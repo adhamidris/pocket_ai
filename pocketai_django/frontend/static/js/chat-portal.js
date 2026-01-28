@@ -28,9 +28,9 @@ class ChatPortalClient {
 	    this.streamController = null;
 	    this.stopRequested = false;
 	    this.bootstrapPayload = null;
-	    this.elements = {
-	      messages: container.querySelector("[data-chat-messages]"),
-	      messagesInner: container.querySelector("[data-chat-inner-container]"),
+    this.elements = {
+      messages: container.querySelector("[data-chat-messages]"),
+      messagesInner: container.querySelector("[data-chat-inner-container]"),
       sendForm: container.querySelector("[data-chat-send-form]"),
       sendButton: container.querySelector("[data-chat-send-button]"),
       sendIcon: container.querySelector("[data-chat-send-icon]"),
@@ -51,6 +51,14 @@ class ChatPortalClient {
       newSessionBtn: container.querySelector("[data-new-session-btn]"),
       fileInput: container.querySelector("[data-chat-file-input]"),
       uploadButton: container.querySelector("[data-chat-upload-button]"),
+      // Tasks panel (agent runs)
+      tasksPanel: container.querySelector("[data-tasks-panel]"),
+      tasksList: container.querySelector("[data-tasks-list]"),
+      tasksEmpty: container.querySelector("[data-tasks-empty]"),
+      tasksCards: container.querySelector("[data-tasks-cards]"),
+      tasksOpenBtn: container.querySelector("[data-tasks-open-btn]"),
+      tasksCloseBtn: container.querySelector("[data-tasks-close-btn]"),
+      tasksCount: container.querySelector("[data-tasks-count]"),
     };
 	    // Session management state
 	    this.sessionTokens = [];
@@ -112,6 +120,11 @@ class ChatPortalClient {
     this.lastTextDeltaAt = 0;
     this.textDeltaIntervalEma = 0;
     this.hadToolsThisTurn = false;
+
+    // Agent runs/tasks panel state
+    this.agentRuns = new Map(); // runId -> { run, events, expanded, seenKeys, lastEventLabel }
+    this.tasksRenderRaf = null;
+    this.tasksPanelUserHidden = false;
   }
 
   async init() {
@@ -144,6 +157,7 @@ class ChatPortalClient {
         if (ta) requestAnimationFrame(() => ta.focus());
       }
 
+      this.initTasksPanel();
       this.connectEventStream();
     } catch (error) {
       this.showToast("Unable to load chat", error.message || "Please refresh and try again.", true);
@@ -3411,6 +3425,409 @@ class ChatPortalClient {
         console.warn("Failed to parse status event", error);
       }
     });
+
+    this.eventSource.addEventListener("agentRunsSnapshot", (event) => {
+      try {
+        const payload = event && event.data ? JSON.parse(event.data) : null;
+        this.handleAgentRunsSnapshot(payload);
+      } catch (error) {
+        console.warn("Failed to parse agent runs snapshot", error);
+      }
+    });
+
+    this.eventSource.addEventListener("agentRunEvent", (event) => {
+      try {
+        const payload = event && event.data ? JSON.parse(event.data) : null;
+        this.handleAgentRunEvent(payload);
+      } catch (error) {
+        console.warn("Failed to parse agent run event", error);
+      }
+    });
+  }
+
+  initTasksPanel() {
+    if (!this.elements.tasksPanel || !this.elements.tasksCards) {
+      return;
+    }
+
+    if (this.elements.tasksOpenBtn) {
+      this.elements.tasksOpenBtn.addEventListener("click", () => {
+        this.tasksPanelUserHidden = false;
+        this.setTasksPanelVisible(true);
+      });
+    }
+    if (this.elements.tasksCloseBtn) {
+      this.elements.tasksCloseBtn.addEventListener("click", () => {
+        this.tasksPanelUserHidden = true;
+        this.setTasksPanelVisible(false);
+      });
+    }
+
+    this.elements.tasksCards.addEventListener("click", (event) => {
+      const target = event && event.target ? event.target : null;
+      if (!target) return;
+      const toggleEl = target.closest("[data-run-toggle]");
+      if (!toggleEl) return;
+      const runId = (toggleEl.getAttribute("data-run-toggle") || "").trim();
+      if (!runId) return;
+      this.toggleRunExpanded(runId);
+    });
+
+    this.setTasksPanelVisible(false);
+  }
+
+  setTasksPanelVisible(visible) {
+    const panel = this.elements.tasksPanel;
+    if (!panel) return;
+    const shouldShow = Boolean(visible);
+    if (shouldShow) {
+      panel.removeAttribute("hidden");
+    } else {
+      panel.setAttribute("hidden", "");
+    }
+    this.updateTasksOpenButton();
+  }
+
+  updateTasksOpenButton() {
+    const btn = this.elements.tasksOpenBtn;
+    if (!btn) return;
+
+    const hasRuns = this.agentRuns && this.agentRuns.size > 0;
+    const panelVisible = this.elements.tasksPanel && !this.elements.tasksPanel.hasAttribute("hidden");
+
+    if (!hasRuns) {
+      btn.setAttribute("hidden", "");
+      return;
+    }
+
+    if (panelVisible) {
+      btn.setAttribute("hidden", "");
+    } else {
+      btn.removeAttribute("hidden");
+    }
+
+    const activeCount = this.getActiveRunCount();
+    if (this.elements.tasksCount) {
+      if (activeCount > 0) {
+        this.elements.tasksCount.textContent = String(activeCount);
+        this.elements.tasksCount.removeAttribute("hidden");
+      } else {
+        this.elements.tasksCount.textContent = "0";
+        this.elements.tasksCount.setAttribute("hidden", "");
+      }
+    }
+  }
+
+  getActiveRunCount() {
+    let count = 0;
+    this.agentRuns.forEach((state) => {
+      const status = state && state.run ? (state.run.status || "").toString().toLowerCase() : "";
+      if (!status) return;
+      if (["running", "queued", "waiting_user", "waiting_approval", "waiting_external", "paused"].includes(status)) {
+        count += 1;
+      }
+    });
+    return count;
+  }
+
+  toggleRunExpanded(runId) {
+    const state = this.agentRuns.get(runId);
+    if (!state) return;
+    state.expanded = !state.expanded;
+    this.scheduleTasksRender();
+  }
+
+  handleAgentRunsSnapshot(payload) {
+    if (!payload || typeof payload !== "object") return;
+    const runs = Array.isArray(payload.runs) ? payload.runs : [];
+    const eventsByRun =
+      payload.eventsByRun && typeof payload.eventsByRun === "object" ? payload.eventsByRun : {};
+
+    runs.forEach((run) => {
+      this.upsertAgentRun(run);
+    });
+
+    Object.keys(eventsByRun).forEach((runId) => {
+      const events = Array.isArray(eventsByRun[runId]) ? eventsByRun[runId] : [];
+      this.replaceAgentRunEvents(runId, events);
+    });
+
+    if (this.agentRuns.size > 0 && !this.tasksPanelUserHidden) {
+      this.setTasksPanelVisible(true);
+    } else {
+      this.updateTasksOpenButton();
+    }
+    this.scheduleTasksRender();
+  }
+
+  handleAgentRunEvent(payload) {
+    if (!payload || typeof payload !== "object") return;
+    const run = payload.run && typeof payload.run === "object" ? payload.run : null;
+    const evt = payload.event && typeof payload.event === "object" ? payload.event : null;
+    const runId =
+      (run && typeof run.id === "string" && run.id.trim()) ||
+      (evt && typeof evt.runId === "string" && evt.runId.trim()) ||
+      "";
+    if (!runId) return;
+
+    if (run) {
+      this.upsertAgentRun(run);
+    } else {
+      this.upsertAgentRun({ id: runId });
+    }
+    if (evt) {
+      this.appendAgentRunEvent(runId, evt);
+    }
+
+    if (!this.tasksPanelUserHidden) {
+      const status = this.agentRuns.get(runId) && this.agentRuns.get(runId).run ? this.agentRuns.get(runId).run.status : "";
+      const norm = (status || "").toString().toLowerCase();
+      if (norm && norm !== "completed" && norm !== "cancelled" && norm !== "failed") {
+        this.setTasksPanelVisible(true);
+      } else {
+        this.updateTasksOpenButton();
+      }
+    } else {
+      this.updateTasksOpenButton();
+    }
+    this.scheduleTasksRender();
+  }
+
+  upsertAgentRun(run) {
+    if (!run || typeof run !== "object") return null;
+    const runId = typeof run.id === "string" ? run.id.trim() : "";
+    if (!runId) return null;
+    const existing = this.agentRuns.get(runId);
+    if (existing) {
+      existing.run = Object.assign({}, existing.run || {}, run);
+      return existing;
+    }
+    const state = {
+      run: Object.assign({}, run),
+      events: [],
+      expanded: false,
+      seenSeq: new Set(),
+      lastEventLabel: "",
+    };
+    this.agentRuns.set(runId, state);
+    return state;
+  }
+
+  replaceAgentRunEvents(runId, events) {
+    if (!runId) return;
+    const state = this.upsertAgentRun({ id: runId }) || this.agentRuns.get(runId);
+    if (!state) return;
+    const clean = Array.isArray(events) ? events.filter((e) => e && typeof e === "object") : [];
+    clean.sort((a, b) => {
+      const ai = Number(a.sequenceIndex || 0);
+      const bi = Number(b.sequenceIndex || 0);
+      return ai - bi;
+    });
+    state.events = clean.slice(-200);
+    state.seenSeq = new Set(state.events.map((e) => Number(e.sequenceIndex || 0)));
+    const last = state.events.length ? state.events[state.events.length - 1] : null;
+    state.lastEventLabel = last && last.label ? String(last.label) : "";
+  }
+
+  appendAgentRunEvent(runId, evt) {
+    const state = this.agentRuns.get(runId);
+    if (!state || !evt) return;
+    const seq = Number(evt.sequenceIndex || 0);
+    if (!seq) return;
+    if (state.seenSeq && state.seenSeq.has(seq)) {
+      return;
+    }
+    state.seenSeq.add(seq);
+    state.events.push(evt);
+    if (state.events.length > 250) {
+      state.events = state.events.slice(-200);
+      state.seenSeq = new Set(state.events.map((e) => Number(e.sequenceIndex || 0)));
+    }
+    state.lastEventLabel = evt.label ? String(evt.label) : state.lastEventLabel;
+  }
+
+  scheduleTasksRender() {
+    if (this.tasksRenderRaf) return;
+    this.tasksRenderRaf = requestAnimationFrame(() => {
+      this.tasksRenderRaf = null;
+      this.renderTasksPanel();
+    });
+  }
+
+  renderTasksPanel() {
+    if (!this.elements.tasksCards) return;
+    const list = this.elements.tasksCards;
+
+    const runs = Array.from(this.agentRuns.entries()).map(([id, state]) => ({
+      id,
+      state,
+      run: state && state.run ? state.run : {},
+    }));
+
+    if (!runs.length) {
+      if (this.elements.tasksEmpty) {
+        this.elements.tasksEmpty.removeAttribute("hidden");
+      }
+      list.innerHTML = "";
+      this.updateTasksOpenButton();
+      return;
+    }
+
+    if (this.elements.tasksEmpty) {
+      this.elements.tasksEmpty.setAttribute("hidden", "");
+    }
+
+    const statusPriority = {
+      running: 0,
+      waiting_approval: 1,
+      waiting_user: 2,
+      queued: 3,
+      waiting_external: 4,
+      paused: 5,
+      failed: 6,
+      cancelled: 7,
+      completed: 8,
+    };
+
+    runs.sort((a, b) => {
+      const aStatus = (a.run.status || "").toString().toLowerCase();
+      const bStatus = (b.run.status || "").toString().toLowerCase();
+      const ap = Object.prototype.hasOwnProperty.call(statusPriority, aStatus) ? statusPriority[aStatus] : 50;
+      const bp = Object.prototype.hasOwnProperty.call(statusPriority, bStatus) ? statusPriority[bStatus] : 50;
+      if (ap !== bp) return ap - bp;
+      const aTime = Date.parse(a.run.updatedAt || a.run.createdAt || "") || 0;
+      const bTime = Date.parse(b.run.updatedAt || b.run.createdAt || "") || 0;
+      return bTime - aTime;
+    });
+
+    const cardsHtml = runs
+      .map(({ id, state, run }) => this.renderRunCardHtml(id, state, run))
+      .join("");
+
+    list.innerHTML = cardsHtml;
+    this.updateTasksOpenButton();
+  }
+
+  renderRunCardHtml(runId, state, run) {
+    const statusRaw = (run && run.status ? run.status : "queued").toString().trim().toLowerCase() || "queued";
+    const title = run && run.title ? run.title : "Background task";
+    const lastEvent = state && Array.isArray(state.events) && state.events.length ? state.events[state.events.length - 1] : null;
+    const subtitle = this.formatRunSubtitle(run, lastEvent);
+    const expanded = Boolean(state && state.expanded);
+
+    const planHtml = this.renderRunPlanHtml(run);
+    const logHtml = this.renderRunLogHtml(state);
+    const resultHtml = this.renderRunResultHtml(run);
+
+    return `
+      <div class="portal-task" data-run-id="${this.escapeHtml(runId)}" data-expanded="${expanded ? "true" : "false"}">
+        <button type="button" class="portal-task__header" data-run-toggle="${this.escapeHtml(runId)}">
+          <div class="portal-task__meta">
+            <div class="portal-task__title">${this.escapeHtml(String(title || "Background task"))}</div>
+            <div class="portal-task__subtitle">${this.escapeHtml(subtitle)}</div>
+          </div>
+          <span class="portal-task__status-pill" data-status="${this.escapeHtml(statusRaw)}">${this.escapeHtml(
+      this.formatRunStatusLabel(statusRaw)
+    )}</span>
+        </button>
+        <div class="portal-task__body">
+          ${planHtml}
+          ${logHtml}
+          ${resultHtml}
+        </div>
+      </div>
+    `;
+  }
+
+  formatRunStatusLabel(status) {
+    const norm = (status || "").toString().trim().toLowerCase();
+    if (!norm) return "QUEUED";
+    return norm.replace(/_/g, " ");
+  }
+
+  formatRunSubtitle(run, lastEvent) {
+    const label = lastEvent && lastEvent.label ? String(lastEvent.label) : "";
+    const createdAt = lastEvent && lastEvent.createdAt ? String(lastEvent.createdAt) : "";
+    if (label && createdAt) {
+      const when = Date.parse(createdAt);
+      if (!Number.isNaN(when)) {
+        return `${label} · ${this.formatRelativeTime(new Date(when))}`;
+      }
+      return label;
+    }
+    if (label) return label;
+    const status = run && run.status ? String(run.status) : "";
+    return status ? this.formatRunStatusLabel(status) : "Waiting for updates…";
+  }
+
+  renderRunPlanHtml(run) {
+    const plan = run && typeof run.plan === "object" ? run.plan : null;
+    const steps = plan && Array.isArray(plan.steps) ? plan.steps : [];
+    const items = steps
+      .slice(0, 12)
+      .map((step) => {
+        const title = step && (step.title || step.description || step.step_id || step.stepId) ? (step.title || step.description || step.step_id || step.stepId) : "";
+        return `<div class="portal-task__list-item">${this.escapeHtml(String(title || "").trim() || "Step")}</div>`;
+      })
+      .join("");
+    const body = items
+      ? `<div class="portal-task__list">${items}</div>`
+      : `<div class="portal-task__subtitle">No plan available yet.</div>`;
+    return `
+      <div class="portal-task__section">
+        <div class="portal-task__section-title">Plan</div>
+        ${body}
+      </div>
+    `;
+  }
+
+  renderRunLogHtml(state) {
+    const events = state && Array.isArray(state.events) ? state.events : [];
+    const recent = events.slice(-15);
+    const items = recent
+      .map((evt) => {
+        const stream = evt && evt.stream ? String(evt.stream) : "";
+        const label = evt && evt.label ? String(evt.label) : String(evt && evt.type ? evt.type : "event");
+        const prefix = stream ? `${stream}: ` : "";
+        return `<div class="portal-task__list-item">${this.escapeHtml(prefix + label)}</div>`;
+      })
+      .join("");
+    const body = items
+      ? `<div class="portal-task__list">${items}</div>`
+      : `<div class="portal-task__subtitle">No activity yet.</div>`;
+    return `
+      <div class="portal-task__section">
+        <div class="portal-task__section-title">Executed Log</div>
+        ${body}
+      </div>
+    `;
+  }
+
+  renderRunResultHtml(run) {
+    const status = (run && run.status ? run.status : "").toString().toLowerCase();
+    const result = run && typeof run.result === "object" ? run.result : null;
+    const responseText = result && typeof result.responseText === "string" ? result.responseText : "";
+    const errorDetail = run && typeof run.errorDetail === "string" ? run.errorDetail : "";
+
+    if (status === "failed" && errorDetail) {
+      return `
+        <div class="portal-task__section">
+          <div class="portal-task__section-title">Error</div>
+          <div class="portal-task__result">${this.escapeHtml(errorDetail)}</div>
+        </div>
+      `;
+    }
+
+    if (responseText) {
+      return `
+        <div class="portal-task__section">
+          <div class="portal-task__section-title">Result</div>
+          <div class="portal-task__result">${this.escapeHtml(responseText)}</div>
+        </div>
+      `;
+    }
+
+    return "";
   }
 
   async submitCsat({ score }) {
@@ -6643,6 +7060,12 @@ class ChatPortalClient {
       this.eventSource.close();
       this.eventSource = null;
     }
+
+    if (this.agentRuns) {
+      this.agentRuns.clear();
+    }
+    this.renderTasksPanel();
+    this.setTasksPanelVisible(false);
   }
 }
 

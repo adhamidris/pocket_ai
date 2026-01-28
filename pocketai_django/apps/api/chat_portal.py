@@ -38,7 +38,14 @@ from apps.conversations.content_blocks import (
     new_block_id,
 )
 from apps.conversations.rich_blocks import RichBlockStreamBuilder, apply_block_ops, coerce_block_event, rich_blocks_from_text
-from apps.conversations.models import ConversationSender, ConversationToolApproval, ConversationToolApprovalStatus
+from apps.conversations.models import (
+    AgentRun,
+    AgentRunEvent,
+    AgentRunStatus,
+    ConversationSender,
+    ConversationToolApproval,
+    ConversationToolApprovalStatus,
+)
 from apps.core.logging_utils import LogEmoji
 from apps.rag.ai_orchestrator import (
     ActionDispatcher,
@@ -996,6 +1003,103 @@ def _serialize_tool_approval(approval: ConversationToolApproval) -> dict[str, ob
         "expires_at": approval.expires_at.isoformat() if approval.expires_at else None,
         "metadata": approval.metadata or {},
     }
+
+def _clip_portal_text(value: str, limit: int) -> str:
+    text = (value or "").strip()
+    if not text:
+        return ""
+    if len(text) <= limit:
+        return text
+    return f"{text[: max(0, limit - 1)].rstrip()}…"
+
+
+def _serialize_agent_run_for_portal(run: AgentRun) -> dict[str, object]:
+    plan_payload = run.plan if isinstance(getattr(run, "plan", None), dict) else {}
+    result_payload = run.result if isinstance(getattr(run, "result", None), dict) else {}
+    response_text = ""
+    if isinstance(result_payload, dict):
+        response_text = str(result_payload.get("response_text") or result_payload.get("responseText") or "").strip()
+    error_detail = str(getattr(run, "error_detail", "") or "").strip()
+    return {
+        "id": str(run.id),
+        "title": run.title or "",
+        "source": run.source,
+        "status": run.status,
+        "attemptCount": int(run.attempt_count or 0),
+        "maxAttempts": int(run.max_attempts or 0),
+        "runAfter": run.run_after.isoformat() if run.run_after else None,
+        "leaseExpiresAt": run.lease_expires_at.isoformat() if run.lease_expires_at else None,
+        "startedAt": run.started_at.isoformat() if run.started_at else None,
+        "finishedAt": run.finished_at.isoformat() if run.finished_at else None,
+        "createdAt": run.created_at.isoformat() if run.created_at else None,
+        "updatedAt": run.updated_at.isoformat() if run.updated_at else None,
+        "errorDetail": _clip_portal_text(error_detail, 800) if error_detail else "",
+        "plan": plan_payload,
+        "result": {"responseText": _clip_portal_text(response_text, 6000)} if response_text else {},
+    }
+
+
+def _serialize_agent_run_event_for_portal(event: AgentRunEvent) -> dict[str, object]:
+    return {
+        "id": str(event.id),
+        "runId": str(event.run_id),
+        "sequenceIndex": int(event.sequence_index),
+        "stream": event.stream,
+        "type": event.event_type,
+        "label": event.label or "",
+        "payload": event.payload if isinstance(getattr(event, "payload", None), dict) else {},
+        "createdAt": event.created_at.isoformat() if event.created_at else None,
+    }
+
+
+def _build_portal_agent_runs_snapshot(
+    *,
+    conversation_id: uuid.UUID,
+    business_id: uuid.UUID | None,
+    runs_limit: int = 15,
+    events_limit_per_run: int = 20,
+) -> dict[str, object]:
+    runs_limit = max(1, min(int(runs_limit), 50))
+    events_limit_per_run = max(0, min(int(events_limit_per_run), 50))
+
+    with tenant_context(business_id):
+        runs = list(
+            AgentRun.objects.filter(conversation_id=conversation_id)
+            .order_by("-created_at")[:runs_limit]
+        )
+        run_ids = [run.id for run in runs]
+
+        events_by_run: dict[str, list[dict[str, object]]] = {}
+        max_created_at: datetime | None = None
+
+        if run_ids and events_limit_per_run:
+            counts: dict[str, int] = {}
+            grouped: dict[str, list[AgentRunEvent]] = {}
+            qs = (
+                AgentRunEvent.objects.filter(run_id__in=run_ids)
+                .order_by("run_id", "-sequence_index")
+            )
+            for event in qs:
+                run_id_str = str(event.run_id)
+                current = counts.get(run_id_str, 0)
+                if current >= events_limit_per_run:
+                    continue
+                counts[run_id_str] = current + 1
+                grouped.setdefault(run_id_str, []).append(event)
+                if event.created_at and (max_created_at is None or event.created_at > max_created_at):
+                    max_created_at = event.created_at
+            for run_id_str, event_list in grouped.items():
+                events_by_run[run_id_str] = [
+                    _serialize_agent_run_event_for_portal(item) for item in reversed(event_list)
+                ]
+
+        cursor_value = (max_created_at or timezone.now()).isoformat()
+        return {
+            "conversationId": str(conversation_id),
+            "runs": [_serialize_agent_run_for_portal(run) for run in runs],
+            "eventsByRun": events_by_run,
+            "cursor": {"since": cursor_value},
+        }
 
 
 def _message_to_dict(message: PortalMessage) -> dict:
@@ -3409,19 +3513,89 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
         return StreamingHttpResponse(status=400)
     service = _service()
     try:
-        session = service.get_session_state(session_token=session_token)
+        conversation = service.get_conversation(session_token=session_token, include_messages=False)
+        session = service.get_session_state(session_token=session_token, conversation=conversation)
     except PortalNotFoundError:
         return StreamingHttpResponse(status=404)
 
-    def heartbeat_stream() -> Iterable[str]:
+    conversation_id = getattr(conversation, "id", None)
+    business_id = getattr(conversation, "business_profile_id", None)
+
+    def event_stream() -> Iterable[str]:
         yield "event: statusChanged\n"
         yield f"data: {json.dumps({'status': session.status})}\n\n"
-        while True:
-            yield "event: heartbeat\n"
-            yield "data: {}\n\n"
-            time.sleep(15)
+        if conversation_id:
+            try:
+                snapshot = _build_portal_agent_runs_snapshot(
+                    conversation_id=conversation_id,
+                    business_id=business_id,
+                )
+                yield "event: agentRunsSnapshot\n"
+                yield f"data: {json.dumps(snapshot)}\n\n"
+                cursor = snapshot.get("cursor") if isinstance(snapshot, dict) else {}
+                since_raw = cursor.get("since") if isinstance(cursor, dict) else None
+                since = None
+                if isinstance(since_raw, str) and since_raw.strip():
+                    raw = since_raw.strip().replace("Z", "+00:00")
+                    try:
+                        since = datetime.fromisoformat(raw)
+                    except ValueError:
+                        since = None
+                    if since is not None and since.tzinfo is None:
+                        since = since.replace(tzinfo=timezone.utc)
+                if since is None:
+                    since = timezone.now()
+            except Exception:  # pragma: no cover - snapshot is best effort only
+                snapshot = None
+                since = timezone.now()
+        else:
+            since = timezone.now()
 
-    response = StreamingHttpResponse(heartbeat_stream(), content_type="text/event-stream")
+        seen: set[tuple[str, int]] = set()
+        seen_order: list[tuple[str, int]] = []
+        seen_limit = 2000
+        last_heartbeat = time.monotonic()
+
+        while True:
+            close_old_connections()
+            if conversation_id:
+                with tenant_context(business_id):
+                    events_batch = list(
+                        AgentRunEvent.objects.select_related("run")
+                        .filter(run__conversation_id=conversation_id)
+                        .filter(created_at__gte=since)
+                        .order_by("created_at", "run_id", "sequence_index")[:250]
+                    )
+                if events_batch:
+                    latest_created_at = since
+                    for event in events_batch:
+                        if event.created_at and event.created_at > latest_created_at:
+                            latest_created_at = event.created_at
+                        key = (str(event.run_id), int(event.sequence_index))
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        seen_order.append(key)
+                        if len(seen_order) > seen_limit:
+                            old = seen_order.pop(0)
+                            seen.discard(old)
+                        run_obj = getattr(event, "run", None)
+                        payload = {
+                            "run": _serialize_agent_run_for_portal(run_obj) if run_obj else {"id": str(event.run_id)},
+                            "event": _serialize_agent_run_event_for_portal(event),
+                        }
+                        yield "event: agentRunEvent\n"
+                        yield f"data: {json.dumps(payload)}\n\n"
+                    since = latest_created_at
+
+            now = time.monotonic()
+            if now - last_heartbeat >= 15.0:
+                yield "event: heartbeat\n"
+                yield "data: {}\n\n"
+                last_heartbeat = now
+            time.sleep(1.0)
+
+    response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")
     response["Cache-Control"] = "no-cache"
     response["X-Accel-Buffering"] = "no"
     return response
