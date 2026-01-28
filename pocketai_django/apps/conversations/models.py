@@ -453,3 +453,371 @@ class ConversationFileChunk(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"{self.conversation_file_id}:{self.chunk_index}"
+
+
+class AgentRunVisibility(models.TextChoices):
+    """
+    High-level visibility control for agent runs.
+
+    Teams/hierarchy is deferred, so these map to workspace-level defaults for now.
+    """
+
+    INITIATOR = "initiator", "Initiator"
+    MANAGERS = "managers", "Managers"
+    WORKSPACE = "workspace", "Workspace"
+
+
+class AgentRunSpecStatus(models.TextChoices):
+    DRAFT = "draft", "Draft"
+    ACTIVE = "active", "Active"
+    ARCHIVED = "archived", "Archived"
+
+
+class AgentRunSpec(models.Model):
+    """
+    Run specification/template owned by a tenant/agent.
+
+    This represents the *contract* for a background run:
+    goal, success criteria, tool allowlist, constraints, output schema, approval requirements, and visibility.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        "accounts.BusinessProfile",
+        related_name="agent_run_specs",
+        on_delete=models.CASCADE,
+    )
+    agent_profile = models.ForeignKey(
+        "accounts.AgentProfile",
+        related_name="run_specs",
+        on_delete=models.CASCADE,
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="created_run_specs",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    name = models.CharField(max_length=160)
+    status = models.CharField(
+        max_length=24,
+        choices=AgentRunSpecStatus.choices,
+        default=AgentRunSpecStatus.DRAFT,
+    )
+    visibility = models.CharField(
+        max_length=24,
+        choices=AgentRunVisibility.choices,
+        default=AgentRunVisibility.INITIATOR,
+    )
+    spec = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Serialized RunSpec payload (goal, tools, constraints, output schema, approvals).",
+    )
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "conversations_agent_run_spec"
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["business_profile", "status"], name="run_spec_biz_status_idx"),
+            models.Index(fields=["agent_profile", "status"], name="run_spec_agent_status_idx"),
+            models.Index(fields=["business_profile", "created_at"], name="run_spec_biz_created_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["agent_profile", "name"],
+                name="run_spec_unique_agent_name",
+            )
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.agent_profile_id and not self.business_profile_id and getattr(self, "agent_profile", None):
+            self.business_profile = self.agent_profile.business_profile
+        super().save(*args, **kwargs)
+
+    def __str__(self) -> str:  # pragma: no cover - human readable only
+        return f"{self.agent_profile_id}:{self.name}"
+
+
+class AgentRunSource(models.TextChoices):
+    CHAT = "chat", "Chat"
+    AUTOMATION = "automation", "Automation"
+    WATCHER = "watcher", "Watcher"
+    API = "api", "API"
+
+
+class AgentRunStatus(models.TextChoices):
+    QUEUED = "queued", "Queued"
+    RUNNING = "running", "Running"
+    WAITING_USER = "waiting_user", "Waiting for user"
+    WAITING_APPROVAL = "waiting_approval", "Waiting for approval"
+    WAITING_EXTERNAL = "waiting_external", "Waiting for external"
+    PAUSED = "paused", "Paused"
+    COMPLETED = "completed", "Completed"
+    FAILED = "failed", "Failed"
+    CANCELLED = "cancelled", "Cancelled"
+
+
+class AgentRun(models.Model):
+    """
+    A single background execution of a RunSpec.
+
+    Runs may be spawned from a chat request, an automation trigger, a watcher, or the API.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        "accounts.BusinessProfile",
+        related_name="agent_runs",
+        on_delete=models.CASCADE,
+    )
+    agent_profile = models.ForeignKey(
+        "accounts.AgentProfile",
+        related_name="runs",
+        on_delete=models.CASCADE,
+    )
+    conversation = models.ForeignKey(
+        Conversation,
+        related_name="agent_runs",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Optional anchor conversation (chat-originated run or automation thread).",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="created_agent_runs",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    run_spec = models.ForeignKey(
+        AgentRunSpec,
+        related_name="runs",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    run_spec_snapshot = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Immutable RunSpec snapshot used for this run (copied from run_spec at creation time).",
+    )
+    title = models.CharField(max_length=200, blank=True, default="")
+    source = models.CharField(
+        max_length=24,
+        choices=AgentRunSource.choices,
+        default=AgentRunSource.CHAT,
+    )
+    status = models.CharField(
+        max_length=24,
+        choices=AgentRunStatus.choices,
+        default=AgentRunStatus.QUEUED,
+        db_index=True,
+    )
+    visibility = models.CharField(
+        max_length=24,
+        choices=AgentRunVisibility.choices,
+        default=AgentRunVisibility.INITIATOR,
+    )
+    plan = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Planner output (intended steps). This is separate from executed logs.",
+    )
+    result = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Final structured result payload (if any).",
+    )
+    metadata = models.JSONField(default=dict, blank=True)
+    attempt_count = models.PositiveIntegerField(default=0)
+    max_attempts = models.PositiveIntegerField(default=5)
+    run_after = models.DateTimeField(null=True, blank=True, db_index=True)
+    lease_expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    error_detail = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "conversations_agent_run"
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["business_profile", "status"], name="run_biz_status_idx"),
+            models.Index(fields=["agent_profile", "status"], name="run_agent_status_idx"),
+            models.Index(fields=["status", "run_after"], name="run_status_run_after_idx"),
+            models.Index(fields=["status", "lease_expires_at"], name="run_status_lease_idx"),
+            models.Index(fields=["conversation", "created_at"], name="run_conv_created_idx"),
+            models.Index(fields=["business_profile", "created_at"], name="run_biz_created_idx"),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.agent_profile_id and not self.business_profile_id and getattr(self, "agent_profile", None):
+            self.business_profile = self.agent_profile.business_profile
+        if self.conversation_id and not self.business_profile_id and getattr(self, "conversation", None):
+            self.business_profile = self.conversation.business_profile
+        super().save(*args, **kwargs)
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.agent_profile_id}:{self.status}:{self.id}"
+
+
+class AgentRunEventStream(models.TextChoices):
+    PLAN = "plan", "Plan"
+    EXECUTED = "executed", "Executed"
+    SYSTEM = "system", "System"
+
+
+class AgentRunEventType(models.TextChoices):
+    PROGRESS = "progress", "Progress"
+    NEEDS_USER = "needs_user", "Needs user"
+    NEEDS_APPROVAL = "needs_approval", "Needs approval"
+    RESULT = "result", "Result"
+    ERROR = "error", "Error"
+    PAUSED = "paused", "Paused"
+    CANCELLED = "cancelled", "Cancelled"
+
+
+class AgentRunEvent(models.Model):
+    """
+    Append-only event log for a run.
+
+    Truthfulness invariant: "plan" stream describes intent; "executed" stream is the source of truth for actions taken.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    run = models.ForeignKey(
+        AgentRun,
+        related_name="events",
+        on_delete=models.CASCADE,
+    )
+    sequence_index = models.PositiveIntegerField(help_text="Monotonic per-run ordering for deterministic playback.")
+    stream = models.CharField(
+        max_length=16,
+        choices=AgentRunEventStream.choices,
+        default=AgentRunEventStream.SYSTEM,
+    )
+    event_type = models.CharField(
+        max_length=24,
+        choices=AgentRunEventType.choices,
+    )
+    label = models.CharField(max_length=240, blank=True, default="")
+    payload = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = "conversations_agent_run_event"
+        ordering = ("run_id", "sequence_index")
+        indexes = [
+            models.Index(fields=["run", "sequence_index"], name="run_event_order_idx"),
+            models.Index(fields=["run", "created_at"], name="run_event_created_idx"),
+            models.Index(fields=["run", "event_type"], name="run_event_type_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(fields=["run", "sequence_index"], name="run_event_unique_sequence"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.run_id}:{self.stream}:{self.event_type}:{self.sequence_index}"
+
+
+class AgentRunArtifactKind(models.TextChoices):
+    FILE = "file", "File"
+    LINK = "link", "Link"
+    RECORD = "record", "Record"
+    MESSAGE = "message", "Message"
+
+
+class AgentRunArtifact(models.Model):
+    """
+    Reference to a run output (file/artifact, link, or created/updated record).
+
+    Storage is intentionally "pointer-like" so large payloads remain out-of-band.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    run = models.ForeignKey(
+        AgentRun,
+        related_name="artifacts",
+        on_delete=models.CASCADE,
+    )
+    kind = models.CharField(
+        max_length=24,
+        choices=AgentRunArtifactKind.choices,
+        default=AgentRunArtifactKind.FILE,
+    )
+    label = models.CharField(max_length=200, blank=True, default="")
+    conversation_file = models.ForeignKey(
+        ConversationFile,
+        related_name="agent_run_artifacts",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    url = models.URLField(blank=True, default="")
+    reference_type = models.CharField(max_length=64, blank=True, default="")
+    reference_id = models.UUIDField(null=True, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = "conversations_agent_run_artifact"
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["run", "created_at"], name="run_artifact_created_idx"),
+            models.Index(fields=["run", "kind"], name="run_artifact_kind_idx"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.run_id}:{self.kind}:{self.id}"
+
+
+class AgentRunMemoryKind(models.TextChoices):
+    FACT = "fact", "Fact"
+    SOP = "sop", "SOP"
+    DECISION = "decision", "Decision"
+    NOTE = "note", "Note"
+
+
+class AgentRunMemoryItem(models.Model):
+    """
+    Structured memory entries emitted during a run (facts, SOP steps, decisions).
+
+    Raw tool dumps should be stored as artifacts or in executed logs, not as memory items.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    run = models.ForeignKey(
+        AgentRun,
+        related_name="memory_items",
+        on_delete=models.CASCADE,
+    )
+    kind = models.CharField(max_length=24, choices=AgentRunMemoryKind.choices)
+    key = models.CharField(max_length=160, blank=True, default="", db_index=True)
+    content = models.TextField(blank=True, default="")
+    payload = models.JSONField(default=dict, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="created_agent_run_memory_items",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = "conversations_agent_run_memory_item"
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["run", "created_at"], name="run_memory_created_idx"),
+            models.Index(fields=["run", "kind"], name="run_memory_kind_idx"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.run_id}:{self.kind}:{self.id}"
