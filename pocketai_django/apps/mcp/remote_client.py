@@ -792,6 +792,7 @@ def call_mcp_tool_streamable_http(
     tool_name: str,
     arguments: dict[str, Any] | None,
     headers: Mapping[str, str] | None = None,
+    idempotency_key: str | None = None,
     timeout_s: float = 45.0,
     protocol_version: str = DEFAULT_PROTOCOL_VERSION,
 ) -> dict[str, Any]:
@@ -802,6 +803,15 @@ def call_mcp_tool_streamable_http(
     """
 
     _validate_mcp_url_for_ssrf(endpoint_url, action="mcp_tools_call")
+    sanitized_idempotency_key: str | None = None
+    if idempotency_key is not None:
+        raw_key = str(idempotency_key).strip()
+        if raw_key:
+            sanitized = "".join(ch for ch in raw_key if ch.isalnum() or ch in "-_.:")
+            sanitized = sanitized[:128]
+            if sanitized:
+                sanitized_idempotency_key = sanitized
+
     with httpx.Client(timeout=timeout_s, follow_redirects=False, trust_env=False) as client:
         try:
             session = _streamable_http_initialize(
@@ -819,6 +829,8 @@ def call_mcp_tool_streamable_http(
             call_headers = _headers_with_protocol(headers, protocol_version=session.protocol_version, session_id=session.session_id)
             call_headers["Accept"] = "application/json, text/event-stream"
             call_headers["Content-Type"] = "application/json"
+            if sanitized_idempotency_key:
+                call_headers["Idempotency-Key"] = sanitized_idempotency_key
             resp = _post_jsonrpc_with_retry_after(
                 client=client,
                 url=session.endpoint_url,
@@ -876,9 +888,12 @@ def call_mcp_tool_streamable_http(
                     request_id=request_id,
                     params={"name": tool_name, "arguments": arguments or {}},
                 )
+                call_post_headers = dict(post_headers)
+                if sanitized_idempotency_key:
+                    call_post_headers["Idempotency-Key"] = sanitized_idempotency_key
                 call_resp = _request_with_transport_errors(
                     "legacy_sse.tools_call",
-                    lambda: client.post(message_url, json=payload, headers=post_headers),
+                    lambda: client.post(message_url, json=payload, headers=call_post_headers),
                 )
                 _raise_for_redirect_response(call_resp, action="legacy_sse.tools_call")
                 try:

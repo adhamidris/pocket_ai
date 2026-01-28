@@ -73,7 +73,14 @@ from .connectors import (
     list_remote_tool_descriptors,
     mcp_connection_auth_headers,
 )
-from .remote_client import McpRemoteError, call_mcp_tool_streamable_http
+from .remote_client import (
+    McpRemoteError,
+    McpRemoteHttpStatusError,
+    McpRemoteProtocolError,
+    McpRemoteSsrBlockedError,
+    McpRemoteTransportError,
+    call_mcp_tool_streamable_http,
+)
 from .redaction import redact_tool_input_payload
 from .tool_artifacts import build_prompt_view_for_remote_tool_result, store_remote_tool_output_artifact
 from .sanitizer import (
@@ -319,6 +326,7 @@ class McpOrchestratorService:
         *,
         conversation: Conversation,
         user_message: str,
+        allowed_tools: set[str] | None = None,
         on_response_text_delta: Callable[[str], None] | None = None,
         on_status_change: Callable[[str], None] | None = None,
         on_placeholder_response: Callable[[str], None] | None = None,
@@ -379,6 +387,10 @@ class McpOrchestratorService:
 
         disable_tools_for_turn = self._is_low_intent_message(user_message)
 
+        normalized_tool_allowlist: set[str] | None = None
+        if allowed_tools is not None:
+            normalized_tool_allowlist = {str(value).strip() for value in allowed_tools if str(value or "").strip()}
+
         internal_tool_defs: list[Mapping[str, object]] = list(mcp_tools.TOOL_DEFINITIONS)
         # Gateway mode is permanently enabled.
         gateway_enabled = True
@@ -406,12 +418,19 @@ class McpOrchestratorService:
                 tool_def for tool_def in internal_tool_defs if self._tool_schema_name(tool_def) in allowed
             ]
 
+        if normalized_tool_allowlist is not None:
+            internal_tool_defs = [
+                tool_def for tool_def in internal_tool_defs if self._tool_schema_name(tool_def) in normalized_tool_allowlist
+            ]
+
         # External MCP connections (per-agent) extend the tool catalog.
         # all_remote_connections was pre-fetched in turn_setup above.
         remote_tool_defs: list[dict[str, Any]] = []
         self._remote_tool_registry = {}
         if not disable_tools_for_turn:
             remote_descriptors = list_remote_tool_descriptors(all_remote_connections)
+            if normalized_tool_allowlist is not None:
+                remote_descriptors = [desc for desc in remote_descriptors if desc.safe_name in normalized_tool_allowlist]
             gateway_catalog: dict[str, dict[str, object]] = {}
             remote_registry: dict[str, tuple[object, str]] = {}
             default_arg_keys_by_connection: dict[str, list[str]] = {}
@@ -1474,6 +1493,11 @@ class McpOrchestratorService:
                                                         connection=connection,
                                                         arguments=effective_inner_args,
                                                         conversation=conversation,
+                                                        idempotency_key=self._mcp_idempotency_key(
+                                                            conversation_id=conversation.id,
+                                                            event_id=tool_event_id,
+                                                        ),
+                                                        operation_type=str(approval_requirement.get("operation_type") or ""),
                                                     )
                                     else:
                                         remote_entry = self._remote_tool_registry.get(tool_name)
@@ -1551,6 +1575,11 @@ class McpOrchestratorService:
                                                     connection=connection,
                                                     arguments=effective_remote_args,
                                                     conversation=conversation,
+                                                    idempotency_key=self._mcp_idempotency_key(
+                                                        conversation_id=conversation.id,
+                                                        event_id=tool_event_id,
+                                                    ),
+                                                    operation_type=str(approval_requirement.get("operation_type") or ""),
                                                 )
                                         else:
                                             call_start = time.perf_counter()
@@ -2656,6 +2685,7 @@ class McpOrchestratorService:
         *,
         conversation: Conversation,
         user_message: str,
+        allowed_tools: set[str] | None = None,
         on_response_text_delta: Callable[[str], None] | None = None,
         on_status_change: Callable[[str], None] | None = None,
         on_placeholder_response: Callable[[str], None] | None = None,
@@ -2670,6 +2700,7 @@ class McpOrchestratorService:
         result = self._execute_turn(
             conversation=conversation,
             user_message=user_message,
+            allowed_tools=allowed_tools,
             on_response_text_delta=on_response_text_delta,
             on_status_change=on_status_change,
             on_placeholder_response=on_placeholder_response,
@@ -9140,6 +9171,21 @@ class McpOrchestratorService:
                 logger.exception("mcp portal tool approval resolve callback failed")
         return True, approval, None
 
+    @staticmethod
+    def _mcp_idempotency_key(*, conversation_id: object, event_id: str) -> str:
+        seed = f"{conversation_id}:{event_id}".encode("utf-8", errors="ignore")
+        digest = hashlib.sha256(seed).hexdigest()[:32]
+        return f"pocketai-mcp-{digest}"
+
+    @staticmethod
+    def _deterministic_retry_delay_seconds(seed: str, attempt: int) -> float:
+        normalized_attempt = max(1, int(attempt))
+        base = 0.25 * (2 ** min(6, normalized_attempt - 1))
+        base = min(2.0, base)
+        digest = hashlib.sha256(f"{seed}:{normalized_attempt}".encode("utf-8", errors="ignore")).digest()
+        jitter = int.from_bytes(digest[:2], "big") / 65536.0
+        return min(2.0, base + (0.25 * jitter))
+
     def _execute_remote_mcp_tool(
         self,
         *,
@@ -9148,6 +9194,8 @@ class McpOrchestratorService:
         connection: object,
         arguments: Mapping[str, object],
         conversation: Conversation,
+        idempotency_key: str | None = None,
+        operation_type: str | None = None,
     ) -> Mapping[str, object]:
         """
         Execute an externally configured MCP tool call by forwarding to the remote MCP server.
@@ -9180,17 +9228,53 @@ class McpOrchestratorService:
 
         headers = mcp_connection_auth_headers(connection)  # type: ignore[arg-type]
         try:
-            result = call_mcp_tool_streamable_http(
-                endpoint_url=endpoint_url,
-                tool_name=remote_tool_name,
-                arguments=dict(arguments),
-                headers=headers,
-            )
+            operation_norm = str(operation_type or "").strip().lower()
+            safe_retry = operation_norm == "read"
+            max_attempts = 3 if safe_retry else 1
+            attempts = 0
+            while True:
+                attempts += 1
+                try:
+                    result = call_mcp_tool_streamable_http(
+                        endpoint_url=endpoint_url,
+                        tool_name=remote_tool_name,
+                        arguments=dict(arguments),
+                        headers=headers,
+                        idempotency_key=idempotency_key,
+                    )
+                    break
+                except McpRemoteSsrBlockedError as exc:
+                    raise exc
+                except McpRemoteProtocolError as exc:
+                    raise exc
+                except McpRemoteTransportError as exc:
+                    status_code = getattr(exc, "status_code", None)
+                    if not safe_retry or attempts >= max_attempts:
+                        raise exc
+                    if isinstance(exc, McpRemoteHttpStatusError):
+                        retryable_statuses = {408, 429, 500, 502, 503, 504}
+                        if status_code is not None and status_code not in retryable_statuses:
+                            raise exc
+                    delay_s = self._deterministic_retry_delay_seconds(
+                        idempotency_key or f"{conversation.id}:{remote_tool_name}",
+                        attempts,
+                    )
+                    retry_after_value = getattr(exc, "retry_after", None)
+                    if status_code == 429 and retry_after_value and str(retry_after_value).strip().isdigit():
+                        retry_after_s = float(str(retry_after_value).strip())
+                        if 0.0 < retry_after_s <= 2.0:
+                            delay_s = max(delay_s, retry_after_s)
+                    time.sleep(delay_s)
         except McpRemoteError as exc:
             structured_log(
                 "mcp",
                 "remote_tool_call_failed",
-                {"tool": tool_name, "remote_tool": remote_tool_name, "error": str(exc)},
+                {
+                    "tool": tool_name,
+                    "remote_tool": remote_tool_name,
+                    "error": str(exc),
+                    "status_code": getattr(exc, "status_code", None),
+                },
                 indent=1,
                 context={"conversation": conversation.id, "business": conversation.business_profile_id},
                 logger_obj=logger,
@@ -9200,7 +9284,7 @@ class McpOrchestratorService:
                 "tool": tool_name,
                 "status": "error",
                 "error_code": "mcp_call_failed",
-                "error": str(exc),
+                "error": str(exc)[:800],
                 "hint": "Test the MCP connection and verify authentication.",
                 "remote": remote_meta,
             }
