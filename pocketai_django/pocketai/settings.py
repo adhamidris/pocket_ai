@@ -588,6 +588,13 @@ MCP_SEARCH_EXCLUDE_SEEN_ENABLED = os.getenv("MCP_SEARCH_EXCLUDE_SEEN_ENABLED", "
 # within the same turn reuse prior results (prevents tool thrash). Disable to force every call
 # to hit retrieval (useful when experimenting with paging/exclusion behaviors).
 MCP_SEARCH_DUPLICATE_INTENT_ENABLED = os.getenv("MCP_SEARCH_DUPLICATE_INTENT_ENABLED", "true").lower() in {"1", "true", "yes"}
+
+# MCP_AGENTIC_SEARCH_PREVIEWS_ENABLED: Include preview text inside agentic search_knowledge refs[].
+# This helps the model decide what to read, but can increase prompt size.
+MCP_AGENTIC_SEARCH_PREVIEWS_ENABLED = os.getenv("MCP_AGENTIC_SEARCH_PREVIEWS_ENABLED", "false").lower() in {"1", "true", "yes"}
+# MCP_AGENTIC_SEARCH_PREVIEWS_HYBRID_ENABLED: Include previews only for the top-ranked refs (smaller/faster).
+# If MCP_AGENTIC_SEARCH_PREVIEWS_ENABLED is true, it takes precedence.
+MCP_AGENTIC_SEARCH_PREVIEWS_HYBRID_ENABLED = os.getenv("MCP_AGENTIC_SEARCH_PREVIEWS_HYBRID_ENABLED", "false").lower() in {"1", "true", "yes"}
 # MCP prompt-safe tool output limits (evidence packets sent back to the LLM).
 # MCP_PROMPT_MAX_SNIPPETS: Max snippet evidence items returned to the model per tool call.
 MCP_PROMPT_MAX_SNIPPETS = int(os.getenv("MCP_PROMPT_MAX_SNIPPETS", "4"))

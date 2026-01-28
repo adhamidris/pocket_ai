@@ -2792,7 +2792,7 @@ def _convert_to_agentic_search_response(
     """
     Convert legacy search_knowledge response to agentic format.
     
-    Phase 1 (EvidenceRefs): return pointers only (no content previews).
+    Phase 1 (EvidenceRefs): return pointers only (optionally with short previews).
 
     The agentic format returns a compact list of "refs" the model can read via
     read_knowledge(). This intentionally avoids duplicating facts in multiple
@@ -2804,6 +2804,28 @@ def _convert_to_agentic_search_response(
         bool(getattr(settings, "MCP_NEW_CONTRACT_ENABLED", True))
         and bool(getattr(settings, "MCP_AGENTIC_READ_V2_ENABLED", False))
     )
+    preview_full_enabled = bool(getattr(settings, "MCP_AGENTIC_SEARCH_PREVIEWS_ENABLED", False))
+    preview_hybrid_enabled = bool(getattr(settings, "MCP_AGENTIC_SEARCH_PREVIEWS_HYBRID_ENABLED", False))
+    try:
+        preview_chars_cap = int(getattr(settings, "MCP_PROMPT_SNIPPET_CONTENT_CHARS", 1200) or 1200)
+    except (TypeError, ValueError):
+        preview_chars_cap = 1200
+    preview_chars_cap = max(0, preview_chars_cap)
+    hybrid_preview_max_items = 10
+    hybrid_preview_chars_cap = min(preview_chars_cap, 400) if preview_chars_cap else 0
+
+    def _preview_text(snippet: Mapping[str, object], *, max_chars: int) -> tuple[str, bool]:
+        if max_chars <= 0:
+            return "", False
+        raw = snippet.get("summary") or snippet.get("content") or ""
+        if not isinstance(raw, str):
+            raw = str(raw or "")
+        text = raw.strip()
+        if not text:
+            return "", False
+        if len(text) <= max_chars:
+            return text, False
+        return text[:max_chars].rstrip() + "…", True
 
     def _is_table_direct(snippet: Mapping[str, object]) -> bool:
         stage = str(snippet.get("search_stage") or "").strip().lower()
@@ -2978,6 +3000,20 @@ def _convert_to_agentic_search_response(
             "char_estimate": char_estimate,
             "read_hint": read_hint_out,
         }
+        include_preview = False
+        preview_cap = preview_chars_cap
+        if preview_full_enabled and preview_chars_cap:
+            include_preview = True
+        elif (not preview_full_enabled) and preview_hybrid_enabled and hybrid_preview_chars_cap:
+            # Hybrid mode: only attach previews to the top-ranked refs.
+            include_preview = len(refs) < hybrid_preview_max_items
+            preview_cap = hybrid_preview_chars_cap
+        if include_preview:
+            preview, preview_truncated = _preview_text(snippet, max_chars=preview_cap)
+            if preview:
+                ref_item["preview"] = preview
+                if preview_truncated:
+                    ref_item["preview_truncated"] = True
         if why:
             ref_item["why"] = why[:3]
         if coverage_hint:

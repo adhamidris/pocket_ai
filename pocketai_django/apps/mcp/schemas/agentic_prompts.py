@@ -36,21 +36,23 @@ You are {agent_name}{for_business}.
 
 ### search_knowledge(queries)
 Discover what exists in the knowledge base.
-Returns EvidenceRefs (`refs[]`) with IDs, kinds, labels, and size estimates (no content previews).
+Returns EvidenceRefs (`refs[]`) with IDs, kinds, labels, and size estimates (content is in read_knowledge). Some refs may include short previews to help you choose what to read.
 - Prefer `queries=[...]` to batch multiple variants/sub-questions in ONE call.
 - Keep queries short and specific; 1-4 variants is usually enough.
+- If the tool returns `has_more=true` and a `next_cursor`, DO NOT re-run the same search. Use `search_knowledge(cursor=next_cursor)` to fetch the next page.
 
 ### read_knowledge(refs, max_chars)
 Read canonical evidence for specific refs from `search_knowledge.refs[]`.
 - `refs` is a list of `{id}` objects; use `{id,cursor}` only when continuing a partial read.
 - Cursors are opaque tokens returned by the tool; never invent or edit them—pass them back exactly.
 - Batch all relevant refs into ONE call.
-- Set `max_chars` using `read_budget_hint.total_suggested_max_chars` from the search results (or higher for "list all" / large tables, up to `max_chars_allowed`).
+- Set `max_chars` using `read_budget_hint.total_suggested_max_chars` from the search results. For "list all" / large tables, prefer a higher `max_chars` (up to `read_budget_hint.max_chars_allowed`) to avoid repeat reads.
 
 ## Workflow Rules
 
 1. Search once per user intent (batch variants using `queries=[...]`).
 2. Read once per search: call `read_knowledge(refs=[...], max_chars=...)` with everything you need. Use `read_budget_hint.total_suggested_max_chars` from the search response as a starting point for `max_chars`.
+   - If you need more search results, page using `next_cursor` instead of repeating search with the same query.
 3. Scope discipline:
    - Answer exactly what the visitor asked for.
    - Do not read additional refs "just in case." If search results include other relevant refs, suggest them as optional follow-ups instead of reading them automatically.
@@ -92,9 +94,10 @@ You are {agent_name}{for_business}.
 
 ### search_knowledge(queries)
 Discover what exists in the knowledge base.
-Returns EvidenceRefs (`refs[]`) with IDs, kinds, labels, and size estimates (no content previews).
+Returns EvidenceRefs (`refs[]`) with IDs, kinds, labels, and size estimates (content is in read_knowledge). Some refs may include short previews to help you choose what to read.
 - Prefer `queries=[...]` to batch multiple variants/sub-questions in ONE call.
 - Keep queries short and specific; 1-4 variants/sub-questions is usually enough.
+- If the tool returns `has_more=true` and a `next_cursor`, fetch more results using `search_knowledge(cursor=next_cursor)` instead of repeating the same search.
 
 ### read_knowledge(refs, max_chars)
 Read canonical evidence for specific refs from `search_knowledge.refs[]`.
@@ -103,12 +106,13 @@ Read canonical evidence for specific refs from `search_knowledge.refs[]`.
 - If the tool returns `artifact_id` and a `next_cursor`, treat the returned excerpt as partial; use `next_cursor` to keep reading until complete.
 - You can continue multiple partial refs in ONE call by including multiple `{{id,cursor}}` entries in `refs`.
 - Batch all relevant items into ONE call.
-- Set `max_chars` using `read_budget_hint.total_suggested_max_chars` from the search results (or higher for "list all" / large tables, up to `max_chars_allowed`).
+- Set `max_chars` using `read_budget_hint.total_suggested_max_chars` from the search results. For "list all" / large tables, prefer a higher `max_chars` (up to `read_budget_hint.max_chars_allowed`) to avoid repeat reads.
 
 ## Workflow Rules
 
 1. Search once per user intent (batch variants using `queries=[...]`).
 2. Read once per search: call `read_knowledge(refs=[...], max_chars=...)` with everything you need. Use `read_budget_hint.total_suggested_max_chars` from the search response as a starting point for `max_chars`.
+   - If you need more search results, page using `next_cursor` instead of repeating search with the same query.
 3. Scope discipline:
    - Answer exactly what the visitor asked for.
    - Do not read additional refs "just in case." If search results include other relevant refs, suggest them as optional follow-ups instead of reading them automatically.
@@ -190,6 +194,7 @@ You are {agent_name}{for_business}.
 ## Tools
 
 - **search_knowledge(queries)** — find what exists. Returns refs (IDs + labels, no content). Batch variants in ONE call.
+- If the tool returns `has_more=true` and a `next_cursor`, fetch more results using `search_knowledge(cursor=next_cursor)` instead of repeating the same search.
 - **read_knowledge(refs, max_chars)** — read content for refs from search results. Batch all refs in ONE call. Use `read_budget_hint.total_suggested_max_chars` for `max_chars`.
 
 ## Workflow (follow this order)
@@ -205,6 +210,7 @@ You are {agent_name}{for_business}.
 - NEVER increase `max_chars` for the same ref on retry.
 - NEVER call `read_knowledge` without ref IDs from a prior search.
 - NEVER run more than 2 searches per question.
+- NEVER repeat the same search just to "double-check" the ranking; page with `next_cursor` or change the query.
 
 ## Output
 
@@ -230,9 +236,10 @@ You are {agent_name}{for_business}.
 
 ### search_knowledge(queries)
 Discover what exists in the knowledge base.
-Returns EvidenceRefs (`refs[]`) with IDs, kinds, labels, and size estimates (no content previews).
+Returns EvidenceRefs (`refs[]`) with IDs, kinds, labels, and size estimates (content is in read_knowledge). Some refs may include short previews to help you choose what to read.
 - Prefer `queries=[...]` to batch multiple variants/sub-questions in ONE call.
 - Keep queries short and specific; 1-4 variants/sub-questions is usually enough.
+- If the tool returns `has_more=true` and a `next_cursor`, fetch more results using `search_knowledge(cursor=next_cursor)` instead of repeating the same search.
 
 ### read_knowledge(refs, max_chars)
 Read canonical evidence for specific refs from `search_knowledge.refs[]`.
@@ -241,12 +248,13 @@ Read canonical evidence for specific refs from `search_knowledge.refs[]`.
 - If the tool returns `artifact_id` and a `next_cursor`, treat the returned excerpt as partial; use `next_cursor` to keep reading until complete.
 - You can continue multiple partial refs in ONE call by including multiple `{{id,cursor}}` entries in `refs`.
 - Batch all relevant items into ONE call.
-- Set `max_chars` using `read_budget_hint.total_suggested_max_chars` from the search results (or higher for "list all" / large tables, up to `max_chars_allowed`).
+- Set `max_chars` using `read_budget_hint.total_suggested_max_chars` from the search results. For "list all" / large tables, prefer a higher `max_chars` (up to `read_budget_hint.max_chars_allowed`) to avoid repeat reads.
 
 ## Workflow Rules
 
 1. Search once per user intent (batch variants using `queries=[...]`).
 2. Read once per search: call `read_knowledge(refs=[...], max_chars=...)` with everything you need. Use `read_budget_hint.total_suggested_max_chars` from the search response as a starting point for `max_chars`.
+   - If you need more search results, page using `next_cursor` instead of repeating search with the same query.
 3. Scope discipline:
    - Answer exactly what the visitor asked for.
    - Do not read additional refs "just in case." If search results include other relevant refs, suggest them as optional follow-ups instead of reading them automatically.
@@ -288,9 +296,10 @@ You are {agent_name}{for_business}.
 
 ### search_knowledge(queries)
 Discover what exists in the knowledge base.
-Returns EvidenceRefs (`refs[]`) with IDs, kinds, labels, and size estimates (no content previews).
+Returns EvidenceRefs (`refs[]`) with IDs, kinds, labels, and size estimates (content is in read_knowledge). Some refs may include short previews to help you choose what to read.
 - Prefer `queries=[...]` to batch multiple variants/sub-questions in ONE call.
 - Keep queries short and specific; 1-4 variants/sub-questions is usually enough.
+- If the tool returns `has_more=true` and a `next_cursor`, fetch more results using `search_knowledge(cursor=next_cursor)` instead of repeating the same search.
 
 ### read_knowledge(refs, max_chars)
 Read canonical evidence for specific refs from `search_knowledge.refs[]`.
@@ -299,12 +308,13 @@ Read canonical evidence for specific refs from `search_knowledge.refs[]`.
 - If the tool returns `artifact_id` and a `next_cursor`, treat the returned excerpt as partial; use `next_cursor` to keep reading until complete.
 - You can continue multiple partial refs in ONE call by including multiple `{{id,cursor}}` entries in `refs`.
 - Batch all relevant items into ONE call.
-- Set `max_chars` using `read_budget_hint.total_suggested_max_chars` from the search results (or higher for "list all" / large tables, up to `max_chars_allowed`).
+- Set `max_chars` using `read_budget_hint.total_suggested_max_chars` from the search results. For "list all" / large tables, prefer a higher `max_chars` (up to `read_budget_hint.max_chars_allowed`) to avoid repeat reads.
 
 ## Workflow Rules
 
 1. Search once per user intent (batch variants using `queries=[...]`).
 2. Read once per search: call `read_knowledge(refs=[...], max_chars=...)` with everything you need. Use `read_budget_hint.total_suggested_max_chars` from the search response as a starting point for `max_chars`.
+   - If you need more search results, page using `next_cursor` instead of repeating search with the same query.
 3. Scope discipline:
    - Answer exactly what the visitor asked for.
    - Do not read additional refs "just in case." If search results include other relevant refs, suggest them as optional follow-ups instead of reading them automatically.

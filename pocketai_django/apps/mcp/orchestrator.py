@@ -5821,8 +5821,9 @@ class McpOrchestratorService:
             return None
 
         lines = [
-            "Evidence summary (system-only): Answer using ONLY this evidence; do NOT call search_knowledge again this turn.",
-            "If you need more detail, use read_knowledge with the ref IDs. Never invent IDs.",
+            "Evidence summary (system-only): Answer using ONLY this evidence; do NOT re-run search_knowledge with new queries just to double-check.",
+            "If you need more results, prefer paging with next_cursor (if available) instead of repeating the same search.",
+            "If you need more detail, use read_knowledge with the ref IDs (and cursors if provided). Never invent IDs/cursors.",
             "Do NOT include document names/IDs/pages in the user-facing answer.",
         ]
         for idx, summary in enumerate(summaries, start=1):
@@ -6930,6 +6931,8 @@ class McpOrchestratorService:
                         "source",
                         "score",
                         "char_estimate",
+                        "preview",
+                        "preview_truncated",
                     ):
                         if key not in result:
                             continue
@@ -6937,6 +6940,9 @@ class McpOrchestratorService:
                         if value is None:
                             continue
                         if isinstance(value, str) and not value.strip():
+                            continue
+                        if key == "preview" and isinstance(value, str) and value.strip():
+                            entry[key] = self._clip_text(value.strip(), int(snippet_content_chars))
                             continue
                         entry[key] = value
                     coverage = result.get("coverage_hint")
