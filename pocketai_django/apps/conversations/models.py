@@ -821,3 +821,114 @@ class AgentRunMemoryItem(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"{self.run_id}:{self.kind}:{self.id}"
+
+
+class AgentAutomationStatus(models.TextChoices):
+    DRAFT = "draft", "Draft"
+    ACTIVE = "active", "Active"
+    PAUSED = "paused", "Paused"
+    ARCHIVED = "archived", "Archived"
+
+
+class AgentAutomationTriggerType(models.TextChoices):
+    CRON = "cron", "Cron"
+    WEBHOOK = "webhook", "Webhook"
+    MANUAL = "manual", "Manual"
+
+
+class AgentAutomation(models.Model):
+    """
+    A tenant-owned automation that spawns AgentRuns based on a trigger configuration.
+
+    Scheduling/execution is handled by a worker loop; this model captures persistence + UI/API wiring.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        "accounts.BusinessProfile",
+        related_name="agent_automations",
+        on_delete=models.CASCADE,
+    )
+    agent_profile = models.ForeignKey(
+        "accounts.AgentProfile",
+        related_name="automations",
+        on_delete=models.CASCADE,
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="created_agent_automations",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    run_spec = models.ForeignKey(
+        AgentRunSpec,
+        related_name="automations",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    run_spec_snapshot = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Immutable RunSpec snapshot used when spawning runs from this automation.",
+    )
+    conversation = models.ForeignKey(
+        Conversation,
+        related_name="agent_automations",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Optional automation thread conversation used as the default destination for results.",
+    )
+    name = models.CharField(max_length=160)
+    status = models.CharField(
+        max_length=24,
+        choices=AgentAutomationStatus.choices,
+        default=AgentAutomationStatus.DRAFT,
+        db_index=True,
+    )
+    visibility = models.CharField(
+        max_length=24,
+        choices=AgentRunVisibility.choices,
+        default=AgentRunVisibility.INITIATOR,
+    )
+    trigger_type = models.CharField(
+        max_length=24,
+        choices=AgentAutomationTriggerType.choices,
+        default=AgentAutomationTriggerType.CRON,
+    )
+    trigger_config = models.JSONField(default=dict, blank=True)
+    destination_config = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Destination policy (automation thread, notifications) for spawned runs.",
+    )
+    last_triggered_at = models.DateTimeField(null=True, blank=True)
+    next_trigger_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "conversations_agent_automation"
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["business_profile", "status"], name="automation_biz_status_idx"),
+            models.Index(fields=["agent_profile", "status"], name="automation_agent_status_idx"),
+            models.Index(fields=["status", "next_trigger_at"], name="automation_status_next_idx"),
+            models.Index(fields=["business_profile", "created_at"], name="automation_biz_created_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(fields=["agent_profile", "name"], name="automation_unique_agent_name"),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.agent_profile_id and not self.business_profile_id and getattr(self, "agent_profile", None):
+            self.business_profile = self.agent_profile.business_profile
+        if self.conversation_id and not self.business_profile_id and getattr(self, "conversation", None):
+            self.business_profile = self.conversation.business_profile
+        super().save(*args, **kwargs)
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.agent_profile_id}:{self.status}:{self.name}"

@@ -5,6 +5,7 @@ from . import mcp_connections
 from . import oauth
 from . import email_oauth
 from . import chat_portal_files
+from . import agent_runs
 from .chat_portal import (
     bootstrap_session,
     create_portal_session,
@@ -41,6 +42,30 @@ urlpatterns = [
         "agents/<uuid:agent_id>/knowledge-access/",
         views.agent_knowledge_access_view,
         name="agents-knowledge-access",
+    ),
+    path("agents/<uuid:agent_id>/run-specs/", agent_runs.agent_run_specs_collection, name="agent-run-specs"),
+    path(
+        "agents/<uuid:agent_id>/run-specs/<uuid:spec_id>/",
+        agent_runs.agent_run_spec_detail,
+        name="agent-run-spec-detail",
+    ),
+    path("agents/<uuid:agent_id>/runs/", agent_runs.agent_runs_collection, name="agent-runs"),
+    path("agents/<uuid:agent_id>/runs/<uuid:run_id>/", agent_runs.agent_run_detail, name="agent-run-detail"),
+    path("agents/<uuid:agent_id>/runs/<uuid:run_id>/events/", agent_runs.agent_run_events, name="agent-run-events"),
+    path("agents/<uuid:agent_id>/runs/<uuid:run_id>/cancel/", agent_runs.agent_run_cancel, name="agent-run-cancel"),
+    path("agents/<uuid:agent_id>/runs/<uuid:run_id>/user-input/", agent_runs.agent_run_user_input, name="agent-run-user-input"),
+    path("agents/<uuid:agent_id>/runs/<uuid:run_id>/approval/", agent_runs.agent_run_approval, name="agent-run-approval"),
+    path("agents/<uuid:agent_id>/runs/<uuid:run_id>/resume/", agent_runs.agent_run_resume, name="agent-run-resume"),
+    path("agents/<uuid:agent_id>/automations/", agent_runs.agent_automations_collection, name="agent-automations"),
+    path(
+        "agents/<uuid:agent_id>/automations/<uuid:automation_id>/",
+        agent_runs.agent_automation_detail,
+        name="agent-automation-detail",
+    ),
+    path(
+        "agents/<uuid:agent_id>/automations/<uuid:automation_id>/trigger/",
+        agent_runs.agent_automation_trigger,
+        name="agent-automation-trigger",
     ),
     path("register/sessions/", views.start_registration, name="register-start"),
     path(
