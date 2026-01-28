@@ -3736,7 +3736,7 @@ class McpOrchestratorService:
             out: dict[str, object] = {"status": status}
             if isinstance(results, list):
                 out["results_count"] = len(results)
-                preview: list[dict[str, object]] = []
+                preview_list: list[dict[str, object]] = []
                 for item in results[:8]:
                     if not isinstance(item, Mapping):
                         continue
@@ -3772,10 +3772,15 @@ class McpOrchestratorService:
                         why_out = [self._clip_text(str(token), 80) for token in why[:2] if str(token).strip()]
                         if why_out:
                             entry["why"] = why_out
+                    preview_text = item.get("preview")
+                    if isinstance(preview_text, str) and preview_text.strip():
+                        entry["preview_chars"] = len(preview_text.strip())
+                        if item.get("preview_truncated") is True:
+                            entry["preview_truncated"] = True
                     if entry:
-                        preview.append(entry)
-                if preview:
-                    out["results_preview"] = preview
+                        preview_list.append(entry)
+                if preview_list:
+                    out["results_preview"] = preview_list
             total_found = tool_result.get("total_found")
             if isinstance(total_found, (int, float)) or (isinstance(total_found, str) and total_found.strip().isdigit()):
                 try:

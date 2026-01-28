@@ -2813,6 +2813,7 @@ def _convert_to_agentic_search_response(
     preview_chars_cap = max(0, preview_chars_cap)
     hybrid_preview_max_items = 10
     hybrid_preview_chars_cap = min(preview_chars_cap, 400) if preview_chars_cap else 0
+    previews_attached = 0
 
     def _preview_text(snippet: Mapping[str, object], *, max_chars: int) -> tuple[str, bool]:
         if max_chars <= 0:
@@ -3014,6 +3015,7 @@ def _convert_to_agentic_search_response(
                 ref_item["preview"] = preview
                 if preview_truncated:
                     ref_item["preview_truncated"] = True
+                previews_attached += 1
         if why:
             ref_item["why"] = why[:3]
         if coverage_hint:
@@ -3087,6 +3089,9 @@ def _convert_to_agentic_search_response(
             "agentic_read_v2_enabled": agentic_read_v2_enabled,
             "table_direct_present": table_direct_present,
             "planner_dropped": max(0, len(raw_snippets) - len(planned_snippets)),
+            "previews_full_enabled": preview_full_enabled,
+            "previews_hybrid_enabled": preview_hybrid_enabled,
+            "previews_attached_count": previews_attached,
         },
         context={
             "conversation": conversation.id,
