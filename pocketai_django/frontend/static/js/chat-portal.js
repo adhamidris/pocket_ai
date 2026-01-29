@@ -4743,6 +4743,60 @@ class ChatPortalClient {
     return html;
   }
 
+  containsMarkdownTable(text) {
+    if (!text) return false;
+    const lines = text.split(/\r?\n/);
+    if (lines.length < 2) return false;
+    const dividerPattern = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/;
+    for (let i = 0; i < lines.length - 1; i += 1) {
+      const header = lines[i];
+      const divider = lines[i + 1];
+      if (!header || !divider) continue;
+      if (header.indexOf("|") === -1) continue;
+      if (dividerPattern.test(divider)) return true;
+    }
+    return false;
+  }
+
+  applyMarkdownTableStyles(rootEl) {
+    if (!rootEl || !rootEl.querySelectorAll) return;
+    const tables = rootEl.querySelectorAll("table");
+    if (!tables.length) return;
+    tables.forEach((table) => {
+      if (!table || !table.parentNode) return;
+      if (!table.dataset) table.dataset = {};
+      if (table.dataset.styledTable === "true") return;
+      table.dataset.styledTable = "true";
+      table.className = "w-full border-collapse text-sm";
+
+      const parent = table.parentNode;
+      if (!parent.dataset || parent.dataset.markdownTableWrapper !== "true") {
+        const wrapper = document.createElement("div");
+        wrapper.dataset.markdownTableWrapper = "true";
+        wrapper.className = "rounded-xl border border-border/60 overflow-hidden bg-background/80 shadow-sm";
+        parent.insertBefore(wrapper, table);
+        wrapper.appendChild(table);
+      }
+
+      const thead = table.querySelector("thead");
+      if (thead) {
+        thead.classList.add("bg-muted/40", "text-muted-foreground");
+      }
+      const headerCells = table.querySelectorAll("th");
+      headerCells.forEach((th) => {
+        th.classList.add("px-3", "py-2", "text-left", "font-medium");
+      });
+      const rows = table.querySelectorAll("tbody tr");
+      rows.forEach((row, idx) => {
+        row.classList.add(idx % 2 === 0 ? "bg-background" : "bg-muted/20");
+      });
+      const cells = table.querySelectorAll("td");
+      cells.forEach((td) => {
+        td.classList.add("px-3", "py-2", "align-top", "text-foreground/90");
+      });
+    });
+  }
+
   normalizeMarkdownForDisplay(text) {
     if (!text) return "";
 
@@ -4981,6 +5035,15 @@ class ChatPortalClient {
 
     if (type === "paragraph" || type === "heading" || type === "list_item") {
       const content = Array.isArray(payload.content) ? payload.content : [];
+      const rawText = this.inlineNodesToText(content);
+      if (this.containsMarkdownTable(rawText)) {
+        const replacement = this.buildContentBlockElement(block);
+        if (replacement) {
+          el.replaceWith(replacement);
+          return replacement;
+        }
+        return el;
+      }
       el.innerHTML = "";
       this.appendInlineNodes(el, content);
       return el;
@@ -4989,6 +5052,14 @@ class ChatPortalClient {
     if (type === "text") {
       const text = typeof payload.text === "string" ? payload.text : "";
       const cleaned = this.stripInlineResponseBlocks(text);
+      if (this.containsMarkdownTable(cleaned)) {
+        const replacement = this.buildContentBlockElement(block);
+        if (replacement) {
+          el.replaceWith(replacement);
+          return replacement;
+        }
+        return el;
+      }
       el.innerHTML = "";
       if (cleaned) {
         this.appendInlineNodes(el, [{ text: cleaned }]);
@@ -5218,6 +5289,19 @@ class ChatPortalClient {
 	      wrapper.dataset.contentBlockText = "true";
       if (blockId) wrapper.dataset.blockId = blockId;
       const content = Array.isArray(payload.content) ? payload.content : [];
+      const rawText = this.inlineNodesToText(content);
+      if (this.containsMarkdownTable(rawText)) {
+        const markdownWrapper = document.createElement("div");
+        markdownWrapper.className = "leading-relaxed space-y-2";
+        markdownWrapper.dataset.contentBlock = "true";
+        markdownWrapper.dataset.blockType = type;
+        markdownWrapper.dataset.contentBlockText = "true";
+        markdownWrapper.dataset.markdownTable = "true";
+        if (blockId) markdownWrapper.dataset.blockId = blockId;
+        markdownWrapper.innerHTML = this.renderMarkdown(rawText);
+        this.applyMarkdownTableStyles(markdownWrapper);
+        return markdownWrapper;
+      }
       this.appendInlineNodes(wrapper, content);
       return wrapper;
     }
@@ -5314,13 +5398,25 @@ class ChatPortalClient {
     }
 
     if (type === "text") {
+      const text = typeof payload.text === "string" ? payload.text : "";
+      const cleaned = this.stripInlineResponseBlocks(text);
+      if (this.containsMarkdownTable(cleaned)) {
+        const markdownWrapper = document.createElement("div");
+        markdownWrapper.className = "leading-relaxed space-y-2";
+        markdownWrapper.dataset.contentBlock = "true";
+        markdownWrapper.dataset.blockType = "text";
+        markdownWrapper.dataset.contentBlockText = "true";
+        markdownWrapper.dataset.markdownTable = "true";
+        if (blockId) markdownWrapper.dataset.blockId = blockId;
+        markdownWrapper.innerHTML = this.renderMarkdown(cleaned);
+        this.applyMarkdownTableStyles(markdownWrapper);
+        return markdownWrapper;
+      }
       const wrapper = document.createElement("p");
       wrapper.dataset.contentBlock = "true";
       wrapper.dataset.blockType = "text";
       wrapper.dataset.contentBlockText = "true";
       if (blockId) wrapper.dataset.blockId = blockId;
-      const text = typeof payload.text === "string" ? payload.text : "";
-      const cleaned = this.stripInlineResponseBlocks(text);
       if (cleaned) {
         this.appendInlineNodes(wrapper, [{ text: cleaned }]);
       }
