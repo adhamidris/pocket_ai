@@ -290,17 +290,38 @@ class ChatPortalClient {
     });
   }
 
+  getMessageContentContainer(container) {
+    if (!container) return null;
+    const bodyEl = container.matches && container.matches("[data-message-body]") ? container : container.closest && container.closest("[data-message-body]");
+    if (bodyEl) {
+      const agentRunContent = bodyEl.querySelector("[data-agent-run-content]");
+      if (agentRunContent) return agentRunContent;
+    }
+    return container;
+  }
+
+  resolveMessageIdForNode(node) {
+    if (!node) return "";
+    const direct = node.dataset && typeof node.dataset.messageId === "string" ? node.dataset.messageId.trim() : "";
+    if (direct) return direct;
+    const wrapper = node.closest ? node.closest("[data-message-id]") : null;
+    const candidate = wrapper && wrapper.getAttribute ? (wrapper.getAttribute("data-message-id") || "").trim() : "";
+    return candidate;
+  }
+
   injectCopyButton(container) {
-      // Prevent duplicate injection
-      if (container.dataset.copyInjected === 'true') return;
-      if (container.querySelector('button[data-copy-btn]')) return;
+      if (!container) return;
       const row = container.closest(".message-row");
       if (row && row.classList.contains("flex-row-reverse")) return;
-      container.dataset.copyInjected = 'true';
+
+      const host = this.getMessageContentContainer(container);
+      if (!host) return;
+      // Prevent duplicate injection
+      if (host.querySelector('button[data-copy-btn]')) return;
 
       // Smart positioning: try to find the last paragraph to append inline
-      let target = container;
-      const streamingText = container.querySelector('[data-streaming-text]');
+      let target = host;
+      const streamingText = host.querySelector('[data-streaming-text]');
       if (streamingText) {
           target = streamingText;
       }
@@ -322,7 +343,7 @@ class ChatPortalClient {
       copyBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
         let textToCopy = "";
-        const messageId = container.dataset.messageId;
+        const messageId = this.resolveMessageIdForNode(host);
         const scriptTag = messageId ? document.getElementById(messageId) : null;
         
         if (scriptTag) {
@@ -342,7 +363,7 @@ class ChatPortalClient {
              } catch(e) {}
         }
         if (!textToCopy) {
-            textToCopy = container.innerText.replace("Copied", "").trim(); 
+            textToCopy = host.innerText.replace("Copied", "").trim(); 
         }
 
         try {
@@ -360,7 +381,7 @@ class ChatPortalClient {
       if (inlineTarget) {
           inlineTarget.appendChild(copyBtn);
       } else {
-          container.appendChild(copyBtn);
+          host.appendChild(copyBtn);
       }
   }
 
@@ -3900,6 +3921,7 @@ class ChatPortalClient {
       this.updateTasksOpenButton();
     }
     this.scheduleTasksRender();
+    this.refreshAgentRunChips();
   }
 
   handleAgentRequestsSnapshot(payload) {
@@ -3945,6 +3967,7 @@ class ChatPortalClient {
       this.updateTasksOpenButton();
     }
     this.scheduleTasksRender();
+    this.refreshAgentRunChips(runId);
   }
 
   handleAgentRequestEvent(payload) {
@@ -6246,6 +6269,246 @@ class ChatPortalClient {
     return wrapper.querySelector("[data-message-body]");
   }
 
+  isAgentRunMetadata(metadata) {
+    if (!metadata || typeof metadata !== "object") return false;
+    const source = (metadata.source || "").toString().trim().toLowerCase();
+    if (source === "agent_run") return true;
+    if (metadata.agent_run_id || metadata.agentRunId || metadata.agent_run || metadata.agentRun) return true;
+    return false;
+  }
+
+  getAgentRunId(metadata) {
+    if (!metadata || typeof metadata !== "object") return "";
+    const raw =
+      (typeof metadata.agent_run_id === "string" && metadata.agent_run_id) ||
+      (typeof metadata.agentRunId === "string" && metadata.agentRunId) ||
+      (typeof metadata.agent_run === "string" && metadata.agent_run) ||
+      (typeof metadata.agentRun === "string" && metadata.agentRun) ||
+      "";
+    return raw.toString().trim();
+  }
+
+  getAgentRunType(metadata) {
+    if (!metadata || typeof metadata !== "object") return "";
+    const raw = metadata.type || metadata.run_type || metadata.runType || "";
+    return raw != null ? raw.toString().trim().toLowerCase() : "";
+  }
+
+  getMessageRenderPayload(messageId) {
+    const safeId = (messageId || "").toString().trim();
+    if (!safeId) return null;
+    const scriptTag = document.getElementById(safeId);
+    if (!scriptTag || scriptTag.tagName !== "SCRIPT") return null;
+    try {
+      const parsed = JSON.parse(scriptTag.textContent || "");
+      if (!parsed || typeof parsed !== "object") return null;
+      const blocks = Array.isArray(parsed.content_blocks)
+        ? parsed.content_blocks
+        : Array.isArray(parsed.contentBlocks)
+        ? parsed.contentBlocks
+        : [];
+      const body = typeof parsed.body === "string" ? parsed.body : parsed.body == null ? "" : String(parsed.body);
+      return { body, blocks };
+    } catch (_err) {
+      return null;
+    }
+  }
+
+  stripAgentRunHandoffPrefix(text) {
+    const raw = (text || "").toString();
+    if (!raw) return "";
+    const trimmed = raw.trim();
+    const lines = trimmed.split(/\r?\n/);
+    if (!lines.length) return trimmed;
+    const first = (lines[0] || "").trim();
+    const handoffPrefixes = [
+      "✅ background run completed:",
+      "background run completed:",
+      "✅ background run update:",
+      "background run update:",
+    ];
+    const normalized = first.toLowerCase();
+    const matched = handoffPrefixes.some((p) => normalized.startsWith(p));
+    if (!matched) return trimmed;
+    const rest = lines.slice(1).join("\n").trim();
+    return rest || "";
+  }
+
+  extractAgentRunTitleFromText(text) {
+    const raw = (text || "").toString();
+    if (!raw) return "";
+    const match = raw.match(/Background run (?:completed|update)[^:]*:\s*(.+)\s*$/im);
+    return match && match[1] ? match[1].trim() : "";
+  }
+
+  computeAgentRunSummary({ messageId, metadata }) {
+    const meta = metadata && typeof metadata === "object" ? metadata : {};
+    const runId = this.getAgentRunId(meta);
+    const runState = runId ? this.agentRuns.get(runId) : null;
+    const run = runState && runState.run ? runState.run : null;
+    const runStatus = run && run.status ? run.status.toString().trim().toLowerCase() : "";
+    const metaType = this.getAgentRunType(meta);
+
+    let pillLabel = "Background run";
+    let variant = "neutral";
+
+    if (runStatus) {
+      if (["waiting_approval", "waiting-approval"].includes(runStatus)) {
+        pillLabel = "Approval needed";
+        variant = "approval";
+      } else if (["waiting_user", "waiting-user"].includes(runStatus)) {
+        pillLabel = "Input needed";
+        variant = "action";
+      } else if (["running"].includes(runStatus)) {
+        pillLabel = "Running";
+        variant = "running";
+      } else if (["queued"].includes(runStatus)) {
+        pillLabel = "Queued";
+        variant = "running";
+      } else if (["failed", "error"].includes(runStatus)) {
+        pillLabel = "Failed";
+        variant = "danger";
+      } else if (["cancelled", "canceled"].includes(runStatus)) {
+        pillLabel = "Cancelled";
+        variant = "neutral";
+      } else if (["completed", "succeeded", "success"].includes(runStatus)) {
+        pillLabel = "Completed";
+        variant = "success";
+      }
+    } else if (metaType === "needs_approval") {
+      pillLabel = "Approval needed";
+      variant = "approval";
+    } else if (metaType === "needs_user") {
+      pillLabel = "Input needed";
+      variant = "action";
+    } else if (metaType === "pending_tool_execution") {
+      pillLabel = "Tool executed";
+      variant = "neutral";
+    }
+
+    const payload = this.getMessageRenderPayload(messageId);
+    const rawText =
+      (payload && payload.blocks && payload.blocks.length
+        ? this.extractPlainTextFromContentBlocks(payload.blocks)
+        : "") ||
+      (payload ? payload.body : "") ||
+      "";
+
+    const title = (run && run.title ? String(run.title).trim() : "") || this.extractAgentRunTitleFromText(rawText);
+
+    return {
+      runId,
+      metaType,
+      runStatus,
+      pillLabel,
+      variant,
+      title: title || "Background task",
+    };
+  }
+
+  ensureAgentRunCollapsible(messageBodyEl, metadata, messageId) {
+    if (!messageBodyEl) return null;
+    const existing = messageBodyEl.querySelector("[data-agent-run-details]");
+    if (existing) {
+      this.updateAgentRunChip(existing, { messageId, metadata });
+      return existing;
+    }
+
+    // Remove the copy-button padding that makes chips look misaligned.
+    messageBodyEl.classList.remove("pr-8");
+
+    const details = document.createElement("details");
+    details.dataset.agentRunDetails = "true";
+    details.className = "portal-agent-run";
+
+    const summary = document.createElement("summary");
+    summary.dataset.agentRunSummary = "true";
+    summary.className = "portal-agent-run__summary";
+
+    const pill = document.createElement("span");
+    pill.dataset.agentRunPill = "true";
+    pill.className = "portal-agent-run__pill";
+
+    const title = document.createElement("span");
+    title.dataset.agentRunTitle = "true";
+    title.className = "portal-agent-run__title";
+
+    const source = document.createElement("span");
+    source.dataset.agentRunSource = "true";
+    source.className = "portal-agent-run__source";
+    source.textContent = "Sub-agent";
+
+    const chevron = document.createElement("span");
+    chevron.dataset.agentRunChevron = "true";
+    chevron.className = "portal-agent-run__chevron";
+    chevron.innerHTML = `<svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
+    summary.appendChild(source);
+    summary.appendChild(title);
+    summary.appendChild(pill);
+    summary.appendChild(chevron);
+
+    const drawer = document.createElement("div");
+    drawer.dataset.agentRunDrawer = "true";
+    drawer.className = "portal-agent-run__drawer";
+
+    const content = document.createElement("div");
+    content.dataset.agentRunContent = "true";
+    content.className = "portal-agent-run__content";
+
+    const existingChildren = Array.from(messageBodyEl.childNodes);
+    existingChildren.forEach((node) => content.appendChild(node));
+    if (!content.querySelector("[data-message-blocks]")) {
+      const blocksRoot = document.createElement("div");
+      blocksRoot.dataset.messageBlocks = "true";
+      blocksRoot.className = "space-y-2";
+      content.appendChild(blocksRoot);
+    }
+
+    drawer.appendChild(content);
+    details.appendChild(summary);
+    details.appendChild(drawer);
+
+    messageBodyEl.innerHTML = "";
+    messageBodyEl.appendChild(details);
+
+    this.updateAgentRunChip(details, { messageId, metadata });
+    return details;
+  }
+
+  updateAgentRunChip(detailsEl, { messageId, metadata } = {}) {
+    if (!detailsEl) return;
+    const id = (messageId || "").toString().trim() || this.resolveMessageIdForNode(detailsEl);
+    const summary = this.computeAgentRunSummary({ messageId: id, metadata });
+
+    detailsEl.dataset.agentRunId = summary.runId || "";
+    detailsEl.dataset.agentRunType = summary.metaType || "";
+    detailsEl.dataset.agentRunStatus = summary.runStatus || "";
+    detailsEl.dataset.agentRunVariant = summary.variant || "neutral";
+
+    const pillEl = detailsEl.querySelector("[data-agent-run-pill]");
+    if (pillEl) pillEl.textContent = summary.pillLabel;
+    const titleEl = detailsEl.querySelector("[data-agent-run-title]");
+    if (titleEl) titleEl.textContent = summary.title;
+  }
+
+  refreshAgentRunChips(runId = "") {
+    const container = this.elements.messagesInner || this.elements.messages;
+    if (!container) return;
+    const targetRunId = (runId || "").toString().trim();
+    container.querySelectorAll("[data-agent-run-details]").forEach((details) => {
+      if (!details) return;
+      if (targetRunId && details.dataset.agentRunId && details.dataset.agentRunId !== targetRunId) return;
+      const messageId = this.resolveMessageIdForNode(details);
+      const meta = {
+        source: "agent_run",
+        agent_run_id: details.dataset.agentRunId || "",
+        type: details.dataset.agentRunType || "",
+      };
+      this.updateAgentRunChip(details, { messageId, metadata: meta });
+    });
+  }
+
   updateMessageMetadata(messageId, metadata) {
     if (!this.elements.messages) return;
     const metaPayload = metadata && typeof metadata === "object" ? metadata : {};
@@ -6257,6 +6520,16 @@ class ChatPortalClient {
       wrapper = this.streamingMessageNode;
     }
     if (!wrapper) return;
+
+    if (this.isAgentRunMetadata(metaPayload)) {
+      const bodyEl = wrapper.querySelector("[data-message-body]");
+      if (bodyEl) {
+        this.ensureAgentRunCollapsible(bodyEl, metaPayload, messageId);
+        // Ensure the copy button lands inside the expandable drawer.
+        this.injectCopyButton(bodyEl);
+      }
+    }
+
     const metaEl = wrapper.querySelector("[data-message-meta]");
     if (!metaEl) return;
     const fragments = [];
