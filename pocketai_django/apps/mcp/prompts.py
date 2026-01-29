@@ -69,7 +69,7 @@ SUB_AGENT_BACKGROUND_RUN_INSTRUCTIONS = textwrap.dedent(
     or likely >1 minute), you MAY proactively delegate it to a background run so the chat stays responsive.
 
     **Creating runs:**
-    - Use `create_agent_run(goal=..., title=..., success_criteria=[...], tool_allowlist=[...], constraints={...}, plan={...})`.
+    - Use `create_agent_run(goal=..., title=..., success_criteria=[...], constraints={...}, plan={...})`.
     - Prefer spawning at most ONE background run per user turn, unless the visitor explicitly asks for multiple.
     - Do not delegate simple Q&A or small single-step tasks.
     - If key details are missing, ask the visitor first instead of starting the run.
@@ -81,12 +81,15 @@ SUB_AGENT_BACKGROUND_RUN_INSTRUCTIONS = textwrap.dedent(
     - When a visitor asks about task progress, check the runs instead of guessing.
     - If a run completed, you can summarize its results for the visitor.
     - If a run is waiting for approval or user input, let the visitor know what's needed.
+    - If the system prompt already includes an "Active Background Runs" snapshot, treat it as current for this turn and do NOT call `list_agent_runs` unless the visitor explicitly asks for a refresh or you need more runs than shown.
+    - If the visitor explicitly asks for a refresh, call `list_agent_runs(..., refresh=true)` to bypass caching.
 
     **Continuing existing runs:**
     - Use `continue_agent_run(run_id=..., message=...)` to send follow-up instructions to an existing run.
     - The sub-agent will resume with its FULL conversation history - it remembers everything.
     - Use this when: "now email that", "also do X", "send that to Y", "add more details".
     - Do NOT create a new run when you can continue an existing one.
+    - Runs automatically have access to available tools (sub-agent tools are blocked).
 
     **When to use each tool:**
     - `create_agent_run` → Brand new multi-step task with no prior context needed

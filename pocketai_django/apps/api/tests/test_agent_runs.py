@@ -56,7 +56,7 @@ class AgentRunsApiTests(TestCase):
                     "name": "Daily Sales Summary",
                     "status": "active",
                     "visibility": "initiator",
-                    "spec": {"version": 1, "goal": "Summarize sales", "tool_allowlist": ["search_knowledge"]},
+                    "spec": {"version": 1, "goal": "Summarize sales"},
                 }
             ),
             content_type="application/json",
@@ -73,7 +73,7 @@ class AgentRunsApiTests(TestCase):
         spec_url = reverse("api:agent-run-specs", args=[self.agent.id])
         spec_res = self.client.post(
             spec_url,
-            data=json.dumps({"name": "One-off task", "status": "active", "spec": {"goal": "Do X", "tool_allowlist": []}}),
+            data=json.dumps({"name": "One-off task", "status": "active", "spec": {"goal": "Do X"}}),
             content_type="application/json",
         )
         self.assertEqual(spec_res.status_code, 201)
@@ -119,7 +119,7 @@ class AgentRunsApiTests(TestCase):
         runs_url = reverse("api:agent-runs", args=[self.agent.id])
         res_initiator = self.client.post(
             runs_url,
-            data=json.dumps({"title": "Initiator run", "runSpecSnapshot": {"goal": "Do X", "tool_allowlist": []}}),
+            data=json.dumps({"title": "Initiator run", "runSpecSnapshot": {"goal": "Do X"}}),
             content_type="application/json",
         )
         self.assertEqual(res_initiator.status_code, 201)
@@ -129,7 +129,7 @@ class AgentRunsApiTests(TestCase):
         res_managers = self.client.post(
             runs_url,
             data=json.dumps(
-                {"title": "Managers run", "visibility": "managers", "runSpecSnapshot": {"goal": "Do Y", "tool_allowlist": []}}
+                {"title": "Managers run", "visibility": "managers", "runSpecSnapshot": {"goal": "Do Y"}}
             ),
             content_type="application/json",
         )
@@ -157,7 +157,7 @@ class AgentRunsApiTests(TestCase):
         spec_url = reverse("api:agent-run-specs", args=[self.agent.id])
         spec_res = self.client.post(
             spec_url,
-            data=json.dumps({"name": "Auto task", "status": "active", "spec": {"goal": "Auto", "tool_allowlist": []}}),
+            data=json.dumps({"name": "Auto task", "status": "active", "spec": {"goal": "Auto"}}),
             content_type="application/json",
         )
         self.assertEqual(spec_res.status_code, 201)
@@ -192,7 +192,7 @@ class AgentRunsApiTests(TestCase):
         spec_url = reverse("api:agent-run-specs", args=[self.agent.id])
         spec_res = self.client.post(
             spec_url,
-            data=json.dumps({"name": "Cron task", "status": "active", "spec": {"goal": "Cron", "tool_allowlist": []}}),
+            data=json.dumps({"name": "Cron task", "status": "active", "spec": {"goal": "Cron"}}),
             content_type="application/json",
         )
         self.assertEqual(spec_res.status_code, 201)
@@ -229,7 +229,7 @@ class AgentRunsApiTests(TestCase):
                     "status": "active",
                     "triggerType": "cron",
                     "triggerConfig": {},
-                    "runSpecSnapshot": {"goal": "Auto", "tool_allowlist": []},
+                    "runSpecSnapshot": {"goal": "Auto"},
                 }
             ),
             content_type="application/json",
@@ -244,7 +244,7 @@ class AgentRunsApiTests(TestCase):
             status=AgentAutomationStatus.ACTIVE,
             trigger_type="cron",
             trigger_config={"cron": "*/1 * * * *", "timezone": "UTC"},
-            run_spec_snapshot={"goal": "Auto", "tool_allowlist": []},
+            run_spec_snapshot={"goal": "Auto"},
             next_trigger_at=timezone.now() - timedelta(minutes=1),
         )
         service = AgentAutomationProcessingService()
@@ -269,7 +269,7 @@ class AgentRunsApiTests(TestCase):
                     "status": "active",
                     "triggerType": "webhook",
                     "triggerConfig": {},
-                    "runSpecSnapshot": {"goal": "Auto", "tool_allowlist": []},
+                    "runSpecSnapshot": {"goal": "Auto"},
                 }
             ),
             content_type="application/json",
@@ -308,7 +308,7 @@ class AgentRunsApiTests(TestCase):
                     "watcherType": "email_inbox",
                     "emailAccountId": str(account.id),
                     "watchConfig": {"query": "is:unread", "unreadOnly": True},
-                    "runSpecSnapshot": {"goal": "Handle new emails", "tool_allowlist": []},
+                    "runSpecSnapshot": {"goal": "Handle new emails"},
                 }
             ),
             content_type="application/json",
@@ -346,7 +346,7 @@ class AgentRunsApiTests(TestCase):
                     "watchConfig": {"query": "is:unread", "unreadOnly": True},
                     "pollIntervalSeconds": 60,
                     "maxEventsPerPoll": 3,
-                    "runSpecSnapshot": {"goal": "Handle new emails", "tool_allowlist": []},
+                    "runSpecSnapshot": {"goal": "Handle new emails"},
                 }
             ),
             content_type="application/json",
@@ -441,7 +441,7 @@ class AgentRunsApiTests(TestCase):
                     "emailAccountId": str(account.id),
                     "watchConfig": {"query": "is:unread", "unreadOnly": True},
                     "destinationConfig": {"postSummaryToConversationId": str(summary_conv.id), "summaryMaxChars": 200},
-                    "runSpecSnapshot": {"goal": "Handle new emails", "tool_allowlist": []},
+                    "runSpecSnapshot": {"goal": "Handle new emails"},
                 }
             ),
             content_type="application/json",

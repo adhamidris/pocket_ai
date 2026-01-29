@@ -588,6 +588,14 @@ class AgentRun(models.Model):
         blank=True,
         help_text="Optional anchor conversation (chat-originated run or automation thread).",
     )
+    execution_conversation = models.ForeignKey(
+        Conversation,
+        related_name="execution_runs",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Isolated execution conversation for this run.",
+    )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         related_name="created_agent_runs",

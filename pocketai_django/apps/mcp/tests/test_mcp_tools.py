@@ -879,12 +879,86 @@ class McpCreateAgentRunToolTests(TestCase):
         self.assertEqual(run.created_by_id, self.user.id)
         self.assertEqual(run.status, AgentRunStatus.QUEUED)
         self.assertEqual(run.title, "Daily Sales Summary")
+        self.assertIsNotNone(run.execution_conversation_id)
+        exec_conversation = Conversation.objects.get(id=run.execution_conversation_id)
+        exec_meta = exec_conversation.metadata or {}
+        self.assertEqual(str(exec_meta.get("source") or ""), "agent_run")
+        self.assertEqual(str(exec_meta.get("anchor_conversation_id") or ""), str(self.conversation.id))
 
         queued = AgentRunEvent.objects.filter(run=run, sequence_index=1).first()
         self.assertIsNotNone(queued)
         assert queued is not None
         self.assertEqual(queued.event_type, AgentRunEventType.PROGRESS)
         self.assertEqual(queued.label, "Queued")
+
+
+class McpContinueAgentRunToolTests(TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.user = User.objects.create(email="mcp-continue@example.com", first_name="Continue")
+        self.registration = RegistrationSession.objects.create(user=self.user)
+        self.business = BusinessProfile.objects.create(
+            user=self.user,
+            registration_session=self.registration,
+            name="Continue Co",
+            industry="ops",
+            metadata={FEATURE_FLAG_METADATA_KEY: {"sub_agents_v1": True}},
+        )
+        self.tenant_scope = tenant_context(self.business.id)
+        self.tenant_scope.__enter__()
+        self.agent = AgentProfile.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            name="Ops Agent",
+        )
+        self.conversation = Conversation.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            session_token="continue-session",
+            metadata={"actor_user_id": str(self.user.id)},
+        )
+        self.execution = Conversation.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            session_token="continue-exec-session",
+            metadata={
+                "source": "agent_run",
+                "agent_run_id": "00000000-0000-0000-0000-000000000010",
+                "anchor_conversation_id": str(self.conversation.id),
+                "actor_user_id": str(self.user.id),
+            },
+        )
+
+    def tearDown(self) -> None:
+        if hasattr(self, "tenant_scope"):
+            self.tenant_scope.__exit__(None, None, None)
+        super().tearDown()
+
+    def test_continue_agent_run_does_not_modify_tool_allowlist(self) -> None:
+        run = AgentRun.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            conversation=self.conversation,
+            execution_conversation=self.execution,
+            created_by=self.user,
+            title="Allowlist Test",
+            status=AgentRunStatus.COMPLETED,
+            run_spec_snapshot={"goal": "Find fees"},
+        )
+
+        result = tools.execute_tool(
+            "continue_agent_run",
+            {
+                "run_id": str(run.id),
+                "message": "Send the email with the findings.",
+            },
+            conversation=self.conversation,
+            context=ToolExecutionContext(),
+        )
+        self.assertEqual(result["status"], "ok")
+
+        run.refresh_from_db()
+        self.assertIsNone(run.run_spec_snapshot.get("tool_allowlist"))
 
 
 class McpFileContextConversationTests(TestCase):

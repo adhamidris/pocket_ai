@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import hashlib
 import logging
 import time
@@ -64,6 +65,54 @@ def _summarize_input_payload(payload: object) -> dict[str, object]:
         "keys": keys[:60],
         **({"keys_total": len(keys)} if len(keys) > 60 else {}),
     }
+
+
+def _summarize_tool_result(tool_name: str, tool_result: object) -> dict[str, object]:
+    """
+    Return a compact, privacy-safe summary of a tool result for resume prompts.
+
+    Avoid dumping raw payloads; keep only identifiers and short error hints.
+    """
+    summary: dict[str, object] = {"tool": tool_name}
+    if not isinstance(tool_result, Mapping):
+        return summary
+    status = str(tool_result.get("status") or "").strip() or "ok"
+    summary["status"] = status
+    for key in (
+        "error_code",
+        "error",
+        "hint",
+        "draft_id",
+        "draftId",
+        "message_id",
+        "messageId",
+        "thread_id",
+        "threadId",
+        "artifact_id",
+        "artifactId",
+        "email_account_id",
+        "emailAccountId",
+        "provider",
+    ):
+        if key not in tool_result:
+            continue
+        value = tool_result.get(key)
+        if value is None:
+            continue
+        text = _clip_text(value, 240)
+        if text:
+            # Normalize camelCase variants.
+            normalized = (
+                key.replace("Id", "_id")
+                .replace("ID", "_id")
+                .replace("draftId", "draft_id")
+                .replace("messageId", "message_id")
+                .replace("threadId", "thread_id")
+                .replace("artifactId", "artifact_id")
+                .replace("emailAccountId", "email_account_id")
+            )
+            summary[normalized] = text
+    return summary
 
 
 def _sanitize_remote_meta(remote: object) -> dict[str, object] | None:
@@ -832,14 +881,7 @@ class AgentRunProcessingService:
         if not goal:
             raise RuntimeError("run has no goal/title to execute")
 
-        allowlist_specified = "tool_allowlist" in spec
-        tool_allowlist = spec.get("tool_allowlist")
         allowed_tools: set[str] | None = None
-        if isinstance(tool_allowlist, list):
-            allowed_tools = {str(value).strip() for value in tool_allowlist if str(value or "").strip()}
-        if allowed_tools is not None:
-            # Background runs must not spawn other background runs.
-            allowed_tools.discard("create_agent_run")
 
         timeout_seconds = None
         constraints = spec.get("constraints")
@@ -889,30 +931,20 @@ class AgentRunProcessingService:
             # Runs must execute in an isolated "agent_run" conversation so they don't
             # inherit the orchestrator's transcript or tool affordances.
             execution_conversation: Conversation | None = None
+            if run.execution_conversation_id:
+                execution_conversation = Conversation.objects.filter(
+                    id=run.execution_conversation_id,
+                    business_profile_id=business_id,
+                ).first()
+
             anchor_meta_map = (
                 anchor_conversation.metadata if isinstance(getattr(anchor_conversation, "metadata", None), Mapping) else {}
             )
             anchor_source = str(anchor_meta_map.get("source") or "").strip().lower()
-            if anchor_source == "agent_run":
-                execution_conversation = anchor_conversation
-            else:
-                exec_id_raw = str(
-                    run_metadata.get("execution_conversation_id")
-                    or run_metadata.get("executionConversationId")
-                    or ""
-                ).strip()
-                exec_uuid: uuid.UUID | None = None
-                if exec_id_raw:
-                    try:
-                        exec_uuid = uuid.UUID(exec_id_raw)
-                    except (TypeError, ValueError):
-                        exec_uuid = None
-                if exec_uuid:
-                    execution_conversation = Conversation.objects.filter(
-                        id=exec_uuid,
-                        business_profile_id=business_id,
-                    ).first()
-                if execution_conversation is None:
+            if execution_conversation is None:
+                if anchor_source == "agent_run":
+                    execution_conversation = anchor_conversation
+                else:
                     actor_user_id = run.created_by_id
                     if not actor_user_id:
                         actor_raw = str(anchor_meta_map.get("actor_user_id") or anchor_meta_map.get("actorUserId") or "").strip()
@@ -937,11 +969,18 @@ class AgentRunProcessingService:
                         metadata=exec_metadata,
                         summary=conversation_summary,
                     )
-                    next_meta = dict(run_metadata)
-                    next_meta["execution_conversation_id"] = str(execution_conversation.id)
-                    AgentRun.objects.filter(id=run.id).update(metadata=next_meta, updated_at=timezone.now())
-                    run.metadata = next_meta
-                    run_metadata = next_meta
+
+            if execution_conversation is not None and run.execution_conversation_id != execution_conversation.id:
+                next_meta = dict(run_metadata)
+                next_meta["execution_conversation_id"] = str(execution_conversation.id)
+                AgentRun.objects.filter(id=run.id).update(
+                    execution_conversation=execution_conversation,
+                    metadata=next_meta,
+                    updated_at=timezone.now(),
+                )
+                run.execution_conversation = execution_conversation
+                run.metadata = next_meta
+                run_metadata = next_meta
 
             if execution_conversation is None:  # pragma: no cover - defensive
                 raise RuntimeError("Unable to resolve agent run execution conversation.")
@@ -1038,11 +1077,75 @@ class AgentRunProcessingService:
                     payload=sanitize_tool_event_for_audit(event),
                 )
 
-            allowlist_display: object
-            if allowlist_specified:
-                allowlist_display = sorted(allowed_tools) if allowed_tools else []
-            else:
-                allowlist_display = "default (no orchestration tools)"
+                # Persist compact tool context into the execution transcript so resumed runs
+                # continue from prior tool outcomes instead of re-running searches.
+                if phase == "finished":
+                    try:
+                        from apps.conversations.content_blocks import make_tool_result_block, make_tool_use_block
+                        from apps.conversations.models import ConversationSender
+
+                        event_id_value = str(event.get("event_id") or event.get("eventId") or "").strip()
+                        if not event_id_value:
+                            event_id_value = f"evt_{uuid.uuid4().hex[:12]}"
+                        tool_call_id_value = str(event.get("tool_call_id") or event.get("toolCallId") or "").strip()
+                        duration_ms = event.get("duration_ms")
+                        try:
+                            duration_ms_int = int(duration_ms) if duration_ms is not None else 0
+                        except (TypeError, ValueError):
+                            duration_ms_int = 0
+
+                        input_payload = event.get("input")
+                        tool_args = dict(input_payload) if isinstance(input_payload, Mapping) else {}
+
+                        output_payload = event.get("output")
+                        tool_output = dict(output_payload) if isinstance(output_payload, Mapping) else {}
+                        if not tool_output:
+                            tool_output = _summarize_tool_result(tool_name, {"status": status_value})
+
+                        remote_payload = _sanitize_remote_meta(event.get("remote"))
+
+                        tool_use_block = make_tool_use_block(
+                            event_id=event_id_value,
+                            tool_name=tool_name or "tool",
+                            tool_call_id=tool_call_id_value,
+                            arguments=tool_args,
+                            status=status_value or "ok",
+                            duration_ms=duration_ms_int,
+                            remote=remote_payload,
+                        )
+                        tool_result_block = make_tool_result_block(
+                            event_id=event_id_value,
+                            tool_name=tool_name or "tool",
+                            output=tool_output,
+                            status=status_value or "ok",
+                            duration_ms=duration_ms_int,
+                        )
+
+                        summary_parts: list[str] = [f"Tool result ({tool_name or 'tool'}) [{event_id_value}]"]
+                        if tool_args:
+                            summary_parts.append(
+                                "Input: " + _clip_text(json.dumps(tool_args, ensure_ascii=False), 1200)
+                            )
+                        if tool_output:
+                            summary_parts.append(
+                                "Output: " + _clip_text(json.dumps(tool_output, ensure_ascii=False), 2000)
+                            )
+                        summary_text = _clip_text("\n".join(summary_parts), 3200)
+
+                        _append_execution_message(
+                            sender=ConversationSender.AI,
+                            body=summary_text,
+                            metadata={
+                                "source": "agent_run",
+                                "agent_run_id": str(run.id),
+                                "type": "tool_result",
+                                "tool_name": tool_name,
+                                "tool_event_id": event_id_value,
+                            },
+                            content_blocks=[tool_use_block, tool_result_block],
+                        )
+                    except Exception:  # pragma: no cover - best effort only
+                        logger.exception("agent_run_tool_transcript_append_failed run=%s tool=%s", run.id, tool_name)
 
             metadata_snapshot = run_metadata if isinstance(run_metadata, Mapping) else {}
             trigger_context_summary = ""
@@ -1081,7 +1184,6 @@ class AgentRunProcessingService:
                 f"Goal: {goal}\n"
                 f"Success criteria: {criteria_lines}\n"
                 f"Constraints: {spec.get('constraints') or {}}\n"
-                f"Tool allowlist: {allowlist_display}\n"
                 f"{trigger_context_summary}"
                 "Instructions:\n"
                 "- Work autonomously.\n"
@@ -1325,6 +1427,14 @@ class AgentRunProcessingService:
                 if external_request_payload:
                     next_metadata["pending_agent_request"] = external_request_payload
 
+            completion_index: int | None = None
+            if next_status == AgentRunStatus.COMPLETED:
+                try:
+                    completion_index = int(next_metadata.get("completion_count") or 0) + 1
+                except (TypeError, ValueError):
+                    completion_index = 1
+                next_metadata["completion_count"] = completion_index
+
             update_fields: dict[str, object] = {
                 "status": next_status,
                 "lease_expires_at": None,
@@ -1366,6 +1476,7 @@ class AgentRunProcessingService:
                             conversation_id=anchor_conversation.id,
                             metadata__agent_run_id=str(run.id),
                             metadata__type="run_result",
+                            metadata__completion_index=completion_index,
                         ).exists()
                         if not already_written:
                             ConversationMessage.objects.create(
@@ -1377,6 +1488,7 @@ class AgentRunProcessingService:
                                     "agent_run_id": str(run.id),
                                     "type": "run_result",
                                     "run_source": run.source,
+                                    "completion_index": completion_index,
                                 },
                                 content_blocks=ensure_assistant_text_blocks(response_text),
                             )
@@ -1397,6 +1509,7 @@ class AgentRunProcessingService:
                                         conversation_id=target.id,
                                         metadata__agent_run_id=str(run.id),
                                         metadata__type="run_summary",
+                                        metadata__completion_index=completion_index,
                                     ).exists()
                                     if not already_summary:
                                         ConversationMessage.objects.create(
@@ -1409,6 +1522,7 @@ class AgentRunProcessingService:
                                                 "type": "run_summary",
                                                 "run_source": run.source,
                                                 "destination": "chat_thread",
+                                                "completion_index": completion_index,
                                             },
                                             content_blocks=ensure_assistant_text_blocks(summary_text),
                                         )
@@ -1427,6 +1541,7 @@ class AgentRunProcessingService:
                             conversation_id=anchor_conversation.id,
                             metadata__agent_run_id=str(run.id),
                             metadata__type="run_handoff",
+                            metadata__completion_index=completion_index,
                         ).exists()
                         if not already_handoff:
                             ConversationMessage.objects.create(
@@ -1439,6 +1554,7 @@ class AgentRunProcessingService:
                                     "type": "run_handoff",
                                     "run_source": run.source,
                                     "followup_mode": followup_mode,
+                                    "completion_index": completion_index,
                                 },
                                 content_blocks=ensure_assistant_text_blocks(handoff_text),
                             )
@@ -1517,7 +1633,11 @@ class AgentRunProcessingService:
                         conversation=anchor_conversation,
                         sender=ConversationSender.AI,
                         body=response_text,
-                        metadata={"source": "agent_run", "agent_run_id": str(run.id)},
+                        metadata={
+                            "source": "agent_run",
+                            "agent_run_id": str(run.id),
+                            "completion_index": completion_index,
+                        },
                         content_blocks=ensure_assistant_text_blocks(response_text),
                     )
 

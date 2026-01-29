@@ -42,7 +42,7 @@ class AgentRunProcessingTests(TestCase):
             title="Test Run",
             status=AgentRunStatus.QUEUED,
             run_after=timezone.now(),
-            run_spec_snapshot={"goal": "Do something safely", "tool_allowlist": []},
+            run_spec_snapshot={"goal": "Do something safely"},
             max_attempts=2,
         )
 
@@ -106,4 +106,4 @@ class AgentRunProcessingTests(TestCase):
 
         run.refresh_from_db()
         self.assertEqual(run.conversation_id, anchor.id)
-        self.assertEqual(str(run.metadata.get("execution_conversation_id") or ""), str(getattr(called_conversation, "id", "")))
+        self.assertEqual(str(run.execution_conversation_id or ""), str(getattr(called_conversation, "id", "")))

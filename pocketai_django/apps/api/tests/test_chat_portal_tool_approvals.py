@@ -211,13 +211,13 @@ class ChatPortalRunApprovalTests(TestCase):
             business_profile=self.business,
             agent_profile=self.agent,
             conversation=self.anchor,
+            execution_conversation=self.execution,
             created_by=self.user,
             title="Email something",
             status=AgentRunStatus.WAITING_APPROVAL,
             run_spec_snapshot={"goal": "Email something"},
             metadata={
                 "pending_approval_id": str(self.approval.id),
-                "execution_conversation_id": str(self.execution.id),
             },
         )
 
@@ -317,13 +317,13 @@ class ChatPortalPendingToolExecutionTests(TestCase):
             business_profile=self.business,
             agent_profile=self.agent,
             conversation=self.anchor,
+            execution_conversation=self.execution,
             created_by=self.user,
             title="Email something with pending tool",
             status=AgentRunStatus.WAITING_APPROVAL,
             run_spec_snapshot={"goal": "Email something"},
             metadata={
                 "pending_approval_id": str(self.approval.id),
-                "execution_conversation_id": str(self.execution.id),
                 "pending_tool_call": {
                     "tool_name": "email_send_draft",
                     "tool_call_id": "call_test_123",

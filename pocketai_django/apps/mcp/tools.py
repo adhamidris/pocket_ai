@@ -564,11 +564,6 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
                 "description": "Optional list of success criteria (1-10).",
                 "items": {"type": "string"},
             },
-            "tool_allowlist": {
-                "type": "array",
-                "description": "Optional allowlist of tool names the run may use.",
-                "items": {"type": "string"},
-            },
             "constraints": {
                 "type": "object",
                 "description": "Optional execution constraints (timeouts, max steps, max tool calls).",
@@ -624,6 +619,10 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
                 "minimum": 1,
                 "maximum": 20,
                 "description": "Max runs to return (default 10).",
+            },
+            "refresh": {
+                "type": "boolean",
+                "description": "Bypass cache and fetch latest runs (default false).",
             },
         },
         required=(),
@@ -14055,16 +14054,6 @@ def _create_agent_run_handler(
             text = item.strip()
             if text:
                 success_criteria.append(text[:280])
-    tool_allowlist_raw = arguments.get("tool_allowlist")
-    tool_allowlist: list[str] = []
-    if isinstance(tool_allowlist_raw, list):
-        for item in tool_allowlist_raw[:60]:
-            if not isinstance(item, str):
-                continue
-            name = item.strip()
-            if name:
-                tool_allowlist.append(name[:80])
-
     constraints = arguments.get("constraints")
     constraints_payload = dict(constraints) if isinstance(constraints, Mapping) else {}
     output_schema = arguments.get("output_schema")
@@ -14123,6 +14112,8 @@ def _create_agent_run_handler(
         AgentRunEventType,
         AgentRunSource,
         AgentRunStatus,
+        Conversation,
+        ConversationChannel,
     )
     from apps.conversations.run_contracts import normalize_run_spec
 
@@ -14131,7 +14122,6 @@ def _create_agent_run_handler(
             "version": 1,
             "goal": goal[:6000],
             "success_criteria": success_criteria[:10],
-            **({"tool_allowlist": tool_allowlist[:30]} if tool_allowlist else {}),
             **({"constraints": constraints_payload} if constraints_payload else {}),
             **({"output_schema": output_schema_payload} if output_schema_payload else {}),
             **({"approval": approval_payload} if approval_payload else {}),
@@ -14214,6 +14204,25 @@ def _create_agent_run_handler(
             },
             run_after=now,
         )
+        exec_metadata: dict[str, object] = {
+            "source": "agent_run",
+            "agent_run_id": str(run.id),
+            "anchor_conversation_id": str(conversation.id),
+        }
+        if actor_id:
+            exec_metadata["actor_user_id"] = str(actor_id)
+        execution_conversation = Conversation.objects.create(
+            business_profile_id=conversation.business_profile_id,
+            agent_profile_id=agent_profile.id,
+            channel=ConversationChannel.API,
+            metadata=exec_metadata,
+        )
+        run.execution_conversation = execution_conversation
+        run.metadata = {
+            **(run.metadata or {}),
+            "execution_conversation_id": str(execution_conversation.id),
+        }
+        run.save(update_fields=["execution_conversation", "metadata", "updated_at"])
         AgentRunEvent.objects.create(
             run=run,
             sequence_index=1,
@@ -14249,6 +14258,7 @@ def _list_agent_runs_handler(
 
     status_filter = str(arguments.get("status_filter") or "all").strip().lower()
     limit = min(20, max(1, int(arguments.get("limit") or 10)))
+    refresh = bool(arguments.get("refresh"))
 
     business_id = getattr(conversation, "business_profile_id", None)
     if not business_id:
@@ -14267,6 +14277,18 @@ def _list_agent_runs_handler(
         "completed": [AgentRunStatus.COMPLETED, AgentRunStatus.FAILED, AgentRunStatus.CANCELLED],
     }
     statuses = status_mapping.get(status_filter)
+
+    try:
+        cache_ttl = int(getattr(settings, "MCP_LIST_AGENT_RUNS_CACHE_TTL_SECONDS", 5) or 5)
+    except (TypeError, ValueError):
+        cache_ttl = 5
+    cache_ttl = max(0, min(cache_ttl, 60))
+    cache_key = f"mcp:list_agent_runs:{business_id}:{conversation.id}:{status_filter}:{limit}"
+
+    if not refresh and cache_ttl > 0:
+        cached = cache.get(cache_key)
+        if isinstance(cached, Mapping):
+            return dict(cached)
 
     with tenant_context(business_id):
         qs = AgentRun.objects.filter(conversation_id=conversation.id).order_by("-created_at")
@@ -14301,13 +14323,16 @@ def _list_agent_runs_handler(
             ),
         })
 
-    return {
+    response = {
         "tool": "list_agent_runs",
         "status": "ok",
         "runs": run_summaries,
         "count": len(run_summaries),
         "filter": status_filter,
     }
+    if cache_ttl > 0:
+        cache.set(cache_key, dict(response), timeout=cache_ttl)
+    return response
 
 
 def _get_agent_run_handler(
@@ -14502,39 +14527,23 @@ def _continue_agent_run_handler(
                 "hint": "Runs can only be continued when completed, failed, waiting, or paused.",
             }
 
-        # Get the execution conversation
         meta = run.metadata if isinstance(getattr(run, "metadata", None), dict) else {}
-        exec_id_raw = str(meta.get("execution_conversation_id") or "").strip()
+        next_spec_snapshot = None
 
-        if not exec_id_raw:
+        execution_conversation = None
+        if run.execution_conversation_id:
+            execution_conversation = Conversation.objects.filter(
+                id=run.execution_conversation_id,
+                business_profile_id=business_id,
+            ).first()
+
+        if execution_conversation is None:
             return {
                 "tool": "continue_agent_run",
                 "status": "error",
                 "error_code": "no_execution_conversation",
-                "error": "Run has no execution conversation to continue.",
-            }
-
-        try:
-            exec_uuid = uuid.UUID(exec_id_raw)
-        except (TypeError, ValueError):
-            return {
-                "tool": "continue_agent_run",
-                "status": "error",
-                "error_code": "invalid_execution_conversation",
-                "error": "Run's execution_conversation_id is invalid.",
-            }
-
-        execution_conversation = Conversation.objects.filter(
-            id=exec_uuid,
-            business_profile_id=business_id,
-        ).first()
-
-        if not execution_conversation:
-            return {
-                "tool": "continue_agent_run",
-                "status": "error",
-                "error_code": "execution_conversation_not_found",
-                "error": "Run's execution conversation not found.",
+                "error": "Run has no execution conversation to continue. The run may not have started yet.",
+                "hint": "Wait for the run to start processing before continuing it.",
             }
 
         now = timezone.now()
@@ -14569,15 +14578,19 @@ def _continue_agent_run_handler(
         next_meta.pop("pending_tool_call", None)
 
         # Re-queue the run
-        AgentRun.objects.filter(id=run.id).update(
-            status=AgentRunStatus.QUEUED,
-            run_after=now,
-            lease_expires_at=None,
-            finished_at=None,
-            error_detail="",
-            metadata=next_meta,
-            updated_at=now,
-        )
+        update_fields = {
+            "status": AgentRunStatus.QUEUED,
+            "run_after": now,
+            "lease_expires_at": None,
+            "finished_at": None,
+            "error_detail": "",
+            "metadata": next_meta,
+            "updated_at": now,
+        }
+        if next_spec_snapshot is not None:
+            update_fields["run_spec_snapshot"] = next_spec_snapshot
+
+        AgentRun.objects.filter(id=run.id).update(**update_fields)
 
         # Log the continuation event
         from apps.conversations.models import AgentRunEventStream, AgentRunEventType

@@ -2002,20 +2002,12 @@ def portal_agent_run_user_input(request: HttpRequest) -> JsonResponse:
     # with a true session transcript (no restart / resume hacks).
     try:
         execution_conversation = None
-        exec_id_raw = ""
-        if run and isinstance(getattr(run, "metadata", None), dict):
-            exec_id_raw = str(run.metadata.get("execution_conversation_id") or run.metadata.get("executionConversationId") or "").strip()
-        if exec_id_raw and business_id:
-            try:
-                exec_uuid = uuid.UUID(exec_id_raw)
-            except (TypeError, ValueError):
-                exec_uuid = None
-            if exec_uuid:
-                with tenant_context(business_id):
-                    execution_conversation = Conversation.objects.filter(
-                        id=exec_uuid,
-                        business_profile_id=business_id,
-                    ).first()
+        if run and run.execution_conversation_id and business_id:
+            with tenant_context(business_id):
+                execution_conversation = Conversation.objects.filter(
+                    id=run.execution_conversation_id,
+                    business_profile_id=business_id,
+                ).first()
         if execution_conversation:
             body = message
             if not body and extra_payload:
@@ -2125,14 +2117,7 @@ def portal_agent_run_approval(request: HttpRequest) -> JsonResponse:
             if not approval:
                 return _json_error("not_found", "Approval not found.", status=404)
 
-            execution_id_raw = str(meta.get("execution_conversation_id") or meta.get("executionConversationId") or "").strip()
-            execution_uuid = None
-            if execution_id_raw:
-                try:
-                    execution_uuid = uuid.UUID(execution_id_raw)
-                except (TypeError, ValueError):
-                    execution_uuid = None
-
+            execution_uuid = run.execution_conversation_id
             if execution_uuid and approval.conversation_id != execution_uuid:
                 return _json_error("approval_mismatch", "Approval does not belong to this run.", status=409)
 

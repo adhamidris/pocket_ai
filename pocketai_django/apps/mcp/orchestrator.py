@@ -445,7 +445,7 @@ class McpOrchestratorService:
 
         # Background runs must not be able to spawn more background runs.
         if is_agent_run_conversation:
-            forbidden = {"create_agent_run"}
+            forbidden = {"create_agent_run", "continue_agent_run", "list_agent_runs", "get_agent_run"}
             if normalized_tool_allowlist is not None:
                 normalized_tool_allowlist -= forbidden
             internal_tool_defs = [

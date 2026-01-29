@@ -32,7 +32,6 @@ class RunSpec(TypedDict, total=False):
     version: int
     goal: str
     success_criteria: list[str]
-    tool_allowlist: list[str]
     constraints: RunConstraints
     output_schema: dict[str, Any]
     approval: dict[str, Any]
@@ -73,11 +72,8 @@ def normalize_run_spec(spec: object | None) -> dict[str, Any]:
         return {}
 
     out: dict[str, Any] = dict(spec)
-    tool_allowlist = out.get("tool_allowlist")
-    if isinstance(tool_allowlist, (list, tuple)):
-        out["tool_allowlist"] = [str(item).strip() for item in tool_allowlist if str(item or "").strip()]
-    elif tool_allowlist is not None:
-        out["tool_allowlist"] = []
+    if "tool_allowlist" in out:
+        out.pop("tool_allowlist", None)
 
     success = out.get("success_criteria")
     if isinstance(success, (list, tuple)):
@@ -114,4 +110,3 @@ def normalize_run_spec(spec: object | None) -> dict[str, Any]:
         out["version"] = 1
 
     return out
-
