@@ -1793,6 +1793,11 @@ class ChatPortalClient {
 
     row.appendChild(rowLeft);
 
+    const outcome = document.createElement("span");
+    outcome.dataset.toolOutcomeInline = "true";
+    outcome.className = "mcp-tool-outcome-inline";
+    row.appendChild(outcome);
+
     card.appendChild(row);
     this.attachToolCardEvents(card);
     return card;
@@ -2197,9 +2202,18 @@ class ChatPortalClient {
 
 			    const outcomeEl = card.querySelector("[data-tool-outcome-inline]");
 			    if (outcomeEl) {
-			      // Compact tool row uses the left icon slot for success/error.
-			      outcomeEl.classList.remove("is-visible");
-			      outcomeEl.innerHTML = "";
+			      const showOutcome = toolState === "success" || toolState === "error";
+			      outcomeEl.classList.toggle("is-visible", showOutcome);
+			      outcomeEl.dataset.outcome = showOutcome ? toolState : "";
+			      outcomeEl.setAttribute("aria-hidden", showOutcome ? "false" : "true");
+			      outcomeEl.title = toolState === "success" ? "Succeeded" : toolState === "error" ? "Failed" : "";
+			      if (showOutcome) {
+			        outcomeEl.innerHTML = toolState === "success"
+			          ? `<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 8.5l2.5 2.5L12 5.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+			          : `<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 5l6 6M11 5l-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
+			      } else {
+			        outcomeEl.innerHTML = "";
+			      }
 			    }
 
     const approvalActionsEl = card.querySelector("[data-tool-approval-actions]");
