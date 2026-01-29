@@ -15,6 +15,9 @@
    - Strict tenant scoping on every query (`business_profile_id`).
 3. Implement background execution runner:
    - Worker loop that claims queued runs and executes them with a bounded budget.
+   - Runs execute in an **isolated execution context** (fresh run conversation) with safe default tools:
+     - Default allowlist = everything **minus orchestration tools** (no nested `create_agent_run`).
+     - File/PDF tools transparently operate on the anchor chat’s uploaded files so delegated tasks still “see” attachments.
    - Tool gating from: tenant policy + user policy + per-tool approval mode + integration ownership.
    - Idempotency keys + retries for safe tool calls; deterministic backoff.
 4. Streaming + UI integration (3-panel portal):

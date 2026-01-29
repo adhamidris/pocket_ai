@@ -398,10 +398,11 @@ class McpOrchestratorService:
         internal_tool_defs.extend(mcp_tools.GATEWAY_TOOL_DEFINITIONS)
         enable_user_input_tool = not wait_for_tool_approval
         convo_meta = getattr(conversation, "metadata", None)
-        if isinstance(convo_meta, Mapping):
-            convo_source = str(convo_meta.get("source") or "").strip().lower()
-            if convo_source == "agent_run":
-                enable_user_input_tool = True
+        convo_meta_map = convo_meta if isinstance(convo_meta, Mapping) else {}
+        convo_source = str(convo_meta_map.get("source") or "").strip().lower()
+        is_agent_run_conversation = convo_source == "agent_run"
+        if is_agent_run_conversation:
+            enable_user_input_tool = True
         if not enable_user_input_tool:
             internal_tool_defs = [
                 tool_def
@@ -437,6 +438,15 @@ class McpOrchestratorService:
         if normalized_tool_allowlist is not None:
             internal_tool_defs = [
                 tool_def for tool_def in internal_tool_defs if self._tool_schema_name(tool_def) in normalized_tool_allowlist
+            ]
+
+        # Background runs must not be able to spawn more background runs.
+        if is_agent_run_conversation:
+            forbidden = {"create_agent_run"}
+            if normalized_tool_allowlist is not None:
+                normalized_tool_allowlist -= forbidden
+            internal_tool_defs = [
+                tool_def for tool_def in internal_tool_defs if self._tool_schema_name(tool_def) not in forbidden
             ]
 
         # External MCP connections (per-agent) extend the tool catalog.

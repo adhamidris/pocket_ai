@@ -4,6 +4,7 @@ import dataclasses
 import hashlib
 import logging
 import time
+import uuid
 from datetime import timedelta
 from typing import Any, Mapping
 
@@ -687,6 +688,9 @@ class AgentRunProcessingService:
         allowed_tools: set[str] | None = None
         if isinstance(tool_allowlist, list):
             allowed_tools = {str(value).strip() for value in tool_allowlist if str(value or "").strip()}
+        if allowed_tools is not None:
+            # Background runs must not spawn other background runs.
+            allowed_tools.discard("create_agent_run")
 
         timeout_seconds = None
         constraints = spec.get("constraints")
@@ -701,21 +705,80 @@ class AgentRunProcessingService:
         timeout_seconds = max(10, min(int(timeout_seconds), 1800))
 
         with tenant_context(business_id):
-            conversation = run.conversation
-            created_conversation = False
-            if conversation is None:
-                conversation_metadata: dict[str, object] = {"source": "agent_run", "agent_run_id": str(run.id)}
+            run_metadata = run.metadata if isinstance(getattr(run, "metadata", None), Mapping) else {}
+
+            anchor_conversation = run.conversation
+            created_anchor_conversation = False
+            if anchor_conversation is None:
+                anchor_metadata: dict[str, object] = {"source": "agent_run", "agent_run_id": str(run.id)}
                 if run.created_by_id:
-                    conversation_metadata["actor_user_id"] = str(run.created_by_id)
-                conversation = Conversation.objects.create(
+                    anchor_metadata["actor_user_id"] = str(run.created_by_id)
+                anchor_conversation = Conversation.objects.create(
                     business_profile_id=business_id,
                     agent_profile_id=run.agent_profile_id,
                     channel=ConversationChannel.API,
-                    metadata=conversation_metadata,
+                    metadata=anchor_metadata,
                 )
-                AgentRun.objects.filter(id=run.id).update(conversation_id=conversation.id, updated_at=timezone.now())
-                run.conversation = conversation
-                created_conversation = True
+                AgentRun.objects.filter(id=run.id).update(
+                    conversation_id=anchor_conversation.id,
+                    updated_at=timezone.now(),
+                )
+                run.conversation = anchor_conversation
+                created_anchor_conversation = True
+
+            # Runs must execute in an isolated "agent_run" conversation so they don't
+            # inherit the orchestrator's transcript or tool affordances.
+            execution_conversation = anchor_conversation
+            anchor_meta_map = (
+                anchor_conversation.metadata if isinstance(getattr(anchor_conversation, "metadata", None), Mapping) else {}
+            )
+            anchor_source = str(anchor_meta_map.get("source") or "").strip().lower()
+            if anchor_source != "agent_run":
+                exec_id_raw = str(
+                    run_metadata.get("execution_conversation_id")
+                    or run_metadata.get("executionConversationId")
+                    or ""
+                ).strip()
+                exec_uuid: uuid.UUID | None = None
+                if exec_id_raw:
+                    try:
+                        exec_uuid = uuid.UUID(exec_id_raw)
+                    except (TypeError, ValueError):
+                        exec_uuid = None
+                if exec_uuid:
+                    execution_conversation = Conversation.objects.filter(
+                        id=exec_uuid,
+                        business_profile_id=business_id,
+                    ).first()
+                if execution_conversation is None:
+                    actor_user_id = run.created_by_id
+                    if not actor_user_id:
+                        actor_raw = str(anchor_meta_map.get("actor_user_id") or anchor_meta_map.get("actorUserId") or "").strip()
+                        if actor_raw:
+                            try:
+                                actor_user_id = uuid.UUID(actor_raw)
+                            except (TypeError, ValueError):
+                                actor_user_id = None
+                    if not actor_user_id:
+                        actor_user_id = getattr(run.agent_profile, "user_id", None)
+                    exec_metadata: dict[str, object] = {
+                        "source": "agent_run",
+                        "agent_run_id": str(run.id),
+                        "anchor_conversation_id": str(anchor_conversation.id),
+                    }
+                    if actor_user_id:
+                        exec_metadata["actor_user_id"] = str(actor_user_id)
+                    execution_conversation = Conversation.objects.create(
+                        business_profile_id=business_id,
+                        agent_profile_id=run.agent_profile_id,
+                        channel=ConversationChannel.API,
+                        metadata=exec_metadata,
+                    )
+                    next_meta = dict(run_metadata)
+                    next_meta["execution_conversation_id"] = str(execution_conversation.id)
+                    AgentRun.objects.filter(id=run.id).update(metadata=next_meta, updated_at=timezone.now())
+                    run.metadata = next_meta
+                    run_metadata = next_meta
 
             orchestrator = McpOrchestratorService(agent=run.agent_profile, provider=provider)
 
@@ -810,9 +873,9 @@ class AgentRunProcessingService:
             if allowlist_specified:
                 allowlist_display = sorted(allowed_tools) if allowed_tools else []
             else:
-                allowlist_display = "default"
+                allowlist_display = "default (no orchestration tools)"
 
-            metadata_snapshot = run.metadata if isinstance(getattr(run, "metadata", None), Mapping) else {}
+            metadata_snapshot = run_metadata if isinstance(run_metadata, Mapping) else {}
             external_inputs_summary = ""
             raw_external_inputs = metadata_snapshot.get("external_inputs") if isinstance(metadata_snapshot, Mapping) else None
             if isinstance(raw_external_inputs, list) and raw_external_inputs:
@@ -874,6 +937,7 @@ class AgentRunProcessingService:
                 f"{external_inputs_summary}"
                 "Instructions:\n"
                 "- Work autonomously.\n"
+                "- You may NOT create or delegate other background runs.\n"
                 "- If you require missing information from the user, call request_user_input with concise questions and stop.\n"
                 "- If you require another agent/department, call create_agent_request with a subject + question + context_refs and stop.\n"
                 "- If a tool call is pending approval, ask the user to approve/deny and stop.\n"
@@ -882,7 +946,7 @@ class AgentRunProcessingService:
             )
 
             turn = orchestrator.stream_turn(
-                conversation=conversation,
+                conversation=execution_conversation,
                 user_message=user_message,
                 on_status_change=_on_status_change,
                 on_tool_event=_on_tool_event,
@@ -997,17 +1061,26 @@ class AgentRunProcessingService:
                     label="Completed",
                     payload={"status": AgentRunStatus.COMPLETED},
                 )
+                followup_meta = next_metadata if isinstance(next_metadata, Mapping) else {}
+                delegate_intent = str(followup_meta.get("delegate_intent") or "").strip().lower()
+                followup_requested = bool(followup_meta.get("followup_requested") or delegate_intent == "explicit")
+                followup_mode = str(followup_meta.get("followup_mode") or "").strip().lower() or "handoff"
+                if followup_mode not in {"handoff", "supervisor"}:
+                    followup_mode = "handoff"
+                should_post_followup = bool(
+                    run.source in {AgentRunSource.AUTOMATION, AgentRunSource.WATCHER} or followup_requested
+                )
                 if run.source in {AgentRunSource.AUTOMATION, AgentRunSource.WATCHER}:
                     response_text = str(turn.response_text or "").strip()
                     if response_text:
                         already_written = ConversationMessage.objects.filter(
-                            conversation_id=conversation.id,
+                            conversation_id=anchor_conversation.id,
                             metadata__agent_run_id=str(run.id),
                             metadata__type="run_result",
                         ).exists()
                         if not already_written:
                             ConversationMessage.objects.create(
-                                conversation=conversation,
+                                conversation=anchor_conversation,
                                 sender=ConversationSender.AI,
                                 body=response_text,
                                 metadata={
@@ -1018,7 +1091,7 @@ class AgentRunProcessingService:
                                 },
                                 content_blocks=ensure_assistant_text_blocks(response_text),
                             )
-                            Conversation.objects.filter(id=conversation.id).update(last_activity_at=now)
+                            Conversation.objects.filter(id=anchor_conversation.id).update(last_activity_at=now)
 
                         dest_cfg = next_metadata.get("destination_config") if isinstance(next_metadata, Mapping) else None
                         summary_conversation_id = parse_summary_destination_id(dest_cfg)
@@ -1051,6 +1124,36 @@ class AgentRunProcessingService:
                                             content_blocks=ensure_assistant_text_blocks(summary_text),
                                         )
                                         Conversation.objects.filter(id=target.id).update(last_activity_at=now)
+                elif should_post_followup:
+                    response_text = str(turn.response_text or "").strip()
+                    if response_text:
+                        # V1: Post a cheap handoff message into chat so the user doesn't need
+                        # to keep the Tasks panel open. Supervisor mode is reserved for later.
+                        preview = response_text
+                        if len(preview) > 6000:
+                            preview = preview[:5999].rstrip() + "…"
+                        prefix = f"✅ Background run completed: {run.title or 'Task'}"
+                        handoff_text = f"{prefix}\n\n{preview}"
+                        already_handoff = ConversationMessage.objects.filter(
+                            conversation_id=anchor_conversation.id,
+                            metadata__agent_run_id=str(run.id),
+                            metadata__type="run_handoff",
+                        ).exists()
+                        if not already_handoff:
+                            ConversationMessage.objects.create(
+                                conversation=anchor_conversation,
+                                sender=ConversationSender.AI,
+                                body=handoff_text,
+                                metadata={
+                                    "source": "agent_run",
+                                    "agent_run_id": str(run.id),
+                                    "type": "run_handoff",
+                                    "run_source": run.source,
+                                    "followup_mode": followup_mode,
+                                },
+                                content_blocks=ensure_assistant_text_blocks(handoff_text),
+                            )
+                            Conversation.objects.filter(id=anchor_conversation.id).update(last_activity_at=now)
             elif next_status == AgentRunStatus.WAITING_EXTERNAL and external_request_id:
                 self._append_event(
                     run,
@@ -1097,24 +1200,32 @@ class AgentRunProcessingService:
                         else:
                             prompt_text = "I need a bit more info to continue. Please reply from the Tasks panel."
 
-                ConversationMessage.objects.create(
-                    conversation=conversation,
-                    sender=ConversationSender.AI,
-                    body=prompt_text,
-                    metadata={
-                        "source": "agent_run",
-                        "agent_run_id": str(run.id),
-                        "type": "needs_approval" if next_status == AgentRunStatus.WAITING_APPROVAL else "needs_user",
-                    },
-                    content_blocks=ensure_assistant_text_blocks(prompt_text),
+                followup_meta = next_metadata if isinstance(next_metadata, Mapping) else {}
+                delegate_intent = str(followup_meta.get("delegate_intent") or "").strip().lower()
+                followup_requested = bool(followup_meta.get("followup_requested") or delegate_intent == "explicit")
+                should_post_followup = bool(
+                    run.source in {AgentRunSource.AUTOMATION, AgentRunSource.WATCHER} or followup_requested
                 )
+                if should_post_followup:
+                    ConversationMessage.objects.create(
+                        conversation=anchor_conversation,
+                        sender=ConversationSender.AI,
+                        body=prompt_text,
+                        metadata={
+                            "source": "agent_run",
+                            "agent_run_id": str(run.id),
+                            "type": "needs_approval" if next_status == AgentRunStatus.WAITING_APPROVAL else "needs_user",
+                        },
+                        content_blocks=ensure_assistant_text_blocks(prompt_text),
+                    )
+                    Conversation.objects.filter(id=anchor_conversation.id).update(last_activity_at=now)
 
-            if created_conversation and next_status == AgentRunStatus.COMPLETED:
+            if created_anchor_conversation and next_status == AgentRunStatus.COMPLETED:
                 # Persist a minimal conversation message when we had to create a thread implicitly.
                 response_text = str(turn.response_text or "").strip()
                 if response_text:
                     ConversationMessage.objects.create(
-                        conversation=conversation,
+                        conversation=anchor_conversation,
                         sender=ConversationSender.AI,
                         body=response_text,
                         metadata={"source": "agent_run", "agent_run_id": str(run.id)},

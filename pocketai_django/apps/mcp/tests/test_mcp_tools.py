@@ -885,3 +885,48 @@ class McpCreateAgentRunToolTests(TestCase):
         assert queued is not None
         self.assertEqual(queued.event_type, AgentRunEventType.PROGRESS)
         self.assertEqual(queued.label, "Queued")
+
+
+class McpFileContextConversationTests(TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.user = User.objects.create(email="mcp-files@example.com", first_name="Files")
+        self.registration = RegistrationSession.objects.create(user=self.user)
+        self.business = BusinessProfile.objects.create(
+            user=self.user,
+            registration_session=self.registration,
+            name="Files Co",
+            industry="ops",
+        )
+        self.tenant_scope = tenant_context(self.business.id)
+        self.tenant_scope.__enter__()
+        self.agent = AgentProfile.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            name="File Agent",
+        )
+
+    def tearDown(self) -> None:
+        if hasattr(self, "tenant_scope"):
+            self.tenant_scope.__exit__(None, None, None)
+        super().tearDown()
+
+    def test_agent_run_file_tools_route_to_anchor_conversation(self) -> None:
+        anchor = Conversation.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            session_token="anchor-files",
+        )
+        execution = Conversation.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            session_token="execution-files",
+            metadata={
+                "source": "agent_run",
+                "agent_run_id": "test",
+                "anchor_conversation_id": str(anchor.id),
+            },
+        )
+
+        resolved = tools._resolve_file_context_conversation(execution)
+        self.assertEqual(resolved.id, anchor.id)

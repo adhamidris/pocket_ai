@@ -9,7 +9,7 @@ from django.utils import timezone
 from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
 from apps.conversations.agent_run_processing import AgentRunProcessingService
-from apps.conversations.models import AgentRun, AgentRunStatus
+from apps.conversations.models import AgentRun, AgentRunStatus, Conversation
 
 
 User = get_user_model()
@@ -59,3 +59,51 @@ class AgentRunProcessingTests(TestCase):
         self.assertEqual(run.attempt_count, 1)
         self.assertIsNotNone(run.run_after)
         self.assertIsNone(run.lease_expires_at)
+
+    def test_execute_run_uses_isolated_execution_conversation(self) -> None:
+        anchor = Conversation.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            session_token="anchor-session",
+            metadata={"actor_user_id": str(self.user.id)},
+        )
+        run = AgentRun.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            conversation=anchor,
+            created_by=self.user,
+            title="Hello World",
+            status=AgentRunStatus.RUNNING,
+            started_at=timezone.now(),
+            lease_expires_at=timezone.now(),
+            run_spec_snapshot={"goal": "Say Hello world"},
+            max_attempts=2,
+        )
+
+        service = AgentRunProcessingService(lease_seconds=1.0, max_retries_default=2, max_retry_delay_seconds=1.0)
+        mock_turn = mock.Mock(
+            response_text="Hello world",
+            response_blocks=[],
+            planned_actions=[],
+            extractions=[],
+            llm_usage={},
+            tool_trace=[],
+        )
+        with mock.patch("apps.llm.llm_provider.load_mcp_provider", return_value=mock.Mock()):
+            with mock.patch("apps.mcp.orchestrator.McpOrchestratorService.stream_turn", return_value=mock_turn) as patched:
+                result = service._execute_run(run)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.status, AgentRunStatus.COMPLETED)
+        patched.assert_called_once()
+        called_conversation = patched.call_args.kwargs.get("conversation")
+        self.assertIsNotNone(called_conversation)
+        meta = getattr(called_conversation, "metadata", None) or {}
+        self.assertEqual(str(meta.get("source") or ""), "agent_run")
+        self.assertEqual(str(meta.get("anchor_conversation_id") or ""), str(anchor.id))
+        self.assertNotEqual(str(getattr(called_conversation, "id", "")), str(anchor.id))
+
+        run.refresh_from_db()
+        self.assertEqual(run.conversation_id, anchor.id)
+        self.assertEqual(str(run.metadata.get("execution_conversation_id") or ""), str(getattr(called_conversation, "id", "")))

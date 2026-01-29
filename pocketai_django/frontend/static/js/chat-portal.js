@@ -3452,6 +3452,15 @@ class ChatPortalClient {
       }
     });
 
+    this.eventSource.addEventListener("conversationMessage", (event) => {
+      try {
+        const payload = event && event.data ? JSON.parse(event.data) : null;
+        this.handleConversationMessageEvent(payload);
+      } catch (error) {
+        console.warn("Failed to parse conversation message event", error);
+      }
+    });
+
     if (this.subAgentsEnabled) {
       this.eventSource.addEventListener("agentRunsSnapshot", (event) => {
         try {
@@ -3489,6 +3498,21 @@ class ChatPortalClient {
         }
       });
     }
+  }
+
+  handleConversationMessageEvent(payload) {
+    if (!payload || typeof payload !== "object") return;
+    const message = payload.message && typeof payload.message === "object" ? payload.message : null;
+    if (!message) return;
+    const messageId = typeof message.id === "string" ? message.id.trim() : "";
+    if (!messageId) return;
+
+    const container = this.elements.messagesInner || this.elements.messages;
+    const safeId = window.CSS && typeof window.CSS.escape === "function" ? window.CSS.escape(messageId) : messageId;
+    if (container && container.querySelector(`.message-row[data-message-id="${safeId}"]`)) {
+      return;
+    }
+    this.appendMessage(message);
   }
 
   initTasksPanel() {

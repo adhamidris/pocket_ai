@@ -3980,6 +3980,7 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
         yield f"data: {json.dumps({'status': session.status})}\n\n"
         run_since = timezone.now()
         request_since = timezone.now()
+        message_since = timezone.now()
         if conversation_id and subagents_enabled:
             try:
                 snapshot = _build_portal_agent_runs_snapshot(
@@ -4029,15 +4030,19 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
                 request_since = since
             except Exception:  # pragma: no cover - snapshot is best effort only
                 request_since = timezone.now()
+            message_since = timezone.now()
         else:
             run_since = timezone.now()
             request_since = timezone.now()
+            message_since = timezone.now()
 
         seen: set[tuple[str, int]] = set()
         seen_order: list[tuple[str, int]] = []
         seen_limit = 2000
         seen_requests: set[tuple[str, str]] = set()
         seen_requests_order: list[tuple[str, str]] = []
+        seen_messages: set[str] = set()
+        seen_messages_order: list[str] = []
         last_heartbeat = time.monotonic()
 
         while True:
@@ -4071,6 +4076,44 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
                         yield "event: agentRunEvent\n"
                         yield f"data: {json.dumps(payload)}\n\n"
                     run_since = latest_created_at
+
+            if conversation_id and subagents_enabled:
+                from apps.conversations.models import ConversationMessage
+
+                def _serialize_message(msg: ConversationMessage) -> dict[str, object]:
+                    return {
+                        "id": str(msg.id),
+                        "sender": msg.sender,
+                        "body": msg.body or "",
+                        "sent_at": msg.sent_at.isoformat() if msg.sent_at else None,
+                        "metadata": msg.metadata if isinstance(getattr(msg, "metadata", None), dict) else {},
+                        "content_blocks": msg.content_blocks if isinstance(getattr(msg, "content_blocks", None), list) else [],
+                    }
+
+                with tenant_context(business_id):
+                    messages_batch = list(
+                        ConversationMessage.objects.filter(conversation_id=conversation_id)
+                        .filter(created_at__gte=message_since)
+                        .filter(metadata__source="agent_run")
+                        .order_by("created_at", "id")[:250]
+                    )
+                if messages_batch:
+                    latest_created_at = message_since
+                    for msg in messages_batch:
+                        if msg.created_at and msg.created_at > latest_created_at:
+                            latest_created_at = msg.created_at
+                        key = str(msg.id)
+                        if key in seen_messages:
+                            continue
+                        seen_messages.add(key)
+                        seen_messages_order.append(key)
+                        if len(seen_messages_order) > seen_limit:
+                            old = seen_messages_order.pop(0)
+                            seen_messages.discard(old)
+                        payload = {"message": _serialize_message(msg)}
+                        yield "event: conversationMessage\n"
+                        yield f"data: {json.dumps(payload)}\n\n"
+                    message_since = latest_created_at
 
             if business_id and agent_profile_id and subagents_enabled:
                 with tenant_context(business_id):

@@ -544,6 +544,14 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
                 "type": "string",
                 "description": "Optional short title shown in the Tasks panel.",
             },
+            "followup_mode": {
+                "type": "string",
+                "enum": ["handoff", "supervisor"],
+                "description": (
+                    "Optional: how results should be reported back into chat. "
+                    "`handoff` posts the run output directly; `supervisor` is reserved for manager-style synthesis."
+                ),
+            },
             "success_criteria": {
                 "type": "array",
                 "description": "Optional list of success criteria (1-10).",
@@ -12117,12 +12125,49 @@ def _read_document_agentic_wrapper(
     return _read_document_handler(arguments, conversation, context)
 
 
+def _resolve_file_context_conversation(conversation: Conversation) -> Conversation:
+    """
+    Agent runs execute in isolated conversations, but still need access to the
+    anchor chat's uploaded files/artifacts.
+
+    If the current conversation is an agent-run execution context and it has an
+    `anchor_conversation_id`, route file tools against that anchor conversation.
+    """
+
+    cached = getattr(conversation, "_file_context_conversation", None)
+    if isinstance(cached, Conversation):
+        return cached
+
+    meta = conversation.metadata if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
+    if isinstance(meta, Mapping):
+        source = str(meta.get("source") or "").strip().lower()
+        if source == "agent_run":
+            anchor_id_raw = str(meta.get("anchor_conversation_id") or meta.get("anchorConversationId") or "").strip()
+            if anchor_id_raw:
+                try:
+                    anchor_uuid = uuid.UUID(anchor_id_raw)
+                except (TypeError, ValueError):
+                    anchor_uuid = None
+                if anchor_uuid:
+                    anchor = Conversation.objects.filter(
+                        id=anchor_uuid,
+                        business_profile_id=getattr(conversation, "business_profile_id", None),
+                    ).first()
+                    if anchor is not None:
+                        setattr(conversation, "_file_context_conversation", anchor)
+                        return anchor
+
+    setattr(conversation, "_file_context_conversation", conversation)
+    return conversation
+
+
 def _search_conversation_files_handler(
     arguments: Mapping[str, object],
     conversation: Conversation,
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
     del context
+    file_conversation = _resolve_file_context_conversation(conversation)
     query_text = _coerce_str(arguments.get("query")).strip()
     if not query_text:
         return {
@@ -12141,7 +12186,7 @@ def _search_conversation_files_handler(
 
     base_qs = (
         ConversationFileChunk.objects.filter(
-            conversation=conversation,
+            conversation=file_conversation,
             conversation_file__status="ready",
             conversation_file__kind="upload",
         )
@@ -12250,6 +12295,7 @@ def _read_conversation_file_handler(
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
     del context
+    file_conversation = _resolve_file_context_conversation(conversation)
     raw_ids = arguments.get("ids")
     if not isinstance(raw_ids, list) or not raw_ids:
         return {
@@ -12288,7 +12334,7 @@ def _read_conversation_file_handler(
 
     rows = list(
         ConversationFileChunk.objects.filter(
-            conversation=conversation,
+            conversation=file_conversation,
             id__in=uuid_ids,
             conversation_file__status="ready",
         )
@@ -12360,6 +12406,7 @@ def _pdf_generate_handler(
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
     del context
+    file_conversation = _resolve_file_context_conversation(conversation)
     content = _coerce_str(arguments.get("content")).strip()
     if not content:
         return {
@@ -12450,14 +12497,14 @@ def _pdf_generate_handler(
     from apps.conversations.portal_files import create_conversation_artifact_from_bytes
 
     artifact = create_conversation_artifact_from_bytes(
-        conversation=conversation,
+        conversation=file_conversation,
         filename=filename,
         content_type="application/pdf",
         payload=pdf_bytes,
         sender="ai",
         max_pdf_pages=int(getattr(settings, "PORTAL_PDF_MAX_PAGES", 250) or 0) or None,
     )
-    download_url = _portal_file_download_url(conversation, artifact.id)
+    download_url = _portal_file_download_url(file_conversation, artifact.id)
     return {
         "tool": "pdf_generate",
         "status": "ok",
@@ -12476,6 +12523,7 @@ def _pdf_merge_handler(
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
     del context
+    file_conversation = _resolve_file_context_conversation(conversation)
     raw_ids = arguments.get("file_ids")
     if not isinstance(raw_ids, list) or len(raw_ids) < 2:
         return {
@@ -12512,7 +12560,7 @@ def _pdf_merge_handler(
 
     files = list(
         ConversationFile.objects.filter(
-            conversation=conversation,
+            conversation=file_conversation,
             id__in=uuid_ids,
             status="ready",
         ).order_by("id")
@@ -12583,14 +12631,14 @@ def _pdf_merge_handler(
     from apps.conversations.portal_files import create_conversation_artifact_from_bytes
 
     artifact = create_conversation_artifact_from_bytes(
-        conversation=conversation,
+        conversation=file_conversation,
         filename=filename,
         content_type="application/pdf",
         payload=pdf_bytes,
         sender="ai",
         max_pdf_pages=int(getattr(settings, "PORTAL_PDF_MAX_PAGES", 250) or 0) or None,
     )
-    download_url = _portal_file_download_url(conversation, artifact.id)
+    download_url = _portal_file_download_url(file_conversation, artifact.id)
     return {
         "tool": "pdf_merge",
         "status": "ok",
@@ -12609,6 +12657,7 @@ def _pdf_extract_pages_handler(
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
     del context
+    file_conversation = _resolve_file_context_conversation(conversation)
     file_id_raw = _coerce_str(arguments.get("file_id")).strip()
     if not file_id_raw:
         return {
@@ -12660,7 +12709,7 @@ def _pdf_extract_pages_handler(
     if not filename.lower().endswith(".pdf"):
         filename = f"{filename}.pdf"
 
-    file = ConversationFile.objects.filter(conversation=conversation, id=file_id, status="ready").first()
+    file = ConversationFile.objects.filter(conversation=file_conversation, id=file_id, status="ready").first()
     if file is None:
         return {
             "tool": "pdf_extract_pages",
@@ -12715,14 +12764,14 @@ def _pdf_extract_pages_handler(
     from apps.conversations.portal_files import create_conversation_artifact_from_bytes
 
     artifact = create_conversation_artifact_from_bytes(
-        conversation=conversation,
+        conversation=file_conversation,
         filename=filename,
         content_type="application/pdf",
         payload=pdf_bytes,
         sender="ai",
         max_pdf_pages=int(getattr(settings, "PORTAL_PDF_MAX_PAGES", 250) or 0) or None,
     )
-    download_url = _portal_file_download_url(conversation, artifact.id)
+    download_url = _portal_file_download_url(file_conversation, artifact.id)
     return {
         "tool": "pdf_extract_pages",
         "status": "ok",
@@ -12741,6 +12790,7 @@ def _pdf_extract_text_handler(
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
     del context
+    file_conversation = _resolve_file_context_conversation(conversation)
     file_id_raw = _coerce_str(arguments.get("file_id")).strip()
     if not file_id_raw:
         return {
@@ -12782,7 +12832,7 @@ def _pdf_extract_text_handler(
         if extracted_pages:
             pages = extracted_pages
 
-    file = ConversationFile.objects.filter(conversation=conversation, id=file_id, status="ready").first()
+    file = ConversationFile.objects.filter(conversation=file_conversation, id=file_id, status="ready").first()
     if file is None:
         return {
             "tool": "pdf_extract_text",
@@ -13898,6 +13948,10 @@ def _create_agent_run_handler(
     if not title:
         title = (goal[:200].strip() or "Background run").rstrip()
 
+    followup_mode = str(arguments.get("followup_mode") or "").strip().lower() or "handoff"
+    if followup_mode not in {"handoff", "supervisor"}:
+        followup_mode = "handoff"
+
     actor_raw = str(convo_meta.get("actor_user_id") or convo_meta.get("actorUserId") or "").strip()
     actor_id: uuid.UUID | None = None
     if actor_raw:
@@ -13955,6 +14009,41 @@ def _create_agent_run_handler(
     metadata = arguments.get("metadata")
     metadata_payload = dict(metadata) if isinstance(metadata, Mapping) else {}
 
+    delegate_mode_enabled = bool(convo_meta.get("delegate_mode") or convo_meta.get("delegateMode"))
+    explicit_delegate = False
+    trigger_message_id = ""
+    last_customer_body = ""
+    try:
+        last_customer = (
+            conversation.messages.filter(sender="customer")
+            .order_by("-sent_at", "-created_at")
+            .values("id", "body")
+            .first()
+        )
+    except Exception:  # pragma: no cover - best effort only
+        last_customer = None
+    if isinstance(last_customer, Mapping):
+        trigger_message_id = str(last_customer.get("id") or "").strip()
+        last_customer_body = str(last_customer.get("body") or "").strip()
+    if last_customer_body:
+        needle = last_customer_body.lower()
+        tokens = (
+            "delegate",
+            "delegat",
+            "subagent",
+            "sub-agent",
+            "sub agent",
+            "background",
+            "in the background",
+            "run this in background",
+            "offload",
+            "hand off",
+            "spawn",
+        )
+        explicit_delegate = any(t in needle for t in tokens)
+    delegate_intent = "explicit" if explicit_delegate else "implicit"
+    followup_requested = bool(explicit_delegate or delegate_mode_enabled)
+
     visibility = str(arguments.get("visibility") or "initiator").strip().lower()
     if visibility not in {"initiator", "managers", "workspace"}:
         visibility = "initiator"
@@ -13991,6 +14080,54 @@ def _create_agent_run_handler(
 
     now = django_timezone.now()
     with transaction.atomic():
+        existing_run = None
+        if trigger_message_id:
+            existing_run = (
+                AgentRun.objects.filter(
+                    business_profile_id=conversation.business_profile_id,
+                    conversation_id=conversation.id,
+                    created_by_id=actor_id,
+                    source=AgentRunSource.CHAT,
+                )
+                .exclude(status__in={AgentRunStatus.COMPLETED, AgentRunStatus.FAILED, AgentRunStatus.CANCELLED})
+                .filter(metadata__trigger_message_id=trigger_message_id)
+                .order_by("-created_at")
+                .first()
+            )
+
+        if existing_run is not None:
+            next_meta = dict(existing_run.metadata or {}) if isinstance(getattr(existing_run, "metadata", None), dict) else {}
+            changed = False
+            if trigger_message_id and next_meta.get("trigger_message_id") != trigger_message_id:
+                next_meta["trigger_message_id"] = trigger_message_id
+                changed = True
+            if delegate_intent == "explicit" and next_meta.get("delegate_intent") != "explicit":
+                next_meta["delegate_intent"] = "explicit"
+                changed = True
+            if followup_requested and not bool(next_meta.get("followup_requested")):
+                next_meta["followup_requested"] = True
+                changed = True
+            if next_meta.get("followup_mode") != followup_mode:
+                next_meta["followup_mode"] = followup_mode
+                changed = True
+            if changed:
+                AgentRun.objects.filter(id=existing_run.id).update(metadata=next_meta, updated_at=now)
+                existing_run.metadata = next_meta
+            return {
+                "tool": "create_agent_run",
+                "status": "ok",
+                "run_id": str(existing_run.id),
+                "deduped": True,
+                "run": {
+                    "id": str(existing_run.id),
+                    "title": existing_run.title,
+                    "status": existing_run.status,
+                    "source": existing_run.source,
+                    "visibility": existing_run.visibility,
+                },
+                "hint": "Background run already queued for this message. Watch the Tasks panel for progress.",
+            }
+
         run = AgentRun.objects.create(
             business_profile_id=conversation.business_profile_id,
             agent_profile_id=agent_profile.id,
@@ -14002,7 +14139,14 @@ def _create_agent_run_handler(
             status=AgentRunStatus.QUEUED,
             visibility=visibility,
             plan=plan_payload,
-            metadata={**metadata_payload, "source": "mcp_tool"},
+            metadata={
+                **metadata_payload,
+                "source": "mcp_tool",
+                "trigger_message_id": trigger_message_id,
+                "delegate_intent": delegate_intent,
+                "followup_requested": followup_requested,
+                "followup_mode": followup_mode,
+            },
             run_after=now,
         )
         AgentRunEvent.objects.create(
