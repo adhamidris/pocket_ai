@@ -257,8 +257,6 @@
   }
 
   [data-chat-portal] .portal-agent-run[data-agent-run-variant="success"] .portal-agent-run__summary {
-    background: hsl(var(--success) / 0.12);
-    border-color: hsl(var(--success) / 0.45);
   }
 
   [data-chat-portal] .portal-agent-run[data-agent-run-variant="running"] .portal-agent-run__summary {
@@ -355,7 +353,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     min-width: 0;
-    flex: 1;
+    flex: 0 1 auto;
   }
 
   [data-chat-portal] .portal-agent-run__chevron {
@@ -391,6 +389,22 @@
     box-shadow: var(--shadow-sm);
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
+  }
+
+  /* Merge summary and drawer when open to look like one card */
+  [data-chat-portal] .portal-agent-run[open] .portal-agent-run__summary {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+    border-bottom-color: transparent;
+    border-radius: 1rem 1rem 0 0;
+    transition: none; /* Disable transition to avoid morphing artifacts */
+  }
+
+  [data-chat-portal] .portal-agent-run[open] .portal-agent-run__drawer {
+    margin-top: 0;
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+    border-top: none;
   }
 
   [data-chat-portal] .portal-agent-run__content {
