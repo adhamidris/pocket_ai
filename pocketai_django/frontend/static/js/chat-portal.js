@@ -4176,7 +4176,7 @@ class ChatPortalClient {
 
     const actionsHtml = this.renderRunActionsHtml(runId, state, run);
     const planHtml = this.renderRunPlanHtml(run);
-    const logHtml = this.renderRunLogHtml(state);
+    const logHtml = this.renderRunLogHtml(state, run);
     const resultHtml = this.renderRunResultHtml(run);
 
     return `
@@ -4288,8 +4288,11 @@ class ChatPortalClient {
 
   formatRunStatusLabel(status) {
     const norm = (status || "").toString().trim().toLowerCase();
-    if (!norm) return "QUEUED";
-    return norm.replace(/_/g, " ");
+    if (!norm) return "Queued";
+    return norm
+      .replace(/_/g, " ")
+      .toLowerCase()
+      .replace(/\b\w/g, (match) => match.toUpperCase());
   }
 
   formatRunSubtitle(run, lastEvent) {
@@ -4303,10 +4306,10 @@ class ChatPortalClient {
       if (lower.startsWith("responding")) {
         return "";
       }
-      let text = textRaw;
       if (lower.startsWith("status:")) {
-        text = textRaw.slice("status:".length);
+        return "";
       }
+      let text = textRaw;
       text = text.replace(/_/g, " ").replace(/\s+/g, " ").trim();
       if (!text) return "";
       return text.charAt(0).toUpperCase() + text.slice(1);
@@ -4373,7 +4376,8 @@ class ChatPortalClient {
     `;
   }
 
-  renderRunLogHtml(state) {
+  renderRunLogHtml(state, run) {
+    const statusRaw = (run && run.status ? run.status : "").toString().trim().toLowerCase();
     const events = state && Array.isArray(state.events) ? state.events : [];
     const recent = events.slice(-80);
 
@@ -4397,6 +4401,8 @@ class ChatPortalClient {
     };
 
     const simplified = [];
+    const seenSystem = new Set();
+    const seenTools = new Set();
     let lastKey = "";
     for (let idx = recent.length - 1; idx >= 0 && simplified.length < 12; idx -= 1) {
       const evt = recent[idx];
@@ -4429,6 +4435,12 @@ class ChatPortalClient {
         const line = status ? `Tool: ${toolLabel} - ${status}` : `Tool: ${toolLabel}`;
         const key = `tool:${title}:${status || ""}`;
         if (key === lastKey) continue;
+        if (toolNameRaw) {
+          seenTools.add(toolNameRaw.toLowerCase());
+        }
+        if (remoteTool) {
+          seenTools.add(remoteTool.toLowerCase());
+        }
         lastKey = key;
         simplified.push({ line, meta: "" });
         continue;
@@ -4444,7 +4456,21 @@ class ChatPortalClient {
         else if (type) line = normalizeSystemLabel(type);
 
         if (!line) continue;
-        const key = `sys:${line}`;
+        const normalizedKey = line
+          .toLowerCase()
+          .replace(/\([^)]*\)/g, "")
+          .replace(/\.{2,}|…/g, "")
+          .replace(/\s+/g, " ")
+          .trim();
+        if (!normalizedKey) continue;
+        const isSearchSystem = normalizedKey.includes("search") && normalizedKey.includes("knowledge");
+        const isReadSystem = normalizedKey.includes("read") && normalizedKey.includes("knowledge");
+        if (isSearchSystem && seenTools.has("search_knowledge")) continue;
+        if (isReadSystem && seenTools.has("read_knowledge")) continue;
+        if (seenSystem.has(normalizedKey)) continue;
+        seenSystem.add(normalizedKey);
+
+        const key = `sys:${normalizedKey}`;
         if (key === lastKey) continue;
         lastKey = key;
         simplified.push({ line, meta: "" });
@@ -4452,14 +4478,45 @@ class ChatPortalClient {
     }
     simplified.reverse();
 
+    const totalSteps = simplified.length;
+    const computeStepStatus = (index) => {
+      if (!totalSteps) return "pending";
+      const lastIndex = totalSteps - 1;
+      if (["failed", "error"].includes(statusRaw)) {
+        return index < lastIndex ? "complete" : "error";
+      }
+      if (["cancelled", "canceled"].includes(statusRaw)) {
+        return index < lastIndex ? "complete" : "cancelled";
+      }
+      if (["completed", "succeeded", "success"].includes(statusRaw)) {
+        return "complete";
+      }
+      if (["waiting_user", "waiting_approval"].includes(statusRaw)) {
+        return index < lastIndex ? "complete" : "attention";
+      }
+      if (["running", "queued", "waiting_external", "paused"].includes(statusRaw)) {
+        return index < lastIndex ? "complete" : "active";
+      }
+      return index < lastIndex ? "complete" : "active";
+    };
+
     const items = simplified
-      .map((row) => {
+      .map((row, idx) => {
         const meta = row.meta ? `<div class="portal-task__subtitle">${this.escapeHtml(row.meta)}</div>` : "";
-        return `<div class="portal-task__list-item"><div>${this.escapeHtml(row.line)}</div>${meta}</div>`;
+        const stepStatus = computeStepStatus(idx);
+        return `
+          <div class="portal-task__step" data-step-status="${this.escapeHtml(stepStatus)}">
+            <span class="portal-task__step-icon" aria-hidden="true"></span>
+            <div class="portal-task__step-text">
+              <div>${this.escapeHtml(row.line)}</div>
+              ${meta}
+            </div>
+          </div>
+        `;
       })
       .join("");
     const body = items
-      ? `<div class="portal-task__list">${items}</div>`
+      ? `<div class="portal-task__steps">${items}</div>`
       : `<div class="portal-task__subtitle">No activity yet.</div>`;
     return `
       <div class="portal-task__section">
@@ -4498,8 +4555,11 @@ class ChatPortalClient {
 
   formatRequestStatusLabel(status) {
     const norm = (status || "").toString().trim().toLowerCase();
-    if (!norm) return "OPEN";
-    return norm.replace(/_/g, " ").toUpperCase();
+    if (!norm) return "Open";
+    return norm
+      .replace(/_/g, " ")
+      .toLowerCase()
+      .replace(/\b\w/g, (match) => match.toUpperCase());
   }
 
   formatRequestSubtitle(request) {
@@ -6354,35 +6414,35 @@ class ChatPortalClient {
 
     if (runStatus) {
       if (["waiting_approval", "waiting-approval"].includes(runStatus)) {
-        pillLabel = "Approval needed";
+        pillLabel = "Approval Needed";
         variant = "approval";
       } else if (["waiting_user", "waiting-user"].includes(runStatus)) {
-        pillLabel = "Input needed";
-        variant = "action";
+        pillLabel = "Input Needed";
+        variant = "input";
       } else if (["running"].includes(runStatus)) {
         pillLabel = "Running";
         variant = "running";
       } else if (["queued"].includes(runStatus)) {
         pillLabel = "Queued";
-        variant = "running";
+        variant = "neutral";
       } else if (["failed", "error"].includes(runStatus)) {
         pillLabel = "Failed";
         variant = "danger";
       } else if (["cancelled", "canceled"].includes(runStatus)) {
         pillLabel = "Cancelled";
-        variant = "neutral";
+        variant = "muted";
       } else if (["completed", "succeeded", "success"].includes(runStatus)) {
         pillLabel = "Completed";
         variant = "success";
       }
     } else if (metaType === "needs_approval") {
-      pillLabel = "Approval needed";
+      pillLabel = "Approval Needed";
       variant = "approval";
     } else if (metaType === "needs_user") {
-      pillLabel = "Input needed";
-      variant = "action";
+      pillLabel = "Input Needed";
+      variant = "input";
     } else if (metaType === "pending_tool_execution") {
-      pillLabel = "Tool executed";
+      pillLabel = "Tool Executed";
       variant = "neutral";
     }
 
@@ -6468,6 +6528,67 @@ class ChatPortalClient {
     drawer.appendChild(content);
     details.appendChild(summary);
     details.appendChild(drawer);
+
+    // Smooth expansion animation
+    summary.addEventListener("click", (e) => {
+      e.preventDefault();
+      if (details.open) {
+        // Collapse
+        const startHeight = drawer.offsetHeight;
+        drawer.style.height = `${startHeight}px`;
+        drawer.style.overflow = "hidden";
+        
+        requestAnimationFrame(() => {
+            drawer.style.transition = "height 0.3s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.2s cubic-bezier(0.25, 1, 0.5, 1)";
+            drawer.style.height = "0px";
+            drawer.style.opacity = "0";
+            
+            // Auto-revert scroll
+            setTimeout(() => {
+                summary.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }, 50);
+        });
+        
+        drawer.addEventListener("transitionend", function onEnd(e) {
+            if (e.propertyName !== "height") return;
+            details.open = false;
+            drawer.style.height = "";
+            drawer.style.opacity = "";
+            drawer.style.transition = "";
+            drawer.style.overflow = "";
+            drawer.removeEventListener("transitionend", onEnd);
+        }); // Removed {once: true} to check propertyName safely
+        
+      } else {
+        // Expand
+        details.open = true;
+        const targetHeight = drawer.scrollHeight;
+        drawer.style.height = "0px";
+        drawer.style.opacity = "0";
+        drawer.style.overflow = "hidden";
+        drawer.style.transition = "height 0.3s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.3s cubic-bezier(0.25, 1, 0.5, 1)";
+        
+        requestAnimationFrame(() => {
+            drawer.style.height = `${targetHeight}px`;
+            drawer.style.opacity = "1";
+            
+            // Auto-scroll to view content
+            setTimeout(() => {
+               const firstBlock = drawer.querySelector('.portal-agent-run__content > :first-child') || drawer;
+               firstBlock.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }, 150);
+        });
+        
+        drawer.addEventListener("transitionend", function onEnd(e) {
+            if (e.propertyName !== "height") return;
+            drawer.style.height = "";
+            drawer.style.opacity = "";
+            drawer.style.transition = "";
+            drawer.style.overflow = "";
+            drawer.removeEventListener("transitionend", onEnd);
+        });
+      }
+    });
 
     messageBodyEl.innerHTML = "";
     messageBodyEl.appendChild(details);
