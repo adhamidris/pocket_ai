@@ -55,7 +55,14 @@ from apps.accounts.models import (
     KnowledgeUploadTableRow,
     KnowledgeUploadTableCell,
 )
-from apps.conversations.models import Conversation, ConversationFile, ConversationFileChunk
+from apps.conversations.models import (
+    AgentRun,
+    AgentRunEvent,
+    AgentRunStatus,
+    Conversation,
+    ConversationFile,
+    ConversationFileChunk,
+)
 from apps.rag.ai_orchestrator import (
     ActionType,
     AiOrchestratorService,
@@ -599,6 +606,64 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
             },
         },
         required=("goal",),
+    ),
+    _function_schema(
+        name="list_agent_runs",
+        description=(
+            "List background runs (sub-agents) for this conversation. "
+            "Returns status, title, and summary for each run so you can track progress and results."
+        ),
+        properties={
+            "status_filter": {
+                "type": "string",
+                "enum": ["all", "active", "completed", "waiting"],
+                "description": "Filter runs by status. 'active' = queued/running, 'waiting' = needs user/approval, 'completed' = finished/failed/cancelled.",
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20,
+                "description": "Max runs to return (default 10).",
+            },
+        },
+        required=(),
+    ),
+    _function_schema(
+        name="get_agent_run",
+        description=(
+            "Get detailed status and result of a specific background run. "
+            "Use this after list_agent_runs to check on a particular task."
+        ),
+        properties={
+            "run_id": {
+                "type": "string",
+                "description": "UUID of the agent run to retrieve.",
+            },
+            "include_events": {
+                "type": "boolean",
+                "description": "Include recent execution events (default false).",
+            },
+        },
+        required=("run_id",),
+    ),
+    _function_schema(
+        name="continue_agent_run",
+        description=(
+            "Continue an existing background run (sub-agent) with a follow-up message. "
+            "Use this to send additional instructions to a completed or waiting run instead of creating a new one. "
+            "The sub-agent will resume with its full conversation history."
+        ),
+        properties={
+            "run_id": {
+                "type": "string",
+                "description": "UUID of the agent run to continue.",
+            },
+            "message": {
+                "type": "string",
+                "description": "Follow-up instruction or message for the sub-agent.",
+            },
+        },
+        required=("run_id", "message"),
     ),
     _function_schema(
         name="search_knowledge",
@@ -14173,12 +14238,387 @@ def _create_agent_run_handler(
     }
 
 
+def _list_agent_runs_handler(
+    arguments: Mapping[str, object],
+    *,
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    """List agent runs for the current conversation."""
+    del context
+
+    status_filter = str(arguments.get("status_filter") or "all").strip().lower()
+    limit = min(20, max(1, int(arguments.get("limit") or 10)))
+
+    business_id = getattr(conversation, "business_profile_id", None)
+    if not business_id:
+        return {
+            "tool": "list_agent_runs",
+            "status": "error",
+            "error_code": "missing_business",
+            "error": "Conversation missing business_profile_id.",
+        }
+
+    # Map status filter to actual statuses
+    status_mapping = {
+        "all": None,
+        "active": [AgentRunStatus.QUEUED, AgentRunStatus.RUNNING],
+        "waiting": [AgentRunStatus.WAITING_USER, AgentRunStatus.WAITING_APPROVAL, AgentRunStatus.WAITING_EXTERNAL, AgentRunStatus.PAUSED],
+        "completed": [AgentRunStatus.COMPLETED, AgentRunStatus.FAILED, AgentRunStatus.CANCELLED],
+    }
+    statuses = status_mapping.get(status_filter)
+
+    with tenant_context(business_id):
+        qs = AgentRun.objects.filter(conversation_id=conversation.id).order_by("-created_at")
+        if statuses:
+            qs = qs.filter(status__in=statuses)
+        runs = list(qs[:limit])
+
+    run_summaries = []
+    for run in runs:
+        result_payload = run.result if isinstance(getattr(run, "result", None), dict) else {}
+        response_text = str(result_payload.get("response_text") or "").strip()
+        # Truncate for summary
+        if len(response_text) > 500:
+            response_text = response_text[:497] + "..."
+
+        meta = run.metadata if isinstance(getattr(run, "metadata", None), dict) else {}
+        pending_approval_id = str(meta.get("pending_approval_id") or "").strip()
+        pending_user_input = bool(meta.get("pending_user_input"))
+
+        run_summaries.append({
+            "id": str(run.id),
+            "title": run.title or "",
+            "status": run.status,
+            "source": run.source,
+            "created_at": run.created_at.isoformat() if run.created_at else None,
+            "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+            "response_preview": response_text or None,
+            "waiting_for": (
+                "approval" if pending_approval_id else
+                "user_input" if pending_user_input else
+                None
+            ),
+        })
+
+    return {
+        "tool": "list_agent_runs",
+        "status": "ok",
+        "runs": run_summaries,
+        "count": len(run_summaries),
+        "filter": status_filter,
+    }
+
+
+def _get_agent_run_handler(
+    arguments: Mapping[str, object],
+    *,
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    """Get detailed status of a specific agent run."""
+    del context
+
+    run_id_raw = str(arguments.get("run_id") or "").strip()
+    include_events = bool(arguments.get("include_events"))
+
+    if not run_id_raw:
+        return {
+            "tool": "get_agent_run",
+            "status": "error",
+            "error_code": "missing_run_id",
+            "error": "run_id is required.",
+        }
+
+    try:
+        run_uuid = uuid.UUID(run_id_raw)
+    except (TypeError, ValueError):
+        return {
+            "tool": "get_agent_run",
+            "status": "error",
+            "error_code": "invalid_run_id",
+            "error": "run_id is not a valid UUID.",
+        }
+
+    business_id = getattr(conversation, "business_profile_id", None)
+    if not business_id:
+        return {
+            "tool": "get_agent_run",
+            "status": "error",
+            "error_code": "missing_business",
+            "error": "Conversation missing business_profile_id.",
+        }
+
+    with tenant_context(business_id):
+        run = AgentRun.objects.filter(
+            id=run_uuid,
+            conversation_id=conversation.id,
+        ).first()
+
+        if not run:
+            return {
+                "tool": "get_agent_run",
+                "status": "error",
+                "error_code": "not_found",
+                "error": f"Run {run_id_raw} not found in this conversation.",
+            }
+
+        result_payload = run.result if isinstance(getattr(run, "result", None), dict) else {}
+        response_text = str(result_payload.get("response_text") or "").strip()
+        # Allow longer text for detailed view so LLM can use the full result
+        if len(response_text) > 8000:
+            response_text = response_text[:7997] + "..."
+
+        meta = run.metadata if isinstance(getattr(run, "metadata", None), dict) else {}
+        pending_approval_id = str(meta.get("pending_approval_id") or "").strip()
+        pending_user_input = meta.get("pending_user_input") if isinstance(meta.get("pending_user_input"), dict) else None
+
+        run_detail: dict[str, object] = {
+            "id": str(run.id),
+            "title": run.title or "",
+            "status": run.status,
+            "source": run.source,
+            "created_at": run.created_at.isoformat() if run.created_at else None,
+            "started_at": run.started_at.isoformat() if run.started_at else None,
+            "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+            "attempt_count": run.attempt_count,
+            "error_detail": run.error_detail or None,
+            "response_text": response_text or None,
+        }
+
+        # Add waiting context if applicable
+        if pending_approval_id:
+            run_detail["waiting_for"] = "approval"
+            run_detail["pending_approval_id"] = pending_approval_id
+        elif pending_user_input:
+            run_detail["waiting_for"] = "user_input"
+            questions = pending_user_input.get("questions") if isinstance(pending_user_input, dict) else []
+            if isinstance(questions, list):
+                run_detail["pending_questions"] = [str(q)[:200] for q in questions[:5]]
+
+        # Include recent events if requested
+        if include_events:
+            events = list(
+                AgentRunEvent.objects.filter(run_id=run.id)
+                .order_by("-sequence_index")[:15]
+            )
+            run_detail["recent_events"] = [
+                {
+                    "sequence": event.sequence_index,
+                    "stream": event.stream,
+                    "type": event.event_type,
+                    "label": event.label,
+                    "created_at": event.created_at.isoformat() if event.created_at else None,
+                }
+                for event in reversed(events)
+            ]
+
+    return {
+        "tool": "get_agent_run",
+        "status": "ok",
+        "run": run_detail,
+    }
+
+
+def _continue_agent_run_handler(
+    arguments: Mapping[str, object],
+    *,
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    """Continue an existing agent run with a follow-up message."""
+    del context
+    from django.utils import timezone
+    from apps.conversations.models import ConversationMessage, ConversationSender
+
+    run_id_raw = str(arguments.get("run_id") or "").strip()
+    message = str(arguments.get("message") or "").strip()
+
+    if not run_id_raw:
+        return {
+            "tool": "continue_agent_run",
+            "status": "error",
+            "error_code": "missing_run_id",
+            "error": "run_id is required.",
+        }
+
+    if not message:
+        return {
+            "tool": "continue_agent_run",
+            "status": "error",
+            "error_code": "missing_message",
+            "error": "message is required.",
+        }
+
+    try:
+        run_uuid = uuid.UUID(run_id_raw)
+    except (TypeError, ValueError):
+        return {
+            "tool": "continue_agent_run",
+            "status": "error",
+            "error_code": "invalid_run_id",
+            "error": "run_id is not a valid UUID.",
+        }
+
+    business_id = getattr(conversation, "business_profile_id", None)
+    if not business_id:
+        return {
+            "tool": "continue_agent_run",
+            "status": "error",
+            "error_code": "missing_business",
+            "error": "Conversation missing business_profile_id.",
+        }
+
+    # States that can be continued
+    continuable_states = {
+        AgentRunStatus.COMPLETED,
+        AgentRunStatus.FAILED,
+        AgentRunStatus.WAITING_USER,
+        AgentRunStatus.WAITING_APPROVAL,
+        AgentRunStatus.WAITING_EXTERNAL,
+        AgentRunStatus.PAUSED,
+    }
+
+    with tenant_context(business_id):
+        run = AgentRun.objects.filter(
+            id=run_uuid,
+            conversation_id=conversation.id,
+        ).first()
+
+        if not run:
+            return {
+                "tool": "continue_agent_run",
+                "status": "error",
+                "error_code": "not_found",
+                "error": f"Run {run_id_raw} not found in this conversation.",
+            }
+
+        if run.status not in continuable_states:
+            return {
+                "tool": "continue_agent_run",
+                "status": "error",
+                "error_code": "not_continuable",
+                "error": f"Run is currently '{run.status}' and cannot be continued. Wait for it to complete or pause.",
+                "hint": "Runs can only be continued when completed, failed, waiting, or paused.",
+            }
+
+        # Get the execution conversation
+        meta = run.metadata if isinstance(getattr(run, "metadata", None), dict) else {}
+        exec_id_raw = str(meta.get("execution_conversation_id") or "").strip()
+
+        if not exec_id_raw:
+            return {
+                "tool": "continue_agent_run",
+                "status": "error",
+                "error_code": "no_execution_conversation",
+                "error": "Run has no execution conversation to continue.",
+            }
+
+        try:
+            exec_uuid = uuid.UUID(exec_id_raw)
+        except (TypeError, ValueError):
+            return {
+                "tool": "continue_agent_run",
+                "status": "error",
+                "error_code": "invalid_execution_conversation",
+                "error": "Run's execution_conversation_id is invalid.",
+            }
+
+        execution_conversation = Conversation.objects.filter(
+            id=exec_uuid,
+            business_profile_id=business_id,
+        ).first()
+
+        if not execution_conversation:
+            return {
+                "tool": "continue_agent_run",
+                "status": "error",
+                "error_code": "execution_conversation_not_found",
+                "error": "Run's execution conversation not found.",
+            }
+
+        now = timezone.now()
+
+        # Append the follow-up message to the execution conversation
+        ConversationMessage.objects.create(
+            conversation=execution_conversation,
+            sender=ConversationSender.CUSTOMER,
+            body=message,
+            metadata={
+                "source": "agent_run_continuation",
+                "agent_run_id": str(run.id),
+                "from_conversation_id": str(conversation.id),
+                "type": "orchestrator_followup",
+            },
+        )
+        Conversation.objects.filter(id=execution_conversation.id).update(last_activity_at=now)
+
+        # Update run metadata to track continuation
+        next_meta = dict(meta)
+        continuations = next_meta.get("continuations") or []
+        if not isinstance(continuations, list):
+            continuations = []
+        continuations.append({
+            "at": now.isoformat(),
+            "from_status": run.status,
+            "message_preview": message[:200],
+        })
+        next_meta["continuations"] = continuations[-10:]  # Keep last 10
+        next_meta.pop("pending_approval_id", None)
+        next_meta.pop("pending_user_input", None)
+        next_meta.pop("pending_tool_call", None)
+
+        # Re-queue the run
+        AgentRun.objects.filter(id=run.id).update(
+            status=AgentRunStatus.QUEUED,
+            run_after=now,
+            lease_expires_at=None,
+            finished_at=None,
+            error_detail="",
+            metadata=next_meta,
+            updated_at=now,
+        )
+
+        # Log the continuation event
+        from apps.conversations.models import AgentRunEventStream, AgentRunEventType
+        from django.db.models import Max
+
+        next_index = (
+            AgentRunEvent.objects.filter(run_id=run.id).aggregate(max_index=Max("sequence_index")).get("max_index") or 0
+        )
+        AgentRunEvent.objects.create(
+            run_id=run.id,
+            sequence_index=int(next_index) + 1,
+            stream=AgentRunEventStream.SYSTEM,
+            event_type=AgentRunEventType.PROGRESS,
+            label="Continued by orchestrator",
+            payload={
+                "from_status": run.status,
+                "message_preview": message[:200],
+                "from_conversation_id": str(conversation.id),
+            },
+        )
+
+    return {
+        "tool": "continue_agent_run",
+        "status": "ok",
+        "run_id": str(run.id),
+        "previous_status": run.status,
+        "new_status": AgentRunStatus.QUEUED,
+        "message_appended": True,
+        "hint": "Run re-queued with your follow-up message. It will continue with full conversation history.",
+    }
+
+
 _TOOL_HANDLERS: dict[str, ToolHandler] = {
     "mcp_search_tools": _mcp_search_tools_handler,
     "mcp_call_tool": _mcp_call_tool_handler,
     "request_user_input": _request_user_input_handler,
     "create_agent_request": _create_agent_request_handler,
     "create_agent_run": _create_agent_run_handler,
+    "list_agent_runs": _list_agent_runs_handler,
+    "get_agent_run": _get_agent_run_handler,
+    "continue_agent_run": _continue_agent_run_handler,
     "search_knowledge": _search_knowledge_handler,
     "search_conversation_files": _search_conversation_files_handler,
     "read_knowledge": _read_knowledge_handler,

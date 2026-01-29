@@ -1,0 +1,655 @@
+
+ ▐▛███▜▌   Claude Code v2.1.22
+▝▜█████▛▘  Opus 4.5 · Claude Pro
+  ▘▘ ▝▝    ~/Desktop/pocket_ai-main 2
+
+❯ /model 
+  ⎿  Set model to Default (Opus 4.5 · Most capable for complex work)
+
+❯ hey opus, we recently added a new feature which is "sub-agents" that gets 
+  triggered/initiated through the main chatportal session[through the main  
+  llm call].                                                                
+                                                                            
+  but it's not done right as per the tests.                                 
+                                                                            
+  What I really wanted is that when we launch a sub-agent through the main  
+  chat portal, is that the sub-agent session also gets like a sub-branch    
+  from the main session. So we can track it and we can continue on that. We 
+  can submit the need approvals when the sub-agent prompts us for           
+  approval. All that must be done through a session management. It should   
+  not be treated like something without a session. So right now what's      
+  happening is when I ask the main LLM to initiate the sub-agent to perform 
+  a specific task, the sub-agent gets initiated successfully. It proceeds   
+  the steps needed for that task. And as soon as it requests an approval or 
+  a human interruption approval needed, it prompts us back and as soon as   
+  I click approve, it repeats the same loop again. And again, every time I  
+  click approve, it repeats the same pattern again and does not actually    
+  proceed the task, which means we are not actually handling the session    
+  correctly. So we need to dig into that and try to understand what is      
+  happening there. What are the inefficiencies? And then I need you to      
+  interview me so that you know the actual behavior that I'm seeking in     
+  this feature.                                                             
+                                                                            
+  And by the way, we are not seeking a quick workarounds or simple fixed    
+  proposals, we are seeking what's long-term and maintainable solution as a 
+  proposal, okay?                                                           
+                                                                            
+  Also, I don't have any issue with a refactor requirement. If it takes us  
+  to clean up some of the mess we have already built and refactor it with   
+  another more superior and enhanced version, I'm totally okay with that.   
+  As long as we are going into the right path.                              
+                                                                            
+  Right now, I'm not asking you for any code edits, just pure               
+  investigation, find the root codes, find the inefficiencies we have       
+  built, and suggest from there or interview me to understand more.         
+
+⏺ I'll conduct a thorough investigation of your sub-agent feature to understand
+  the architecture, identify the root causes of the loop issue, and then
+  interview you to clarify the desired behavior.
+
+  Let me start by exploring the relevant code.
+
+⏺ Explore(Explore sub-agent architecture)
+  ⎿  Done (35 tool uses · 85.4k tokens · 1m 56s)
+
+⏺ Excellent investigation. Now let me dig deeper into the specific flow that's
+  causing the loop issue - the approval resumption logic and test expectations.
+
+⏺ Read 3 files (ctrl+o to expand)
+
+⏺ Now let me look at the MCP orchestrator to understand how it handles tool
+  calls and approvals during the turn.
+
+⏺ Searched for 2 patterns (ctrl+o to expand)
+
+⏺ Let me read the _get_or_create_tool_approval and _maybe_request_tool_approval
+  functions to understand the approval matching logic.
+
+⏺ Read 1 file (ctrl+o to expand)
+
+⏺ Let me also check the email-specific approval logic.
+
+⏺ Read 1 file (ctrl+o to expand)
+
+⏺ I now have a comprehensive understanding of the architecture. Let me
+  synthesize my findings and then ask you some clarifying questions.
+
+  ---
+  Investigation Summary
+
+  Architecture Overview
+
+  Your system uses a two-conversation model for sub-agents:
+
+  1. Anchor Conversation - The parent session where the user interacts
+  2. Execution Conversation - An isolated conversation created for each agent
+  run's work
+
+  This separation is good for keeping the main chat clean, but it's also where
+  the session management complexity lives.
+
+  The Flow I Traced
+
+  1. Initial Turn: LLM calls a tool (e.g., email_send_draft), approval is
+  required
+  2. Approval Created: ConversationToolApproval record with status PENDING
+  3. Run Pauses: AgentRun.status → WAITING_APPROVAL, pending_approval_id stored
+  in metadata
+  4. User Approves: Via portal_agent_run_approval():
+    - Approval status → APPROVED
+    - A decision message appended to execution conversation: "Approved\nTool: 
+  email_send_draft\napproval_id: xxx"
+    - Run status → QUEUED
+  5. Worker Resumes: Picks up the run, calls orchestrator.stream_turn() with the
+   "Approved..." message as user input
+
+  Root Cause Analysis
+
+  I've identified multiple interconnected issues:
+
+  Issue #1: No True "Resume" Semantics
+
+  The system treats the resumed run as a brand new LLM turn rather than
+  continuing a paused tool execution. When the worker resumes
+  (agent_run_processing.py:1039-1047):
+
+  turn = orchestrator.stream_turn(
+      conversation=execution_conversation,
+      user_message=turn_user_message,  # "Approved\nTool: email_send_draft..."
+      ...
+      wait_for_tool_approval=False,  # Don't wait, just return pending
+  )
+
+  The LLM sees the transcript and interprets the situation as:
+  - "I tried tool X → got an error saying 'pending approval'"
+  - "User said 'Approved'"
+  - "Let me try tool X again"
+
+  Issue #2: Approval Matching Relies on Exact Input Payload Match
+
+  The code at orchestrator.py:4262-4278 tries to find existing APPROVED
+  approvals:
+
+  for candidate in approved_candidates:
+      if dict(candidate.input_payload) == redacted_input_dict:  # Strict 
+  equality!
+          existing_approved = candidate
+          break
+
+  If the LLM generates slightly different arguments on retry (different UUID
+  format, different key ordering after serialization, extra whitespace, etc.),
+  this match fails and a new pending approval is created → infinite loop.
+
+  Issue #3: Decision Message ≠ Tool Result
+
+  When approval is given, a customer message is appended:
+  "Approved\nTool: email_send_draft\napproval_id: xxx"
+
+  But this is not a tool result. The LLM's context shows:
+  - Tool call with pending_approval error (failure)
+  - User message saying "Approved" (acknowledgment)
+
+  The LLM has no indication that the tool should now be considered successful.
+  It naturally retries.
+
+  Issue #4: No Tool Call ID Tracking Across Resumes
+
+  Each LLM turn generates new tool_call_ids. The system can't correlate "this
+  new tool call is the retry of that previous pending one that was just
+  approved."
+
+  ---
+  Interview Questions
+
+  Now I'd like to understand your desired behavior better:
+
+  1. When a sub-agent requests approval and the user approves, what should 
+  happen?
+    - a) The exact same tool call that was pending should execute with the same 
+  arguments
+    - b) The LLM should be informed the approval was granted and can decide what
+   to do next
+    - c) Something else?
+  2. How do you envision the transcript/context for resumed runs?
+    - a) The approval should be injected as if the tool succeeded (fake a
+  successful tool result)
+    - b) The approval should be a special "system" message the LLM understands
+    - c) The pending tool call should be stored and re-executed, bypassing the
+  LLM's retry decision
+  3. What happens if the LLM wants to call the same tool with different 
+  arguments after approval?
+    - a) Should require new approval (each unique input needs explicit approval)
+    - b) Tool approval should be "sticky" for the session (once approved, always
+   approved)
+    - c) Time-bounded approval (approved for N minutes, any matching calls pass)
+  4. For sub-agent session management, what's your priority?
+    - a) Minimal changes - fix the loop with targeted patches
+    - b) Introduce a proper "suspended tool call" concept that gets resumed
+    - c) Full refactor with explicit state machine and tool execution queue
+  5. Do you have other approval-requiring tools beyond email_send_draft? The MCP
+   remote tools also seem to use approval. Should they behave consistently?
+  6. Should the user be able to see the sub-agent's full execution transcript
+  (the execution conversation), or only the final result posted back to the
+  anchor conversation?
+
+✻ Baked for 4m 59s
+
+❯ Answers to your questions;                                                
+                                                                            
+  1. "a", the exact same tool call that was pending should execute with the 
+  same agrs.                                                                
+                                                                            
+  2. I think it should execute while giving the sub-agent the ability to    
+  continue, because on some tasks we might get prompted with approval for a 
+  point that is a part of a complete workflow, which means approving it     
+  should make the task continue automatically, I think the smart way to do  
+  this is when tool is approved, the output should be informed to the agent 
+  along with the history of the sub-agent session to ccontinue normally.    
+                                                                            
+  3. should require new approval                                            
+                                                                            
+  4. full refactor with explicit state machine and tool execution but while 
+  being sub-branched from the main llm session[the orchestrator agent].     
+                                                                            
+  5. Approvals are set from the connection tab in our dashboard, you should 
+  just adjust the agentic experience to rely on that, if the tenant has it  
+  auto approve then agents should respect that and auto execute.            
+                                                                            
+  6. keep as is for now.                                                    
+                                                                            
+  and let me clarify more what am i trying to do[almost built already];     
+                                                                            
+  Here's my dumped thoughts;                                                
+                                                                            
+  I am trying to make the orchestrator[which is the main llm session] be    
+  the main controller/middle man between endusers and generative chat plus  
+  the sub-agent background tasks/automations, for example in real life      
+  usage;                                                                    
+                                                                            
+  enduser --> prompts the main llm; hey i need to lookup X Y Z information  
+  and mail them to Mr Khaled --> llm initiates a sub-agent with the needed  
+  task, runs it in background and the main agent gets 0 interruptions, it   
+  just initiates and comes back to the enduser informing it to follow up    
+  the task from the tasks panel --> enduser asks for another task, llm      
+  initates a new task as the current initiated one is still executing, and  
+  the flow goes on again.                                                   
+                                                                            
+  let's say the enduser received the feedback for task 1[sub-agent 1].. and 
+  decided to re-use that sub-agent for a different task or even the         
+  sub-agent has done something wrong and we need to correct it, we shall be 
+  able to either continue on an existing initiated sub-agent session or     
+  initiate a new one, so the main orchestrator should be able to prompt     
+  back a sub agent session or decide to initiate a new one, but the         
+  capability must be there already. that's why i am seeking to make         
+  sub-agents use sessions so we can continue the sessions when needed       
+  through the orchestrator.                                                 
+                                                                            
+  and sub-agents should be isolated as in the system prompts used, tools    
+  exposed[all tools minus the ability to initiate sub-agent .. NO SUBAGENT  
+  SHOULD BE ALLOWED TO INITIATE A SUBAGENT].                                
+                                                                            
+  let me tell you even more of what am i building;                          
+                                                                            
+  this is going to be a platform where you can structure your own company   
+  or workspace with virtual employees and assign each virtual employee to a 
+  real human-employee; lets imagine it;                                     
+                                                                            
+  a company owner has 5 employees, he buys our system, creates his CEO      
+  orchestrator agent, then creates orchestrator agents for each employee    
+  with it's given job title/description/requirements and assign it to the   
+  employee user.                                                            
+                                                                            
+  each employee user now gets access to the company workspace + their own   
+  orchestrator agent                                                        
+                                                                            
+  and those orchestrator agents can initiate sub-agents to proceed/execute  
+  the employee's tasks based on what the employees prompt their own         
+  orchestrators. and each orchestrator will be given the concerned          
+  employee/departement's tools/knowledge.                                   
+                                                                            
+  that takes us to the next step which is allowing orchestrators or         
+  initiated sub-agents to communicate with the other departement's          
+  orchestrator; like for example the Fraud departement's orchestrator or    
+  sub-agent during a task noticed that the job description/flow document    
+  instructs it to grant approval from the legal team, then sub-agent of     
+  fraud departement should be able to initiate/continue a session with an   
+  agent from the legal team, where the legal team agent sees what this      
+  agent from fraud team needs, check if it's allowed to expose this         
+  information or grant this information based on it's instructional         
+  files/job duties, and hands the needed to the asking agent, and both      
+  sessions should be traced and tracked and should allow continuation       
+  because let's say the fraud team agent found that the approval is missing 
+  something, it should be able to prompt back the legal team's agent        
+  asking again for it on the same session to make sure we're being smartly  
+  optimized.                                                                
+                                                                            
+  that's all the dump i could think of right now.                           
+                                                                            
+  what do you think and feel free to prompt me for more questions or even   
+  brainstorm creatively with me.                                            
+
+⏺ This is a fantastic vision, and I can see exactly where you're headed. Let me
+  reflect back what I understand and then propose an architecture.
+
+  ---
+  What You're Building (My Understanding)
+
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │                         COMPANY WORKSPACE                                │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │                                                                          │
+  │  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐                │
+  │  │   EMPLOYEE   │   │   EMPLOYEE   │   │   EMPLOYEE   │                │
+  │  │   (Human)    │   │   (Human)    │   │   (Human)    │                │
+  │  └──────┬───────┘   └──────┬───────┘   └──────┬───────┘                │
+  │         │                  │                  │                         │
+  │         ▼                  ▼                  ▼                         │
+  │  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐                │
+  │  │ ORCHESTRATOR │   │ ORCHESTRATOR │   │ ORCHESTRATOR │                │
+  │  │    (Fraud)   │◄──┼──►  (Legal)  │◄──┼──►  (Sales)  │                │
+  │  │              │   │              │   │              │                │
+  │  │  - Tools     │   │  - Tools     │   │  - Tools     │                │
+  │  │  - Knowledge │   │  - Knowledge │   │  - Knowledge │                │
+  │  │  - Job Desc  │   │  - Job Desc  │   │  - Job Desc  │                │
+  │  └──────┬───────┘   └──────┬───────┘   └──────┬───────┘                │
+  │         │                  │                  │                         │
+  │    ┌────┴────┐        ┌────┴────┐        ┌────┴────┐                   │
+  │    ▼         ▼        ▼         ▼        ▼         ▼                   │
+  │ ┌─────┐  ┌─────┐  ┌─────┐  ┌─────┐  ┌─────┐  ┌─────┐                  │
+  │ │ Sub │  │ Sub │  │ Sub │  │ Sub │  │ Sub │  │ Sub │                  │
+  │ │Agent│  │Agent│  │Agent│  │Agent│  │Agent│  │Agent│                  │
+  │ │  1  │  │  2  │  │  1  │  │  2  │  │  1  │  │  2  │                  │
+  │ └─────┘  └─────┘  └─────┘  └─────┘  └─────┘  └─────┘                  │
+  │                                                                          │
+  │  Rules:                                                                  │
+  │  - Sub-agents CANNOT spawn sub-agents (flat under orchestrator)         │
+  │  - Sub-agents CAN communicate with other orchestrators                  │
+  │  - All sessions are tracked and continuable                             │
+  │  - Approvals follow tenant settings (auto/manual)                       │
+  │                                                                          │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+  Key Flows:
+
+  1. User → Orchestrator → Sub-agent (background task)
+    - "Look up X, Y, Z and email them to Mr. Khaled"
+    - Orchestrator spawns sub-agent, immediately responds to user
+    - Sub-agent executes in background, user tracks via Tasks panel
+  2. Sub-agent needs approval → User approves → Sub-agent continues
+    - Sub-agent hits a tool requiring approval
+    - THE BUG: Currently loops instead of continuing
+    - SHOULD: Execute the exact pending tool, inject result, continue workflow
+  3. Sub-agent → Other Department's Orchestrator (inter-agent)
+    - Fraud sub-agent needs Legal approval
+    - Creates AgentRequest to Legal orchestrator
+    - Legal responds (in their session)
+    - Fraud sub-agent continues with the response
+  4. User continues an existing sub-agent session
+    - "Hey, that task you did earlier - can you also add X?"
+    - Orchestrator routes to existing sub-agent session (not new one)
+
+  ---
+  The Core Problem (Refined)
+
+  Your current implementation has a semantic gap in the approval flow:
+
+  CURRENT (BROKEN):
+
+    Sub-agent               Approval DB            Worker Resume
+    ─────────               ───────────            ─────────────
+        │                        │                       │
+        │ Tool needs approval    │                       │
+        │───────────────────────►│ (PENDING)             │
+        │                        │                       │
+        │ Returns "pending"      │                       │
+        │ error to LLM           │                       │
+        │                        │                       │
+        │ LLM says "need         │                       │
+        │ approval" to user      │                       │
+        │                        │                       │
+        │                        │ User approves         │
+        │                        │──────────────────────►│
+        │                        │ (APPROVED)            │
+        │                        │                       │
+        │                        │ Append "Approved"     │
+        │                        │ message to session    │
+        │◄───────────────────────│───────────────────────│
+        │                        │                       │
+        │ NEW LLM turn starts    │                       │
+        │ LLM sees "Approved"    │                       │
+        │ as user message        │                       │
+        │                        │                       │
+        │ LLM decides to retry   │                       │
+        │ tool (NEW call ID,     │                       │
+        │ possibly different     │                       │
+        │ args)                  │                       │
+        │───────────────────────►│                       │
+        │                        │                       │
+        │ Args don't match?      │                       │
+        │ NEW approval created!  │                       │
+        │                        │                       │
+        ▼                        ▼                       ▼
+                      INFINITE LOOP
+
+  The fix requires storing the exact pending tool call and executing it directly
+   on resume, not asking the LLM to decide.
+
+  ---
+  Proposed Architecture
+
+  1. State Machine for AgentRun
+
+                      ┌─────────────────────────────────────────────┐
+                      │                                             │
+                      ▼                                             │
+                ┌──────────┐                                        │
+                │  QUEUED  │◄────────────────────────────────────┐  │
+                └────┬─────┘                                     │  │
+                     │ worker claims                             │  │
+                     ▼                                           │  │
+                ┌──────────┐                                     │  │
+       ┌───────►│ RUNNING  │◄────────────────────────────────┐   │  │
+       │        └────┬─────┘                                 │   │  │
+       │             │                                       │   │  │
+       │             ├──────────────────┬────────────────────┤   │  │
+       │             │                  │                    │   │  │
+       │             ▼                  ▼                    ▼   │  │
+       │    ┌────────────────┐  ┌─────────────┐  ┌──────────────┐│  │
+       │    │   WAITING_     │  │  WAITING_   │  │   WAITING_   ││  │
+       │    │   APPROVAL     │  │    USER     │  │   EXTERNAL   ││  │
+       │    │                │  │             │  │              ││  │
+       │    │ pending_tool:  │  │ questions:  │  │ agent_req:   ││  │
+       │    │ {name, args,   │  │ [...]       │  │ {id, ...}    ││  │
+       │    │  call_id}      │  │             │  │              ││  │
+       │    └───────┬────────┘  └──────┬──────┘  └──────┬───────┘│  │
+       │            │                  │                │        │  │
+       │            │ approved         │ answered       │resolved│  │
+       │            │                  │                │        │  │
+       │            ▼                  ▼                ▼        │  │
+       │    ┌────────────────────────────────────────────────┐   │  │
+       │    │              RESUMING                          │   │  │
+       │    │                                                │   │  │
+       │    │  1. Execute pending_tool (if approval)         │   │  │
+       │    │  2. Inject result into session                 │   │  │
+       │    │  3. Continue LLM turn with injected context    │   │  │
+       │    └───────────────────────┬────────────────────────┘   │  │
+       │                            │                            │  │
+       └────────────────────────────┘                            │  │
+                                                                 │  │
+                ┌──────────┐         ┌───────────┐               │  │
+                │COMPLETED │         │ CANCELLED │◄──────────────┘  │
+                └──────────┘         └───────────┘                  │
+                     ▲                    ▲                         │
+                     │                    │ denied                  │
+                     │                    └─────────────────────────┘
+                     │
+                     └── workflow complete
+
+  2. New Metadata Structure for Pending Tool Calls
+
+  # In AgentRun.metadata when WAITING_APPROVAL:
+  {
+      "pending_tool_call": {
+          "tool_name": "email_send_draft",
+          "tool_call_id": "call_abc123",          # Original call ID from LLM
+          "arguments": {                           # Exact arguments to execute
+              "draft_id": "draft_123",
+              "email_account_id": "uuid..."
+          },
+          "approval_id": "uuid...",               # Link to 
+  ConversationToolApproval
+          "connection_id": "uuid...",             # For MCP tools
+          "remote_tool_name": "send_email",       # For MCP tools
+          "event_id": "evt_xxx",                  # For tracing
+          "requested_at": "2024-01-29T...",
+      },
+      "execution_conversation_id": "uuid...",
+      # ... other metadata
+  }
+
+  3. Revised Approval-Resume Flow
+
+  PROPOSED (FIXED):
+
+    Sub-agent               Approval DB            Worker Resume
+    ─────────               ───────────            ─────────────
+        │                        │                       │
+        │ Tool needs approval    │                       │
+        │───────────────────────►│                       │
+        │                        │                       │
+        │ Store FULL tool call   │                       │
+        │ in run.metadata:       │                       │
+        │ {name, args, call_id}  │                       │
+        │                        │                       │
+        │ Return "pending" to    │                       │
+        │ LLM, LLM responds      │                       │
+        │                        │                       │
+        │ Run → WAITING_APPROVAL │                       │
+        │                        │                       │
+        │                        │ User approves         │
+        │                        │──────────────────────►│
+        │                        │                       │
+        │                        │ Approval → APPROVED   │
+        │                        │ Run → QUEUED          │
+        │                        │ (keep pending_tool)   │
+        │                        │                       │
+        │                        │                       │ Worker picks up
+        │                        │                       │
+        │◄───────────────────────────────────────────────│
+        │                        │                       │
+        │ Worker sees            │                       │
+        │ pending_tool_call      │                       │
+        │                        │                       │
+        │ EXECUTE TOOL DIRECTLY  │                       │ (bypass LLM)
+        │ with stored args       │                       │
+        │                        │                       │
+        │ Get tool result        │                       │
+        │                        │                       │
+        │ Inject as proper       │                       │
+        │ tool_result message    │                       │
+        │ into session           │                       │
+        │                        │                       │
+        │ Clear pending_tool     │                       │
+        │                        │                       │
+        │ Continue LLM turn      │                       │
+        │ (LLM sees tool         │                       │
+        │ succeeded, continues   │                       │
+        │ workflow)              │                       │
+        │                        │                       │
+        ▼                        ▼                       ▼
+                      WORKFLOW CONTINUES
+
+  4. Session Hierarchy Model
+
+  # Conceptual model for session relationships
+
+  class SubAgentSession:
+      """
+      Represents a sub-agent's execution session as a branch 
+      from the parent orchestrator session.
+      """
+
+      # Identity
+      execution_conversation_id: UUID      # The isolated execution conversation
+      anchor_conversation_id: UUID         # Parent orchestrator's conversation
+      agent_run_id: UUID                   # The AgentRun tracking this session
+
+      # Lineage
+      parent_session_id: UUID | None       # If spawned by another sub-agent 
+  (future)
+      spawned_by_orchestrator_id: UUID     # Which orchestrator spawned this
+
+      # State
+      status: Literal["active", "waiting", "completed", "cancelled"]
+      can_be_continued: bool = True        # Can orchestrator send more 
+  messages?
+
+      # Context for continuation
+      last_checkpoint: {
+          "message_count": int,
+          "last_tool_call": {...} | None,
+          "workflow_state": str,           # e.g., "mid_email_flow"
+      }
+
+  5. Tool Execution Service (New Component)
+
+  class PendingToolExecutor:
+      """
+      Executes stored pending tool calls after approval.
+      Bypasses LLM decision-making for approved operations.
+      """
+
+      def execute_pending_tool(
+          self,
+          run: AgentRun,
+          pending_tool: dict,
+          execution_conversation: Conversation,
+      ) -> ToolExecutionResult:
+          """
+          1. Validate the pending tool call matches the approval
+          2. Execute the tool with stored arguments
+          3. Format the result as a proper tool_result message
+          4. Inject into the execution conversation
+          5. Return result for LLM continuation
+          """
+
+          tool_name = pending_tool["tool_name"]
+          arguments = pending_tool["arguments"]
+
+          # Execute the actual tool
+          if pending_tool.get("connection_id"):
+              # MCP remote tool
+              result = self._execute_mcp_tool(...)
+          elif tool_name.startswith("email_"):
+              # Email tool
+              result = self._execute_email_tool(...)
+          else:
+              # Built-in tool
+              result = self._execute_builtin_tool(...)
+
+          # Inject result into conversation as tool_result
+          self._inject_tool_result(
+              conversation=execution_conversation,
+              tool_call_id=pending_tool["tool_call_id"],
+              tool_name=tool_name,
+              result=result,
+          )
+
+          return result
+
+  ---
+  Key Changes Required
+
+  Phase 1: Fix the Loop (Immediate)
+
+  1. Store full pending tool call when approval is requested
+    - Modify orchestrator.py to save {tool_name, arguments, tool_call_id, ...}
+  to run metadata
+  2. Execute pending tool on resume (bypass LLM retry)
+    - Modify agent_run_processing.py to check for pending_tool_call before
+  calling stream_turn()
+    - Execute the stored tool directly
+    - Inject result into execution conversation
+  3. Proper tool result injection
+    - Create a tool_result message that the LLM understands as "this tool
+  succeeded"
+    - Continue the turn with this context
+
+  Phase 2: Session Management (Foundation)
+
+  4. Sub-agent session continuation
+    - Allow orchestrator to send follow-up messages to existing sub-agent
+  sessions
+    - Track session state for resumption
+  5. Clear session hierarchy
+    - Establish parent-child relationships between conversations
+    - Prevent sub-agents from spawning sub-sub-agents (enforce at tool level)
+
+  Phase 3: Inter-Agent Communication (Already Partially Built)
+
+  6. Polish AgentRequest flow
+    - Ensure requesting agent's session can continue after response
+    - Track bidirectional session references
+
+  ---
+  Questions Before I Propose Detailed Implementation
+
+  1. For tool result injection: Should the injected result appear in the
+  execution conversation as:
+    - a) A special tool_result message type (requires model support)
+    - b) A system message summarizing "Tool X executed successfully: {result}"
+    - c) Formatted as the LLM would expect in its message history (assistant
+  tool_use + tool_result pair)
+  2. For session continuation: When the orchestrator wants to continue a
+  sub-agent session, should it:
+    - a) Append a new user message to the execution conversation and re-queue
+  the run
+    - b) Create a new run that "continues" the old execution conversation
+    - c) Something else?
+  3. For the explicit state machine: Do you want a visual/auditable state
+  transition log? (e.g., AgentRunStateTransition model that records every status
+   change with timestamp, actor, reason)
+  4. Scope check: Should I include the inter-agent communication polish in this
+  refactor, or focus purely on the sub-agent approval/session flow first?
+
+✻ Sautéed for 1m 43s

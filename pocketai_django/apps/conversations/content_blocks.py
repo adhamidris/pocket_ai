@@ -215,3 +215,64 @@ def _is_text_block(block: Mapping[str, object]) -> bool:
 def _is_rich_text_block(block: Mapping[str, object]) -> bool:
     block_type = str(block.get("type") or "").strip().lower()
     return block_type in {"paragraph", "heading", "list", "list_item", "quote", "code_block"}
+
+
+def make_tool_use_block(
+    *,
+    event_id: str,
+    tool_name: str,
+    tool_call_id: str,
+    arguments: dict[str, Any],
+    status: str = "finished",
+    duration_ms: int = 0,
+    remote: dict[str, Any] | None = None,
+    block_id: str | None = None,
+    created_at: str | None = None,
+) -> ContentBlock:
+    """Create a tool_use content block."""
+    payload: dict[str, Any] = {
+        "event_id": event_id,
+        "phase": "finished",
+        "status": status,
+        "tool_name": tool_name,
+        "tool_call_id": tool_call_id,
+        "duration_ms": duration_ms,
+        "input": arguments,
+    }
+    if remote:
+        payload["remote"] = remote
+        payload["kind"] = "mcp_remote"
+    else:
+        payload["kind"] = "tool"
+    return {
+        "block_id": block_id or new_block_id(),
+        "type": "tool_use",
+        "created_at": created_at or timezone.now().isoformat(),
+        "payload": payload,
+    }
+
+
+def make_tool_result_block(
+    *,
+    event_id: str,
+    tool_name: str,
+    output: dict[str, Any],
+    status: str = "ok",
+    duration_ms: int = 0,
+    block_id: str | None = None,
+    created_at: str | None = None,
+) -> ContentBlock:
+    """Create a tool_result content block."""
+    return {
+        "block_id": block_id or new_block_id(),
+        "type": "tool_result",
+        "created_at": created_at or timezone.now().isoformat(),
+        "payload": {
+            "event_id": event_id,
+            "phase": "finished",
+            "status": status,
+            "tool_name": tool_name,
+            "duration_ms": duration_ms,
+            "output": output,
+        },
+    }

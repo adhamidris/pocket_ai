@@ -424,6 +424,9 @@ class McpOrchestratorService:
                 "request_user_input",
                 "create_agent_request",
                 "create_agent_run",
+                "list_agent_runs",
+                "get_agent_run",
+                "continue_agent_run",
                 PORTAL_BLOCK_TOOL_NAME,
                 "email_search",
                 "email_get_message",
@@ -4339,6 +4342,15 @@ class McpOrchestratorService:
             "reason": reason,
             "expires_at": approval.expires_at.isoformat() if approval.expires_at else None,
         }
+        pending_tool_call_data = {
+            "tool_name": tool_name,
+            "tool_call_id": tool_call_id,
+            "arguments": dict(arguments) if isinstance(arguments, Mapping) else {},
+            "approval_id": str(approval.id),
+            "connection_id": None,
+            "remote_tool_name": "",
+            "event_id": tool_event_id,
+        }
         request_event = {
             "event_id": tool_event_id,
             "phase": "approval_requested",
@@ -4348,6 +4360,7 @@ class McpOrchestratorService:
             "kind": "email",
             "input": redacted_input_dict,
             "approval": approval_payload,
+            "output": {"pending_tool_call": pending_tool_call_data},
         }
         if on_tool_event:
             try:
@@ -4364,6 +4377,7 @@ class McpOrchestratorService:
                 "hint": "Ask the user to approve or deny sending, then retry.",
                 "approval": approval_payload,
                 "input": redacted_input_dict,
+                "pending_tool_call": pending_tool_call_data,
             }
             return False, approval, tool_result
 
@@ -9289,6 +9303,15 @@ class McpOrchestratorService:
             "reason": approval_requirement.get("reason"),
             "expires_at": approval.expires_at.isoformat() if approval.expires_at else None,
         }
+        pending_tool_call_data = {
+            "tool_name": tool_name,
+            "tool_call_id": tool_call_id,
+            "arguments": dict(arguments) if isinstance(arguments, Mapping) else {},
+            "approval_id": str(approval.id),
+            "connection_id": str(getattr(connection, "id", "") or "") if connection else None,
+            "remote_tool_name": remote_tool_name,
+            "event_id": tool_event_id,
+        }
         request_event = {
             "event_id": tool_event_id,
             "phase": "approval_requested",
@@ -9304,6 +9327,7 @@ class McpOrchestratorService:
             },
             "input": redacted_input_dict,
             "approval": approval_payload,
+            "output": {"pending_tool_call": pending_tool_call_data},
         }
         if on_tool_event:
             try:
@@ -9321,6 +9345,7 @@ class McpOrchestratorService:
                 "approval": approval_payload,
                 "remote": dict(request_event.get("remote") or {}) if isinstance(request_event.get("remote"), Mapping) else {},
                 "input": redacted_input_dict,
+                "pending_tool_call": pending_tool_call_data,
             }
             return False, approval, tool_result
 

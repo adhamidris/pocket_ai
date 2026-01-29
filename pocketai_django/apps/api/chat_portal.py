@@ -49,6 +49,7 @@ from apps.conversations.models import (
     AgentRunMemoryItem,
     AgentRunMemoryKind,
     AgentRunStatus,
+    Conversation,
     ConversationSender,
     ConversationToolApproval,
     ConversationToolApprovalStatus,
@@ -1997,6 +1998,203 @@ def portal_agent_run_user_input(request: HttpRequest) -> JsonResponse:
     except Exception:  # pragma: no cover - chat transcript should not block execution
         logger.exception("portal_agent_run_user_input_message_failed run=%s", run_uuid)
 
+    # Also append into the run's isolated execution conversation so the run can continue
+    # with a true session transcript (no restart / resume hacks).
+    try:
+        execution_conversation = None
+        exec_id_raw = ""
+        if run and isinstance(getattr(run, "metadata", None), dict):
+            exec_id_raw = str(run.metadata.get("execution_conversation_id") or run.metadata.get("executionConversationId") or "").strip()
+        if exec_id_raw and business_id:
+            try:
+                exec_uuid = uuid.UUID(exec_id_raw)
+            except (TypeError, ValueError):
+                exec_uuid = None
+            if exec_uuid:
+                with tenant_context(business_id):
+                    execution_conversation = Conversation.objects.filter(
+                        id=exec_uuid,
+                        business_profile_id=business_id,
+                    ).first()
+        if execution_conversation:
+            body = message
+            if not body and extra_payload:
+                body = "User input payload:\n" + json.dumps(extra_payload, ensure_ascii=False)
+            if body:
+                service.append_message(
+                    session_token=execution_conversation.session_token,
+                    sender=ConversationSender.CUSTOMER,
+                    body=body,
+                    metadata={"source": "agent_run", "agent_run_id": str(run.id), "type": "user_input"},
+                    conversation=execution_conversation,
+                )
+    except Exception:  # pragma: no cover - best effort only
+        logger.exception("portal_agent_run_user_input_execution_message_failed run=%s", run_uuid)
+
+    return JsonResponse({"session": _session_to_dict(session), "run": _serialize_agent_run_for_portal(run)}, status=200)
+
+
+@csrf_exempt
+@require_POST
+def portal_agent_run_approval(request: HttpRequest) -> JsonResponse:
+    service = _service()
+    try:
+        payload = _parse_json_body(request)
+    except PortalValidationError as exc:
+        return _json_error("invalid_json", str(exc))
+
+    session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
+    run_id_raw = (payload.get("run_id") or payload.get("runId") or "").strip()
+    approval_id_raw = (payload.get("approval_id") or payload.get("approvalId") or "").strip()
+    decision_raw = payload.get("decision") or payload.get("action") or payload.get("status") or ""
+    decision = str(decision_raw).strip().lower()
+
+    if not session_token or not run_id_raw or not decision:
+        return _json_error("validation_error", "session_token, run_id, and decision are required.")
+
+    if decision in {"approve", "approved", "allow"}:
+        next_status = ConversationToolApprovalStatus.APPROVED
+        decision_value = "approve"
+    elif decision in {"deny", "denied", "reject"}:
+        next_status = ConversationToolApprovalStatus.DENIED
+        decision_value = "deny"
+    else:
+        return _json_error("validation_error", "decision must be approve or deny.")
+
+    try:
+        run_uuid = uuid.UUID(run_id_raw)
+    except (TypeError, ValueError):
+        return _json_error("validation_error", "run_id is invalid.")
+
+    try:
+        conversation = service.get_conversation(session_token=session_token, include_messages=False)
+        session = service.get_session_state(session_token=session_token, conversation=conversation)
+    except PortalNotFoundError as exc:
+        return _json_error("not_found", str(exc), status=404)
+
+    business_id = getattr(conversation, "business_profile_id", None)
+    enabled = False
+    try:
+        from apps.accounts.feature_flags import FeatureFlagService
+
+        if business_id:
+            with tenant_context(business_id):
+                business = BusinessProfile.objects.filter(id=business_id).only("id", "metadata").first()
+            enabled = bool(getattr(FeatureFlagService.snapshot(business), "sub_agents_v1", False)) if business else False
+    except Exception:  # pragma: no cover - best effort only
+        enabled = False
+
+    if not enabled:
+        return _json_error("feature_disabled", "Sub-agents are not enabled for this business.", status=403)
+
+    actor_user = request.user if getattr(request, "user", None) and request.user.is_authenticated else None
+    if actor_user:
+        actor_snapshot: dict[str, object] = {"type": "user", "user_id": str(getattr(actor_user, "id", "") or "")}
+    else:
+        actor_snapshot = {
+            "type": "portal_session",
+            "session_hash": hashlib.sha256(session_token.encode("utf-8", errors="ignore")).hexdigest()[:16],
+        }
+
+    run: AgentRun | None = None
+    with transaction.atomic():
+        with tenant_context(business_id):
+            run = AgentRun.objects.select_for_update().filter(id=run_uuid, conversation_id=conversation.id).first()
+            if run is None:
+                return _json_error("not_found", "Run not found.", status=404)
+
+            if run.status not in {AgentRunStatus.WAITING_APPROVAL, AgentRunStatus.PAUSED}:
+                return _json_error("run_not_waiting_approval", "Run is not waiting for approval.", status=409)
+
+            meta = run.metadata if isinstance(getattr(run, "metadata", None), dict) else {}
+            pending_id = str(meta.get("pending_approval_id") or "").strip()
+            if not pending_id:
+                return _json_error("missing_pending_approval", "Run has no pending approval to resolve.", status=409)
+            if approval_id_raw and approval_id_raw != pending_id:
+                return _json_error("approval_mismatch", "approval_id does not match the run's pending approval.", status=409)
+
+            try:
+                approval_uuid = uuid.UUID(pending_id)
+            except (TypeError, ValueError):
+                return _json_error("approval_invalid", "Run pending approval ID is invalid.", status=409)
+
+            approval = ConversationToolApproval.objects.select_for_update().filter(
+                id=approval_uuid,
+                conversation__business_profile_id=business_id,
+            ).first()
+            if not approval:
+                return _json_error("not_found", "Approval not found.", status=404)
+
+            execution_id_raw = str(meta.get("execution_conversation_id") or meta.get("executionConversationId") or "").strip()
+            execution_uuid = None
+            if execution_id_raw:
+                try:
+                    execution_uuid = uuid.UUID(execution_id_raw)
+                except (TypeError, ValueError):
+                    execution_uuid = None
+
+            if execution_uuid and approval.conversation_id != execution_uuid:
+                return _json_error("approval_mismatch", "Approval does not belong to this run.", status=409)
+
+            now = timezone.now()
+            if approval.status == ConversationToolApprovalStatus.PENDING:
+                approval.status = next_status
+                approval.resolved_at = now
+                approval.save(update_fields=["status", "resolved_at", "updated_at"])
+
+            _append_agent_run_event(
+                run,
+                stream=AgentRunEventStream.EXECUTED,
+                event_type=AgentRunEventType.PROGRESS,
+                label="Approved" if decision_value == "approve" else "Denied",
+                payload={
+                    "decision": decision_value,
+                    "approval_id": str(approval.id),
+                    "tool_name": approval.tool_name,
+                    "remote_tool_name": approval.remote_tool_name,
+                },
+            )
+            AgentRunMemoryItem.objects.create(
+                run=run,
+                kind=AgentRunMemoryKind.DECISION,
+                key="tool_approval",
+                content=decision_value,
+                payload={
+                    "decision": decision_value,
+                    "approval_id": str(approval.id),
+                    "tool_name": approval.tool_name,
+                    "remote_tool_name": approval.remote_tool_name,
+                    "actor": actor_snapshot,
+                },
+                created_by=actor_user,
+            )
+
+            next_meta = dict(meta)
+            next_meta.pop("pending_approval_id", None)
+            # NOTE: pending_tool_call is preserved - worker will execute it directly and clear it
+
+            if decision_value == "approve":
+                AgentRun.objects.filter(id=run.id).update(
+                    status=AgentRunStatus.QUEUED,
+                    run_after=now,
+                    lease_expires_at=None,
+                    error_detail="",
+                    metadata=next_meta,
+                    updated_at=now,
+                )
+            else:
+                AgentRun.objects.filter(id=run.id).update(
+                    status=AgentRunStatus.CANCELLED,
+                    finished_at=now,
+                    lease_expires_at=None,
+                    run_after=None,
+                    error_detail="denied",
+                    metadata=next_meta,
+                    updated_at=now,
+                )
+            run.refresh_from_db()
+
+    assert run is not None
     return JsonResponse({"session": _session_to_dict(session), "run": _serialize_agent_run_for_portal(run)}, status=200)
 
 

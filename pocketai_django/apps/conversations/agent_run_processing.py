@@ -617,6 +617,155 @@ class AgentRunProcessingService:
                 payload=dict(payload or {}),
             )
 
+    def _execute_pending_tool_call(
+        self,
+        *,
+        run: AgentRun,
+        pending_tool_call: Mapping[str, object],
+        execution_conversation: Any,
+        orchestrator: Any,
+        on_tool_event: Any,
+    ) -> bool:
+        """
+        Execute a pending tool call that was approved.
+
+        Returns True if tool was executed successfully, False otherwise.
+        """
+        from apps.conversations.content_blocks import make_tool_use_block, make_tool_result_block
+        from apps.conversations.models import ConversationMessage, ConversationSender
+        from apps.mcp import tools as mcp_tools
+        from apps.mcp.types import ToolExecutionContext
+
+        tool_name = str(pending_tool_call.get("tool_name") or "").strip()
+        tool_call_id = str(pending_tool_call.get("tool_call_id") or "").strip()
+        arguments = pending_tool_call.get("arguments") or {}
+        connection_id = pending_tool_call.get("connection_id")
+        remote_tool_name = str(pending_tool_call.get("remote_tool_name") or "").strip()
+        event_id = str(pending_tool_call.get("event_id") or f"evt_{uuid.uuid4().hex[:12]}")
+
+        if not tool_name:
+            logger.warning("pending_tool_call missing tool_name, skipping execution")
+            return False
+
+        started = time.monotonic()
+        tool_result = None
+        error_message = None
+
+        try:
+            # Determine if this is an MCP remote tool or built-in tool
+            if connection_id and remote_tool_name:
+                # MCP remote tool - use orchestrator's remote execution
+                from apps.accounts.models import McpConnection
+
+                connection = McpConnection.objects.filter(id=connection_id).first()
+                if connection:
+                    tool_result = orchestrator._execute_remote_mcp_tool(
+                        connection=connection,
+                        tool_name=tool_name,
+                        remote_tool_name=remote_tool_name,
+                        arguments=arguments,
+                        conversation=execution_conversation,
+                        tool_event_id=event_id,
+                        on_tool_event=on_tool_event,
+                    )
+                else:
+                    error_message = f"MCP connection {connection_id} not found"
+            else:
+                # Built-in tool (email tools, etc.)
+                tool_context = ToolExecutionContext()
+                tool_result = mcp_tools.execute_tool(
+                    tool_name,
+                    dict(arguments) if isinstance(arguments, Mapping) else {},
+                    conversation=execution_conversation,
+                    context=tool_context,
+                )
+        except Exception as exc:
+            logger.exception("pending_tool_call execution failed tool=%s run=%s", tool_name, run.id)
+            error_message = str(exc)
+
+        duration_ms = int((time.monotonic() - started) * 1000)
+
+        # Build the result
+        if tool_result is None:
+            tool_result = {
+                "tool": tool_name,
+                "status": "error",
+                "error": error_message or "Tool execution failed",
+            }
+
+        status = str(tool_result.get("status") or "ok").strip()
+
+        # Emit tool event for UI
+        if on_tool_event:
+            try:
+                on_tool_event({
+                    "event_id": event_id,
+                    "phase": "finished",
+                    "status": status,
+                    "tool_call_id": tool_call_id,
+                    "tool_name": tool_name,
+                    "duration_ms": duration_ms,
+                    "output": tool_result,
+                })
+            except Exception:
+                logger.exception("on_tool_event callback failed")
+
+        # Inject tool_use + tool_result into execution conversation
+        remote_info = None
+        if connection_id and remote_tool_name:
+            remote_info = {
+                "connection_id": str(connection_id),
+                "remote_tool": remote_tool_name,
+            }
+
+        tool_use_block = make_tool_use_block(
+            event_id=event_id,
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            arguments=dict(arguments) if isinstance(arguments, Mapping) else {},
+            status=status,
+            duration_ms=duration_ms,
+            remote=remote_info,
+        )
+
+        tool_result_block = make_tool_result_block(
+            event_id=event_id,
+            tool_name=tool_name,
+            output=tool_result,
+            status=status,
+            duration_ms=duration_ms,
+        )
+
+        # Create the message with both blocks
+        ConversationMessage.objects.create(
+            conversation=execution_conversation,
+            sender=ConversationSender.AI,
+            body=f"Executed approved tool: {tool_name}",
+            content_blocks=[tool_use_block, tool_result_block],
+            metadata={
+                "source": "agent_run",
+                "agent_run_id": str(run.id),
+                "type": "pending_tool_execution",
+                "tool_name": tool_name,
+            },
+        )
+
+        # Log the event
+        self._append_event(
+            run,
+            stream=AgentRunEventStream.EXECUTED,
+            event_type=AgentRunEventType.PROGRESS,
+            label=f"Executed approved tool: {tool_name}",
+            payload={
+                "tool_name": tool_name,
+                "status": status,
+                "duration_ms": duration_ms,
+                "was_pending_approval": True,
+            },
+        )
+
+        return True
+
     def _execute_run(self, run: AgentRun) -> AgentRunProcessResult:
         """
         Minimal executor: run one MCP turn using the run's goal and snapshot.
@@ -629,7 +778,7 @@ class AgentRunProcessingService:
 
         from apps.llm.llm_provider import load_mcp_provider
         from apps.mcp.orchestrator import McpOrchestratorService
-        from apps.conversations.content_blocks import ensure_assistant_text_blocks
+        from apps.conversations.content_blocks import content_blocks_from_response_blocks, ensure_assistant_text_blocks
         from apps.conversations.models import Conversation, ConversationChannel, ConversationMessage, ConversationSender
 
         business_id = run.business_profile_id
@@ -704,6 +853,16 @@ class AgentRunProcessingService:
             timeout_seconds = 300
         timeout_seconds = max(10, min(int(timeout_seconds), 1800))
 
+        success_criteria = spec.get("success_criteria") or []
+        if not isinstance(success_criteria, list):
+            success_criteria = [str(success_criteria)]
+        criteria_lines = [str(item).strip() for item in success_criteria if str(item or "").strip()]
+        criteria_text = "\n".join([f"- {line}" for line in criteria_lines])
+        conversation_summary = f"Agent run\nGoal: {goal}".strip()
+        if criteria_text:
+            conversation_summary = f"{conversation_summary}\nSuccess criteria:\n{criteria_text}".strip()
+        conversation_summary = _clip_text(conversation_summary, 1400)
+
         with tenant_context(business_id):
             run_metadata = run.metadata if isinstance(getattr(run, "metadata", None), Mapping) else {}
 
@@ -718,6 +877,7 @@ class AgentRunProcessingService:
                     agent_profile_id=run.agent_profile_id,
                     channel=ConversationChannel.API,
                     metadata=anchor_metadata,
+                    summary=conversation_summary,
                 )
                 AgentRun.objects.filter(id=run.id).update(
                     conversation_id=anchor_conversation.id,
@@ -728,12 +888,14 @@ class AgentRunProcessingService:
 
             # Runs must execute in an isolated "agent_run" conversation so they don't
             # inherit the orchestrator's transcript or tool affordances.
-            execution_conversation = anchor_conversation
+            execution_conversation: Conversation | None = None
             anchor_meta_map = (
                 anchor_conversation.metadata if isinstance(getattr(anchor_conversation, "metadata", None), Mapping) else {}
             )
             anchor_source = str(anchor_meta_map.get("source") or "").strip().lower()
-            if anchor_source != "agent_run":
+            if anchor_source == "agent_run":
+                execution_conversation = anchor_conversation
+            else:
                 exec_id_raw = str(
                     run_metadata.get("execution_conversation_id")
                     or run_metadata.get("executionConversationId")
@@ -773,12 +935,19 @@ class AgentRunProcessingService:
                         agent_profile_id=run.agent_profile_id,
                         channel=ConversationChannel.API,
                         metadata=exec_metadata,
+                        summary=conversation_summary,
                     )
                     next_meta = dict(run_metadata)
                     next_meta["execution_conversation_id"] = str(execution_conversation.id)
                     AgentRun.objects.filter(id=run.id).update(metadata=next_meta, updated_at=timezone.now())
                     run.metadata = next_meta
                     run_metadata = next_meta
+
+            if execution_conversation is None:  # pragma: no cover - defensive
+                raise RuntimeError("Unable to resolve agent run execution conversation.")
+
+            if not str(getattr(execution_conversation, "summary", "") or "").strip() and conversation_summary:
+                Conversation.objects.filter(id=execution_conversation.id).update(summary=conversation_summary)
 
             orchestrator = McpOrchestratorService(agent=run.agent_profile, provider=provider)
 
@@ -876,26 +1045,6 @@ class AgentRunProcessingService:
                 allowlist_display = "default (no orchestration tools)"
 
             metadata_snapshot = run_metadata if isinstance(run_metadata, Mapping) else {}
-            external_inputs_summary = ""
-            raw_external_inputs = metadata_snapshot.get("external_inputs") if isinstance(metadata_snapshot, Mapping) else None
-            if isinstance(raw_external_inputs, list) and raw_external_inputs:
-                lines: list[str] = []
-                for item in raw_external_inputs[-3:]:
-                    if not isinstance(item, Mapping):
-                        continue
-                    subject = str(item.get("subject") or "").strip()
-                    resolution = str(item.get("resolution") or "").strip()
-                    if resolution:
-                        resolution = resolution[:800].rstrip()
-                    if subject and resolution:
-                        lines.append(f"- {subject}: {resolution}")
-                    elif subject:
-                        lines.append(f"- {subject}")
-                    elif resolution:
-                        lines.append(f"- {resolution}")
-                if lines:
-                    external_inputs_summary = "External inputs:\n" + "\n".join(lines) + "\n"
-
             trigger_context_summary = ""
             raw_trigger = metadata_snapshot.get("trigger") if isinstance(metadata_snapshot, Mapping) else None
             if isinstance(raw_trigger, Mapping) and raw_trigger:
@@ -927,14 +1076,13 @@ class AgentRunProcessingService:
                 if lines:
                     trigger_context_summary = "Trigger context:\n" + "\n".join(lines) + "\n"
 
-            user_message = (
+            seed_prompt = (
                 "You are running a background task (agent run).\n"
                 f"Goal: {goal}\n"
-                f"Success criteria: {spec.get('success_criteria') or []}\n"
+                f"Success criteria: {criteria_lines}\n"
                 f"Constraints: {spec.get('constraints') or {}}\n"
                 f"Tool allowlist: {allowlist_display}\n"
                 f"{trigger_context_summary}"
-                f"{external_inputs_summary}"
                 "Instructions:\n"
                 "- Work autonomously.\n"
                 "- You may NOT create or delegate other background runs.\n"
@@ -943,17 +1091,152 @@ class AgentRunProcessingService:
                 "- If a tool call is pending approval, ask the user to approve/deny and stop.\n"
                 "- Do not claim actions happened unless they were executed via tools.\n"
                 "- Keep internal steps/tool chatter out of the final response.\n"
-            )
+            ).strip()
+
+            def _append_execution_message(
+                *,
+                sender: str,
+                body: str,
+                metadata: Mapping[str, object] | None = None,
+                content_blocks: list[dict[str, object]] | None = None,
+            ) -> None:
+                text = str(body or "").strip()
+                if not text:
+                    return
+                last = (
+                    execution_conversation.messages.order_by("-sent_at", "-created_at").only("id", "sender", "body").first()
+                )
+                if last and last.sender == sender and str(last.body or "").strip() == text:
+                    return
+                create_kwargs: dict[str, object] = {
+                    "conversation": execution_conversation,
+                    "sender": sender,
+                    "body": text,
+                    "metadata": dict(metadata or {}),
+                }
+                if content_blocks is not None:
+                    create_kwargs["content_blocks"] = content_blocks
+                elif sender == ConversationSender.AI:
+                    create_kwargs["content_blocks"] = ensure_assistant_text_blocks(text)
+                ConversationMessage.objects.create(**create_kwargs)
+                Conversation.objects.filter(id=execution_conversation.id).update(last_activity_at=timezone.now())
+
+            # Ensure the execution conversation has an initial seed prompt so resumes
+            # behave like a normal chat session (transcript-driven).
+            has_exec_messages = execution_conversation.messages.exists()
+            if not has_exec_messages:
+                _append_execution_message(
+                    sender=ConversationSender.CUSTOMER,
+                    body=seed_prompt,
+                    metadata={"source": "agent_run", "agent_run_id": str(run.id), "type": "run_seed"},
+                )
+
+            # Feed any new external inputs into the execution transcript once.
+            cursor = 0
+            try:
+                cursor = int(metadata_snapshot.get("external_inputs_cursor") or 0)
+            except (TypeError, ValueError):
+                cursor = 0
+            raw_external_inputs = metadata_snapshot.get("external_inputs") if isinstance(metadata_snapshot, Mapping) else None
+            external_inputs = raw_external_inputs if isinstance(raw_external_inputs, list) else []
+            if cursor < 0:
+                cursor = 0
+            if cursor > len(external_inputs):
+                cursor = len(external_inputs)
+            new_external = external_inputs[cursor:]
+            if new_external:
+                lines: list[str] = []
+                for item in new_external[-3:]:
+                    if not isinstance(item, Mapping):
+                        continue
+                    subject = str(item.get("subject") or "").strip()
+                    resolution = str(item.get("resolution") or "").strip()
+                    if resolution:
+                        resolution = resolution[:800].rstrip()
+                    if subject and resolution:
+                        lines.append(f"- {subject}: {resolution}")
+                    elif subject:
+                        lines.append(f"- {subject}")
+                    elif resolution:
+                        lines.append(f"- {resolution}")
+                if lines:
+                    external_message = "External inputs received:\n" + "\n".join(lines)
+                    _append_execution_message(
+                        sender=ConversationSender.CUSTOMER,
+                        body=external_message,
+                        metadata={"source": "agent_run", "agent_run_id": str(run.id), "type": "external_inputs"},
+                    )
+                updated_meta = dict(run_metadata) if isinstance(run_metadata, Mapping) else {}
+                updated_meta["external_inputs_cursor"] = len(external_inputs)
+                run.metadata = updated_meta
+                run_metadata = updated_meta
+                metadata_snapshot = updated_meta
+
+            # Execute pending tool call if resuming from approval
+            pending_tool_call = run_metadata.get("pending_tool_call")
+            pending_tool_executed = False
+            if pending_tool_call and isinstance(pending_tool_call, Mapping):
+                tool_executed = self._execute_pending_tool_call(
+                    run=run,
+                    pending_tool_call=pending_tool_call,
+                    execution_conversation=execution_conversation,
+                    orchestrator=orchestrator,
+                    on_tool_event=_on_tool_event,
+                )
+                if tool_executed:
+                    pending_tool_executed = True
+                    # Clear the pending tool call from metadata
+                    next_meta = dict(run_metadata)
+                    next_meta.pop("pending_tool_call", None)
+                    next_meta.pop("pending_approval_id", None)
+                    AgentRun.objects.filter(id=run.id).update(metadata=next_meta, updated_at=timezone.now())
+                    run.metadata = next_meta
+                    run_metadata = next_meta
+
+            # If a pending tool was executed, update the user message to indicate continuation
+            if pending_tool_executed:
+                turn_user_message = "The approved tool has been executed. Continue with the workflow."
+                _append_execution_message(
+                    sender=ConversationSender.CUSTOMER,
+                    body=turn_user_message,
+                    metadata={"source": "agent_run", "agent_run_id": str(run.id), "type": "post_approval_continue"},
+                )
+            else:
+                last_exec = (
+                    execution_conversation.messages.order_by("-sent_at", "-created_at").only("sender", "body").first()
+                )
+                if last_exec and last_exec.sender == ConversationSender.CUSTOMER:
+                    turn_user_message = str(last_exec.body or "").strip()
+                else:
+                    turn_user_message = "Continue."
+                    _append_execution_message(
+                        sender=ConversationSender.CUSTOMER,
+                        body=turn_user_message,
+                        metadata={"source": "agent_run", "agent_run_id": str(run.id), "type": "continue"},
+                    )
 
             turn = orchestrator.stream_turn(
                 conversation=execution_conversation,
-                user_message=user_message,
+                user_message=turn_user_message,
                 on_status_change=_on_status_change,
                 on_tool_event=_on_tool_event,
                 should_cancel=_should_cancel,
                 allowed_tools=allowed_tools,
                 wait_for_tool_approval=False,
             )
+
+            response_text_value = str(getattr(turn, "response_text", "") or "").strip()
+            if response_text_value:
+                response_blocks = list(getattr(turn, "response_blocks", None) or ())
+                blocks = content_blocks_from_response_blocks(response_blocks)
+                if not blocks:
+                    blocks = ensure_assistant_text_blocks(response_text_value)
+                _append_execution_message(
+                    sender=ConversationSender.AI,
+                    body=response_text_value,
+                    metadata={"source": "agent_run", "agent_run_id": str(run.id), "type": "assistant"},
+                    content_blocks=blocks,
+                )
 
             if _deadline_exceeded():
                 raise RuntimeError("timeout: run exceeded configured timeout_seconds")
@@ -1029,6 +1312,12 @@ class AgentRunProcessingService:
             next_metadata = dict(run.metadata or {}) if isinstance(getattr(run, "metadata", None), dict) else {}
             if next_status == AgentRunStatus.WAITING_APPROVAL and approval_id:
                 next_metadata["pending_approval_id"] = approval_id
+                # Store the full pending tool call for direct execution on resume
+                approval_event_data = pause_state.get("approval_event") or {}
+                tool_result_output = approval_event_data.get("output") if isinstance(approval_event_data.get("output"), Mapping) else {}
+                pending_tool_call = tool_result_output.get("pending_tool_call")
+                if pending_tool_call and isinstance(pending_tool_call, Mapping):
+                    next_metadata["pending_tool_call"] = dict(pending_tool_call)
             if next_status == AgentRunStatus.WAITING_USER and isinstance(pause_payload, dict):
                 next_metadata["pending_user_input"] = dict(pause_payload)
             if next_status == AgentRunStatus.WAITING_EXTERNAL and external_request_id:

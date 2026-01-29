@@ -10,6 +10,7 @@ class ChatPortalClient {
 	      csat: container.getAttribute("data-endpoint-csat"),
 	      toolApproval: container.getAttribute("data-endpoint-tool-approval"),
 	      toolHistory: container.getAttribute("data-endpoint-tool-history"),
+      runApproval: container.getAttribute("data-endpoint-run-approval"),
       runUserInput: container.getAttribute("data-endpoint-run-user-input"),
       agentRequestUpdate: container.getAttribute("data-endpoint-agent-request-update"),
       emailSendDraft: container.getAttribute("data-endpoint-email-send-draft"),
@@ -3543,8 +3544,9 @@ class ChatPortalClient {
         const decision = (approvalBtn.getAttribute("data-run-approval-action") || "").trim();
         const approvalId = (approvalBtn.getAttribute("data-approval-id") || "").trim();
         const card = approvalBtn.closest(".portal-task");
-        if (decision && approvalId) {
-          this.submitRunApproval(approvalId, decision, card);
+        const runId = card ? (card.getAttribute("data-run-id") || "").trim() : "";
+        if (decision && runId) {
+          this.submitRunApproval(runId, approvalId, decision, card);
         }
         return;
       }
@@ -3651,9 +3653,9 @@ class ChatPortalClient {
     return null;
   }
 
-  async submitRunApproval(approvalId, decision, cardEl) {
-    if (!approvalId || !decision) return;
-    if (!this.endpoints.toolApproval) {
+  async submitRunApproval(runId, approvalId, decision, cardEl) {
+    if (!runId || !decision) return;
+    if (!this.endpoints.runApproval) {
       this.showToast("Approval unavailable", "Approval endpoint is not configured.", true);
       return;
     }
@@ -3673,11 +3675,12 @@ class ChatPortalClient {
     });
 
     try {
-      const response = await fetch(this.endpoints.toolApproval, {
+      const response = await fetch(this.endpoints.runApproval, {
         method: "POST",
         headers: this.jsonHeaders(),
         body: JSON.stringify({
           session_token: this.sessionToken,
+          run_id: runId,
           approval_id: approvalId,
           decision: decision.toString().trim().toLowerCase(),
         }),
@@ -4267,7 +4270,52 @@ class ChatPortalClient {
   }
 
   formatRunSubtitle(run, lastEvent) {
-    const label = lastEvent && lastEvent.label ? String(lastEvent.label) : "";
+    const normalizeSystemLabel = (raw) => {
+      const textRaw = (raw || "").toString().trim();
+      if (!textRaw) return "";
+      const lower = textRaw.toLowerCase();
+      if (lower === "stream_complete" || lower === "stream.completed" || lower === "answer ready" || lower === "answer_ready") {
+        return "";
+      }
+      if (lower.startsWith("responding")) {
+        return "";
+      }
+      let text = textRaw;
+      if (lower.startsWith("status:")) {
+        text = textRaw.slice("status:".length);
+      }
+      text = text.replace(/_/g, " ").replace(/\s+/g, " ").trim();
+      if (!text) return "";
+      return text.charAt(0).toUpperCase() + text.slice(1);
+    };
+
+    const computeLabel = (evt) => {
+      if (!evt || typeof evt !== "object") return "";
+      const stream = (evt.stream || "").toString().trim().toLowerCase();
+      const type = (evt.type || "").toString().trim().toLowerCase();
+      const raw = evt.label ? String(evt.label) : "";
+      const payload = evt.payload && typeof evt.payload === "object" ? evt.payload : {};
+
+      if (stream === "executed") {
+        const phase = (payload.phase || "").toString().trim().toLowerCase();
+        if (phase !== "finished") return "";
+        const toolName = (payload.tool_name || payload.toolName || "").toString().trim();
+        const remote = payload.remote && typeof payload.remote === "object" ? payload.remote : null;
+        const connectionName = remote && remote.connection_name ? remote.connection_name.toString().trim() : "";
+        const remoteTool = remote && remote.remote_tool ? remote.remote_tool.toString().trim() : "";
+        let title = toolName || remoteTool || raw || "Tool";
+        if (connectionName) title = `${connectionName} · ${title}`;
+        return `Tool: ${title}`;
+      }
+
+      if (type === "needs_approval") return "Needs approval";
+      if (type === "needs_user") return "Needs your input";
+      if (type === "result") return "Completed";
+      if (type === "error") return "Error";
+      return normalizeSystemLabel(raw || type);
+    };
+
+    const label = computeLabel(lastEvent);
     const createdAt = lastEvent && lastEvent.createdAt ? String(lastEvent.createdAt) : "";
     if (label && createdAt) {
       const when = Date.parse(createdAt);
@@ -4304,13 +4352,87 @@ class ChatPortalClient {
 
   renderRunLogHtml(state) {
     const events = state && Array.isArray(state.events) ? state.events : [];
-    const recent = events.slice(-15);
-    const items = recent
-      .map((evt) => {
-        const stream = evt && evt.stream ? String(evt.stream) : "";
-        const label = evt && evt.label ? String(evt.label) : String(evt && evt.type ? evt.type : "event");
-        const prefix = stream ? `${stream}: ` : "";
-        return `<div class="portal-task__list-item">${this.escapeHtml(prefix + label)}</div>`;
+    const recent = events.slice(-80);
+
+    const normalizeSystemLabel = (raw) => {
+      const textRaw = (raw || "").toString().trim();
+      if (!textRaw) return "";
+      const lower = textRaw.toLowerCase();
+      if (lower === "stream_complete" || lower === "stream.completed" || lower === "answer ready" || lower === "answer_ready") {
+        return "";
+      }
+      if (lower.startsWith("responding")) {
+        return "";
+      }
+      let text = textRaw;
+      if (lower.startsWith("status:")) {
+        text = textRaw.slice("status:".length);
+      }
+      text = text.replace(/_/g, " ").replace(/\s+/g, " ").trim();
+      if (!text) return "";
+      return text.charAt(0).toUpperCase() + text.slice(1);
+    };
+
+    const simplified = [];
+    let lastKey = "";
+    for (let idx = recent.length - 1; idx >= 0 && simplified.length < 12; idx -= 1) {
+      const evt = recent[idx];
+      if (!evt || typeof evt !== "object") continue;
+      const stream = (evt.stream || "").toString().trim().toLowerCase();
+      const type = (evt.type || "").toString().trim().toLowerCase();
+      const labelRaw = evt.label ? String(evt.label) : "";
+      const payload = evt.payload && typeof evt.payload === "object" ? evt.payload : {};
+
+      if (stream === "executed") {
+        const phase = (payload.phase || "").toString().trim().toLowerCase();
+        if (phase !== "finished") {
+          continue;
+        }
+        const toolNameRaw = (payload.tool_name || payload.toolName || "").toString().trim();
+        const remote = payload.remote && typeof payload.remote === "object" ? payload.remote : null;
+        const connectionName = remote && remote.connection_name ? remote.connection_name.toString().trim() : "";
+        const remoteTool = remote && remote.remote_tool ? remote.remote_tool.toString().trim() : "";
+        const output = payload.output && typeof payload.output === "object" ? payload.output : null;
+        const status =
+          (output && output.status ? String(output.status).trim().toLowerCase() : "") ||
+          (payload.status ? String(payload.status).trim().toLowerCase() : "");
+
+        let title = toolNameRaw || remoteTool || labelRaw || "Tool";
+        if (connectionName) {
+          title = `${connectionName} · ${title}`;
+        }
+
+        const toolLabel = title ? title.charAt(0).toUpperCase() + title.slice(1) : "Tool";
+        const line = status ? `Tool: ${toolLabel} - ${status}` : `Tool: ${toolLabel}`;
+        const key = `tool:${title}:${status || ""}`;
+        if (key === lastKey) continue;
+        lastKey = key;
+        simplified.push({ line, meta: "" });
+        continue;
+      }
+
+      if (stream === "system") {
+        let line = "";
+        if (type === "needs_approval") line = "Needs approval";
+        else if (type === "needs_user") line = "Needs your input";
+        else if (type === "result") line = "Completed";
+        else if (type === "error") line = "Error";
+        else if (labelRaw) line = normalizeSystemLabel(labelRaw);
+        else if (type) line = normalizeSystemLabel(type);
+
+        if (!line) continue;
+        const key = `sys:${line}`;
+        if (key === lastKey) continue;
+        lastKey = key;
+        simplified.push({ line, meta: "" });
+      }
+    }
+    simplified.reverse();
+
+    const items = simplified
+      .map((row) => {
+        const meta = row.meta ? `<div class="portal-task__subtitle">${this.escapeHtml(row.meta)}</div>` : "";
+        return `<div class="portal-task__list-item"><div>${this.escapeHtml(row.line)}</div>${meta}</div>`;
       })
       .join("");
     const body = items
@@ -4318,7 +4440,7 @@ class ChatPortalClient {
       : `<div class="portal-task__subtitle">No activity yet.</div>`;
     return `
       <div class="portal-task__section">
-        <div class="portal-task__section-title">Executed Log</div>
+        <div class="portal-task__section-title">Steps</div>
         ${body}
       </div>
     `;
@@ -4334,7 +4456,7 @@ class ChatPortalClient {
       return `
         <div class="portal-task__section">
           <div class="portal-task__section-title">Error</div>
-          <div class="portal-task__result">${this.escapeHtml(errorDetail)}</div>
+          <div class="portal-task__result">${this.renderMarkdown(errorDetail)}</div>
         </div>
       `;
     }
@@ -4343,7 +4465,7 @@ class ChatPortalClient {
       return `
         <div class="portal-task__section">
           <div class="portal-task__section-title">Result</div>
-          <div class="portal-task__result">${this.escapeHtml(responseText)}</div>
+          <div class="portal-task__result">${this.renderMarkdown(responseText)}</div>
         </div>
       `;
     }
@@ -4605,7 +4727,11 @@ class ChatPortalClient {
     const normalized = this.normalizeMarkdownForDisplay(raw);
     if (typeof marked === 'undefined') {
       // Fallback if marked not loaded
-      return normalized.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const escaped = normalized
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+      return escaped.replace(/\n/g, "<br>");
     }
     const html = marked.parse(normalized);
     if (typeof DOMPurify !== 'undefined') {
