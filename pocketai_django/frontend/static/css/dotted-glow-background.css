@@ -1,0 +1,28 @@
+/* Scoped CSS for Dotted Glow Background Integration */
+
+/* 
+  Masking for the dotted background.
+  Simulates the Tailwind v4 mask utilities: 
+  mask-radial-to-90% mask-radial-at-center
+*/
+.dotted-glow-mask {
+  -webkit-mask-image: radial-gradient(circle at center, black 0%, transparent 90%);
+  mask-image: radial-gradient(circle at center, black 0%, transparent 90%);
+}
+
+/* Ensure the summary has relative positioning for the canvas */
+.portal-agent-run__summary {
+  position: relative;
+  overflow: hidden; /* Contain the canvas */
+  /* Remove existing background so the glow is visible? 
+     Or keep it semi-transparent? 
+     The original CSS has background: hsl(var(--muted) / 0.32);
+     We might want to keep that or adjust it.
+  */
+}
+
+/* Ensure content inside summary stays on top of canvas */
+.portal-agent-run__summary > * {
+  position: relative;
+  z-index: 10;
+}
