@@ -622,22 +622,53 @@
   }
 
   [data-chat-portal] .mcp-tool-row {
-    padding: 0.125rem 0;
+    padding: 0.2rem 0;
     gap: 0.5rem;
   }
 
   [data-chat-portal] .mcp-tool-row-line {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.55rem;
     width: fit-content;
     max-width: 100%;
+    position: relative;
+    padding: 0.28rem 0.6rem 0.28rem 0.8rem;
+    border-radius: 999px;
+    background: transparent;
+  }
+
+  [data-chat-portal] .mcp-tool-row-line::before {
+    content: "";
+    position: absolute;
+    left: 0.3rem;
+    top: 22%;
+    width: 2px;
+    height: 56%;
+    border-radius: 999px;
+    background: hsl(var(--primary) / 0.45);
+  }
+
+  [data-chat-portal] .mcp-tool-row[data-tool-state="running"] .mcp-tool-row-line::before {
+    background: hsl(var(--primary) / 0.75);
+  }
+
+  [data-chat-portal] .mcp-tool-row[data-tool-state="pending"] .mcp-tool-row-line::before {
+    background: hsl(var(--primary) / 0.6);
+  }
+
+  [data-chat-portal] .mcp-tool-row[data-tool-state="success"] .mcp-tool-row-line::before {
+    background: hsl(var(--primary) / 0.6);
+  }
+
+  [data-chat-portal] .mcp-tool-row[data-tool-state="error"] .mcp-tool-row-line::before {
+    background: hsl(var(--primary) / 0.6);
   }
 
   [data-chat-portal] .mcp-tool-row-left {
     display: inline-flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.65rem;
     min-width: 0;
     max-width: 100%;
   }
@@ -648,8 +679,8 @@
 
   [data-chat-portal] .mcp-tool-title {
     font-size: var(--portal-font-xs);
-    font-weight: 500;
-    color: hsl(var(--foreground) / 0.78);
+    font-weight: 600;
+    color: hsl(var(--foreground) / 0.88);
     letter-spacing: 0.01em;
   }
 
@@ -659,11 +690,13 @@
 
   [data-chat-portal] .mcp-status {
     font-size: var(--portal-font-xs);
+    display: inline-flex;
+    align-items: center;
   }
 
   [data-chat-portal] .mcp-status-icon {
-    width: var(--portal-tool-orbit-size, 24px);
-    height: var(--portal-tool-orbit-size, 24px);
+    width: 8px;
+    height: 8px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -671,19 +704,33 @@
     position: relative;
   }
 
-  [data-chat-portal] .mcp-status-icon::before {
+  [data-chat-portal] .mcp-status-icon::before,
+  [data-chat-portal] .mcp-status-icon::after {
     content: "";
     position: absolute;
-    inset: 2px;
+    inset: 0;
     border-radius: 999px;
-    background: radial-gradient(circle at 50% 50%, hsl(var(--primary) / 0.18), transparent 62%);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 160ms ease;
   }
 
-  [data-chat-portal] .mcp-status-icon.mcp-status-icon--orbit::before {
-    opacity: 1;
+  [data-chat-portal] .mcp-status-icon::after {
+    background: hsl(var(--primary) / 0.5);
+  }
+
+  [data-chat-portal] .mcp-tool-row[data-tool-state="running"] .mcp-status-icon::after {
+    background: hsl(var(--primary));
+    animation: portal-task-status-pulse 1.1s ease-in-out infinite;
+  }
+
+  [data-chat-portal] .mcp-tool-row[data-tool-state="pending"] .mcp-status-icon::after {
+    background: hsl(var(--primary) / 0.8);
+  }
+
+  [data-chat-portal] .mcp-tool-row[data-tool-state="success"] .mcp-status-icon::after {
+    background: hsl(var(--primary) / 0.8);
+  }
+
+  [data-chat-portal] .mcp-tool-row[data-tool-state="error"] .mcp-status-icon::after {
+    background: hsl(var(--primary) / 0.8);
   }
 
   [data-chat-portal] .mcp-status-icon > * {
@@ -696,13 +743,7 @@
   }
 
   [data-chat-portal] .mcp-status-orbits {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-    display: block;
-    transform-origin: 50% 50%;
-    animation: mcp-orbits-spin 1.2s linear infinite;
-    filter: drop-shadow(0 0 16px hsl(var(--primary) / 0.42)) brightness(1.45) saturate(1.4) contrast(1.12);
+    display: none;
   }
 
   @keyframes mcp-orbits-spin {
@@ -717,10 +758,7 @@
   }
 
   [data-chat-portal] .mcp-status-done {
-    width: 20px;
-    height: 20px;
-    object-fit: contain;
-    display: block;
+    display: none;
   }
 
   [data-chat-portal] .chat-portal-status-orbit {
