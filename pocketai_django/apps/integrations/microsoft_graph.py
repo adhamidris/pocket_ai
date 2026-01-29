@@ -349,6 +349,84 @@ def graph_search_messages(
     }
 
 
+def graph_list_messages(
+    *,
+    access_token: str,
+    limit: int,
+    unread_only: bool = False,
+    after: str | None = None,
+    before: str | None = None,
+) -> dict[str, object]:
+    """
+    List recent mailbox messages with a conservative OData filter.
+
+    Unlike graph_search_messages, this does not require a full-text query.
+    """
+
+    safe_limit = max(1, min(int(limit or 0), 25))
+    params: dict[str, object] = {
+        "$top": safe_limit,
+        "$orderby": "receivedDateTime desc",
+        "$select": ",".join(
+            [
+                "id",
+                "conversationId",
+                "receivedDateTime",
+                "subject",
+                "bodyPreview",
+                "from",
+                "toRecipients",
+                "isRead",
+            ]
+        ),
+    }
+
+    clauses: list[str] = []
+    date_filter = _build_messages_filter(after=after, before=before)
+    if date_filter:
+        clauses.append(date_filter)
+    if unread_only:
+        clauses.append("isRead eq false")
+    if clauses:
+        params["$filter"] = " and ".join([c for c in clauses if c])
+
+    _, payload = _graph_request(
+        method="GET",
+        url=f"{GRAPH_API_BASE}/messages",
+        access_token=access_token,
+        params=params,
+    )
+
+    items = payload.get("value") if isinstance(payload.get("value"), list) else []
+    results: list[dict[str, object]] = []
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        message_id = str(item.get("id") or "").strip()
+        if not message_id:
+            continue
+        thread_id = str(item.get("conversationId") or "").strip()
+        from_obj = item.get("from") if isinstance(item.get("from"), Mapping) else {}
+        from_email = ""
+        if isinstance(from_obj, Mapping):
+            email_obj = from_obj.get("emailAddress") if isinstance(from_obj.get("emailAddress"), Mapping) else {}
+            from_email = str(email_obj.get("address") or "").strip()
+        results.append(
+            {
+                "message_id": message_id,
+                "thread_id": thread_id,
+                "snippet": str(item.get("bodyPreview") or "").strip(),
+                "subject": str(item.get("subject") or "").strip(),
+                "from": from_email,
+                "to": _format_addresses(item.get("toRecipients")),
+                "date": str(item.get("receivedDateTime") or "").strip(),
+                "is_read": bool(item.get("isRead")),
+            }
+        )
+
+    return {"results": results}
+
+
 def graph_get_message(
     *,
     access_token: str,

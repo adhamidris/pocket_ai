@@ -32,6 +32,7 @@ class FeatureState:
     rag_eval_logging: bool
     rag_agentic_mode: bool  # 2-tool retrieval: search (metadata) → read (content)
     mcp_gateway_mode: bool  # Small gateway tool surface for external MCP
+    sub_agents_v1: bool  # Background runs/automations/watchers/inbox
 
     def as_dict(self) -> dict[str, bool]:
         return {
@@ -47,6 +48,7 @@ class FeatureState:
             "rag_eval_logging": self.rag_eval_logging,
             "rag_agentic_mode": self.rag_agentic_mode,
             "mcp_gateway_mode": self.mcp_gateway_mode,
+            "sub_agents_v1": self.sub_agents_v1,
         }
 
 
@@ -69,7 +71,22 @@ class FeatureFlagService:
         metadata = getattr(business_profile, "metadata", {}) if business_profile else {}
         payload = metadata.get(FEATURE_FLAG_METADATA_KEY) if isinstance(metadata, dict) else {}
         normalized = sanitize_feature_payload(payload)
-        return cls._state_from_payload(normalized)
+        state = cls._state_from_payload(normalized)
+
+        # Global rollout override (mainly for dev/ops). When set, it forces the
+        # sub-agents flag regardless of per-business metadata.
+        try:
+            from django.conf import settings
+
+            override = getattr(settings, "SUB_AGENTS_V1_GLOBAL_OVERRIDE", None)
+        except Exception:  # pragma: no cover - defensive
+            override = None
+
+        if override is True and not state.sub_agents_v1:
+            return dataclasses.replace(state, sub_agents_v1=True)
+        if override is False and state.sub_agents_v1:
+            return dataclasses.replace(state, sub_agents_v1=False)
+        return state
 
     @classmethod
     def _state_from_payload(cls, payload: Mapping[str, bool]) -> FeatureState:
@@ -94,6 +111,7 @@ class FeatureFlagService:
             rag_eval_logging=bool(payload.get("rag_eval_logging", FEATURE_FLAG_DEFAULTS["rag_eval_logging"])),
             rag_agentic_mode=bool(payload.get("rag_agentic_mode", FEATURE_FLAG_DEFAULTS["rag_agentic_mode"])),
             mcp_gateway_mode=bool(payload.get("mcp_gateway_mode", FEATURE_FLAG_DEFAULTS["mcp_gateway_mode"])),
+            sub_agents_v1=bool(payload.get("sub_agents_v1", FEATURE_FLAG_DEFAULTS["sub_agents_v1"])),
         )
 
     @classmethod

@@ -3000,6 +3000,9 @@ def chat_portal(request: HttpRequest, business_slug: str, agent_slug: str) -> Ht
         metadata=visitor_metadata,
     )
 
+    capabilities = bootstrap_payload.get("capabilities") if isinstance(bootstrap_payload, dict) else {}
+    subagents_enabled = bool(capabilities.get("subAgentsEnabled")) if isinstance(capabilities, dict) else False
+
     business = bootstrap_payload.get("business", {})
     agent = bootstrap_payload.get("agent", {})
     session = bootstrap_payload.get("session", {})
@@ -3063,6 +3066,7 @@ def chat_portal(request: HttpRequest, business_slug: str, agent_slug: str) -> Ht
         "csat_scores": [(i, i) for i in range(1, 6)],
         "bootstrap_payload": bootstrap_payload,
         "bootstrap_script_id": PORTAL_BOOTSTRAP_SCRIPT_ID,
+        "subagents_enabled": subagents_enabled,
         "asset_version": getattr(settings, "PORTAL_ASSET_VERSION", "dev"),
         "endpoints": {
             "bootstrap": reverse("api:chat-portal-session"),
@@ -3073,6 +3077,8 @@ def chat_portal(request: HttpRequest, business_slug: str, agent_slug: str) -> Ht
             "csat": reverse("api:chat-csat"),
             "tool_approval": reverse("api:chat-portal-tools-approve"),
             "tool_history": reverse("api:chat-portal-tools-history"),
+            "run_user_input": reverse("api:chat-portal-runs-user-input"),
+            "agent_request_update": reverse("api:chat-portal-agent-requests-update"),
             "email_send_draft": reverse("api:chat-portal-email-send-draft"),
             "email_discard_draft": reverse("api:chat-portal-email-discard-draft"),
             "file_upload": reverse("api:chat-portal-files-upload"),

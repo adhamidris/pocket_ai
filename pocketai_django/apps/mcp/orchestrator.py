@@ -327,6 +327,7 @@ class McpOrchestratorService:
         conversation: Conversation,
         user_message: str,
         allowed_tools: set[str] | None = None,
+        wait_for_tool_approval: bool = True,
         on_response_text_delta: Callable[[str], None] | None = None,
         on_status_change: Callable[[str], None] | None = None,
         on_placeholder_response: Callable[[str], None] | None = None,
@@ -395,6 +396,18 @@ class McpOrchestratorService:
         # Gateway mode is permanently enabled.
         gateway_enabled = True
         internal_tool_defs.extend(mcp_tools.GATEWAY_TOOL_DEFINITIONS)
+        enable_user_input_tool = not wait_for_tool_approval
+        convo_meta = getattr(conversation, "metadata", None)
+        if isinstance(convo_meta, Mapping):
+            convo_source = str(convo_meta.get("source") or "").strip().lower()
+            if convo_source == "agent_run":
+                enable_user_input_tool = True
+        if not enable_user_input_tool:
+            internal_tool_defs = [
+                tool_def
+                for tool_def in internal_tool_defs
+                if self._tool_schema_name(tool_def) not in {"request_user_input", "create_agent_request"}
+            ]
         if rag_agentic_enabled:
             allowed = {
                 "search_knowledge",
@@ -407,6 +420,9 @@ class McpOrchestratorService:
                 "pdf_extract_text",
                 "mcp_search_tools",
                 "mcp_call_tool",
+                "request_user_input",
+                "create_agent_request",
+                "create_agent_run",
                 PORTAL_BLOCK_TOOL_NAME,
                 "email_search",
                 "email_get_message",
@@ -1453,6 +1469,7 @@ class McpOrchestratorService:
                                                         arguments=inner_args,
                                                         approval_requirement=approval_requirement,
                                                         on_tool_event=on_tool_event,
+                                                        wait_for_approval=wait_for_tool_approval,
                                                     )
                                                     if not approved:
                                                         tool_result = approval_result
@@ -1520,6 +1537,7 @@ class McpOrchestratorService:
                                                     arguments=arguments,
                                                     approval_requirement=approval_requirement,
                                                     on_tool_event=on_tool_event,
+                                                    wait_for_approval=wait_for_tool_approval,
                                                 )
                                                 if not approved:
                                                     tool_result = approval_result
@@ -1616,6 +1634,29 @@ class McpOrchestratorService:
                                                     internal_event_payload["input"] = {
                                                         "query": self._clip_text(query_text, 280),
                                                     }
+                                            elif tool_name == "request_user_input":
+                                                prompt_value = (
+                                                    effective_arguments.get("prompt") if isinstance(effective_arguments, Mapping) else None
+                                                )
+                                                prompt_text = str(prompt_value).strip() if prompt_value is not None else ""
+                                                raw_questions = (
+                                                    effective_arguments.get("questions") if isinstance(effective_arguments, Mapping) else None
+                                                )
+                                                questions: list[str] = []
+                                                if isinstance(raw_questions, list):
+                                                    for q in raw_questions:
+                                                        if not isinstance(q, str):
+                                                            continue
+                                                        qt = q.strip()
+                                                        if qt:
+                                                            questions.append(self._clip_text(qt, 200))
+                                                if prompt_text or questions:
+                                                    payload: dict[str, object] = {}
+                                                    if prompt_text:
+                                                        payload["prompt"] = self._clip_text(prompt_text, 280)
+                                                    if questions:
+                                                        payload["questions"] = questions[:5]
+                                                    internal_event_payload["input"] = payload
                                             if on_tool_event:
                                                 try:
                                                     on_tool_event(internal_event_payload)
@@ -1657,6 +1698,7 @@ class McpOrchestratorService:
                                                         arguments=effective_arguments,
                                                         reason=approval_reason,
                                                         on_tool_event=on_tool_event,
+                                                        wait_for_approval=wait_for_tool_approval,
                                                     )
                                                     if not approved:
                                                         tool_result = approval_result
@@ -2095,7 +2137,7 @@ class McpOrchestratorService:
                                         draft_id=draft_id,
                                     )
                                     if approval_needed:
-                                        approved, _, _ = self._maybe_request_email_tool_approval(
+                                        approved, _, approval_result = self._maybe_request_email_tool_approval(
                                             conversation=conversation,
                                             tool_name="email_send_draft",
                                             tool_call_id="",
@@ -2103,14 +2145,24 @@ class McpOrchestratorService:
                                             arguments=send_args,
                                             reason=approval_reason,
                                             on_tool_event=on_tool_event,
+                                            wait_for_approval=wait_for_tool_approval,
                                         )
                                         if not approved:
-                                            self._clear_pending_email_draft(
-                                                conversation=conversation,
-                                                email_account_id=getattr(email_account, "id", None),
-                                                draft_id=draft_id,
-                                            )
-                                            response_text = "Okay — I won't send it."
+                                            status_value = ""
+                                            if isinstance(approval_result, Mapping):
+                                                status_value = str(approval_result.get("status") or "").strip().lower()
+                                            if status_value != "pending_approval":
+                                                self._clear_pending_email_draft(
+                                                    conversation=conversation,
+                                                    email_account_id=getattr(email_account, "id", None),
+                                                    draft_id=draft_id,
+                                                )
+                                                response_text = "Okay — I won't send it."
+                                            else:
+                                                response_text = (
+                                                    "I need your approval before I can send this email. "
+                                                    "Please approve the pending request to continue."
+                                                )
                                             _emit_final_answer(response_text)
                                             _status_event("answer_finalized", "Answer ready")
                                             _status_event("stream_complete", "")
@@ -2686,6 +2738,7 @@ class McpOrchestratorService:
         conversation: Conversation,
         user_message: str,
         allowed_tools: set[str] | None = None,
+        wait_for_tool_approval: bool = True,
         on_response_text_delta: Callable[[str], None] | None = None,
         on_status_change: Callable[[str], None] | None = None,
         on_placeholder_response: Callable[[str], None] | None = None,
@@ -2701,6 +2754,7 @@ class McpOrchestratorService:
             conversation=conversation,
             user_message=user_message,
             allowed_tools=allowed_tools,
+            wait_for_tool_approval=wait_for_tool_approval,
             on_response_text_delta=on_response_text_delta,
             on_status_change=on_status_change,
             on_placeholder_response=on_placeholder_response,
@@ -4187,9 +4241,57 @@ class McpOrchestratorService:
         arguments: Mapping[str, object],
         reason: str,
         on_tool_event: Callable[[Mapping[str, object]], None] | None,
+        wait_for_approval: bool = True,
     ) -> tuple[bool, ConversationToolApproval | None, Mapping[str, object] | None]:
         expires_at = timezone.now() + timedelta(seconds=self._tool_approval_timeout_seconds())
         business_id = getattr(conversation, "business_profile_id", None)
+
+        redacted_input = redact_tool_input_payload(arguments, sensitive_keys={"body_text", "bodyText"})
+        redacted_input_dict = dict(redacted_input) if isinstance(redacted_input, Mapping) else {}
+
+        # Reuse a prior identical approval to avoid repeated prompts on retries/resumes.
+        existing_approved: ConversationToolApproval | None = None
+        with tenant_context(business_id):
+            approved_candidates = list(
+                ConversationToolApproval.objects.filter(
+                    conversation=conversation,
+                    tool_name=tool_name,
+                    remote_tool_name="",
+                    status=ConversationToolApprovalStatus.APPROVED,
+                )
+                .order_by("-resolved_at")[:10]
+            )
+        for candidate in approved_candidates:
+            candidate_input = getattr(candidate, "input_payload", None)
+            if isinstance(candidate_input, Mapping) and dict(candidate_input) == redacted_input_dict:
+                existing_approved = candidate
+                break
+
+        if existing_approved:
+            approval_payload = {
+                "id": str(existing_approved.id),
+                "status": ConversationToolApprovalStatus.APPROVED,
+                "operation_type": "write",
+                "reason": reason,
+                "expires_at": existing_approved.expires_at.isoformat() if existing_approved.expires_at else None,
+            }
+            resolve_event = {
+                "event_id": tool_event_id,
+                "phase": "approval_resolved",
+                "status": ConversationToolApprovalStatus.APPROVED,
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+                "kind": "email",
+                "approval": approval_payload,
+                "input": redacted_input_dict,
+            }
+            if on_tool_event:
+                try:
+                    on_tool_event(resolve_event)
+                except Exception:  # pragma: no cover - UI callback must not break tools
+                    logger.exception("mcp portal email approval resolve callback failed")
+            return True, existing_approved, None
+
         with tenant_context(business_id):
             existing = None
             if tool_call_id:
@@ -4234,7 +4336,7 @@ class McpOrchestratorService:
             "tool_call_id": tool_call_id,
             "tool_name": tool_name,
             "kind": "email",
-            "input": dict(redact_tool_input_payload(arguments, sensitive_keys={"body_text", "bodyText"})),
+            "input": redacted_input_dict,
             "approval": approval_payload,
         }
         if on_tool_event:
@@ -4242,6 +4344,18 @@ class McpOrchestratorService:
                 on_tool_event(request_event)
             except Exception:  # pragma: no cover - UI callback must not break tools
                 logger.exception("mcp portal email approval request callback failed")
+
+        if not wait_for_approval:
+            tool_result = {
+                "tool": tool_name,
+                "status": "pending_approval",
+                "error_code": "pending_approval",
+                "error": "Awaiting user approval.",
+                "hint": "Ask the user to approve or deny sending, then retry.",
+                "approval": approval_payload,
+                "input": redacted_input_dict,
+            }
+            return False, approval, tool_result
 
         approval = self._wait_for_tool_approval(approval=approval, conversation=conversation)
         status_value = approval.status if approval else ConversationToolApprovalStatus.DENIED
@@ -4258,9 +4372,7 @@ class McpOrchestratorService:
         # Include the (redacted) input so the portal UI can correlate this approval
         # resolution with the existing draft card (prevents duplicate "Sending email…"
         # cards that never transition to a finished state).
-        resolve_event["input"] = dict(
-            redact_tool_input_payload(arguments, sensitive_keys={"body_text", "bodyText"})
-        )
+        resolve_event["input"] = redacted_input_dict
 
         if status_value != ConversationToolApprovalStatus.APPROVED:
             tool_result = self._approval_blocked_payload(tool_name, status_value)
@@ -9087,9 +9199,67 @@ class McpOrchestratorService:
         arguments: Mapping[str, object],
         approval_requirement: Mapping[str, object],
         on_tool_event: Callable[[Mapping[str, object]], None] | None,
+        wait_for_approval: bool = True,
     ) -> tuple[bool, ConversationToolApproval | None, Mapping[str, object] | None]:
         if not approval_requirement.get("requires_approval"):
             return True, None, None
+
+        sensitive_keys = self._mcp_setup_fields_for_connection(connection).keys()
+        redacted_input = redact_tool_input_payload(arguments, sensitive_keys=sensitive_keys)
+        if not isinstance(redacted_input, Mapping):
+            redacted_input = {}
+        redacted_input_dict = dict(redacted_input)
+
+        # If an identical (redacted) call was already approved in this conversation,
+        # treat the approval as granted to avoid duplicate prompts during retries/resumes.
+        existing_approved: ConversationToolApproval | None = None
+        business_id = getattr(conversation, "business_profile_id", None)
+        with tenant_context(business_id):
+            approved_candidates = list(
+                ConversationToolApproval.objects.filter(
+                    conversation=conversation,
+                    tool_name=tool_name,
+                    remote_tool_name=remote_tool_name or "",
+                    status=ConversationToolApprovalStatus.APPROVED,
+                )
+                .order_by("-resolved_at")[:10]
+            )
+        for candidate in approved_candidates:
+            candidate_input = getattr(candidate, "input_payload", None)
+            if isinstance(candidate_input, Mapping) and dict(candidate_input) == redacted_input_dict:
+                existing_approved = candidate
+                break
+
+        if existing_approved:
+            approval_payload = {
+                "id": str(existing_approved.id),
+                "status": ConversationToolApprovalStatus.APPROVED,
+                "mode": approval_requirement.get("approval_mode"),
+                "operation_type": approval_requirement.get("operation_type"),
+                "reason": approval_requirement.get("reason"),
+                "expires_at": existing_approved.expires_at.isoformat() if existing_approved.expires_at else None,
+            }
+            resolve_event = {
+                "event_id": tool_event_id,
+                "phase": "approval_resolved",
+                "status": ConversationToolApprovalStatus.APPROVED,
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+                "kind": "mcp_remote",
+                "remote": {
+                    "connection_id": str(getattr(connection, "id", "") or ""),
+                    "connection_name": str(getattr(connection, "name", "") or ""),
+                    "endpoint_url": str(getattr(connection, "server_url", "") or ""),
+                    "remote_tool": remote_tool_name,
+                },
+                "approval": approval_payload,
+            }
+            if on_tool_event:
+                try:
+                    on_tool_event(resolve_event)
+                except Exception:  # pragma: no cover - UI callback must not break tools
+                    logger.exception("mcp portal tool approval resolve callback failed")
+            return True, existing_approved, None
 
         approval = self._get_or_create_tool_approval(
             conversation=conversation,
@@ -9109,10 +9279,6 @@ class McpOrchestratorService:
             "reason": approval_requirement.get("reason"),
             "expires_at": approval.expires_at.isoformat() if approval.expires_at else None,
         }
-        sensitive_keys = self._mcp_setup_fields_for_connection(connection).keys()
-        redacted_input = redact_tool_input_payload(arguments, sensitive_keys=sensitive_keys)
-        if not isinstance(redacted_input, Mapping):
-            redacted_input = {}
         request_event = {
             "event_id": tool_event_id,
             "phase": "approval_requested",
@@ -9126,7 +9292,7 @@ class McpOrchestratorService:
                 "endpoint_url": str(getattr(connection, "server_url", "") or ""),
                 "remote_tool": remote_tool_name,
             },
-            "input": dict(redacted_input),
+            "input": redacted_input_dict,
             "approval": approval_payload,
         }
         if on_tool_event:
@@ -9134,6 +9300,19 @@ class McpOrchestratorService:
                 on_tool_event(request_event)
             except Exception:  # pragma: no cover - UI callback must not break tools
                 logger.exception("mcp portal tool approval request callback failed")
+
+        if not wait_for_approval:
+            tool_result = {
+                "tool": tool_name,
+                "status": "pending_approval",
+                "error_code": "pending_approval",
+                "error": "Awaiting user approval.",
+                "hint": "Ask the user to approve or deny this action, then retry the tool call.",
+                "approval": approval_payload,
+                "remote": dict(request_event.get("remote") or {}) if isinstance(request_event.get("remote"), Mapping) else {},
+                "input": redacted_input_dict,
+            }
+            return False, approval, tool_result
 
         approval = self._wait_for_tool_approval(approval=approval, conversation=conversation)
         status_value = approval.status if approval else ConversationToolApprovalStatus.DENIED

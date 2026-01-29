@@ -6,6 +6,7 @@ from django.test import TestCase, override_settings
 
 from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
 from apps.accounts.models import (
+    AgentProfile,
     BusinessProfile,
     KnowledgeSourceType,
     KnowledgeStatus,
@@ -20,7 +21,7 @@ from apps.accounts.models import (
     IdentifierSchemaSource,
     IdentifierSchemaStatus,
 )
-from apps.conversations.models import Conversation
+from apps.conversations.models import AgentRun, AgentRunEvent, AgentRunEventType, AgentRunStatus, Conversation
 from apps.mcp import tools
 from apps.mcp.types import ToolExecutionContext
 from core.tenancy import tenant_context
@@ -787,3 +788,100 @@ class McpSearchKnowledgeHandlerTests(TestCase):
         self.assertEqual(completeness["shown"], 2)
         self.assertEqual(completeness["already_seen"], 2)
         self.assertTrue(completeness.get("all_previously_shown"))
+
+
+@override_settings(SUB_AGENTS_V1_GLOBAL_OVERRIDE=None)
+class McpCreateAgentRunToolTests(TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.user = User.objects.create(email="mcp-runs@example.com", first_name="Runner")
+        self.registration = RegistrationSession.objects.create(user=self.user)
+        self.business = BusinessProfile.objects.create(
+            user=self.user,
+            registration_session=self.registration,
+            name="Runs Co",
+            industry="ops",
+            metadata={FEATURE_FLAG_METADATA_KEY: {"sub_agents_v1": True}},
+        )
+        self.tenant_scope = tenant_context(self.business.id)
+        self.tenant_scope.__enter__()
+        self.agent = AgentProfile.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            name="Ops Agent",
+        )
+        self.conversation = Conversation.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            session_token="runs-session",
+            metadata={"actor_user_id": str(self.user.id)},
+        )
+
+    def tearDown(self) -> None:
+        if hasattr(self, "tenant_scope"):
+            self.tenant_scope.__exit__(None, None, None)
+        super().tearDown()
+
+    def test_create_agent_run_rejects_when_feature_disabled(self) -> None:
+        self.business.metadata = {FEATURE_FLAG_METADATA_KEY: {"sub_agents_v1": False}}
+        self.business.save(update_fields=["metadata"])
+        result = tools.execute_tool(
+            "create_agent_run",
+            {"goal": "Do the thing"},
+            conversation=self.conversation,
+            context=ToolExecutionContext(),
+        )
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["error_code"], "feature_disabled")
+
+    def test_create_agent_run_rejects_without_actor_user_id(self) -> None:
+        self.conversation.metadata = {}
+        self.conversation.save(update_fields=["metadata"])
+        result = tools.execute_tool(
+            "create_agent_run",
+            {"goal": "Do the thing"},
+            conversation=self.conversation,
+            context=ToolExecutionContext(),
+        )
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["error_code"], "missing_actor_user")
+
+    def test_create_agent_run_rejects_nested_run_conversation(self) -> None:
+        self.conversation.metadata = {"source": "agent_run", "actor_user_id": str(self.user.id)}
+        self.conversation.save(update_fields=["metadata"])
+        result = tools.execute_tool(
+            "create_agent_run",
+            {"goal": "Do the thing"},
+            conversation=self.conversation,
+            context=ToolExecutionContext(),
+        )
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["error_code"], "nested_runs_forbidden")
+
+    def test_create_agent_run_creates_run_and_queued_event(self) -> None:
+        result = tools.execute_tool(
+            "create_agent_run",
+            {
+                "goal": "Summarize yesterday sales and draft an email",
+                "title": "Daily Sales Summary",
+                "success_criteria": ["Email draft created", "Summary includes totals"],
+                "constraints": {"timeout_seconds": 120},
+            },
+            conversation=self.conversation,
+            context=ToolExecutionContext(),
+        )
+        self.assertEqual(result["status"], "ok")
+        run_id = result.get("run_id")
+        self.assertIsNotNone(run_id)
+
+        run = AgentRun.objects.get(id=run_id)
+        self.assertEqual(run.conversation_id, self.conversation.id)
+        self.assertEqual(run.created_by_id, self.user.id)
+        self.assertEqual(run.status, AgentRunStatus.QUEUED)
+        self.assertEqual(run.title, "Daily Sales Summary")
+
+        queued = AgentRunEvent.objects.filter(run=run, sequence_index=1).first()
+        self.assertIsNotNone(queued)
+        assert queued is not None
+        self.assertEqual(queued.event_type, AgentRunEventType.PROGRESS)
+        self.assertEqual(queued.label, "Queued")

@@ -1433,6 +1433,66 @@
     line-height: 1.45;
   }
 
+  /* ------------------------------------------------------------------ */
+  /* Inbox Panel (Agent Requests) */
+
+  [data-chat-portal] [data-inbox-panel][hidden] {
+    display: none !important;
+  }
+
+  [data-chat-portal] [data-inbox-panel] {
+    display: none;
+    width: 360px;
+    min-width: 320px;
+    max-width: 420px;
+    border-left: 1px solid hsl(var(--border) / 0.5);
+    background: hsl(var(--muted) / 0.22);
+    color: hsl(var(--foreground));
+    flex-direction: column;
+  }
+
+  @media (min-width: 1024px) {
+    [data-chat-portal] [data-inbox-panel] {
+      display: flex;
+    }
+  }
+
+  [data-chat-portal] .portal-inbox-header {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 1rem 1rem 0.85rem;
+    border-bottom: 1px solid hsl(var(--border) / 0.5);
+    background: hsl(var(--background) / 0.86);
+    backdrop-filter: blur(12px);
+  }
+
+  [data-chat-portal] .portal-inbox-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+
+  [data-chat-portal] .portal-inbox-body {
+    flex: 1;
+    min-height: 0;
+    padding: 0.85rem 0.85rem 1rem;
+    overflow-y: auto;
+  }
+
+  [data-chat-portal] .portal-inbox-empty {
+    padding: 0.9rem 0.9rem;
+    border: 1px dashed hsl(var(--border) / 0.7);
+    border-radius: 14px;
+    color: hsl(var(--muted-foreground));
+    font-size: 0.85rem;
+    line-height: 1.45;
+  }
+
   [data-chat-portal] .portal-task {
     border: 1px solid hsl(var(--border) / 0.75);
     border-radius: 16px;
@@ -1526,6 +1586,31 @@
     color: hsl(0 84% 60%);
   }
 
+  [data-chat-portal] .portal-task__status-pill[data-status="waiting_user"],
+  [data-chat-portal] .portal-task__status-pill[data-status="waiting_approval"] {
+    border-color: hsl(38 92% 50% / 0.55);
+    background: hsl(38 92% 50% / 0.14);
+    color: hsl(38 92% 50%);
+  }
+
+  [data-chat-portal] .portal-task__status-pill[data-status="open"] {
+    border-color: hsl(38 92% 50% / 0.55);
+    background: hsl(38 92% 50% / 0.14);
+    color: hsl(38 92% 50%);
+  }
+
+  [data-chat-portal] .portal-task__status-pill[data-status="in_progress"] {
+    border-color: hsl(var(--primary) / 0.5);
+    background: hsl(var(--primary) / 0.14);
+    color: hsl(var(--primary));
+  }
+
+  [data-chat-portal] .portal-task__status-pill[data-status="resolved"] {
+    border-color: hsl(142 76% 36% / 0.45);
+    background: hsl(142 76% 36% / 0.12);
+    color: hsl(142 76% 36%);
+  }
+
   [data-chat-portal] .portal-task__body {
     border-top: 1px solid hsl(var(--border) / 0.55);
     padding: 0.75rem 0.9rem 0.95rem;
@@ -1584,6 +1669,62 @@
     overflow-wrap: anywhere;
   }
 
+  [data-chat-portal] .portal-task__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.65rem;
+  }
+
+  [data-chat-portal] .portal-task__btn {
+    border-radius: 12px;
+    padding: 0.5rem 0.7rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    border: 1px solid hsl(var(--border) / 0.65);
+    background: hsl(var(--background) / 0.8);
+    color: hsl(var(--foreground));
+    transition: background 140ms ease, border-color 140ms ease, opacity 140ms ease;
+  }
+
+  [data-chat-portal] .portal-task__btn:hover {
+    background: hsl(var(--muted) / 0.55);
+    border-color: hsl(var(--border));
+  }
+
+  [data-chat-portal] .portal-task__btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  [data-chat-portal] .portal-task__btn--approve {
+    border-color: hsl(142 76% 36% / 0.45);
+    color: hsl(142 76% 36%);
+  }
+
+  [data-chat-portal] .portal-task__btn--deny {
+    border-color: hsl(0 84% 60% / 0.5);
+    color: hsl(0 84% 60%);
+  }
+
+  [data-chat-portal] .portal-task__input {
+    width: 100%;
+    min-height: 84px;
+    resize: vertical;
+    border-radius: 14px;
+    padding: 0.65rem 0.7rem;
+    font-size: 0.82rem;
+    line-height: 1.4;
+    border: 1px solid hsl(var(--border) / 0.7);
+    background: hsl(var(--background) / 0.8);
+    color: hsl(var(--foreground));
+  }
+
+  [data-chat-portal] .portal-task__input:focus-visible {
+    outline: 2px solid hsl(var(--primary) / 0.55);
+    outline-offset: 2px;
+  }
+
   [data-chat-portal] .portal-tasks-open-btn[hidden] {
     display: none !important;
   }
@@ -1636,6 +1777,59 @@
     justify-content: center;
     box-shadow: 0 12px 24px hsl(var(--primary) / 0.2);
   }
+
+  [data-chat-portal] .portal-inbox-open-btn[hidden] {
+    display: none !important;
+  }
+
+  [data-chat-portal] .portal-inbox-open-btn {
+    position: absolute;
+    top: 1rem;
+    right: 7rem;
+    z-index: 50;
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid hsl(var(--border) / 0.6);
+    background: hsl(var(--background) / 0.86);
+    color: hsl(var(--muted-foreground));
+    backdrop-filter: blur(10px);
+    transition: background 160ms ease, color 160ms ease, border-color 160ms ease, transform 120ms ease;
+  }
+
+  @media (min-width: 1024px) {
+    [data-chat-portal] .portal-inbox-open-btn {
+      display: inline-flex;
+    }
+  }
+
+  [data-chat-portal] .portal-inbox-open-btn:hover {
+    color: hsl(var(--foreground));
+    background: hsl(var(--muted) / 0.55);
+    border-color: hsl(var(--border));
+    transform: translateY(-1px);
+  }
+
+  [data-chat-portal] .portal-inbox-open-btn__badge {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: hsl(38 92% 50%);
+    color: white;
+    font-size: 0.7rem;
+    font-weight: 800;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 12px 24px hsl(38 92% 50% / 0.22);
+  }
 </style>
 {% endblock %}
 
@@ -1647,6 +1841,8 @@
   data-endpoint-stream-stop="{{ portal.endpoints.stream_stop }}"
   data-endpoint-csat="{{ portal.endpoints.csat }}" data-endpoint-tool-approval="{{ portal.endpoints.tool_approval }}"
   data-endpoint-tool-history="{{ portal.endpoints.tool_history }}"
+  data-endpoint-run-user-input="{{ portal.endpoints.run_user_input }}"
+  data-endpoint-agent-request-update="{{ portal.endpoints.agent_request_update }}"
   data-endpoint-email-send-draft="{{ portal.endpoints.email_send_draft }}"
   data-endpoint-email-discard-draft="{{ portal.endpoints.email_discard_draft }}"
   data-endpoint-file-upload="{{ portal.endpoints.file_upload }}"
@@ -1654,6 +1850,7 @@
   data-business-slug="{{ portal.business.slug }}"
   data-agent-slug="{{ portal.agent.slug }}" data-agent-name="{{ portal.agent.name }}"
   data-agent-initials="{{ portal.agent.initials }}" data-bootstrap-script-id="{{ portal.bootstrap_script_id }}"
+  data-subagents-enabled="{{ portal.subagents_enabled|yesno:'true,false' }}"
   data-initial-status="{{ portal.conversation_status_code }}">
 
   <!-- Sidebar - Session Management -->
@@ -1779,6 +1976,14 @@
         <svg class="absolute inset-0 h-5 w-5" data-theme-icon="sun" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
         <svg class="absolute inset-0 h-5 w-5" data-theme-icon="moon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
       </span>
+    </button>
+    <button type="button" class="portal-inbox-open-btn" data-inbox-open-btn hidden aria-label="Open inbox">
+      <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 15V8a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v7"></path>
+        <path d="M7 10h10"></path>
+        <path d="M21 15l-3 6H6l-3-6"></path>
+      </svg>
+      <span class="portal-inbox-open-btn__badge" data-inbox-count hidden>0</span>
     </button>
     <button type="button" class="portal-tasks-open-btn" data-tasks-open-btn hidden aria-label="Open tasks">
       <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -1954,6 +2159,25 @@
         Background tasks will appear here while you keep chatting.
       </div>
       <div data-tasks-cards></div>
+    </div>
+  </aside>
+
+  <!-- Inbox Panel (Agent Requests) -->
+  <aside hidden data-inbox-panel>
+    <div class="portal-inbox-header" data-inbox-header>
+      <div class="portal-inbox-title">Inbox</div>
+      <button type="button" class="portal-tasks-close-btn" data-inbox-close-btn aria-label="Close inbox">
+        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M18 6L6 18"></path>
+          <path d="M6 6l12 12"></path>
+        </svg>
+      </button>
+    </div>
+    <div class="portal-inbox-body custom-scrollbar" data-inbox-list>
+      <div class="portal-inbox-empty" data-inbox-empty>
+        Agent-to-agent requests will appear here.
+      </div>
+      <div data-inbox-cards></div>
     </div>
   </aside>
 </div>

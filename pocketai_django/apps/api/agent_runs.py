@@ -1,20 +1,24 @@
 from __future__ import annotations
 
 import json
+import secrets
 import uuid
 from http import HTTPStatus
 from typing import Any
 
 from django.db import transaction
-from django.db.models import Max
+from django.db.models import Max, Q
 from django.http import HttpRequest, JsonResponse
 from django.utils import timezone
+from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.http import require_http_methods
+from django.views.decorators.http import require_POST
 
-from core.tenancy import tenant_context
+from core.tenancy import tenant_bypass, tenant_context
 
-from apps.accounts.models import AgentProfile
+from apps.accounts.models import AgentProfile, EmailAccount, EmailAccountStatus
+from apps.accounts.feature_flags import FeatureFlagService
 from apps.conversations.models import (
     AgentAutomation,
     AgentAutomationStatus,
@@ -30,8 +34,13 @@ from apps.conversations.models import (
     AgentRunSpecStatus,
     AgentRunStatus,
     AgentRunVisibility,
+    AgentWatcher,
+    AgentWatcherStatus,
+    AgentWatcherType,
     Conversation,
 )
+from apps.conversations.automation_scheduling import CronScheduleError, compute_next_automation_trigger_at
+from apps.conversations.output_destinations import ensure_automation_thread, ensure_watcher_thread
 from apps.conversations.run_contracts import normalize_run_spec
 
 
@@ -69,11 +78,62 @@ def _resolve_agent_for_request(request: HttpRequest, agent_id: uuid.UUID) -> tup
 
     qs = AgentProfile.objects.select_related("business_profile")
     if not request.user.is_staff:
-        qs = qs.filter(user=request.user)
+        # Teams/roles are pending; for now treat the business owner as "manager"
+        # with visibility into the workspace, in addition to the agent's assigned user.
+        qs = qs.filter(Q(user=request.user) | Q(business_profile__user=request.user))
     agent = qs.filter(id=agent_id).first()
     if agent is None:
         return None, JsonResponse({"error": "AGENT_NOT_FOUND", "message": "Agent profile not found."}, status=HTTPStatus.NOT_FOUND)
     return agent, None
+
+
+def _user_is_business_owner(request: HttpRequest, agent: AgentProfile) -> bool:
+    business = getattr(agent, "business_profile", None)
+    owner_id = getattr(business, "user_id", None)
+    return bool(request.user.is_authenticated and owner_id and owner_id == request.user.id)
+
+
+def _ensure_subagents_enabled(
+    request: HttpRequest,
+    *,
+    agent: AgentProfile,
+    allow_read_only: bool = True,
+) -> JsonResponse | None:
+    """
+    Enforce per-business rollout toggle for sub-agents surfaces.
+
+    Teams/roles are pending; this is a coarse per-tenant feature gate.
+    """
+
+    if request.user.is_staff:
+        return None
+    enabled = bool(getattr(FeatureFlagService.snapshot(agent.business_profile), "sub_agents_v1", False))
+    if enabled:
+        return None
+    if allow_read_only and request.method == "GET":
+        return None
+    return JsonResponse(
+        {"error": "FEATURE_DISABLED", "message": "Sub-agents are not enabled for this business."},
+        status=HTTPStatus.FORBIDDEN,
+    )
+
+
+def _run_visibility_filter(request: HttpRequest, *, agent: AgentProfile) -> Q:
+    """
+    Runs are workspace-scoped but may be restricted by visibility.
+
+    - initiator: only the initiating user (created_by)
+    - managers: initiator + business owner (until full team RBAC lands)
+    - workspace: any user who can access this agent in this tenant
+    """
+
+    if request.user.is_staff:
+        return Q()
+
+    base = Q(created_by=request.user) | Q(visibility=AgentRunVisibility.WORKSPACE)
+    if _user_is_business_owner(request, agent):
+        base |= Q(visibility=AgentRunVisibility.MANAGERS)
+    return base
 
 
 def _serialize_run_spec(spec: AgentRunSpec) -> dict[str, object]:
@@ -154,6 +214,34 @@ def _serialize_automation(automation: AgentAutomation) -> dict[str, object]:
     }
 
 
+def _serialize_watcher(watcher: AgentWatcher) -> dict[str, object]:
+    return {
+        "id": str(watcher.id),
+        "agentId": str(watcher.agent_profile_id),
+        "businessId": str(watcher.business_profile_id),
+        "conversationId": str(watcher.conversation_id) if watcher.conversation_id else None,
+        "runSpecId": str(watcher.run_spec_id) if watcher.run_spec_id else None,
+        "emailAccountId": str(watcher.email_account_id) if watcher.email_account_id else None,
+        "name": watcher.name,
+        "status": watcher.status,
+        "visibility": watcher.visibility,
+        "watcherType": watcher.watcher_type,
+        "watchConfig": watcher.watch_config if isinstance(watcher.watch_config, dict) else {},
+        "destinationConfig": watcher.destination_config if isinstance(getattr(watcher, "destination_config", None), dict) else {},
+        "pollIntervalSeconds": int(watcher.poll_interval_seconds or 0),
+        "maxEventsPerPoll": int(watcher.max_events_per_poll or 0),
+        "lastPolledAt": watcher.last_polled_at.isoformat() if watcher.last_polled_at else None,
+        "nextPollAt": watcher.next_poll_at.isoformat() if watcher.next_poll_at else None,
+        "leaseExpiresAt": watcher.lease_expires_at.isoformat() if watcher.lease_expires_at else None,
+        "errorCount": int(watcher.error_count or 0),
+        "lastError": watcher.last_error or "",
+        "metadata": watcher.metadata if isinstance(watcher.metadata, dict) else {},
+        "createdBy": str(watcher.created_by_id) if watcher.created_by_id else None,
+        "createdAt": watcher.created_at.isoformat() if watcher.created_at else None,
+        "updatedAt": watcher.updated_at.isoformat() if watcher.updated_at else None,
+    }
+
+
 def _append_run_event(
     run_id: uuid.UUID,
     *,
@@ -213,6 +301,9 @@ def agent_run_specs_collection(request: HttpRequest, agent_id: uuid.UUID) -> Jso
     if error:
         return error
     assert agent is not None
+    feature_err = _ensure_subagents_enabled(request, agent=agent, allow_read_only=True)
+    if feature_err:
+        return feature_err
 
     with tenant_context(agent.business_profile_id):
         if request.method == "GET":
@@ -262,6 +353,9 @@ def agent_run_spec_detail(request: HttpRequest, agent_id: uuid.UUID, spec_id: uu
     if error:
         return error
     assert agent is not None
+    feature_err = _ensure_subagents_enabled(request, agent=agent, allow_read_only=True)
+    if feature_err:
+        return feature_err
 
     with tenant_context(agent.business_profile_id):
         run_spec = AgentRunSpec.objects.filter(id=spec_id, agent_profile=agent).first()
@@ -312,6 +406,9 @@ def agent_runs_collection(request: HttpRequest, agent_id: uuid.UUID) -> JsonResp
     if error:
         return error
     assert agent is not None
+    feature_err = _ensure_subagents_enabled(request, agent=agent, allow_read_only=True)
+    if feature_err:
+        return feature_err
 
     with tenant_context(agent.business_profile_id):
         if request.method == "GET":
@@ -322,7 +419,7 @@ def agent_runs_collection(request: HttpRequest, agent_id: uuid.UUID) -> JsonResp
             limit = max(1, min(limit, 200))
             offset = max(0, offset)
 
-            qs = AgentRun.objects.filter(agent_profile=agent).order_by("-created_at")
+            qs = AgentRun.objects.filter(agent_profile=agent).filter(_run_visibility_filter(request, agent=agent)).order_by("-created_at")
             if status:
                 qs = qs.filter(status=status)
             if conversation_id:
@@ -414,9 +511,16 @@ def agent_run_detail(request: HttpRequest, agent_id: uuid.UUID, run_id: uuid.UUI
     if error:
         return error
     assert agent is not None
+    feature_err = _ensure_subagents_enabled(request, agent=agent, allow_read_only=True)
+    if feature_err:
+        return feature_err
 
     with tenant_context(agent.business_profile_id):
-        run = AgentRun.objects.filter(id=run_id, agent_profile=agent).first()
+        run = (
+            AgentRun.objects.filter(id=run_id, agent_profile=agent)
+            .filter(_run_visibility_filter(request, agent=agent))
+            .first()
+        )
         if run is None:
             return JsonResponse({"error": "RUN_NOT_FOUND", "message": "Run not found."}, status=HTTPStatus.NOT_FOUND)
 
@@ -458,9 +562,16 @@ def agent_run_events(request: HttpRequest, agent_id: uuid.UUID, run_id: uuid.UUI
     if error:
         return error
     assert agent is not None
+    feature_err = _ensure_subagents_enabled(request, agent=agent, allow_read_only=True)
+    if feature_err:
+        return feature_err
 
     with tenant_context(agent.business_profile_id):
-        run = AgentRun.objects.filter(id=run_id, agent_profile=agent).first()
+        run = (
+            AgentRun.objects.filter(id=run_id, agent_profile=agent)
+            .filter(_run_visibility_filter(request, agent=agent))
+            .first()
+        )
         if run is None:
             return JsonResponse({"error": "RUN_NOT_FOUND", "message": "Run not found."}, status=HTTPStatus.NOT_FOUND)
 
@@ -485,6 +596,9 @@ def agent_run_cancel(request: HttpRequest, agent_id: uuid.UUID, run_id: uuid.UUI
     if error:
         return error
     assert agent is not None
+    feature_err = _ensure_subagents_enabled(request, agent=agent, allow_read_only=False)
+    if feature_err:
+        return feature_err
 
     payload, error = _parse_json_body(request)
     if error:
@@ -493,7 +607,11 @@ def agent_run_cancel(request: HttpRequest, agent_id: uuid.UUID, run_id: uuid.UUI
     reason = str((payload or {}).get("reason") or "").strip()
 
     with tenant_context(agent.business_profile_id):
-        run = AgentRun.objects.filter(id=run_id, agent_profile=agent).first()
+        run = (
+            AgentRun.objects.filter(id=run_id, agent_profile=agent)
+            .filter(_run_visibility_filter(request, agent=agent))
+            .first()
+        )
         if run is None:
             return JsonResponse({"error": "RUN_NOT_FOUND", "message": "Run not found."}, status=HTTPStatus.NOT_FOUND)
 
@@ -520,6 +638,9 @@ def agent_run_user_input(request: HttpRequest, agent_id: uuid.UUID, run_id: uuid
     if error:
         return error
     assert agent is not None
+    feature_err = _ensure_subagents_enabled(request, agent=agent, allow_read_only=False)
+    if feature_err:
+        return feature_err
 
     payload, error = _parse_json_body(request)
     if error:
@@ -536,7 +657,11 @@ def agent_run_user_input(request: HttpRequest, agent_id: uuid.UUID, run_id: uuid
         )
 
     with tenant_context(agent.business_profile_id):
-        run = AgentRun.objects.filter(id=run_id, agent_profile=agent).first()
+        run = (
+            AgentRun.objects.filter(id=run_id, agent_profile=agent)
+            .filter(_run_visibility_filter(request, agent=agent))
+            .first()
+        )
         if run is None:
             return JsonResponse({"error": "RUN_NOT_FOUND", "message": "Run not found."}, status=HTTPStatus.NOT_FOUND)
 
@@ -577,6 +702,9 @@ def agent_run_approval(request: HttpRequest, agent_id: uuid.UUID, run_id: uuid.U
     if error:
         return error
     assert agent is not None
+    feature_err = _ensure_subagents_enabled(request, agent=agent, allow_read_only=False)
+    if feature_err:
+        return feature_err
 
     payload, error = _parse_json_body(request)
     if error:
@@ -594,7 +722,11 @@ def agent_run_approval(request: HttpRequest, agent_id: uuid.UUID, run_id: uuid.U
     extra_payload = dict(extra) if isinstance(extra, dict) else {}
 
     with tenant_context(agent.business_profile_id):
-        run = AgentRun.objects.filter(id=run_id, agent_profile=agent).first()
+        run = (
+            AgentRun.objects.filter(id=run_id, agent_profile=agent)
+            .filter(_run_visibility_filter(request, agent=agent))
+            .first()
+        )
         if run is None:
             return JsonResponse({"error": "RUN_NOT_FOUND", "message": "Run not found."}, status=HTTPStatus.NOT_FOUND)
 
@@ -640,6 +772,9 @@ def agent_run_resume(request: HttpRequest, agent_id: uuid.UUID, run_id: uuid.UUI
     if error:
         return error
     assert agent is not None
+    feature_err = _ensure_subagents_enabled(request, agent=agent, allow_read_only=False)
+    if feature_err:
+        return feature_err
 
     payload, error = _parse_json_body(request)
     if error:
@@ -648,7 +783,11 @@ def agent_run_resume(request: HttpRequest, agent_id: uuid.UUID, run_id: uuid.UUI
     reason = str((payload or {}).get("reason") or "").strip()
 
     with tenant_context(agent.business_profile_id):
-        run = AgentRun.objects.filter(id=run_id, agent_profile=agent).first()
+        run = (
+            AgentRun.objects.filter(id=run_id, agent_profile=agent)
+            .filter(_run_visibility_filter(request, agent=agent))
+            .first()
+        )
         if run is None:
             return JsonResponse({"error": "RUN_NOT_FOUND", "message": "Run not found."}, status=HTTPStatus.NOT_FOUND)
 
@@ -686,6 +825,9 @@ def agent_automations_collection(request: HttpRequest, agent_id: uuid.UUID) -> J
     if error:
         return error
     assert agent is not None
+    feature_err = _ensure_subagents_enabled(request, agent=agent, allow_read_only=True)
+    if feature_err:
+        return feature_err
 
     with tenant_context(agent.business_profile_id):
         if request.method == "GET":
@@ -719,6 +861,11 @@ def agent_automations_collection(request: HttpRequest, agent_id: uuid.UUID) -> J
         trigger_config = (payload or {}).get("triggerConfig")
         trigger_config = dict(trigger_config) if isinstance(trigger_config, dict) else {}
 
+        if trigger_type == AgentAutomationTriggerType.WEBHOOK:
+            secret_value = str(trigger_config.get("secret") or "").strip()
+            if not secret_value:
+                trigger_config["secret"] = secrets.token_urlsafe(24)
+
         destination_config = (payload or {}).get("destinationConfig")
         destination_config = dict(destination_config) if isinstance(destination_config, dict) else {}
 
@@ -749,6 +896,13 @@ def agent_automations_collection(request: HttpRequest, agent_id: uuid.UUID) -> J
             snapshot_payload = (payload or {}).get("runSpec") or (payload or {}).get("runSpecSnapshot") or {}
             run_spec_snapshot = normalize_run_spec(snapshot_payload)
 
+        next_trigger_at = None
+        if status == AgentAutomationStatus.ACTIVE and trigger_type == AgentAutomationTriggerType.CRON:
+            try:
+                next_trigger_at = compute_next_automation_trigger_at(trigger_type, trigger_config, after=timezone.now())
+            except CronScheduleError as exc:
+                return JsonResponse({"error": "VALIDATION_ERROR", "message": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+
         automation = AgentAutomation.objects.create(
             business_profile=agent.business_profile,
             agent_profile=agent,
@@ -762,8 +916,11 @@ def agent_automations_collection(request: HttpRequest, agent_id: uuid.UUID) -> J
             trigger_type=trigger_type,
             trigger_config=trigger_config,
             destination_config=destination_config,
+            next_trigger_at=next_trigger_at,
             metadata=(payload or {}).get("metadata") if isinstance((payload or {}).get("metadata"), dict) else {},
         )
+        if automation.conversation_id is None:
+            ensure_automation_thread(automation)
         return JsonResponse({"automation": _serialize_automation(automation)}, status=HTTPStatus.CREATED)
 
 
@@ -774,6 +931,9 @@ def agent_automation_detail(request: HttpRequest, agent_id: uuid.UUID, automatio
     if error:
         return error
     assert agent is not None
+    feature_err = _ensure_subagents_enabled(request, agent=agent, allow_read_only=True)
+    if feature_err:
+        return feature_err
 
     with tenant_context(agent.business_profile_id):
         automation = AgentAutomation.objects.filter(id=automation_id, agent_profile=agent).first()
@@ -827,12 +987,106 @@ def agent_automation_detail(request: HttpRequest, agent_id: uuid.UUID, automatio
             automation.metadata = dict(payload.get("metadata") or {})
             updates.append("metadata")
 
+        if ("trigger_type" in updates or "trigger_config" in updates) and automation.trigger_type == AgentAutomationTriggerType.WEBHOOK:
+            current_config = dict(automation.trigger_config or {}) if isinstance(automation.trigger_config, dict) else {}
+            secret_value = str(current_config.get("secret") or "").strip()
+            if not secret_value:
+                current_config["secret"] = secrets.token_urlsafe(24)
+                automation.trigger_config = current_config
+                if "trigger_config" not in updates:
+                    updates.append("trigger_config")
+
+        if {"status", "trigger_type", "trigger_config"} & set(updates):
+            next_trigger_at = None
+            if automation.status == AgentAutomationStatus.ACTIVE and automation.trigger_type == AgentAutomationTriggerType.CRON:
+                try:
+                    next_trigger_at = compute_next_automation_trigger_at(
+                        automation.trigger_type,
+                        automation.trigger_config,
+                        after=timezone.now(),
+                    )
+                except CronScheduleError as exc:
+                    return JsonResponse({"error": "VALIDATION_ERROR", "message": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            automation.next_trigger_at = next_trigger_at
+            updates.append("next_trigger_at")
+
         if not updates:
             return JsonResponse({"automation": _serialize_automation(automation)}, status=HTTPStatus.OK)
 
         updates.append("updated_at")
         automation.save(update_fields=updates)
+        if automation.conversation_id is None:
+            ensure_automation_thread(automation)
         return JsonResponse({"automation": _serialize_automation(automation)}, status=HTTPStatus.OK)
+
+
+@csrf_exempt
+@require_POST
+def automation_webhook_trigger(request: HttpRequest, automation_id: uuid.UUID, token: str) -> JsonResponse:
+    """
+    Trigger a webhook automation without a user session.
+
+    Security model (V1): UUID + per-automation shared secret in trigger_config.secret.
+    """
+
+    token_value = str(token or "").strip()
+    if not token_value:
+        return JsonResponse({"error": "NOT_FOUND", "message": "Automation not found."}, status=HTTPStatus.NOT_FOUND)
+
+    with tenant_bypass():
+        automation = (
+            AgentAutomation.objects.select_related("agent_profile", "business_profile", "conversation", "run_spec")
+            .filter(id=automation_id, trigger_type=AgentAutomationTriggerType.WEBHOOK)
+            .first()
+        )
+        if automation is None:
+            return JsonResponse({"error": "NOT_FOUND", "message": "Automation not found."}, status=HTTPStatus.NOT_FOUND)
+
+        config = automation.trigger_config if isinstance(automation.trigger_config, dict) else {}
+        secret_value = str(config.get("secret") or "").strip()
+        if not secret_value or not secrets.compare_digest(secret_value, token_value):
+            return JsonResponse({"error": "NOT_FOUND", "message": "Automation not found."}, status=HTTPStatus.NOT_FOUND)
+
+        enabled = bool(getattr(FeatureFlagService.snapshot(automation.business_profile), "sub_agents_v1", False))
+        if not enabled:
+            return JsonResponse(
+                {"error": "FEATURE_DISABLED", "message": "Sub-agents are not enabled for this business."},
+                status=HTTPStatus.FORBIDDEN,
+            )
+
+        if automation.status not in {AgentAutomationStatus.ACTIVE, AgentAutomationStatus.PAUSED, AgentAutomationStatus.DRAFT}:
+            return JsonResponse(
+                {"error": "AUTOMATION_NOT_TRIGGERABLE", "message": "Automation is not triggerable."},
+                status=HTTPStatus.CONFLICT,
+            )
+
+        now = timezone.now()
+        with tenant_context(automation.business_profile_id):
+            if automation.conversation_id is None:
+                ensure_automation_thread(automation)
+        run = AgentRun.objects.create(
+            business_profile=automation.business_profile,
+            agent_profile=automation.agent_profile,
+            conversation=automation.conversation,
+            created_by=None,
+            run_spec=automation.run_spec,
+            run_spec_snapshot=normalize_run_spec(automation.run_spec_snapshot),
+            title=(automation.name or "Automation run")[:200],
+            source=AgentRunSource.AUTOMATION,
+            status=AgentRunStatus.QUEUED,
+            visibility=automation.visibility,
+            metadata={"automation_id": str(automation.id), "trigger": "webhook", "destination_config": dict(automation.destination_config or {}) if isinstance(automation.destination_config, dict) else {}},
+            run_after=now,
+        )
+        _append_run_event(
+            run.id,
+            stream=AgentRunEventStream.SYSTEM,
+            event_type=AgentRunEventType.PROGRESS,
+            label="Queued (automation)",
+            payload={"automation_id": str(automation.id), "trigger": "webhook"},
+        )
+        AgentAutomation.objects.filter(id=automation.id).update(last_triggered_at=now, updated_at=now)
+        return JsonResponse({"runId": str(run.id)}, status=HTTPStatus.CREATED)
 
 
 @csrf_protect
@@ -846,6 +1100,9 @@ def agent_automation_trigger(request: HttpRequest, agent_id: uuid.UUID, automati
     if error:
         return error
     assert agent is not None
+    feature_err = _ensure_subagents_enabled(request, agent=agent, allow_read_only=False)
+    if feature_err:
+        return feature_err
 
     with tenant_context(agent.business_profile_id):
         automation = AgentAutomation.objects.filter(id=automation_id, agent_profile=agent).first()
@@ -858,6 +1115,9 @@ def agent_automation_trigger(request: HttpRequest, agent_id: uuid.UUID, automati
                 status=HTTPStatus.CONFLICT,
             )
 
+        if automation.conversation_id is None:
+            ensure_automation_thread(automation)
+
         run = AgentRun.objects.create(
             business_profile=agent.business_profile,
             agent_profile=agent,
@@ -869,7 +1129,7 @@ def agent_automation_trigger(request: HttpRequest, agent_id: uuid.UUID, automati
             source=AgentRunSource.AUTOMATION,
             status=AgentRunStatus.QUEUED,
             visibility=automation.visibility,
-            metadata={"automation_id": str(automation.id)},
+            metadata={"automation_id": str(automation.id), "destination_config": dict(automation.destination_config or {}) if isinstance(automation.destination_config, dict) else {}},
             run_after=timezone.now(),
         )
         _append_run_event(
@@ -881,3 +1141,315 @@ def agent_automation_trigger(request: HttpRequest, agent_id: uuid.UUID, automati
         )
         AgentAutomation.objects.filter(id=automation.id).update(last_triggered_at=timezone.now(), updated_at=timezone.now())
         return JsonResponse({"run": _serialize_run(run)}, status=HTTPStatus.CREATED)
+
+
+@csrf_protect
+@require_http_methods(["GET", "POST"])
+def agent_watchers_collection(request: HttpRequest, agent_id: uuid.UUID) -> JsonResponse:
+    agent, error = _resolve_agent_for_request(request, agent_id)
+    if error:
+        return error
+    assert agent is not None
+    feature_err = _ensure_subagents_enabled(request, agent=agent, allow_read_only=True)
+    if feature_err:
+        return feature_err
+
+    with tenant_context(agent.business_profile_id):
+        if request.method == "GET":
+            status = str(request.GET.get("status") or "").strip().lower()
+            qs = AgentWatcher.objects.filter(agent_profile=agent).order_by("-created_at")
+            if status:
+                qs = qs.filter(status=status)
+            items = [_serialize_watcher(item) for item in qs[:200]]
+            return JsonResponse({"watchers": items}, status=HTTPStatus.OK)
+
+        payload, error = _parse_json_body(request)
+        if error:
+            return error
+
+        name = str((payload or {}).get("name") or "").strip()
+        if not name:
+            return JsonResponse({"error": "VALIDATION_ERROR", "message": "name is required."}, status=HTTPStatus.BAD_REQUEST)
+
+        status = str((payload or {}).get("status") or AgentWatcherStatus.DRAFT).strip().lower()
+        if status not in {choice for choice, _ in AgentWatcherStatus.choices}:
+            return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid status."}, status=HTTPStatus.BAD_REQUEST)
+
+        visibility = str((payload or {}).get("visibility") or AgentRunVisibility.INITIATOR).strip().lower()
+        if visibility not in {choice for choice, _ in AgentRunVisibility.choices}:
+            return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid visibility."}, status=HTTPStatus.BAD_REQUEST)
+
+        watcher_type = str((payload or {}).get("watcherType") or (payload or {}).get("watcher_type") or AgentWatcherType.EMAIL_INBOX).strip().lower()
+        if watcher_type not in {choice for choice, _ in AgentWatcherType.choices}:
+            return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid watcherType."}, status=HTTPStatus.BAD_REQUEST)
+
+        try:
+            poll_interval = int((payload or {}).get("pollIntervalSeconds") or (payload or {}).get("poll_interval_seconds") or 300)
+        except (TypeError, ValueError):
+            poll_interval = 300
+        poll_interval = max(60, min(int(poll_interval), 24 * 60 * 60))
+
+        try:
+            max_events = int((payload or {}).get("maxEventsPerPoll") or (payload or {}).get("max_events_per_poll") or 5)
+        except (TypeError, ValueError):
+            max_events = 5
+        max_events = max(1, min(int(max_events), 25))
+
+        watch_config = (payload or {}).get("watchConfig") or (payload or {}).get("watch_config") or {}
+        watch_config = dict(watch_config) if isinstance(watch_config, dict) else {}
+
+        destination_config = (payload or {}).get("destinationConfig") or (payload or {}).get("destination_config") or {}
+        destination_config = dict(destination_config) if isinstance(destination_config, dict) else {}
+
+        conversation_id_raw = (payload or {}).get("conversationId") or (payload or {}).get("conversation_id")
+        conversation_id, err = _parse_uuid(conversation_id_raw, field="conversationId")
+        if err:
+            return err
+
+        conversation = None
+        if conversation_id:
+            conversation = Conversation.objects.filter(id=conversation_id, business_profile=agent.business_profile).first()
+            if conversation is None:
+                return JsonResponse({"error": "CONVERSATION_NOT_FOUND", "message": "Conversation not found."}, status=HTTPStatus.NOT_FOUND)
+
+        run_spec_id_raw = (payload or {}).get("runSpecId") or (payload or {}).get("run_spec_id")
+        run_spec_id, err = _parse_uuid(run_spec_id_raw, field="runSpecId")
+        if err:
+            return err
+
+        run_spec = None
+        run_spec_snapshot: dict[str, Any] = {}
+        if run_spec_id:
+            run_spec = AgentRunSpec.objects.filter(id=run_spec_id, agent_profile=agent).first()
+            if run_spec is None:
+                return JsonResponse({"error": "RUN_SPEC_NOT_FOUND", "message": "Run spec not found."}, status=HTTPStatus.NOT_FOUND)
+            run_spec_snapshot = normalize_run_spec(run_spec.spec)
+        else:
+            snapshot_payload = (payload or {}).get("runSpec") or (payload or {}).get("runSpecSnapshot") or {}
+            run_spec_snapshot = normalize_run_spec(snapshot_payload)
+
+        email_account = None
+        email_account_id_raw = (payload or {}).get("emailAccountId") or (payload or {}).get("email_account_id")
+        email_account_id, err = _parse_uuid(email_account_id_raw, field="emailAccountId")
+        if err:
+            return err
+        if watcher_type == AgentWatcherType.EMAIL_INBOX:
+            if not email_account_id:
+                return JsonResponse(
+                    {"error": "VALIDATION_ERROR", "message": "emailAccountId is required for email watchers."},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
+            account_qs = EmailAccount.objects.filter(id=email_account_id, business_profile=agent.business_profile)
+            if not request.user.is_staff:
+                account_qs = account_qs.filter(user=request.user)
+            email_account = account_qs.first()
+            if email_account is None:
+                return JsonResponse({"error": "EMAIL_ACCOUNT_NOT_FOUND", "message": "Email account not found."}, status=HTTPStatus.NOT_FOUND)
+            if email_account.status != EmailAccountStatus.CONNECTED:
+                return JsonResponse(
+                    {"error": "VALIDATION_ERROR", "message": "Email account must be connected before enabling a watcher."},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
+
+        next_poll_at = timezone.now() if status == AgentWatcherStatus.ACTIVE else None
+
+        watcher = AgentWatcher.objects.create(
+            business_profile=agent.business_profile,
+            agent_profile=agent,
+            created_by=request.user,
+            run_spec=run_spec,
+            run_spec_snapshot=run_spec_snapshot,
+            conversation=conversation,
+            email_account=email_account,
+            name=name,
+            status=status,
+            visibility=visibility,
+            watcher_type=watcher_type,
+            watch_config=watch_config,
+            destination_config=destination_config,
+            poll_interval_seconds=poll_interval,
+            max_events_per_poll=max_events,
+            next_poll_at=next_poll_at,
+            metadata=(payload or {}).get("metadata") if isinstance((payload or {}).get("metadata"), dict) else {},
+        )
+        if watcher.conversation_id is None:
+            ensure_watcher_thread(watcher)
+        return JsonResponse({"watcher": _serialize_watcher(watcher)}, status=HTTPStatus.CREATED)
+
+
+@csrf_protect
+@require_http_methods(["GET", "PUT", "DELETE"])
+def agent_watcher_detail(request: HttpRequest, agent_id: uuid.UUID, watcher_id: uuid.UUID) -> JsonResponse:
+    agent, error = _resolve_agent_for_request(request, agent_id)
+    if error:
+        return error
+    assert agent is not None
+    feature_err = _ensure_subagents_enabled(request, agent=agent, allow_read_only=True)
+    if feature_err:
+        return feature_err
+
+    with tenant_context(agent.business_profile_id):
+        watcher = AgentWatcher.objects.filter(id=watcher_id, agent_profile=agent).select_related("email_account").first()
+        if watcher is None:
+            return JsonResponse({"error": "WATCHER_NOT_FOUND", "message": "Watcher not found."}, status=HTTPStatus.NOT_FOUND)
+
+        if request.method == "GET":
+            return JsonResponse({"watcher": _serialize_watcher(watcher)}, status=HTTPStatus.OK)
+
+        if request.method == "DELETE":
+            watcher.status = AgentWatcherStatus.ARCHIVED
+            watcher.next_poll_at = None
+            watcher.lease_expires_at = None
+            watcher.save(update_fields=["status", "next_poll_at", "lease_expires_at", "updated_at"])
+            return JsonResponse({}, status=HTTPStatus.NO_CONTENT)
+
+        payload, error = _parse_json_body(request)
+        if error:
+            return error
+
+        updates: list[str] = []
+        if "name" in payload:
+            name = str(payload.get("name") or "").strip()
+            if not name:
+                return JsonResponse({"error": "VALIDATION_ERROR", "message": "name cannot be blank."}, status=HTTPStatus.BAD_REQUEST)
+            watcher.name = name[:160]
+            updates.append("name")
+        if "status" in payload:
+            status = str(payload.get("status") or "").strip().lower()
+            if status not in {choice for choice, _ in AgentWatcherStatus.choices}:
+                return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid status."}, status=HTTPStatus.BAD_REQUEST)
+            watcher.status = status
+            updates.append("status")
+        if "visibility" in payload:
+            visibility = str(payload.get("visibility") or "").strip().lower()
+            if visibility not in {choice for choice, _ in AgentRunVisibility.choices}:
+                return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid visibility."}, status=HTTPStatus.BAD_REQUEST)
+            watcher.visibility = visibility
+            updates.append("visibility")
+        if "watcherType" in payload or "watcher_type" in payload:
+            watcher_type = str(payload.get("watcherType") or payload.get("watcher_type") or "").strip().lower()
+            if watcher_type not in {choice for choice, _ in AgentWatcherType.choices}:
+                return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid watcherType."}, status=HTTPStatus.BAD_REQUEST)
+            watcher.watcher_type = watcher_type
+            updates.append("watcher_type")
+        if "watchConfig" in payload and isinstance(payload.get("watchConfig"), dict):
+            watcher.watch_config = dict(payload.get("watchConfig") or {})
+            updates.append("watch_config")
+        if "destinationConfig" in payload and isinstance(payload.get("destinationConfig"), dict):
+            watcher.destination_config = dict(payload.get("destinationConfig") or {})
+            updates.append("destination_config")
+        if "pollIntervalSeconds" in payload or "poll_interval_seconds" in payload:
+            raw = payload.get("pollIntervalSeconds") if "pollIntervalSeconds" in payload else payload.get("poll_interval_seconds")
+            try:
+                poll_interval = int(raw)
+            except (TypeError, ValueError):
+                poll_interval = int(watcher.poll_interval_seconds or 300)
+            watcher.poll_interval_seconds = max(60, min(int(poll_interval), 24 * 60 * 60))
+            updates.append("poll_interval_seconds")
+        if "maxEventsPerPoll" in payload or "max_events_per_poll" in payload:
+            raw = payload.get("maxEventsPerPoll") if "maxEventsPerPoll" in payload else payload.get("max_events_per_poll")
+            try:
+                max_events = int(raw)
+            except (TypeError, ValueError):
+                max_events = int(watcher.max_events_per_poll or 5)
+            watcher.max_events_per_poll = max(1, min(int(max_events), 25))
+            updates.append("max_events_per_poll")
+        if "metadata" in payload and isinstance(payload.get("metadata"), dict):
+            watcher.metadata = dict(payload.get("metadata") or {})
+            updates.append("metadata")
+
+        if "emailAccountId" in payload or "email_account_id" in payload:
+            email_account_id_raw = payload.get("emailAccountId") or payload.get("email_account_id")
+            email_account_id, err = _parse_uuid(email_account_id_raw, field="emailAccountId")
+            if err:
+                return err
+            email_account = None
+            if email_account_id:
+                account_qs = EmailAccount.objects.filter(id=email_account_id, business_profile=agent.business_profile)
+                if not request.user.is_staff:
+                    account_qs = account_qs.filter(user=request.user)
+                email_account = account_qs.first()
+                if email_account is None:
+                    return JsonResponse({"error": "EMAIL_ACCOUNT_NOT_FOUND", "message": "Email account not found."}, status=HTTPStatus.NOT_FOUND)
+            watcher.email_account = email_account
+            updates.append("email_account")
+
+        if "conversationId" in payload or "conversation_id" in payload:
+            conversation_id_raw = payload.get("conversationId") or payload.get("conversation_id")
+            conversation_id, err = _parse_uuid(conversation_id_raw, field="conversationId")
+            if err:
+                return err
+            conversation = None
+            if conversation_id:
+                conversation = Conversation.objects.filter(id=conversation_id, business_profile=agent.business_profile).first()
+                if conversation is None:
+                    return JsonResponse({"error": "CONVERSATION_NOT_FOUND", "message": "Conversation not found."}, status=HTTPStatus.NOT_FOUND)
+            watcher.conversation = conversation
+            updates.append("conversation")
+
+        if "runSpecId" in payload or "run_spec_id" in payload:
+            run_spec_id_raw = payload.get("runSpecId") or payload.get("run_spec_id")
+            run_spec_id, err = _parse_uuid(run_spec_id_raw, field="runSpecId")
+            if err:
+                return err
+            run_spec = None
+            if run_spec_id:
+                run_spec = AgentRunSpec.objects.filter(id=run_spec_id, agent_profile=agent).first()
+                if run_spec is None:
+                    return JsonResponse({"error": "RUN_SPEC_NOT_FOUND", "message": "Run spec not found."}, status=HTTPStatus.NOT_FOUND)
+                watcher.run_spec_snapshot = normalize_run_spec(run_spec.spec)
+            watcher.run_spec = run_spec
+            updates.append("run_spec")
+            updates.append("run_spec_snapshot")
+
+        if watcher.status == AgentWatcherStatus.ACTIVE:
+            watcher.next_poll_at = timezone.now()
+            watcher.lease_expires_at = None
+            updates.extend(["next_poll_at", "lease_expires_at"])
+        elif watcher.status in {AgentWatcherStatus.PAUSED, AgentWatcherStatus.ARCHIVED, AgentWatcherStatus.DRAFT}:
+            watcher.next_poll_at = None
+            watcher.lease_expires_at = None
+            updates.extend(["next_poll_at", "lease_expires_at"])
+
+        if not updates:
+            return JsonResponse({"watcher": _serialize_watcher(watcher)}, status=HTTPStatus.OK)
+
+        updates.append("updated_at")
+        watcher.save(update_fields=sorted(set(updates)))
+        if watcher.conversation_id is None:
+            ensure_watcher_thread(watcher)
+        return JsonResponse({"watcher": _serialize_watcher(watcher)}, status=HTTPStatus.OK)
+
+
+@csrf_protect
+@require_http_methods(["POST"])
+def agent_watcher_trigger(request: HttpRequest, agent_id: uuid.UUID, watcher_id: uuid.UUID) -> JsonResponse:
+    """
+    Manually nudge a watcher to poll immediately (used by "Run now").
+    """
+
+    agent, error = _resolve_agent_for_request(request, agent_id)
+    if error:
+        return error
+    assert agent is not None
+    feature_err = _ensure_subagents_enabled(request, agent=agent, allow_read_only=False)
+    if feature_err:
+        return feature_err
+
+    with tenant_context(agent.business_profile_id):
+        watcher = AgentWatcher.objects.filter(id=watcher_id, agent_profile=agent).first()
+        if watcher is None:
+            return JsonResponse({"error": "WATCHER_NOT_FOUND", "message": "Watcher not found."}, status=HTTPStatus.NOT_FOUND)
+
+        if watcher.status == AgentWatcherStatus.ARCHIVED:
+            return JsonResponse(
+                {"error": "WATCHER_NOT_TRIGGERABLE", "message": "Watcher is archived."},
+                status=HTTPStatus.CONFLICT,
+            )
+
+        if watcher.conversation_id is None:
+            ensure_watcher_thread(watcher)
+
+        AgentWatcher.objects.filter(id=watcher.id).update(next_poll_at=timezone.now(), lease_expires_at=None, updated_at=timezone.now())
+        watcher.refresh_from_db()
+        return JsonResponse({"watcher": _serialize_watcher(watcher)}, status=HTTPStatus.OK)

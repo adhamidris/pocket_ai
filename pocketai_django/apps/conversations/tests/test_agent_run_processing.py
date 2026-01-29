@@ -6,6 +6,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.utils import timezone
 
+from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
 from apps.conversations.agent_run_processing import AgentRunProcessingService
 from apps.conversations.models import AgentRun, AgentRunStatus
@@ -24,6 +25,7 @@ class AgentRunProcessingTests(TestCase):
             name="Acme Co",
             industry="Retail",
             status="active",
+            metadata={FEATURE_FLAG_METADATA_KEY: {"sub_agents_v1": True}},
         )
         self.agent = AgentProfile.objects.create(
             business_profile=self.business,
@@ -57,4 +59,3 @@ class AgentRunProcessingTests(TestCase):
         self.assertEqual(run.attempt_count, 1)
         self.assertIsNotNone(run.run_after)
         self.assertIsNone(run.lease_expires_at)
-

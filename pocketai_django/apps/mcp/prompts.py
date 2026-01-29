@@ -57,6 +57,23 @@ PORTAL_SPINNER_HINT_INSTRUCTIONS = (
     "When calling tools, include `__ui.spinner_text` (short label) in tool arguments for portal display."
 )
 
+SUB_AGENT_BACKGROUND_RUN_INSTRUCTIONS = textwrap.dedent(
+    """
+    ---
+
+    ## Background Runs (Sub-Agents)
+
+    When the visitor asks for a long-running, multi-step, or operational task (multiple tools, multiple deliverables,
+    or likely >1 minute), you MAY proactively delegate it to a background run so the chat stays responsive.
+
+    - Use `create_agent_run(goal=..., title=..., success_criteria=[...], tool_allowlist=[...], constraints={...}, plan={...})`.
+    - Prefer spawning at most ONE background run per user turn, unless the visitor explicitly asks for multiple.
+    - Do not delegate simple Q&A or small single-step tasks.
+    - If key details are missing, ask the visitor first instead of starting the run.
+    - After creating the run, tell the visitor what you started and that progress/results will appear in the Tasks panel.
+    """
+).strip()
+
 _ARABIC_CHAR_PATTERN = re.compile(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]")
 
 
@@ -588,6 +605,28 @@ def build_messages(
         if agent:
             system_sections.append(PLACEHOLDER_REMINDER.strip())
             system_sections.append(PORTAL_SPINNER_HINT_INSTRUCTIONS.strip())
+            try:
+                feature_state = FeatureFlagService.snapshot(business_profile)
+                subagents_enabled = bool(getattr(feature_state, "sub_agents_v1", False))
+            except Exception:  # pragma: no cover - best effort only
+                subagents_enabled = False
+
+            convo_meta = getattr(conversation, "metadata", None)
+            convo_meta_map = convo_meta if isinstance(convo_meta, Mapping) else {}
+            convo_source = str(convo_meta_map.get("source") or "").strip().lower()
+            actor_raw = str(convo_meta_map.get("actor_user_id") or convo_meta_map.get("actorUserId") or "").strip()
+            try:
+                actor_uuid = uuid.UUID(actor_raw) if actor_raw else None
+            except (TypeError, ValueError):
+                actor_uuid = None
+
+            is_agent_run = bool(convo_source == "agent_run" or convo_meta_map.get("agent_run_id") or convo_meta_map.get("agentRunId"))
+            owner_id = getattr(business_profile, "user_id", None) if business_profile else None
+            agent_user_id = getattr(agent, "user_id", None) if agent else None
+            actor_allowed = bool(actor_uuid and actor_uuid in {owner_id, agent_user_id})
+
+            if subagents_enabled and actor_allowed and not is_agent_run:
+                system_sections.append(SUB_AGENT_BACKGROUND_RUN_INSTRUCTIONS.strip())
 
         normalized_user_message = (user_message or "").strip()
         if normalized_user_message:

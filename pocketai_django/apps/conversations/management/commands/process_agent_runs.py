@@ -81,6 +81,8 @@ class Command(BaseCommand):
             processed += 1
             if result.status == AgentRunStatus.COMPLETED:
                 self.stdout.write(self.style.SUCCESS(f"Completed run {result.run_id}."))
+            elif result.status in {AgentRunStatus.WAITING_APPROVAL, AgentRunStatus.WAITING_USER, AgentRunStatus.WAITING_EXTERNAL}:
+                self.stdout.write(self.style.WARNING(f"Paused run {result.run_id}: {result.status}"))
             elif result.requeued:
                 self.stdout.write(self.style.WARNING(f"Requeued run {result.run_id}: {result.error or 'retry scheduled'}"))
             else:
@@ -88,4 +90,3 @@ class Command(BaseCommand):
 
             if watch and sleep_seconds:
                 time.sleep(sleep_seconds)
-

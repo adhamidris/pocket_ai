@@ -10,11 +10,13 @@ class ChatPortalClient {
 	      csat: container.getAttribute("data-endpoint-csat"),
 	      toolApproval: container.getAttribute("data-endpoint-tool-approval"),
 	      toolHistory: container.getAttribute("data-endpoint-tool-history"),
+      runUserInput: container.getAttribute("data-endpoint-run-user-input"),
+      agentRequestUpdate: container.getAttribute("data-endpoint-agent-request-update"),
       emailSendDraft: container.getAttribute("data-endpoint-email-send-draft"),
       emailDiscardDraft: container.getAttribute("data-endpoint-email-discard-draft"),
 	      fileUpload: container.getAttribute("data-endpoint-file-upload"),
       fileDownloadUrlTemplate: container.getAttribute("data-endpoint-file-download-url-template"),
-    };
+	    };
     this.businessSlug = container.getAttribute("data-business-slug") || "";
     this.agentSlug = container.getAttribute("data-agent-slug") || "";
     this.agentName = container.getAttribute("data-agent-name") || "Pocket AI";
@@ -22,6 +24,8 @@ class ChatPortalClient {
     this.sessionToken = container.getAttribute("data-session-token") || null;
     this.sessionCacheKey = container.getAttribute("data-session-cache-key") || "";
     this.bootstrapScriptId = container.getAttribute("data-bootstrap-script-id") || "";
+    const subAgentsAttr = (container.getAttribute("data-subagents-enabled") || "").toString().trim().toLowerCase();
+    this.subAgentsEnabled = subAgentsAttr === "true" || subAgentsAttr === "1" || subAgentsAttr === "yes";
     this.currentStatus = container.getAttribute("data-initial-status") || "new";
     this.eventSource = null;
 	    this.awaitingReply = false;
@@ -59,6 +63,14 @@ class ChatPortalClient {
       tasksOpenBtn: container.querySelector("[data-tasks-open-btn]"),
       tasksCloseBtn: container.querySelector("[data-tasks-close-btn]"),
       tasksCount: container.querySelector("[data-tasks-count]"),
+      // Inbox panel (agent requests)
+      inboxPanel: container.querySelector("[data-inbox-panel]"),
+      inboxList: container.querySelector("[data-inbox-list]"),
+      inboxEmpty: container.querySelector("[data-inbox-empty]"),
+      inboxCards: container.querySelector("[data-inbox-cards]"),
+      inboxOpenBtn: container.querySelector("[data-inbox-open-btn]"),
+      inboxCloseBtn: container.querySelector("[data-inbox-close-btn]"),
+      inboxCount: container.querySelector("[data-inbox-count]"),
     };
 	    // Session management state
 	    this.sessionTokens = [];
@@ -125,6 +137,11 @@ class ChatPortalClient {
     this.agentRuns = new Map(); // runId -> { run, events, expanded, seenKeys, lastEventLabel }
     this.tasksRenderRaf = null;
     this.tasksPanelUserHidden = false;
+
+    // Agent requests/inbox panel state
+    this.agentRequests = new Map(); // requestId -> { request, expanded }
+    this.inboxRenderRaf = null;
+    this.inboxPanelUserHidden = false;
   }
 
   async init() {
@@ -157,7 +174,16 @@ class ChatPortalClient {
         if (ta) requestAnimationFrame(() => ta.focus());
       }
 
-      this.initTasksPanel();
+      if (this.subAgentsEnabled) {
+        this.initTasksPanel();
+        this.initInboxPanel();
+      } else {
+        // Single-agent mode: keep the portal chat-only and hide background surfaces.
+        this.setTasksPanelVisible(false);
+        this.setInboxPanelVisible(false);
+        if (this.elements.tasksOpenBtn) this.elements.tasksOpenBtn.setAttribute("hidden", "");
+        if (this.elements.inboxOpenBtn) this.elements.inboxOpenBtn.setAttribute("hidden", "");
+      }
       this.connectEventStream();
     } catch (error) {
       this.showToast("Unable to load chat", error.message || "Please refresh and try again.", true);
@@ -3426,23 +3452,43 @@ class ChatPortalClient {
       }
     });
 
-    this.eventSource.addEventListener("agentRunsSnapshot", (event) => {
-      try {
-        const payload = event && event.data ? JSON.parse(event.data) : null;
-        this.handleAgentRunsSnapshot(payload);
-      } catch (error) {
-        console.warn("Failed to parse agent runs snapshot", error);
-      }
-    });
+    if (this.subAgentsEnabled) {
+      this.eventSource.addEventListener("agentRunsSnapshot", (event) => {
+        try {
+          const payload = event && event.data ? JSON.parse(event.data) : null;
+          this.handleAgentRunsSnapshot(payload);
+        } catch (error) {
+          console.warn("Failed to parse agent runs snapshot", error);
+        }
+      });
 
-    this.eventSource.addEventListener("agentRunEvent", (event) => {
-      try {
-        const payload = event && event.data ? JSON.parse(event.data) : null;
-        this.handleAgentRunEvent(payload);
-      } catch (error) {
-        console.warn("Failed to parse agent run event", error);
-      }
-    });
+      this.eventSource.addEventListener("agentRunEvent", (event) => {
+        try {
+          const payload = event && event.data ? JSON.parse(event.data) : null;
+          this.handleAgentRunEvent(payload);
+        } catch (error) {
+          console.warn("Failed to parse agent run event", error);
+        }
+      });
+
+      this.eventSource.addEventListener("agentRequestsSnapshot", (event) => {
+        try {
+          const payload = event && event.data ? JSON.parse(event.data) : null;
+          this.handleAgentRequestsSnapshot(payload);
+        } catch (error) {
+          console.warn("Failed to parse agent requests snapshot", error);
+        }
+      });
+
+      this.eventSource.addEventListener("agentRequestEvent", (event) => {
+        try {
+          const payload = event && event.data ? JSON.parse(event.data) : null;
+          this.handleAgentRequestEvent(payload);
+        } catch (error) {
+          console.warn("Failed to parse agent request event", error);
+        }
+      });
+    }
   }
 
   initTasksPanel() {
@@ -3453,6 +3499,7 @@ class ChatPortalClient {
     if (this.elements.tasksOpenBtn) {
       this.elements.tasksOpenBtn.addEventListener("click", () => {
         this.tasksPanelUserHidden = false;
+        this.setInboxPanelVisible(false);
         this.setTasksPanelVisible(true);
       });
     }
@@ -3466,6 +3513,41 @@ class ChatPortalClient {
     this.elements.tasksCards.addEventListener("click", (event) => {
       const target = event && event.target ? event.target : null;
       if (!target) return;
+
+      const approvalBtn = target.closest("[data-run-approval-action]");
+      if (approvalBtn) {
+        const decision = (approvalBtn.getAttribute("data-run-approval-action") || "").trim();
+        const approvalId = (approvalBtn.getAttribute("data-approval-id") || "").trim();
+        const card = approvalBtn.closest(".portal-task");
+        if (decision && approvalId) {
+          this.submitRunApproval(approvalId, decision, card);
+        }
+        return;
+      }
+
+      const sendBtn = target.closest("[data-run-user-input-send]");
+      if (sendBtn) {
+        const runId = (sendBtn.getAttribute("data-run-user-input-send") || "").trim();
+        const card = sendBtn.closest(".portal-task");
+        const textarea = card ? card.querySelector("[data-run-user-input-text]") : null;
+        const message = textarea && typeof textarea.value === "string" ? textarea.value.trim() : "";
+        if (!runId) return;
+        if (!message) {
+          this.showToast("Missing input", "Please enter your answer first.", true);
+          return;
+        }
+        this.submitRunUserInput(runId, message, textarea, sendBtn);
+        return;
+      }
+
+      const openInboxBtn = target.closest("[data-open-inbox]");
+      if (openInboxBtn) {
+        this.inboxPanelUserHidden = false;
+        this.setTasksPanelVisible(false);
+        this.setInboxPanelVisible(true);
+        return;
+      }
+
       const toggleEl = target.closest("[data-run-toggle]");
       if (!toggleEl) return;
       const runId = (toggleEl.getAttribute("data-run-toggle") || "").trim();
@@ -3474,6 +3556,178 @@ class ChatPortalClient {
     });
 
     this.setTasksPanelVisible(false);
+  }
+
+  initInboxPanel() {
+    if (!this.elements.inboxPanel || !this.elements.inboxCards) {
+      return;
+    }
+
+    if (this.elements.inboxOpenBtn) {
+      this.elements.inboxOpenBtn.addEventListener("click", () => {
+        this.inboxPanelUserHidden = false;
+        this.setTasksPanelVisible(false);
+        this.setInboxPanelVisible(true);
+      });
+    }
+
+    if (this.elements.inboxCloseBtn) {
+      this.elements.inboxCloseBtn.addEventListener("click", () => {
+        this.inboxPanelUserHidden = true;
+        this.setInboxPanelVisible(false);
+      });
+    }
+
+    this.elements.inboxCards.addEventListener("click", (event) => {
+      const target = event && event.target ? event.target : null;
+      if (!target) return;
+
+      const statusBtn = target.closest("[data-request-set-status]");
+      if (statusBtn) {
+        const requestId = (statusBtn.getAttribute("data-request-set-status") || "").trim();
+        const status = (statusBtn.getAttribute("data-request-status") || "").trim();
+        const card = statusBtn.closest(".portal-task");
+        if (requestId && status) {
+          this.submitAgentRequestUpdate(requestId, status, "", card);
+        }
+        return;
+      }
+
+      const resolveBtn = target.closest("[data-request-resolve-send]");
+      if (resolveBtn) {
+        const requestId = (resolveBtn.getAttribute("data-request-resolve-send") || "").trim();
+        const card = resolveBtn.closest(".portal-task");
+        const textarea = card ? card.querySelector("[data-request-resolution-text]") : null;
+        const resolution = textarea && typeof textarea.value === "string" ? textarea.value.trim() : "";
+        if (!requestId) return;
+        if (!resolution) {
+          this.showToast("Missing resolution", "Please enter a reply before resolving.", true);
+          return;
+        }
+        this.submitAgentRequestUpdate(requestId, "resolved", resolution, card, textarea, resolveBtn);
+        return;
+      }
+
+      const toggleEl = target.closest("[data-request-toggle]");
+      if (!toggleEl) return;
+      const requestId = (toggleEl.getAttribute("data-request-toggle") || "").trim();
+      if (!requestId) return;
+      this.toggleRequestExpanded(requestId);
+    });
+
+    this.setInboxPanelVisible(false);
+  }
+
+  getLatestRunEvent(state, predicate) {
+    const events = state && Array.isArray(state.events) ? state.events : [];
+    for (let idx = events.length - 1; idx >= 0; idx -= 1) {
+      const evt = events[idx];
+      if (evt && predicate(evt)) return evt;
+    }
+    return null;
+  }
+
+  async submitRunApproval(approvalId, decision, cardEl) {
+    if (!approvalId || !decision) return;
+    if (!this.endpoints.toolApproval) {
+      this.showToast("Approval unavailable", "Approval endpoint is not configured.", true);
+      return;
+    }
+    if (!this.sessionToken) {
+      this.showToast("Approval unavailable", "Session token missing.", true);
+      return;
+    }
+    if (cardEl && cardEl.dataset.runApprovalBusy === "true") {
+      return;
+    }
+    if (cardEl) {
+      cardEl.dataset.runApprovalBusy = "true";
+    }
+    const buttons = cardEl ? cardEl.querySelectorAll("[data-run-approval-action]") : [];
+    buttons.forEach((btn) => {
+      btn.disabled = true;
+    });
+
+    try {
+      const response = await fetch(this.endpoints.toolApproval, {
+        method: "POST",
+        headers: this.jsonHeaders(),
+        body: JSON.stringify({
+          session_token: this.sessionToken,
+          approval_id: approvalId,
+          decision: decision.toString().trim().toLowerCase(),
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const message = payload && payload.error && payload.error.message ? payload.error.message : "Approval failed.";
+        throw new Error(message);
+      }
+      this.showToast("Saved", "Approval recorded.", false);
+    } catch (error) {
+      console.warn("Run approval failed", error);
+      this.showToast("Approval failed", error.message || "Please try again.", true);
+    } finally {
+      if (cardEl) {
+        cardEl.dataset.runApprovalBusy = "false";
+      }
+      buttons.forEach((btn) => {
+        btn.disabled = false;
+      });
+    }
+  }
+
+  async submitRunUserInput(runId, message, textareaEl, buttonEl) {
+    if (!runId) return;
+    if (!this.endpoints.runUserInput) {
+      this.showToast("Unavailable", "User-input endpoint is not configured.", true);
+      return;
+    }
+    if (!this.sessionToken) {
+      this.showToast("Unavailable", "Session token missing.", true);
+      return;
+    }
+    if (buttonEl && buttonEl.dataset.runUserInputBusy === "true") {
+      return;
+    }
+    if (buttonEl) {
+      buttonEl.dataset.runUserInputBusy = "true";
+      buttonEl.disabled = true;
+    }
+    if (textareaEl) {
+      textareaEl.disabled = true;
+    }
+    try {
+      const response = await fetch(this.endpoints.runUserInput, {
+        method: "POST",
+        headers: this.jsonHeaders(),
+        body: JSON.stringify({
+          session_token: this.sessionToken,
+          run_id: runId,
+          message,
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const messageOut = payload && payload.error && payload.error.message ? payload.error.message : "Send failed.";
+        throw new Error(messageOut);
+      }
+      if (textareaEl) {
+        textareaEl.value = "";
+      }
+      this.showToast("Sent", "Your answer was sent to the task.", false);
+    } catch (error) {
+      console.warn("Run user input failed", error);
+      this.showToast("Send failed", error.message || "Please try again.", true);
+    } finally {
+      if (buttonEl) {
+        buttonEl.dataset.runUserInputBusy = "false";
+        buttonEl.disabled = false;
+      }
+      if (textareaEl) {
+        textareaEl.disabled = false;
+      }
+    }
   }
 
   setTasksPanelVisible(visible) {
@@ -3486,6 +3740,18 @@ class ChatPortalClient {
       panel.setAttribute("hidden", "");
     }
     this.updateTasksOpenButton();
+  }
+
+  setInboxPanelVisible(visible) {
+    const panel = this.elements.inboxPanel;
+    if (!panel) return;
+    const shouldShow = Boolean(visible);
+    if (shouldShow) {
+      panel.removeAttribute("hidden");
+    } else {
+      panel.setAttribute("hidden", "");
+    }
+    this.updateInboxOpenButton();
   }
 
   updateTasksOpenButton() {
@@ -3518,6 +3784,36 @@ class ChatPortalClient {
     }
   }
 
+  updateInboxOpenButton() {
+    const btn = this.elements.inboxOpenBtn;
+    if (!btn) return;
+
+    const hasAny = this.agentRequests && this.agentRequests.size > 0;
+    const activeCount = this.getActiveRequestCount();
+    const panelVisible = this.elements.inboxPanel && !this.elements.inboxPanel.hasAttribute("hidden");
+
+    if (!hasAny) {
+      btn.setAttribute("hidden", "");
+      return;
+    }
+
+    if (panelVisible) {
+      btn.setAttribute("hidden", "");
+    } else {
+      btn.removeAttribute("hidden");
+    }
+
+    if (this.elements.inboxCount) {
+      if (activeCount > 0) {
+        this.elements.inboxCount.textContent = String(activeCount);
+        this.elements.inboxCount.removeAttribute("hidden");
+      } else {
+        this.elements.inboxCount.textContent = "0";
+        this.elements.inboxCount.setAttribute("hidden", "");
+      }
+    }
+  }
+
   getActiveRunCount() {
     let count = 0;
     this.agentRuns.forEach((state) => {
@@ -3530,11 +3826,30 @@ class ChatPortalClient {
     return count;
   }
 
+  getActiveRequestCount() {
+    let count = 0;
+    this.agentRequests.forEach((state) => {
+      const status = state && state.request ? (state.request.status || "").toString().toLowerCase() : "";
+      if (!status) return;
+      if (["open", "in_progress"].includes(status)) {
+        count += 1;
+      }
+    });
+    return count;
+  }
+
   toggleRunExpanded(runId) {
     const state = this.agentRuns.get(runId);
     if (!state) return;
     state.expanded = !state.expanded;
     this.scheduleTasksRender();
+  }
+
+  toggleRequestExpanded(requestId) {
+    const state = this.agentRequests.get(requestId);
+    if (!state) return;
+    state.expanded = !state.expanded;
+    this.scheduleInboxRender();
   }
 
   handleAgentRunsSnapshot(payload) {
@@ -3558,6 +3873,18 @@ class ChatPortalClient {
       this.updateTasksOpenButton();
     }
     this.scheduleTasksRender();
+  }
+
+  handleAgentRequestsSnapshot(payload) {
+    if (!payload || typeof payload !== "object") return;
+    const requests = Array.isArray(payload.requests) ? payload.requests : [];
+
+    requests.forEach((req) => {
+      this.upsertAgentRequest(req);
+    });
+
+    this.updateInboxOpenButton();
+    this.scheduleInboxRender();
   }
 
   handleAgentRunEvent(payload) {
@@ -3593,6 +3920,15 @@ class ChatPortalClient {
     this.scheduleTasksRender();
   }
 
+  handleAgentRequestEvent(payload) {
+    if (!payload || typeof payload !== "object") return;
+    const req = payload.request && typeof payload.request === "object" ? payload.request : null;
+    if (!req) return;
+    this.upsertAgentRequest(req);
+    this.updateInboxOpenButton();
+    this.scheduleInboxRender();
+  }
+
   upsertAgentRun(run) {
     if (!run || typeof run !== "object") return null;
     const runId = typeof run.id === "string" ? run.id.trim() : "";
@@ -3610,6 +3946,23 @@ class ChatPortalClient {
       lastEventLabel: "",
     };
     this.agentRuns.set(runId, state);
+    return state;
+  }
+
+  upsertAgentRequest(req) {
+    if (!req || typeof req !== "object") return null;
+    const requestId = typeof req.id === "string" ? req.id.trim() : "";
+    if (!requestId) return null;
+    const existing = this.agentRequests.get(requestId);
+    if (existing) {
+      existing.request = Object.assign({}, existing.request || {}, req);
+      return existing;
+    }
+    const state = {
+      request: Object.assign({}, req),
+      expanded: false,
+    };
+    this.agentRequests.set(requestId, state);
     return state;
   }
 
@@ -3651,6 +4004,14 @@ class ChatPortalClient {
     this.tasksRenderRaf = requestAnimationFrame(() => {
       this.tasksRenderRaf = null;
       this.renderTasksPanel();
+    });
+  }
+
+  scheduleInboxRender() {
+    if (this.inboxRenderRaf) return;
+    this.inboxRenderRaf = requestAnimationFrame(() => {
+      this.inboxRenderRaf = null;
+      this.renderInboxPanel();
     });
   }
 
@@ -3708,6 +4069,54 @@ class ChatPortalClient {
     this.updateTasksOpenButton();
   }
 
+  renderInboxPanel() {
+    if (!this.elements.inboxCards) return;
+    const list = this.elements.inboxCards;
+
+    const requests = Array.from(this.agentRequests.entries()).map(([id, state]) => ({
+      id,
+      state,
+      request: state && state.request ? state.request : {},
+    }));
+
+    if (!requests.length) {
+      if (this.elements.inboxEmpty) {
+        this.elements.inboxEmpty.removeAttribute("hidden");
+      }
+      list.innerHTML = "";
+      this.updateInboxOpenButton();
+      return;
+    }
+
+    if (this.elements.inboxEmpty) {
+      this.elements.inboxEmpty.setAttribute("hidden", "");
+    }
+
+    const statusPriority = {
+      open: 0,
+      in_progress: 1,
+      resolved: 2,
+    };
+
+    requests.sort((a, b) => {
+      const aStatus = (a.request.status || "").toString().toLowerCase();
+      const bStatus = (b.request.status || "").toString().toLowerCase();
+      const ap = Object.prototype.hasOwnProperty.call(statusPriority, aStatus) ? statusPriority[aStatus] : 50;
+      const bp = Object.prototype.hasOwnProperty.call(statusPriority, bStatus) ? statusPriority[bStatus] : 50;
+      if (ap !== bp) return ap - bp;
+      const aTime = Date.parse(a.request.updatedAt || a.request.createdAt || "") || 0;
+      const bTime = Date.parse(b.request.updatedAt || b.request.createdAt || "") || 0;
+      return bTime - aTime;
+    });
+
+    const cardsHtml = requests
+      .map(({ id, state, request }) => this.renderRequestCardHtml(id, state, request))
+      .join("");
+
+    list.innerHTML = cardsHtml;
+    this.updateInboxOpenButton();
+  }
+
   renderRunCardHtml(runId, state, run) {
     const statusRaw = (run && run.status ? run.status : "queued").toString().trim().toLowerCase() || "queued";
     const title = run && run.title ? run.title : "Background task";
@@ -3715,6 +4124,7 @@ class ChatPortalClient {
     const subtitle = this.formatRunSubtitle(run, lastEvent);
     const expanded = Boolean(state && state.expanded);
 
+    const actionsHtml = this.renderRunActionsHtml(runId, state, run);
     const planHtml = this.renderRunPlanHtml(run);
     const logHtml = this.renderRunLogHtml(state);
     const resultHtml = this.renderRunResultHtml(run);
@@ -3731,12 +4141,99 @@ class ChatPortalClient {
     )}</span>
         </button>
         <div class="portal-task__body">
+          ${actionsHtml}
           ${planHtml}
           ${logHtml}
           ${resultHtml}
         </div>
       </div>
     `;
+  }
+
+  renderRunActionsHtml(runId, state, run) {
+    const status = (run && run.status ? run.status : "").toString().trim().toLowerCase();
+    if (status === "waiting_approval") {
+      const approvalEvent = this.getLatestRunEvent(state, (evt) => {
+        return evt && evt.type === "needs_approval";
+      });
+      const payload = approvalEvent && approvalEvent.payload && typeof approvalEvent.payload === "object" ? approvalEvent.payload : null;
+      const approval = payload && payload.approval && typeof payload.approval === "object" ? payload.approval : null;
+      const approvalId = approval && approval.id ? approval.id.toString().trim() : "";
+      if (!approvalId) {
+        return `
+          <div class="portal-task__section">
+            <div class="portal-task__section-title">Approval</div>
+            <div class="portal-task__subtitle">Waiting for approval.</div>
+          </div>
+        `;
+      }
+      const reason = approval.reason ? approval.reason.toString().trim() : "";
+      const toolName = payload && payload.tool_name ? payload.tool_name.toString().trim() : "";
+      const remote = payload && payload.remote && typeof payload.remote === "object" ? payload.remote : null;
+      const connectionName = remote && remote.connection_name ? remote.connection_name.toString().trim() : "";
+      const toolLabel = connectionName ? `${connectionName}${toolName ? ` · ${toolName}` : ""}` : toolName;
+      const summaryParts = [];
+      if (toolLabel) summaryParts.push(toolLabel);
+      if (reason) summaryParts.push(reason);
+      const summary = summaryParts.join(" • ");
+
+      return `
+        <div class="portal-task__section">
+          <div class="portal-task__section-title">Approval</div>
+          <div class="portal-task__subtitle">${this.escapeHtml(summary || "This task needs your approval to continue.")}</div>
+          <div class="portal-task__actions">
+            <button type="button" class="portal-task__btn portal-task__btn--approve" data-run-approval-action="approve" data-approval-id="${this.escapeHtml(
+              approvalId
+            )}">Approve</button>
+            <button type="button" class="portal-task__btn portal-task__btn--deny" data-run-approval-action="deny" data-approval-id="${this.escapeHtml(
+              approvalId
+            )}">Deny</button>
+          </div>
+        </div>
+      `;
+    }
+
+    if (status === "waiting_user") {
+      const needsUserEvent = this.getLatestRunEvent(state, (evt) => {
+        return evt && evt.type === "needs_user";
+      });
+      const payload = needsUserEvent && needsUserEvent.payload && typeof needsUserEvent.payload === "object" ? needsUserEvent.payload : null;
+      const prompt = payload && payload.prompt ? payload.prompt.toString().trim() : "";
+      const questions = payload && Array.isArray(payload.questions) ? payload.questions : [];
+      const questionLines = questions
+        .filter((q) => typeof q === "string" && q.trim())
+        .slice(0, 6)
+        .map((q) => `<div class="portal-task__list-item">${this.escapeHtml(q.trim())}</div>`)
+        .join("");
+      const questionHtml = questionLines ? `<div class="portal-task__list">${questionLines}</div>` : "";
+      const promptText = prompt || (questionLines ? "" : "This task needs more information to continue.");
+
+      return `
+        <div class="portal-task__section">
+          <div class="portal-task__section-title">Question</div>
+          ${promptText ? `<div class="portal-task__subtitle">${this.escapeHtml(promptText)}</div>` : ""}
+          ${questionHtml}
+          <textarea class="portal-task__input" data-run-user-input-text rows="3" placeholder="Type your answer…"></textarea>
+          <div class="portal-task__actions">
+            <button type="button" class="portal-task__btn" data-run-user-input-send="${this.escapeHtml(runId)}">Send</button>
+          </div>
+        </div>
+      `;
+    }
+
+    if (status === "waiting_external") {
+      return `
+        <div class="portal-task__section">
+          <div class="portal-task__section-title">Waiting</div>
+          <div class="portal-task__subtitle">This task is waiting on another agent. Check the Inbox for updates.</div>
+          <div class="portal-task__actions">
+            <button type="button" class="portal-task__btn" data-open-inbox="true">Open inbox</button>
+          </div>
+        </div>
+      `;
+    }
+
+    return "";
   }
 
   formatRunStatusLabel(status) {
@@ -3828,6 +4325,222 @@ class ChatPortalClient {
     }
 
     return "";
+  }
+
+  formatRequestStatusLabel(status) {
+    const norm = (status || "").toString().trim().toLowerCase();
+    if (!norm) return "OPEN";
+    return norm.replace(/_/g, " ").toUpperCase();
+  }
+
+  formatRequestSubtitle(request) {
+    const from = request && request.fromAgent && request.fromAgent.name ? String(request.fromAgent.name).trim() : "";
+    const to = request && request.toAgent && request.toAgent.name ? String(request.toAgent.name).trim() : "";
+    let base = "Agent request";
+    if (from && to) {
+      base = `${from} → ${to}`;
+    } else if (from) {
+      base = `${from} → Agent`;
+    } else if (to) {
+      base = `Agent → ${to}`;
+    }
+    const whenRaw = request && (request.updatedAt || request.createdAt) ? String(request.updatedAt || request.createdAt) : "";
+    const when = whenRaw ? Date.parse(whenRaw) : NaN;
+    if (!Number.isNaN(when)) {
+      return `${base} · ${this.formatRelativeTime(new Date(when))}`;
+    }
+    return base;
+  }
+
+  renderRequestCardHtml(requestId, state, request) {
+    const statusRaw = (request && request.status ? request.status : "open").toString().trim().toLowerCase() || "open";
+    const subject = request && request.subject ? request.subject : "Agent request";
+    const subtitle = this.formatRequestSubtitle(request);
+    const expanded = Boolean(state && state.expanded);
+
+    const detailsHtml = this.renderRequestDetailsHtml(request);
+    const actionsHtml = this.renderRequestActionsHtml(requestId, request);
+
+    return `
+      <div class="portal-task" data-request-id="${this.escapeHtml(requestId)}" data-expanded="${expanded ? "true" : "false"}">
+        <button type="button" class="portal-task__header" data-request-toggle="${this.escapeHtml(requestId)}">
+          <div class="portal-task__meta">
+            <div class="portal-task__title">${this.escapeHtml(String(subject || "Agent request"))}</div>
+            <div class="portal-task__subtitle">${this.escapeHtml(subtitle)}</div>
+          </div>
+          <span class="portal-task__status-pill" data-status="${this.escapeHtml(statusRaw)}">${this.escapeHtml(
+            this.formatRequestStatusLabel(statusRaw)
+          )}</span>
+        </button>
+        <div class="portal-task__body">
+          ${detailsHtml}
+          ${actionsHtml}
+        </div>
+      </div>
+    `;
+  }
+
+  renderRequestDetailsHtml(request) {
+    const question = request && typeof request.question === "string" ? request.question.trim() : "";
+    const resolution = request && typeof request.resolution === "string" ? request.resolution.trim() : "";
+    const contextRefs = request && Array.isArray(request.contextRefs) ? request.contextRefs : [];
+
+    const questionHtml = question
+      ? `
+        <div class="portal-task__section">
+          <div class="portal-task__section-title">Question</div>
+          <div class="portal-task__result">${this.escapeHtml(question)}</div>
+        </div>
+      `
+      : "";
+
+    const contextItems = contextRefs
+      .slice(0, 10)
+      .map((ref) => {
+        if (!ref || typeof ref !== "object") return "";
+        const type = ref.type || ref.kind || ref.ref_type || "";
+        const id = ref.id || ref.message_id || ref.messageId || ref.run_id || ref.runId || ref.artifact_id || ref.artifactId || ref.url || "";
+        const note = ref.note || ref.label || "";
+        const parts = [];
+        if (type) parts.push(String(type).trim());
+        if (id) parts.push(String(id).trim());
+        if (note) parts.push(String(note).trim());
+        const text = parts.join(" · ");
+        return text ? `<div class="portal-task__list-item">${this.escapeHtml(text)}</div>` : "";
+      })
+      .filter(Boolean)
+      .join("");
+
+    const contextHtml = contextItems
+      ? `
+        <div class="portal-task__section">
+          <div class="portal-task__section-title">Context</div>
+          <div class="portal-task__list">${contextItems}</div>
+        </div>
+      `
+      : "";
+
+    const resolutionHtml = resolution
+      ? `
+        <div class="portal-task__section">
+          <div class="portal-task__section-title">Resolution</div>
+          <div class="portal-task__result">${this.escapeHtml(resolution)}</div>
+        </div>
+      `
+      : "";
+
+    return `${questionHtml}${contextHtml}${resolutionHtml}`;
+  }
+
+  renderRequestActionsHtml(requestId, request) {
+    const status = (request && request.status ? request.status : "").toString().trim().toLowerCase();
+    if (status === "resolved") {
+      return "";
+    }
+
+    const startBtn =
+      status === "open"
+        ? `
+          <button type="button" class="portal-task__btn" data-request-set-status="${this.escapeHtml(
+            requestId
+          )}" data-request-status="in_progress">Mark in progress</button>
+        `
+        : "";
+
+    return `
+      <div class="portal-task__section">
+        <div class="portal-task__section-title">Actions</div>
+        <div class="portal-task__actions">
+          ${startBtn}
+        </div>
+      </div>
+      <div class="portal-task__section">
+        <div class="portal-task__section-title">Resolve</div>
+        <textarea class="portal-task__input" data-request-resolution-text rows="3" placeholder="Write a short reply…"></textarea>
+        <div class="portal-task__actions">
+          <button type="button" class="portal-task__btn portal-task__btn--approve" data-request-resolve-send="${this.escapeHtml(
+            requestId
+          )}">Resolve</button>
+        </div>
+      </div>
+    `;
+  }
+
+  async submitAgentRequestUpdate(requestId, status, resolution, cardEl, textareaEl, buttonEl) {
+    if (!requestId || !status) return;
+    if (!this.endpoints.agentRequestUpdate) {
+      this.showToast("Unavailable", "Agent request endpoint is not configured.", true);
+      return;
+    }
+    if (!this.sessionToken) {
+      this.showToast("Unavailable", "Session token missing.", true);
+      return;
+    }
+    if (cardEl && cardEl.dataset.requestBusy === "true") {
+      return;
+    }
+    if (cardEl) {
+      cardEl.dataset.requestBusy = "true";
+    }
+
+    const buttons = cardEl ? cardEl.querySelectorAll("[data-request-set-status], [data-request-resolve-send]") : [];
+    buttons.forEach((btn) => {
+      btn.disabled = true;
+    });
+    if (buttonEl) {
+      buttonEl.disabled = true;
+    }
+    if (textareaEl) {
+      textareaEl.disabled = true;
+    }
+
+    try {
+      const response = await fetch(this.endpoints.agentRequestUpdate, {
+        method: "POST",
+        headers: this.jsonHeaders(),
+        body: JSON.stringify({
+          session_token: this.sessionToken,
+          request_id: requestId,
+          status,
+          resolution: resolution || undefined,
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const message = payload && payload.error && payload.error.message ? payload.error.message : "Update failed.";
+        throw new Error(message);
+      }
+      if (payload && payload.request && typeof payload.request === "object") {
+        this.upsertAgentRequest(payload.request);
+        this.updateInboxOpenButton();
+        this.scheduleInboxRender();
+      }
+      if (payload && payload.run && typeof payload.run === "object") {
+        this.upsertAgentRun(payload.run);
+        this.scheduleTasksRender();
+        this.updateTasksOpenButton();
+      }
+      if (textareaEl && status.toString().toLowerCase() === "resolved") {
+        textareaEl.value = "";
+      }
+      this.showToast("Saved", "Inbox updated.", false);
+    } catch (error) {
+      console.warn("Agent request update failed", error);
+      this.showToast("Update failed", error.message || "Please try again.", true);
+    } finally {
+      if (cardEl) {
+        cardEl.dataset.requestBusy = "false";
+      }
+      buttons.forEach((btn) => {
+        btn.disabled = false;
+      });
+      if (buttonEl) {
+        buttonEl.disabled = false;
+      }
+      if (textareaEl) {
+        textareaEl.disabled = false;
+      }
+    }
   }
 
   async submitCsat({ score }) {

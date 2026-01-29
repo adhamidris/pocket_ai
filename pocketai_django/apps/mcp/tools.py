@@ -467,6 +467,132 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
         required=("events",),
     ),
     _function_schema(
+        name="request_user_input",
+        description=(
+            "Request missing information from the end user. "
+            "Use this when running background tasks that must pause until the user responds."
+        ),
+        properties={
+            "prompt": {
+                "type": "string",
+                "description": "Primary question/prompt for the user (freeform).",
+            },
+            "questions": {
+                "type": "array",
+                "description": "Optional list of crisp questions to ask the user.",
+                "items": {"type": "string"},
+            },
+            "schema": {
+                "type": "object",
+                "description": "Optional structured schema for the user's response (UI hint only).",
+                "additionalProperties": True,
+            },
+            "__ui": {
+                "type": "object",
+                "description": "UI-only metadata (ignored by the tool).",
+                "additionalProperties": True,
+            },
+        },
+        required=(),
+    ),
+    _function_schema(
+        name="create_agent_request",
+        description=(
+            "Send a structured request from Agent A to Agent B (agent-to-agent inbox). "
+            "Use this when you need another agent/department to answer something. "
+            "Provide references (ids/links) instead of raw dumps."
+        ),
+        properties={
+            "to_agent_slug": {
+                "type": "string",
+                "description": "Recipient agent slug (optional). Defaults to the current agent.",
+            },
+            "subject": {
+                "type": "string",
+                "description": "Short subject line for the request.",
+            },
+            "question": {
+                "type": "string",
+                "description": "The question/task for the recipient agent (avoid pasting large raw context).",
+            },
+            "context_refs": {
+                "type": "array",
+                "description": "Structured references for context (conversation_id, run_id, message_id, artifact_id, etc.).",
+                "items": {"type": "object", "additionalProperties": True},
+            },
+            "__ui": {
+                "type": "object",
+                "description": "UI-only metadata (ignored by the tool).",
+                "additionalProperties": True,
+            },
+        },
+        required=("question",),
+    ),
+    _function_schema(
+        name="create_agent_run",
+        description=(
+            "Create a background AgentRun (sub-agent) anchored to this conversation. "
+            "Use this when the visitor asks for a long-running or multi-step task so the chat can continue "
+            "while the work happens in the Tasks panel."
+        ),
+        properties={
+            "goal": {
+                "type": "string",
+                "description": "Clear task goal for the background run.",
+            },
+            "title": {
+                "type": "string",
+                "description": "Optional short title shown in the Tasks panel.",
+            },
+            "success_criteria": {
+                "type": "array",
+                "description": "Optional list of success criteria (1-10).",
+                "items": {"type": "string"},
+            },
+            "tool_allowlist": {
+                "type": "array",
+                "description": "Optional allowlist of tool names the run may use.",
+                "items": {"type": "string"},
+            },
+            "constraints": {
+                "type": "object",
+                "description": "Optional execution constraints (timeouts, max steps, max tool calls).",
+                "additionalProperties": True,
+            },
+            "output_schema": {
+                "type": "object",
+                "description": "Optional expected output schema (JSON Schema-like).",
+                "additionalProperties": True,
+            },
+            "approval": {
+                "type": "object",
+                "description": "Optional approval policy metadata for downstream tools.",
+                "additionalProperties": True,
+            },
+            "visibility": {
+                "type": "string",
+                "enum": ["initiator", "managers", "workspace"],
+                "description": "Who can view this run (teams/roles are pending).",
+            },
+            "plan": {
+                "type": "object",
+                "description": "Optional planner output to display in the Tasks panel.",
+                "additionalProperties": True,
+            },
+            "metadata": {
+                "type": "object",
+                "description": "Optional metadata for routing/output destinations.",
+                "additionalProperties": True,
+            },
+            "__ui": {
+                "type": "object",
+                "description": "UI-only metadata (ignored by the tool).",
+                "additionalProperties": True,
+            },
+        },
+        required=("goal",),
+    ),
+    _function_schema(
         name="search_knowledge",
         description="Search the knowledge base using a natural-language query.",
         properties={
@@ -13522,9 +13648,393 @@ def _email_send_draft_handler(
     }
 
 
+def _request_user_input_handler(
+    arguments: Mapping[str, object],
+    *,
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    prompt = str(arguments.get("prompt") or arguments.get("question") or "").strip()
+    raw_questions = arguments.get("questions")
+    questions: list[str] = []
+    if isinstance(raw_questions, list):
+        for item in raw_questions:
+            if not isinstance(item, str):
+                continue
+            text = item.strip()
+            if text:
+                questions.append(text)
+    if not questions and prompt:
+        questions = [prompt]
+    if not questions:
+        return {
+            "tool": "request_user_input",
+            "status": "error",
+            "error_code": "validation_failed",
+            "error": "missing_prompt",
+            "hint": "Provide prompt or questions for request_user_input.",
+        }
+
+    schema = arguments.get("schema")
+    schema_payload = dict(schema) if isinstance(schema, Mapping) else {}
+    return {
+        "tool": "request_user_input",
+        "status": "needs_user",
+        "questions": questions[:10],
+        "schema": schema_payload,
+        "hint": "Awaiting user input. Ask the user, then resume after they reply.",
+    }
+
+
+def _create_agent_request_handler(
+    arguments: Mapping[str, object],
+    *,
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context
+
+    feature_state = FeatureFlagService.snapshot(conversation.business_profile)
+    if not bool(getattr(feature_state, "sub_agents_v1", False)):
+        return {
+            "tool": "create_agent_request",
+            "status": "error",
+            "error_code": "feature_disabled",
+            "error": "sub_agents_disabled",
+            "hint": (
+                "Sub-agents are disabled for this business. "
+                "Enable the per-business feature flag `sub_agents_v1` or set `SUB_AGENTS_V1_GLOBAL_OVERRIDE=true` "
+                "and restart the server."
+            ),
+        }
+
+    from_agent_profile = getattr(conversation, "agent_profile", None)
+    if not from_agent_profile:
+        return {
+            "tool": "create_agent_request",
+            "status": "error",
+            "error_code": "missing_agent_profile",
+            "error": "missing_agent_profile",
+            "hint": "Conversation must be linked to an agent_profile to create agent requests.",
+        }
+
+    question = str(arguments.get("question") or arguments.get("body") or "").strip()
+    subject = str(arguments.get("subject") or "").strip()
+    to_agent_slug = _coerce_str(arguments.get("to_agent_slug") or arguments.get("toAgentSlug")).strip()
+
+    if not question:
+        return {
+            "tool": "create_agent_request",
+            "status": "error",
+            "error_code": "validation_failed",
+            "error": "missing_question",
+            "hint": "Provide question for create_agent_request.",
+        }
+
+    if not subject:
+        subject = (question[:120].strip() or "Agent request").rstrip()
+
+    def _sanitize_value(value: object, *, depth: int) -> object:
+        if value is None or isinstance(value, (bool, int, float)):
+            return value
+        if isinstance(value, str):
+            return value.strip()[:280]
+        if depth >= 1:
+            return str(value)[:180]
+        if isinstance(value, Mapping):
+            payload: dict[str, object] = {}
+            for key, inner in list(value.items())[:10]:
+                if not isinstance(key, str):
+                    continue
+                key_norm = key.strip()
+                if not key_norm or len(key_norm) > 64:
+                    continue
+                payload[key_norm] = _sanitize_value(inner, depth=depth + 1)
+            return payload
+        if isinstance(value, list):
+            items: list[object] = []
+            for inner in value[:10]:
+                items.append(_sanitize_value(inner, depth=depth + 1))
+            return items
+        return str(value)[:180]
+
+    raw_refs = arguments.get("context_refs") or arguments.get("contextRefs") or []
+    context_refs: list[dict[str, object]] = []
+    if isinstance(raw_refs, list):
+        for item in raw_refs[:20]:
+            if not isinstance(item, Mapping):
+                continue
+            cleaned: dict[str, object] = {}
+            for key, value in item.items():
+                if not isinstance(key, str):
+                    continue
+                key_norm = key.strip()
+                if not key_norm or len(key_norm) > 64:
+                    continue
+                cleaned[key_norm] = _sanitize_value(value, depth=0)
+            if cleaned:
+                context_refs.append(cleaned)
+
+    from apps.accounts.models import AgentProfile
+    from apps.conversations.models import AgentRequest, AgentRequestStatus, AgentRun
+
+    to_agent_profile = from_agent_profile
+    if to_agent_slug:
+        resolved = AgentProfile.objects.filter(
+            business_profile_id=conversation.business_profile_id,
+            slug=to_agent_slug,
+        ).first()
+        if not resolved:
+            return {
+                "tool": "create_agent_request",
+                "status": "error",
+                "error_code": "recipient_not_found",
+                "error": "recipient_not_found",
+                "hint": "Recipient agent was not found for to_agent_slug.",
+            }
+        to_agent_profile = resolved
+
+    meta = conversation.metadata if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
+    run_id_raw = str(meta.get("agent_run_id") or meta.get("agentRunId") or "").strip()
+    agent_run_id = None
+    if run_id_raw:
+        try:
+            run_uuid = uuid.UUID(run_id_raw)
+        except (TypeError, ValueError):
+            run_uuid = None
+        if run_uuid:
+            agent_run_id = (
+                AgentRun.objects.filter(id=run_uuid, business_profile_id=conversation.business_profile_id)
+                .values_list("id", flat=True)
+                .first()
+            )
+
+    req = AgentRequest.objects.create(
+        business_profile_id=conversation.business_profile_id,
+        from_agent_profile_id=from_agent_profile.id,
+        to_agent_profile_id=to_agent_profile.id,
+        conversation_id=conversation.id,
+        agent_run_id=agent_run_id,
+        created_by_id=getattr(from_agent_profile, "user_id", None),
+        status=AgentRequestStatus.OPEN,
+        subject=subject[:240],
+        question=question[:6000],
+        context_refs=context_refs,
+        metadata={
+            "source": "mcp_tool",
+            "to_agent_slug": to_agent_slug,
+        },
+    )
+
+    return {
+        "tool": "create_agent_request",
+        "status": "needs_external",
+        "agent_request_id": str(req.id),
+        "request": {
+            "id": str(req.id),
+            "status": req.status,
+            "subject": req.subject,
+            "from_agent": {"id": str(from_agent_profile.id), "name": from_agent_profile.name, "slug": from_agent_profile.slug},
+            "to_agent": {"id": str(to_agent_profile.id), "name": to_agent_profile.name, "slug": to_agent_profile.slug},
+        },
+        "hint": "Request created. Await response in the agent inbox, then resume.",
+    }
+
+
+def _create_agent_run_handler(
+    arguments: Mapping[str, object],
+    *,
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context
+
+    feature_state = FeatureFlagService.snapshot(conversation.business_profile)
+    if not bool(getattr(feature_state, "sub_agents_v1", False)):
+        return {
+            "tool": "create_agent_run",
+            "status": "error",
+            "error_code": "feature_disabled",
+            "error": "sub_agents_disabled",
+            "hint": (
+                "Sub-agents are disabled for this business. "
+                "Enable the per-business feature flag `sub_agents_v1` or set `SUB_AGENTS_V1_GLOBAL_OVERRIDE=true` "
+                "and restart the server."
+            ),
+        }
+
+    convo_meta = conversation.metadata if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
+    convo_source = str(convo_meta.get("source") or "").strip().lower()
+    if convo_source == "agent_run" or convo_meta.get("agent_run_id") or convo_meta.get("agentRunId"):
+        return {
+            "tool": "create_agent_run",
+            "status": "error",
+            "error_code": "nested_runs_forbidden",
+            "error": "nested_runs_forbidden",
+            "hint": "Creating background runs from inside another run is not supported in v1.",
+        }
+
+    agent_profile = getattr(conversation, "agent_profile", None)
+    if not agent_profile:
+        return {
+            "tool": "create_agent_run",
+            "status": "error",
+            "error_code": "missing_agent_profile",
+            "error": "missing_agent_profile",
+            "hint": "Conversation must be linked to an agent_profile to create runs.",
+        }
+
+    goal = str(arguments.get("goal") or "").strip()
+    if not goal:
+        return {
+            "tool": "create_agent_run",
+            "status": "error",
+            "error_code": "validation_failed",
+            "error": "missing_goal",
+            "hint": "Provide goal for create_agent_run.",
+        }
+
+    title = str(arguments.get("title") or "").strip()
+    if not title:
+        title = (goal[:200].strip() or "Background run").rstrip()
+
+    actor_raw = str(convo_meta.get("actor_user_id") or convo_meta.get("actorUserId") or "").strip()
+    actor_id: uuid.UUID | None = None
+    if actor_raw:
+        try:
+            actor_id = uuid.UUID(actor_raw)
+        except (TypeError, ValueError):
+            actor_id = None
+
+    business_owner_id = getattr(getattr(conversation, "business_profile", None), "user_id", None)
+    agent_user_id = getattr(agent_profile, "user_id", None)
+
+    if not actor_id:
+        return {
+            "tool": "create_agent_run",
+            "status": "error",
+            "error_code": "missing_actor_user",
+            "error": "missing_actor_user",
+            "hint": "Authenticated actor_user_id is required to start background runs.",
+        }
+
+    if actor_id not in {business_owner_id, agent_user_id}:
+        return {
+            "tool": "create_agent_run",
+            "status": "error",
+            "error_code": "forbidden",
+            "error": "forbidden",
+            "hint": "Actor is not permitted to start runs for this business.",
+        }
+
+    success_raw = arguments.get("success_criteria")
+    success_criteria: list[str] = []
+    if isinstance(success_raw, list):
+        for item in success_raw[:20]:
+            if not isinstance(item, str):
+                continue
+            text = item.strip()
+            if text:
+                success_criteria.append(text[:280])
+    tool_allowlist_raw = arguments.get("tool_allowlist")
+    tool_allowlist: list[str] = []
+    if isinstance(tool_allowlist_raw, list):
+        for item in tool_allowlist_raw[:60]:
+            if not isinstance(item, str):
+                continue
+            name = item.strip()
+            if name:
+                tool_allowlist.append(name[:80])
+
+    constraints = arguments.get("constraints")
+    constraints_payload = dict(constraints) if isinstance(constraints, Mapping) else {}
+    output_schema = arguments.get("output_schema")
+    output_schema_payload = dict(output_schema) if isinstance(output_schema, Mapping) else {}
+    approval = arguments.get("approval")
+    approval_payload = dict(approval) if isinstance(approval, Mapping) else {}
+    metadata = arguments.get("metadata")
+    metadata_payload = dict(metadata) if isinstance(metadata, Mapping) else {}
+
+    visibility = str(arguments.get("visibility") or "initiator").strip().lower()
+    if visibility not in {"initiator", "managers", "workspace"}:
+        visibility = "initiator"
+
+    from django.db import transaction
+    from django.utils import timezone as django_timezone
+
+    from apps.conversations.models import (
+        AgentRun,
+        AgentRunEvent,
+        AgentRunEventStream,
+        AgentRunEventType,
+        AgentRunSource,
+        AgentRunStatus,
+    )
+    from apps.conversations.run_contracts import normalize_run_spec
+
+    run_spec_snapshot = normalize_run_spec(
+        {
+            "version": 1,
+            "goal": goal[:6000],
+            "success_criteria": success_criteria[:10],
+            **({"tool_allowlist": tool_allowlist[:30]} if tool_allowlist else {}),
+            **({"constraints": constraints_payload} if constraints_payload else {}),
+            **({"output_schema": output_schema_payload} if output_schema_payload else {}),
+            **({"approval": approval_payload} if approval_payload else {}),
+            "visibility": visibility,
+            "metadata": metadata_payload,
+        }
+    )
+
+    plan = arguments.get("plan")
+    plan_payload = dict(plan) if isinstance(plan, Mapping) else {}
+
+    now = django_timezone.now()
+    with transaction.atomic():
+        run = AgentRun.objects.create(
+            business_profile_id=conversation.business_profile_id,
+            agent_profile_id=agent_profile.id,
+            conversation_id=conversation.id,
+            created_by_id=actor_id,
+            run_spec_snapshot=run_spec_snapshot,
+            title=title[:200],
+            source=AgentRunSource.CHAT,
+            status=AgentRunStatus.QUEUED,
+            visibility=visibility,
+            plan=plan_payload,
+            metadata={**metadata_payload, "source": "mcp_tool"},
+            run_after=now,
+        )
+        AgentRunEvent.objects.create(
+            run=run,
+            sequence_index=1,
+            stream=AgentRunEventStream.SYSTEM,
+            event_type=AgentRunEventType.PROGRESS,
+            label="Queued",
+            payload={"status": AgentRunStatus.QUEUED},
+        )
+
+    return {
+        "tool": "create_agent_run",
+        "status": "ok",
+        "run_id": str(run.id),
+        "run": {
+            "id": str(run.id),
+            "title": run.title,
+            "status": run.status,
+            "source": run.source,
+            "visibility": run.visibility,
+        },
+        "hint": "Background run queued. Watch the Tasks panel for progress.",
+    }
+
+
 _TOOL_HANDLERS: dict[str, ToolHandler] = {
     "mcp_search_tools": _mcp_search_tools_handler,
     "mcp_call_tool": _mcp_call_tool_handler,
+    "request_user_input": _request_user_input_handler,
+    "create_agent_request": _create_agent_request_handler,
+    "create_agent_run": _create_agent_run_handler,
     "search_knowledge": _search_knowledge_handler,
     "search_conversation_files": _search_conversation_files_handler,
     "read_knowledge": _read_knowledge_handler,

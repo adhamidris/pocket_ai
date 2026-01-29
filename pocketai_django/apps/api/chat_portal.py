@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 from django.conf import settings
 from django.core.cache import cache
 from django.db import close_old_connections, transaction
+from django.db.models import Max, Q
 from django.http import HttpRequest, HttpResponse, JsonResponse, StreamingHttpResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -39,8 +40,14 @@ from apps.conversations.content_blocks import (
 )
 from apps.conversations.rich_blocks import RichBlockStreamBuilder, apply_block_ops, coerce_block_event, rich_blocks_from_text
 from apps.conversations.models import (
+    AgentRequest,
+    AgentRequestStatus,
     AgentRun,
     AgentRunEvent,
+    AgentRunEventStream,
+    AgentRunEventType,
+    AgentRunMemoryItem,
+    AgentRunMemoryKind,
     AgentRunStatus,
     ConversationSender,
     ConversationToolApproval,
@@ -1052,6 +1059,29 @@ def _serialize_agent_run_event_for_portal(event: AgentRunEvent) -> dict[str, obj
     }
 
 
+def _append_agent_run_event(
+    run: AgentRun,
+    *,
+    stream: str,
+    event_type: str,
+    label: str = "",
+    payload: dict[str, object] | None = None,
+) -> AgentRunEvent:
+    with transaction.atomic():
+        locked_run = AgentRun.objects.select_for_update().get(id=run.id)
+        next_index = (
+            AgentRunEvent.objects.filter(run=locked_run).aggregate(max_index=Max("sequence_index")).get("max_index") or 0
+        )
+        return AgentRunEvent.objects.create(
+            run=locked_run,
+            sequence_index=int(next_index) + 1,
+            stream=stream,
+            event_type=event_type,
+            label=(label or "")[:240],
+            payload=payload or {},
+        )
+
+
 def _build_portal_agent_runs_snapshot(
     *,
     conversation_id: uuid.UUID,
@@ -1102,6 +1132,73 @@ def _build_portal_agent_runs_snapshot(
         }
 
 
+def _serialize_agent_request_for_portal(request: AgentRequest) -> dict[str, object]:
+    context_refs = request.context_refs if isinstance(getattr(request, "context_refs", None), list) else []
+    from_agent = getattr(request, "from_agent_profile", None)
+    to_agent = getattr(request, "to_agent_profile", None)
+    return {
+        "id": str(request.id),
+        "status": request.status,
+        "subject": request.subject or "",
+        "question": _clip_portal_text(str(request.question or ""), 6000),
+        "contextRefs": context_refs,
+        "resolution": _clip_portal_text(str(request.resolution or ""), 6000),
+        "fromAgent": {
+            "id": str(getattr(from_agent, "id", "") or ""),
+            "name": str(getattr(from_agent, "name", "") or ""),
+            "slug": str(getattr(from_agent, "slug", "") or ""),
+        }
+        if from_agent
+        else {},
+        "toAgent": {
+            "id": str(getattr(to_agent, "id", "") or ""),
+            "name": str(getattr(to_agent, "name", "") or ""),
+            "slug": str(getattr(to_agent, "slug", "") or ""),
+        }
+        if to_agent
+        else {},
+        "conversationId": str(request.conversation_id) if request.conversation_id else None,
+        "agentRunId": str(request.agent_run_id) if request.agent_run_id else None,
+        "createdAt": request.created_at.isoformat() if request.created_at else None,
+        "updatedAt": request.updated_at.isoformat() if request.updated_at else None,
+        "resolvedAt": request.resolved_at.isoformat() if request.resolved_at else None,
+    }
+
+
+def _build_portal_agent_requests_snapshot(
+    *,
+    business_id: uuid.UUID | None,
+    agent_profile_id: uuid.UUID | None,
+    limit: int = 25,
+) -> dict[str, object]:
+    limit = max(1, min(int(limit), 100))
+    if not business_id or not agent_profile_id:
+        return {
+            "agentProfileId": str(agent_profile_id) if agent_profile_id else None,
+            "requests": [],
+            "cursor": {"since": timezone.now().isoformat()},
+        }
+
+    with tenant_context(business_id):
+        qs = (
+            AgentRequest.objects.select_related("from_agent_profile", "to_agent_profile")
+            .filter(business_profile_id=business_id)
+            .filter(Q(to_agent_profile_id=agent_profile_id) | Q(from_agent_profile_id=agent_profile_id))
+            .order_by("-updated_at")[:limit]
+        )
+        requests = list(qs)
+        max_updated = None
+        for req in requests:
+            if req.updated_at and (max_updated is None or req.updated_at > max_updated):
+                max_updated = req.updated_at
+        cursor_value = (max_updated or timezone.now()).isoformat()
+        return {
+            "agentProfileId": str(agent_profile_id),
+            "requests": [_serialize_agent_request_for_portal(req) for req in requests],
+            "cursor": {"since": cursor_value},
+        }
+
+
 def _message_to_dict(message: PortalMessage) -> dict:
     return {
         "id": str(message.id),
@@ -1114,12 +1211,22 @@ def _message_to_dict(message: PortalMessage) -> dict:
 
 
 def _bootstrap_to_dict(result: PortalSessionBootstrap) -> dict:
-    return {
+    payload = {
         "business": _business_to_dict(result.business),
         "agent": _agent_to_dict(result.agent),
         "session": _session_to_dict(result.session),
         "messages": [_message_to_dict(msg) for msg in result.messages],
     }
+    try:
+        from apps.accounts.feature_flags import FeatureFlagService
+
+        feature_state = FeatureFlagService.snapshot(result.business)
+        payload["capabilities"] = {
+            "subAgentsEnabled": bool(getattr(feature_state, "sub_agents_v1", False)),
+        }
+    except Exception:  # pragma: no cover - best effort only
+        payload["capabilities"] = {"subAgentsEnabled": False}
+    return payload
 
 
 @require_GET
@@ -1704,6 +1811,78 @@ def portal_tool_approval(request: HttpRequest) -> JsonResponse:
             except Exception:  # pragma: no cover - best effort only
                 logger.exception("portal_tool_preference_save_failed approval=%s", approval.id)
 
+    # If this approval unblocks a background AgentRun (Tasks panel), resume/cancel it.
+    if approval:
+        actor_user = request.user if getattr(request, "user", None) and request.user.is_authenticated else None
+        if actor_user:
+            actor_snapshot: dict[str, object] = {"type": "user", "user_id": str(getattr(actor_user, "id", "") or "")}
+        else:
+            actor_snapshot = {
+                "type": "portal_session",
+                "session_hash": hashlib.sha256(session_token.encode("utf-8", errors="ignore")).hexdigest()[:16],
+            }
+        with tenant_context(business_id):
+            waiting_runs = list(
+                AgentRun.objects.filter(conversation_id=conversation.id, status=AgentRunStatus.WAITING_APPROVAL)
+                .order_by("-updated_at")[:15]
+            )
+            for run in waiting_runs:
+                meta = run.metadata if isinstance(getattr(run, "metadata", None), dict) else {}
+                pending_id = str(meta.get("pending_approval_id") or "").strip()
+                if pending_id and pending_id != str(approval.id):
+                    continue
+
+                decision_value = "approve" if approval.status == ConversationToolApprovalStatus.APPROVED else "deny"
+                _append_agent_run_event(
+                    run,
+                    stream=AgentRunEventStream.EXECUTED,
+                    event_type=AgentRunEventType.PROGRESS,
+                    label="Approved" if decision_value == "approve" else "Denied",
+                    payload={
+                        "decision": decision_value,
+                        "approval_id": str(approval.id),
+                        "tool_name": approval.tool_name,
+                        "remote_tool_name": approval.remote_tool_name,
+                    },
+                )
+                AgentRunMemoryItem.objects.create(
+                    run=run,
+                    kind=AgentRunMemoryKind.DECISION,
+                    key="tool_approval",
+                    content=decision_value,
+                    payload={
+                        "decision": decision_value,
+                        "approval_id": str(approval.id),
+                        "tool_name": approval.tool_name,
+                        "remote_tool_name": approval.remote_tool_name,
+                        "actor": actor_snapshot,
+                    },
+                    created_by=actor_user,
+                )
+
+                next_meta = dict(meta)
+                next_meta.pop("pending_approval_id", None)
+
+                if approval.status == ConversationToolApprovalStatus.APPROVED:
+                    AgentRun.objects.filter(id=run.id).update(
+                        status=AgentRunStatus.QUEUED,
+                        run_after=timezone.now(),
+                        lease_expires_at=None,
+                        error_detail="",
+                        metadata=next_meta,
+                        updated_at=timezone.now(),
+                    )
+                else:
+                    AgentRun.objects.filter(id=run.id).update(
+                        status=AgentRunStatus.CANCELLED,
+                        finished_at=timezone.now(),
+                        lease_expires_at=None,
+                        run_after=None,
+                        error_detail="denied",
+                        metadata=next_meta,
+                        updated_at=timezone.now(),
+                    )
+
     return JsonResponse(
         {
             "session": _session_to_dict(session),
@@ -1711,6 +1890,269 @@ def portal_tool_approval(request: HttpRequest) -> JsonResponse:
             "preferenceSaved": preference_saved,
         }
     )
+
+
+@csrf_exempt
+@require_POST
+def portal_agent_run_user_input(request: HttpRequest) -> JsonResponse:
+    service = _service()
+    try:
+        payload = _parse_json_body(request)
+    except PortalValidationError as exc:
+        return _json_error("invalid_json", str(exc))
+
+    session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
+    run_id_raw = (payload.get("run_id") or payload.get("runId") or "").strip()
+    message = str(payload.get("message") or "").strip()
+    extra = payload.get("payload")
+    extra_payload = dict(extra) if isinstance(extra, dict) else {}
+
+    if not session_token or not run_id_raw:
+        return _json_error("validation_error", "session_token and run_id are required.")
+    if not message and not extra_payload:
+        return _json_error("validation_error", "message or payload is required.")
+
+    try:
+        run_uuid = uuid.UUID(run_id_raw)
+    except (TypeError, ValueError):
+        return _json_error("validation_error", "run_id is invalid.")
+
+    try:
+        conversation = service.get_conversation(session_token=session_token, include_messages=False)
+        session = service.get_session_state(session_token=session_token, conversation=conversation)
+    except PortalNotFoundError as exc:
+        return _json_error("not_found", str(exc), status=404)
+
+    business_id = getattr(conversation, "business_profile_id", None)
+    enabled = False
+    try:
+        from apps.accounts.feature_flags import FeatureFlagService
+        from apps.accounts.models import BusinessProfile
+
+        if business_id:
+            with tenant_context(business_id):
+                business = BusinessProfile.objects.filter(id=business_id).only("id", "metadata").first()
+            enabled = bool(getattr(FeatureFlagService.snapshot(business), "sub_agents_v1", False)) if business else False
+    except Exception:  # pragma: no cover - best effort only
+        enabled = False
+
+    if not enabled:
+        return _json_error("feature_disabled", "Sub-agents are not enabled for this business.", status=403)
+    actor_user = request.user if getattr(request, "user", None) and request.user.is_authenticated else None
+    if actor_user:
+        actor_snapshot: dict[str, object] = {"type": "user", "user_id": str(getattr(actor_user, "id", "") or "")}
+    else:
+        actor_snapshot = {
+            "type": "portal_session",
+            "session_hash": hashlib.sha256(session_token.encode("utf-8", errors="ignore")).hexdigest()[:16],
+        }
+
+    with tenant_context(business_id):
+        run = AgentRun.objects.filter(id=run_uuid, conversation_id=conversation.id).first()
+        if run is None:
+            return _json_error("not_found", "Run not found.", status=404)
+
+        if run.status not in {AgentRunStatus.WAITING_USER, AgentRunStatus.PAUSED, AgentRunStatus.WAITING_EXTERNAL}:
+            return _json_error("run_not_waiting_user", "Run is not waiting for user input.", status=409)
+
+        _append_agent_run_event(
+            run,
+            stream=AgentRunEventStream.EXECUTED,
+            event_type=AgentRunEventType.PROGRESS,
+            label="User input received",
+            payload={"message": message, "payload": extra_payload} if extra_payload else {"message": message},
+        )
+        AgentRunMemoryItem.objects.create(
+            run=run,
+            kind=AgentRunMemoryKind.NOTE,
+            key="user_input",
+            content=message[:4000],
+            payload={"actor": actor_snapshot, "payload": extra_payload},
+            created_by=actor_user,
+        )
+
+        next_meta = run.metadata if isinstance(getattr(run, "metadata", None), dict) else {}
+        next_meta = dict(next_meta)
+        next_meta.pop("pending_user_input", None)
+
+        AgentRun.objects.filter(id=run.id).update(
+            status=AgentRunStatus.QUEUED,
+            run_after=timezone.now(),
+            lease_expires_at=None,
+            error_detail="",
+            metadata=next_meta,
+            updated_at=timezone.now(),
+        )
+        run.refresh_from_db()
+
+    try:
+        if message:
+            service.append_message(
+                session_token=session_token,
+                sender=ConversationSender.CUSTOMER,
+                body=message,
+                metadata={"source": "agent_run", "agent_run_id": str(run.id), "type": "user_input"},
+                conversation=conversation,
+            )
+    except Exception:  # pragma: no cover - chat transcript should not block execution
+        logger.exception("portal_agent_run_user_input_message_failed run=%s", run_uuid)
+
+    return JsonResponse({"session": _session_to_dict(session), "run": _serialize_agent_run_for_portal(run)}, status=200)
+
+
+@csrf_exempt
+@require_POST
+def portal_agent_request_update(request: HttpRequest) -> JsonResponse:
+    service = _service()
+    try:
+        payload = _parse_json_body(request)
+    except PortalValidationError as exc:
+        return _json_error("invalid_json", str(exc))
+
+    session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
+    request_id_raw = (payload.get("request_id") or payload.get("requestId") or "").strip()
+    status_raw = payload.get("status") or payload.get("state") or payload.get("action") or ""
+    status_value = str(status_raw).strip().lower().replace("-", "_").replace(" ", "_")
+    resolution = str(payload.get("resolution") or payload.get("message") or payload.get("reply") or "").strip()
+
+    if not session_token or not request_id_raw:
+        return _json_error("validation_error", "session_token and request_id are required.")
+
+    try:
+        request_uuid = uuid.UUID(request_id_raw)
+    except (TypeError, ValueError):
+        return _json_error("validation_error", "request_id is invalid.")
+
+    status_map = {
+        "open": AgentRequestStatus.OPEN,
+        "in_progress": AgentRequestStatus.IN_PROGRESS,
+        "inprogress": AgentRequestStatus.IN_PROGRESS,
+        "start": AgentRequestStatus.IN_PROGRESS,
+        "started": AgentRequestStatus.IN_PROGRESS,
+        "resolve": AgentRequestStatus.RESOLVED,
+        "resolved": AgentRequestStatus.RESOLVED,
+    }
+    next_status = status_map.get(status_value)
+    if not next_status:
+        return _json_error("validation_error", "status must be open, in_progress, or resolved.")
+    if next_status == AgentRequestStatus.RESOLVED and not resolution:
+        return _json_error("validation_error", "resolution is required when resolving a request.")
+
+    try:
+        conversation = service.get_conversation(session_token=session_token, include_messages=False)
+        session = service.get_session_state(session_token=session_token, conversation=conversation)
+    except PortalNotFoundError as exc:
+        return _json_error("not_found", str(exc), status=404)
+
+    business_id = getattr(conversation, "business_profile_id", None)
+    enabled = False
+    try:
+        from apps.accounts.feature_flags import FeatureFlagService
+        from apps.accounts.models import BusinessProfile
+
+        if business_id:
+            with tenant_context(business_id):
+                business = BusinessProfile.objects.filter(id=business_id).only("id", "metadata").first()
+            enabled = bool(getattr(FeatureFlagService.snapshot(business), "sub_agents_v1", False)) if business else False
+    except Exception:  # pragma: no cover - best effort only
+        enabled = False
+
+    if not enabled:
+        return _json_error("feature_disabled", "Sub-agents are not enabled for this business.", status=403)
+    agent_profile_id = getattr(conversation, "agent_profile_id", None)
+    actor_user = request.user if getattr(request, "user", None) and request.user.is_authenticated else None
+    if actor_user:
+        actor_snapshot: dict[str, object] = {"type": "user", "user_id": str(getattr(actor_user, "id", "") or "")}
+    else:
+        actor_snapshot = {
+            "type": "portal_session",
+            "session_hash": hashlib.sha256(session_token.encode("utf-8", errors="ignore")).hexdigest()[:16],
+        }
+
+    run_payload: dict[str, object] | None = None
+    with transaction.atomic():
+        with tenant_context(business_id):
+            qs = AgentRequest.objects.select_for_update().select_related("from_agent_profile", "to_agent_profile").filter(
+                id=request_uuid,
+                business_profile_id=business_id,
+            )
+            if agent_profile_id:
+                qs = qs.filter(Q(to_agent_profile_id=agent_profile_id) | Q(from_agent_profile_id=agent_profile_id))
+            agent_request = qs.first()
+            if agent_request is None:
+                return _json_error("not_found", "Request not found.", status=404)
+
+            now = timezone.now()
+            update_fields: list[str] = ["status", "updated_at"]
+            agent_request.status = next_status
+            if next_status == AgentRequestStatus.RESOLVED:
+                agent_request.resolution = resolution[:8000]
+                agent_request.resolved_at = now
+                update_fields.extend(["resolution", "resolved_at"])
+            agent_request.save(update_fields=update_fields)
+
+            if next_status == AgentRequestStatus.RESOLVED and agent_request.agent_run_id:
+                run = AgentRun.objects.select_for_update().filter(id=agent_request.agent_run_id).first()
+                if run and run.status in {AgentRunStatus.WAITING_EXTERNAL, AgentRunStatus.PAUSED}:
+                    _append_agent_run_event(
+                        run,
+                        stream=AgentRunEventStream.EXECUTED,
+                        event_type=AgentRunEventType.PROGRESS,
+                        label="Agent response received",
+                        payload={
+                            "agent_request_id": str(agent_request.id),
+                            "subject": agent_request.subject,
+                        },
+                    )
+                    AgentRunMemoryItem.objects.create(
+                        run=run,
+                        kind=AgentRunMemoryKind.NOTE,
+                        key="agent_request",
+                        content=resolution[:4000],
+                        payload={
+                            "agent_request_id": str(agent_request.id),
+                            "subject": agent_request.subject,
+                            "actor": actor_snapshot,
+                        },
+                        created_by=actor_user,
+                    )
+
+                    next_meta = run.metadata if isinstance(getattr(run, "metadata", None), dict) else {}
+                    next_meta = dict(next_meta)
+                    inputs = next_meta.get("external_inputs")
+                    if not isinstance(inputs, list):
+                        inputs = []
+                    inputs.append(
+                        {
+                            "type": "agent_request",
+                            "id": str(agent_request.id),
+                            "subject": agent_request.subject,
+                            "resolution": resolution[:4000],
+                            "at": now.isoformat(),
+                        }
+                    )
+                    next_meta["external_inputs"] = inputs[-10:]
+                    next_meta.pop("pending_agent_request_id", None)
+                    next_meta.pop("pending_agent_request", None)
+
+                    AgentRun.objects.filter(id=run.id).update(
+                        status=AgentRunStatus.QUEUED,
+                        run_after=now,
+                        lease_expires_at=None,
+                        error_detail="",
+                        metadata=next_meta,
+                        updated_at=now,
+                    )
+                    run.refresh_from_db()
+                    run_payload = _serialize_agent_run_for_portal(run)
+
+    response_payload: dict[str, object] = {
+        "session": _session_to_dict(session),
+        "request": _serialize_agent_request_for_portal(agent_request),
+    }
+    if run_payload:
+        response_payload["run"] = run_payload
+    return JsonResponse(response_payload, status=200)
 
 
 @csrf_exempt
@@ -3520,11 +3962,25 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
 
     conversation_id = getattr(conversation, "id", None)
     business_id = getattr(conversation, "business_profile_id", None)
+    agent_profile_id = getattr(conversation, "agent_profile_id", None)
+    subagents_enabled = False
+    try:
+        from apps.accounts.feature_flags import FeatureFlagService
+        from apps.accounts.models import BusinessProfile
+
+        if business_id:
+            with tenant_context(business_id):
+                business = BusinessProfile.objects.filter(id=business_id).first()
+            subagents_enabled = bool(getattr(FeatureFlagService.snapshot(business), "sub_agents_v1", False)) if business else False
+    except Exception:  # pragma: no cover - best effort only
+        subagents_enabled = False
 
     def event_stream() -> Iterable[str]:
         yield "event: statusChanged\n"
         yield f"data: {json.dumps({'status': session.status})}\n\n"
-        if conversation_id:
+        run_since = timezone.now()
+        request_since = timezone.now()
+        if conversation_id and subagents_enabled:
             try:
                 snapshot = _build_portal_agent_runs_snapshot(
                     conversation_id=conversation_id,
@@ -3545,29 +4001,57 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
                         since = since.replace(tzinfo=timezone.utc)
                 if since is None:
                     since = timezone.now()
+                run_since = since
             except Exception:  # pragma: no cover - snapshot is best effort only
                 snapshot = None
-                since = timezone.now()
+                run_since = timezone.now()
+
+            try:
+                request_snapshot = _build_portal_agent_requests_snapshot(
+                    business_id=business_id,
+                    agent_profile_id=agent_profile_id,
+                )
+                yield "event: agentRequestsSnapshot\n"
+                yield f"data: {json.dumps(request_snapshot)}\n\n"
+                cursor = request_snapshot.get("cursor") if isinstance(request_snapshot, dict) else {}
+                since_raw = cursor.get("since") if isinstance(cursor, dict) else None
+                since = None
+                if isinstance(since_raw, str) and since_raw.strip():
+                    raw = since_raw.strip().replace("Z", "+00:00")
+                    try:
+                        since = datetime.fromisoformat(raw)
+                    except ValueError:
+                        since = None
+                    if since is not None and since.tzinfo is None:
+                        since = since.replace(tzinfo=timezone.utc)
+                if since is None:
+                    since = timezone.now()
+                request_since = since
+            except Exception:  # pragma: no cover - snapshot is best effort only
+                request_since = timezone.now()
         else:
-            since = timezone.now()
+            run_since = timezone.now()
+            request_since = timezone.now()
 
         seen: set[tuple[str, int]] = set()
         seen_order: list[tuple[str, int]] = []
         seen_limit = 2000
+        seen_requests: set[tuple[str, str]] = set()
+        seen_requests_order: list[tuple[str, str]] = []
         last_heartbeat = time.monotonic()
 
         while True:
             close_old_connections()
-            if conversation_id:
+            if conversation_id and subagents_enabled:
                 with tenant_context(business_id):
                     events_batch = list(
                         AgentRunEvent.objects.select_related("run")
                         .filter(run__conversation_id=conversation_id)
-                        .filter(created_at__gte=since)
+                        .filter(created_at__gte=run_since)
                         .order_by("created_at", "run_id", "sequence_index")[:250]
                     )
                 if events_batch:
-                    latest_created_at = since
+                    latest_created_at = run_since
                     for event in events_batch:
                         if event.created_at and event.created_at > latest_created_at:
                             latest_created_at = event.created_at
@@ -3586,7 +4070,35 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
                         }
                         yield "event: agentRunEvent\n"
                         yield f"data: {json.dumps(payload)}\n\n"
-                    since = latest_created_at
+                    run_since = latest_created_at
+
+            if business_id and agent_profile_id and subagents_enabled:
+                with tenant_context(business_id):
+                    requests_batch = list(
+                        AgentRequest.objects.select_related("from_agent_profile", "to_agent_profile")
+                        .filter(business_profile_id=business_id)
+                        .filter(Q(to_agent_profile_id=agent_profile_id) | Q(from_agent_profile_id=agent_profile_id))
+                        .filter(updated_at__gte=request_since)
+                        .order_by("updated_at", "id")[:250]
+                    )
+                if requests_batch:
+                    latest_updated_at = request_since
+                    for req in requests_batch:
+                        if req.updated_at and req.updated_at > latest_updated_at:
+                            latest_updated_at = req.updated_at
+                        updated_key = req.updated_at.isoformat() if req.updated_at else ""
+                        key = (str(req.id), updated_key)
+                        if key in seen_requests:
+                            continue
+                        seen_requests.add(key)
+                        seen_requests_order.append(key)
+                        if len(seen_requests_order) > seen_limit:
+                            old = seen_requests_order.pop(0)
+                            seen_requests.discard(old)
+                        payload = {"request": _serialize_agent_request_for_portal(req)}
+                        yield "event: agentRequestEvent\n"
+                        yield f"data: {json.dumps(payload)}\n\n"
+                    request_since = latest_updated_at
 
             now = time.monotonic()
             if now - last_heartbeat >= 15.0:
