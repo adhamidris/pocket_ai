@@ -4222,10 +4222,12 @@ class ChatPortalClient {
       <div class="portal-task" data-run-id="${this.escapeHtml(runId)}" data-expanded="${expanded ? "true" : "false"}">
         <button type="button" class="portal-task__header" data-run-toggle="${this.escapeHtml(runId)}">
           <div class="portal-task__meta">
-            <div class="portal-task__title">${this.escapeHtml(String(title || "Background task"))}</div>
+            <div class="portal-task__title-row">
+              <div class="portal-task__title">${this.escapeHtml(String(title || "Background task"))}</div>
+              ${this.renderRunStatusPill(statusRaw)}
+            </div>
             <div class="portal-task__subtitle">${this.escapeHtml(subtitle)}</div>
           </div>
-          ${this.renderRunStatusPill(statusRaw)}
         </button>
         <div class="portal-task__body">
           ${actionsHtml}
@@ -4661,10 +4663,12 @@ class ChatPortalClient {
       <div class="portal-task" data-request-id="${this.escapeHtml(requestId)}" data-expanded="${expanded ? "true" : "false"}">
         <button type="button" class="portal-task__header" data-request-toggle="${this.escapeHtml(requestId)}">
           <div class="portal-task__meta">
-            <div class="portal-task__title">${this.escapeHtml(String(subject || "Agent request"))}</div>
+            <div class="portal-task__title-row">
+              <div class="portal-task__title">${this.escapeHtml(String(subject || "Agent request"))}</div>
+              ${this.renderRequestStatusPill(statusRaw)}
+            </div>
             <div class="portal-task__subtitle">${this.escapeHtml(subtitle)}</div>
           </div>
-          ${this.renderRequestStatusPill(statusRaw)}
         </button>
         <div class="portal-task__body">
           ${detailsHtml}
