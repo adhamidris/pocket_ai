@@ -3641,6 +3641,7 @@ class ChatPortalClient {
       this.toggleRunExpanded(runId);
     });
 
+    this.initTasksPanelGrid();
     this.setTasksPanelVisible(false);
   }
 
@@ -3826,7 +3827,198 @@ class ChatPortalClient {
     } else {
       panel.setAttribute("hidden", "");
     }
+    this.setTasksPanelGridActive(shouldShow);
     this.updateTasksOpenButton();
+  }
+
+  initTasksPanelGrid() {
+    if (!this.elements.tasksPanel) return;
+    if (this.tasksPanelGrid) return;
+    try {
+    const panel = this.elements.tasksPanel;
+    const canvas = document.createElement("canvas");
+    canvas.className = "portal-tasks-grid";
+    canvas.dataset.tasksGrid = "true";
+    canvas.setAttribute("aria-hidden", "true");
+    panel.prepend(canvas);
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const state = {
+      canvas,
+      ctx,
+      panel,
+      dpr: window.devicePixelRatio || 1,
+      width: 0,
+      height: 0,
+      cols: 0,
+      rows: 0,
+      squareSize: 4,
+      gridGap: 6,
+      flickerChance: 0.18,
+      maxOpacity: 0.22,
+      squares: new Float32Array(0),
+      colorPrefix: "rgba(99,102,241,",
+      running: false,
+      raf: null,
+      lastTime: 0,
+    };
+
+    const readPrimary = () => {
+      const cssVar = getComputedStyle(panel).getPropertyValue("--primary").trim();
+      const temp = document.createElement("canvas");
+      temp.width = 1;
+      temp.height = 1;
+      const tmpCtx = temp.getContext("2d");
+      if (!tmpCtx) {
+        return "rgba(99,102,241,";
+      }
+      let color = cssVar;
+      if (!color) {
+        color = "rgb(99,102,241)";
+      } else if (!color.includes("(") && !color.startsWith("#")) {
+        color = `hsl(${color})`;
+      }
+      tmpCtx.fillStyle = color;
+      tmpCtx.fillRect(0, 0, 1, 1);
+      const [r, g, b] = Array.from(tmpCtx.getImageData(0, 0, 1, 1).data);
+      return `rgba(${r}, ${g}, ${b},`;
+    };
+
+    const initGrid = () => {
+      const rect = panel.getBoundingClientRect();
+      const width = Math.max(1, Math.round(rect.width));
+      const height = Math.max(1, Math.round(rect.height));
+      state.dpr = window.devicePixelRatio || 1;
+      state.width = width;
+      state.height = height;
+      canvas.width = Math.floor(width * state.dpr);
+      canvas.height = Math.floor(height * state.dpr);
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+      state.cols = Math.floor(width / (state.squareSize + state.gridGap));
+      state.rows = Math.floor(height / (state.squareSize + state.gridGap));
+      const total = Math.max(1, state.cols * state.rows);
+      state.squares = new Float32Array(total);
+      for (let i = 0; i < total; i += 1) {
+        state.squares[i] = Math.random() * state.maxOpacity;
+      }
+      state.colorPrefix = readPrimary();
+    };
+
+    state.refresh = initGrid;
+
+    const updateSquares = (deltaTime) => {
+      const chance = state.flickerChance * deltaTime;
+      const total = state.squares.length;
+      for (let i = 0; i < total; i += 1) {
+        if (Math.random() < chance) {
+          state.squares[i] = Math.random() * state.maxOpacity;
+        }
+      }
+    };
+
+    const draw = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "transparent";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      for (let i = 0; i < state.cols; i += 1) {
+        for (let j = 0; j < state.rows; j += 1) {
+          const opacity = state.squares[i * state.rows + j] || 0;
+          ctx.fillStyle = `${state.colorPrefix}${opacity})`;
+          ctx.fillRect(
+            i * (state.squareSize + state.gridGap) * state.dpr,
+            j * (state.squareSize + state.gridGap) * state.dpr,
+            state.squareSize * state.dpr,
+            state.squareSize * state.dpr
+          );
+        }
+      }
+    };
+
+    state.draw = draw;
+
+    const tick = (time) => {
+      if (!state.running) return;
+      if (!time) time = performance.now();
+      if (!state.lastTime) state.lastTime = time;
+      const deltaTime = (time - state.lastTime) / 1000;
+      state.lastTime = time;
+      updateSquares(deltaTime);
+      draw();
+      state.raf = requestAnimationFrame(tick);
+    };
+
+    state.start = () => {
+      if (state.running) return;
+      const rect = panel.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      state.refresh();
+      state.running = true;
+      state.lastTime = 0;
+      state.raf = requestAnimationFrame(tick);
+    };
+
+    state.stop = () => {
+      state.running = false;
+      if (state.raf) {
+        cancelAnimationFrame(state.raf);
+        state.raf = null;
+      }
+    };
+
+    if (typeof ResizeObserver !== "undefined") {
+    const resizeObserver = new ResizeObserver(() => {
+      initGrid();
+      if (state.running) {
+        draw();
+      }
+    });
+      resizeObserver.observe(panel);
+    } else {
+      window.addEventListener("resize", () => {
+        initGrid();
+        if (state.running) {
+          draw();
+        }
+      });
+    }
+
+    const visibilityObserver = new MutationObserver(() => {
+      const visible = !panel.hasAttribute("hidden");
+      if (visible) {
+        state.refresh();
+        state.draw();
+        state.start();
+      } else {
+        state.stop();
+      }
+    });
+    visibilityObserver.observe(panel, { attributes: true, attributeFilter: ["hidden"] });
+
+    initGrid();
+    this.tasksPanelGrid = state;
+    } catch (error) {
+      console.warn("Failed to initialize tasks grid", error);
+    }
+  }
+
+  setTasksPanelGridActive(visible) {
+    if (!this.tasksPanelGrid) return;
+    if (visible) {
+      if (this.tasksPanelGrid.refresh) {
+        this.tasksPanelGrid.refresh();
+      }
+      if (this.tasksPanelGrid.draw) {
+        this.tasksPanelGrid.draw();
+      }
+      this.tasksPanelGrid.start();
+    } else {
+      this.tasksPanelGrid.stop();
+    }
   }
 
   setInboxPanelVisible(visible) {

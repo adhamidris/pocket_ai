@@ -336,7 +336,7 @@
     padding: 0.18rem 0.55rem;
     border-radius: 999px;
     border: 1px solid hsl(var(--primary) / 0.35);
-    background: hsl(var(--primary) / 0.08);
+    background: hsl(var(--background));
     color: hsl(var(--primary));
     font-size: var(--portal-font-xs);
     font-weight: 600;
@@ -1845,6 +1845,24 @@
     background: hsl(var(--muted) / 0.22);
     color: hsl(var(--foreground));
     flex-direction: column;
+    position: relative;
+    overflow: hidden;
+  }
+
+  [data-chat-portal] .portal-tasks-grid {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 0;
+    filter: blur(0.6px);
+    opacity: 0.85;
+  }
+
+  [data-chat-portal] [data-tasks-panel] > :not(.portal-tasks-grid) {
+    position: relative;
+    z-index: 1;
   }
 
   @media (min-width: 1024px) {
@@ -1862,15 +1880,51 @@
     justify-content: space-between;
     gap: 0.75rem;
     padding: 1rem 1rem 0.85rem;
-    border-bottom: 1px solid hsl(var(--border) / 0.5);
-    background: hsl(var(--background) / 0.86);
+    border-bottom: 1px solid hsl(var(--primary) / 0.35);
+    background: hsl(var(--primary));
     backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+
+  [data-chat-portal] .portal-tasks-title {
+    color: hsl(var(--primary-foreground));
+  }
+
+  [data-chat-portal] .portal-tasks-header .portal-tasks-close-btn {
+    border-color: hsl(var(--primary) / 0.35);
+    background: hsl(var(--primary) / 0.12);
+    color: hsl(var(--primary-foreground));
+  }
+
+  [data-chat-portal] .portal-tasks-header .portal-tasks-close-btn:hover {
+    background: hsl(var(--primary) / 0.2);
+    border-color: hsl(var(--primary) / 0.5);
+    color: hsl(var(--primary-foreground));
   }
 
   [data-chat-portal] .portal-tasks-title {
     font-size: 0.95rem;
     font-weight: 600;
     letter-spacing: -0.01em;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  [data-chat-portal] .portal-tasks-title-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    margin-right: 0.45rem;
+  }
+
+  [data-chat-portal] .portal-tasks-title-icon svg {
+    width: 16px;
+    height: 16px;
+    display: block;
+    transform: scaleX(1);
+    transform-origin: center;
   }
 
   [data-chat-portal] .portal-tasks-close-btn {
@@ -1987,10 +2041,16 @@
     justify-content: space-between;
     gap: 0.75rem;
     padding: 0.85rem 0.9rem;
-    background: transparent;
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
     border: 0;
     text-align: left;
     cursor: pointer;
+  }
+
+  .dark [data-chat-portal] .portal-task__header {
+    background: #1c2025;
+    color: hsl(var(--foreground));
   }
 
   [data-chat-portal] .portal-task__header:focus-visible {
@@ -2023,6 +2083,14 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  [data-chat-portal] .portal-task__header {
+    color: hsl(var(--foreground));
+  }
+
+  [data-chat-portal] .portal-task__header .portal-task__subtitle {
+    color: hsl(var(--muted-foreground));
   }
 
   [data-chat-portal] .portal-task__subtitle {
@@ -2875,7 +2943,19 @@
   <!-- Tasks Panel (Agent Runs) -->
   <aside hidden data-tasks-panel>
     <div class="portal-tasks-header" data-tasks-header>
-      <div class="portal-tasks-title">Tasks</div>
+      <div class="portal-tasks-title">
+        <span class="portal-tasks-title-icon" aria-hidden="true">
+          <svg viewBox="0 0 16 16" fill="none">
+            <g transform="rotate(90 8 8)">
+              <circle cx="3" cy="3" r="2" stroke="currentColor" stroke-width="1.4"></circle>
+              <circle cx="13" cy="3" r="2" stroke="currentColor" stroke-width="1.4"></circle>
+              <circle cx="8" cy="13" r="2" stroke="currentColor" stroke-width="1.4"></circle>
+              <path d="M3 5v2c0 1.1 0.9 2 2 2h3M13 5v2c0 1.1-0.9 2-2 2H8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"></path>
+            </g>
+          </svg>
+        </span>
+        <span>Sub Agents</span>
+      </div>
       <button type="button" class="portal-tasks-close-btn" data-tasks-close-btn aria-label="Close tasks">
         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M18 6L6 18"></path>
