@@ -3297,6 +3297,15 @@ class ChatPortalClient {
     `;
   }
 
+  getSuccessBadgeIconMarkup() {
+    return `
+      <svg viewBox="0 0 16 16" aria-hidden="true">
+        <circle cx="8" cy="8" r="8" fill="currentColor"></circle>
+        <path d="M4.8 8.6l2 2.1 4.4-5" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+      </svg>
+    `;
+  }
+
   getToolFailureIconMarkup() {
     return `
       <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -6446,7 +6455,7 @@ class ChatPortalClient {
         pillLabel = "Cancelled";
         variant = "muted";
       } else if (["completed", "succeeded", "success"].includes(runStatus)) {
-        pillLabel = "Completed";
+        pillLabel = "Success";
         variant = "success";
       }
     } else if (metaType === "needs_approval") {
@@ -6507,17 +6516,28 @@ class ChatPortalClient {
     title.dataset.agentRunTitle = "true";
     title.className = "portal-agent-run__title";
 
+    const sourceIcon = document.createElement("span");
+    sourceIcon.dataset.agentRunSourceIcon = "true";
+    sourceIcon.className = "portal-agent-run__source-icon";
+    sourceIcon.innerHTML = `<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><g transform="rotate(90 8 8)"><circle cx="3" cy="3" r="2" stroke="currentColor" stroke-width="1.4"/><circle cx="13" cy="3" r="2" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="13" r="2" stroke="currentColor" stroke-width="1.4"/><path d="M3 5v2c0 1.1 0.9 2 2 2h3M13 5v2c0 1.1-0.9 2-2 2H8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></g></svg>`;
+
     const source = document.createElement("span");
     source.dataset.agentRunSource = "true";
     source.className = "portal-agent-run__source";
-    source.textContent = "Sub-agent";
+    source.innerHTML = `<span>Sub-agent</span>`;
+
+    const sourceWrap = document.createElement("span");
+    sourceWrap.dataset.agentRunSourceWrap = "true";
+    sourceWrap.className = "portal-agent-run__source-wrap";
+    sourceWrap.appendChild(sourceIcon);
+    sourceWrap.appendChild(source);
 
     const chevron = document.createElement("span");
     chevron.dataset.agentRunChevron = "true";
     chevron.className = "portal-agent-run__chevron";
     chevron.innerHTML = `<svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
-    summary.appendChild(source);
+    summary.appendChild(sourceWrap);
     summary.appendChild(title);
     summary.appendChild(pill);
     summary.appendChild(chevron);
@@ -6622,7 +6642,19 @@ class ChatPortalClient {
     detailsEl.dataset.agentRunVariant = summary.variant || "neutral";
 
     const pillEl = detailsEl.querySelector("[data-agent-run-pill]");
-    if (pillEl) pillEl.textContent = summary.pillLabel;
+    if (pillEl) {
+      if (summary.variant === "success" && summary.pillLabel === "Success") {
+        pillEl.dataset.iconOnly = "true";
+        pillEl.innerHTML = `<span class="portal-agent-run__pill-icon" aria-hidden="true">${this.getSuccessBadgeIconMarkup()}</span>`;
+        pillEl.setAttribute("aria-label", "Success");
+        pillEl.setAttribute("title", "Success");
+      } else {
+        pillEl.dataset.iconOnly = "false";
+        pillEl.textContent = summary.pillLabel;
+        pillEl.removeAttribute("aria-label");
+        pillEl.removeAttribute("title");
+      }
+    }
     const titleEl = detailsEl.querySelector("[data-agent-run-title]");
     if (titleEl) titleEl.textContent = summary.title;
   }

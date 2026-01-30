@@ -223,11 +223,8 @@
     width: 100%;
     padding: 0.55rem 0.75rem;
     border-radius: 999px;
-    border: 1px solid hsl(var(--border) / 0.6);
-    background: hsl(var(--muted) / 0.5);
-    box-shadow: 0 4px 20px -4px hsl(var(--foreground) / 0.04);
-    backdrop-filter: blur(16px) saturate(180%);
-    -webkit-backdrop-filter: blur(16px) saturate(180%);
+    border: none;
+    background: transparent;
     cursor: pointer;
     user-select: none;
     -webkit-user-select: none;
@@ -237,50 +234,44 @@
   }
 
   [data-chat-portal] .portal-agent-run__summary:hover {
-    background: hsl(var(--muted) / 0.65);
-    border-color: hsl(var(--border) / 0.8);
-    box-shadow: 0 8px 30px -4px hsl(var(--foreground) / 0.08);
-    transform: translateY(-1px);
+    background: transparent;
   }
 
   [data-chat-portal] .portal-agent-run[data-agent-run-variant="action"] .portal-agent-run__summary {
-    background: hsl(var(--primary) / 0.08);
-    border-color: hsl(var(--primary) / 0.45);
+    background: transparent;
   }
 
   [data-chat-portal] .portal-agent-run[data-agent-run-variant="input"] .portal-agent-run__summary {
-    background: hsl(var(--warning) / 0.08);
-    border-color: hsl(var(--warning) / 0.4);
+    background: transparent;
   }
 
   [data-chat-portal] .portal-agent-run[data-agent-run-variant="approval"] .portal-agent-run__summary {
-    background: hsl(var(--warning) / 0.1);
-    border-color: hsl(var(--warning) / 0.5);
+    background: transparent;
   }
 
   [data-chat-portal] .portal-agent-run[data-agent-run-variant="danger"] .portal-agent-run__summary {
-    background: hsl(var(--error) / 0.08);
-    border-color: hsl(var(--error) / 0.45);
+    background: transparent;
   }
 
   [data-chat-portal] .portal-agent-run[data-agent-run-variant="success"] .portal-agent-run__summary {
-    background: hsl(var(--muted) / 0.32);
-    border-color: hsl(var(--border) / 0.6);
+    background: transparent;
   }
 
   [data-chat-portal] .portal-agent-run[data-agent-run-variant="muted"] .portal-agent-run__summary {
-    background: hsl(var(--muted) / 0.35);
-    border-color: hsl(var(--border) / 0.6);
+    background: transparent;
     color: hsl(var(--muted-foreground));
   }
 
   [data-chat-portal] .portal-agent-run[data-agent-run-variant="running"] .portal-agent-run__summary {
-    border-color: hsl(var(--primary) / 0.4);
+    border-color: transparent;
+  }
+
+  .dark [data-chat-portal] .portal-agent-run__summary {
+    background: transparent;
   }
 
   [data-chat-portal] .portal-agent-run__summary:focus-visible {
-    outline: 2px solid hsl(var(--primary) / 0.35);
-    outline-offset: 2px;
+    outline: none;
   }
 
   [data-chat-portal] .portal-agent-run__summary::-webkit-details-marker {
@@ -293,15 +284,47 @@
     gap: 0.35rem;
     padding: 0.18rem 0.55rem;
     border-radius: 999px;
-    border: 1px solid hsl(var(--border) / 0.8);
-    background: hsl(var(--muted) / 0.35);
-    color: hsl(var(--foreground));
+    border: 1px solid hsl(var(--primary) / 0.35);
+    background: hsl(var(--primary) / 0.08);
+    color: hsl(var(--primary));
     font-size: var(--portal-font-xs);
     font-weight: 600;
     letter-spacing: 0.01em;
     flex-shrink: 0;
     white-space: nowrap;
     margin-left: 0;
+  }
+
+  [data-chat-portal] .portal-agent-run__pill[data-icon-only="true"] {
+    padding: 0.18rem 0.3rem;
+    border: none;
+    background: transparent;
+  }
+
+  [data-chat-portal] .portal-agent-run__pill[data-icon-only="true"]::before {
+    content: "";
+    display: none;
+  }
+
+  [data-chat-portal] .portal-agent-run__pill-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    color: hsl(var(--success));
+  }
+
+  [data-chat-portal] .portal-agent-run__pill-icon svg {
+    width: 16px;
+    height: 16px;
+    display: block;
+  }
+
+  .dark [data-chat-portal] .portal-agent-run__pill {
+    border-color: hsl(var(--primary) / 0.45);
+    background: hsl(var(--primary) / 0.12);
+    color: hsl(var(--primary));
   }
 
   @keyframes portal-shimmer-sparkle {
@@ -312,11 +335,12 @@
   [data-chat-portal] .portal-agent-run__source {
     display: inline-flex;
     align-items: center;
+    gap: 0.35rem;
     padding: 0.16rem 0.5rem;
-    border-radius: 999px;
-    border: 1px solid hsl(var(--border) / 0.5);
-    background: hsl(var(--background) / 0.2);
-    color: hsl(var(--muted-foreground));
+    border-radius: 0 999px 999px 0;
+    border: 1px solid transparent;
+    background: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
     font-size: 0.72rem;
     font-weight: 600;
     letter-spacing: 0.02em;
@@ -327,23 +351,92 @@
     overflow: hidden;
   }
 
-  [data-chat-portal] .portal-agent-run__source::after {
+  [data-chat-portal] .portal-agent-run__source-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 0;
+  }
+
+  [data-chat-portal] .portal-agent-run__source-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    color: hsl(var(--primary));
+    flex-shrink: 0;
+    position: relative;
+    padding-right: 0.45rem;
+  }
+
+  [data-chat-portal] .portal-agent-run__source-icon svg {
+    width: 14px;
+    height: 14px;
+    display: block;
+    transform: scaleX(-1);
+    transform-origin: center;
+  }
+
+  [data-chat-portal] .portal-agent-run__source-icon::after {
     content: "";
     position: absolute;
-    top: 0;
-    left: 0;
-    width: 60%;
-    height: 100%;
-    background: linear-gradient(
-      90deg,
-      transparent,
-      hsl(var(--foreground) / 0.12),
-      transparent
-    );
-    filter: blur(4px);
-    transform: translateX(-150%) skewX(-20deg);
-    animation: portal-shimmer-sparkle 3.5s infinite ease-in-out;
-    pointer-events: none;
+    right: 0;
+    top: 50%;
+    width: 0.45rem;
+    height: 1px;
+    background: hsl(var(--primary) / 0.7);
+    transform: translateY(-50%);
+  }
+
+  [data-chat-portal] .portal-agent-run__source svg {
+    width: 12px;
+    height: 12px;
+    display: block;
+    flex-shrink: 0;
+  }
+
+  @keyframes portal-silver-sheen {
+    0% { background-position: 140% 50%; }
+    100% { background-position: -40% 50%; }
+  }
+
+  @keyframes portal-silver-icon {
+    0% { opacity: 0.8; }
+    50% { opacity: 1; }
+    100% { opacity: 0.8; }
+  }
+
+  [data-chat-portal] .portal-agent-run__source span {
+    color: hsl(var(--primary-foreground));
+  }
+
+  @supports (-webkit-background-clip: text) {
+    [data-chat-portal] .portal-agent-run__source span {
+      background: linear-gradient(
+        90deg,
+        rgba(224, 232, 246, 0.85),
+        rgba(246, 249, 255, 1),
+        rgba(224, 232, 246, 0.85)
+      );
+      background-size: 240% 100%;
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      -webkit-text-fill-color: transparent;
+      animation: portal-silver-sheen 2.6s ease-in-out infinite;
+    }
+  }
+
+  [data-chat-portal] .portal-agent-run__source svg {
+    animation: portal-silver-icon 2.6s ease-in-out infinite;
+  }
+
+  [data-chat-portal] .portal-agent-run__source-icon svg {
+    animation: portal-silver-icon 2.6s ease-in-out infinite;
+  }
+
+  [data-chat-portal] .portal-agent-run__source::after {
+    content: none;
   }
 
   @keyframes portal-agent-run-pulse {
@@ -352,51 +445,41 @@
     100% { transform: scale(0.88); opacity: 0.65; }
   }
 
-  [data-chat-portal] .portal-agent-run[data-agent-run-variant="running"] .portal-agent-run__pill::before {
+  [data-chat-portal] .portal-agent-run__pill::before {
     content: "";
-    width: 7px;
-    height: 7px;
-    border-radius: 999px;
-    background: hsl(var(--primary));
-    box-shadow: 0 0 0 3px hsl(var(--primary) / 0.18);
+    display: none;
+    font-size: 0.7rem;
+    line-height: 1;
+  }
+
+  [data-chat-portal] .portal-agent-run[data-agent-run-variant="running"] .portal-agent-run__pill::before {
+    content: "…";
     display: inline-block;
-    animation: portal-agent-run-pulse 1.2s ease-in-out infinite;
   }
 
-  [data-chat-portal] .portal-agent-run[data-agent-run-variant="action"] .portal-agent-run__pill {
-    background: hsl(var(--primary) / 0.14);
-    border-color: hsl(var(--primary) / 0.5);
-    color: hsl(var(--primary));
+  [data-chat-portal] .portal-agent-run[data-agent-run-variant="approval"] .portal-agent-run__pill::before {
+    content: "!";
+    display: inline-block;
   }
 
-  [data-chat-portal] .portal-agent-run[data-agent-run-variant="input"] .portal-agent-run__pill {
-    background: hsl(38 92% 50% / 0.12);
-    border-color: hsl(38 92% 50% / 0.45);
-    color: hsl(38 92% 50%);
+  [data-chat-portal] .portal-agent-run[data-agent-run-variant="input"] .portal-agent-run__pill::before {
+    content: "?";
+    display: inline-block;
   }
 
-  [data-chat-portal] .portal-agent-run[data-agent-run-variant="approval"] .portal-agent-run__pill {
-    background: hsl(38 92% 50% / 0.2);
-    border-color: hsl(38 92% 50% / 0.6);
-    color: hsl(38 92% 50%);
+  [data-chat-portal] .portal-agent-run[data-agent-run-variant="danger"] .portal-agent-run__pill::before {
+    content: "×";
+    display: inline-block;
   }
 
-  [data-chat-portal] .portal-agent-run[data-agent-run-variant="danger"] .portal-agent-run__pill {
-    background: hsl(0 84% 60% / 0.12);
-    border-color: hsl(0 84% 60% / 0.5);
-    color: hsl(0 84% 60%);
+  [data-chat-portal] .portal-agent-run[data-agent-run-variant="success"] .portal-agent-run__pill::before {
+    content: "✓";
+    display: inline-block;
   }
 
-  [data-chat-portal] .portal-agent-run[data-agent-run-variant="success"] .portal-agent-run__pill {
-    background: hsl(142 76% 36% / 0.12);
-    border-color: hsl(142 76% 36% / 0.45);
-    color: hsl(142 76% 36%);
-  }
-
-  [data-chat-portal] .portal-agent-run[data-agent-run-variant="muted"] .portal-agent-run__pill {
-    background: hsl(var(--muted) / 0.45);
-    border-color: hsl(var(--border) / 0.9);
-    color: hsl(var(--muted-foreground));
+  [data-chat-portal] .portal-agent-run[data-agent-run-variant="success"] .portal-agent-run__pill[data-icon-only="true"]::before {
+    content: "";
+    display: none;
   }
 
   [data-chat-portal] .portal-agent-run__title {
@@ -718,7 +801,7 @@
 
   [data-chat-portal] .mcp-tool-row[data-tool-state="running"] .mcp-status-icon::after {
     background: hsl(var(--primary));
-    animation: portal-task-status-pulse 1.1s ease-in-out infinite;
+    animation: none;
   }
 
   [data-chat-portal] .mcp-tool-row[data-tool-state="pending"] .mcp-status-icon::after {
@@ -1812,9 +1895,9 @@
   }
 
   [data-chat-portal] .portal-task {
-    border: 1px solid hsl(var(--border) / 0.75);
+    border: 1px solid hsl(var(--border) / 0.7);
     border-radius: 16px;
-    background: hsl(var(--card) / 0.55);
+    background: hsl(var(--card) / 0.6);
     overflow: hidden;
     box-shadow: 0 10px 30px hsl(var(--foreground) / 0.04);
   }
@@ -1873,84 +1956,67 @@
     letter-spacing: 0.02em;
     padding: 0.25rem 0.55rem;
     border-radius: 999px;
-    border: 1px solid hsl(var(--border) / 0.8);
-    color: hsl(var(--foreground));
-    background: hsl(var(--muted) / 0.35);
+    border: 1px solid hsl(var(--primary) / 0.35);
+    color: hsl(var(--primary));
+    background: hsl(var(--primary) / 0.08);
     line-height: 1.2;
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;
   }
 
-  [data-chat-portal] .portal-task__status-pill[data-status="running"] {
-    border-color: hsl(var(--primary) / 0.5);
-    background: hsl(var(--primary) / 0.14);
+  .dark [data-chat-portal] .portal-task__status-pill {
+    border-color: hsl(var(--primary) / 0.45);
+    background: hsl(var(--primary) / 0.12);
     color: hsl(var(--primary));
   }
 
-  @keyframes portal-task-status-pulse {
-    0% { transform: scale(0.9); opacity: 0.7; }
-    50% { transform: scale(1); opacity: 1; }
-    100% { transform: scale(0.9); opacity: 0.7; }
+  [data-chat-portal] .portal-task__status-pill::before {
+    content: "";
+    display: none;
+    font-size: 0.7rem;
+    line-height: 1;
   }
 
   [data-chat-portal] .portal-task__status-pill[data-status="running"]::before {
-    content: "";
-    width: 6px;
-    height: 6px;
-    border-radius: 999px;
-    background: currentColor;
-    box-shadow: 0 0 0 3px hsl(var(--primary) / 0.18);
+    content: "…";
     display: inline-block;
-    animation: portal-task-status-pulse 1.1s ease-in-out infinite;
   }
 
-  [data-chat-portal] .portal-task__status-pill[data-status="queued"] {
-    border-color: hsl(var(--border) / 0.9);
-    background: hsl(var(--muted) / 0.45);
-    color: hsl(var(--foreground));
+  [data-chat-portal] .portal-task__status-pill[data-status="queued"]::before {
+    content: "•";
+    display: inline-block;
   }
 
-  [data-chat-portal] .portal-task__status-pill[data-status="completed"] {
-    border-color: hsl(142 76% 36% / 0.45);
-    background: hsl(142 76% 36% / 0.12);
-    color: hsl(142 76% 36%);
+  [data-chat-portal] .portal-task__status-pill[data-status="completed"]::before,
+  [data-chat-portal] .portal-task__status-pill[data-status="resolved"]::before {
+    content: "✓";
+    display: inline-block;
   }
 
-  [data-chat-portal] .portal-task__status-pill[data-status="failed"] {
-    border-color: hsl(0 84% 60% / 0.5);
-    background: hsl(0 84% 60% / 0.12);
-    color: hsl(0 84% 60%);
+  [data-chat-portal] .portal-task__status-pill[data-status="failed"]::before {
+    content: "×";
+    display: inline-block;
   }
 
-  [data-chat-portal] .portal-task__status-pill[data-status="waiting_approval"] {
-    border-color: hsl(38 92% 50% / 0.6);
-    background: hsl(38 92% 50% / 0.2);
-    color: hsl(38 92% 50%);
+  [data-chat-portal] .portal-task__status-pill[data-status="waiting_approval"]::before {
+    content: "!";
+    display: inline-block;
   }
 
-  [data-chat-portal] .portal-task__status-pill[data-status="waiting_user"] {
-    border-color: hsl(38 92% 50% / 0.45);
-    background: hsl(38 92% 50% / 0.12);
-    color: hsl(38 92% 50%);
+  [data-chat-portal] .portal-task__status-pill[data-status="waiting_user"]::before {
+    content: "?";
+    display: inline-block;
   }
 
-  [data-chat-portal] .portal-task__status-pill[data-status="open"] {
-    border-color: hsl(38 92% 50% / 0.55);
-    background: hsl(38 92% 50% / 0.14);
-    color: hsl(38 92% 50%);
+  [data-chat-portal] .portal-task__status-pill[data-status="open"]::before {
+    content: "•";
+    display: inline-block;
   }
 
-  [data-chat-portal] .portal-task__status-pill[data-status="in_progress"] {
-    border-color: hsl(var(--primary) / 0.5);
-    background: hsl(var(--primary) / 0.14);
-    color: hsl(var(--primary));
-  }
-
-  [data-chat-portal] .portal-task__status-pill[data-status="resolved"] {
-    border-color: hsl(142 76% 36% / 0.45);
-    background: hsl(142 76% 36% / 0.12);
-    color: hsl(142 76% 36%);
+  [data-chat-portal] .portal-task__status-pill[data-status="in_progress"]::before {
+    content: "…";
+    display: inline-block;
   }
 
   [data-chat-portal] .portal-task__body {
@@ -2078,7 +2144,7 @@
     border-radius: 999px;
     background: currentColor;
     display: inline-block;
-    animation: portal-task-step-pulse 1.1s ease-in-out infinite;
+    animation: none;
   }
 
   [data-chat-portal] .portal-task__step[data-step-status="attention"] {
