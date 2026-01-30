@@ -115,6 +115,98 @@ def _summarize_tool_result(tool_name: str, tool_result: object) -> dict[str, obj
     return summary
 
 
+def _format_email_address(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, Mapping):
+        email = str(value.get("email") or value.get("address") or value.get("value") or "").strip()
+        name = str(value.get("name") or value.get("label") or "").strip()
+        if email and name:
+            return f"{name} <{email}>"
+        return email or name
+    return str(value).strip()
+
+
+def _format_email_list(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple)):
+        parts = []
+        for item in value:
+            rendered = _format_email_address(item)
+            if rendered:
+                parts.append(rendered)
+        return ", ".join(parts)
+    return _format_email_address(value)
+
+
+def _build_email_approval_preview(arguments: Mapping[str, object]) -> dict[str, object] | None:
+    if not isinstance(arguments, Mapping):
+        return None
+    to_value = _format_email_list(arguments.get("to") or arguments.get("recipients") or arguments.get("recipient"))
+    cc_value = _format_email_list(arguments.get("cc"))
+    bcc_value = _format_email_list(arguments.get("bcc"))
+    from_value = _format_email_list(arguments.get("from") or arguments.get("sender") or arguments.get("sender_email"))
+    subject = str(arguments.get("subject") or arguments.get("title") or "").strip()
+    body = str(
+        arguments.get("body")
+        or arguments.get("body_html")
+        or arguments.get("bodyHtml")
+        or arguments.get("body_text")
+        or arguments.get("bodyText")
+        or arguments.get("message")
+        or arguments.get("content")
+        or ""
+    ).strip()
+    attachments = arguments.get("attachments")
+    attachment_count = len(attachments) if isinstance(attachments, list) else 0
+
+    fields: list[dict[str, str]] = []
+    if to_value:
+        fields.append({"label": "To", "value": _clip_text(to_value, 320)})
+    if cc_value:
+        fields.append({"label": "Cc", "value": _clip_text(cc_value, 320)})
+    if bcc_value:
+        fields.append({"label": "Bcc", "value": _clip_text(bcc_value, 320)})
+    if from_value:
+        fields.append({"label": "From", "value": _clip_text(from_value, 240)})
+    if subject:
+        fields.append({"label": "Subject", "value": _clip_text(subject, 240)})
+    if attachment_count:
+        label = "Attachment" if attachment_count == 1 else "Attachments"
+        fields.append({"label": label, "value": f"{attachment_count} file(s)"})
+
+    preview: dict[str, object] = {"type": "email", "title": "Email draft", "fields": fields}
+    if body:
+        preview["body"] = _clip_text(body, 1400)
+    if not fields and not body:
+        return None
+    return preview
+
+
+def _build_approval_preview(
+    tool_name: str,
+    approval_event: Mapping[str, object] | None,
+    pending_tool_call: Mapping[str, object] | None,
+) -> dict[str, object] | None:
+    tool_norm = str(tool_name or "").strip().lower()
+    kind = ""
+    if isinstance(approval_event, Mapping):
+        kind = str(approval_event.get("kind") or "").strip().lower()
+    arguments = None
+    if isinstance(pending_tool_call, Mapping):
+        arguments = pending_tool_call.get("arguments")
+    if not isinstance(arguments, Mapping) and isinstance(approval_event, Mapping):
+        candidate = approval_event.get("input")
+        if isinstance(candidate, Mapping):
+            arguments = candidate
+    if not isinstance(arguments, Mapping):
+        return None
+    if "email" in tool_norm or kind == "email":
+        return _build_email_approval_preview(arguments)
+    return None
+
+
 def _sanitize_remote_meta(remote: object) -> dict[str, object] | None:
     if not isinstance(remote, Mapping):
         return None
@@ -991,6 +1083,7 @@ class AgentRunProcessingService:
             orchestrator = McpOrchestratorService(agent=run.agent_profile, provider=provider)
 
             pause_state: dict[str, object] = {"approval_event": None, "user_input_event": None, "external_request_event": None}
+            latest_email_draft_preview: dict[str, object] | None = None
 
             def _deadline_exceeded() -> bool:
                 return (time.monotonic() - started) >= float(timeout_seconds or 300)
@@ -1041,6 +1134,7 @@ class AgentRunProcessingService:
                         )
 
             def _on_tool_event(event: Mapping[str, object] | None) -> None:
+                nonlocal latest_email_draft_preview
                 if not event:
                     return
                 phase = str(event.get("phase") or "").strip().lower()
@@ -1048,6 +1142,17 @@ class AgentRunProcessingService:
                 status_value = str(event.get("status") or "").strip().lower()
                 if phase == "approval_requested" and status_value == "pending_approval":
                     pause_state["approval_event"] = dict(event)
+                if tool_name == "email_create_draft" and phase == "finished":
+                    input_payload = event.get("input") if isinstance(event.get("input"), Mapping) else None
+                    output_payload = event.get("output") if isinstance(event.get("output"), Mapping) else None
+                    preview = _build_email_approval_preview(input_payload or {}) if input_payload else None
+                    if isinstance(preview, dict):
+                        draft_id = ""
+                        if isinstance(output_payload, Mapping):
+                            draft_id = str(output_payload.get("draft_id") or output_payload.get("draftId") or "").strip()
+                        if draft_id:
+                            preview["draft_id"] = draft_id
+                        latest_email_draft_preview = preview
                 if tool_name == "request_user_input" and phase in {"started", "finished"}:
                     pause_state["user_input_event"] = dict(event)
                 label = f"{phase}:{tool_name}" if tool_name else (phase or "tool_event")
@@ -1378,11 +1483,13 @@ class AgentRunProcessingService:
                     elif isinstance(request_payload, Mapping):
                         external_request_payload = dict(request_payload)
 
+            approval_preview: dict[str, object] | None = None
+            pending_tool_call: Mapping[str, object] | None = None
             if approval_id:
                 next_status = AgentRunStatus.WAITING_APPROVAL
                 pause_event_type = AgentRunEventType.NEEDS_APPROVAL
                 pause_payload = {
-                    "approval": dict(approval_payload) if approval_payload else {},
+                    "approval": _sanitize_approval_meta(approval_payload) or {},
                     "tool_name": str(approval_event.get("tool_name") or "") if isinstance(approval_event, Mapping) else "",
                     "remote": dict(approval_event.get("remote") or {}) if isinstance(approval_event, Mapping) and isinstance(approval_event.get("remote"), Mapping) else {},
                 }
@@ -1420,12 +1527,37 @@ class AgentRunProcessingService:
                 pending_tool_call = tool_result_output.get("pending_tool_call")
                 if pending_tool_call and isinstance(pending_tool_call, Mapping):
                     next_metadata["pending_tool_call"] = dict(pending_tool_call)
+                approval_preview = _build_approval_preview(
+                    pause_payload.get("tool_name") if isinstance(pause_payload, dict) else "",
+                    approval_event_data if isinstance(approval_event_data, Mapping) else None,
+                    pending_tool_call if isinstance(pending_tool_call, Mapping) else None,
+                )
+                if (
+                    not approval_preview
+                    and isinstance(approval_payload, Mapping)
+                    and isinstance(approval_payload.get("preview"), Mapping)
+                ):
+                    approval_preview = _build_email_approval_preview(dict(approval_payload.get("preview") or {}))
+                if not approval_preview and isinstance(pause_payload, dict):
+                    tool_name_value = str(pause_payload.get("tool_name") or "").strip().lower()
+                    if tool_name_value == "email_send_draft":
+                        fallback = latest_email_draft_preview or next_metadata.get("last_email_draft_preview")
+                        if isinstance(fallback, Mapping):
+                            draft_id = ""
+                            if isinstance(pending_tool_call, Mapping):
+                                args = pending_tool_call.get("arguments")
+                                if isinstance(args, Mapping):
+                                    draft_id = str(args.get("draft_id") or args.get("draftId") or "").strip()
+                            if not draft_id or str(fallback.get("draft_id") or "").strip() == draft_id:
+                                approval_preview = dict(fallback)
             if next_status == AgentRunStatus.WAITING_USER and isinstance(pause_payload, dict):
                 next_metadata["pending_user_input"] = dict(pause_payload)
             if next_status == AgentRunStatus.WAITING_EXTERNAL and external_request_id:
                 next_metadata["pending_agent_request_id"] = external_request_id
                 if external_request_payload:
                     next_metadata["pending_agent_request"] = external_request_payload
+            if latest_email_draft_preview:
+                next_metadata["last_email_draft_preview"] = latest_email_draft_preview
 
             completion_index: int | None = None
             if next_status == AgentRunStatus.COMPLETED:
@@ -1612,15 +1744,20 @@ class AgentRunProcessingService:
                     run.source in {AgentRunSource.AUTOMATION, AgentRunSource.WATCHER} or followup_requested
                 )
                 if should_post_followup:
+                    message_meta = {
+                        "source": "agent_run",
+                        "agent_run_id": str(run.id),
+                        "type": "needs_approval" if next_status == AgentRunStatus.WAITING_APPROVAL else "needs_user",
+                    }
+                    if approval_id:
+                        message_meta["pending_approval_id"] = approval_id
+                    if approval_preview:
+                        message_meta["approval_preview"] = approval_preview
                     ConversationMessage.objects.create(
                         conversation=anchor_conversation,
                         sender=ConversationSender.AI,
                         body=prompt_text,
-                        metadata={
-                            "source": "agent_run",
-                            "agent_run_id": str(run.id),
-                            "type": "needs_approval" if next_status == AgentRunStatus.WAITING_APPROVAL else "needs_user",
-                        },
+                        metadata=message_meta,
                         content_blocks=ensure_assistant_text_blocks(prompt_text),
                     )
                     Conversation.objects.filter(id=anchor_conversation.id).update(last_activity_at=now)

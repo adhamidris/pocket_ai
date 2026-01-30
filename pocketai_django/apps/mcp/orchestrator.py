@@ -1760,6 +1760,10 @@ class McpOrchestratorService:
                                                                 "draft_id": draft_id,
                                                                 "email_account_id": str(account_id),
                                                             }
+                                                            draft_preview = self._email_tool_event_input(
+                                                                "email_create_draft",
+                                                                effective_arguments,
+                                                            )
                                                             self._set_pending_email_draft(
                                                                 conversation=conversation,
                                                                 email_account_id=account_id,
@@ -1767,6 +1771,9 @@ class McpOrchestratorService:
                                                                 draft_id=draft_id,
                                                                 message_id=str(tool_result.get("message_id") or "").strip(),
                                                                 thread_id=str(tool_result.get("thread_id") or "").strip(),
+                                                                preview=draft_preview
+                                                                if isinstance(draft_preview, Mapping)
+                                                                else None,
                                                             )
                                 except ToolConstraintError as exc:
                                     structured_log(
@@ -3633,11 +3640,12 @@ class McpOrchestratorService:
         draft_id: str,
         message_id: str,
         thread_id: str,
+        preview: Mapping[str, object] | None = None,
     ) -> None:
         business_id = getattr(conversation, "business_profile_id", None)
         with tenant_context(business_id):
             meta = dict(conversation.metadata) if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
-            meta[self._EMAIL_PENDING_DRAFT_META_KEY] = {
+            payload: dict[str, object] = {
                 "email_account_id": str(email_account_id),
                 "provider": str(provider or ""),
                 "draft_id": str(draft_id or ""),
@@ -3645,6 +3653,31 @@ class McpOrchestratorService:
                 "thread_id": str(thread_id or ""),
                 "created_at": timezone.now().isoformat(),
             }
+            if isinstance(preview, Mapping):
+                safe_preview: dict[str, object] = {}
+                for key in ("to", "cc", "bcc", "subject", "body_text"):
+                    if key not in preview:
+                        continue
+                    value = preview.get(key)
+                    if value is None:
+                        continue
+                    if isinstance(value, list):
+                        out: list[str] = []
+                        for item in value[:64]:
+                            text = str(item or "").strip()
+                            if text:
+                                out.append(self._clip_text(text, 240))
+                        if out:
+                            safe_preview[key] = out
+                        continue
+                    text_value = str(value or "").strip()
+                    if not text_value:
+                        continue
+                    limit = 5000 if key == "body_text" else 240
+                    safe_preview[key] = self._clip_text(text_value, limit)
+                if safe_preview:
+                    payload["preview"] = safe_preview
+            meta[self._EMAIL_PENDING_DRAFT_META_KEY] = payload
             conversation.metadata = meta
             conversation.save(update_fields=["metadata", "last_activity_at"])
 
@@ -4335,6 +4368,32 @@ class McpOrchestratorService:
                 },
             )
 
+        preview_payload: dict[str, object] | None = None
+        try:
+            draft_id = str(arguments.get("draft_id") or arguments.get("draftId") or "").strip()
+            meta = conversation.metadata if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
+            pending = meta.get(self._EMAIL_PENDING_DRAFT_META_KEY)
+            if isinstance(pending, Mapping):
+                pending_draft_id = str(pending.get("draft_id") or "").strip()
+                preview = pending.get("preview")
+                if draft_id and pending_draft_id and pending_draft_id == draft_id and isinstance(preview, Mapping):
+                    preview_payload = dict(preview)
+        except Exception:  # pragma: no cover - best effort only
+            preview_payload = None
+
+        if preview_payload and isinstance(getattr(approval, "metadata", None), Mapping):
+            try:
+                updated_meta = dict(approval.metadata or {})
+                updated_meta["preview"] = preview_payload
+                with tenant_context(business_id):
+                    ConversationToolApproval.objects.filter(id=approval.id).update(
+                        metadata=updated_meta,
+                        updated_at=timezone.now(),
+                    )
+                approval.metadata = updated_meta
+            except Exception:  # pragma: no cover - best effort only
+                logger.exception("mcp email approval preview persist failed approval=%s", getattr(approval, "id", None))
+
         approval_payload = {
             "id": str(approval.id),
             "status": approval.status,
@@ -4342,6 +4401,8 @@ class McpOrchestratorService:
             "reason": reason,
             "expires_at": approval.expires_at.isoformat() if approval.expires_at else None,
         }
+        if preview_payload:
+            approval_payload["preview"] = preview_payload
         pending_tool_call_data = {
             "tool_name": tool_name,
             "tool_call_id": tool_call_id,

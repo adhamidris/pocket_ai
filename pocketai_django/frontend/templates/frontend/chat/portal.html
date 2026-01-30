@@ -346,6 +346,10 @@
     margin-left: 0;
   }
 
+  [data-chat-portal] .portal-agent-run__pill[hidden] {
+    display: none !important;
+  }
+
   [data-chat-portal] .portal-agent-run__pill[data-icon-only="true"] {
     padding: 0.18rem 0.3rem;
     border: none;
@@ -373,6 +377,57 @@
     width: 16px;
     height: 16px;
     display: block;
+  }
+
+  [data-chat-portal] .portal-agent-run__preview {
+    margin: 0.65rem 0 0.4rem;
+    padding: 0.75rem 0.85rem;
+    border-radius: 12px;
+    border: 1px solid hsl(var(--border) / 0.55);
+    background: hsl(var(--card));
+    color: hsl(var(--foreground));
+    display: grid;
+    gap: 0.35rem;
+  }
+
+  .dark [data-chat-portal] .portal-agent-run__preview {
+    border-color: hsl(var(--border) / 0.35);
+    background: hsl(var(--card) / 0.92);
+  }
+
+  [data-chat-portal] .portal-agent-run__preview-title {
+    font-size: var(--portal-font-sm);
+    font-weight: 600;
+    color: hsl(var(--foreground));
+  }
+
+  [data-chat-portal] .portal-agent-run__preview-row {
+    display: flex;
+    gap: 0.5rem;
+    font-size: var(--portal-font-xs);
+    line-height: 1.3;
+    color: hsl(var(--muted-foreground));
+  }
+
+  [data-chat-portal] .portal-agent-run__preview-label {
+    min-width: 64px;
+    font-weight: 600;
+    color: hsl(var(--foreground) / 0.9);
+  }
+
+  [data-chat-portal] .portal-agent-run__preview-value {
+    flex: 1;
+    color: hsl(var(--foreground) / 0.75);
+    word-break: break-word;
+  }
+
+  [data-chat-portal] .portal-agent-run__preview-body {
+    font-size: var(--portal-font-sm);
+    line-height: 1.45;
+    color: hsl(var(--foreground) / 0.82);
+    border-top: 1px dashed hsl(var(--border) / 0.6);
+    padding-top: 0.5rem;
+    white-space: pre-wrap;
   }
 
   .dark [data-chat-portal] .portal-agent-run__pill {
