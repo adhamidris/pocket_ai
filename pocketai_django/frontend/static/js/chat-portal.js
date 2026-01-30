@@ -319,18 +319,19 @@ class ChatPortalClient {
       // Prevent duplicate injection
       if (host.querySelector('button[data-copy-btn]')) return;
 
-      // Smart positioning: try to find the last paragraph to append inline
-      let target = host;
+      // Smart positioning: anchor copy button at end of the last visible text block.
+      let inlineTarget = null;
       const streamingText = host.querySelector('[data-streaming-text]');
       if (streamingText) {
-          target = streamingText;
-      }
-      
-      // If the last child is a paragraph, list item, or similar text block, append to it
-      // to keep the icon inline/nearby the last word.
-      let inlineTarget = null;
-      if (target.lastElementChild && ["P", "LI", "SPAN", "STRONG", "EM"].includes(target.lastElementChild.tagName)) {
-         inlineTarget = target.lastElementChild;
+        inlineTarget = streamingText;
+      } else {
+        const blocksRoot = host.querySelector("[data-message-blocks]") || host;
+        const candidates = Array.from(
+          blocksRoot.querySelectorAll(
+            "[data-content-block-text], p, li, h1, h2, h3, blockquote"
+          )
+        );
+        inlineTarget = candidates.reverse().find((el) => (el.textContent || "").trim().length);
       }
 
       const copyBtn = document.createElement("button");
@@ -379,9 +380,9 @@ class ChatPortalClient {
       });
       
       if (inlineTarget) {
-          inlineTarget.appendChild(copyBtn);
+        inlineTarget.appendChild(copyBtn);
       } else {
-          host.appendChild(copyBtn);
+        host.appendChild(copyBtn);
       }
   }
 
@@ -3300,8 +3301,7 @@ class ChatPortalClient {
   getSuccessBadgeIconMarkup() {
     return `
       <svg viewBox="0 0 16 16" aria-hidden="true">
-        <circle cx="8" cy="8" r="8" fill="currentColor"></circle>
-        <path d="M4.8 8.6l2 2.1 4.4-5" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+        <path d="M4.8 8.6l2 2.1 4.4-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
       </svg>
     `;
   }
@@ -5020,7 +5020,7 @@ class ChatPortalClient {
       return blocks.filter((entry) => entry && typeof entry === "object");
     }
     const body = typeof fallbackBody === "string" ? fallbackBody : fallbackBody == null ? "" : String(fallbackBody);
-    const cleaned = this.stripInlineResponseBlocks(body).trim();
+    const cleaned = this.stripAgentRunHandoffPrefix(this.stripInlineResponseBlocks(body)).trim();
     if (!cleaned) return [];
     return [
       {
@@ -5044,7 +5044,8 @@ class ChatPortalClient {
         messageBodyEl.appendChild(root);
         return root;
       })();
-    this.renderContentBlocksInto(blocksRoot, blocks);
+    const normalizedBlocks = this.stripAgentRunHandoffFromBlocks(blocks);
+    this.renderContentBlocksInto(blocksRoot, normalizedBlocks);
   }
 
   renderContentBlocksInto(containerEl, blocks) {
@@ -5084,7 +5085,8 @@ class ChatPortalClient {
         messageBodyEl.appendChild(root);
         return root;
       })();
-    this.reconcileContentBlocksInto(blocksRoot, blocks);
+    const normalizedBlocks = this.stripAgentRunHandoffFromBlocks(blocks);
+    this.reconcileContentBlocksInto(blocksRoot, normalizedBlocks);
   }
 
   decodeHtmlEntities(value) {
@@ -6415,6 +6417,34 @@ class ChatPortalClient {
     if (!matched) return trimmed;
     const rest = lines.slice(1).join("\n").trim();
     return rest || "";
+  }
+
+  stripAgentRunHandoffFromBlocks(blocks) {
+    if (!Array.isArray(blocks) || !blocks.length) return blocks;
+    let stripped = false;
+    return blocks.reduce((acc, block) => {
+      if (!block || typeof block !== "object") return acc;
+      const type = (block.type || "").toString().trim().toLowerCase();
+      if (!stripped && ["paragraph", "heading", "list_item"].includes(type)) {
+        const payload = block.payload && typeof block.payload === "object" ? block.payload : {};
+        const content = Array.isArray(payload.content) ? payload.content : [];
+        const isSimpleText = content.length === 1 && content[0] && typeof content[0].text === "string";
+        const rawText = isSimpleText ? content[0].text : this.inlineNodesToText(content);
+        const cleaned = this.stripAgentRunHandoffPrefix(rawText);
+        if (cleaned !== rawText) {
+          stripped = true;
+          if (cleaned) {
+            const nextContent = isSimpleText
+              ? [{ ...content[0], text: cleaned }]
+              : [{ text: cleaned }];
+            acc.push({ ...block, payload: { ...payload, content: nextContent } });
+          }
+          return acc;
+        }
+      }
+      acc.push(block);
+      return acc;
+    }, []);
   }
 
   extractAgentRunTitleFromText(text) {

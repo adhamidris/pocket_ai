@@ -3094,7 +3094,7 @@ def chat_portal(request: HttpRequest, business_slug: str, agent_slug: str) -> Ht
     response.set_cookie(
         cookie_key,
         portal_context["session_token"],
-        max_age=3600 * 6,
+        max_age=3600 * 24 * 365,
         httponly=False,
         secure=False,
         samesite="Lax",

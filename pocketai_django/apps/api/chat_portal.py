@@ -1295,7 +1295,7 @@ def bootstrap_session(request: HttpRequest) -> JsonResponse:
     response.set_cookie(
         f"chat_session_{result.business.slug}_{result.agent.slug}",
         result.session.session_token,
-        max_age=3600 * 6,
+        max_age=3600 * 24 * 365,
         httponly=False,
         secure=False,
         samesite="Lax",
@@ -4456,7 +4456,7 @@ def create_portal_session(request: HttpRequest) -> JsonResponse:
     response.set_cookie(
         f"chat_session_{result.business.slug}_{result.agent.slug}",
         result.session.session_token,
-        max_age=3600 * 6,
+        max_age=3600 * 24 * 365,
         httponly=False,
         secure=False,
         samesite="Lax",

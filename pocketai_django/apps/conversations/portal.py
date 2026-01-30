@@ -76,7 +76,7 @@ class PortalSessionBootstrap:
     messages: Sequence[PortalMessage]
 
 
-DEFAULT_SESSION_TTL = timedelta(hours=4)
+DEFAULT_SESSION_TTL: timedelta | None = None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -94,7 +94,7 @@ class ChatPortalService:
     """High-level orchestration for public chat portal lifecycle."""
 
     def __init__(self, *, session_ttl: timedelta | None = None) -> None:
-        self.session_ttl = session_ttl or DEFAULT_SESSION_TTL
+        self.session_ttl = session_ttl if session_ttl is not None else DEFAULT_SESSION_TTL
 
     # ------------------------------------------------------------------
     # Public API
@@ -465,8 +465,6 @@ class ChatPortalService:
         conversation = queryset.filter(session_token=session_token).first()
         if conversation is None:
             raise PortalNotFoundError("Conversation not found")
-        if not conversation.is_active:
-            raise PortalNotFoundError("Conversation is no longer active")
         return conversation
 
     def _conversation_queryset(self, *, include_messages: bool):
@@ -546,11 +544,11 @@ class ChatPortalService:
                 business_profile=business,
                 session_token=existing_session_token,
             ).first()
-            if conversation and not conversation.is_active:
-                conversation = None
+            if conversation is None:
+                raise PortalNotFoundError("Conversation not found")
 
         if conversation is None:
-            expires_at = now + self.session_ttl
+            expires_at = now + self.session_ttl if self.session_ttl else None
             conversation = Conversation.objects.create(
                 business_profile=business,
                 agent_profile=agent,
@@ -562,11 +560,19 @@ class ChatPortalService:
             return conversation
 
         updated_metadata = {**(conversation.metadata or {}), **metadata}
+        update_fields: list[str] = ["last_activity_at"]
         if updated_metadata != conversation.metadata:
             conversation.metadata = updated_metadata
-        if conversation.expires_at is None or conversation.expires_at < now:
-            conversation.expires_at = now + self.session_ttl
-        conversation.save(update_fields=["metadata", "expires_at", "last_activity_at"])
+            update_fields.append("metadata")
+        if self.session_ttl:
+            next_expires = now + self.session_ttl
+            if conversation.expires_at != next_expires:
+                conversation.expires_at = next_expires
+                update_fields.append("expires_at")
+        elif conversation.expires_at is not None:
+            conversation.expires_at = None
+            update_fields.append("expires_at")
+        conversation.save(update_fields=update_fields)
         return conversation
 
     def _ensure_welcome_message(self, conversation: Conversation) -> None:
@@ -579,21 +585,35 @@ class ChatPortalService:
         )
 
     def _touch_conversation_after_message(self, conversation: Conversation, message: ConversationMessage, *, metadata_updated: bool = False) -> None:
-        needs_save = False
-        if message.sender == ConversationSender.CUSTOMER and conversation.first_customer_message_at is None:
-            conversation.first_customer_message_at = message.sent_at
-            needs_save = True
-            if conversation.status == ConversationStatus.NEW:
+        update_fields: list[str] = ["last_activity_at"]
+        if message.sender == ConversationSender.CUSTOMER:
+            if conversation.first_customer_message_at is None:
+                conversation.first_customer_message_at = message.sent_at
+                update_fields.append("first_customer_message_at")
+            if conversation.status in {
+                ConversationStatus.NEW,
+                ConversationStatus.RESOLVED,
+                ConversationStatus.CLOSED,
+                ConversationStatus.EXPIRED,
+            }:
                 conversation.status = ConversationStatus.LIVE
+                conversation.closed_at = None
+                update_fields.extend(["status", "closed_at"])
         if message.sender == ConversationSender.AI and conversation.first_ai_message_at is None:
             conversation.first_ai_message_at = message.sent_at
-            needs_save = True
-        update_fields = ["last_activity_at"]
+            update_fields.append("first_ai_message_at")
+        now = timezone.now()
+        if self.session_ttl:
+            next_expires = now + self.session_ttl
+            if conversation.expires_at != next_expires:
+                conversation.expires_at = next_expires
+                update_fields.append("expires_at")
+        elif conversation.expires_at is not None:
+            conversation.expires_at = None
+            update_fields.append("expires_at")
         if metadata_updated:
             update_fields.append("metadata")
-        if needs_save:
-            update_fields.extend(["first_customer_message_at", "first_ai_message_at", "status"])
-        conversation.save(update_fields=update_fields)
+        conversation.save(update_fields=list(dict.fromkeys(update_fields)))
 
     def _capture_customer_identifiers(self, *, conversation, body: str, message_metadata: dict | None) -> bool:
         """
