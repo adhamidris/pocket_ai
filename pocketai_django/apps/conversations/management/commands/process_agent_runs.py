@@ -1,15 +1,51 @@
 from __future__ import annotations
 
+import logging
 import time
 
 from django.core.management.base import BaseCommand
+from django.utils import timezone
 
 from apps.conversations.agent_run_processing import AgentRunProcessingService
-from apps.conversations.models import AgentRunStatus
+from apps.conversations.models import AgentRun, AgentRunStatus
+from core.tenancy import tenant_bypass
+
+
+logger = logging.getLogger(__name__)
 
 
 class Command(BaseCommand):
     help = "Process queued agent runs (background sub-agent executions)."
+
+    def log_queue_health(self) -> None:
+        """Log queue health metrics for monitoring."""
+        with tenant_bypass():
+            queued_count = AgentRun.objects.filter(status=AgentRunStatus.QUEUED).count()
+            running_count = AgentRun.objects.filter(status=AgentRunStatus.RUNNING).count()
+
+            # Get age of oldest queued run
+            oldest_queued = (
+                AgentRun.objects.filter(status=AgentRunStatus.QUEUED)
+                .order_by('created_at')
+                .values_list('created_at', flat=True)
+                .first()
+            )
+
+            if oldest_queued:
+                age_seconds = (timezone.now() - oldest_queued).total_seconds()
+                age_minutes = int(age_seconds / 60)
+                logger.info(
+                    f"Queue health: {queued_count} queued, {running_count} running, "
+                    f"oldest waiting {age_minutes}m ({age_seconds:.0f}s)"
+                )
+
+                # Warn if queue is building up
+                if queued_count > 100:
+                    logger.warning(f"Queue depth high: {queued_count} runs queued")
+                if age_minutes > 5:
+                    logger.warning(f"Queue latency high: oldest run waiting {age_minutes} minutes")
+            else:
+                logger.info(f"Queue health: {queued_count} queued, {running_count} running")
 
     def add_arguments(self, parser) -> None:
         parser.add_argument(
@@ -47,11 +83,18 @@ class Command(BaseCommand):
             default=900.0,
             help="Maximum backoff delay for retries in seconds (default: 900).",
         )
+        parser.add_argument(
+            "--log-metrics-every",
+            type=int,
+            default=10,
+            help="Log queue health metrics every N processed runs (default: 10, 0 to disable).",
+        )
 
     def handle(self, *args, **options):
         max_runs = options.get("max_runs")
         watch = bool(options.get("watch"))
         sleep_seconds = float(options.get("sleep") or 0.0)
+        log_metrics_every = int(options.get("log_metrics_every") or 10)
         if watch and sleep_seconds <= 0:
             sleep_seconds = 2.0
 
@@ -60,6 +103,10 @@ class Command(BaseCommand):
             max_stale_requeues_per_pass=int(options.get("max_stale_requeues") or 25),
             max_retry_delay_seconds=float(options.get("max_retry_delay_seconds") or 900.0),
         )
+
+        # Log initial queue health
+        if log_metrics_every > 0:
+            self.log_queue_health()
 
         processed = 0
         while True:
@@ -87,6 +134,10 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.WARNING(f"Requeued run {result.run_id}: {result.error or 'retry scheduled'}"))
             else:
                 self.stdout.write(self.style.ERROR(f"Failed run {result.run_id}: {result.error or 'unknown error'}"))
+
+            # Log queue health metrics periodically
+            if log_metrics_every > 0 and processed % log_metrics_every == 0:
+                self.log_queue_health()
 
             if watch and sleep_seconds:
                 time.sleep(sleep_seconds)

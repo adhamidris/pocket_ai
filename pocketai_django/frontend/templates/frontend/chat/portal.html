@@ -60,7 +60,7 @@
     --portal-control-radius: 999px;
     --portal-tool-orbit-size: 32px;
     --portal-tool-orbit-stroke: 2px;
-    --portal-status-orbit-size: 26px;
+    --portal-status-orbit-size: 16px;
     --portal-status-orbit-stroke: 2px;
   }
 
@@ -1010,42 +1010,21 @@
   }
 
   [data-chat-portal] .mcp-status-icon {
-    width: 8px;
-    height: 8px;
+    width: var(--mcp-status-icon-size, 24px);
+    height: var(--mcp-status-icon-size, 24px);
     display: inline-flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
     position: relative;
+    line-height: 0;
+    background: transparent;
+    box-shadow: none;
   }
 
   [data-chat-portal] .mcp-status-icon::before,
   [data-chat-portal] .mcp-status-icon::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: 999px;
-  }
-
-  [data-chat-portal] .mcp-status-icon::after {
-    background: hsl(var(--primary) / 0.5);
-  }
-
-  [data-chat-portal] .mcp-tool-row[data-tool-state="running"] .mcp-status-icon::after {
-    background: hsl(var(--primary));
-    animation: none;
-  }
-
-  [data-chat-portal] .mcp-tool-row[data-tool-state="pending"] .mcp-status-icon::after {
-    background: hsl(var(--primary) / 0.8);
-  }
-
-  [data-chat-portal] .mcp-tool-row[data-tool-state="success"] .mcp-status-icon::after {
-    background: hsl(var(--primary) / 0.8);
-  }
-
-  [data-chat-portal] .mcp-tool-row[data-tool-state="error"] .mcp-status-icon::after {
-    background: hsl(var(--primary) / 0.8);
+    content: none !important;
   }
 
   [data-chat-portal] .mcp-status-icon > * {
@@ -1055,43 +1034,6 @@
 
   [data-chat-portal] [data-segment-tools] {
     --mcp-status-icon-size: 28px;
-  }
-
-  [data-chat-portal] .mcp-status-orbits {
-    display: none;
-  }
-
-  @keyframes mcp-orbits-spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    [data-chat-portal] .mcp-status-orbits {
-      animation: none;
-    }
-  }
-
-  [data-chat-portal] .mcp-status-done {
-    display: none;
-  }
-
-  [data-chat-portal] .chat-portal-status-orbit {
-    position: relative;
-  }
-
-  [data-chat-portal] .chat-portal-status-orbit::before {
-    content: "";
-    position: absolute;
-    inset: 2px;
-    border-radius: 999px;
-    background: radial-gradient(circle at 50% 50%, hsl(var(--primary) / 0.2), transparent 62%);
-    pointer-events: none;
-  }
-
-  [data-chat-portal] .chat-portal-status-orbit > * {
-    position: relative;
-    z-index: 1;
   }
 
   /* Streaming blocks (Anthropic-style) */
@@ -1198,44 +1140,35 @@
     display: none;
   }
 
-  [data-chat-portal] .mcp-orbit-loader {
-    --mcp-orbit-size: var(--portal-tool-orbit-size);
-    --mcp-orbit-stroke: var(--portal-tool-orbit-stroke);
-    position: relative;
-    display: inline-block;
-    width: var(--mcp-orbit-size);
-    height: var(--mcp-orbit-size);
-  }
-
-  [data-chat-portal] .mcp-orbit-ring {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    border-radius: 50%;
-    border: var(--mcp-orbit-stroke) solid transparent;
-    box-sizing: border-box;
-  }
-
-  [data-chat-portal] .mcp-orbit-ring--1 {
+  [data-chat-portal] .mcp-status-spinner {
+    --mcp-spinner-size: 16px;
+    width: var(--mcp-spinner-size);
+    height: var(--mcp-spinner-size);
+    border-radius: 999px;
+    border: 2px solid hsl(var(--primary) / 0.25);
     border-top-color: hsl(var(--primary));
-    animation: orbit-spin 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+    box-sizing: border-box;
+    animation: mcp-mini-spin 0.8s linear infinite;
+    display: inline-block;
+    background: transparent;
+    box-shadow: none;
   }
 
-  [data-chat-portal] .mcp-orbit-ring--2 {
-    border-top-color: hsl(var(--primary) / 0.5);
-    animation: orbit-spin 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite;
-    animation-delay: -0.4s;
+  [data-chat-portal] .mcp-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: hsl(var(--primary));
+    opacity: 0.9;
+    display: inline-block;
+    box-shadow: none;
   }
 
-  [data-chat-portal] .mcp-orbit-ring--3 {
-    border-top-color: hsl(var(--primary) / 0.25);
-    animation: orbit-spin 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite;
-    animation-delay: -0.8s;
+  [data-chat-portal] .chat-portal-status-orbit .mcp-status-spinner {
+    --mcp-spinner-size: var(--portal-status-orbit-size, 16px);
   }
 
-  @keyframes orbit-spin {
+  @keyframes mcp-mini-spin {
     0% {
       transform: rotate(0deg);
     }

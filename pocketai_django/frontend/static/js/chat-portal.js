@@ -1751,18 +1751,10 @@ class ChatPortalClient {
     status.dataset.toolStatus = "true";
     status.className = "mcp-status pending";
 
-    const statusIcon = document.createElement("span");
-    statusIcon.dataset.toolStatusIcon = "true";
-    statusIcon.className = "mcp-status-icon mcp-status-icon--orbit";
-    // Always reserve the left-side loader slot to prevent layout shift.
-    const orbitImg = document.createElement("img");
-    orbitImg.className = "mcp-status-orbits";
-    orbitImg.alt = "";
-    orbitImg.decoding = "async";
-    orbitImg.loading = "eager";
-    orbitImg.src = this.getToolOrbitImageUrl();
-    orbitImg.srcset = `${this.getToolOrbitImageUrl()} 1x, ${this.getToolOrbitImage2xUrl()} 2x`;
-    statusIcon.appendChild(orbitImg);
+		    const statusIcon = document.createElement("span");
+		    statusIcon.dataset.toolStatusIcon = "true";
+		    statusIcon.className = "mcp-status-icon";
+		    statusIcon.innerHTML = this.getOrbitLoaderMarkup();
 
     const statusLabel = document.createElement("span");
     statusLabel.dataset.toolStatusLabel = "true";
@@ -2168,46 +2160,27 @@ class ChatPortalClient {
 		      const iconEl = statusEl.querySelector("[data-tool-status-icon]");
 		      const labelEl = statusEl.querySelector("[data-tool-status-label]");
 
-		      if (labelEl) labelEl.textContent = "";
+			      if (labelEl) labelEl.textContent = "";
 
-		      if (iconEl) {
-		        iconEl.classList.toggle("mcp-status-icon--orbit", isRunning);
-		        iconEl.classList.toggle("mcp-status-icon--done", !isRunning);
-		        const orbitImg = iconEl.querySelector(".mcp-status-orbits");
-		        const doneImg = iconEl.querySelector(".mcp-status-done");
-		        if (isRunning) {
-		          if (!orbitImg) {
-		            iconEl.innerHTML = "";
-		            const img = document.createElement("img");
-		            img.className = "mcp-status-orbits";
-		            img.alt = "";
-		            img.decoding = "async";
-		            img.loading = "eager";
-			            img.src = this.getToolOrbitImageUrl();
-			            img.srcset = `${this.getToolOrbitImageUrl()} 1x, ${this.getToolOrbitImage2xUrl()} 2x`;
-			            iconEl.appendChild(img);
-		          }
-		          if (doneImg) {
-		            doneImg.remove();
-		          }
-		        } else {
-		          if (orbitImg) {
-		            orbitImg.remove();
-		          }
-		          if (!doneImg) {
-		            const img = document.createElement("img");
-		            img.className = "mcp-status-done";
-		            img.alt = "";
-		            img.decoding = "async";
-		            img.loading = "lazy";
-		            img.src = toolState === "success" ? this.getToolSuccessIconUrl() : this.getToolFailureIconUrl();
-		            iconEl.appendChild(img);
-		          } else {
-		            doneImg.src = toolState === "success" ? this.getToolSuccessIconUrl() : this.getToolFailureIconUrl();
-		          }
-		        }
-		      }
-		    }
+			      if (iconEl) {
+			        const spinnerEl = iconEl.querySelector(".mcp-status-spinner");
+			        const dotEl = iconEl.querySelector(".mcp-status-dot");
+			        const legacyDone = iconEl.querySelector(".mcp-status-done");
+			        if (legacyDone) legacyDone.remove();
+
+			        if (isRunning) {
+			          if (dotEl) dotEl.remove();
+			          if (!spinnerEl) {
+			            iconEl.innerHTML = this.getOrbitLoaderMarkup();
+			          }
+			        } else {
+			          if (spinnerEl) spinnerEl.remove();
+			          if (!dotEl) {
+			            iconEl.innerHTML = this.getStatusDotMarkup();
+			          }
+			        }
+			      }
+			    }
 
 			    const outcomeEl = card.querySelector("[data-tool-outcome-inline]");
 			    if (outcomeEl) {
@@ -3330,14 +3303,6 @@ class ChatPortalClient {
     `;
   }
 
-  getToolSuccessIconUrl() {
-    return "/static/check.png";
-  }
-
-  getToolFailureIconUrl() {
-    return "/static/cross.png";
-  }
-
   getFileTypeIcon(type) {
     const icons = {
       pdf: `<svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -3374,18 +3339,12 @@ class ChatPortalClient {
     return icons[type] || icons.default;
   }
 
-  getToolOrbitImageUrl() {
-    return "/static/orbits.png";
-  }
-
-  getToolOrbitImage2xUrl() {
-    return "/static/orbits@2x.png";
-  }
-
   getOrbitLoaderMarkup() {
-    const src = this.getToolOrbitImageUrl();
-    const src2x = this.getToolOrbitImage2xUrl();
-    return `<img class="mcp-status-orbits" alt="" decoding="async" loading="eager" src="${src}" srcset="${src} 1x, ${src2x} 2x">`;
+    return `<span class="mcp-status-spinner" aria-hidden="true"></span>`;
+  }
+
+  getStatusDotMarkup() {
+    return `<span class="mcp-status-dot" aria-hidden="true"></span>`;
   }
 
   formatDurationMs(ms) {
@@ -8127,9 +8086,8 @@ class ChatPortalClient {
         height: var(--portal-status-orbit-size, 16px);
         flex-shrink: 0;
       }
-      .chat-portal-status-orbit .mcp-orbit-loader {
-        --mcp-orbit-size: var(--portal-status-orbit-size, 16px);
-        --mcp-orbit-stroke: var(--portal-status-orbit-stroke, 2px);
+      .chat-portal-status-orbit .mcp-status-spinner {
+        --mcp-spinner-size: var(--portal-status-orbit-size, 16px);
       }
       .skeleton-loader {
         background: linear-gradient(90deg, 
