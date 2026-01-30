@@ -3306,6 +3306,14 @@ class ChatPortalClient {
     `;
   }
 
+  getSuccessCircleIconMarkup() {
+    return `
+      <svg viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M4.8 8.6l2 2.1 4.4-5" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+      </svg>
+    `;
+  }
+
   getSuccessBadgeIconMarkup() {
     return `
       <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -4217,9 +4225,7 @@ class ChatPortalClient {
             <div class="portal-task__title">${this.escapeHtml(String(title || "Background task"))}</div>
             <div class="portal-task__subtitle">${this.escapeHtml(subtitle)}</div>
           </div>
-          <span class="portal-task__status-pill" data-status="${this.escapeHtml(statusRaw)}">${this.escapeHtml(
-      this.formatRunStatusLabel(statusRaw)
-    )}</span>
+          ${this.renderRunStatusPill(statusRaw)}
         </button>
         <div class="portal-task__body">
           ${actionsHtml}
@@ -4612,6 +4618,36 @@ class ChatPortalClient {
     return base;
   }
 
+  renderRunStatusPill(statusRaw) {
+    const label = this.formatRunStatusLabel(statusRaw);
+    const status = (statusRaw || "").toString().trim().toLowerCase();
+    if (["completed", "resolved", "success", "succeeded"].includes(status)) {
+      return `
+        <span class="portal-task__status-pill portal-task__status-pill--icon" data-status="${this.escapeHtml(status)}" aria-label="Success">
+          <span class="portal-task__status-pill-icon" aria-hidden="true">${this.getSuccessCircleIconMarkup()}</span>
+        </span>
+      `;
+    }
+    return `
+      <span class="portal-task__status-pill" data-status="${this.escapeHtml(status)}">${this.escapeHtml(label)}</span>
+    `;
+  }
+
+  renderRequestStatusPill(statusRaw) {
+    const label = this.formatRequestStatusLabel(statusRaw);
+    const status = (statusRaw || "").toString().trim().toLowerCase();
+    if (["completed", "resolved", "success", "succeeded"].includes(status)) {
+      return `
+        <span class="portal-task__status-pill portal-task__status-pill--icon" data-status="${this.escapeHtml(status)}" aria-label="Success">
+          <span class="portal-task__status-pill-icon" aria-hidden="true">${this.getSuccessCircleIconMarkup()}</span>
+        </span>
+      `;
+    }
+    return `
+      <span class="portal-task__status-pill" data-status="${this.escapeHtml(status)}">${this.escapeHtml(label)}</span>
+    `;
+  }
+
   renderRequestCardHtml(requestId, state, request) {
     const statusRaw = (request && request.status ? request.status : "open").toString().trim().toLowerCase() || "open";
     const subject = request && request.subject ? request.subject : "Agent request";
@@ -4628,9 +4664,7 @@ class ChatPortalClient {
             <div class="portal-task__title">${this.escapeHtml(String(subject || "Agent request"))}</div>
             <div class="portal-task__subtitle">${this.escapeHtml(subtitle)}</div>
           </div>
-          <span class="portal-task__status-pill" data-status="${this.escapeHtml(statusRaw)}">${this.escapeHtml(
-            this.formatRequestStatusLabel(statusRaw)
-          )}</span>
+          ${this.renderRequestStatusPill(statusRaw)}
         </button>
         <div class="portal-task__body">
           ${detailsHtml}
