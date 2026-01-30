@@ -257,6 +257,14 @@ class ChatPortalClient {
                 : payloadObj && typeof payloadObj.body === "string"
                 ? payloadObj.body
                 : "";
+            const plainText =
+              (Array.isArray(contentBlocks) && contentBlocks.length
+                ? this.extractPlainTextFromContentBlocks(contentBlocks)
+                : bodyText) || "";
+            const isAgentRunHandoff = this.stripAgentRunHandoffPrefix(plainText) !== plainText;
+            if (isAgentRunHandoff) {
+              this.ensureAgentRunCollapsible(el, { source: "agent_run" }, messageId);
+            }
 
             // Prefer canonical block rendering when available.
             if (Array.isArray(contentBlocks) && contentBlocks.length) {
@@ -6462,7 +6470,7 @@ class ChatPortalClient {
     const runStatus = run && run.status ? run.status.toString().trim().toLowerCase() : "";
     const metaType = this.getAgentRunType(meta);
 
-    let pillLabel = "Background run";
+    let pillLabel = "";
     let variant = "neutral";
 
     if (runStatus) {
@@ -6541,6 +6549,7 @@ class ChatPortalClient {
     const pill = document.createElement("span");
     pill.dataset.agentRunPill = "true";
     pill.className = "portal-agent-run__pill";
+    pill.setAttribute("hidden", "true");
 
     const title = document.createElement("span");
     title.dataset.agentRunTitle = "true";
@@ -6673,16 +6682,25 @@ class ChatPortalClient {
 
     const pillEl = detailsEl.querySelector("[data-agent-run-pill]");
     if (pillEl) {
-      if (summary.variant === "success" && summary.pillLabel === "Success") {
+      const label = summary.pillLabel ? summary.pillLabel.toString().trim() : "";
+      if (!label) {
+        pillEl.dataset.iconOnly = "false";
+        pillEl.textContent = "";
+        pillEl.setAttribute("hidden", "true");
+        pillEl.removeAttribute("aria-label");
+        pillEl.removeAttribute("title");
+      } else if (summary.variant === "success" && label === "Success") {
         pillEl.dataset.iconOnly = "true";
         pillEl.innerHTML = `<span class="portal-agent-run__pill-icon" aria-hidden="true">${this.getSuccessBadgeIconMarkup()}</span>`;
         pillEl.setAttribute("aria-label", "Success");
         pillEl.setAttribute("title", "Success");
+        pillEl.removeAttribute("hidden");
       } else {
         pillEl.dataset.iconOnly = "false";
-        pillEl.textContent = summary.pillLabel;
+        pillEl.textContent = label;
         pillEl.removeAttribute("aria-label");
         pillEl.removeAttribute("title");
+        pillEl.removeAttribute("hidden");
       }
     }
     const titleEl = detailsEl.querySelector("[data-agent-run-title]");

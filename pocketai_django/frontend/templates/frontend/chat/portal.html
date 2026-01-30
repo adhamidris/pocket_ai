@@ -213,6 +213,7 @@
     display: block;
     width: 100%;
     max-width: 100%;
+    position: relative;
   }
 
   [data-chat-portal] .portal-agent-run__summary {
@@ -221,9 +222,10 @@
     align-items: center;
     gap: 0.55rem;
     width: 100%;
-    padding: 0.55rem 0.75rem;
-    border-radius: 1.1rem;
+    padding: 0.55rem 0.75rem 0.55rem 1.4rem;
+    border-radius: 0;
     border: none;
+    box-shadow: none;
     background: transparent;
     cursor: pointer;
     user-select: none;
@@ -232,7 +234,34 @@
     font-size: var(--portal-font-sm);
     line-height: var(--portal-line-tight);
     position: relative;
+    padding-left: 1.4rem;
     overflow: hidden;
+  }
+
+  [data-chat-portal] .portal-agent-run__summary::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 22%;
+    width: 1.5px;
+    height: 56%;
+    border-radius: 999px;
+    background: hsl(var(--primary) / 0.5);
+  }
+
+  [data-chat-portal] .portal-agent-run[open]::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 1.5px;
+    border-radius: 999px;
+    background: hsl(var(--primary) / 0.5);
+  }
+
+  [data-chat-portal] .portal-agent-run[open] .portal-agent-run__summary::after {
+    opacity: 0;
   }
 
   [data-chat-portal] .portal-agent-run__summary::before {
@@ -244,32 +273,40 @@
     z-index: 1;
   }
 
+
   [data-chat-portal] .portal-agent-run__summary:hover {
     background: transparent;
+    border-color: transparent;
   }
 
   [data-chat-portal] .portal-agent-run[data-agent-run-variant="action"] .portal-agent-run__summary {
     background: transparent;
+    border-color: transparent;
   }
 
   [data-chat-portal] .portal-agent-run[data-agent-run-variant="input"] .portal-agent-run__summary {
     background: transparent;
+    border-color: transparent;
   }
 
   [data-chat-portal] .portal-agent-run[data-agent-run-variant="approval"] .portal-agent-run__summary {
     background: transparent;
+    border-color: transparent;
   }
 
   [data-chat-portal] .portal-agent-run[data-agent-run-variant="danger"] .portal-agent-run__summary {
     background: transparent;
+    border-color: transparent;
   }
 
   [data-chat-portal] .portal-agent-run[data-agent-run-variant="success"] .portal-agent-run__summary {
     background: transparent;
+    border-color: transparent;
   }
 
   [data-chat-portal] .portal-agent-run[data-agent-run-variant="muted"] .portal-agent-run__summary {
     background: transparent;
+    border-color: transparent;
     color: hsl(var(--muted-foreground));
   }
 
@@ -279,10 +316,13 @@
 
   .dark [data-chat-portal] .portal-agent-run__summary {
     background: transparent;
+    border-color: transparent;
+    box-shadow: none;
   }
 
   [data-chat-portal] .portal-agent-run__summary:focus-visible {
-    outline: none;
+    outline: 2px solid hsl(var(--primary) / 0.35);
+    outline-offset: 2px;
   }
 
   [data-chat-portal] .portal-agent-run__summary::-webkit-details-marker {
@@ -535,6 +575,7 @@
     padding: 0.9rem 0.95rem;
     border-radius: 1.1rem;
     border: none;
+    box-shadow: none;
     background: transparent;
     box-shadow: none;
     backdrop-filter: none;
