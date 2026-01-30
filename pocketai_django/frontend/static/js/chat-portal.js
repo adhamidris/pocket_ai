@@ -3714,6 +3714,20 @@ class ChatPortalClient {
     return null;
   }
 
+  getPendingRunApprovalId(runId) {
+    const safeRunId = (runId || "").toString().trim();
+    if (!safeRunId) return "";
+    const state = this.agentRuns.get(safeRunId);
+    const run = state && state.run ? state.run : null;
+    const metadata = run && run.metadata && typeof run.metadata === "object" ? run.metadata : null;
+    const metaApprovalId =
+      metadata && (metadata.pending_approval_id || metadata.pendingApprovalId)
+        ? String(metadata.pending_approval_id || metadata.pendingApprovalId).trim()
+        : "";
+    if (metaApprovalId) return metaApprovalId;
+    return "";
+  }
+
   async submitRunApproval(runId, approvalId, decision, cardEl) {
     if (!runId || !decision) return;
     if (!this.endpoints.runApproval) {
@@ -6692,6 +6706,132 @@ class ChatPortalClient {
     return match && match[1] ? match[1].trim() : "";
   }
 
+  humanizeAgentToolName(toolName) {
+    const raw = (toolName || "").toString().trim();
+    if (!raw) return "";
+    const normalized = raw.toLowerCase();
+    const mapping = {
+      email_send_draft: "send email",
+      email_create_draft: "create email draft",
+      email_get_message: "read email message",
+      email_get_thread: "read email thread",
+      search_knowledge: "search knowledge base",
+      read_knowledge: "read documents",
+      create_agent_run: "start sub-agent",
+      continue_agent_run: "continue sub-agent",
+    };
+    if (Object.prototype.hasOwnProperty.call(mapping, normalized)) {
+      return mapping[normalized];
+    }
+    return raw.replace(/[_-]+/g, " ").trim();
+  }
+
+  extractToolNameFromText(text) {
+    const raw = (text || "").toString();
+    if (!raw) return "";
+    const match = raw.match(/\btool\s*:\s*([a-zA-Z0-9_-]{2,})/i);
+    return match && match[1] ? match[1].trim() : "";
+  }
+
+  extractFirstQuestionFromText(text) {
+    const raw = (text || "").toString();
+    if (!raw) return "";
+    const lines = raw
+      .split(/\r?\n/)
+      .map((line) => (line || "").trim())
+      .filter(Boolean);
+    const bullet = lines.find((line) => /^[-*]\s+/.test(line));
+    if (bullet) return bullet.replace(/^[-*]\s+/, "").trim();
+    return "";
+  }
+
+  extractFirstHeadingFromBlocks(blocks, fallbackText = "") {
+    const items = Array.isArray(blocks) ? blocks : [];
+    for (const block of items) {
+      if (!block || typeof block !== "object") continue;
+      const type = (block.type || "").toString().trim().toLowerCase();
+      if (type !== "heading") continue;
+      const payload = block.payload && typeof block.payload === "object" ? block.payload : {};
+      const content = Array.isArray(payload.content) ? payload.content : [];
+      const heading = this.inlineNodesToText(content).trim();
+      if (heading) return heading;
+    }
+    const raw = (fallbackText || "").toString().trim();
+    if (!raw) return "";
+    const line = raw.split(/\r?\n/).map((l) => (l || "").trim()).find(Boolean) || "";
+    return line;
+  }
+
+  inferAgentRunMilestoneSubtitle({ metaType, runStatus, cleanedText, cleanedBlocks, title } = {}) {
+    const kind = (metaType || "").toString().trim().toLowerCase();
+    const text = (cleanedText || "").toString().trim();
+    const lower = text.toLowerCase();
+
+    if (kind === "needs_approval") {
+      const toolName = this.extractToolNameFromText(text);
+      const action = this.humanizeAgentToolName(toolName);
+      if (action) return `Awaiting approval to ${action}`;
+      return "Awaiting approval to continue";
+    }
+
+    if (kind === "needs_user") {
+      const question = this.extractFirstQuestionFromText(text);
+      if (question) return `Needs input: ${this.clipText(question, 72)}`;
+      return "Needs your input to continue";
+    }
+
+    if (["run_handoff", "run_result", "run_summary"].includes(kind)) {
+      if (
+        lower.includes("sent the email") ||
+        lower.includes("email has been delivered") ||
+        (lower.includes("successfully") && lower.includes("sent") && lower.includes("email"))
+      ) {
+        return "Email sent";
+      }
+      if (lower.includes("draft") && (lower.includes("created") || lower.includes("saved"))) {
+        return "Email draft created";
+      }
+      if (lower.includes("unable to locate") || lower.includes("not found")) {
+        return "Completed — no match found";
+      }
+      const heading = this.extractFirstHeadingFromBlocks(cleanedBlocks, text);
+      if (heading) {
+        const normalizedHeading = heading.toLowerCase();
+        const normalizedTitle = (title || "").toString().trim().toLowerCase();
+        if (!normalizedTitle || !normalizedHeading || normalizedHeading === normalizedTitle) {
+          return "Completed";
+        }
+        return this.clipText(heading, 72);
+      }
+      return "Completed";
+    }
+
+    if (runStatus) {
+      const status = runStatus.toString().trim().toLowerCase();
+      if (["waiting_approval", "waiting-approval"].includes(status)) return "Awaiting approval";
+      if (["waiting_user", "waiting-user"].includes(status)) return "Awaiting your input";
+      if (["running"].includes(status)) return "Working…";
+      if (["queued"].includes(status)) return "Queued";
+      if (["failed", "error"].includes(status)) return "Failed";
+      if (["cancelled", "canceled"].includes(status)) return "Cancelled";
+      if (["completed", "succeeded", "success"].includes(status)) return "Completed";
+    }
+
+    return "";
+  }
+
+  getAgentRunApprovalOutcome(runState) {
+    if (!runState || !Array.isArray(runState.events)) return "";
+    for (let i = runState.events.length - 1; i >= 0; i -= 1) {
+      const evt = runState.events[i];
+      if (!evt) continue;
+      const label = (evt.label || "").toString().trim().toLowerCase();
+      if (label === "approved") return "Approved";
+      if (label === "denied") return "Denied";
+    }
+    return "";
+  }
+
   computeAgentRunSummary({ messageId, metadata }) {
     const meta = metadata && typeof metadata === "object" ? metadata : {};
     const runId = this.getAgentRunId(meta);
@@ -6699,11 +6839,44 @@ class ChatPortalClient {
     const run = runState && runState.run ? runState.run : null;
     const runStatus = run && run.status ? run.status.toString().trim().toLowerCase() : "";
     const metaType = this.getAgentRunType(meta);
+    const approvalOutcome = this.getAgentRunApprovalOutcome(runState);
+
+    const payload = this.getMessageRenderPayload(messageId);
+    const rawBlocks = payload && Array.isArray(payload.blocks) ? payload.blocks : [];
+    const cleanedBlocks = this.stripAgentRunHandoffFromBlocks(rawBlocks);
+    const rawText =
+      (payload && payload.blocks && payload.blocks.length
+        ? this.extractPlainTextFromContentBlocks(payload.blocks)
+        : "") ||
+      (payload ? payload.body : "") ||
+      "";
+
+    const cleanedText = this.stripAgentRunHandoffPrefix(rawText);
+
+    const title = (run && run.title ? String(run.title).trim() : "") || this.extractAgentRunTitleFromText(rawText);
+
+    const milestoneTypes = new Set(["needs_approval", "needs_user", "run_handoff", "run_result", "run_summary"]);
+    const isMilestone = milestoneTypes.has(metaType);
 
     let pillLabel = "";
     let variant = "neutral";
-
-    if (runStatus) {
+    if (isMilestone) {
+      if (metaType === "needs_approval") {
+        if (approvalOutcome) {
+          pillLabel = approvalOutcome;
+          variant = approvalOutcome === "Approved" ? "success" : "danger";
+        } else {
+          pillLabel = "Approval Needed";
+          variant = "approval";
+        }
+      } else if (metaType === "needs_user") {
+        pillLabel = "Input Needed";
+        variant = "input";
+      } else if (["run_handoff", "run_result", "run_summary"].includes(metaType)) {
+        pillLabel = "Success";
+        variant = "success";
+      }
+    } else if (runStatus) {
       if (["waiting_approval", "waiting-approval"].includes(runStatus)) {
         pillLabel = "Approval Needed";
         variant = "approval";
@@ -6726,26 +6899,21 @@ class ChatPortalClient {
         pillLabel = "Success";
         variant = "success";
       }
-    } else if (metaType === "needs_approval") {
-      pillLabel = "Approval Needed";
-      variant = "approval";
-    } else if (metaType === "needs_user") {
-      pillLabel = "Input Needed";
-      variant = "input";
     } else if (metaType === "pending_tool_execution") {
       pillLabel = "Tool Executed";
       variant = "neutral";
     }
 
-    const payload = this.getMessageRenderPayload(messageId);
-    const rawText =
-      (payload && payload.blocks && payload.blocks.length
-        ? this.extractPlainTextFromContentBlocks(payload.blocks)
-        : "") ||
-      (payload ? payload.body : "") ||
-      "";
-
-    const title = (run && run.title ? String(run.title).trim() : "") || this.extractAgentRunTitleFromText(rawText);
+    let subtitle = this.inferAgentRunMilestoneSubtitle({
+      metaType,
+      runStatus,
+      cleanedText,
+      cleanedBlocks,
+      title: title || "",
+    });
+    if (metaType === "needs_approval" && approvalOutcome) {
+      subtitle = approvalOutcome === "Approved" ? "Approval granted" : "Approval denied";
+    }
 
     return {
       runId,
@@ -6754,6 +6922,7 @@ class ChatPortalClient {
       pillLabel,
       variant,
       title: title || "Background task",
+      subtitle,
     };
   }
 
@@ -6785,6 +6954,23 @@ class ChatPortalClient {
     title.dataset.agentRunTitle = "true";
     title.className = "portal-agent-run__title";
 
+    const subtitle = document.createElement("span");
+    subtitle.dataset.agentRunSubtitle = "true";
+    subtitle.className = "portal-agent-run__subtitle";
+    subtitle.setAttribute("hidden", "true");
+
+    const headingRow = document.createElement("span");
+    headingRow.dataset.agentRunHeadingRow = "true";
+    headingRow.className = "portal-agent-run__heading-row";
+    headingRow.appendChild(title);
+    headingRow.appendChild(pill);
+
+    const heading = document.createElement("span");
+    heading.dataset.agentRunHeading = "true";
+    heading.className = "portal-agent-run__heading";
+    heading.appendChild(headingRow);
+    heading.appendChild(subtitle);
+
     const sourceIcon = document.createElement("span");
     sourceIcon.dataset.agentRunSourceIcon = "true";
     sourceIcon.className = "portal-agent-run__source-icon";
@@ -6806,9 +6992,42 @@ class ChatPortalClient {
     chevron.className = "portal-agent-run__chevron";
     chevron.innerHTML = `<svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
+    const actions = document.createElement("span");
+    actions.dataset.agentRunActions = "true";
+    actions.className = "portal-agent-run__actions";
+    actions.setAttribute("hidden", "true");
+
+    const approveBtn = document.createElement("button");
+    approveBtn.type = "button";
+    approveBtn.className = "portal-agent-run__btn portal-agent-run__btn--approve";
+    approveBtn.setAttribute("data-run-approval-action", "approve");
+    approveBtn.textContent = "Approve";
+
+    const denyBtn = document.createElement("button");
+    denyBtn.type = "button";
+    denyBtn.className = "portal-agent-run__btn portal-agent-run__btn--deny";
+    denyBtn.setAttribute("data-run-approval-action", "deny");
+    denyBtn.textContent = "Deny";
+
+    const onApprovalClick = (decision) => (event) => {
+      if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      const runId = (details.dataset.agentRunId || this.getAgentRunId(metadata) || "").toString().trim();
+      const approvalId = (event && event.currentTarget ? event.currentTarget.getAttribute("data-approval-id") : "") || "";
+      if (!runId) return;
+      this.submitRunApproval(runId, approvalId, decision, actions);
+    };
+    approveBtn.addEventListener("click", onApprovalClick("approve"));
+    denyBtn.addEventListener("click", onApprovalClick("deny"));
+
+    actions.appendChild(approveBtn);
+    actions.appendChild(denyBtn);
+
     summary.appendChild(sourceWrap);
-    summary.appendChild(title);
-    summary.appendChild(pill);
+    summary.appendChild(heading);
+    summary.appendChild(actions);
     summary.appendChild(chevron);
 
     const drawer = document.createElement("div");
@@ -6912,7 +7131,8 @@ class ChatPortalClient {
 
     const pillEl = detailsEl.querySelector("[data-agent-run-pill]");
     if (pillEl) {
-      const label = summary.pillLabel ? summary.pillLabel.toString().trim() : "";
+      const rawLabel = summary.pillLabel ? summary.pillLabel.toString().trim() : "";
+      const label = rawLabel === "Approval Needed" ? "" : rawLabel;
       if (!label) {
         pillEl.dataset.iconOnly = "false";
         pillEl.textContent = "";
@@ -6935,6 +7155,62 @@ class ChatPortalClient {
     }
     const titleEl = detailsEl.querySelector("[data-agent-run-title]");
     if (titleEl) titleEl.textContent = summary.title;
+
+    const subtitleEl = detailsEl.querySelector("[data-agent-run-subtitle]");
+    if (subtitleEl) {
+      const value = summary.subtitle ? summary.subtitle.toString().trim() : "";
+      if (value) {
+        subtitleEl.textContent = value;
+        subtitleEl.removeAttribute("hidden");
+      } else {
+        subtitleEl.textContent = "";
+        subtitleEl.setAttribute("hidden", "true");
+      }
+    }
+
+    this.updateAgentRunApprovalActions(detailsEl, summary);
+  }
+
+  updateAgentRunApprovalActions(detailsEl, summary) {
+    if (!detailsEl) return;
+    const actionsEl = detailsEl.querySelector("[data-agent-run-actions]");
+    if (!actionsEl) return;
+
+    const approveBtn = actionsEl.querySelector('[data-run-approval-action="approve"]');
+    const denyBtn = actionsEl.querySelector('[data-run-approval-action="deny"]');
+    if (!approveBtn || !denyBtn) return;
+
+    const runId = (summary && summary.runId ? summary.runId : detailsEl.dataset.agentRunId || "").toString().trim();
+    const container = this.elements.messagesInner || this.elements.messages;
+    const runCards = runId && container ? container.querySelectorAll(`[data-agent-run-details][data-agent-run-id="${runId}"]`) : [];
+    const isLatestForRun = runCards && runCards.length ? runCards[runCards.length - 1] === detailsEl : true;
+    const state = runId ? this.agentRuns.get(runId) : null;
+    const runStatus = state && state.run && state.run.status ? state.run.status.toString().trim().toLowerCase() : "";
+    const shouldShow = Boolean(
+      summary &&
+        summary.metaType === "needs_approval" &&
+        runStatus === "waiting_approval" &&
+        isLatestForRun
+    );
+
+    if (!shouldShow) {
+      approveBtn.removeAttribute("data-approval-id");
+      denyBtn.removeAttribute("data-approval-id");
+      actionsEl.setAttribute("hidden", "true");
+      return;
+    }
+
+    const approvalId = this.getPendingRunApprovalId(runId);
+    if (!approvalId) {
+      approveBtn.removeAttribute("data-approval-id");
+      denyBtn.removeAttribute("data-approval-id");
+      actionsEl.setAttribute("hidden", "true");
+      return;
+    }
+
+    approveBtn.setAttribute("data-approval-id", approvalId);
+    denyBtn.setAttribute("data-approval-id", approvalId);
+    actionsEl.removeAttribute("hidden");
   }
 
   refreshAgentRunChips(runId = "") {
