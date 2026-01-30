@@ -3795,13 +3795,73 @@ class ChatPortalClient {
     const panel = this.elements.tasksPanel;
     if (!panel) return;
     const shouldShow = Boolean(visible);
-    if (shouldShow) {
-      panel.removeAttribute("hidden");
-    } else {
-      panel.setAttribute("hidden", "");
+    const isHidden = panel.hasAttribute("hidden");
+
+    if (panel._tasksPanelOpenRaf) {
+      cancelAnimationFrame(panel._tasksPanelOpenRaf);
+      panel._tasksPanelOpenRaf = null;
     }
-    this.setTasksPanelGridActive(shouldShow);
-    this.updateTasksOpenButton();
+    if (panel._tasksPanelCloseTimer) {
+      clearTimeout(panel._tasksPanelCloseTimer);
+      panel._tasksPanelCloseTimer = null;
+    }
+
+    if (shouldShow) {
+      if (!isHidden && panel.dataset.panelState === "open") {
+        this.setTasksPanelGridActive(true);
+        this.updateTasksOpenButton();
+        return;
+      }
+
+      // Start from the closed state so the transition can animate in.
+      panel.dataset.panelState = "closed";
+      panel.removeAttribute("hidden");
+
+      // Force reflow so the browser picks up the starting transform/opacity before we open.
+      void panel.offsetWidth;
+
+      panel._tasksPanelOpenRaf = requestAnimationFrame(() => {
+        panel.dataset.panelState = "open";
+        panel._tasksPanelOpenRaf = null;
+      });
+
+      this.setTasksPanelGridActive(true);
+      this.updateTasksOpenButton();
+      return;
+    }
+
+    if (isHidden) {
+      panel.dataset.panelState = "closed";
+      this.setTasksPanelGridActive(false);
+      this.updateTasksOpenButton();
+      return;
+    }
+
+    const finalizeClose = () => {
+      panel.setAttribute("hidden", "");
+      panel.dataset.panelState = "closed";
+      this.setTasksPanelGridActive(false);
+      this.updateTasksOpenButton();
+    };
+
+    panel.dataset.panelState = "closed";
+
+    const onEnd = (event) => {
+      if (!event || event.target !== panel) return;
+      if (event.propertyName !== "transform" && event.propertyName !== "opacity") return;
+      panel.removeEventListener("transitionend", onEnd);
+      finalizeClose();
+    };
+    panel.addEventListener("transitionend", onEnd);
+
+    // Fallback in case transitionend doesn't fire (tab not visible, etc.)
+    panel._tasksPanelCloseTimer = window.setTimeout(() => {
+      panel._tasksPanelCloseTimer = null;
+      panel.removeEventListener("transitionend", onEnd);
+      if (!panel.hasAttribute("hidden")) {
+        finalizeClose();
+      }
+    }, 320);
   }
 
   initTasksPanelGrid() {

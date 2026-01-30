@@ -997,8 +997,121 @@ class RichBlockStreamBuilder:
         self.active_list_ordered = None
 
 
+def _fix_malformed_markdown(text: str) -> str:
+    """
+    Fix common LLM markdown formatting issues before parsing.
+
+    Handles:
+    - Inline numbered lists: "text 1. item 2. item" → "text:\n\n1. item\n2. item"
+    - Inline bullet lists: "text - item - item" → "text:\n\n- item\n- item"
+    - Missing blank lines before lists
+    """
+    if not text:
+        return text
+
+    lines = text.split("\n")
+    fixed_lines: list[str] = []
+
+    for line in lines:
+        # Skip lines that are already properly formatted list items
+        stripped = line.lstrip()
+        if re.match(r"^(\d+)\.\s+", stripped) or re.match(r"^[-*+]\s+", stripped):
+            fixed_lines.append(line)
+            continue
+
+        # Skip code blocks (don't modify content inside code fences)
+        if stripped.startswith("```"):
+            fixed_lines.append(line)
+            continue
+
+        # Fix inline numbered lists: "text 1. item 2. item 3. item"
+        # Pattern: word/punctuation followed by " 1. " mid-line (not at start)
+        inline_numbered_pattern = r"(\S)(\s+)(\d+)\.\s+(\S)"
+        if re.search(inline_numbered_pattern, line):
+            # Check if this looks like an inline list (multiple numbered items on same line)
+            numbered_items = list(re.finditer(r"(\d+)\.\s+", line))
+            if len(numbered_items) >= 2:
+                # Multiple numbered items on one line - likely malformed list
+                # Find where the list starts (first number that follows text)
+                first_match = None
+                for match in numbered_items:
+                    # Check if there's text before this number (not just whitespace)
+                    before = line[:match.start()].rstrip()
+                    if before and not re.match(r"^\s*$", before):
+                        first_match = match
+                        break
+
+                if first_match:
+                    # Split into intro text and list items
+                    intro = line[:first_match.start()].rstrip()
+                    rest = line[first_match.start():]
+
+                    # Add colon to intro if it doesn't end with punctuation
+                    if intro and intro[-1] not in ":;.,!?":
+                        intro = intro + ":"
+
+                    # Split the rest into individual list items
+                    items = re.split(r"(\d+)\.\s+", rest)
+                    formatted_items: list[str] = []
+                    i = 1
+                    while i < len(items):
+                        if i + 1 < len(items):
+                            num = items[i]
+                            content = items[i + 1].strip()
+                            if content:
+                                formatted_items.append(f"{num}. {content}")
+                        i += 2
+
+                    if formatted_items:
+                        fixed_lines.append(intro)
+                        fixed_lines.append("")  # Blank line before list
+                        fixed_lines.extend(formatted_items)
+                        continue
+
+        # Fix inline bullet lists: "text - item - another item"
+        # Only if there are multiple " - " patterns suggesting a list
+        bullet_matches = list(re.finditer(r"\s[-*+]\s+\S", line))
+        if len(bullet_matches) >= 2:
+            # Check if first bullet is mid-sentence (has text before it)
+            first_match = bullet_matches[0]
+            before = line[:first_match.start()].strip()
+            if before and not re.match(r"^[-*+]\s", before):
+                # Split into intro and items
+                intro = before
+                rest = line[first_match.start():]
+
+                # Add colon to intro if needed
+                if intro and intro[-1] not in ":;.,!?":
+                    intro = intro + ":"
+
+                # Split by bullet markers
+                items = re.split(r"\s+([-*+])\s+", rest)
+                formatted_items: list[str] = []
+                i = 1
+                while i < len(items):
+                    if i + 1 < len(items):
+                        marker = items[i]
+                        content = items[i + 1].strip()
+                        if content:
+                            formatted_items.append(f"{marker} {content}")
+                    i += 2
+
+                if formatted_items:
+                    fixed_lines.append(intro)
+                    fixed_lines.append("")  # Blank line before list
+                    fixed_lines.extend(formatted_items)
+                    continue
+
+        # No fixes needed for this line
+        fixed_lines.append(line)
+
+    return "\n".join(fixed_lines)
+
+
 def rich_blocks_from_text(text: str) -> list[dict[str, object]]:
+    # Pre-process to fix common LLM formatting issues
+    fixed_text = _fix_malformed_markdown(text or "")
     builder = RichBlockStreamBuilder()
-    builder.feed_text(text or "")
+    builder.feed_text(fixed_text)
     builder.finalize()
     return builder.snapshot()

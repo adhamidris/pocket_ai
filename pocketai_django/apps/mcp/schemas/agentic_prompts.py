@@ -69,12 +69,31 @@ Read canonical evidence for specific refs from `search_knowledge.refs[]`.
 - For list/compare/fees responses, prefer structured output via response_blocks (type=table/kv) instead of markdown tables.
 - When presenting numeric lists/tables (prices, fees, limits, percentages, counts), consider sorting by the relevant numeric column; place non-numeric amounts (e.g., "Free", "N/A", "-") last, and keep displayed values unchanged.
 
-## Chat UI Formatting
+## Chat UI Formatting (CRITICAL)
 
-- Use blank lines between paragraphs ("\\n\\n"); do not hard-wrap prose lines.
-- Use "- " for bullets and "1. " for numbering; include a blank line before/after lists.
-- Use single newlines only inside lists, code blocks, or truly line-based content (addresses).
-- Never embed list markers inside a sentence (bad: "you 1. ... 2. ..."). If you introduce steps, end the lead-in with ":" then start the list on the next line.
+**Paragraph spacing:** Use blank lines between paragraphs ("\\n\\n"); do not hard-wrap prose lines.
+
+**Lists MUST start on their own line.** NEVER put list markers inline with preceding text.
+
+❌ WRONG: "The options are 1. Option A 2. Option B 3. Option C"
+❌ WRONG: "You can - do this - or that - or another thing"
+❌ WRONG: "It refers to 1. First thing 2. Second thing"
+
+✅ CORRECT:
+"The options are:
+
+1. Option A
+2. Option B
+3. Option C"
+
+✅ CORRECT:
+"You can:
+
+- do this
+- or that
+- or another thing"
+
+**Rule:** If introducing a list, end with a colon, add a blank line, then start items on separate lines.
 {additional_rules}
 '''
 
@@ -129,12 +148,31 @@ Read canonical evidence for specific refs from `search_knowledge.refs[]`.
 - For list/compare/fees responses, prefer structured output via response_blocks (type=table/kv) instead of markdown tables.
 - When presenting numeric lists/tables (prices, fees, limits, percentages, counts), consider sorting by the relevant numeric column; place non-numeric amounts (e.g., "Free", "N/A", "-") last, and keep displayed values unchanged.
 
-## Chat UI Formatting
+## Chat UI Formatting (CRITICAL)
 
-- Use blank lines between paragraphs ("\\n\\n"); do not hard-wrap prose lines.
-- Use "- " for bullets and "1. " for numbering; include a blank line before/after lists.
-- Use single newlines only inside lists, code blocks, or truly line-based content (addresses).
-- Never embed list markers inside a sentence (bad: "you 1. ... 2. ..."). If you introduce steps, end the lead-in with ":" then start the list on the next line.
+**Paragraph spacing:** Use blank lines between paragraphs ("\\n\\n"); do not hard-wrap prose lines.
+
+**Lists MUST start on their own line.** NEVER put list markers inline with preceding text.
+
+❌ WRONG: "The options are 1. Option A 2. Option B 3. Option C"
+❌ WRONG: "You can - do this - or that - or another thing"
+❌ WRONG: "It refers to 1. First thing 2. Second thing"
+
+✅ CORRECT:
+"The options are:
+
+1. Option A
+2. Option B
+3. Option C"
+
+✅ CORRECT:
+"You can:
+
+- do this
+- or that
+- or another thing"
+
+**Rule:** If introducing a list, end with a colon, add a blank line, then start items on separate lines.
 {additional_rules}
 '''
 
@@ -271,12 +309,31 @@ Read canonical evidence for specific refs from `search_knowledge.refs[]`.
 - For list/compare/fees responses, prefer structured output via response_blocks (type=table/kv) instead of markdown tables.
 - When presenting numeric lists/tables (prices, fees, limits, percentages, counts), consider sorting by the relevant numeric column; place non-numeric amounts (e.g., "Free", "N/A", "-") last, and keep displayed values unchanged.
 
-## Chat UI Formatting
+## Chat UI Formatting (CRITICAL)
 
-- Use blank lines between paragraphs ("\\n\\n"); do not hard-wrap prose lines.
-- Use "- " for bullets and "1. " for numbering; include a blank line before/after lists.
-- Use single newlines only inside lists, code blocks, or truly line-based content (addresses).
-- Never embed list markers inside a sentence (bad: "you 1. ... 2. ..."). If you introduce steps, end the lead-in with ":" then start the list on the next line.
+**Paragraph spacing:** Use blank lines between paragraphs ("\\n\\n"); do not hard-wrap prose lines.
+
+**Lists MUST start on their own line.** NEVER put list markers inline with preceding text.
+
+❌ WRONG: "The options are 1. Option A 2. Option B 3. Option C"
+❌ WRONG: "You can - do this - or that - or another thing"
+❌ WRONG: "It refers to 1. First thing 2. Second thing"
+
+✅ CORRECT:
+"The options are:
+
+1. Option A
+2. Option B
+3. Option C"
+
+✅ CORRECT:
+"You can:
+
+- do this
+- or that
+- or another thing"
+
+**Rule:** If introducing a list, end with a colon, add a blank line, then start items on separate lines.
 {additional_rules}
 '''
 
@@ -331,12 +388,31 @@ Read canonical evidence for specific refs from `search_knowledge.refs[]`.
 - For list/compare/fees responses, prefer structured output via response_blocks (type=table/kv) instead of markdown tables.
 - When presenting numeric lists/tables (prices, fees, limits, percentages, counts), consider sorting by the relevant numeric column; place non-numeric amounts (e.g., "Free", "N/A", "-") last, and keep displayed values unchanged.
 
-## Chat UI Formatting
+## Chat UI Formatting (CRITICAL)
 
-- Use blank lines between paragraphs ("\\n\\n"); do not hard-wrap prose lines.
-- Use "- " for bullets and "1. " for numbering; include a blank line before/after lists.
-- Use single newlines only inside lists, code blocks, or truly line-based content (addresses).
-- Never embed list markers inside a sentence (bad: "you 1. ... 2. ..."). If you introduce steps, end the lead-in with ":" then start the list on the next line.
+**Paragraph spacing:** Use blank lines between paragraphs ("\\n\\n"); do not hard-wrap prose lines.
+
+**Lists MUST start on their own line.** NEVER put list markers inline with preceding text.
+
+❌ WRONG: "The options are 1. Option A 2. Option B 3. Option C"
+❌ WRONG: "You can - do this - or that - or another thing"
+❌ WRONG: "It refers to 1. First thing 2. Second thing"
+
+✅ CORRECT:
+"The options are:
+
+1. Option A
+2. Option B
+3. Option C"
+
+✅ CORRECT:
+"You can:
+
+- do this
+- or that
+- or another thing"
+
+**Rule:** If introducing a list, end with a colon, add a blank line, then start items on separate lines.
 {additional_rules}
 '''
 

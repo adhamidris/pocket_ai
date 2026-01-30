@@ -115,32 +115,40 @@ def content_blocks_from_response_blocks(response_blocks: object | None) -> list[
 
 def ensure_assistant_text_blocks(body: str, *, existing_blocks: object | None = None) -> list[dict[str, object]]:
     """
-    Phase 0 helper: ensure the assistant message has a canonical text block.
+    Ensure the assistant message has properly formatted text blocks.
 
-    - If existing blocks are present and include more than a single text block,
-      keep them as-is (future phases will populate full block streams).
-    - If blocks are empty/missing or represent a single text block, create/update
-      the single text block so refresh can render deterministically.
+    Strategy:
+    - Keep non-text blocks (tool_use, tool_result, reasoning, table, kv) from existing_blocks
+    - Always regenerate text blocks from body using rich_blocks_from_text
+      (which applies markdown formatting fixes like proper list formatting)
+    - This ensures consistent formatting regardless of how blocks were originally created
     """
-
     blocks = _coerce_block_list(existing_blocks)
     body_value = body.strip()
+
+    # Types that should be preserved (not regenerated from body text)
+    non_text_block_types = {"tool_use", "tool_result", "reasoning", "table", "kv"}
+
+    # Separate non-text blocks (to preserve) from text blocks (to regenerate)
+    non_text_blocks = [
+        block for block in blocks
+        if isinstance(block, Mapping) and str(block.get("type") or "").strip().lower() in non_text_block_types
+    ]
+
     if not body_value:
-        return blocks
+        # No body text, just return non-text blocks
+        return non_text_blocks if non_text_blocks else blocks
 
+    # Generate fresh text blocks from body (this applies our markdown formatting fixes)
     rich_blocks = rich_blocks_from_text(body_value)
-    if not rich_blocks:
+
+    if not rich_blocks and not non_text_blocks:
+        # Fallback: return existing blocks if we couldn't generate anything
         return blocks
 
-    legacy_text_indices = [idx for idx, block in enumerate(blocks) if _is_text_block(block)]
-    has_rich = any(_is_rich_text_block(block) for block in blocks)
-    if not blocks:
-        return rich_blocks
-    if has_rich:
-        return blocks
-    if legacy_text_indices and len(legacy_text_indices) == len(blocks):
-        return rich_blocks
-    return blocks + rich_blocks
+    # Combine: non-text blocks first (tools, reasoning), then text blocks
+    # This maintains the visual order: tool indicators at top, response text below
+    return non_text_blocks + rich_blocks
 
 
 def extract_text_from_content_blocks(value: object | None) -> str:
