@@ -1,0 +1,3093 @@
+
+ ▐▛███▜▌   Claude Code v2.1.27
+▝▜█████▛▘  Opus 4.5 · Claude Pro
+  ▘▘ ▝▝    ~/Desktop/pocket_ai-main 2
+
+❯ /model 
+  ⎿  Set model to Default (Opus 4.5 · Most capable for complex work)
+
+❯ Hey opus, we need to findout/investigate a specific concern;              
+                                                                            
+  I suspect that we're not handling sub-agent continuation properly or      
+  handling the session history messages wrongly;                            
+                                                                            
+  I tested initiating two sub-agents as shown below;                        
+                                                                            
+  conversation;                                                             
+  launch two subagents, one that searches for gold card issuance fees and   
+  mail it to mr adhamidris@outlook.com                                      
+                                                                            
+  the other one searches heya card issuance fees and mail to                
+  adhamidris@outlook.com                                                    
+                                                                            
+  Create Agent Run                                                          
+  Create Agent Run                                                          
+  Perfect! I've launched two background sub-agents for you:                 
+                                                                            
+  Gold Card Fees Search & Email - This agent will search for Gold Card      
+  issuance fees and email the findings to adhamidris@outlook.com            
+  Heya Card Fees Search & Email - This agent will search for Heya Card      
+  issuance fees and email the findings to adhamidris@outlook.com            
+  Both tasks are now running in the background. You can monitor their       
+  progress in the Tasks panel. Each agent will:                             
+                                                                            
+  Search the knowledge base for the specific card's issuance fees           
+  Compile the findings into a clear summary                                 
+  Create an email draft with the information                                
+  Send the email to the specified address                                   
+  The agents will work independently and you'll be able to see their        
+  results in the Tasks panel as they complete.                              
+                                                                            
+                                                                            
+  ---------------------------                                               
+  this initiated two tasks;                                                 
+  1. Gold Card Fees Search & Email                                          
+  2. Heya Card Fees Search & Email                                          
+                                                                            
+  -----------------------------                                             
+  first output of the two tasks;                                            
+                                                                            
+  Task no. 1;                                                               
+  Email draft                                                               
+  To                                                                        
+  adhamidris@outlook.com                                                    
+  Subject                                                                   
+  Gold Card Issuance Fees - CIB Findings                                    
+  Dear Adham Idris,                                                         
+                                                                            
+  As requested, here are the findings regarding Gold Card issuance fees     
+  from CIB's knowledge base:                                                
+                                                                            
+  **Gold Card Issuance and Renewal Fees:**                                  
+  - **Issuance and Renewal Fee:** EGP 300                                   
+                                                                            
+  **Other Relevant Gold Card Fees:**                                        
+  1. **Late Payment Fees:** EGP 150                                         
+  2. **Supplementary Fees:** Free (appears as "Fre" in the table)           
+  3. **Cash Withdrawal Fees from International ATMs:** 10% minimum EGP 20   
+                                                                            
+  **Comparison with Other Card Types:**                                     
+  - White Card: EGP 500 issuance fee                                        
+  - Classic Card: EGP 250 issuance fee                                      
+  - Gold Card: EGP 300 issuance fee                                         
+  - Cash Back Card: EGP 350 issuance fee                                    
+  - E-commerce Card: EGP 500 issuance fee                                   
+                                                                            
+  The Gold Card issuance fee of EGP 300 positions it as a mid-tier option   
+  between the Classic Card (EGP 250) and Cash Back Card (EGP 350).          
+                                                                            
+  Please note that these fees are based on the latest available information 
+   from CIB's fees and charges documentation. For the most current rates or 
+   any specific application requirements, I recommend contacting CIB        
+  directly.                                                                 
+                                                                            
+  Best regards,                                                             
+  Salah for CIB                                                             
+  I need your approval before I can send this email. Please approve the     
+  pending request to continue.                                              
+                                                                            
+  --------------------                                                      
+  Task no. 2;                                                               
+  Email draft                                                               
+  To                                                                        
+  adhamidris@outlook.com                                                    
+  Subject                                                                   
+  Heya Card Issuance Fees - CIB Findings                                    
+  Dear Adham,                                                               
+                                                                            
+  As requested, here are the findings regarding Heya Card issuance fees     
+  from CIB's knowledge base:                                                
+                                                                            
+  **HEYA CARD FEES SUMMARY:**                                               
+                                                                            
+  1. **Issuance and Renewal Fees:** EGP 450                                 
+  2. **Life Insurance Heya Cards:** EGP 5                                   
+  3. **Replacement Fees:** Free                                             
+  4. **Supplementary Fees:** Free                                           
+                                                                            
+  **Additional Notes:**                                                     
+  - The Heya Card issuance fee of EGP 450 applies to both initial issuance  
+  and renewal.                                                              
+  - Life insurance coverage for Heya Cards carries a nominal fee of EGP 5.  
+  - Card replacement and supplementary card issuance are provided free of   
+  charge.                                                                   
+                                                                            
+  These fees are based on the latest available information from CIB's fees  
+  and charges documentation.                                                
+                                                                            
+  Best regards,                                                             
+  Salah                                                                     
+  CIB Customer Support                                                      
+  I need your approval before I can send this email. Please approve the     
+  pending request to continue.                                              
+                                                                            
+  --------------------                                                      
+                                                                            
+  second output of the two tasks[after approving];                          
+                                                                            
+  Task no. 1;                                                               
+  ✅ Background run completed: Heya Card Fees Search & Email                
+                                                                            
+  Perfect! I've successfully sent the email with the Heya Card issuance     
+  fees findings to adhamidris@outlook.com.                                  
+                                                                            
+  Summary of what was 1. Searched the knowledge base for Heya Card issuance 
+   2. Compiled findings into a clear 3. Created and sent an email** to      
+  adhamidris@outlook.com with the findings                                  
+                                                                            
+  The email has been sent successfully. The workflow is now complete. Is    
+  there anything else you'd like me to help you with regarding Heya Card    
+  fees or any other CIB-related inquiries?                                  
+                                                                            
+  Task no. 2;                                                               
+   Background run completed: Gold Card Fees Search & Email                  
+                                                                            
+  Perfect! I've successfully sent the email with the Gold Card issuance     
+  fees information to adhamidris@outlook.com.                               
+                                                                            
+  Task Summary:                                                             
+  ✅ Search completed - Found comprehensive information about Gold Card     
+  issuance fees                                                             
+  ✅ Findings compiled - Created a clear summary of all relevant fee        
+  information                                                               
+  ✅ Email drafted - Prepared a detailed email with the findings            
+  ✅ Email sent - Successfully delivered to adhamidris@outlook.com          
+                                                                            
+  The email contains all the key information about Gold Card issuance fees  
+  including:                                                                
+                                                                            
+  Gold Card issuance fee: EGP 1,000                                         
+  Gold Card renewal fee: EGP 1,000                                          
+  Gold Card replacement fee: EGP 1,000                                      
+  Gold Card upgrade fee: EGP 1,000                                          
+  Gold Card downgrade fee: EGP 1,000                                        
+  Gold Card cancellation fee: EGP 1,000                                     
+  All tasks have been completed successfully. Is there anything else you'd  
+  like me to help you with regarding Gold Cards or other banking services   
+                                                                            
+  --------------------                                                      
+                                                                            
+  if you noticed that the task 2 final output was hallucenated response..   
+  mentioning invalid fee amounts noting that the same Subagent sent the     
+  email with the correct fees, this leaves us a suspicion that we're not    
+  passing history properly because if it had it it would've never mentioned 
+   invalid fees on the final response, or more deeper it could be something 
+   related to when approving an email? i dunno but i need findings and root 
+   causes.                                                                  
+                                                                            
+  no code edits yet. start investigating and come back.                     
+
+⏺ I'll investigate this issue. The symptoms suggest that after the email
+  approval, the sub-agent may be losing its conversation history context and
+  hallucinating the final summary. Let me explore the relevant code.
+
+⏺ Explore(Investigate sub-agent history)
+  ⎿  Done (44 tool uses · 87.0k tokens · 2m 5s)
+
+⏺ Excellent investigation. Here's a summary of the findings:
+
+  Root Cause Analysis
+
+  Primary Bug: Severely Limited Message History
+
+  Location: pocketai_django/apps/mcp/prompts.py (lines 748-752)
+
+  When the LLM resumes after approval, build_messages() only loads the last 4 
+  messages from the execution conversation:
+
+  history_limit = 8
+  if getattr(settings, "MCP_LONG_CHAT_MEMORY_ENABLED", True) and memory_note:
+      history_limit = max(1, int(getattr(settings, "MCP_MEMORY_RECENT_MESSAGES",
+   4) or 4))
+
+  transcript_qs = conversation.messages.order_by("-sent_at",
+  "-created_at")[:history_limit]
+
+  Why This Causes Hallucination
+
+  Here's what happens in the execution conversation:
+  Msg #: 1
+  Content: Seed prompt (run goal)
+  ────────────────────────────────────────
+  Msg #: 2
+  Content: "Continue"
+  ────────────────────────────────────────
+  Msg #: 3
+  Content: Tool call: search_knowledge
+  ────────────────────────────────────────
+  Msg #: 4
+  Content: Tool result: Returns fee data (EGP 300)
+  ────────────────────────────────────────
+  Msg #: 5
+  Content: Tool call: email_create_draft (with correct fees)
+  ────────────────────────────────────────
+  Msg #: 6
+  Content: Tool result: Draft created
+  ────────────────────────────────────────
+  Msg #: 7
+  Content: "The approved tool has been executed. Continue..."
+  ────────────────────────────────────────
+  Msg #: 8
+  Content: AI response → Only sees msgs 5-8, misses the actual fee data from msg
+   
+    4
+  The LLM sees the draft was created but doesn't see the search results that 
+  contained the actual fee amounts. It then hallucinates a summary.
+
+  Contributing Factors
+
+  1. Isolated Execution Conversations (agent_run_processing.py:1023-1038): Each
+  sub-agent gets its own isolated conversation separate from the parent, so
+  there's no shared context.
+  2. No Special Handling for Approval Continuation (prompts.py:644-779): The
+  code doesn't distinguish between a fresh turn (where 4 messages is fine) vs. a
+   resume-after-approval turn (where full context is critical).
+  3. Approval Message Pushes Context Out (agent_run_processing.py:1403-1433):
+  Adding "The approved tool has been executed..." pushes older critical messages
+   out of the 4-message window.
+
+  Key Files to Fix
+  File: pocketai_django/apps/mcp/prompts.py
+  Lines: 748-779
+  Issue: History limit too aggressive
+  ────────────────────────────────────────
+  File: pocketai_django/apps/conversations/agent_run_processing.py
+  Lines: 1403-1433
+  Issue: No context preservation on resume
+  ────────────────────────────────────────
+  File: pocketai_django/apps/conversations/agent_run_processing.py
+  Lines: 1587-1626
+  Issue: Final summary uses hallucinated response
+  Recommended Fixes
+
+  1. Increase history limit for sub-agent execution conversations - Use full
+  history (or at least 20+ messages) when pending_tool_executed=True
+  2. Inject tool execution context into the resume prompt - Include what tool
+  was approved and key data from it
+  3. Store critical context in metadata - When creating email drafts, store the
+  key facts that should survive the history window
+
+  Would you like me to proceed with implementing a fix, or do you want to review
+   the specific code sections first?
+
+✻ Cogitated for 2m 39s
+
+❯ And is it the same for the main chat portal thread? those limitations are 
+   applied for all normal agents and sub-agents?                            
+
+⏺ Let me check if the same limitations apply to the main chat portal vs
+  sub-agents.
+
+⏺ Searched for 12 patterns, read 2 files (ctrl+o to expand)
+
+⏺ Now I have the complete picture. Here's my findings:
+
+  Summary: The Limitations Apply to BOTH Main Chat and Sub-agents
+
+  Yes, the same build_messages() function is used for all conversations. The
+  difference is:
+  Scenario: Main chat WITH memory summary
+  History Limit: 4 messages (from MCP_MEMORY_RECENT_MESSAGES)
+  ────────────────────────────────────────
+  Scenario: Main chat WITHOUT memory
+  History Limit: 8 messages (default)
+  ────────────────────────────────────────
+  Scenario: Sub-agents (fresh execution conversation)
+  History Limit: 8 messages (no memory built yet)
+  ---
+  Critical Finding: Tool Details Are NEVER Included
+
+  There's an even more fundamental issue I discovered. Look at how messages are
+  built in prompts.py:754-765:
+
+  for entry in transcript:
+      role = "assistant" if entry.sender == ConversationSender.AI else "user"
+      content = entry.body  # <-- ONLY USES body, NOT content_blocks!
+      messages.append({
+          "role": role,
+          "content": content,
+      })
+
+  But tool calls and results are stored in content_blocks, not body:
+
+  # agent_run_processing.py:881-885
+  ConversationMessage.objects.create(
+      body=f"Executed approved tool: {tool_name}",  # Just a summary
+      content_blocks=[tool_use_block, tool_result_block],  # Actual data here!
+  )
+
+  This means when resuming after approval, the LLM only sees:
+  - "Executed approved tool: email_send"
+  - "Draft created successfully"
+
+  It does NOT see:
+  - The actual search results with fee amounts
+  - The email draft content
+  - Any tool execution details
+
+  ---
+  Root Cause Summary
+  Issue: content_blocks ignored
+  Location: prompts.py:756
+  Impact: Tool details never included in LLM context
+  ────────────────────────────────────────
+  Issue: History limit too small
+  Location: prompts.py:748-750
+  Impact: Only 4-8 recent messages loaded
+  ────────────────────────────────────────
+  Issue: No special handling for approval resume
+  Location: prompts.py / agent_run_processing.py
+  Impact: Same limited context after approval
+  ────────────────────────────────────────
+  Issue: Sub-agent isolation
+  Location: agent_run_processing.py:1057
+  Impact: Fresh conversation = no memory
+  The hallucination happens because after approval, the LLM knows an email was
+  sent but has zero visibility into what the email contained or what the search
+  results were. It makes up the summary.
+
+  Would you like me to dig deeper into any specific area, or shall we start
+  planning a fix?
+
+✻ Sautéed for 2m 25s
+
+❯ /model 
+  ⎿  Set model to Default (Opus 4.5 · Most capable for complex work)
+
+❯ Yea dig deeper. because i want the fix recommendation to be of long-term  
+  and based on interview questions so you understand how we want to tailor  
+  the fix.                                                                  
+
+⏺ Let me dig deeper into the system to understand the full architecture before
+  we discuss the fix approach.
+
+⏺ Searched for 7 patterns, read 4 files (ctrl+o to expand)
+
+⏺ Now I have a comprehensive understanding. Let me prepare interview questions
+  to understand your preferences before recommending a fix.
+
+  ---
+  Deep-Dive Findings Summary
+
+  Architecture Overview
+
+  1. Message Storage:
+    - body: Human-readable summary (e.g., "Executed approved tool: email_send")
+    - content_blocks: Actual tool call/result details (JSON with all
+  parameters/outputs)
+  2. Message Retrieval (build_messages()):
+    - Only uses entry.body - completely ignores content_blocks
+    - Limited to 4-8 recent messages depending on memory state
+  3. Within-Turn Tool Loop:
+    - The orchestrator maintains an in-memory transcript list during a single
+  stream_turn() call
+    - Tool calls/results are appended to this transcript and passed to the LLM
+    - This works correctly within a single turn
+  4. Cross-Turn Continuations (The Problem):
+    - When stream_turn() ends (e.g., waiting for approval), the in-memory
+  transcript is lost
+    - On resume, build_messages() reconstructs from DB, but only uses body
+    - Tool execution details in content_blocks are never recovered
+  5. Existing Infrastructure:
+    - tool_trace in ToolExecutionContext: Tracks tool executions within a turn
+  (not persisted)
+    - AgentRunMemoryItem: Model exists but unused in agent_run_processing
+    - structured_memory_v2: Rolling summary for long conversations (not built
+  for sub-agents)
+    - AgentRunEvent: Stores events but not used for context reconstruction
+
+  ---
+  Interview Questions
+
+  Before recommending a fix, I need to understand your preferences:
+
+  1. Scope of Fix
+
+  - Should the fix address only sub-agents, or should it also improve the main
+  chat portal's handling of tool history across turns?
+  - Are there other scenarios where tool approvals happen in the main chat that
+  would benefit?
+
+  2. History Reconstruction Strategy
+
+  - Option A: Include content_blocks in build_messages() - convert them back to
+  proper tool_call/tool_result message format
+  - Option B: Persist a "turn summary" or "tool trace" that survives across
+  turns and inject it into the system prompt
+  - Option C: Use AgentRunMemoryItem to store key facts (like "Gold Card fee:
+  EGP 300") and inject them on resume
+  - Option D: Increase history limit significantly for sub-agent execution
+  conversations
+
+  Which approach aligns with your long-term vision?
+
+  3. Performance vs Accuracy Trade-off
+
+  - Reconstructing full tool history from content_blocks could significantly
+  increase token usage
+  - Would you prefer a summarized approach (less tokens, less accurate) or full
+  reconstruction (more tokens, more accurate)?
+
+  4. Backward Compatibility
+
+  - Should the fix handle existing sub-agent runs that are currently paused
+  waiting for approval?
+  - Or is it acceptable to only fix new runs going forward?
+
+  5. Memory System Integration
+
+  - The AgentRunMemoryItem model exists but is unused. Should we leverage it for
+   persisting key context?
+  - Or keep the fix isolated to the message/transcript layer?
+
+  6. Main Chat vs Sub-Agent Divergence
+
+  - Should sub-agents have a different (larger) history limit than main chat?
+  - Or should we unify the approach?
+
+✻ Cooked for 1m 31s
+
+❯ /model 
+  ⎿  Set model to sonnet (claude-sonnet-4-5-20250929)
+
+❯ 1. scope of fix should improve both.                                      
+                                                                            
+  2. tell me the differences from business prespective.                     
+                                                                            
+  3. what would be best to handle lengthy-tasks with high accuracy even if  
+  tokens are high, but at some point we could use like auto-compact like    
+  modern platforms, tell me more?                                           
+                                                                            
+  4. new runs and going forward.                                            
+                                                                            
+  5. tell me how can we benefit from agent run memoy item?                  
+                                                                            
+  6. i think both should have larger history, the difference between main   
+  chat and sub-agents is the concept of having things done in the           
+  background without affecting "Extremely" the main chat thread's tokens    
+  and allow the enduser to still communicate with the llm as tasks are      
+  being executed. we're basically making the main chat thread a more of a   
+  planner than executor, which means it should be take decisions from a     
+  broader vision, while sub-agents should make executions on a narrow       
+  vision[including excessive details, keeping track of tasks, plan steps,   
+  what was done, what branches from step 1 that may be connected to step 2, 
+   relating and storing, progressive and highly optimized]                  
+                                                                            
+  now lets keep braining together until we plan it right. and by the way    
+  consider this as overall context optimization and tracking for            
+  longer-context tasks.                                                     
+
+⏺ Excellent! This gives me clear direction. Let's brain together on the optimal
+  architecture.
+
+  ---
+  Option Analysis: Business Perspective
+
+  Option A: Full Content Blocks Reconstruction
+
+  Business Value:
+  - Accuracy: 100% - LLM sees exact same data it would during live execution
+  - Debugging: Full audit trail of what happened
+  - Token Cost: High - could be 2-10x current usage for tool-heavy workflows
+  - Complexity: Low - straightforward implementation
+
+  Trade-off: Pay more for perfection. Good for high-stakes workflows (banking,
+  healthcare).
+
+  Option B: Turn Summary / Tool Trace Injection
+
+  Business Value:
+  - Accuracy: 70-85% - depends on summary quality
+  - Token Cost: Medium - controlled summary size
+  - Complexity: Medium - need smart summarization
+  - Risk: Summary might miss critical details
+
+  Trade-off: Cost-effective but introduces summarization errors. The thing we're
+   trying to fix (hallucination) could happen in the summarizer itself.
+
+  Option C: AgentRunMemoryItem (Structured Facts)
+
+  Business Value:
+  - Accuracy: 60-75% - only captures what we explicitly extract
+  - Token Cost: Low - very compact
+  - Complexity: High - need to identify what facts to extract
+  - Scalability: Excellent - structured data queryable later
+
+  Trade-off: Great for long-running agents, but requires upfront design of what
+  to track.
+
+  Option D: Larger History Limit
+
+  Business Value:
+  - Accuracy: Depends on task length - works until history exceeds limit
+  - Token Cost: Medium-High
+  - Complexity: Low - just increase the number
+  - Fragility: Still breaks on very long tasks
+
+  Trade-off: Quick fix but doesn't solve the fundamental problem for lengthy
+  workflows.
+
+  ---
+  My Recommendation: Hybrid Architecture
+
+  Based on your vision (main chat = planner, sub-agents = executors), here's a
+  multi-layered approach:
+
+  Layer 1: Immediate Fix (Option A + D)
+
+  For sub-agents specifically:
+
+  1. Reconstruct tool history from content_blocks
+    - When build_messages() is called for a sub-agent execution conversation
+    - Parse recent messages' content_blocks to rebuild proper
+  tool_call/tool_result messages
+    - This ensures 100% accuracy for approval resumptions
+  2. Increase history limit for sub-agents
+    - Main chat: Keep at 4-8 (planner needs recent context only)
+    - Sub-agents: Increase to 20-30 (executor needs full task context)
+
+  Layer 2: Auto-Compaction (Like Modern Platforms)
+
+  You mentioned "auto-compact like modern platforms" - here's what that looks
+  like:
+
+  Anthropic's Approach (what we should emulate):
+  - Prompt caching: First N tokens are cached, reducing cost 90% on repeated
+  context
+  - Sliding window: Keep recent messages verbatim, summarize older ones
+  - Hierarchical memory: Facts → Episodes → Summaries
+
+  Our Implementation:
+
+  ┌─────────────────────────────────────────────────────┐
+  │ Sub-Agent Context Architecture                       │
+  ├─────────────────────────────────────────────────────┤
+  │                                                       │
+  │ [System Prompt] ← Always included                   │
+  │                                                       │
+  │ [Structured Memory] ← AgentRunMemoryItem              │
+  │   • Facts: "Gold Card fee: EGP 300"                 │
+  │   • Decisions: "User approved email sending"        │
+  │   • SOPs: "Step 1: Search → Step 2: Draft → ..."   │
+  │                                                       │
+  │ [Compacted History] ← Auto-summarized older turns    │
+  │   • Turn 1-5 summary: "Searched knowledge base..."  │
+  │                                                       │
+  │ [Recent Full History] ← Last 10-15 messages verbatim│
+  │   • Full tool calls/results                         │
+  │   • User approvals                                  │
+  │   • Assistant responses                             │
+  │                                                       │
+  │ [Current Message] ← User input                       │
+  └─────────────────────────────────────────────────────┘
+
+  Layer 3: Progressive Context Optimization
+
+  For sub-agents executing lengthy multi-step tasks:
+
+  Phase-Based Memory:
+  1. Execution Phase (Steps 1-3): Keep full history
+  2. Approval Gate: Extract key facts → AgentRunMemoryItem
+  3. Continuation Phase (Steps 4-6):
+    - Recent history (full detail)
+    - Older history (compacted summary)
+    - Structured facts (always available)
+
+  Auto-Compaction Trigger:
+  if execution_conversation.messages.count() > 15:
+      # Compact messages 1-10 into summary
+      # Keep messages 11-15 verbatim
+      # Store critical facts in AgentRunMemoryItem
+
+  ---
+  How AgentRunMemoryItem Benefits Us
+
+  Current State: Model exists, unused
+  Potential Use: Structured knowledge base for sub-agent runs
+
+  Use Cases:
+
+  1. Cross-Step Context
+  # Step 1: Search completes
+  AgentRunMemoryItem.objects.create(
+      run=run,
+      kind=AgentRunMemoryKind.FACT,
+      key="gold_card_issuance_fee",
+      content="EGP 300",
+      payload={"source": "knowledge_base", "confidence": "high"}
+  )
+
+  # Step 2: Email draft - LLM sees this fact even if tool history is compacted
+
+  2. Decision Tracking
+  # User approves email
+  AgentRunMemoryItem.objects.create(
+      run=run,
+      kind=AgentRunMemoryKind.DECISION,
+      key="email_approval",
+      content="User approved sending email to adhamidris@outlook.com",
+      payload={"tool": "email_send", "timestamp": "..."}
+  )
+
+  3. SOP Progress Tracking
+  # Track multi-step workflow
+  AgentRunMemoryItem.objects.create(
+      run=run,
+      kind=AgentRunMemoryKind.SOP,
+      key="workflow_step_2_complete",
+      content="Drafted email with fees: Gold Card EGP 300, Heya Card EGP 450",
+      payload={"step": 2, "next_step": 3}
+  )
+
+  Injection Strategy:
+  When building messages for sub-agent, inject memory items into system prompt:
+  You are continuing a background task.
+
+  **Task Memory**:
+  Facts:
+  - gold_card_issuance_fee: EGP 300 (source: knowledge_base)
+  - heya_card_issuance_fee: EGP 450 (source: knowledge_base)
+
+  Decisions:
+  - User approved sending email to adhamidris@outlook.com
+
+  Workflow Progress:
+  - ✅ Step 1: Search completed
+  - ✅ Step 2: Draft created
+  - 🔄 Step 3: Send email (current)
+
+  ---
+  Token Budget Philosophy
+
+  Based on your vision:
+  Aspect: History Limit
+  Main Chat (Planner): 4-8 messages
+  Sub-Agent (Executor): 20-30 messages
+  ────────────────────────────────────────
+  Aspect: Tool Detail
+  Main Chat (Planner): Summaries only
+  Sub-Agent (Executor): Full tool calls/results
+  ────────────────────────────────────────
+  Aspect: Memory Type
+  Main Chat (Planner): Rolling summary
+  Sub-Agent (Executor): Structured facts + full history
+  ────────────────────────────────────────
+  Aspect: Compaction
+  Main Chat (Planner): Aggressive (after 10 msgs)
+  Sub-Agent (Executor): Conservative (after 30 msgs)
+  ────────────────────────────────────────
+  Aspect: Token Budget
+  Main Chat (Planner): Low (user pays per turn)
+  Sub-Agent (Executor): High (amortized across background work)
+  ---
+  Implementation Phases
+
+  Phase 1: Critical Fix (Week 1)
+
+  ✅ Fix the hallucination bug
+  - Reconstruct content_blocks in build_messages() for sub-agents
+  - Increase history limit to 30 for execution conversations
+  - Add flag: is_execution_conversation to detect sub-agents
+
+  Phase 2: Structured Memory (Week 2-3)
+
+  - Implement AgentRunMemoryItem extraction during tool execution
+  - Auto-extract facts from tool results (e.g., fee amounts, approvals)
+  - Inject memory items into system prompt on resume
+
+  Phase 3: Auto-Compaction (Week 4-5)
+
+  - Implement turn summarization for messages 1-N when N > 30
+  - Use LLM to generate compact summaries of older tool loops
+  - Store summaries in conversation metadata
+
+  Phase 4: Main Chat Optimization (Week 6)
+
+  - Apply lighter version to main chat (planner mode)
+  - Keep main chat lean, delegate heavy lifting to sub-agents
+
+  ---
+  Questions for You
+
+  1. Compaction Threshold: When should we trigger auto-compaction?
+    - After 30 messages?
+    - After 100K tokens?
+    - Based on time (e.g., every 5 minutes)?
+  2. Fact Extraction: Should it be:
+    - Automatic (LLM auto-extracts facts from tool results)
+    - Manual (we define extraction rules per tool)
+    - Hybrid (rules for common tools, LLM for others)
+  3. Backward Compatibility: You said new runs only, but should we add a
+  migration to enhance currently-paused runs?
+  4. Cost Control: Max token budget per sub-agent turn? (e.g., 100K tokens max,
+  then force compaction)
+  5. Progressive Detail: Should older compacted history be retrievable
+  on-demand? (e.g., "Show me details of Step 2")
+
+  Let's refine this together!
+
+✻ Brewed for 1m 5s
+
+❯ but don't you think the planner should have the same lengthy context      
+  experience too since it'll manage multiple sub-agents and it must be      
+  fully aware since it's considered the leader agent here? if the leader    
+  loses context the sub-agents won't be accurate because they are always    
+  triggered by the main leader, right?                                      
+                                                                            
+  compaction should happen on around 70~75% of context with a little buffer 
+   window to avoid interrupting tasks, and even on interruption from        
+  auto-compaction we don't want to lose the current ongoing execution       
+  plan/steps.                                                               
+                                                                            
+  I think a blend of automatic with manual would be perfect..               
+                                                                            
+  we're pre-production so there are no older runs that we need to take care 
+   of.                                                                      
+                                                                            
+  yes of course it should be retrievable on-demand by the agent so it gets  
+  no interruptions executing tasks/lengthy or automated tasks.              
+                                                                            
+  let's keep braining about it.                                             
+
+⏺ You're absolutely right! I was thinking about it backwards. Let me reconsider:
+
+  ---
+  Corrected Mental Model
+
+  Leader Agent (Main Chat) Architecture
+
+  The leader needs broad AND deep context because it's orchestrating everything:
+
+  ┌─────────────────────────────────────────────────────┐
+  │ LEADER AGENT (Main Chat Thread)                     │
+  ├─────────────────────────────────────────────────────┤
+  │                                                       │
+  │ [System Prompt + Agent Constitution]                │
+  │                                                       │
+  │ [Orchestration State] ← Critical for coordination   │
+  │   • Active Sub-Agents: 2 running, 1 completed       │
+  │   • Task 1 (Gold Card): Waiting approval            │
+  │   • Task 2 (Heya Card): Email sent ✓                │
+  │   • Overall Goal: Compare card fees                 │
+  │                                                       │
+  │ [Sub-Agent Summaries] ← Aggregated worker updates   │
+  │   • Gold Card Agent: Found fee EGP 300, drafted... │
+  │   • Heya Card Agent: Completed successfully         │
+  │                                                       │
+  │ [Compacted Leader History] ← Auto-summarized        │
+  │   • Turns 1-10: User requested card comparison...   │
+  │                                                       │
+  │ [Recent Full History] ← Last 20-30 messages         │
+  │   • User: "launch two subagents..."                 │
+  │   • Leader: "Perfect! I've launched..."             │
+  │   • Sub-Agent Update: Task 2 completed              │
+  │   • User: "approve the email"                       │
+  │                                                       │
+  │ [Current User Input]                                 │
+  └─────────────────────────────────────────────────────┘
+
+  Key Insight: Leader must maintain awareness of:
+  1. What it delegated to each sub-agent
+  2. Current state of each worker
+  3. User's original intent
+  4. Cross-dependencies between tasks
+
+  If the leader loses context, it can't make intelligent coordination decisions.
+
+  ---
+  Revised Context Strategy
+
+  Both Need Length, Different Purposes
+  ┌───────────────┬──────────────────────────────┬─────────────────────────────┐
+  │   Dimension   │      Leader (Main Chat)      │     Sub-Agent (Worker)      │
+  ├───────────────┼──────────────────────────────┼─────────────────────────────┤
+  │ Context Depth │ Broad - Sees all sub-agents  │ Narrow - Sees only its task │
+  │               │ + user conversation          │                             │
+  ├───────────────┼──────────────────────────────┼─────────────────────────────┤
+  │ Context       │ Very Long - Must track       │ Very Long - Must track all  │
+  │ Length        │ entire workflow              │ execution steps             │
+  ├───────────────┼──────────────────────────────┼─────────────────────────────┤
+  │ Compaction    │ Preserve: orchestration      │ Preserve: execution plan,   │
+  │ Strategy      │ decisions, sub-agent states  │ step progress, tool results │
+  ├───────────────┼──────────────────────────────┼─────────────────────────────┤
+  │ Token         │ User interaction +           │ Task execution + accuracy   │
+  │ Priority      │ coordination                 │                             │
+  ├───────────────┼──────────────────────────────┼─────────────────────────────┤
+  │ Update        │ Every user message +         │ Every tool call + approval  │
+  │ Frequency     │ sub-agent completion         │                             │
+  └───────────────┴──────────────────────────────┴─────────────────────────────┘
+  Context Window Allocation
+
+  Assuming 200K token context window:
+
+  Leader Agent:
+  - System prompt: ~5K tokens
+  - Sub-agent state summaries: ~2K per active agent (10K for 5 agents)
+  - Compacted history: ~30K tokens
+  - Recent full history (30 msgs): ~50K tokens
+  - Buffer for response: ~20K tokens
+  - Total: ~115K tokens (57% of window)
+
+  Sub-Agent:
+  - System prompt + task goal: ~3K tokens
+  - Structured memory (facts/decisions): ~5K tokens
+  - Compacted execution history: ~20K tokens
+  - Recent full history (30 msgs with tools): ~80K tokens
+  - Buffer for response: ~20K tokens
+  - Total: ~128K tokens (64% of window)
+
+  ---
+  Compaction Strategy: 70-75% Trigger
+
+  Smart Compaction Rules
+
+  Trigger Condition:
+  context_usage = estimate_token_count(all_messages)
+  context_limit = 200_000  # Model's context window
+  compaction_threshold = context_limit * 0.70  # 140K tokens
+
+  if context_usage >= compaction_threshold:
+      trigger_compaction(preserve_current_execution=True)
+
+  What to Preserve During Compaction
+
+  For Leader:
+  PRESERVE_ALWAYS = [
+      "last_20_messages",           # Recent user conversation
+      "active_subagent_states",     # Current worker status
+      "pending_approvals",          # Things waiting user input
+      "current_execution_plan",     # Active workflow
+  ]
+
+  COMPACT_CANDIDATES = [
+      "completed_subagent_history", # Summarize finished tasks
+      "old_user_messages",          # Summarize turns > 20
+      "intermediate_tool_calls",    # Summarize non-critical tools
+  ]
+
+  For Sub-Agent:
+  PRESERVE_ALWAYS = [
+      "current_step_context",       # Active execution step
+      "last_15_messages",           # Recent execution history
+      "approval_decisions",         # User approvals
+      "extracted_facts",            # Key data (fees, IDs, etc.)
+      "execution_plan",             # Multi-step workflow
+  ]
+
+  COMPACT_CANDIDATES = [
+      "old_search_results",         # Keep facts, compact full results
+      "intermediate_tool_outputs",  # Summarize non-critical outputs
+      "early_exploration_steps",    # Summarize initial searches
+  ]
+
+  Non-Interrupting Compaction
+
+  Problem: If compaction happens mid-execution, agent loses context
+
+  Solution: Deferred compaction with execution awareness
+
+  def should_compact_now(conversation, ongoing_execution):
+      """
+      Only compact during 'safe' moments:
+      - After a tool loop completes
+      - After user responds
+      - NOT during multi-step tool execution
+      """
+      if ongoing_execution:
+          # Mark for compaction after current step completes
+          conversation.metadata['pending_compaction'] = True
+          return False
+
+      if conversation.metadata.get('pending_compaction'):
+          return True
+
+      return context_usage >= threshold
+
+  Execution State Preservation:
+  # Before compaction, snapshot current execution state
+  execution_snapshot = {
+      "current_step": 2,
+      "total_steps": 5,
+      "plan": [
+          "✅ Step 1: Search knowledge base",
+          "✅ Step 2: Draft email",
+          "🔄 Step 3: Send email (CURRENT)",
+          "⏳ Step 4: Verify delivery",
+          "⏳ Step 5: Report completion"
+      ],
+      "critical_facts": {
+          "gold_card_fee": "EGP 300",
+          "draft_id": "draft_abc123",
+          "recipient": "adhamidris@outlook.com"
+      }
+  }
+
+  # Store in conversation.metadata['execution_state']
+  # Inject into system prompt after compaction
+
+  ---
+  Hybrid Fact Extraction: Automatic + Manual
+
+  Manual Rules (Fast, Deterministic)
+
+  EXTRACTION_RULES = {
+      "search_knowledge": {
+          "extract": ["fee", "price", "cost", "charge"],
+          "pattern": r"(EGP|USD|EUR)\s*(\d+(?:,\d{3})*(?:\.\d{2})?)",
+          "store_as": "fact"
+      },
+      "email_create_draft": {
+          "extract": ["draft_id", "recipient", "subject"],
+          "store_as": "decision"
+      },
+      "email_send": {
+          "extract": ["message_id", "status"],
+          "store_as": "decision"
+      }
+  }
+
+  # Example:
+  tool_result = {
+      "status": "ok",
+      "snippet": "Gold Card issuance fee: EGP 300"
+  }
+
+  # Rule-based extraction:
+  extracted = {
+      "kind": "fact",
+      "key": "gold_card_issuance_fee",
+      "content": "EGP 300",
+      "source": "search_knowledge",
+      "confidence": "high"
+  }
+
+  Automatic LLM Extraction (Smart, Flexible)
+
+  When tool result doesn't match rules OR is complex:
+
+  # Prompt for extraction:
+  extraction_prompt = f"""
+  Analyze this tool execution and extract key facts:
+
+  Tool: {tool_name}
+  Arguments: {arguments}
+  Result: {tool_result}
+
+  Extract:
+  1. Facts: Concrete data points (fees, IDs, names, dates)
+  2. Decisions: Actions taken or approved
+  3. Progress: Steps completed or planned
+
+  Format as JSON.
+  """
+
+  # LLM returns:
+  {
+      "facts": [
+          {"key": "gold_card_fee", "value": "EGP 300", "confidence": 0.95}
+      ],
+      "decisions": [
+          {"key": "user_approved_email", "value": true, "timestamp": "..."}
+      ],
+      "progress": {
+          "completed": ["search", "draft"],
+          "current": "send",
+          "remaining": ["verify", "report"]
+      }
+  }
+
+  Validation Layer
+
+  def validate_extraction(auto_extracted, rule_extracted):
+      """
+      Cross-validate automatic and rule-based extraction
+      """
+      validated = {}
+
+      for fact in auto_extracted['facts']:
+          # If rule also found it, confidence++
+          if fact['key'] in rule_extracted:
+              if fact['value'] == rule_extracted[fact['key']]:
+                  fact['confidence'] = 'very_high'
+                  fact['validated_by'] = 'both'
+
+          validated[fact['key']] = fact
+
+      # Add any rule-found facts that LLM missed
+      for key, value in rule_extracted.items():
+          if key not in validated:
+              validated[key] = {
+                  'key': key,
+                  'value': value,
+                  'confidence': 'high',
+                  'validated_by': 'rules'
+              }
+
+      return validated
+
+  ---
+  On-Demand Retrieval Architecture
+
+  The Problem
+
+  After compaction, detailed history is summarized. But sometimes the agent
+  needs the full details.
+
+  Solution: Lazy Retrieval Layer
+
+  class ContextRetrieval:
+      """
+      Provides on-demand access to compacted history
+      """
+
+      def __init__(self, conversation):
+          self.conversation = conversation
+          self.compacted_segments =
+  conversation.metadata.get('compacted_history', [])
+
+      def retrieve_segment(self, segment_id):
+          """
+          Fetch full details of a compacted segment
+          
+          Example:
+          segment_id = "turns_1_to_10"
+          Returns: Full message history for turns 1-10
+          """
+          # Fetch from DB or object storage
+          segment = CompactedHistory.objects.get(
+              conversation=self.conversation,
+              segment_id=segment_id
+          )
+          return segment.full_messages  # Original uncompacted messages
+
+      def search_history(self, query):
+          """
+          Semantic search across compacted history
+          
+          Example:
+          query = "What was the Gold Card fee we found?"
+          Returns: Relevant messages mentioning Gold Card fees
+          """
+          # Use vector search or keyword matching
+          results = []
+          for segment in self.compacted_segments:
+              if self._matches_query(segment.summary, query):
+                  results.append(self.retrieve_segment(segment.id))
+          return results
+
+  Agent Tool for Retrieval
+
+  Provide agents with a tool to fetch compacted context:
+
+  {
+      "name": "retrieve_earlier_context",
+      "description": "Fetch detailed history from earlier in the conversation 
+  that has been compacted. Use when you need specifics from earlier steps.",
+      "input_schema": {
+          "type": "object",
+          "properties": {
+              "query": {
+                  "type": "string",
+                  "description": "What you're looking for (e.g., 'Gold Card fee 
+  amount')"
+              },
+              "timeframe": {
+                  "type": "string",
+                  "enum": ["first_10_turns", "turns_10_to_20", "all"],
+                  "description": "Which part of history to search"
+              }
+          }
+      }
+  }
+
+  Example Usage:
+  Agent (after compaction): "I need to confirm the fee amount we found
+  earlier..."
+
+  Tool Call: retrieve_earlier_context(
+      query="Gold Card issuance fee",
+      timeframe="first_10_turns"
+  )
+
+  Tool Result: {
+      "found": true,
+      "messages": [
+          {"role": "assistant", "content": "I found that Gold Card issuance fee
+  is EGP 300 from the knowledge base"}
+      ],
+      "extracted_facts": {
+          "gold_card_fee": "EGP 300"
+      }
+  }
+
+  ---
+  Key Questions to Refine Further
+
+  1. Leader-Worker Communication:
+  How should sub-agents report back to the leader?
+  - Option A: After each significant step (more updates, higher accuracy)
+  - Option B: Only on completion or approval needed (less noise)
+  - Option C: Leader polls on-demand (pull vs push)
+
+  2. Cross-Sub-Agent Context:
+  Should sub-agents see each other's context?
+  - Example: If Gold Card agent finds fee, should Heya Card agent know about it?
+  - Could enable: "Heya Card fee is higher than Gold Card (EGP 450 vs EGP 300)"
+
+  3. Compaction Granularity:
+  When we hit 70%, what's the buffer?
+  - Compact down to 50% (aggressive, less frequent compactions)
+  - Compact down to 60% (moderate, balanced)
+  - Compact down to 65% (conservative, small buffer)
+
+  4. Storage for Compacted History:
+  Where do we store full uncompacted history?
+  - Option A: Separate CompactedHistory table (queryable, retrievable)
+  - Option B: Object storage (S3) with references (cheaper, slower)
+  - Option C: Keep in content_blocks but marked as archived (simple, may bloat
+  DB)
+
+  5. Memory Item Lifecycle:
+  Should AgentRunMemoryItem facts expire?
+  - Keep all facts forever (complete history)
+  - Expire facts after 30 days (prevent stale data)
+  - Mark facts as "stale" but keep (with warnings)
+
+  Let's keep building this out!
+
+✻ Cogitated for 1m 22s
+
+❯ 1. option "B" + we should allow the main leader to access something like  
+  a detailed report on the task so it can make decisions based on facts as  
+  a leader not just a completion summary, but that should be on demand and  
+  be used when needed, what do you think?                                   
+                                                                            
+  2. no sub-agents shouldn't see eachother's context, those are isolated.   
+                                                                            
+  3. what do you recommend?                                                 
+                                                                            
+  4. what do you recommend on this point too? and why did you recommend     
+  this?                                                                     
+                                                                            
+  5. Not sure what to choose!                                               
+                                                                            
+  try to make your discussion with me a merge of business x technical tone. 
+
+⏺ Perfect! Let's tackle these with a business-technical lens.
+
+  ---
+  1. Leader-Worker Communication: On-Demand Detailed Reports
+
+  Your Proposal: Option B (report on completion) + on-demand detailed access
+
+  Business Case:
+  This mirrors real-world management:
+  - Delegation: Leader delegates, workers report back when done
+  - Exception Management: Leader only drills down when needed (decision points,
+  anomalies, user questions)
+  - Efficiency: Leader isn't overwhelmed with constant updates from 5+
+  concurrent workers
+
+  Technical Implementation:
+
+  Worker → Leader: Completion Report
+
+  # When sub-agent completes or hits approval gate
+  completion_report = {
+      "task_id": "gold-card-search",
+      "status": "waiting_approval",
+      "summary": "Found Gold Card fees, drafted email",
+      "metrics": {
+          "tools_used": 3,
+          "duration_seconds": 12,
+          "tokens_used": 8500
+      },
+      "decision_needed": "approve_email_send",
+      "key_facts": {
+          "gold_card_issuance_fee": "EGP 300",
+          "draft_id": "draft_abc123"
+      }
+  }
+
+  # Stored in leader's conversation as structured message
+
+  Leader → Worker: Detailed Report Pull
+
+  # New tool for leader agent
+  {
+      "name": "get_subagent_detailed_report",
+      "description": "Retrieve full execution details from a sub-agent task. Use
+   when you need to make decisions based on specifics, debug issues, or answer 
+  user questions about task execution.",
+      "input_schema": {
+          "task_id": "string",  # Which sub-agent
+          "sections": ["all", "tool_trace", "execution_plan", "extracted_facts",
+   "full_transcript"]
+      }
+  }
+
+  When Leader Uses This:
+  1. User asks specifics: "What exactly did you find about Gold Card?"
+    - Leader pulls detailed report to answer accurately
+  2. Decision point: Should I approve this email? Let me see the full draft
+    - Leader pulls tool_trace to see email content
+  3. Error handling: Sub-agent failed, what went wrong?
+    - Leader pulls full_transcript to diagnose
+
+  Business Benefit:
+  - 95% of time: Leader operates on summaries (low token cost, fast responses)
+  - 5% of time: Leader drills down (pays for detail only when needed)
+  - Result: Optimal cost/accuracy trade-off
+
+  I fully support this approach. ✅
+
+  ---
+  2. Sub-Agent Isolation: Confirmed
+
+  Business Rationale:
+  - Reliability: Failures in one worker don't cascade
+  - Debugging: Clear boundaries make troubleshooting simple
+  - Scalability: Can parallelize 10+ workers without context contamination
+
+  Technical Benefit:
+  - Each worker's execution_conversation is truly isolated
+  - No cross-talk, no confusion about which context belongs where
+  - Leader is the only integration point
+
+  Confirmed: Sub-agents stay isolated. ✅
+
+  ---
+  3. Compaction Granularity: My Recommendation
+
+  Recommended: Compact to 60% (Moderate Buffer)
+
+  Business Analysis:
+  ┌──────────────┬─────────┬───────────────┬───────────────────┬───────────────┐
+  │   Strategy   │ Compact │     Pros      │       Cons        │   Business    │
+  │              │    to   │               │                   │    Impact     │
+  ├──────────────┼─────────┼───────────────┼───────────────────┼───────────────┤
+  │              │         │ Less frequent │ Larger compaction │ Better for    │
+  │ Aggressive   │ 50%     │  compaction   │  operations,      │ short tasks   │
+  │              │         │ overhead      │ longer            │ (<20 turns)   │
+  │              │         │               │ interruption      │               │
+  ├──────────────┼─────────┼───────────────┼───────────────────┼───────────────┤
+  │              │         │ Balanced      │                   │               │
+  │ Moderate     │ 60%     │ frequency and │ Middle ground     │ Best for most │
+  │              │         │  operation    │                   │  workflows    │
+  │              │         │ size          │                   │               │
+  ├──────────────┼─────────┼───────────────┼───────────────────┼───────────────┤
+  │              │         │ Small         │                   │ Better for    │
+  │ Conservative │ 65%     │ compaction    │ More frequent     │ very long     │
+  │              │         │ ops           │ overhead          │ tasks (100+   │
+  │              │         │               │                   │ turns)        │
+  └──────────────┴─────────┴───────────────┴───────────────────┴───────────────┘
+  Technical Reasoning:
+
+  Context Window: 200K tokens
+  Trigger: 140K (70%)
+  Compact to: 120K (60%)
+  Buffer created: 20K tokens
+
+  Time to next compaction:
+  - If avg message = 2K tokens
+  - 20K buffer / 2K = ~10 messages before next compaction
+  - Gives breathing room for multi-step execution
+
+  Why 60% is optimal:
+  1. 10-message buffer is enough for typical tool loops (search → read → draft →
+   send)
+  2. Compaction overhead happens every ~15-20 messages (manageable)
+  3. Operation size: Compacting 20K tokens is fast (<2 seconds with LLM)
+
+  Recommendation: 60% target, with adaptive adjustment ✅
+
+  Adaptive Adjustment:
+  def calculate_compaction_target(conversation_context):
+      """
+      Adjust target based on execution pattern
+      """
+      if is_rapid_tool_execution(conversation_context):
+          # Lots of tools firing quickly - be more aggressive
+          return 0.55  # Compact to 55%, bigger buffer
+
+      if is_user_interactive(conversation_context):
+          # User in the loop - minimize interruptions
+          return 0.65  # Compact to 65%, smaller ops
+
+      return 0.60  # Default moderate
+
+  ---
+  4. Storage for Compacted History: My Recommendation
+
+  Phase 1 (Now): Separate Table - Option A
+
+  Phase 2 (Scale): Hybrid A+B
+
+  Business-Technical Analysis:
+  Option: A: Separate Table
+  Storage: PostgreSQL
+  Cost: $
+  Speed: Fast (indexed queries)
+  Complexity: Low
+  When to Use: 0-10K conversations
+  ────────────────────────────────────────
+  Option: B: Object Storage (S3)
+  Storage: S3
+  Cost: $$ (cheaper long-term)
+  Speed: Medium (network latency)
+  Complexity: Medium
+  When to Use: 10K+ conversations
+  ────────────────────────────────────────
+  Option: C: Archived content_blocks
+  Storage: PostgreSQL
+  Cost: $$$ (DB bloat)
+  Speed: Fast
+  Complexity: Low
+  When to Use: Not recommended
+  Recommendation: Start with A, graduate to A+B
+
+  Why Option A First:
+
+  class CompactedHistorySegment(models.Model):
+      """
+      Stores compacted conversation segments for retrieval
+      """
+      id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+      conversation = models.ForeignKey(Conversation,
+  related_name='compacted_segments')
+      segment_range = models.CharField(max_length=50)  # "turns_1_to_20"
+
+      # Summary for quick context
+      summary = models.TextField()  # LLM-generated summary
+
+      # Full messages for retrieval
+      full_messages = models.JSONField()  # Original uncompacted messages
+
+      # Extracted structured data
+      extracted_facts = models.JSONField(default=dict)
+      extracted_decisions = models.JSONField(default=dict)
+
+      # Metadata
+      compacted_at = models.DateTimeField(auto_now_add=True)
+      token_count_original = models.IntegerField()
+      token_count_summary = models.IntegerField()
+      compression_ratio = models.FloatField()  # e.g., 0.15 = 85% reduction
+
+      class Meta:
+          indexes = [
+              models.Index(fields=['conversation', 'segment_range']),
+              models.Index(fields=['compacted_at']),
+          ]
+
+  Business Benefits:
+  1. Fast retrieval: PostgreSQL indexed queries (<50ms)
+  2. Queryable: Can search across segments with SQL
+  3. Simple: No external dependencies (S3 setup, credentials)
+  4. Cost: Negligible for first 10K conversations (~5GB storage @ $0.10/GB/month
+   = $0.50/month)
+
+  When to Migrate to Hybrid A+B:
+
+  # Archive old segments to S3
+  if compacted_segment.age_days > 30:
+      # Move to S3
+      s3_key = f"compacted/{conversation_id}/{segment_id}.json"
+      s3.put_object(Bucket='history-archive', Key=s3_key,
+  Body=json.dumps(segment.full_messages))
+
+      # Keep summary in DB for search
+      segment.full_messages = None  # Clear from DB
+      segment.s3_location = s3_key
+      segment.save()
+
+  Cost at Scale:
+  - Year 1 (10K conversations): PostgreSQL only - $50/month
+  - Year 2 (100K conversations): PostgreSQL + S3 - $100/month (90% in cheap S3)
+  - Year 3 (1M conversations): S3-heavy - $500/month (vs $5000/month for pure
+  PostgreSQL)
+
+  Recommendation: Start with Option A (separate table), add S3 archival when you
+   hit 50K conversations. ✅
+
+  ---
+  5. Memory Item Lifecycle: Business Decision Framework
+
+  Let me help you decide by framing the trade-offs:
+
+  Option Analysis
+  ┌────────────┬─────────────────────────┬──────────────────┬──────────────────┐
+  │  Strategy  │     Business Impact     │ Technical Impact │     Use Case     │
+  ├────────────┼─────────────────────────┼──────────────────┼──────────────────┤
+  │            │                         │ DB grows         │ Banking,         │
+  │ Keep       │ Complete audit trail,   │ linearly,        │ Healthcare,      │
+  │ Forever    │ compliance-friendly     │ queries slow     │ Legal            │
+  │            │                         │ over time        │                  │
+  ├────────────┼─────────────────────────┼──────────────────┼──────────────────┤
+  │ Expire     │                         │ Controlled DB    │ Customer         │
+  │ After 30   │ Fresh data only,        │ size, fast       │ support,         │
+  │ Days       │ prevents confusion      │ queries          │ Short-term       │
+  │            │                         │                  │ projects         │
+  ├────────────┼─────────────────────────┼──────────────────┼──────────────────┤
+  │ Mark as    │ Best of both worlds,    │ Moderate DB      │                  │
+  │ Stale      │ transparent to agent    │ size, needs      │ General purpose  │
+  │            │                         │ staleness logic  │                  │
+  └────────────┴─────────────────────────┴──────────────────┴──────────────────┘
+  My Recommendation: Tiered Lifecycle
+
+  Tier 1: Hot Facts (0-7 days)
+  - Always injected into agent context
+  - Treated as current truth
+  - Example: "Gold Card fee: EGP 300" (discovered today)
+
+  Tier 2: Warm Facts (7-30 days)
+  - Injected with staleness warning
+  - Agent knows it might be outdated
+  - Example: "Gold Card fee: EGP 300 (as of 15 days ago - may have changed)"
+
+  Tier 3: Cold Facts (30+ days)
+  - Archived to separate table
+  - Retrievable on-demand only
+  - Example: Agent can call retrieve_historical_facts(older_than=30_days) if
+  needed
+
+  Implementation:
+  class AgentRunMemoryItem(models.Model):
+      # ... existing fields ...
+
+      freshness_tier = models.CharField(
+          max_length=10,
+          choices=[
+              ('hot', 'Hot (0-7 days)'),
+              ('warm', 'Warm (7-30 days)'),
+              ('cold', 'Cold (30+ days)'),
+          ],
+          default='hot'
+      )
+
+      @property
+      def is_stale(self):
+          age = timezone.now() - self.created_at
+          return age > timedelta(days=7)
+
+      @property
+      def staleness_warning(self):
+          age_days = (timezone.now() - self.created_at).days
+          if age_days < 7:
+              return None
+          return f"This fact is {age_days} days old and may be outdated"
+
+  Injection Strategy:
+  def build_memory_context(run):
+      """
+      Inject memory items based on freshness
+      """
+      hot_facts = run.memory_items.filter(
+          freshness_tier='hot'
+      ).order_by('-created_at')[:20]
+
+      warm_facts = run.memory_items.filter(
+          freshness_tier='warm'
+      ).order_by('-created_at')[:10]
+
+      context = "**Task Memory**:\n\n"
+
+      if hot_facts:
+          context += "Current Facts:\n"
+          for fact in hot_facts:
+              context += f"- {fact.key}: {fact.content}\n"
+
+      if warm_facts:
+          context += "\nRecent Facts (may be outdated):\n"
+          for fact in warm_facts:
+              age = (timezone.now() - fact.created_at).days
+              context += f"- {fact.key}: {fact.content} ({age} days old)\n"
+
+      return context
+
+  Business Logic for Your Decision:
+
+  Choose "Keep Forever" if:
+  - You need regulatory compliance (audit trails)
+  - Historical analysis is valuable (trends, patterns)
+  - Storage cost isn't a concern
+
+  Choose "Expire After 30 Days" if:
+  - You operate in fast-changing environment (prices change daily)
+  - Stale data is worse than no data
+  - You want minimal DB footprint
+
+  Choose "Tiered Lifecycle" if:
+  - You want flexibility
+  - Different facts have different shelf lives
+  - You want agents to be aware of data freshness
+
+  My Recommendation for Your Use Case (Banking/Financial):
+
+  Tiered Lifecycle with Domain-Specific Rules:
+
+  MEMORY_LIFECYCLE_RULES = {
+      "fees": {
+          "hot_period": 7,    # Fee data is current for 7 days
+          "warm_period": 30,  # Then it's suspect
+          "archive_after": 90 # Archive after 3 months
+      },
+      "decisions": {
+          "hot_period": 999,  # User approvals never go stale
+          "archive_after": 365  # Keep for 1 year
+      },
+      "customer_data": {
+          "hot_period": 1,    # Customer info changes fast
+          "warm_period": 7,
+          "archive_after": 30
+      }
+  }
+
+  Why This Works for Banking:
+  - Fees/Rates: Go stale quickly (bank changes them)
+  - Approvals/Decisions: Never stale (historical record)
+  - Customer Data: Can change but needs short retention
+
+  Recommendation: Tiered lifecycle with domain-specific freshness rules. ✅
+
+  ---
+  Summary: Recommended Architecture
+  ┌────────────────────┬─────────────────────────────┬─────────────────────────┐
+  │     Component      │          Decision           │        Rationale        │
+  ├────────────────────┼─────────────────────────────┼─────────────────────────┤
+  │ Leader-Worker      │ Option B + on-demand        │ 95% efficiency, 5%      │
+  │ Communication      │ reports                     │ deep-dive when needed   │
+  ├────────────────────┼─────────────────────────────┼─────────────────────────┤
+  │ Sub-Agent          │                             │ Reliability,            │
+  │ Isolation          │ Fully isolated              │ debuggability,          │
+  │                    │                             │ scalability             │
+  ├────────────────────┼─────────────────────────────┼─────────────────────────┤
+  │ Compaction Target  │ 60% (adaptive)              │ Balanced buffer,        │
+  │                    │                             │ moderate frequency      │
+  ├────────────────────┼─────────────────────────────┼─────────────────────────┤
+  │ Compacted Storage  │ Start Table (A), graduate   │ Simple now, scalable    │
+  │                    │ to S3 (B) at 50K convos     │ later                   │
+  ├────────────────────┼─────────────────────────────┼─────────────────────────┤
+  │ Memory Lifecycle   │ Tiered (hot/warm/cold) with │ Balances freshness,     │
+  │                    │  domain rules               │ history, and cost       │
+  └────────────────────┴─────────────────────────────┴─────────────────────────┘
+  Next: Should we start sketching the implementation plan? Or do you want to
+  drill deeper into any of these decisions?
+
+✻ Churned for 1m 21s
+
+❯ a small correction, i am not gonna be only dealing with banks/financials, 
+   i serve multi-tenants and different industries. so will the above fit    
+  them too? i kinda think it will.. just confirm.                           
+
+⏺ Absolutely correct - the architecture is industry-agnostic by design! Let me
+  validate this with examples across different industries:
+
+  ---
+  Multi-Tenant Industry Validation
+
+  Core Architecture: Universal ✅
+  Component: Leader-Worker Pattern
+  Banking: ✅ Orchestrate multiple card searches
+  Healthcare: ✅ Coordinate patient data lookup + appointment scheduling
+  E-commerce: ✅ Manage inventory check + order processing
+  Legal: ✅ Handle multi-jurisdiction research tasks
+  SaaS: ✅ Parallel customer onboarding steps
+  ────────────────────────────────────────
+  Component: On-Demand Reports
+  Banking: ✅ Pull fee details when approving transactions
+  Healthcare: ✅ Retrieve patient history for diagnosis
+  E-commerce: ✅ Get inventory details before confirming order
+  Legal: ✅ Access full case citations when drafting
+  SaaS: ✅ Review usage metrics before upgrade offer
+  ────────────────────────────────────────
+  Component: Sub-Agent Isolation
+  Banking: ✅ Separate workers per card type
+  Healthcare: ✅ Separate workers per department
+  E-commerce: ✅ Separate workers per warehouse
+  Legal: ✅ Separate workers per jurisdiction
+  SaaS: ✅ Separate workers per integration
+  ────────────────────────────────────────
+  Component: 60% Compaction
+  Banking: ✅ Same token economics
+  Healthcare: ✅ Same token economics
+  E-commerce: ✅ Same token economics
+  Legal: ✅ Same token economics
+  SaaS: ✅ Same token economics
+  Result: Core architecture is 100% industry-agnostic. ✅
+
+  ---
+  The Only Variable: Memory Lifecycle Configuration
+
+  This is where industries diverge, but the architecture handles it through 
+  configuration:
+
+  Tenant-Specific Lifecycle Rules
+
+  Instead of hardcoding banking rules, make it configurable per tenant:
+
+  class TenantMemoryConfiguration(models.Model):
+      """
+      Per-tenant configuration for memory item lifecycle
+      """
+      business_profile = models.OneToOneField(BusinessProfile,
+  related_name='memory_config')
+
+      # Default lifecycle settings (can be overridden per memory kind)
+      default_hot_period_days = models.IntegerField(default=7)
+      default_warm_period_days = models.IntegerField(default=30)
+      default_archive_after_days = models.IntegerField(default=90)
+
+      # Industry-specific rules (JSON for flexibility)
+      custom_rules = models.JSONField(default=dict)
+      # Example: {"fees": {"hot": 7, "warm": 30, "archive": 90}}
+
+      # Compliance requirements
+      minimum_retention_days = models.IntegerField(default=0)  # Legal minimum
+      maximum_retention_days = models.IntegerField(null=True, blank=True)  # 
+  Privacy law max
+
+  Industry Examples: How Rules Adapt
+
+  Banking/Finance:
+  {
+      "fees": {"hot": 7, "warm": 30, "archive": 365},  # Keep fees for audit
+      "rates": {"hot": 1, "warm": 7, "archive": 365},  # Rates change daily
+      "decisions": {"hot": 999, "archive": 2555},      # 7-year retention 
+  (regulation)
+      "customer_data": {"hot": 7, "warm": 30, "archive": 2555}
+  }
+
+  Healthcare (HIPAA Compliance):
+  {
+      "patient_data": {"hot": 30, "warm": 90, "archive": 2555},  # 7-year 
+  minimum
+      "appointments": {"hot": 7, "warm": 30, "archive": 365},
+      "diagnoses": {"hot": 999, "archive": 2555},  # Never stale, keep forever
+      "prescriptions": {"hot": 90, "warm": 180, "archive": 2555}
+  }
+
+  E-commerce:
+  {
+      "product_prices": {"hot": 1, "warm": 7, "archive": 90},  # Prices change 
+  fast
+      "inventory": {"hot": 0.5, "warm": 1, "archive": 30},     # Real-time data
+      "orders": {"hot": 30, "warm": 90, "archive": 1095},      # 3-year 
+  retention
+      "customer_preferences": {"hot": 30, "warm": 90, "archive": 365}
+  }
+
+  Legal:
+  {
+      "case_law": {"hot": 999, "archive": 9999},        # Never expires
+      "statutes": {"hot": 365, "warm": 730, "archive": 9999},  # Check annually
+      "deadlines": {"hot": 999, "archive": 2555},       # Critical, keep long
+      "client_data": {"hot": 90, "warm": 180, "archive": 2555}  # Long retention
+  }
+
+  SaaS:
+  {
+      "usage_metrics": {"hot": 7, "warm": 30, "archive": 365},
+      "feature_flags": {"hot": 1, "warm": 7, "archive": 90},
+      "support_tickets": {"hot": 30, "warm": 90, "archive": 1095},
+      "billing_data": {"hot": 90, "warm": 180, "archive": 2555}
+  }
+
+  ---
+  Implementation: Industry-Agnostic Core
+
+  Automatic Industry Detection (Optional Enhancement)
+
+  def suggest_memory_lifecycle_config(business_profile):
+      """
+      Suggest defaults based on industry, but allow full customization
+      """
+      industry = business_profile.industry.lower()
+
+      if 'bank' in industry or 'financ' in industry:
+          return BANKING_DEFAULTS
+      elif 'health' in industry or 'medic' in industry:
+          return HEALTHCARE_DEFAULTS
+      elif 'ecommerce' in industry or 'retail' in industry:
+          return ECOMMERCE_DEFAULTS
+      elif 'legal' in industry or 'law' in industry:
+          return LEGAL_DEFAULTS
+      elif 'saas' in industry or 'software' in industry:
+          return SAAS_DEFAULTS
+      else:
+          return GENERIC_DEFAULTS
+
+  # But tenant can always override:
+  tenant.memory_config.custom_rules = {
+      "my_custom_fact_type": {"hot": 14, "warm": 60, "archive": 180}
+  }
+
+  Compliance Layer (Critical for Multi-Tenant)
+
+  class ComplianceProfile(models.Model):
+      """
+      Legal/regulatory requirements per tenant
+      """
+      business_profile = models.OneToOneField(BusinessProfile,
+  related_name='compliance')
+
+      # Regulatory framework
+      frameworks = models.JSONField(default=list)  # ["GDPR", "HIPAA", "SOX", 
+  "PCI-DSS"]
+
+      # Retention requirements
+      minimum_retention_days = models.IntegerField(default=0)
+      maximum_retention_days = models.IntegerField(null=True)  # GDPR: can't 
+  keep forever
+
+      # Data residency
+      data_residency_region = models.CharField(max_length=10)  # "EU", "US", 
+  "APAC"
+
+      # Right to deletion
+      allow_user_deletion = models.BooleanField(default=True)  # GDPR right to 
+  be forgotten
+
+  def enforce_compliance(memory_item, tenant):
+      """
+      Ensure memory lifecycle respects legal requirements
+      """
+      compliance = tenant.compliance
+
+      # Check minimum retention
+      if memory_item.age_days < compliance.minimum_retention_days:
+          raise ComplianceError("Cannot delete - minimum retention not met")
+
+      # Check maximum retention (GDPR)
+      if compliance.maximum_retention_days:
+          if memory_item.age_days > compliance.maximum_retention_days:
+              # Auto-delete or anonymize
+              memory_item.anonymize()
+
+      # Data residency check
+      if compliance.data_residency_region == "EU":
+          if not is_stored_in_eu(memory_item):
+              raise ComplianceError("Data must be stored in EU")
+
+  ---
+  Storage Strategy: Multi-Tenant Considerations
+
+  Table vs S3: Industry Impact
+  Industry: Banking
+  Data Volume: High
+  Retention: 7+ years
+  Storage Strategy: Table → S3 at 90 days
+  ────────────────────────────────────────
+  Industry: Healthcare
+  Data Volume: Very High
+  Retention: 7+ years
+  Storage Strategy: Table → S3 at 60 days
+  ────────────────────────────────────────
+  Industry: E-commerce
+  Data Volume: Very High
+  Retention: 3 years
+  Storage Strategy: Table → S3 at 30 days (hot data only)
+  ────────────────────────────────────────
+  Industry: Legal
+  Data Volume: Medium
+  Retention: Indefinite
+  Storage Strategy: Table → S3 at 180 days
+  ────────────────────────────────────────
+  Industry: SaaS
+  Data Volume: High
+  Retention: 3 years
+  Storage Strategy: Table → S3 at 90 days
+  Architecture handles this through tenant-specific archival policies:
+
+  class TenantStoragePolicy(models.Model):
+      business_profile = models.OneToOneField(BusinessProfile,
+  related_name='storage_policy')
+
+      # When to move to S3
+      archive_to_s3_after_days = models.IntegerField(default=90)
+
+      # When to delete from S3 (null = keep forever)
+      delete_from_s3_after_days = models.IntegerField(null=True, blank=True)
+
+      # Storage class (cost optimization)
+      s3_storage_class = models.CharField(
+          max_length=20,
+          choices=[
+              ('STANDARD', 'Standard (fast access)'),
+              ('INTELLIGENT_TIERING', 'Intelligent (auto-optimize)'),
+              ('GLACIER', 'Glacier (archive, slow retrieval)'),
+          ],
+          default='INTELLIGENT_TIERING'
+      )
+
+  ---
+  Final Confirmation
+
+  Yes, the architecture fits all industries because:
+
+  ✅ Core patterns are universal:
+  - Leader-worker orchestration works everywhere
+  - Context compaction is about tokens, not domain
+  - On-demand retrieval is a general UX pattern
+  - Isolation is a reliability principle
+
+  ✅ Variability is handled through configuration:
+  - Memory lifecycle rules per tenant
+  - Compliance requirements per tenant
+  - Storage policies per tenant
+  - Retention rules per industry
+
+  ✅ Multi-tenant by design:
+  - Each BusinessProfile has its own config
+  - No hardcoded industry assumptions
+  - Flexible JSON fields for custom rules
+  - Compliance layer enforces legal requirements
+
+  The Architecture Pattern:
+
+  ┌─────────────────────────────────────────────┐
+  │     UNIVERSAL CORE (Industry-Agnostic)      │
+  │  • Leader-Worker Pattern                    │
+  │  • Context Compaction (60%)                 │
+  │  • On-Demand Retrieval                      │
+  │  • Sub-Agent Isolation                      │
+  └─────────────────────────────────────────────┘
+                      ↓
+  ┌─────────────────────────────────────────────┐
+  │   CONFIGURATION LAYER (Per-Tenant)          │
+  │  • TenantMemoryConfiguration                │
+  │  • ComplianceProfile                        │
+  │  • TenantStoragePolicy                      │
+  └─────────────────────────────────────────────┘
+                      ↓
+  ┌─────────────────────────────────────────────┐
+  │   INDUSTRY PRESETS (Optional Defaults)      │
+  │  • Banking → 7yr retention, daily rates     │
+  │  • Healthcare → HIPAA compliance, 7yr       │
+  │  • E-commerce → Real-time inventory         │
+  │  • Legal → Indefinite retention             │
+  │  • SaaS → 3yr retention, feature tracking   │
+  └─────────────────────────────────────────────┘
+
+  Recommendation: Proceed with the architecture as designed. It's inherently 
+  multi-tenant and industry-agnostic. ✅
+
+  Want to move to implementation planning? Or refine any aspect further?
+
+✻ Cogitated for 57s
+
+❯ /model 
+  ⎿  Set model to Default (Opus 4.5 · Most capable for complex work)
+
+❯ yes go ahead plan it. 
+
+⏺ Entered plan mode
+  Claude is now exploring and designing an implementation approach.
+
+⏺ I'll explore the codebase to understand existing patterns before creating the
+  implementation plan. Based on our discussion, I need to examine specific areas
+   in detail.
+
+⏺ 3 Explore agents finished (ctrl+o to expand)
+   ├─ Explore content_blocks structure · 22 tool uses · 88.0k tokens
+   │  ⎿  Done
+   ├─ Explore AgentRunMemoryItem usage · 44 tool uses · 35.9k tokens
+   │  ⎿  Done
+   └─ Explore compaction patterns · 20 tool uses · 63.9k tokens
+      ⎿  Done
+
+⏺ I now have comprehensive information from the exploration. Let me synthesize
+  this into a detailed implementation plan.
+
+⏺ Updated plan
+  ⎿  /plan to preview
+
+⏺ Now let me launch a Plan agent to validate and refine this implementation
+  approach.
+
+⏺ Plan(Validate context optimization plan)
+  ⎿  Done (24 tool uses · 119.9k tokens · 2m 6s)
+
+⏺ Excellent validation. Let me update the plan with these critical insights.
+
+⏺ Updated plan
+  ⎿  /plan to preview
+
+⏺ Updated plan
+  ⎿  /plan to preview
+
+⏺ Updated plan
+  ⎿  /plan to preview
+
+⏺ Read 1 file (ctrl+o to expand)
+
+⏺ The plan is complete and comprehensive. Let me exit plan mode for your
+  approval.
+
+⏺ User approved Claude's plan
+  ⎿  Plan saved to: ~/.claude/plans/proud-sauteeing-hanrahan.md · /plan to 
+     edit
+     Context Optimization & Long-Running Task Tracking
+
+     Status: Ready for Approval
+
+     ---
+     Problem Statement
+
+     Sub-agents (and main chat to a lesser extent) lose context after
+     approval flows and during lengthy multi-step tasks because:
+
+     1. content_blocks ignored: build_messages() only uses entry.body,
+     losing tool call/result details stored in content_blocks
+     2. History limit too small: Only 4-8 messages loaded, insufficient for
+     multi-step workflows
+     3. No structured fact persistence: Key data (fees, IDs, approvals) not
+     extracted and persisted
+     4. No compaction strategy: Long tasks eventually hit context limits
+     with no graceful handling
+
+     Solution Architecture
+
+     ┌─────────────────────────────────────────────────────────────────┐
+     │                    CONTEXT MANAGEMENT LAYERS                     │
+     ├─────────────────────────────────────────────────────────────────┤
+     │                                                                   │
+     │  Layer 1: Message History (Full Content Blocks)                  │
+     │  ├─ Reconstruct tool_calls from content_blocks                   │
+     │  ├─ Larger history limits (30 for sub-agents, 20 for main chat) │
+     │  └─ Proper tool_call/tool_result message format                  │
+     │                                                                   │
+     │  Layer 2: Structured Memory (AgentRunMemoryItem)                 │
+     │  ├─ Auto-extract facts from tool results                        │
+     │  ├─ Track decisions (approvals, user choices)                   │
+     │  ├─ Track workflow progress (steps completed/pending)           │
+     │  └─ Tiered lifecycle (hot/warm/cold)                            │
+     │                                                                   │
+     │  Layer 3: Auto-Compaction (70% trigger → 60% target)            │
+     │  ├─ Summarize older message segments                            │
+     │  ├─ Preserve current execution state                            │
+     │  ├─ Store full history in CompactedHistorySegment               │
+     │  └─ Non-interrupting (defer during active tool loops)           │
+     │                                                                   │
+     │  Layer 4: On-Demand Retrieval                                    │
+     │  ├─ New tool: retrieve_earlier_context                          │
+     │  ├─ Semantic search across compacted history                    │
+     │  └─ Full segment retrieval when needed                          │
+     │                                                                   │
+     │  Layer 5: Configuration (Per-Tenant)                             │
+     │  ├─ TenantMemoryConfiguration (lifecycle rules)                 │
+     │  ├─ Industry presets (banking, healthcare, e-commerce, etc.)    │
+     │  └─ Compliance requirements (retention, deletion)               │
+     │                                                                   │
+     └─────────────────────────────────────────────────────────────────┘
+
+     ---
+     Phase 1: Critical Fix (Content Blocks Reconstruction)
+
+     Goal: Fix the hallucination bug by reconstructing full tool history
+     from content_blocks
+
+     1.1 Create Content Blocks to LLM Format Converter
+
+     File: pocketai_django/apps/conversations/content_blocks.py
+
+     Add new function to convert content_blocks to LLM-compatible tool
+     messages:
+
+     def reconstruct_tool_messages_from_content_blocks(
+         content_blocks: list[dict],
+         message_body: str,
+         *,
+         max_output_chars: int = 25000,
+     ) -> list[dict[str, object]]:
+         """
+         Convert content_blocks containing tool_use/tool_result into
+         proper LLM message format (assistant with tool_calls + tool 
+     response).
+
+         Following the pattern from build_cached_table_messages():
+         - Creates assistant message with tool_calls array
+         - Creates separate tool response messages with tool_call_id
+
+         Returns:
+         - List of messages: [assistant_with_tool_calls, tool_response_1, 
+     tool_response_2, ...]
+         - Empty list if no tool blocks found
+         """
+
+     Logic:
+     1. Scan content_blocks for type="tool_use" and type="tool_result"
+     2. Group by event_id (tool_use and its corresponding tool_result)
+     3. Build assistant message with tool_calls array:
+     {
+         "role": "assistant",
+         "content": "",
+         "tool_calls": [
+             {
+                 "id": payload["tool_call_id"],
+                 "type": "function",
+                 "function": {
+                     "name": payload["tool_name"],
+                     "arguments": json.dumps(payload["input"]),
+                 }
+             }
+         ]
+     }
+     4. Build tool response messages:
+     {
+         "role": "tool",
+         "tool_call_id": payload["event_id"],  # Links to tool_calls[].id
+         "name": payload["tool_name"],
+         "content": json.dumps(payload["output"])[:max_output_chars],
+     }
+     5. Return list maintaining proper order (assistant first, then tool
+     responses)
+
+     1.2 Modify build_messages() for Execution Conversations
+
+     File: pocketai_django/apps/mcp/prompts.py
+
+     Modify build_messages() to:
+
+     1. Detect if conversation is an execution conversation (sub-agent):
+     convo_meta = conversation.metadata or {}
+     is_execution_conversation = (
+         convo_meta.get("source") == "agent_run" or
+         convo_meta.get("agent_run_id")
+     )
+     2. Increase history limit for execution conversations:
+     if is_execution_conversation:
+         history_limit = int(getattr(settings,
+     "MCP_EXECUTION_HISTORY_LIMIT", 30))
+     else:
+         history_limit = 8 if not memory_note else 4
+     3. For each message with content_blocks, reconstruct tool messages:
+     for entry in transcript:
+         if entry.content_blocks and is_execution_conversation:
+             tool_messages = reconstruct_tool_messages_from_content_blocks(
+                 entry.content_blocks, entry.body
+             )
+             if tool_messages:
+                 messages.extend(tool_messages)
+                 continue
+         # Existing body-only logic...
+
+     1.3 Add Configuration Settings
+
+     File: pocketai_django/pocketai/settings.py
+
+     # Execution conversation (sub-agent) history limit
+     MCP_EXECUTION_HISTORY_LIMIT =
+     int(os.getenv("MCP_EXECUTION_HISTORY_LIMIT", "30"))
+
+     # Main chat history limit (with memory)
+     MCP_MEMORY_RECENT_MESSAGES =
+     int(os.getenv("MCP_MEMORY_RECENT_MESSAGES", "20"))
+
+     ---
+     Phase 2: Structured Memory (AgentRunMemoryItem Enhancement)
+
+     Goal: Auto-extract and persist key facts from tool executions
+
+     2.1 Add New Memory Kinds
+
+     File: pocketai_django/apps/conversations/models.py
+
+     class AgentRunMemoryKind(models.TextChoices):
+         FACT = "fact", "Fact"
+         SOP = "sop", "SOP"
+         DECISION = "decision", "Decision"
+         NOTE = "note", "Note"
+         # New kinds:
+         EXTRACTED_DATA = "extracted_data", "Extracted Data"
+         WORKFLOW_STATE = "workflow_state", "Workflow State"
+         CONTEXT_SNAPSHOT = "context_snapshot", "Context Snapshot"
+
+     2.2 Create Fact Extraction Service
+
+     File: pocketai_django/apps/conversations/memory_extraction.py (new
+     file)
+
+     class MemoryExtractionService:
+         """
+         Extracts structured facts from tool executions
+         """
+
+         # Rule-based extractors per tool
+         EXTRACTION_RULES = {
+             "search_knowledge": {
+                 "patterns": [
+                     (r"(fee|price|cost|charge)[:\s]*(EGP|USD|EUR)?\s*(\d+(?
+     :,\d{3})*(?:\.\d{2})?)", "amount"),
+                     (r"(rate|percentage)[:\s]*(\d+(?:\.\d+)?)\s*%",
+     "rate"),
+                 ],
+                 "store_as": "fact",
+             },
+             "email_create_draft": {
+                 "extract_fields": ["draft_id", "recipient", "subject"],
+                 "store_as": "decision",
+             },
+             "email_send": {
+                 "extract_fields": ["message_id", "status", "recipient"],
+                 "store_as": "decision",
+             },
+         }
+
+         def extract_from_tool_result(
+             self,
+             run: AgentRun,
+             tool_name: str,
+             arguments: dict,
+             result: dict,
+             user: User | None = None,
+         ) -> list[AgentRunMemoryItem]:
+             """
+             Extract facts/decisions from a tool result.
+             Uses rule-based extraction first, falls back to LLM for complex
+      cases.
+             """
+
+         def _rule_based_extraction(self, tool_name: str, result: dict) -> 
+     list[dict]:
+             """Apply extraction rules for known tools"""
+
+         def _llm_extraction(self, tool_name: str, arguments: dict, result: 
+     dict) -> list[dict]:
+             """Use LLM to extract facts from complex/unknown tool 
+     results"""
+
+     2.3 Integrate Extraction into Agent Run Processing
+
+     File: pocketai_django/apps/conversations/agent_run_processing.py
+
+     After tool execution (around line 1250), add:
+
+     # Extract and store memory items
+     from apps.conversations.memory_extraction import
+     MemoryExtractionService
+
+     extractor = MemoryExtractionService()
+     memory_items = extractor.extract_from_tool_result(
+         run=run,
+         tool_name=tool_name,
+         arguments=arguments,
+         result=tool_result,
+         user=actor_user,
+     )
+     # Items are created inside the service
+
+     2.4 Inject Memory Items into Prompt
+
+     File: pocketai_django/apps/mcp/prompts.py
+
+     Add function to build memory context for sub-agents:
+
+     def _build_run_memory_context(run_id: uuid.UUID) -> str | None:
+         """
+         Build structured memory context from AgentRunMemoryItems
+         for injection into sub-agent prompts.
+         """
+         from apps.conversations.models import AgentRunMemoryItem,
+     AgentRunMemoryKind
+
+         items = AgentRunMemoryItem.objects.filter(
+             run_id=run_id
+         ).order_by('-created_at')[:30]
+
+         if not items:
+             return None
+
+         sections = []
+
+         # Group by kind
+         facts = [i for i in items if i.kind ==
+     AgentRunMemoryKind.EXTRACTED_DATA]
+         decisions = [i for i in items if i.kind ==
+     AgentRunMemoryKind.DECISION]
+         workflow = [i for i in items if i.kind ==
+     AgentRunMemoryKind.WORKFLOW_STATE]
+
+         if facts:
+             sections.append("**Extracted Facts:**")
+             for f in facts[:15]:
+                 sections.append(f"- {f.key}: {f.content}")
+
+         if decisions:
+             sections.append("\n**Decisions Made:**")
+             for d in decisions[:10]:
+                 sections.append(f"- {d.content}")
+
+         if workflow:
+             sections.append("\n**Workflow Progress:**")
+             for w in workflow[:5]:
+                 sections.append(f"- {w.content}")
+
+         return "\n".join(sections)
+
+     Inject into build_messages() for execution conversations:
+
+     if is_execution_conversation:
+         run_id = convo_meta.get("agent_run_id")
+         if run_id:
+             memory_context = _build_run_memory_context(uuid.UUID(run_id))
+             if memory_context:
+                 system_sections.append(f"**Task 
+     Memory:**\n{memory_context}")
+
+     ---
+     Phase 3: Auto-Compaction
+
+     Goal: Automatically compact context when approaching 70% of limit
+
+     3.1 Create Compacted History Model
+
+     File: pocketai_django/apps/conversations/models.py
+
+     class CompactedHistorySegment(models.Model):
+         """
+         Stores compacted conversation segments for on-demand retrieval
+         """
+         id = models.UUIDField(primary_key=True, default=uuid.uuid4,
+     editable=False)
+         conversation = models.ForeignKey(
+             Conversation,
+             related_name='compacted_segments',
+             on_delete=models.CASCADE,
+         )
+         segment_range = models.CharField(max_length=50)  # "turns_1_to_20"
+         start_message_id = models.UUIDField()
+         end_message_id = models.UUIDField()
+
+         # Summary for injection
+         summary = models.TextField()
+
+         # Full messages for retrieval (JSON)
+         full_messages = models.JSONField()
+
+         # Extracted structured data
+         extracted_facts = models.JSONField(default=dict)
+         extracted_decisions = models.JSONField(default=dict)
+
+         # Metrics
+         token_count_original = models.IntegerField()
+         token_count_summary = models.IntegerField()
+         compression_ratio = models.FloatField()
+
+         # Timestamps
+         compacted_at = models.DateTimeField(auto_now_add=True)
+
+         class Meta:
+             db_table = "conversations_compacted_history_segment"
+             ordering = ["-compacted_at"]
+             indexes = [
+                 models.Index(fields=["conversation", "compacted_at"]),
+             ]
+
+     3.2 Create Compaction Service
+
+     File: pocketai_django/apps/conversations/compaction_service.py (new
+     file)
+
+     class ContextCompactionService:
+         """
+         Manages automatic context compaction for conversations
+         """
+
+         TRIGGER_THRESHOLD = 0.70  # 70% of context window
+         TARGET_THRESHOLD = 0.60   # Compact down to 60%
+         CONTEXT_WINDOW = 200_000  # Tokens (configurable)
+
+         def should_compact(self, conversation: Conversation) -> bool:
+             """Check if compaction needed based on context usage"""
+             usage = self.estimate_context_usage(conversation)
+             return usage >= (self.CONTEXT_WINDOW * self.TRIGGER_THRESHOLD)
+
+         def estimate_context_usage(self, conversation: Conversation) -> 
+     int:
+             """Estimate current token usage for conversation"""
+             # Use existing _estimate_request_tokens pattern
+
+         def compact(
+             self,
+             conversation: Conversation,
+             preserve_last_n: int = 15,
+             preserve_execution_state: bool = True,
+         ) -> CompactedHistorySegment:
+             """
+             Compact older messages while preserving recent history
+             and current execution state.
+             """
+
+         def _generate_summary(self, messages: list[dict]) -> str:
+             """Use LLM to generate compact summary of message segment"""
+
+         def _extract_critical_context(self, messages: list[dict]) -> dict:
+             """Extract facts and decisions that must survive compaction"""
+
+         def is_safe_to_compact(self, conversation: Conversation) -> bool:
+             """
+             Check if compaction can happen now without interrupting 
+     execution.
+             Returns False if active tool loop in progress.
+             """
+
+     3.3 Integrate Compaction into Orchestrator
+
+     File: pocketai_django/apps/mcp/orchestrator.py
+
+     At the end of stream_turn(), before returning:
+
+     # Check if compaction needed (deferred, non-blocking)
+     from apps.conversations.compaction_service import
+     ContextCompactionService
+
+     compaction_service = ContextCompactionService()
+     if compaction_service.should_compact(conversation):
+         if compaction_service.is_safe_to_compact(conversation):
+             # Run in background thread
+             threading.Thread(
+                 target=compaction_service.compact,
+                 kwargs={"conversation": conversation},
+                 daemon=True,
+             ).start()
+         else:
+             # Mark for compaction after current execution completes
+             conversation.metadata["pending_compaction"] = True
+             conversation.save(update_fields=["metadata"])
+
+     3.4 Inject Compacted History into Prompts
+
+     File: pocketai_django/apps/mcp/prompts.py
+
+     Modify build_messages() to include compacted history summaries:
+
+     # Before transcript loading
+     compacted_segments =
+     conversation.compacted_segments.order_by('compacted_at')[:3]
+     if compacted_segments:
+         compacted_context = "**Earlier Conversation Summary:**\n"
+         for segment in compacted_segments:
+             compacted_context +=
+     f"\n{segment.segment_range}:\n{segment.summary}\n"
+         system_sections.append(compacted_context)
+
+     ---
+     Phase 4: On-Demand Retrieval
+
+     Goal: Allow agents to retrieve detailed history from compacted segments
+
+     4.1 Create Retrieval Tool
+
+     File: pocketai_django/apps/mcp/tools.py
+
+     def retrieve_earlier_context(
+         *,
+         query: str,
+         timeframe: str = "all",
+         conversation: Conversation,
+         context: ToolExecutionContext | None = None,
+     ) -> dict[str, object]:
+         """
+         Retrieve detailed context from earlier in the conversation
+         that has been compacted.
+
+         Args:
+             query: What to search for (e.g., "Gold Card fee amount")
+             timeframe: Which segment to search ("first_10_turns", 
+     "turns_10_to_20", "all")
+
+         Returns:
+             {
+                 "found": bool,
+                 "messages": list[dict],  # Relevant messages
+                 "facts": dict,  # Extracted facts matching query
+                 "segment": str,  # Which segment this came from
+             }
+         """
+
+     4.2 Register Tool in Orchestrator
+
+     File: pocketai_django/apps/mcp/orchestrator.py
+
+     Add to tool definitions:
+
+     {
+         "type": "function",
+         "function": {
+             "name": "retrieve_earlier_context",
+             "description": "Fetch detailed history from earlier in the 
+     conversation that has been compacted. Use when you need specifics from 
+     earlier steps that may not be in current context.",
+             "parameters": {
+                 "type": "object",
+                 "properties": {
+                     "query": {
+                         "type": "string",
+                         "description": "What you're looking for (e.g., 
+     'Gold Card fee amount')"
+                     },
+                     "timeframe": {
+                         "type": "string",
+                         "enum": ["first_10_turns", "turns_10_to_20",
+     "all"],
+                         "description": "Which part of history to search"
+                     }
+                 },
+                 "required": ["query"]
+             }
+         }
+     }
+
+     ---
+     Phase 5: Per-Tenant Configuration
+
+     Goal: Allow industry-specific memory lifecycle rules
+
+     5.1 Create Configuration Model
+
+     File: pocketai_django/apps/accounts/models.py
+
+     class TenantMemoryConfiguration(models.Model):
+         """
+         Per-tenant configuration for memory lifecycle
+         """
+         business_profile = models.OneToOneField(
+             BusinessProfile,
+             related_name='memory_config',
+             on_delete=models.CASCADE,
+         )
+
+         # Lifecycle defaults
+         default_hot_period_days = models.IntegerField(default=7)
+         default_warm_period_days = models.IntegerField(default=30)
+         default_archive_after_days = models.IntegerField(default=90)
+
+         # Industry-specific rules (JSON)
+         custom_rules = models.JSONField(default=dict, blank=True)
+         # Example: {"fees": {"hot": 7, "warm": 30, "archive": 90}}
+
+         # Compliance
+         minimum_retention_days = models.IntegerField(default=0)
+         maximum_retention_days = models.IntegerField(null=True, blank=True)
+
+         created_at = models.DateTimeField(auto_now_add=True)
+         updated_at = models.DateTimeField(auto_now=True)
+
+     5.2 Apply Lifecycle Rules
+
+     File: pocketai_django/apps/conversations/memory_extraction.py
+
+     When building memory context, apply freshness tiers:
+
+     def get_memory_items_with_freshness(
+         run_id: uuid.UUID,
+         tenant_config: TenantMemoryConfiguration,
+     ) -> dict[str, list[AgentRunMemoryItem]]:
+         """
+         Get memory items grouped by freshness tier
+         """
+         items = AgentRunMemoryItem.objects.filter(run_id=run_id)
+
+         hot = []
+         warm = []
+
+         for item in items:
+             age_days = (timezone.now() - item.created_at).days
+             rules = tenant_config.custom_rules.get(item.key, {})
+             hot_period = rules.get("hot",
+     tenant_config.default_hot_period_days)
+             warm_period = rules.get("warm",
+     tenant_config.default_warm_period_days)
+
+             if age_days <= hot_period:
+                 hot.append(item)
+             elif age_days <= warm_period:
+                 warm.append(item)
+             # Cold items not injected, available via retrieval tool
+
+         return {"hot": hot, "warm": warm}
+
+     ---
+     Critical Files to Modify
+
+
+
+
+
+
+     File: apps/conversations/content_blocks.py
+     Changes: Add reconstruct_tool_messages_from_content_blocks()
+     ────────────────────────────────────────
+     File: apps/mcp/prompts.py
+     Changes: Modify build_messages() for content_blocks and larger history
+     ────────────────────────────────────────
+     File: apps/conversations/models.py
+     Changes: Add CompactedHistorySegment, extend AgentRunMemoryKind
+     ────────────────────────────────────────
+     File: apps/conversations/memory_extraction.py
+     Changes: NEW: Fact extraction service
+     ────────────────────────────────────────
+     File: apps/conversations/compaction_service.py
+     Changes: NEW: Context compaction service
+     ────────────────────────────────────────
+     File: apps/conversations/agent_run_processing.py
+     Changes: Integrate memory extraction
+     ────────────────────────────────────────
+     File: apps/mcp/orchestrator.py
+     Changes: Integrate compaction, add retrieval tool
+     ────────────────────────────────────────
+     File: apps/mcp/tools.py
+     Changes: Add retrieve_earlier_context tool
+     ────────────────────────────────────────
+     File: apps/accounts/models.py
+     Changes: Add TenantMemoryConfiguration
+     ────────────────────────────────────────
+     File: pocketai/settings.py
+     Changes: Add new configuration variables
+     ---
+     Database Migrations Required
+
+     1. Phase 2: Add new AgentRunMemoryKind choices (no schema change, just
+     enum)
+     2. Phase 3: Create CompactedHistorySegment table
+     3. Phase 5: Create TenantMemoryConfiguration table
+
+     ---
+     Verification Plan
+
+     Phase 1 Testing
+
+     1. Create a sub-agent that executes tool calls
+     2. Pause at approval gate
+     3. Approve and continue
+     4. Verify final response includes accurate data from earlier tool
+     results
+     5. Check that content_blocks are properly reconstructed in LLM messages
+
+     Phase 2 Testing
+
+     1. Execute search_knowledge tool with fee data in results
+     2. Verify AgentRunMemoryItem created with extracted facts
+     3. Verify facts injected into subsequent prompts
+     4. Test hybrid extraction (rules + LLM fallback)
+
+     Phase 3 Testing
+
+     1. Create conversation with 50+ messages
+     2. Verify compaction triggers at 70% context usage
+     3. Verify CompactedHistorySegment created with summary
+     4. Verify summary injected into prompts
+     5. Verify full messages retrievable via segment
+
+     Phase 4 Testing
+
+     1. After compaction, use retrieve_earlier_context tool
+     2. Verify relevant messages returned
+     3. Verify extracted facts available in response
+
+     Phase 5 Testing
+
+     1. Create tenant with custom lifecycle rules
+     2. Verify hot/warm/cold classification works
+     3. Verify warm items show staleness warning
+     4. Verify cold items only available via retrieval
+
+     ---
+     Implementation Order
+
+     1. Week 1: Phase 1 (Critical fix - content_blocks reconstruction)
+     2. Week 2-3: Phase 2 (Structured memory extraction)
+     3. Week 4-5: Phase 3 (Auto-compaction)
+     4. Week 6: Phase 4 (On-demand retrieval)
+     5. Week 7: Phase 5 (Per-tenant configuration)
+
+     ---
+     Critical Edge Cases to Handle
+
+     1. Concurrent Tool Executions
+
+     Risk: Multiple tool calls in parallel could interleave content_blocks
+     Mitigation: Ensure tool_call_ids are unique per message; add mutex in
+     _append_execution_message()
+
+     2. Approval While Compaction is Running
+
+     Risk: If compaction runs during WAITING_APPROVAL, resumed context may
+     be stale
+     Mitigation:
+     - Store pre-compaction checkpoint when entering WAITING_APPROVAL
+     - Use existing pending_tool_call metadata to restore exact state
+     - Add compaction_checkpoint_id to metadata before compaction
+
+     3. Message ID Drift
+
+     Risk: Race condition between memory update and compaction
+     Mitigation: Use expected_last_message_id pattern (already in memory
+     update) for compaction
+
+     4. Tool Chain Integrity
+
+     Risk: Reconstructed tool messages may have broken tool_call/response
+     chains
+     Mitigation: Call _history_requires_tool_anchor() after reconstruction;
+     validate all tool_call_ids have responses
+
+     5. Safe Compaction Timing
+
+     Risk: Compaction during active tool loop breaks execution
+     Mitigation: Only compact when:
+     - Run status is WAITING_APPROVAL, WAITING_EXTERNAL, or COMPLETED
+     - No pending tool calls in metadata
+     - Mark pending_compaction=True if unsafe, defer to next safe point
+
+     ---
+     Key Design Decisions (Validated)
+
+     1. Content Blocks Reconstruction Format
+
+     Decision: Create separate assistant/tool messages (not combined)
+     Rationale: Follows existing pattern in build_cached_table_messages()
+     (lines 782-857 in prompts.py):
+     assistant_message = {"role": "assistant", "content": "", "tool_calls":
+     [...]}
+     tool_messages = [{"role": "tool", "tool_call_id": id, "content":
+     result}]
+
+     2. AgentRunMemoryItem vs structured_memory_v2
+
+     Decision: Keep AgentRunMemoryItem separate from structured_memory_v2
+     Rationale:
+     - structured_memory_v2 is conversation-scoped (customer-facing chat
+     memory)
+     - AgentRunMemoryItem is run-scoped (sub-agent operational context)
+     - Different lifecycles, different retention requirements
+
+     3. Compaction Infrastructure
+
+     Decision: Extend existing MCP_PROACTIVE_COMPACTION_* patterns
+     Rationale: System already has compaction at 90%/85% triggers; we add
+     sub-agent specific thresholds (70%/60%)
+
+     4. Retrieval Tool Scope
+
+     Decision: Available to both main chat and sub-agents
+     Rationale: Main chat users may reference past tools; sub-agents need it
+      for context recovery
+
+     5. Per-Tenant Configuration
+
+     Decision: Use business_profile.metadata["rag_overrides"] pattern
+     Rationale: Follows existing FeatureFlagService and business override
+     patterns
+
+     ---
+     Configuration Variables Summary
+
+     # Phase 1: History limits
+     MCP_EXECUTION_HISTORY_LIMIT = 30  # Sub-agents
+     MCP_MEMORY_RECENT_MESSAGES = 20   # Main chat with memory
+
+     # Phase 3: Compaction
+     MCP_COMPACTION_TRIGGER_THRESHOLD = 0.70  # 70% of context
+     MCP_COMPACTION_TARGET_THRESHOLD = 0.60   # Compact to 60%
+     MCP_CONTEXT_WINDOW_TOKENS = 200000       # Model context window
+
+     # Phase 5: Lifecycle defaults
+     MCP_MEMORY_DEFAULT_HOT_DAYS = 7
+     MCP_MEMORY_DEFAULT_WARM_DAYS = 30
+     MCP_MEMORY_DEFAULT_ARCHIVE_DAYS = 90
+
+
+
+
+
+⏺ The plan is approved. Let me create tasks to track the implementation and
+  start with Phase 1 - the critical fix.
+
+⏺ Read 1 file (ctrl+o to expand)
+
+⏺ Now I'll add the reconstruct_tool_messages_from_content_blocks() function to
+  convert content_blocks to LLM-compatible tool messages.
+
+⏺ Update(pocketai_django/apps/conversations/content_blocks.py)
+  ⎿  Added 127 lines
+      284              "output": output,
+      285          },
+      286      }
+      287 +                                                              
+      288 +                                                              
+      289 +def reconstruct_tool_messages_from_content_blocks(            
+      290 +    content_blocks: list[dict[str, Any]] | None,              
+      291 +    message_body: str = "",                                   
+      292 +    *,                                                        
+      293 +    max_output_chars: int = 25000,                            
+      294 +) -> list[dict[str, object]]:                                 
+      295 +    """                                                       
+      296 +    Convert content_blocks containing tool_use/tool_result int
+          +o                                                             
+      297 +    proper LLM message format (assistant with tool_calls + too
+          +l responses).                                                 
+      298 +                                                              
+      299 +    This function reconstructs the tool call history from stor
+          +ed content_blocks                                             
+      300 +    so that the LLM can see the full context of what tools wer
+          +e executed and                                                
+      301 +    their results when resuming a conversation (e.g., after ap
+          +proval flows).                                                
+      302 +                                                              
+      303 +    Following the pattern from build_cached_table_messages(): 
+      304 +    - Creates assistant message with tool_calls array         
+      305 +    - Creates separate tool response messages with tool_call_i
+          +d                                                             
+      306 +                                                              
+      307 +    Args:                                                     
+      308 +        content_blocks: List of content block dictionaries fro
+          +m ConversationMessage                                         
+      309 +        message_body: The message body text (used as content i
+          +f no tool blocks found)                                       
+      310 +        max_output_chars: Maximum characters for tool output J
+          +SON (default 25000)                                           
+      311 +                                                              
+      312 +    Returns:                                                  
+      313 +        List of messages in LLM format:                       
+      314 +        - [assistant_with_tool_calls, tool_response_1, tool_re
+          +sponse_2, ...]                                                
+      315 +        - Empty list if no tool blocks found                  
+      316 +    """                                                       
+      317 +    import json                                               
+      318 +                                                              
+      319 +    blocks = _coerce_block_list(content_blocks)               
+      320 +    if not blocks:                                            
+      321 +        return []                                             
+      322 +                                                              
+      323 +    # Collect tool_use and tool_result blocks, grouped by even
+          +t_id                                                          
+      324 +    tool_uses: dict[str, dict[str, Any]] = {}  # event_id -> p
+          +ayload                                                        
+      325 +    tool_results: dict[str, dict[str, Any]] = {}  # event_id -
+          +> payload                                                     
+      326 +                                                              
+      327 +    for block in blocks:                                      
+      328 +        block_type = str(block.get("type") or "").strip().lowe
+          +r()                                                           
+      329 +        payload = block.get("payload")                        
+      330 +        if not isinstance(payload, Mapping):                  
+      331 +            continue                                          
+      332 +                                                              
+      333 +        event_id = str(payload.get("event_id") or "").strip() 
+      334 +        if not event_id:                                      
+      335 +            continue                                          
+      336 +                                                              
+      337 +        if block_type == "tool_use":                          
+      338 +            tool_uses[event_id] = dict(payload)               
+      339 +        elif block_type == "tool_result":                     
+      340 +            tool_results[event_id] = dict(payload)            
+      341 +                                                              
+      342 +    if not tool_uses:                                         
+      343 +        # No tool_use blocks found, return empty              
+      344 +        return []                                             
+      345 +                                                              
+      346 +    # Build tool_calls array for assistant message            
+      347 +    tool_calls: list[dict[str, object]] = []                  
+      348 +    for event_id, use_payload in tool_uses.items():           
+      349 +        tool_name = str(use_payload.get("tool_name") or "").st
+          +rip()                                                         
+      350 +        tool_call_id = str(use_payload.get("tool_call_id") or 
+          +event_id).strip()                                             
+      351 +        arguments = use_payload.get("input") or {}            
+      352 +                                                              
+      353 +        if not tool_name:                                     
+      354 +            continue                                          
+      355 +                                                              
+      356 +        # Serialize arguments to JSON string                  
+      357 +        try:                                                  
+      358 +            args_json = json.dumps(arguments, ensure_ascii=Fal
+          +se)                                                           
+      359 +        except (TypeError, ValueError):                       
+      360 +            args_json = "{}"                                  
+      361 +                                                              
+      362 +        tool_calls.append({                                   
+      363 +            "id": tool_call_id,                               
+      364 +            "type": "function",                               
+      365 +            "function": {                                     
+      366 +                "name": tool_name,                            
+      367 +                "arguments": args_json,                       
+      368 +            },                                                
+      369 +        })                                                    
+      370 +                                                              
+      371 +    if not tool_calls:                                        
+      372 +        return []                                             
+      373 +                                                              
+      374 +    # Build assistant message with tool_calls                 
+      375 +    messages: list[dict[str, object]] = []                    
+      376 +    assistant_message: dict[str, object] = {                  
+      377 +        "role": "assistant",                                  
+      378 +        "content": "",                                        
+      379 +        "tool_calls": tool_calls,                             
+      380 +    }                                                         
+      381 +    messages.append(assistant_message)                        
+      382 +                                                              
+      383 +    # Build tool response messages (one per tool_use, in same 
+          +order)                                                        
+      384 +    for event_id, use_payload in tool_uses.items():           
+      385 +        tool_name = str(use_payload.get("tool_name") or "").st
+          +rip()                                                         
+      386 +        tool_call_id = str(use_payload.get("tool_call_id") or 
+          +event_id).strip()                                             
+      387 +                                                              
+      388 +        if not tool_name:                                     
+      389 +            continue                                          
+      390 +                                                              
+      391 +        # Get the corresponding result                        
+      392 +        result_payload = tool_results.get(event_id, {})       
+      393 +        output = result_payload.get("output") or {}           
+      394 +        status = str(result_payload.get("status") or "ok").str
+          +ip()                                                          
+      395 +                                                              
+      396 +        # Serialize output to JSON string, respecting max_outp
+          +ut_chars                                                      
+      397 +        try:                                                  
+      398 +            output_json = json.dumps(output, ensure_ascii=Fals
+          +e)                                                            
+      399 +            if len(output_json) > max_output_chars:           
+      400 +                # Truncate and add indicator                  
+      401 +                output_json = output_json[:max_output_chars] +
+          + "...[truncated]"                                             
+      402 +        except (TypeError, ValueError):                       
+      403 +            output_json = json.dumps({"status": status, "error
+          +": "serialization_failed"})                                   
+      404 +                                                              
+      405 +        tool_message: dict[str, object] = {                   
+      406 +            "role": "tool",                                   
+      407 +            "tool_call_id": tool_call_id,                     
+      408 +            "name": tool_name,                                
+      409 +            "content": output_json,                           
+      410 +        }                                                     
+      411 +        messages.append(tool_message)                         
+      412 +                                                              
+      413 +    return messages                                           
+
+⏺ Now let me modify build_messages() in prompts.py. First, let me read the
+  relevant section.
+
+⏺ Read 1 file (ctrl+o to expand)
+
+⏺ Now I'll modify build_messages() to handle execution conversations with
+  content_blocks reconstruction. I need to:
+
+  1. Use the existing is_agent_run detection
+  2. Increase history limit for execution conversations
+  3. Reconstruct tool messages from content_blocks
+
+⏺ Update(pocketai_django/apps/mcp/prompts.py)
+  ⎿  Added 37 lines, removed 2 lines
+      745  
+      746          messages: list[Mapping[str, object]] = [{"role": "syst
+           em", "content": system_message}]
+      747  
+      748 -        history_limit = 8                                     
+      749 -        if getattr(settings, "MCP_LONG_CHAT_MEMORY_ENABLED", T
+          -rue) and memory_note:                                         
+      748 +        # Determine if this is an execution conversation (sub-
+          +agent)                                                        
+      749 +        # Use is_agent_run which is already computed above, or
+          + check metadata directly                                      
+      750 +        convo_meta_for_history = getattr(conversation, "metada
+          +ta", None)                                                    
+      751 +        convo_meta_for_history_map = convo_meta_for_history if
+          + isinstance(convo_meta_for_history, Mapping) else {}          
+      752 +        is_execution_conversation = bool(                     
+      753 +            convo_meta_for_history_map.get("source") == "agent
+          +_run"                                                         
+      754 +            or convo_meta_for_history_map.get("agent_run_id") 
+      755 +            or convo_meta_for_history_map.get("agentRunId")   
+      756 +        )                                                     
+      757 +                                                              
+      758 +        # Execution conversations (sub-agents) get larger hist
+          +ory to maintain context                                       
+      759 +        # across multi-step tool executions and approval flows
+      760 +        if is_execution_conversation:                         
+      761 +            history_limit = int(getattr(settings, "MCP_EXECUTI
+          +ON_HISTORY_LIMIT", 30))                                       
+      762 +        elif getattr(settings, "MCP_LONG_CHAT_MEMORY_ENABLED",
+          + True) and memory_note:                                       
+      763              history_limit = max(1, int(getattr(settings, "MCP_
+           MEMORY_RECENT_MESSAGES", 4) or 4))
+      764 +        else:                                                 
+      765 +            history_limit = 8                                 
+      766  
+      767          transcript_qs = conversation.messages.order_by("-sent_
+           at", "-created_at")[:history_limit]
+      768          transcript = list(reversed(transcript_qs))
+      769 +                                                              
+      770 +        # Import the content_blocks reconstruction function   
+      771 +        from apps.conversations.content_blocks import reconstr
+          +uct_tool_messages_from_content_blocks                         
+      772 +                                                              
+      773          for entry in transcript:
+      774              role = "assistant" if entry.sender == Conversation
+           Sender.AI else "user"
+      775 +                                                              
+      776 +            # For execution conversations, attempt to reconstr
+          +uct tool messages from content_blocks                         
+      777 +            # This preserves full tool call/result context tha
+          +t would otherwise be lost                                     
+      778 +            if is_execution_conversation and role == "assistan
+          +t":                                                           
+      779 +                entry_content_blocks = getattr(entry, "content
+          +_blocks", None)                                               
+      780 +                if entry_content_blocks:                      
+      781 +                    tool_messages = reconstruct_tool_messages_
+          +from_content_blocks(                                          
+      782 +                        entry_content_blocks,                 
+      783 +                        entry.body or "",                     
+      784 +                    )                                         
+      785 +                    if tool_messages:                         
+      786 +                        # Add reconstructed tool messages inst
+          +ead of just the body                                          
+      787 +                        messages.extend(tool_messages)        
+      788 +                        continue                              
+      789 +                                                              
+      790 +            # Default behavior: use message body              
+      791              content = entry.body
+      792              if role == "assistant":
+      793                  content = sanitize_text(content or "")
+
+⏺ Read 1 file (ctrl+o to expand)
+
+⏺ Update(pocketai_django/pocketai/settings.py)
+  ⎿  Added 6 lines
+      761  except (TypeError, ValueError):
+      762      MCP_MEMORY_RECENT_MESSAGES = 4
+      763  try:
+      764 +    # MCP_EXECUTION_HISTORY_LIMIT: Number of messages kept for
+          + execution conversations (sub-agents).                        
+      765 +    # Sub-agents need larger history to maintain context acros
+          +s multi-step tool executions and approval flows.              
+      766 +    MCP_EXECUTION_HISTORY_LIMIT = int(os.getenv("MCP_EXECUTION
+          +_HISTORY_LIMIT", "30"))                                       
+      767 +except (TypeError, ValueError):                               
+      768 +    MCP_EXECUTION_HISTORY_LIMIT = 30                          
+      769 +try:                                                          
+      770      # MCP_MEMORY_UPDATE_AFTER_MESSAGES: Refresh summary after 
+           N new messages.
+      771      MCP_MEMORY_UPDATE_AFTER_MESSAGES = int(os.getenv("MCP_MEMO
+           RY_UPDATE_AFTER_MESSAGES", "10"))
+      772  except (TypeError, ValueError):
+
+⏺ Let me also update the default for MCP_MEMORY_RECENT_MESSAGES from 4 to 20 as
+  planned.
+
+⏺ Update(pocketai_django/pocketai/settings.py)
+  ⎿  Added 3 lines, removed 2 lines
+      757  MCP_LONG_CHAT_MEMORY_ENABLED = os.getenv("MCP_LONG_CHAT_MEMORY
+           _ENABLED", "true").lower() in {"1", "true", "yes"}
+      758  try:
+      759      # MCP_MEMORY_RECENT_MESSAGES: Number of recent messages ke
+           pt verbatim in the prompt.
+      760 -    MCP_MEMORY_RECENT_MESSAGES = int(os.getenv("MCP_MEMORY_REC
+          -ENT_MESSAGES", "4"))                                          
+      760 +    # Increased from 4 to 20 to maintain better context in lon
+          +g conversations.                                              
+      761 +    MCP_MEMORY_RECENT_MESSAGES = int(os.getenv("MCP_MEMORY_REC
+          +ENT_MESSAGES", "20"))                                         
+      762  except (TypeError, ValueError):
+      762 -    MCP_MEMORY_RECENT_MESSAGES = 4                            
+      763 +    MCP_MEMORY_RECENT_MESSAGES = 20                           
+      764  try:
+      765      # MCP_EXECUTION_HISTORY_LIMIT: Number of messages kept for
+            execution conversations (sub-agents).
+      766      # Sub-agents need larger history to maintain context acros
+           s multi-step tool executions and approval flows.
+
+⏺ Phase 1 implementation is complete! Here's what was done:
+
+  Phase 1 Summary: Critical Fix for Content Blocks Reconstruction
+
+  Files Modified:
+
+  1. apps/conversations/content_blocks.py
+  - Added reconstruct_tool_messages_from_content_blocks() function
+  - Converts stored tool_use/tool_result content blocks back to LLM-compatible
+  format
+  - Creates proper assistant message with tool_calls array + separate tool
+  response messages
+
+  2. apps/mcp/prompts.py
+  - Modified build_messages() to detect execution conversations (sub-agents)
+  - Execution conversations now get 30-message history limit (vs 4-8 for main
+  chat)
+  - For assistant messages with content_blocks, reconstructs full tool
+  call/result messages
+  - Falls back to body-only behavior for non-execution conversations
+
+  3. pocketai/settings.py
+  - Added MCP_EXECUTION_HISTORY_LIMIT = 30 for sub-agents
+  - Increased MCP_MEMORY_RECENT_MESSAGES from 4 to 20 for main chat
+
+  What This Fixes:
+
+  Before: Sub-agents resuming after approval would only see message bodies like
+  "Executed approved tool: email_send" - losing all context of what fees were
+  found, what email was drafted, etc.
+
+  After: Sub-agents now see the full tool call arguments AND results
+  reconstructed from content_blocks, maintaining accurate context across
+  approval flows.
+
+  ---
+  Next Steps (Phases 2-5):
+
+  Would you like me to continue with:
+  - Phase 2: Structured Memory (AgentRunMemoryItem auto-extraction)
+  - Phase 3: Auto-Compaction (70% trigger → 60% target)
+  - Phase 4: On-Demand Retrieval tool
+  - Phase 5: Per-Tenant Configuration
+
+  Or would you prefer to test Phase 1 first before proceeding?
+
+✻ Worked for 9m 21s
+
+❯ ignore testing for now, go for phase 2. 
+
+⏺ Searched for 1 pattern (ctrl+o to expand)
+
+⏺ Update(pocketai_django/apps/conversations/models.py)
+  ⎿  File must be read first
+
+⏺ Read 1 file (ctrl+o to expand)
+
+⏺ Update(pocketai_django/apps/conversations/models.py)
+  ⎿  Added 4 lines
+      791      SOP = "sop", "SOP"
+      792      DECISION = "decision", "Decision"
+      793      NOTE = "note", "Note"
+      794 +    # New kinds for context optimization (Phase 2)            
+      795 +    EXTRACTED_DATA = "extracted_data", "Extracted Data"       
+      796 +    WORKFLOW_STATE = "workflow_state", "Workflow State"       
+      797 +    CONTEXT_SNAPSHOT = "context_snapshot", "Context Snapshot" 
+      798  
+      799  
+      800  class AgentRunMemoryItem(models.Model):
+
+⏺ Write(pocketai_django/apps/conversations/memory_extraction.py)
+  ⎿  Wrote 457 lines to
+     pocketai_django/apps/conversations/memory_extraction.py
+       1 """
+       2 Memory Extraction Service for Agent Runs
+       3 
+       4 Extracts structured facts and decisions from tool executions to 
+         persist
+       5 in AgentRunMemoryItem for context preservation across turns.
+       6 
+       7 Uses a hybrid approach:
+       8 - Rule-based extraction for known tool patterns (fast, determini
+         stic)
+       9 - LLM-based extraction for complex/unknown tools (flexible, sema
+         ntic)
+      10 """
+     … +447 lines (ctrl+o to expand)
+  ⎿  You've hit your limit · resets 6pm (Africa/Cairo)
+     /upgrade to increase your usage limit.
+
+✻ Crunched for 1m 38s

@@ -2922,6 +2922,23 @@ class McpOrchestratorService:
                 on_stream_complete()
             except Exception:  # pragma: no cover - defensive
                 pass
+
+        if getattr(settings, "MCP_COMPACTION_ENABLED", True):
+            try:
+                from apps.conversations.compaction_service import ContextCompactionService
+
+                compaction_service = ContextCompactionService()
+                if compaction_service.should_compact(conversation):
+                    if compaction_service.is_safe_to_compact(conversation):
+                        threading.Thread(
+                            target=compaction_service.compact,
+                            kwargs={"conversation": conversation},
+                            daemon=True,
+                        ).start()
+                    else:
+                        compaction_service.mark_pending(conversation)
+            except Exception:  # pragma: no cover - defensive
+                logger.exception("mcp.compaction.trigger_failed", extra={"conversation_id": str(conversation.id)})
         llm_usage = None
         if tool_context and isinstance(getattr(tool_context, "llm_usage", None), Mapping):
             usage_totals = dict(tool_context.llm_usage)

@@ -284,3 +284,130 @@ def make_tool_result_block(
             "output": output,
         },
     }
+
+
+def reconstruct_tool_messages_from_content_blocks(
+    content_blocks: list[dict[str, Any]] | None,
+    message_body: str = "",
+    *,
+    max_output_chars: int = 25000,
+) -> list[dict[str, object]]:
+    """
+    Convert content_blocks containing tool_use/tool_result into
+    proper LLM message format (assistant with tool_calls + tool responses).
+
+    This function reconstructs the tool call history from stored content_blocks
+    so that the LLM can see the full context of what tools were executed and
+    their results when resuming a conversation (e.g., after approval flows).
+
+    Following the pattern from build_cached_table_messages():
+    - Creates assistant message with tool_calls array
+    - Creates separate tool response messages with tool_call_id
+
+    Args:
+        content_blocks: List of content block dictionaries from ConversationMessage
+        message_body: The message body text (used as content if no tool blocks found)
+        max_output_chars: Maximum characters for tool output JSON (default 25000)
+
+    Returns:
+        List of messages in LLM format:
+        - [assistant_with_tool_calls, tool_response_1, tool_response_2, ...]
+        - Empty list if no tool blocks found
+    """
+    import json
+
+    blocks = _coerce_block_list(content_blocks)
+    if not blocks:
+        return []
+
+    # Collect tool_use and tool_result blocks, grouped by event_id
+    tool_uses: dict[str, dict[str, Any]] = {}  # event_id -> payload
+    tool_results: dict[str, dict[str, Any]] = {}  # event_id -> payload
+
+    for block in blocks:
+        block_type = str(block.get("type") or "").strip().lower()
+        payload = block.get("payload")
+        if not isinstance(payload, Mapping):
+            continue
+
+        event_id = str(payload.get("event_id") or "").strip()
+        if not event_id:
+            continue
+
+        if block_type == "tool_use":
+            tool_uses[event_id] = dict(payload)
+        elif block_type == "tool_result":
+            tool_results[event_id] = dict(payload)
+
+    if not tool_uses:
+        # No tool_use blocks found, return empty
+        return []
+
+    # Build tool_calls array for assistant message
+    tool_calls: list[dict[str, object]] = []
+    for event_id, use_payload in tool_uses.items():
+        tool_name = str(use_payload.get("tool_name") or "").strip()
+        tool_call_id = str(use_payload.get("tool_call_id") or event_id).strip()
+        arguments = use_payload.get("input") or {}
+
+        if not tool_name:
+            continue
+
+        # Serialize arguments to JSON string
+        try:
+            args_json = json.dumps(arguments, ensure_ascii=False)
+        except (TypeError, ValueError):
+            args_json = "{}"
+
+        tool_calls.append({
+            "id": tool_call_id,
+            "type": "function",
+            "function": {
+                "name": tool_name,
+                "arguments": args_json,
+            },
+        })
+
+    if not tool_calls:
+        return []
+
+    # Build assistant message with tool_calls
+    messages: list[dict[str, object]] = []
+    assistant_message: dict[str, object] = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": tool_calls,
+    }
+    messages.append(assistant_message)
+
+    # Build tool response messages (one per tool_use, in same order)
+    for event_id, use_payload in tool_uses.items():
+        tool_name = str(use_payload.get("tool_name") or "").strip()
+        tool_call_id = str(use_payload.get("tool_call_id") or event_id).strip()
+
+        if not tool_name:
+            continue
+
+        # Get the corresponding result
+        result_payload = tool_results.get(event_id, {})
+        output = result_payload.get("output") or {}
+        status = str(result_payload.get("status") or "ok").strip()
+
+        # Serialize output to JSON string, respecting max_output_chars
+        try:
+            output_json = json.dumps(output, ensure_ascii=False)
+            if len(output_json) > max_output_chars:
+                # Truncate and add indicator
+                output_json = output_json[:max_output_chars] + "...[truncated]"
+        except (TypeError, ValueError):
+            output_json = json.dumps({"status": status, "error": "serialization_failed"})
+
+        tool_message: dict[str, object] = {
+            "role": "tool",
+            "tool_call_id": tool_call_id,
+            "name": tool_name,
+            "content": output_json,
+        }
+        messages.append(tool_message)
+
+    return messages

@@ -846,6 +846,7 @@ class AgentRunProcessingService:
                     "tool_call_id": tool_call_id,
                     "tool_name": tool_name,
                     "duration_ms": duration_ms,
+                    "input": dict(arguments) if isinstance(arguments, Mapping) else {},
                     "output": tool_result,
                 })
             except Exception:
@@ -1185,6 +1186,20 @@ class AgentRunProcessingService:
                 # Persist compact tool context into the execution transcript so resumed runs
                 # continue from prior tool outcomes instead of re-running searches.
                 if phase == "finished":
+                    input_payload = event.get("input") if isinstance(event.get("input"), Mapping) else None
+                    tool_args = dict(input_payload) if isinstance(input_payload, Mapping) else {}
+
+                    output_payload = event.get("output") if isinstance(event.get("output"), Mapping) else None
+                    tool_output = dict(output_payload) if isinstance(output_payload, Mapping) else {}
+                    if not tool_output:
+                        tool_output = _summarize_tool_result(tool_name, {"status": status_value})
+
+                    extraction_result = dict(output_payload) if isinstance(output_payload, Mapping) else {}
+                    if status_value and "status" not in extraction_result:
+                        extraction_result["status"] = status_value
+                    if not extraction_result:
+                        extraction_result = {"status": status_value or "ok"}
+
                     try:
                         from apps.conversations.content_blocks import make_tool_result_block, make_tool_use_block
                         from apps.conversations.models import ConversationSender
@@ -1198,14 +1213,6 @@ class AgentRunProcessingService:
                             duration_ms_int = int(duration_ms) if duration_ms is not None else 0
                         except (TypeError, ValueError):
                             duration_ms_int = 0
-
-                        input_payload = event.get("input")
-                        tool_args = dict(input_payload) if isinstance(input_payload, Mapping) else {}
-
-                        output_payload = event.get("output")
-                        tool_output = dict(output_payload) if isinstance(output_payload, Mapping) else {}
-                        if not tool_output:
-                            tool_output = _summarize_tool_result(tool_name, {"status": status_value})
 
                         remote_payload = _sanitize_remote_meta(event.get("remote"))
 
@@ -1251,6 +1258,21 @@ class AgentRunProcessingService:
                         )
                     except Exception:  # pragma: no cover - best effort only
                         logger.exception("agent_run_tool_transcript_append_failed run=%s tool=%s", run.id, tool_name)
+
+                    if getattr(settings, "MCP_RUN_MEMORY_ENABLED", True) and tool_name:
+                        try:
+                            from apps.conversations.memory_extraction import MemoryExtractionService
+
+                            extractor = MemoryExtractionService()
+                            extractor.extract_from_tool_result(
+                                run=run,
+                                tool_name=tool_name,
+                                arguments=tool_args,
+                                result=extraction_result,
+                                user=run.created_by if getattr(run, "created_by_id", None) else None,
+                            )
+                        except Exception:  # pragma: no cover - best effort only
+                            logger.exception("agent_run_memory_extraction_failed run=%s tool=%s", run.id, tool_name)
 
             metadata_snapshot = run_metadata if isinstance(run_metadata, Mapping) else {}
             trigger_context_summary = ""

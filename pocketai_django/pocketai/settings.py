@@ -757,9 +757,97 @@ MCP_PROACTIVE_COMPACTION_KEEP_LAST_TURNS = max(1, min(25, MCP_PROACTIVE_COMPACTI
 MCP_LONG_CHAT_MEMORY_ENABLED = os.getenv("MCP_LONG_CHAT_MEMORY_ENABLED", "true").lower() in {"1", "true", "yes"}
 try:
     # MCP_MEMORY_RECENT_MESSAGES: Number of recent messages kept verbatim in the prompt.
-    MCP_MEMORY_RECENT_MESSAGES = int(os.getenv("MCP_MEMORY_RECENT_MESSAGES", "4"))
+    # Increased from 4 to 20 to maintain better context in long conversations.
+    MCP_MEMORY_RECENT_MESSAGES = int(os.getenv("MCP_MEMORY_RECENT_MESSAGES", "20"))
 except (TypeError, ValueError):
-    MCP_MEMORY_RECENT_MESSAGES = 4
+    MCP_MEMORY_RECENT_MESSAGES = 20
+try:
+    # MCP_EXECUTION_HISTORY_LIMIT: Number of messages kept for execution conversations (sub-agents).
+    # Sub-agents need larger history to maintain context across multi-step tool executions and approval flows.
+    MCP_EXECUTION_HISTORY_LIMIT = int(os.getenv("MCP_EXECUTION_HISTORY_LIMIT", "30"))
+except (TypeError, ValueError):
+    MCP_EXECUTION_HISTORY_LIMIT = 30
+
+# Agent run memory extraction (structured memory for sub-agent workflows).
+MCP_RUN_MEMORY_ENABLED = os.getenv("MCP_RUN_MEMORY_ENABLED", "true").lower() in {"1", "true", "yes"}
+MCP_MEMORY_LLM_EXTRACTION_ENABLED = (
+    os.getenv("MCP_MEMORY_LLM_EXTRACTION_ENABLED", "false").lower() in {"1", "true", "yes"}
+)
+try:
+    MCP_RUN_MEMORY_MAX_ITEMS = int(os.getenv("MCP_RUN_MEMORY_MAX_ITEMS", "30"))
+except (TypeError, ValueError):
+    MCP_RUN_MEMORY_MAX_ITEMS = 30
+try:
+    MCP_RUN_MEMORY_ITEM_MAX_CHARS = int(os.getenv("MCP_RUN_MEMORY_ITEM_MAX_CHARS", "240"))
+except (TypeError, ValueError):
+    MCP_RUN_MEMORY_ITEM_MAX_CHARS = 240
+try:
+    MCP_RUN_MEMORY_FACTS_MAX_ITEMS = int(os.getenv("MCP_RUN_MEMORY_FACTS_MAX_ITEMS", "15"))
+except (TypeError, ValueError):
+    MCP_RUN_MEMORY_FACTS_MAX_ITEMS = 15
+try:
+    MCP_RUN_MEMORY_DECISIONS_MAX_ITEMS = int(os.getenv("MCP_RUN_MEMORY_DECISIONS_MAX_ITEMS", "10"))
+except (TypeError, ValueError):
+    MCP_RUN_MEMORY_DECISIONS_MAX_ITEMS = 10
+try:
+    MCP_RUN_MEMORY_WORKFLOW_MAX_ITEMS = int(os.getenv("MCP_RUN_MEMORY_WORKFLOW_MAX_ITEMS", "5"))
+except (TypeError, ValueError):
+    MCP_RUN_MEMORY_WORKFLOW_MAX_ITEMS = 5
+try:
+    MCP_RUN_MEMORY_NOTES_MAX_ITEMS = int(os.getenv("MCP_RUN_MEMORY_NOTES_MAX_ITEMS", "6"))
+except (TypeError, ValueError):
+    MCP_RUN_MEMORY_NOTES_MAX_ITEMS = 6
+try:
+    MCP_MEMORY_DEFAULT_HOT_DAYS = int(os.getenv("MCP_MEMORY_DEFAULT_HOT_DAYS", "7"))
+except (TypeError, ValueError):
+    MCP_MEMORY_DEFAULT_HOT_DAYS = 7
+try:
+    MCP_MEMORY_DEFAULT_WARM_DAYS = int(os.getenv("MCP_MEMORY_DEFAULT_WARM_DAYS", "30"))
+except (TypeError, ValueError):
+    MCP_MEMORY_DEFAULT_WARM_DAYS = 30
+try:
+    MCP_MEMORY_DEFAULT_ARCHIVE_DAYS = int(os.getenv("MCP_MEMORY_DEFAULT_ARCHIVE_DAYS", "90"))
+except (TypeError, ValueError):
+    MCP_MEMORY_DEFAULT_ARCHIVE_DAYS = 90
+
+# Conversation compaction (store older segments for retrieval + summary injection).
+MCP_COMPACTION_ENABLED = os.getenv("MCP_COMPACTION_ENABLED", "true").lower() in {"1", "true", "yes"}
+try:
+    MCP_COMPACTION_TRIGGER_THRESHOLD = float(os.getenv("MCP_COMPACTION_TRIGGER_THRESHOLD", "0.70"))
+except (TypeError, ValueError):
+    MCP_COMPACTION_TRIGGER_THRESHOLD = 0.70
+try:
+    MCP_COMPACTION_TARGET_THRESHOLD = float(os.getenv("MCP_COMPACTION_TARGET_THRESHOLD", "0.60"))
+except (TypeError, ValueError):
+    MCP_COMPACTION_TARGET_THRESHOLD = 0.60
+try:
+    MCP_CONTEXT_WINDOW_TOKENS = int(os.getenv("MCP_CONTEXT_WINDOW_TOKENS", "200000"))
+except (TypeError, ValueError):
+    MCP_CONTEXT_WINDOW_TOKENS = 200000
+try:
+    MCP_COMPACTION_PRESERVE_LAST_MESSAGES = int(os.getenv("MCP_COMPACTION_PRESERVE_LAST_MESSAGES", "15"))
+except (TypeError, ValueError):
+    MCP_COMPACTION_PRESERVE_LAST_MESSAGES = 15
+try:
+    MCP_COMPACTION_MAX_MESSAGES_PER_SEGMENT = int(os.getenv("MCP_COMPACTION_MAX_MESSAGES_PER_SEGMENT", "120"))
+except (TypeError, ValueError):
+    MCP_COMPACTION_MAX_MESSAGES_PER_SEGMENT = 120
+try:
+    MCP_COMPACTION_SUMMARY_MAX_CHARS = int(os.getenv("MCP_COMPACTION_SUMMARY_MAX_CHARS", "4000"))
+except (TypeError, ValueError):
+    MCP_COMPACTION_SUMMARY_MAX_CHARS = 4000
+try:
+    MCP_COMPACTION_TRANSCRIPT_MAX_CHARS = int(os.getenv("MCP_COMPACTION_TRANSCRIPT_MAX_CHARS", "12000"))
+except (TypeError, ValueError):
+    MCP_COMPACTION_TRANSCRIPT_MAX_CHARS = 12000
+try:
+    MCP_COMPACTION_EMBED_TEXT_MAX_CHARS = int(os.getenv("MCP_COMPACTION_EMBED_TEXT_MAX_CHARS", "8000"))
+except (TypeError, ValueError):
+    MCP_COMPACTION_EMBED_TEXT_MAX_CHARS = 8000
+try:
+    MCP_COMPACTION_PROMPT_SEGMENTS = int(os.getenv("MCP_COMPACTION_PROMPT_SEGMENTS", "3"))
+except (TypeError, ValueError):
+    MCP_COMPACTION_PROMPT_SEGMENTS = 3
 try:
     # MCP_MEMORY_UPDATE_AFTER_MESSAGES: Refresh summary after N new messages.
     MCP_MEMORY_UPDATE_AFTER_MESSAGES = int(os.getenv("MCP_MEMORY_UPDATE_AFTER_MESSAGES", "10"))

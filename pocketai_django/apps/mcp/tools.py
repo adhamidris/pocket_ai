@@ -25,7 +25,7 @@ import uuid
 from bisect import bisect_left
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from functools import lru_cache
 import logging
 import math
@@ -439,6 +439,41 @@ GATEWAY_TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
 
 
 TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
+    _function_schema(
+        name="retrieve_earlier_context",
+        description=(
+            "Retrieve detailed context from earlier conversation history that was compacted. "
+            "Use this when you need specific facts or messages from earlier turns."
+        ),
+        properties={
+            "query": {"type": "string", "description": "What to search for (keywords or a short question)."},
+            "segment_id": {
+                "type": "string",
+                "description": "Optional: exact compacted segment id returned by a previous retrieve_earlier_context call.",
+            },
+            "timeframe": {
+                "type": "string",
+                "description": "Which part of history to search.",
+                "enum": ["first_10_turns", "turns_10_to_20", "recent", "oldest", "all"],
+            },
+            "include_full_segment": {
+                "type": "boolean",
+                "description": "When true, return the full compacted segment messages (may be large).",
+            },
+            "max_messages": {
+                "type": "integer",
+                "description": "Maximum messages to return (applies to both matched and full segment output).",
+                "minimum": 1,
+                "maximum": 50,
+            },
+            "__ui": {
+                "type": "object",
+                "description": "UI-only metadata (ignored by the tool).",
+                "properties": {"spinner_text": {"type": "string"}},
+            },
+        },
+        required=(),
+    ),
     _function_schema(
         name="portal_emit_blocks",
         description=(
@@ -5821,7 +5856,18 @@ def _agentic_read_v2_handler(
             "hint": "items[] must contain at least one {id} from search_knowledge results.",
         }
 
-    business = conversation.business_profile
+    # NOTE: Some unit tests pass a lightweight conversation stub (SimpleNamespace)
+    # instead of a real BusinessProfile instance. Avoid blowing up inside ORM
+    # lookups by normalizing to a UUID early and returning a structured error
+    # when missing/invalid.
+    business_uuid: uuid.UUID | None = None
+    raw_business_id = getattr(conversation, "business_profile_id", None)
+    try:
+        if raw_business_id is not None:
+            business_uuid = uuid.UUID(str(raw_business_id))
+    except (TypeError, ValueError, AttributeError):
+        business_uuid = None
+    business = getattr(conversation, "business_profile", None)
     redact_text = _should_redact_text_pii(conversation)
 
     def _upload_title(upload: KnowledgeUpload | None) -> str:
@@ -5871,6 +5917,18 @@ def _agentic_read_v2_handler(
         KnowledgeUploadTableRow | None,
         dict[str, object] | None,
     ]:
+        if business_uuid is None:
+            return (
+                None,
+                None,
+                None,
+                None,
+                {
+                    "id": item_id,
+                    "error_code": "invalid_business_profile",
+                    "hint": "conversation.business_profile_id must be a UUID.",
+                },
+            )
         try:
             identifier = uuid.UUID(item_id)
         except (TypeError, ValueError):
@@ -5880,7 +5938,7 @@ def _agentic_read_v2_handler(
             apply_customer_visible_chunks(
                 KnowledgeUploadChunk.objects.filter(
                     id=identifier,
-                    business_profile=business,
+                    business_profile_id=business_uuid,
                     upload__status=KnowledgeStatus.ACTIVE,
                 )
             )
@@ -5894,7 +5952,7 @@ def _agentic_read_v2_handler(
         upload_record = apply_customer_visible_uploads(
             KnowledgeUpload.objects.filter(
                 id=identifier,
-                business_profile=business,
+                business_profile_id=business_uuid,
                 status=KnowledgeStatus.ACTIVE,
             )
         ).first()
@@ -5904,7 +5962,7 @@ def _agentic_read_v2_handler(
         table_record = (
             KnowledgeUploadTable.objects.filter(
                 id=identifier,
-                upload__business_profile=business,
+                upload__business_profile_id=business_uuid,
                 upload__status=KnowledgeStatus.ACTIVE,
             )
             .exclude(upload__visibility=KnowledgeVisibility.INTERNAL)
@@ -5929,7 +5987,7 @@ def _agentic_read_v2_handler(
         row_record = (
             KnowledgeUploadTableRow.objects.filter(
                 id=identifier,
-                table__upload__business_profile=business,
+                table__upload__business_profile_id=business_uuid,
                 table__upload__status=KnowledgeStatus.ACTIVE,
             )
             .exclude(table__upload__visibility=KnowledgeVisibility.INTERNAL)
@@ -14626,7 +14684,265 @@ def _continue_agent_run_handler(
     }
 
 
+def _retrieve_earlier_context_handler(
+    arguments: Mapping[str, object],
+    *,
+    conversation: Conversation,
+    context: ToolExecutionContext | None = None,
+) -> Mapping[str, object]:
+    del context
+
+    query = str(arguments.get("query") or "").strip()
+    segment_id_raw = str(arguments.get("segment_id") or "").strip()
+    timeframe = str(arguments.get("timeframe") or "all").strip().lower()
+    include_full_segment = bool(arguments.get("include_full_segment"))
+    try:
+        max_messages = int(arguments.get("max_messages") or (50 if include_full_segment else 12))
+    except (TypeError, ValueError):
+        max_messages = 50 if include_full_segment else 12
+    max_messages = max(1, min(50, max_messages))
+
+    if segment_id_raw:
+        try:
+            seg_uuid = uuid.UUID(segment_id_raw)
+        except (TypeError, ValueError):
+            return {
+                "tool": "retrieve_earlier_context",
+                "status": "error",
+                "error": "invalid_segment_id",
+                "hint": "segment_id must be a valid UUID.",
+            }
+        segment = conversation.compacted_segments.filter(id=seg_uuid).first()
+        if not segment:
+            return {
+                "tool": "retrieve_earlier_context",
+                "status": "ok",
+                "found": False,
+                "message": "Compacted segment not found for this conversation.",
+                "segment_id": segment_id_raw,
+            }
+        messages_out = list(segment.full_messages or [])
+        if len(messages_out) > max_messages:
+            messages_out = messages_out[:max_messages]
+        return {
+            "tool": "retrieve_earlier_context",
+            "status": "ok",
+            "found": True,
+            "match_method": "direct",
+            "segment_id": str(segment.id),
+            "segment": str(segment.segment_range or ""),
+            "summary": str(segment.summary or ""),
+            "facts": segment.extracted_facts if isinstance(segment.extracted_facts, Mapping) else {},
+            "decisions": segment.extracted_decisions if isinstance(segment.extracted_decisions, Mapping) else {},
+            "messages": messages_out if include_full_segment else [],
+        }
+
+    if not query:
+        return {
+            "tool": "retrieve_earlier_context",
+            "status": "error",
+            "error": "missing_query",
+            "hint": "Provide a query string (or segment_id) to search compacted history.",
+        }
+
+    business_profile = getattr(conversation, "business_profile", None)
+    max_retention_days = None
+    if business_profile is not None:
+        try:
+            config = business_profile.memory_config
+        except Exception:
+            config = None
+        if config and config.maximum_retention_days is not None:
+            try:
+                max_retention_days = int(config.maximum_retention_days)
+            except (TypeError, ValueError):
+                max_retention_days = None
+
+    base_qs = conversation.compacted_segments.all()
+    if max_retention_days and max_retention_days > 0:
+        from django.utils import timezone as django_timezone
+
+        cutoff = django_timezone.now() - timedelta(days=max_retention_days)
+        base_qs = base_qs.filter(compacted_at__gte=cutoff)
+
+    # Apply coarse timeframe narrowing (fine-grained turn-range filtering happens after ranking).
+    if timeframe in {"recent"}:
+        base_qs = base_qs.order_by("-compacted_at")[:15]
+    elif timeframe in {"oldest"}:
+        base_qs = base_qs.order_by("compacted_at")[:15]
+
+    segments = list(base_qs)
+    if not segments:
+        return {
+            "tool": "retrieve_earlier_context",
+            "status": "ok",
+            "found": False,
+            "message": "No compacted history segments are available yet.",
+            "query": query,
+        }
+
+    def _parse_range(label: str) -> tuple[int, int] | None:
+        match = re.match(r"^turns_(\\d+)_to_(\\d+)$", str(label or "").strip().lower())
+        if not match:
+            return None
+        try:
+            start = int(match.group(1))
+            end = int(match.group(2))
+        except (TypeError, ValueError):
+            return None
+        if start <= 0 or end <= 0:
+            return None
+        if end < start:
+            start, end = end, start
+        return (start, end)
+
+    def _overlaps_turn_range(segment_range: str, start: int, end: int) -> bool:
+        parsed = _parse_range(segment_range)
+        if not parsed:
+            return False
+        seg_start, seg_end = parsed
+        return not (seg_end < start or seg_start > end)
+
+    desired_turn_range = None
+    if timeframe == "first_10_turns":
+        desired_turn_range = (1, 10)
+    elif timeframe == "turns_10_to_20":
+        desired_turn_range = (10, 20)
+    if desired_turn_range:
+        start, end = desired_turn_range
+        range_filtered = [s for s in segments if _overlaps_turn_range(str(s.segment_range or ""), start, end)]
+        if range_filtered:
+            segments = range_filtered
+
+    query_tokens = {token for token in re.split(r"\\W+", query.lower()) if token}
+
+    def _score_text(text: str) -> int:
+        if not text or not query_tokens:
+            return 0
+        lowered = text.lower()
+        score = 0
+        for token in query_tokens:
+            if token and token in lowered:
+                score += 1
+        return score
+
+    best_segment = None
+    match_method = "lexical"
+    vector_distance = None
+
+    embedder = _portal_file_embedding_service()
+    query_vector: list[float] | None = None
+    if embedder:
+        try:
+            query_vector = embedder.embed_text(query)
+        except Exception:
+            query_vector = None
+
+    if query_vector:
+        # Opportunistic backfill: ensure recent segments have embeddings.
+        expected_dim = int(getattr(settings, "EMBED_DIM", 384) or 384)
+        missing = [s for s in segments if getattr(s, "embedding", None) is None and str(getattr(s, "summary", "") or "").strip()]
+        for seg in missing[:10]:
+            try:
+                vec = embedder.embed_text(str(seg.summary or "").strip())
+            except Exception:
+                continue
+            if vec and len(vec) == expected_dim:
+                try:
+                    seg.__class__.objects.filter(id=seg.id).update(embedding=vec)
+                except Exception:
+                    continue
+
+        try:
+            from pgvector.django import CosineDistance
+        except Exception:
+            query_vector = None
+        else:
+            ann_limit = max(20, min(80, len(segments) * 5))
+            seg_ids = [s.id for s in segments]
+            ranked = (
+                conversation.compacted_segments.filter(id__in=seg_ids)
+                .exclude(embedding__isnull=True)
+                .annotate(distance=CosineDistance("embedding", query_vector))
+                .order_by("distance", "id")[:ann_limit]
+            )
+            ranked_list = list(ranked)
+            if ranked_list:
+                best_segment = ranked_list[0]
+                match_method = "semantic"
+                try:
+                    vector_distance = float(getattr(best_segment, "distance", None) or 0.0)
+                except (TypeError, ValueError):
+                    vector_distance = None
+
+    if best_segment is None:
+        best_score = 0
+        for segment in segments:
+            score = _score_text(str(segment.summary or ""))
+            if isinstance(segment.extracted_facts, Mapping):
+                score += _score_text(json.dumps(segment.extracted_facts, ensure_ascii=False))
+            if isinstance(segment.extracted_decisions, Mapping):
+                score += _score_text(json.dumps(segment.extracted_decisions, ensure_ascii=False))
+            if score > best_score:
+                best_score = score
+                best_segment = segment
+        if not best_segment or best_score == 0:
+            return {
+                "tool": "retrieve_earlier_context",
+                "status": "ok",
+                "found": False,
+                "message": "No matching compacted history found for that query.",
+                "query": query,
+            }
+
+    # Message selection
+    if include_full_segment:
+        messages_out = list(best_segment.full_messages or [])
+        if len(messages_out) > max_messages:
+            messages_out = messages_out[:max_messages]
+    else:
+        matched_messages: list[dict[str, object]] = []
+        for msg in best_segment.full_messages or []:
+            if not isinstance(msg, Mapping):
+                continue
+            body = str(msg.get("body") or "")
+            meta = msg.get("metadata") if isinstance(msg.get("metadata"), Mapping) else {}
+            block_text = ""
+            blocks = msg.get("content_blocks")
+            if isinstance(blocks, list):
+                block_text = json.dumps(blocks, ensure_ascii=False)
+            if _score_text(body) > 0 or _score_text(block_text) > 0 or _score_text(json.dumps(meta, ensure_ascii=False)) > 0:
+                matched_messages.append(
+                    {
+                        "id": str(msg.get("id") or ""),
+                        "sender": msg.get("sender"),
+                        "body": body[:2400],
+                        "metadata": meta,
+                        "sent_at": msg.get("sent_at"),
+                    }
+                )
+            if len(matched_messages) >= max_messages:
+                break
+        messages_out = matched_messages
+
+    return {
+        "tool": "retrieve_earlier_context",
+        "status": "ok",
+        "found": True,
+        "match_method": match_method,
+        "query": query,
+        "segment_id": str(best_segment.id),
+        "segment": str(best_segment.segment_range or ""),
+        "summary": str(best_segment.summary or ""),
+        "vector_distance": vector_distance,
+        "facts": best_segment.extracted_facts if isinstance(best_segment.extracted_facts, Mapping) else {},
+        "decisions": best_segment.extracted_decisions if isinstance(best_segment.extracted_decisions, Mapping) else {},
+        "messages": messages_out,
+    }
+
+
 _TOOL_HANDLERS: dict[str, ToolHandler] = {
+    "retrieve_earlier_context": _retrieve_earlier_context_handler,
     "mcp_search_tools": _mcp_search_tools_handler,
     "mcp_call_tool": _mcp_call_tool_handler,
     "request_user_input": _request_user_input_handler,

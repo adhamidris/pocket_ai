@@ -288,6 +288,34 @@ class BusinessProfile(models.Model):
         super().save(*args, **kwargs)
 
 
+class TenantMemoryConfiguration(models.Model):
+    """
+    Per-tenant configuration for memory lifecycle and retention.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.OneToOneField(
+        BusinessProfile,
+        related_name="memory_config",
+        on_delete=models.CASCADE,
+    )
+    default_hot_period_days = models.IntegerField(default=7)
+    default_warm_period_days = models.IntegerField(default=30)
+    default_archive_after_days = models.IntegerField(default=90)
+    custom_rules = models.JSONField(default=dict, blank=True)
+    minimum_retention_days = models.IntegerField(default=0)
+    maximum_retention_days = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "accounts_tenant_memory_configuration"
+        ordering = ("-updated_at",)
+
+    def __str__(self) -> str:  # pragma: no cover - human readable only
+        return f"TenantMemoryConfiguration<{self.business_profile_id}>"
+
+
 class AgentProfile(models.Model):
     """
     Stores the virtual agent configuration gathered during registration step 3.

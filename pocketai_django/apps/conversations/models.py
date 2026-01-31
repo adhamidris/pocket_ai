@@ -169,6 +169,41 @@ class ConversationMessage(models.Model):
         return f"{self.conversation_id}:{self.sender}"
 
 
+class CompactedHistorySegment(models.Model):
+    """
+    Stores compacted conversation segments for on-demand retrieval.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    conversation = models.ForeignKey(
+        Conversation,
+        related_name="compacted_segments",
+        on_delete=models.CASCADE,
+    )
+    segment_range = models.CharField(max_length=64)
+    start_message_id = models.UUIDField()
+    end_message_id = models.UUIDField()
+    summary = models.TextField()
+    full_messages = models.JSONField()
+    embedding = VectorField(dimensions=settings.EMBED_DIM, null=True, blank=True)
+    extracted_facts = models.JSONField(default=dict, blank=True)
+    extracted_decisions = models.JSONField(default=dict, blank=True)
+    token_count_original = models.IntegerField()
+    token_count_summary = models.IntegerField()
+    compression_ratio = models.FloatField()
+    compacted_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "conversations_compacted_history_segment"
+        ordering = ("-compacted_at",)
+        indexes = [
+            models.Index(fields=["conversation", "compacted_at"], name="conv_compacted_at_idx"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - human readable only
+        return f"{self.conversation_id}:{self.segment_range}"
+
+
 class ConversationToolApprovalStatus(models.TextChoices):
     PENDING = "pending", "Pending"
     APPROVED = "approved", "Approved"
@@ -791,6 +826,10 @@ class AgentRunMemoryKind(models.TextChoices):
     SOP = "sop", "SOP"
     DECISION = "decision", "Decision"
     NOTE = "note", "Note"
+    # New kinds for context optimization (Phase 2)
+    EXTRACTED_DATA = "extracted_data", "Extracted Data"
+    WORKFLOW_STATE = "workflow_state", "Workflow State"
+    CONTEXT_SNAPSHOT = "context_snapshot", "Context Snapshot"
 
 
 class AgentRunMemoryItem(models.Model):
