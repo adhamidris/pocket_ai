@@ -14691,6 +14691,7 @@ def _retrieve_earlier_context_handler(
     context: ToolExecutionContext | None = None,
 ) -> Mapping[str, object]:
     del context
+    start = time.perf_counter()
 
     query = str(arguments.get("query") or "").strip()
     segment_id_raw = str(arguments.get("segment_id") or "").strip()
@@ -14702,25 +14703,80 @@ def _retrieve_earlier_context_handler(
         max_messages = 50 if include_full_segment else 12
     max_messages = max(1, min(50, max_messages))
 
+    def _log_performance(
+        payload: Mapping[str, object],
+        *,
+        segments_available: int | None = None,
+        semantic_enabled: bool | None = None,
+        embeddings_backfilled: int | None = None,
+        embeddings_backfill_attempted: int | None = None,
+        ranked_candidates: int | None = None,
+    ) -> None:
+        duration_ms = int((time.perf_counter() - start) * 1000.0)
+        warn_ms = int(getattr(settings, "MCP_SLO_RETRIEVE_EARLIER_CONTEXT_WARN_MS", 1200) or 0)
+        slow = bool(warn_ms and duration_ms >= warn_ms)
+        status_value = str(payload.get("status") or "").strip().lower() or "ok"
+        detail: dict[str, object] = {
+            "status": payload.get("status"),
+            "found": payload.get("found"),
+            "match_method": payload.get("match_method"),
+            "segment_id": payload.get("segment_id"),
+            "vector_distance": payload.get("vector_distance"),
+            "duration_ms": duration_ms,
+            "timeframe": timeframe,
+            "include_full_segment": include_full_segment,
+            "max_messages": max_messages,
+            "query_chars": len(query),
+            "segment_id_provided": bool(segment_id_raw),
+            "segments_available": segments_available,
+            "semantic_enabled": semantic_enabled,
+            "ranked_candidates": ranked_candidates,
+            "embeddings_backfilled": embeddings_backfilled,
+            "embeddings_backfill_attempted": embeddings_backfill_attempted,
+        }
+        try:
+            messages = payload.get("messages")
+            if isinstance(messages, (list, tuple)):
+                detail["messages_returned"] = len(messages)
+        except Exception:
+            pass
+        if slow:
+            detail["slo"] = "slow"
+            detail["slo_warn_ms"] = warn_ms
+        structured_log(
+            "mcp",
+            "retrieve_earlier_context.performance",
+            detail,
+            context={
+                "business": conversation.business_profile_id,
+                "conversation": conversation.id,
+            },
+            level=logging.WARNING if slow or status_value in {"error"} else logging.INFO,
+        )
+
     if segment_id_raw:
         try:
             seg_uuid = uuid.UUID(segment_id_raw)
         except (TypeError, ValueError):
-            return {
+            payload = {
                 "tool": "retrieve_earlier_context",
                 "status": "error",
                 "error": "invalid_segment_id",
                 "hint": "segment_id must be a valid UUID.",
             }
+            _log_performance(payload, semantic_enabled=False)
+            return payload
         segment = conversation.compacted_segments.filter(id=seg_uuid).first()
         if not segment:
-            return {
+            payload = {
                 "tool": "retrieve_earlier_context",
                 "status": "ok",
                 "found": False,
                 "message": "Compacted segment not found for this conversation.",
                 "segment_id": segment_id_raw,
             }
+            _log_performance(payload, semantic_enabled=False)
+            return payload
 
         # Enforce tenant maximum retention even for direct segment fetches.
         business_profile = getattr(conversation, "business_profile", None)
@@ -14741,18 +14797,20 @@ def _retrieve_earlier_context_handler(
             cutoff = django_timezone.now() - timedelta(days=max_retention_days)
             segment_end = getattr(segment, "end_message_sent_at", None) or getattr(segment, "compacted_at", None)
             if segment_end is not None and segment_end < cutoff:
-                return {
+                payload = {
                     "tool": "retrieve_earlier_context",
                     "status": "ok",
                     "found": False,
                     "message": "Compacted segment is outside this tenant's retention window.",
                     "segment_id": segment_id_raw,
                 }
+                _log_performance(payload, semantic_enabled=False)
+                return payload
 
         messages_out = list(segment.full_messages or [])
         if len(messages_out) > max_messages:
             messages_out = messages_out[:max_messages]
-        return {
+        payload = {
             "tool": "retrieve_earlier_context",
             "status": "ok",
             "found": True,
@@ -14764,14 +14822,18 @@ def _retrieve_earlier_context_handler(
             "decisions": segment.extracted_decisions if isinstance(segment.extracted_decisions, Mapping) else {},
             "messages": messages_out if include_full_segment else [],
         }
+        _log_performance(payload, semantic_enabled=False)
+        return payload
 
     if not query:
-        return {
+        payload = {
             "tool": "retrieve_earlier_context",
             "status": "error",
             "error": "missing_query",
             "hint": "Provide a query string (or segment_id) to search compacted history.",
         }
+        _log_performance(payload, semantic_enabled=False)
+        return payload
 
     business_profile = getattr(conversation, "business_profile", None)
     max_retention_days = None
@@ -14807,13 +14869,15 @@ def _retrieve_earlier_context_handler(
 
     segments = list(base_qs)
     if not segments:
-        return {
+        payload = {
             "tool": "retrieve_earlier_context",
             "status": "ok",
             "found": False,
             "message": "No compacted history segments are available yet.",
             "query": query,
         }
+        _log_performance(payload, segments_available=0, semantic_enabled=False)
+        return payload
 
     def _parse_range(label: str) -> tuple[int, int] | None:
         match = re.match(r"^turns_(\\d+)_to_(\\d+)$", str(label or "").strip().lower())
@@ -14872,18 +14936,26 @@ def _retrieve_earlier_context_handler(
         except Exception:
             query_vector = None
 
+    semantic_enabled = bool(query_vector)
+    embeddings_backfill_attempted = 0
+    embeddings_backfilled = 0
+    ranked_candidates = None
+
     if query_vector:
         # Opportunistic backfill: ensure recent segments have embeddings.
         expected_dim = int(getattr(settings, "EMBED_DIM", 384) or 384)
         missing = [s for s in segments if getattr(s, "embedding", None) is None and str(getattr(s, "summary", "") or "").strip()]
         for seg in missing[:10]:
+            embeddings_backfill_attempted += 1
             try:
                 vec = embedder.embed_text(str(seg.summary or "").strip())
             except Exception:
                 continue
             if vec and len(vec) == expected_dim:
                 try:
-                    seg.__class__.objects.filter(id=seg.id).update(embedding=vec)
+                    updated = seg.__class__.objects.filter(id=seg.id).update(embedding=vec)
+                    if updated:
+                        embeddings_backfilled += 1
                 except Exception:
                     continue
 
@@ -14901,6 +14973,7 @@ def _retrieve_earlier_context_handler(
                 .order_by("distance", "id")[:ann_limit]
             )
             ranked_list = list(ranked)
+            ranked_candidates = len(ranked_list)
             if ranked_list:
                 best_segment = ranked_list[0]
                 match_method = "semantic"
@@ -14921,13 +14994,22 @@ def _retrieve_earlier_context_handler(
                 best_score = score
                 best_segment = segment
         if not best_segment or best_score == 0:
-            return {
+            payload = {
                 "tool": "retrieve_earlier_context",
                 "status": "ok",
                 "found": False,
                 "message": "No matching compacted history found for that query.",
                 "query": query,
             }
+            _log_performance(
+                payload,
+                segments_available=len(segments),
+                semantic_enabled=semantic_enabled,
+                embeddings_backfilled=embeddings_backfilled,
+                embeddings_backfill_attempted=embeddings_backfill_attempted,
+                ranked_candidates=ranked_candidates,
+            )
+            return payload
 
     # Message selection
     if include_full_segment:
@@ -14959,7 +15041,7 @@ def _retrieve_earlier_context_handler(
                 break
         messages_out = matched_messages
 
-    return {
+    payload = {
         "tool": "retrieve_earlier_context",
         "status": "ok",
         "found": True,
@@ -14973,6 +15055,15 @@ def _retrieve_earlier_context_handler(
         "decisions": best_segment.extracted_decisions if isinstance(best_segment.extracted_decisions, Mapping) else {},
         "messages": messages_out,
     }
+    _log_performance(
+        payload,
+        segments_available=len(segments),
+        semantic_enabled=semantic_enabled,
+        embeddings_backfilled=embeddings_backfilled,
+        embeddings_backfill_attempted=embeddings_backfill_attempted,
+        ranked_candidates=ranked_candidates,
+    )
+    return payload
 
 
 _TOOL_HANDLERS: dict[str, ToolHandler] = {

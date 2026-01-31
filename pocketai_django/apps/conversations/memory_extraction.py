@@ -13,10 +13,13 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from typing import Any, Mapping
 
 from django.conf import settings
 from django.utils import timezone
+
+from apps.rag.rag_logging import structured_log
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +122,11 @@ class MemoryExtractionService:
         """
         from apps.conversations.models import AgentRunMemoryItem, AgentRunMemoryKind
 
+        started = time.perf_counter()
         created_items: list[AgentRunMemoryItem] = []
+        llm_enabled = bool(getattr(settings, "MCP_MEMORY_LLM_EXTRACTION_ENABLED", False))
+        llm_attempted = False
+        llm_created = 0
 
         # Skip if tool failed
         status = str(result.get("status") or "").strip().lower()
@@ -133,6 +140,7 @@ class MemoryExtractionService:
 
         # Rule-based extraction
         extracted = self._rule_based_extraction(tool_name, arguments, result, rules)
+        rule_based_created = 0
 
         # Create memory items from extracted data
         for key, value in extracted.items():
@@ -164,6 +172,7 @@ class MemoryExtractionService:
                     created_by=user,
                 )
                 created_items.append(item)
+                rule_based_created += 1
             except Exception as exc:
                 logger.warning(
                     "Failed to create memory item: run=%s tool=%s key=%s error=%s",
@@ -172,6 +181,7 @@ class MemoryExtractionService:
 
         # LLM fallback for complex extractions (if enabled and no extractions yet)
         if self.use_llm_fallback and not extracted:
+            llm_attempted = True
             llm_extracted = self._llm_extraction(tool_name, arguments, result)
             for item_data in llm_extracted:
                 try:
@@ -192,11 +202,47 @@ class MemoryExtractionService:
                         created_by=user,
                     )
                     created_items.append(item)
+                    llm_created += 1
                 except Exception as exc:
                     logger.warning(
                         "Failed to create LLM-extracted memory item: run=%s tool=%s error=%s",
                         run.id, tool_name, exc
                     )
+
+        duration_ms = int((time.perf_counter() - started) * 1000.0)
+        warn_ms = int(getattr(settings, "MCP_SLO_MEMORY_EXTRACTION_WARN_MS", 2500) or 0)
+        slow = bool(warn_ms and duration_ms >= warn_ms)
+        if created_items or llm_attempted or slow:
+            kind_counts: dict[str, int] = {}
+            for item in created_items:
+                kind_key = str(getattr(item, "kind", "") or "").strip() or "unknown"
+                kind_counts[kind_key] = kind_counts.get(kind_key, 0) + 1
+
+            detail: dict[str, object] = {
+                "tool_name": tool_name,
+                "tool_status": status or "ok",
+                "duration_ms": duration_ms,
+                "created_items": len(created_items),
+                "rule_based_created": rule_based_created,
+                "llm_enabled": llm_enabled,
+                "llm_attempted": llm_attempted,
+                "llm_created": llm_created,
+                "kinds": kind_counts,
+            }
+            if slow:
+                detail["slo"] = "slow"
+                detail["slo_warn_ms"] = warn_ms
+            structured_log(
+                "mcp",
+                "memory.extraction",
+                detail,
+                context={
+                    "business": getattr(run, "business_profile_id", None),
+                    "run": getattr(run, "id", None),
+                },
+                logger_obj=logger,
+                level=logging.WARNING if slow else logging.INFO,
+            )
 
         return created_items
 

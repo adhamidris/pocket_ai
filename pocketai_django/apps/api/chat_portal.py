@@ -60,6 +60,7 @@ from apps.rag.ai_orchestrator import (
     AiOrchestratorService,
     StreamingTurnContext,
 )
+from apps.rag.rag_logging import structured_log
 from apps.mcp.sanitizer import sanitize_placeholder_thinking, sanitize_text, sanitize_with_diagnostics
 from apps.mcp.tool_artifacts import store_remote_tool_output_artifact
 from apps.llm.llm_provider import load_default_provider
@@ -1742,11 +1743,61 @@ def portal_tool_approval(request: HttpRequest) -> JsonResponse:
             if not approval:
                 return _json_error("not_found", "Approval not found.", status=404)
             if approval.status != ConversationToolApprovalStatus.PENDING:
+                try:
+                    age_ms = None
+                    if approval.requested_at:
+                        age_ms = int((now - approval.requested_at).total_seconds() * 1000)
+                    structured_log(
+                        "portal",
+                        "approval.tool.decision",
+                        {
+                            "status": approval.status,
+                            "decision": decision,
+                            "already_resolved": True,
+                            "tool_name": approval.tool_name,
+                            "remote_tool_name": approval.remote_tool_name,
+                            "connection_id": str(approval.connection_id or ""),
+                            "age_ms": age_ms,
+                        },
+                        context={
+                            "business": business_id,
+                            "conversation": conversation.id,
+                            "approval": str(approval.id),
+                        },
+                        level=logging.INFO,
+                    )
+                except Exception:
+                    pass
                 return JsonResponse({"session": _session_to_dict(session), "approval": _serialize_tool_approval(approval)})
             if approval.expires_at and approval.expires_at <= now:
                 approval.status = ConversationToolApprovalStatus.EXPIRED
                 approval.resolved_at = now
                 approval.save(update_fields=["status", "resolved_at", "updated_at"])
+                try:
+                    age_ms = None
+                    if approval.requested_at:
+                        age_ms = int((now - approval.requested_at).total_seconds() * 1000)
+                    structured_log(
+                        "portal",
+                        "approval.tool.decision",
+                        {
+                            "status": approval.status,
+                            "decision": decision,
+                            "expired": True,
+                            "tool_name": approval.tool_name,
+                            "remote_tool_name": approval.remote_tool_name,
+                            "connection_id": str(approval.connection_id or ""),
+                            "age_ms": age_ms,
+                        },
+                        context={
+                            "business": business_id,
+                            "conversation": conversation.id,
+                            "approval": str(approval.id),
+                        },
+                        level=logging.INFO,
+                    )
+                except Exception:
+                    pass
                 return JsonResponse({"session": _session_to_dict(session), "approval": _serialize_tool_approval(approval)})
             approval.status = next_status
             approval.resolved_at = now
@@ -1883,6 +1934,35 @@ def portal_tool_approval(request: HttpRequest) -> JsonResponse:
                         metadata=next_meta,
                         updated_at=timezone.now(),
                     )
+
+    if approval:
+        try:
+            latency_ms = None
+            if approval.requested_at and approval.resolved_at:
+                latency_ms = int((approval.resolved_at - approval.requested_at).total_seconds() * 1000)
+            structured_log(
+                "portal",
+                "approval.tool.decision",
+                {
+                    "status": approval.status,
+                    "decision": decision,
+                    "remember": remember,
+                    "preference_saved": preference_saved,
+                    "tool_name": approval.tool_name,
+                    "remote_tool_name": approval.remote_tool_name,
+                    "connection_id": str(approval.connection_id or ""),
+                    "operation_type": str((approval.metadata or {}).get("operation_type") or ""),
+                    "latency_ms": latency_ms,
+                },
+                context={
+                    "business": business_id,
+                    "conversation": conversation.id,
+                    "approval": str(approval.id),
+                },
+                level=logging.INFO,
+            )
+        except Exception:  # pragma: no cover - observability must not block portal responses
+            pass
 
     return JsonResponse(
         {
@@ -2089,6 +2169,7 @@ def portal_agent_run_approval(request: HttpRequest) -> JsonResponse:
         }
 
     run: AgentRun | None = None
+    approval: ConversationToolApproval | None = None
     with transaction.atomic():
         with tenant_context(business_id):
             run = AgentRun.objects.select_for_update().filter(id=run_uuid, conversation_id=conversation.id).first()
@@ -2180,6 +2261,32 @@ def portal_agent_run_approval(request: HttpRequest) -> JsonResponse:
             run.refresh_from_db()
 
     assert run is not None
+    if approval is not None:
+        try:
+            latency_ms = None
+            if approval.requested_at and approval.resolved_at:
+                latency_ms = int((approval.resolved_at - approval.requested_at).total_seconds() * 1000)
+            structured_log(
+                "portal",
+                "approval.run.decision",
+                {
+                    "decision": decision_value,
+                    "approval_status": approval.status,
+                    "tool_name": approval.tool_name,
+                    "remote_tool_name": approval.remote_tool_name,
+                    "latency_ms": latency_ms,
+                    "actor_type": str(actor_snapshot.get("type") or ""),
+                },
+                context={
+                    "business": business_id,
+                    "conversation": conversation.id,
+                    "run": run.id,
+                    "approval": str(approval.id),
+                },
+                level=logging.INFO,
+            )
+        except Exception:  # pragma: no cover - observability must not block portal responses
+            pass
     return JsonResponse({"session": _session_to_dict(session), "run": _serialize_agent_run_for_portal(run)}, status=200)
 
 

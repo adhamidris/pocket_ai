@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
+from django.conf import settings
 from django.db import connection as db_connection
 from django.db import IntegrityError
 from django.db import transaction
@@ -18,6 +20,7 @@ from apps.conversations.models import (
     ConversationMaintenanceJobKind,
     ConversationMaintenanceJobStatus,
 )
+from apps.rag.rag_logging import structured_log
 from core.tenancy import tenant_bypass, tenant_context
 
 
@@ -248,14 +251,53 @@ class ConversationMaintenanceJobProcessingService:
 
     def _execute_compaction(self, job: ConversationMaintenanceJob, conversation: Conversation) -> ConversationMaintenanceJobProcessResult:
         service = ContextCompactionService()
+        started = time.perf_counter()
+        business_id = getattr(job, "business_profile_id", None) or getattr(conversation, "business_profile_id", None)
 
         # Mandatory safety gate at execution time.
         if not service.is_safe_to_compact(conversation):
             self._defer_job(job, delay_seconds=self.unsafe_backoff_seconds, reason="not_safe_to_compact")
+            duration_ms = int((time.perf_counter() - started) * 1000.0)
+            structured_log(
+                "mcp",
+                "compaction.performance",
+                {
+                    "status": "deferred",
+                    "job_kind": job.kind,
+                    "duration_ms": duration_ms,
+                    "reason": "not_safe_to_compact",
+                    "delay_seconds": float(self.unsafe_backoff_seconds),
+                },
+                context={
+                    "business": business_id,
+                    "conversation": conversation.id,
+                    "job": job.id,
+                },
+                logger_obj=logger,
+                level=logging.INFO,
+            )
             return ConversationMaintenanceJobProcessResult(job_id=job.id, status=ConversationMaintenanceJobStatus.QUEUED, requeued=True)
 
         # Nothing to do anymore (another worker already compacted, or the conversation shrank).
         if not service.should_compact(conversation):
+            duration_ms = int((time.perf_counter() - started) * 1000.0)
+            structured_log(
+                "mcp",
+                "compaction.performance",
+                {
+                    "status": "noop",
+                    "job_kind": job.kind,
+                    "duration_ms": duration_ms,
+                    "reason": "not_needed",
+                },
+                context={
+                    "business": business_id,
+                    "conversation": conversation.id,
+                    "job": job.id,
+                },
+                logger_obj=logger,
+                level=logging.INFO,
+            )
             return self._mark_succeeded(job)
 
         # Count only "real" execution attempts (not safety defers).
@@ -267,9 +309,80 @@ class ConversationMaintenanceJobProcessingService:
         ConversationMaintenanceJob.objects.filter(id=job.id).update(attempt_count=job.attempt_count, updated_at=now)
 
         try:
-            service.compact(conversation=conversation)
+            segment = service.compact(conversation=conversation)
         except Exception as exc:
+            duration_ms = int((time.perf_counter() - started) * 1000.0)
+            warn_ms = int(getattr(settings, "MCP_SLO_COMPACTION_WARN_MS", 30000) or 0)
+            slow = bool(warn_ms and duration_ms >= warn_ms)
+            structured_log(
+                "mcp",
+                "compaction.performance",
+                {
+                    "status": "error",
+                    "job_kind": job.kind,
+                    "duration_ms": duration_ms,
+                    "attempt_count": int(job.attempt_count or 0),
+                    "error": str(exc)[:500],
+                    "slo": "slow" if slow else None,
+                    "slo_warn_ms": warn_ms if slow else None,
+                },
+                context={
+                    "business": business_id,
+                    "conversation": conversation.id,
+                    "job": job.id,
+                },
+                logger_obj=logger,
+                level=logging.WARNING if slow else logging.INFO,
+            )
             return self._requeue_job_with_backoff(job, str(exc), reason="compaction_failed")
+
+        duration_ms = int((time.perf_counter() - started) * 1000.0)
+        warn_ms = int(getattr(settings, "MCP_SLO_COMPACTION_WARN_MS", 30000) or 0)
+        slow = bool(warn_ms and duration_ms >= warn_ms)
+        segment_created = bool(segment is not None)
+        detail: dict[str, object] = {
+            "status": "ok",
+            "job_kind": job.kind,
+            "duration_ms": duration_ms,
+            "attempt_count": int(job.attempt_count or 0),
+            "segment_created": segment_created,
+        }
+        if segment is not None:
+            detail.update(
+                {
+                    "segment_id": str(getattr(segment, "id", "") or ""),
+                    "segment_range": str(getattr(segment, "segment_range", "") or ""),
+                    "messages_compacted": len(getattr(segment, "full_messages", None) or ()),
+                    "summary_chars": len(str(getattr(segment, "summary", "") or "")),
+                    "token_count_original": getattr(segment, "token_count_original", None),
+                    "token_count_summary": getattr(segment, "token_count_summary", None),
+                    "compression_ratio": round(float(getattr(segment, "compression_ratio", 0.0) or 0.0), 4),
+                    "facts_count": len(getattr(segment, "extracted_facts", None) or {}),
+                    "decisions_count": len(getattr(segment, "extracted_decisions", None) or {}),
+                    "embedding_present": getattr(segment, "embedding", None) is not None,
+                }
+            )
+            try:
+                embedding_value = getattr(segment, "embedding", None)
+                if embedding_value is not None:
+                    detail["embedding_dim"] = len(embedding_value)  # type: ignore[arg-type]
+            except Exception:
+                pass
+        if slow:
+            detail["slo"] = "slow"
+            detail["slo_warn_ms"] = warn_ms
+        structured_log(
+            "mcp",
+            "compaction.performance",
+            detail,
+            context={
+                "business": business_id,
+                "conversation": conversation.id,
+                "job": job.id,
+            },
+            logger_obj=logger,
+            level=logging.WARNING if slow else logging.INFO,
+        )
 
         return self._mark_succeeded(job)
 

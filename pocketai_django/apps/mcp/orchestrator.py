@@ -2934,13 +2934,34 @@ class McpOrchestratorService:
                     # If the conversation isn't safe yet (pending approvals/active runs),
                     # schedule the first attempt a bit later to avoid worker thrash.
                     run_after = timezone.now()
-                    if not compaction_service.is_safe_to_compact(conversation):
+                    safe_to_compact = compaction_service.is_safe_to_compact(conversation)
+                    if not safe_to_compact:
                         try:
                             delay_seconds = float(getattr(settings, "MCP_COMPACTION_UNSAFE_BACKOFF_SECONDS", 60.0) or 60.0)
                         except (TypeError, ValueError):
                             delay_seconds = 60.0
                         run_after = timezone.now() + timedelta(seconds=max(1.0, delay_seconds))
-                    enqueue_compaction_job(conversation, run_after=run_after)
+                    job = enqueue_compaction_job(conversation, run_after=run_after)
+                    try:
+                        delay_s = max(0.0, float((run_after - timezone.now()).total_seconds()))
+                    except Exception:
+                        delay_s = 0.0
+                    structured_log(
+                        "mcp",
+                        "compaction.enqueue",
+                        {
+                            "enqueued": bool(job),
+                            "job_id": str(getattr(job, "id", "") or "") if job else None,
+                            "safe_to_compact": bool(safe_to_compact),
+                            "delay_seconds": round(delay_s, 2) if delay_s else 0,
+                        },
+                        context={
+                            "business": conversation.business_profile_id,
+                            "conversation": conversation.id,
+                        },
+                        logger_obj=logger,
+                        level=logging.INFO,
+                    )
             except Exception:  # pragma: no cover - defensive
                 logger.exception("mcp.compaction.trigger_failed", extra={"conversation_id": str(conversation.id)})
         llm_usage = None

@@ -26,6 +26,7 @@ from apps.conversations.models import (
     AgentRunStatus,
 )
 from apps.conversations.output_destinations import parse_summary_destination_id, parse_summary_max_chars
+from apps.rag.rag_logging import structured_log
 
 
 logger = logging.getLogger(__name__)
@@ -906,6 +907,33 @@ class AgentRunProcessingService:
             },
         )
 
+        try:
+            warn_ms = int(getattr(settings, "MCP_SLO_APPROVAL_TOOL_EXECUTION_WARN_MS", 5000) or 0)
+            slow = bool(warn_ms and duration_ms >= warn_ms)
+            structured_log(
+                "mcp",
+                "approval.pending_tool_execution",
+                {
+                    "tool_name": tool_name,
+                    "remote_tool_name": remote_tool_name,
+                    "is_remote": bool(connection_id and remote_tool_name),
+                    "status": status,
+                    "success": status.lower() not in {"error", "failed"},
+                    "duration_ms": duration_ms,
+                    "error_code": tool_result.get("error_code") if isinstance(tool_result, Mapping) else None,
+                    "slo": "slow" if slow else None,
+                    "slo_warn_ms": warn_ms if slow else None,
+                },
+                context={
+                    "business": getattr(run, "business_profile_id", None),
+                    "run": getattr(run, "id", None),
+                    "conversation": getattr(execution_conversation, "id", None),
+                },
+                level=logging.WARNING if slow else logging.INFO,
+            )
+        except Exception:  # pragma: no cover - observability must not break resume flow
+            pass
+
         return True
 
     def _execute_run(self, run: AgentRun) -> AgentRunProcessResult:
@@ -1605,6 +1633,32 @@ class AgentRunProcessingService:
             if not updated:
                 status_now = AgentRun.objects.filter(id=run.id).values_list("status", flat=True).first() or ""
                 return AgentRunProcessResult(run_id=str(run.id), status=str(status_now) or "unknown")
+
+            if next_status == AgentRunStatus.WAITING_APPROVAL and approval_id:
+                try:
+                    tool_name_value = ""
+                    remote_tool_name_value = ""
+                    if isinstance(pause_payload, Mapping):
+                        tool_name_value = str(pause_payload.get("tool_name") or "").strip()
+                        remote = pause_payload.get("remote") if isinstance(pause_payload.get("remote"), Mapping) else {}
+                        remote_tool_name_value = str(remote.get("tool") or remote.get("tool_name") or "").strip()
+                    structured_log(
+                        "mcp",
+                        "agent_run.waiting_approval",
+                        {
+                            "tool_name": tool_name_value,
+                            "remote_tool_name": remote_tool_name_value,
+                        },
+                        context={
+                            "business": business_id,
+                            "run": run.id,
+                            "conversation": getattr(execution_conversation, "id", None),
+                            "approval": approval_id,
+                        },
+                        level=logging.INFO,
+                    )
+                except Exception:  # pragma: no cover - observability must not block agent run processing
+                    pass
 
             if next_status == AgentRunStatus.COMPLETED:
                 self._append_event(
