@@ -2924,19 +2924,23 @@ class McpOrchestratorService:
                 pass
 
         if getattr(settings, "MCP_COMPACTION_ENABLED", True):
+            # Phase 6: enqueue durable background work (no inline threads).
             try:
                 from apps.conversations.compaction_service import ContextCompactionService
+                from apps.conversations.maintenance_job_processing import enqueue_compaction_job
 
                 compaction_service = ContextCompactionService()
                 if compaction_service.should_compact(conversation):
-                    if compaction_service.is_safe_to_compact(conversation):
-                        threading.Thread(
-                            target=compaction_service.compact,
-                            kwargs={"conversation": conversation},
-                            daemon=True,
-                        ).start()
-                    else:
-                        compaction_service.mark_pending(conversation)
+                    # If the conversation isn't safe yet (pending approvals/active runs),
+                    # schedule the first attempt a bit later to avoid worker thrash.
+                    run_after = timezone.now()
+                    if not compaction_service.is_safe_to_compact(conversation):
+                        try:
+                            delay_seconds = float(getattr(settings, "MCP_COMPACTION_UNSAFE_BACKOFF_SECONDS", 60.0) or 60.0)
+                        except (TypeError, ValueError):
+                            delay_seconds = 60.0
+                        run_after = timezone.now() + timedelta(seconds=max(1.0, delay_seconds))
+                    enqueue_compaction_job(conversation, run_after=run_after)
             except Exception:  # pragma: no cover - defensive
                 logger.exception("mcp.compaction.trigger_failed", extra={"conversation_id": str(conversation.id)})
         llm_usage = None

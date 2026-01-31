@@ -15,6 +15,7 @@ from typing import Any, Iterable, Mapping
 
 from django.conf import settings
 from django.db import close_old_connections
+from django.db import IntegrityError
 from django.db.models import Q
 from django.utils import timezone
 
@@ -43,9 +44,6 @@ class ContextCompactionService:
     def should_compact(self, conversation) -> bool:
         if not getattr(settings, "MCP_COMPACTION_ENABLED", True):
             return False
-        metadata = conversation.metadata if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
-        if metadata.get("compaction_in_progress"):
-            return False
 
         messages = self._fetch_uncompacted_messages(conversation)
         preserve_last_n = self._preserve_last_n()
@@ -54,9 +52,6 @@ class ContextCompactionService:
         candidates = messages[:-preserve_last_n]
         if not candidates:
             return False
-
-        if metadata.get("pending_compaction"):
-            return True
 
         total_tokens = self._estimate_tokens_for_messages(messages)
         trigger_tokens = int(self._context_window_tokens() * self._trigger_ratio())
@@ -70,8 +65,6 @@ class ContextCompactionService:
             return False
 
         metadata = conversation.metadata if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
-        if metadata.get("compaction_in_progress"):
-            return False
 
         source = str(metadata.get("source") or "").strip().lower()
         run_id = str(metadata.get("agent_run_id") or metadata.get("agentRunId") or "").strip()
@@ -87,33 +80,15 @@ class ContextCompactionService:
 
         return True
 
-    def mark_pending(self, conversation) -> None:
-        metadata = conversation.metadata if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
-        metadata = dict(metadata)
-        metadata["pending_compaction"] = True
-        metadata["pending_compaction_at"] = timezone.now().isoformat()
-        conversation.metadata = metadata
-        conversation.__class__.objects.filter(id=conversation.id).update(metadata=metadata)
-
     def compact(self, *, conversation, preserve_last_n: int | None = None):
         close_old_connections()
         if not getattr(settings, "MCP_COMPACTION_ENABLED", True):
             return None
 
         if not self.is_safe_to_compact(conversation):
-            self.mark_pending(conversation)
             return None
 
         from apps.conversations.models import CompactedHistorySegment
-
-        metadata = conversation.metadata if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
-        if metadata.get("compaction_in_progress"):
-            return None
-
-        metadata = dict(metadata)
-        metadata["compaction_in_progress"] = True
-        conversation.metadata = metadata
-        conversation.__class__.objects.filter(id=conversation.id).update(metadata=metadata)
 
         try:
             messages = self._fetch_uncompacted_messages(conversation)
@@ -129,8 +104,7 @@ class ContextCompactionService:
 
             total_tokens = self._estimate_tokens_for_messages(messages)
             target_tokens = int(self._context_window_tokens() * self._target_ratio())
-            pending = bool(metadata.get("pending_compaction"))
-            if total_tokens <= max(1, target_tokens) and not pending:
+            if total_tokens <= max(1, target_tokens):
                 self._clear_pending(conversation)
                 return None
 
@@ -154,27 +128,39 @@ class ContextCompactionService:
                 float(token_count_summary) / float(token_count_original) if token_count_original else 0.0
             )
 
-            segment = CompactedHistorySegment.objects.create(
-                conversation=conversation,
-                segment_range=segment_range,
-                start_message_id=candidates[0].id,
-                end_message_id=candidates[-1].id,
-                summary=summary_text,
-                full_messages=full_messages,
-                embedding=embedding_vector,
-                extracted_facts=extracted_facts,
-                extracted_decisions=extracted_decisions,
-                token_count_original=token_count_original,
-                token_count_summary=token_count_summary,
-                compression_ratio=compression_ratio,
-            )
+            try:
+                segment = CompactedHistorySegment.objects.create(
+                    conversation=conversation,
+                    segment_range=segment_range,
+                    start_message_id=candidates[0].id,
+                    end_message_id=candidates[-1].id,
+                    summary=summary_text,
+                    full_messages=full_messages,
+                    embedding=embedding_vector,
+                    extracted_facts=extracted_facts,
+                    extracted_decisions=extracted_decisions,
+                    token_count_original=token_count_original,
+                    token_count_summary=token_count_summary,
+                    compression_ratio=compression_ratio,
+                )
+            except IntegrityError:
+                # Another worker created the same segment concurrently (or we re-ran the job).
+                segment = (
+                    CompactedHistorySegment.objects.filter(
+                        conversation=conversation,
+                        start_message_id=candidates[0].id,
+                        end_message_id=candidates[-1].id,
+                    )
+                    .order_by("-compacted_at")
+                    .first()
+                )
 
             self._clear_pending(conversation, last_end_message_id=str(candidates[-1].id))
             return segment
-        except Exception:  # pragma: no cover - defensive
+        except Exception:
             logger.exception("conversation_compaction_failed conversation=%s", conversation.id)
             self._clear_pending(conversation)
-            return None
+            raise
 
     def _clear_pending(self, conversation, *, last_end_message_id: str | None = None) -> None:
         metadata = conversation.metadata if isinstance(getattr(conversation, "metadata", None), Mapping) else {}

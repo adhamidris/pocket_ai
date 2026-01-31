@@ -7,6 +7,7 @@ from datetime import datetime
 from django.conf import settings
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
+from django.db.models import Q
 from django.utils import timezone
 
 from pgvector.django import VectorField
@@ -199,9 +200,92 @@ class CompactedHistorySegment(models.Model):
         indexes = [
             models.Index(fields=["conversation", "compacted_at"], name="conv_compacted_at_idx"),
         ]
+        constraints = [
+            # Guard against duplicate inserts when multiple workers attempt to compact the same range.
+            models.UniqueConstraint(
+                fields=["conversation", "start_message_id", "end_message_id"],
+                name="uniq_compacted_history_segment_bounds",
+            ),
+        ]
 
     def __str__(self) -> str:  # pragma: no cover - human readable only
         return f"{self.conversation_id}:{self.segment_range}"
+
+
+class ConversationMaintenanceJobKind(models.TextChoices):
+    COMPACT_HISTORY = "compact_history", "Compact History"
+
+
+class ConversationMaintenanceJobStatus(models.TextChoices):
+    QUEUED = "queued", "Queued"
+    RUNNING = "running", "Running"
+    SUCCEEDED = "succeeded", "Succeeded"
+    FAILED = "failed", "Failed"
+
+
+class ConversationMaintenanceJob(models.Model):
+    """
+    DB-backed queue for background conversation maintenance tasks.
+
+    Phase 6: used to run compaction/embedding out-of-band (no inline threads).
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        "accounts.BusinessProfile",
+        related_name="conversation_maintenance_jobs",
+        on_delete=models.CASCADE,
+    )
+    conversation = models.ForeignKey(
+        Conversation,
+        related_name="maintenance_jobs",
+        on_delete=models.CASCADE,
+    )
+    kind = models.CharField(
+        max_length=64,
+        choices=ConversationMaintenanceJobKind.choices,
+        db_index=True,
+    )
+    status = models.CharField(
+        max_length=24,
+        choices=ConversationMaintenanceJobStatus.choices,
+        default=ConversationMaintenanceJobStatus.QUEUED,
+        db_index=True,
+    )
+    run_after = models.DateTimeField(null=True, blank=True, db_index=True)
+    lease_expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    attempt_count = models.PositiveIntegerField(default=0)
+    max_attempts = models.PositiveIntegerField(default=10)
+    error_detail = models.TextField(blank=True, default="")
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "conversations_conversation_maintenance_job"
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["business_profile", "status"], name="job_biz_status_idx"),
+            models.Index(fields=["status", "run_after"], name="job_status_run_after_idx"),
+            models.Index(fields=["status", "lease_expires_at"], name="job_status_lease_idx"),
+            models.Index(fields=["conversation", "created_at"], name="job_conv_created_idx"),
+        ]
+        constraints = [
+            # Idempotency: never enqueue more than one active maintenance job of the same kind
+            # for a conversation. (Succeeded/failed jobs don't block new work.)
+            models.UniqueConstraint(
+                fields=["conversation", "kind"],
+                condition=Q(status__in=[ConversationMaintenanceJobStatus.QUEUED, ConversationMaintenanceJobStatus.RUNNING]),
+                name="uniq_active_conversation_maintenance_job",
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.conversation_id and not self.business_profile_id and getattr(self, "conversation", None):
+            self.business_profile = self.conversation.business_profile
+        super().save(*args, **kwargs)
 
 
 class ConversationToolApprovalStatus(models.TextChoices):

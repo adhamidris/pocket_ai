@@ -849,6 +849,12 @@ try:
 except (TypeError, ValueError):
     MCP_COMPACTION_PROMPT_SEGMENTS = 3
 try:
+    # When compaction is queued but unsafe (pending approvals/active agent runs),
+    # delay the first attempt to avoid worker thrash.
+    MCP_COMPACTION_UNSAFE_BACKOFF_SECONDS = float(os.getenv("MCP_COMPACTION_UNSAFE_BACKOFF_SECONDS", "60"))
+except (TypeError, ValueError):
+    MCP_COMPACTION_UNSAFE_BACKOFF_SECONDS = 60.0
+try:
     # MCP_MEMORY_UPDATE_AFTER_MESSAGES: Refresh summary after N new messages.
     MCP_MEMORY_UPDATE_AFTER_MESSAGES = int(os.getenv("MCP_MEMORY_UPDATE_AFTER_MESSAGES", "10"))
 except (TypeError, ValueError):
