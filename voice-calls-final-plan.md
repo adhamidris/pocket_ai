@@ -350,5 +350,9 @@ This repository now contains:
   - Post-call worker (transcript + summary + optional R2 upload): `pocketai_django/apps/voice/management/commands/voice_post_call_worker.py`
   - MCP tool: `initiate_phone_call` (registered in `pocketai_django/apps/mcp/tools.py`)
   - Supervisor API (transcript SSE + hangup): `pocketai_django/apps/api/voice_calls.py`
+- Phase 2 (in-progress → implemented here): Arabic + code-switch QA
+  - Arabic TwiML consent/disclosure prompts: `pocketai_django/apps/voice/views_twilio.py`
+  - STT dual-stream for Arabic calls (ar + en) and per-chunk TTS voice selection: `pocketai_django/apps/voice/runtime.py`
+  - QA checklist/runbook: `pocketai_django/docs/voice/phase2_arabic_qa.md`
 
 Runbook: `pocketai_django/docs/voice/phase1_mvp.md`

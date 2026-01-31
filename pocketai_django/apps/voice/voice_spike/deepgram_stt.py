@@ -13,6 +13,7 @@ class DeepgramConfig:
     api_key: str
     model: str
     language: str
+    endpointing_ms: int = 300
 
     @staticmethod
     def from_env(*, language: str) -> "DeepgramConfig":
@@ -20,7 +21,13 @@ class DeepgramConfig:
         if not api_key:
             raise RuntimeError("DEEPGRAM_API_KEY is not configured.")
         model = (os.getenv("DEEPGRAM_MODEL") or "nova-2").strip()
-        return DeepgramConfig(api_key=api_key, model=model, language=language)
+        endpointing_ms_raw = (os.getenv("DEEPGRAM_ENDPOINTING_MS") or "300").strip()
+        try:
+            endpointing_ms = int(endpointing_ms_raw)
+        except Exception:
+            endpointing_ms = 300
+        endpointing_ms = max(0, min(2000, endpointing_ms))
+        return DeepgramConfig(api_key=api_key, model=model, language=language, endpointing_ms=endpointing_ms)
 
 
 def _deepgram_ws_url(*, config: DeepgramConfig) -> str:
@@ -33,9 +40,10 @@ def _deepgram_ws_url(*, config: DeepgramConfig) -> str:
         "language": config.language,
         "interim_results": "true",
         "punctuate": "true",
-        "endpointing": "300",
+        "endpointing": str(int(config.endpointing_ms)),
         "vad_events": "true",
         "smart_format": "true",
+        "numerals": "true",
     }
     query = "&".join(f"{k}={v}" for k, v in params.items())
     return f"wss://api.deepgram.com/v1/listen?{query}"

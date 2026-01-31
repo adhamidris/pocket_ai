@@ -131,6 +131,7 @@ def generate_summary_and_actions(session: CallSession) -> tuple[str, list[dict[s
     system_prompt = (
         "You summarize phone calls for a business workspace.\n"
         "Be factual and concise. Do not hallucinate.\n"
+        "Write the summary in the call's language (Arabic/English) when possible.\n"
         "Return JSON with keys: response_text (summary string), actions (array), extractions (empty array).\n"
         "If the customer asked for a follow-up, include a follow_up action in actions.\n"
     )
@@ -256,4 +257,3 @@ def process_post_call(session: CallSession) -> PostCallProcessingResult:
             summary_written=summary_written,
             recording_uploaded=recording_uploaded,
         )
-

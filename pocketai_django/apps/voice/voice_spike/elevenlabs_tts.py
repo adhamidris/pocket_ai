@@ -15,14 +15,35 @@ class ElevenLabsConfig:
     output_format: str
 
     @staticmethod
-    def from_env() -> "ElevenLabsConfig":
+    def from_env(*, language: str | None = None) -> "ElevenLabsConfig":
         api_key = (os.getenv("ELEVENLABS_API_KEY") or "").strip()
         if not api_key:
             raise RuntimeError("ELEVENLABS_API_KEY is not configured.")
-        voice_id = (os.getenv("ELEVENLABS_VOICE_ID") or os.getenv("ELEVENLABS_DEFAULT_VOICE_EN") or "").strip()
+
+        forced_voice_id = (os.getenv("ELEVENLABS_VOICE_ID") or "").strip()
+        if forced_voice_id:
+            voice_id = forced_voice_id
+        else:
+            language_norm = (language or "").strip().lower()
+            if language_norm == "ar":
+                voice_id = (
+                    (os.getenv("ELEVENLABS_DEFAULT_VOICE_AR") or "").strip()
+                    or (os.getenv("ELEVENLABS_DEFAULT_VOICE_EN") or "").strip()
+                )
+            else:
+                voice_id = (os.getenv("ELEVENLABS_DEFAULT_VOICE_EN") or "").strip()
+
         if not voice_id:
-            raise RuntimeError("ELEVENLABS_VOICE_ID is not configured (or ELEVENLABS_DEFAULT_VOICE_EN).")
-        model_id = (os.getenv("ELEVENLABS_MODEL_ID") or "eleven_flash_v2_5").strip()
+            raise RuntimeError(
+                "ELEVENLABS_VOICE_ID is not configured (or ELEVENLABS_DEFAULT_VOICE_EN/ELEVENLABS_DEFAULT_VOICE_AR)."
+            )
+
+        model_id = (os.getenv("ELEVENLABS_MODEL_ID") or "").strip()
+        if language and not model_id:
+            model_id = (os.getenv(f"ELEVENLABS_MODEL_ID_{language.strip().upper()}") or "").strip()
+        if not model_id:
+            model_id = "eleven_flash_v2_5"
+
         output_format = (os.getenv("ELEVENLABS_OUTPUT_FORMAT") or "ulaw_8000").strip()
         return ElevenLabsConfig(api_key=api_key, voice_id=voice_id, model_id=model_id, output_format=output_format)
 
@@ -59,4 +80,3 @@ async def stream_tts_audio(text: str, *, config: ElevenLabsConfig) -> AsyncItera
             async for chunk in resp.aiter_bytes():
                 if chunk:
                     yield chunk
-

@@ -67,28 +67,81 @@ def _twiml_decline() -> str:
     )
 
 
+def _say(*, text: str, language: str | None = None, voice: str | None = None) -> str:
+    attrs: list[str] = []
+    if language:
+        attrs.append(f'language="{_xml_escape(language)}"')
+    if voice:
+        attrs.append(f'voice="{_xml_escape(voice)}"')
+    attr_text = (" " + " ".join(attrs)) if attrs else ""
+    return f"<Say{attr_text}>{_xml_escape(text)}</Say>"
+
+
+def _twilio_language_tag(*, session: CallSession) -> str | None:
+    lang = str(session.language or "").strip().lower()
+    if lang != "ar":
+        return None
+
+    country = str(session.country or "").strip().upper()
+    mapping = {
+        "EG": "ar-EG",
+        "AE": "ar-AE",
+        "SA": "ar-SA",
+        "QA": "ar-QA",
+        "KW": "ar-KW",
+        "JO": "ar-JO",
+    }
+    return mapping.get(country, "ar-SA")
+
+
+def _twilio_voice_name(*, session: CallSession) -> str | None:
+    lang = str(session.language or "").strip().lower()
+    if lang == "ar":
+        return (os.getenv("VOICE_TWILIO_VOICE_AR") or "").strip() or "Polly.Zeina"
+    return (os.getenv("VOICE_TWILIO_VOICE_EN") or "").strip() or None
+
+
 def _twiml_gather_consent(*, session: CallSession, cfg) -> str:
     consent_url = f"{cfg.webhook_base_url}/voice/twilio/consent/{session.id}/"
 
-    disclosure = (
-        (os.getenv("VOICE_AI_DISCLOSURE_DEFAULT") or "").strip()
-        or "Hello. This is an AI assistant calling."
-    )
-    notice = (
-        f"{disclosure} "
-        "This call will be recorded. "
-        "Press 1 to consent and continue. "
-        "If you do not consent, please hang up."
-    )
+    lang_tag = _twilio_language_tag(session=session)
+    voice_name = _twilio_voice_name(session=session)
+
+    default_disclosure_en = "Hello. This is an AI assistant calling."
+    default_disclosure_ar = "مرحباً. أنا مساعد ذكاء اصطناعي أتصل بك."
+
+    lang = str(session.language or "").strip().lower()
+    disclosure = default_disclosure_ar if lang == "ar" else default_disclosure_en
+    disclosure_env_key = "VOICE_AI_DISCLOSURE_DEFAULT_AR" if lang == "ar" else "VOICE_AI_DISCLOSURE_DEFAULT"
+    disclosure = (os.getenv(disclosure_env_key) or "").strip() or disclosure
+
+    if lang == "ar":
+        notice = (
+            f"{disclosure} "
+            "سيتم تسجيل هذه المكالمة. "
+            "اضغط 1 للموافقة والمتابعة. "
+            "إذا لم توافق، يرجى إنهاء المكالمة."
+        )
+        prompt = "اضغط 1 للمتابعة."
+        no_consent = "لم يتم استلام الموافقة. مع السلامة."
+    else:
+        notice = (
+            f"{disclosure} "
+            "This call will be recorded. "
+            "Press 1 to consent and continue. "
+            "If you do not consent, please hang up."
+        )
+        prompt = "Press 1 to continue."
+        no_consent = "No consent received. Goodbye."
 
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
         "<Response>"
-        f"<Say>{_xml_escape(notice)}</Say>"
+        f"{_say(text=notice, language=lang_tag, voice=voice_name)}"
         f'<Gather numDigits="1" action="{_xml_escape(consent_url)}" method="POST" timeout="8">'
-        "<Say>Press 1 to continue.</Say>"
+        f"{_say(text=prompt, language=lang_tag, voice=voice_name)}"
         "</Gather>"
-        "<Say>No consent received. Goodbye.</Say>"
+        f"{_say(text=no_consent, language=lang_tag, voice=voice_name)}"
         "<Hangup/>"
         "</Response>"
     )
@@ -108,10 +161,18 @@ def _twiml_after_consent(*, session: CallSession, cfg) -> str:
     stream_url = f"{ws_base}/voice/stream/{session.id}?token={token}"
     recording_cb = f"{cfg.webhook_base_url}/voice/twilio/recording/{session.id}/"
 
+    lang = str(session.language or "").strip().lower()
+    lang_tag = _twilio_language_tag(session=session)
+    voice_name = _twilio_voice_name(session=session)
+
+    thanks = "Thank you. Please hold."
+    if lang == "ar":
+        thanks = "شكراً. الرجاء الانتظار."
+
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
         "<Response>"
-        "<Say>Thank you. Please hold.</Say>"
+        f"{_say(text=thanks, language=lang_tag, voice=voice_name)}"
         "<Start>"
         f'<Record recordingStatusCallback="{_xml_escape(recording_cb)}" '
         'recordingStatusCallbackMethod="POST" '

@@ -20,6 +20,7 @@
 - `mcp/` — MCP-specific prompt/validation docs
 - `voice/phase0_spike.md` — Phase 0 voice calling spike (Twilio/Deepgram/ElevenLabs)
 - `voice/phase1_mvp.md` — Phase 1 voice calling MVP (queue + workers + monitoring)
+- `voice/phase2_arabic_qa.md` — Phase 2 Arabic + dialect QA (Arabic/English + code-switch)
 
 ## Prompts
 - `prompts/` — prompt catalogs and reviews

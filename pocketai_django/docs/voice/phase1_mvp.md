@@ -8,12 +8,15 @@ Phase 1 turns the Phase 0 spike into a production-shaped subsystem:
 - `voice_ws_server` → Twilio Media Streams WS runtime (STT→LLM→TTS)
 - `voice_post_call_worker` → transcript finalization + summary + optional R2 upload
 
+Arabic + dialect QA (Phase 2): `docs/voice/phase2_arabic_qa.md`
+
 ## Environment variables
 
 ### Voice (owner)
 - `VOICE_GLOBAL_ENABLED=true`
 - `VOICE_AUTO_CREATE_CONFIG=true` (optional for early dev; creates `VoiceConfiguration` automatically)
 - `VOICE_WS_BASE_URL=wss://<public-wss-domain>` (no trailing slash)
+- `VOICE_STT_DUAL_STREAM_AR_EN=true` (optional; default `true` for Arabic sessions to improve Arabic↔English code-switch)
 
 ### Twilio
 - `TWILIO_ACCOUNT_SID=...`
@@ -25,10 +28,14 @@ Phase 1 turns the Phase 0 spike into a production-shaped subsystem:
 ### Deepgram (STT)
 - `DEEPGRAM_API_KEY=...`
 - `DEEPGRAM_MODEL=nova-2` (optional)
+- `DEEPGRAM_ENDPOINTING_MS=300` (optional)
 
 ### ElevenLabs (TTS)
 - `ELEVENLABS_API_KEY=...`
-- `ELEVENLABS_VOICE_ID=...` (or `ELEVENLABS_DEFAULT_VOICE_EN`)
+- `ELEVENLABS_VOICE_ID=...` (optional; forces a single voice for all languages)
+- `ELEVENLABS_DEFAULT_VOICE_EN=...` (required if `ELEVENLABS_VOICE_ID` is not set)
+- `ELEVENLABS_DEFAULT_VOICE_AR=...` (recommended for Arabic calls)
+- `ELEVENLABS_MODEL_ID=...` or `ELEVENLABS_MODEL_ID_EN=...` / `ELEVENLABS_MODEL_ID_AR=...` (optional)
 
 ### LLM
 - `LLM_PROVIDER=openai` or `LLM_PROVIDER=deepseek`

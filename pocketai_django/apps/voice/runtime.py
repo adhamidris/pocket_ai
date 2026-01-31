@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 from dataclasses import dataclass
 from typing import AsyncIterator, Callable
 
@@ -42,28 +43,47 @@ class VoiceCallRuntime:
 
     async def run_twilio_stream(self, twilio_ws) -> None:
         session = await self._get_session()
-        audio_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=200)
-        utterance_queue: asyncio.Queue[str] = asyncio.Queue()
         stop_event = asyncio.Event()
 
-        async def audio_source() -> AsyncIterator[bytes]:
-            while not stop_event.is_set():
-                chunk = await audio_queue.get()
-                if chunk is None:  # type: ignore[comparison-overlap]
-                    break
-                yield chunk
+        utterance_queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+        stt_audio_queues: list[asyncio.Queue[bytes]] = []
+        stt_tasks: list[asyncio.Task] = []
 
-        async def stt_loop() -> None:
-            try:
-                dg_config = DeepgramConfig.from_env(language=session.language or "en")
-                async for payload in deepgram_transcripts(config=dg_config, audio_source=audio_source()):
-                    text = _extract_final_transcript(payload)
-                    if text:
-                        await utterance_queue.put(text)
-            except Exception as exc:
-                logger.exception("Deepgram STT loop crashed: %s", exc)
+        def _enable_dual_stream_for_arabic() -> bool:
+            raw = (os.getenv("VOICE_STT_DUAL_STREAM_AR_EN") or "").strip().lower()
+            if raw:
+                return raw in {"1", "true", "yes"}
+            return True
 
-        stt_task = asyncio.create_task(stt_loop())
+        stt_languages = _stt_language_tags_for_session(
+            language=(session.language or "en").strip().lower(),
+            country=(session.country or "").strip().upper(),
+            dual_stream_for_arabic=_enable_dual_stream_for_arabic(),
+        )
+
+        for lang_tag in stt_languages:
+            audio_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=200)
+            stt_audio_queues.append(audio_queue)
+
+            async def audio_source(*, _queue: asyncio.Queue[bytes] = audio_queue) -> AsyncIterator[bytes]:
+                while not stop_event.is_set():
+                    chunk = await _queue.get()
+                    if chunk is None:  # type: ignore[comparison-overlap]
+                        break
+                    yield chunk
+
+            async def stt_loop(*, _lang: str = lang_tag, _source: Callable[[], AsyncIterator[bytes]] = audio_source) -> None:
+                try:
+                    dg_config = DeepgramConfig.from_env(language=_lang)
+                    async for payload in deepgram_transcripts(config=dg_config, audio_source=_source()):
+                        text, confidence = _extract_final_transcript_with_confidence(payload)
+                        if text:
+                            await utterance_queue.put({"text": text, "confidence": confidence, "stt_language": _lang})
+                except Exception as exc:
+                    logger.exception("Deepgram STT loop crashed lang=%s: %s", _lang, exc)
+
+            stt_tasks.append(asyncio.create_task(stt_loop()))
+
         try:
             async for raw_message in twilio_ws:
                 if not raw_message:
@@ -95,25 +115,28 @@ class VoiceCallRuntime:
                     except Exception:
                         continue
 
-                    try:
-                        audio_queue.put_nowait(audio)
-                    except asyncio.QueueFull:
-                        pass
+                    for queue in stt_audio_queues:
+                        try:
+                            queue.put_nowait(audio)
+                        except asyncio.QueueFull:
+                            pass
 
                     await self._drain_utterances(utterance_queue, twilio_ws)
                     continue
         finally:
             stop_event.set()
-            try:
-                audio_queue.put_nowait(b"")
-            except Exception:
-                pass
+            for queue in stt_audio_queues:
+                try:
+                    queue.put_nowait(b"")
+                except Exception:
+                    pass
             if self._current_speak_task:
                 self._current_speak_task.cancel()
-            stt_task.cancel()
+            for task in stt_tasks:
+                task.cancel()
 
-    async def _drain_utterances(self, utterance_queue: asyncio.Queue[str], twilio_ws) -> None:
-        drained: list[str] = []
+    async def _drain_utterances(self, utterance_queue: asyncio.Queue[dict[str, object]], twilio_ws) -> None:
+        drained: list[dict[str, object]] = []
         while True:
             try:
                 drained.append(utterance_queue.get_nowait())
@@ -121,16 +144,21 @@ class VoiceCallRuntime:
                 break
         if not drained:
             return
-        text = drained[-1].strip()
+        best = _pick_best_utterance(drained)
+        text = str(best.get("text") or "").strip()
         if not text:
             return
 
-        await self._log_event("stt.final", {"text": text})
+        confidence = float(best.get("confidence") or 0.0)
+        stt_language = str(best.get("stt_language") or "").strip()
+        await self._log_event("stt.final", {"text": text, "confidence": confidence, "stt_language": stt_language})
         self._history.append(("customer", text))
         self._history = self._history[-(self.runtime_config.max_history_turns * 2) :]
 
         await self._interrupt_speech(twilio_ws)
-        self._current_speak_task = asyncio.create_task(self._respond_and_speak(twilio_ws, customer_text=text))
+        self._current_speak_task = asyncio.create_task(
+            self._respond_and_speak(twilio_ws, customer_text=text, customer_language=_normalize_lang_for_prompt(stt_language))
+        )
 
     async def _interrupt_speech(self, twilio_ws) -> None:
         if self._current_speak_task and not self._current_speak_task.done():
@@ -138,7 +166,7 @@ class VoiceCallRuntime:
         if self._stream_sid:
             await _twilio_send(twilio_ws, {"event": "clear", "streamSid": self._stream_sid})
 
-    async def _respond_and_speak(self, twilio_ws, *, customer_text: str) -> None:
+    async def _respond_and_speak(self, twilio_ws, *, customer_text: str, customer_language: str | None = None) -> None:
         session = await self._get_session()
         if not session.consent_obtained:
             await self._log_event("guard.no_consent", {})
@@ -150,15 +178,20 @@ class VoiceCallRuntime:
             return
 
         system_prompt = (
-            "You are a phone-call agent. Be natural, concise, and helpful.\n"
-            "Do not hallucinate. If you don't know something, say you'll check and follow up.\n"
+            "You are a phone-call agent for a business. Be natural, concise, and helpful.\n"
+            "Never hallucinate. If you don't know something, say you'll check and follow up.\n"
+            "Language policy: respond in the customer's language (Arabic or English). If the customer code-switches, you may code-switch.\n"
+            "If speaking Arabic, prefer clear Modern Standard Arabic unless the customer uses a dialect.\n"
             "Ask short clarifying questions when needed.\n"
             "Return JSON with keys: response_text (string), actions (empty array), extractions (empty array).\n"
         )
         history_lines = "\n".join(f"{role}: {text}" for role, text in self._history[-12:])
+        customer_language_hint = (customer_language or session.language or "").strip().lower()
         user_prompt = (
             f"Call objective: {session.objective}\n"
-            f"Language: {session.language}\n\n"
+            f"Workspace default language: {session.language}\n"
+            f"Customer language hint: {customer_language_hint}\n"
+            f"Country: {session.country}\n\n"
             "Conversation so far:\n"
             f"{history_lines}\n\n"
             f"Customer just said: {customer_text}\n"
@@ -209,7 +242,8 @@ class VoiceCallRuntime:
         llm_task = asyncio.create_task(_llm_thread())
 
         try:
-            tts_config = ElevenLabsConfig.from_env()
+            tts_config_en = ElevenLabsConfig.from_env(language="en")
+            tts_config_ar = ElevenLabsConfig.from_env(language="ar")
         except Exception as exc:
             await self._log_event("tts.disabled", {"error": str(exc)})
             await llm_task
@@ -225,12 +259,16 @@ class VoiceCallRuntime:
                 chunk, buffer = _maybe_extract_speakable_chunk(buffer)
                 if chunk:
                     await self._log_event("tts.chunk", {"text": chunk})
-                    await self._stream_tts_to_twilio(twilio_ws, chunk, config=tts_config)
+                    tts_lang = _detect_text_language(chunk, fallback=customer_language_hint)
+                    tts_cfg = tts_config_ar if tts_lang == "ar" else tts_config_en
+                    await self._stream_tts_to_twilio(twilio_ws, chunk, config=tts_cfg)
 
             final = buffer.strip()
             if final:
                 await self._log_event("tts.chunk.final", {"text": final})
-                await self._stream_tts_to_twilio(twilio_ws, final, config=tts_config)
+                tts_lang = _detect_text_language(final, fallback=customer_language_hint)
+                tts_cfg = tts_config_ar if tts_lang == "ar" else tts_config_en
+                await self._stream_tts_to_twilio(twilio_ws, final, config=tts_cfg)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -292,9 +330,25 @@ def _extract_final_transcript(payload: dict) -> str:
     return transcript
 
 
+def _extract_final_transcript_with_confidence(payload: dict) -> tuple[str, float]:
+    transcript = _extract_final_transcript(payload)
+    if not transcript:
+        return "", 0.0
+    channel = payload.get("channel") or {}
+    alternatives = channel.get("alternatives") or []
+    if not alternatives or not isinstance(alternatives, list):
+        return transcript, 0.0
+    first = alternatives[0] if isinstance(alternatives[0], dict) else {}
+    try:
+        confidence = float(first.get("confidence") or 0.0)
+    except Exception:
+        confidence = 0.0
+    return transcript, confidence
+
+
 def _maybe_extract_speakable_chunk(buffer: str) -> tuple[str, str]:
     text = buffer
-    for punct in (". ", "? ", "! ", "\n"):
+    for punct in (". ", "? ", "! ", "؟ ", "؟", "\n"):
         idx = text.find(punct)
         if idx != -1 and idx >= 40:
             cut = idx + len(punct)
@@ -309,3 +363,68 @@ def _maybe_extract_speakable_chunk(buffer: str) -> tuple[str, str]:
             rest = text[last_space + 1 :].lstrip()
             return chunk, rest
     return "", buffer
+
+
+def _normalize_lang_for_prompt(stt_language: str) -> str | None:
+    lang = (stt_language or "").strip().lower()
+    if not lang:
+        return None
+    if lang.startswith("ar"):
+        return "ar"
+    if lang.startswith("en"):
+        return "en"
+    return None
+
+
+def _stt_language_tags_for_session(*, language: str, country: str, dual_stream_for_arabic: bool) -> list[str]:
+    language_norm = (language or "en").strip().lower()
+    if language_norm == "ar":
+        ar_tag = _arabic_bcp47_for_country(country)
+        if dual_stream_for_arabic:
+            return [ar_tag, "en"]
+        return [ar_tag]
+    return ["en"]
+
+
+def _arabic_bcp47_for_country(country: str) -> str:
+    country_norm = (country or "").strip().upper()
+    mapping = {
+        "EG": "ar-EG",
+        "AE": "ar-AE",
+        "SA": "ar-SA",
+        "QA": "ar-QA",
+        "KW": "ar-KW",
+        "JO": "ar-JO",
+    }
+    return mapping.get(country_norm, "ar")
+
+
+def _pick_best_utterance(drained: list[dict[str, object]]) -> dict[str, object]:
+    def _score(item: dict[str, object]) -> float:
+        text = str(item.get("text") or "")
+        try:
+            confidence = float(item.get("confidence") or 0.0)
+        except Exception:
+            confidence = 0.0
+        if not text.strip():
+            return 0.0
+        return confidence * max(1.0, float(len(text.strip())))
+
+    best = drained[0]
+    best_score = _score(best)
+    for item in drained[1:]:
+        score = _score(item)
+        if score > best_score:
+            best = item
+            best_score = score
+    return best
+
+
+def _detect_text_language(text: str, *, fallback: str | None = None) -> str:
+    if any("\u0600" <= ch <= "\u06FF" for ch in text):
+        return "ar"
+    if any("A" <= ch <= "Z" or "a" <= ch <= "z" for ch in text):
+        return "en"
+    if fallback in {"ar", "en"}:
+        return fallback
+    return "en"
