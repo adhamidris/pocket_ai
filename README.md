@@ -18,6 +18,8 @@ python manage.py migrate
 python manage.py runserver
 ```
 
+Docs index: `pocketai_django/docs/README.md` (includes voice runbooks under `docs/voice/`).
+
 ## Mobile (mobile)
 
 ```sh

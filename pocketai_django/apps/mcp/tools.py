@@ -1318,6 +1318,53 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
         },
         required=(),
     ),
+    _function_schema(
+        name="initiate_phone_call",
+        description=(
+            "Initiate a single outbound phone call. "
+            "Creates a queued CallSession that will be executed by the voice_call_worker."
+        ),
+        properties={
+            "phone_number": {
+                "type": "string",
+                "description": "Destination number in E.164 format (e.g., +201234567890).",
+            },
+            "objective": {
+                "type": "string",
+                "description": "Short, concrete purpose for the call (what the agent must accomplish).",
+            },
+            "call_type": {
+                "type": "string",
+                "description": "Type of call (service or marketing). Marketing calls may be blocked by policy.",
+                "enum": ["service", "marketing"],
+                "default": "service",
+            },
+            "language": {
+                "type": "string",
+                "description": "Call language (en or ar).",
+                "enum": ["en", "ar"],
+                "default": "en",
+            },
+            "max_duration_minutes": {
+                "type": "integer",
+                "description": "Upper bound for call duration (enforced by policy).",
+                "minimum": 1,
+                "maximum": 60,
+                "default": 10,
+            },
+            "context_items": {
+                "type": "array",
+                "description": "Optional structured notes to attach to the call session.",
+                "items": {"type": "object", "additionalProperties": True},
+            },
+            "__ui": {
+                "type": "object",
+                "description": "UI-only metadata (ignored by the tool).",
+                "properties": {"spinner_text": {"type": "string"}},
+            },
+        },
+        required=("phone_number", "objective"),
+    ),
 )
 
 READ_DOCUMENT_TOOL_DEFINITION_AGENTIC_V2: Mapping[str, object] = _function_schema(
@@ -15065,6 +15112,12 @@ def _retrieve_earlier_context_handler(
     )
     return payload
 
+# Voice tools live in the voice app to keep this registry focused.
+try:  # pragma: no cover - optional feature gate
+    from apps.voice.mcp_tools import initiate_phone_call_tool as _initiate_phone_call_handler
+except Exception:  # pragma: no cover - voice feature may be disabled in some deployments
+    _initiate_phone_call_handler = None  # type: ignore[assignment]
+
 
 _TOOL_HANDLERS: dict[str, ToolHandler] = {
     "retrieve_earlier_context": _retrieve_earlier_context_handler,
@@ -15106,4 +15159,5 @@ _TOOL_HANDLERS: dict[str, ToolHandler] = {
     "email_get_thread": _email_get_thread_handler,
     "email_create_draft": _email_create_draft_handler,
     "email_send_draft": _email_send_draft_handler,
+    **({"initiate_phone_call": _initiate_phone_call_handler} if _initiate_phone_call_handler else {}),
 }

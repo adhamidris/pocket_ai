@@ -3,6 +3,7 @@
 from pathlib import Path
 import base64
 import binascii
+from decimal import Decimal
 import hashlib
 import json
 import os
@@ -301,6 +302,7 @@ INSTALLED_APPS = [
     "apps.llm.apps.LlmConfig",
     "apps.mcp.apps.McpConfig",
     "apps.rag.apps.RagConfig",
+    "apps.voice.apps.VoiceConfig",
     "frontend",
     #Vectorizing
     "pgvector.django",
@@ -1873,3 +1875,49 @@ LOGGING = {
         "apps.api.chat_portal": {"handlers": ["console", "rag_file"], "level": "INFO", "propagate": False},
     },
 }
+
+# ==============================================================================
+# VOICE CALLS (Phase 1+)
+# ==============================================================================
+
+def _csv_env_list(var_name: str, default_csv: str) -> list[str]:
+    raw = (os.getenv(var_name) or default_csv).strip()
+    if not raw:
+        return []
+    parts = [part.strip().upper() for part in raw.split(",")]
+    return [part for part in parts if part]
+
+
+# Owner defaults: conservative, MENA/GCC-first allow-list (ISO 3166-1 alpha-2).
+VOICE_DEFAULT_ALLOWED_COUNTRIES = _csv_env_list(
+    "VOICE_DEFAULT_ALLOWED_COUNTRIES",
+    "EG,AE,SA,QA,KW,JO,OM",
+)
+
+# Global enable (owner-controlled).
+VOICE_GLOBAL_ENABLED = os.getenv("VOICE_GLOBAL_ENABLED", "false").strip().lower() in {"1", "true", "yes"}
+
+# Optional convenience for early development: auto-create VoiceConfiguration rows.
+VOICE_AUTO_CREATE_CONFIG = os.getenv("VOICE_AUTO_CREATE_CONFIG", "false").strip().lower() in {"1", "true", "yes"}
+
+# Mandatory everywhere: AI disclosure and explicit recording consent (DTMF) before recording starts.
+VOICE_AI_DISCLOSURE_DEFAULT = os.getenv(
+    "VOICE_AI_DISCLOSURE_DEFAULT",
+    "Hello. This is an AI assistant calling.",
+).strip()
+VOICE_RECORDING_CONSENT_REQUIRED = True
+
+# Owner hard caps (tenants cannot exceed; can be tightened per-tenant in VoiceConfiguration).
+VOICE_OWNER_MAX_CONCURRENT_CALLS = int(os.getenv("VOICE_OWNER_MAX_CONCURRENT_CALLS", "20"))
+VOICE_OWNER_MAX_CALLS_PER_DAY = int(os.getenv("VOICE_OWNER_MAX_CALLS_PER_DAY", "2000"))
+VOICE_OWNER_MAX_CALL_DURATION_SECONDS = int(os.getenv("VOICE_OWNER_MAX_CALL_DURATION_SECONDS", "900"))
+
+# Budget/cost estimation: coarse per-minute estimate used for pre-call budget checks.
+VOICE_COST_ESTIMATE_USD_PER_MINUTE = Decimal(os.getenv("VOICE_COST_ESTIMATE_USD_PER_MINUTE", "0.12"))
+
+# Cloudflare R2 (S3-compatible) recording storage (optional; required for production recording retention).
+VOICE_R2_ENDPOINT_URL = (os.getenv("VOICE_R2_ENDPOINT_URL") or "").strip()
+VOICE_R2_REGION = (os.getenv("VOICE_R2_REGION") or "auto").strip()
+VOICE_R2_BUCKET = (os.getenv("VOICE_R2_BUCKET") or "").strip()
+VOICE_R2_ACCESS_KEY_ID = (os.getenv("VOICE_R2_ACCESS_KEY_ID") or "").strip()
+VOICE_R2_SECRET_ACCESS_KEY = (os.getenv("VOICE_R2_SECRET_ACCESS_KEY") or "").strip()

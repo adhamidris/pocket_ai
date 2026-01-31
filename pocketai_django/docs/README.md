@@ -18,6 +18,8 @@
 - `integrations/` — integrations docs (Google, etc.)
   - `integrations/email-connectors.md` — first‑party email connector design (Google/Microsoft)
 - `mcp/` — MCP-specific prompt/validation docs
+- `voice/phase0_spike.md` — Phase 0 voice calling spike (Twilio/Deepgram/ElevenLabs)
+- `voice/phase1_mvp.md` — Phase 1 voice calling MVP (queue + workers + monitoring)
 
 ## Prompts
 - `prompts/` — prompt catalogs and reviews
