@@ -2720,8 +2720,6 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
     content_blocks: list[dict[str, object]] = []
     content_blocks_by_id: dict[str, dict[str, object]] = {}
     rich_builder = RichBlockStreamBuilder()
-    rich_builder.blocks = content_blocks
-    rich_builder.blocks_by_id = content_blocks_by_id
     block_ops_active = False
     tool_use_block_id_by_event_id: dict[str, str] = {}
     reasoning_block_id_by_call_id: dict[str, str] = {}
@@ -2956,8 +2954,12 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             return
         message_id = _current_message_id()
         for event in events:
+            if not event or not isinstance(event, Mapping):
+                continue
             event_type = event.get("type")
             payload = dict(event.get("payload") or {})
+            if event_type in {"block_start", "block_delta", "block_end"}:
+                _apply_block_event({"type": event_type, "payload": payload})
             payload["message_id"] = message_id
             stream_queue.put({"type": event_type, "payload": payload})
 
@@ -3087,11 +3089,9 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
         normalized = coerce_block_event(event)
         if not normalized:
             return
-        applied = _apply_block_event(normalized)
-        if applied:
-            if not block_ops_active:
-                block_ops_active = True
-            _emit_block_events([normalized])
+        if not block_ops_active:
+            block_ops_active = True
+        _emit_block_events([normalized])
 
     def on_response_text_delta(chunk: str) -> None:
         if not chunk:

@@ -84,11 +84,12 @@ class ChatPortalClient {
 	    this.streamingStatusEl = null;
     this.streamingStatusTextEl = null;
     this.streamingStatusDotEl = null;
-    this.streamingMessageId = null;
+	    this.streamingMessageId = null;
 	    this.streamingBlocksEl = null;
 	    // Canonical block streaming state (block_id -> DOM + buffers)
 	    this.usingBlockStream = false;
 	    this.streamingContentBlockEls = new Map();
+    this.streamingContentBlocksById = new Map();
     this.streamingPendingBlockOps = new Map();
     this.streamingTextBlockActiveIds = new Set();
     this.streamingToolBlockActiveIds = new Set();
@@ -1058,6 +1059,9 @@ class ChatPortalClient {
 	    this.upsertStreamingContentBlock(block);
 	    const blockType = (block.type || "").toString().trim().toLowerCase();
 	    const blockId = (block.block_id || block.blockId || "").toString().trim();
+    if (blockId) {
+      this.streamingContentBlocksById.set(blockId, block);
+    }
 	    if (blockId && this.isStreamingTextBlock(blockType)) {
 	      this.streamingTextBlockActiveIds.add(blockId);
         this.setActiveStreamingTextBlock(blockId);
@@ -1304,8 +1308,13 @@ class ChatPortalClient {
   }
 
   applyBlockOps(blockId, ops) {
+    if (!Array.isArray(ops)) return;
+    const blockModel = this.streamingContentBlocksById.get(blockId);
+    if (blockModel) {
+      this.applyBlockOpsToBlockModel(blockModel, ops);
+    }
     const wrapper = this.streamingContentBlockEls.get(blockId);
-    if (!wrapper || !Array.isArray(ops)) return;
+    if (!wrapper) return;
     ops.forEach((op) => {
       if (!op || typeof op !== "object") return;
       const kind = (op.op || "").toString().trim();
@@ -1329,6 +1338,69 @@ class ChatPortalClient {
         }
       }
     });
+    if (blockModel) {
+      this.maybeUpgradeStreamingBlockMarkup(blockId, wrapper, blockModel);
+    }
+  }
+
+  applyBlockOpsToBlockModel(block, ops) {
+    if (!block || typeof block !== "object" || !Array.isArray(ops)) return;
+    const payload = block.payload && typeof block.payload === "object" ? block.payload : {};
+    if (!block.payload || typeof block.payload !== "object") {
+      block.payload = payload;
+    }
+    ops.forEach((op) => {
+      if (!op || typeof op !== "object") return;
+      const kind = (op.op || "").toString().trim();
+      if (kind === "append_inline") {
+        const nodes = Array.isArray(op.nodes) ? op.nodes : op.node ? [op.node] : [];
+        if (!nodes.length) return;
+        let content = Array.isArray(payload.content) ? payload.content : [];
+        if (!Array.isArray(payload.content)) {
+          payload.content = content;
+        }
+        nodes.forEach((node) => {
+          if (!node || typeof node !== "object") return;
+          const text = typeof node.text === "string" ? node.text : "";
+          if (!text) return;
+          const marks = Array.isArray(node.marks) ? node.marks : null;
+          const outNode = { text };
+          if (marks && marks.length) {
+            outNode.marks = marks;
+          }
+          content.push(outNode);
+        });
+        return;
+      }
+      if (kind === "append_code") {
+        const text = typeof op.text === "string" ? op.text : "";
+        if (!text) return;
+        const existing = typeof payload.code === "string" ? payload.code : "";
+        payload.code = `${existing}${text}`;
+      }
+    });
+  }
+
+  maybeUpgradeStreamingBlockMarkup(blockId, wrapper, block) {
+    if (!wrapper || !block || typeof block !== "object") return;
+    const type = (block.type || "").toString().trim().toLowerCase();
+    if (!["paragraph", "heading", "list_item", "text"].includes(type)) return;
+    const payload = block.payload && typeof block.payload === "object" ? block.payload : {};
+    let rawText = "";
+    if (type === "text") {
+      const text = typeof payload.text === "string" ? payload.text : "";
+      rawText = this.stripInlineResponseBlocks(text);
+    } else {
+      const content = Array.isArray(payload.content) ? payload.content : [];
+      rawText = this.inlineNodesToText(content);
+    }
+    if (!rawText || !this.containsMarkdownTable(rawText)) return;
+    const replacement = this.buildContentBlockElement(block);
+    if (!replacement || replacement === wrapper) return;
+    if (wrapper.parentNode) {
+      wrapper.parentNode.replaceChild(replacement, wrapper);
+    }
+    this.streamingContentBlockEls.set(blockId, replacement);
   }
 
   scheduleStreamingBlockRender() {
@@ -7845,6 +7917,7 @@ class ChatPortalClient {
 				    this.streamingBlocksEl = null;
 				    this.usingBlockStream = false;
 				    this.streamingContentBlockEls.clear();
+          this.streamingContentBlocksById.clear();
 			    this.streamingPendingBlockOps.clear();
 			    this.streamingTextBlockActiveIds.clear();
 			    this.streamingToolBlockActiveIds.clear();

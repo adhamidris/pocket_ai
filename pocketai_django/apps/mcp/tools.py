@@ -14137,12 +14137,15 @@ def _create_agent_run_handler(
     with transaction.atomic():
         existing_run = None
         if trigger_message_id:
+            # Dedup by trigger_message_id AND title to allow multiple distinct runs
+            # from the same user message while preventing true duplicates.
             existing_run = (
                 AgentRun.objects.filter(
                     business_profile_id=conversation.business_profile_id,
                     conversation_id=conversation.id,
                     created_by_id=actor_id,
                     source=AgentRunSource.CHAT,
+                    title=title,  # Different titles = different runs
                 )
                 .exclude(status__in={AgentRunStatus.COMPLETED, AgentRunStatus.FAILED, AgentRunStatus.CANCELLED})
                 .filter(metadata__trigger_message_id=trigger_message_id)
