@@ -14721,6 +14721,34 @@ def _retrieve_earlier_context_handler(
                 "message": "Compacted segment not found for this conversation.",
                 "segment_id": segment_id_raw,
             }
+
+        # Enforce tenant maximum retention even for direct segment fetches.
+        business_profile = getattr(conversation, "business_profile", None)
+        max_retention_days = None
+        if business_profile is not None:
+            try:
+                config = business_profile.memory_config
+            except Exception:
+                config = None
+            if config and config.maximum_retention_days is not None:
+                try:
+                    max_retention_days = int(config.maximum_retention_days)
+                except (TypeError, ValueError):
+                    max_retention_days = None
+        if max_retention_days and max_retention_days > 0:
+            from django.utils import timezone as django_timezone
+
+            cutoff = django_timezone.now() - timedelta(days=max_retention_days)
+            segment_end = getattr(segment, "end_message_sent_at", None) or getattr(segment, "compacted_at", None)
+            if segment_end is not None and segment_end < cutoff:
+                return {
+                    "tool": "retrieve_earlier_context",
+                    "status": "ok",
+                    "found": False,
+                    "message": "Compacted segment is outside this tenant's retention window.",
+                    "segment_id": segment_id_raw,
+                }
+
         messages_out = list(segment.full_messages or [])
         if len(messages_out) > max_messages:
             messages_out = messages_out[:max_messages]
@@ -14760,16 +14788,22 @@ def _retrieve_earlier_context_handler(
 
     base_qs = conversation.compacted_segments.all()
     if max_retention_days and max_retention_days > 0:
+        from django.db.models import Q as DjangoQ
         from django.utils import timezone as django_timezone
 
         cutoff = django_timezone.now() - timedelta(days=max_retention_days)
-        base_qs = base_qs.filter(compacted_at__gte=cutoff)
+        # Retention is based on the underlying message timestamps, not the compaction timestamp.
+        # Fallback to compacted_at for legacy rows that haven't been backfilled yet.
+        base_qs = base_qs.filter(
+            DjangoQ(end_message_sent_at__gte=cutoff)
+            | DjangoQ(end_message_sent_at__isnull=True, compacted_at__gte=cutoff)
+        )
 
     # Apply coarse timeframe narrowing (fine-grained turn-range filtering happens after ranking).
     if timeframe in {"recent"}:
-        base_qs = base_qs.order_by("-compacted_at")[:15]
+        base_qs = base_qs.order_by("-end_message_sent_at", "-compacted_at")[:15]
     elif timeframe in {"oldest"}:
-        base_qs = base_qs.order_by("compacted_at")[:15]
+        base_qs = base_qs.order_by("end_message_sent_at", "compacted_at")[:15]
 
     segments = list(base_qs)
     if not segments:

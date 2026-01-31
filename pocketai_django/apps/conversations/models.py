@@ -184,6 +184,8 @@ class CompactedHistorySegment(models.Model):
     segment_range = models.CharField(max_length=64)
     start_message_id = models.UUIDField()
     end_message_id = models.UUIDField()
+    start_message_sent_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    end_message_sent_at = models.DateTimeField(null=True, blank=True, db_index=True)
     summary = models.TextField()
     full_messages = models.JSONField()
     embedding = VectorField(dimensions=settings.EMBED_DIM, null=True, blank=True)

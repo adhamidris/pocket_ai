@@ -13,6 +13,7 @@ import os
 import re
 import textwrap
 import uuid
+from datetime import timedelta
 from typing import Iterable, Mapping, Sequence
 
 from core.otel import otel_trace
@@ -807,7 +808,33 @@ def _compacted_history_note(
         return None
 
     try:
-        segments = list(conversation.compacted_segments.order_by("-compacted_at")[:max_segments])
+        qs = conversation.compacted_segments.all()
+
+        # Retention enforcement: do not inject compacted summaries older than the tenant's
+        # maximum retention window (if configured).
+        business_profile = getattr(conversation, "business_profile", None)
+        max_retention_days = None
+        if business_profile is not None:
+            try:
+                config = business_profile.memory_config
+            except Exception:
+                config = None
+            if config and config.maximum_retention_days is not None:
+                try:
+                    max_retention_days = int(config.maximum_retention_days)
+                except (TypeError, ValueError):
+                    max_retention_days = None
+
+        if max_retention_days and max_retention_days > 0:
+            from django.db.models import Q as DjangoQ
+
+            cutoff = timezone.now() - timedelta(days=max_retention_days)
+            qs = qs.filter(
+                DjangoQ(end_message_sent_at__gte=cutoff)
+                | DjangoQ(end_message_sent_at__isnull=True, compacted_at__gte=cutoff)
+            )
+
+        segments = list(qs.order_by("-end_message_sent_at", "-compacted_at")[:max_segments])
     except Exception:  # pragma: no cover - defensive
         return None
     if not segments:

@@ -305,6 +305,8 @@ class TenantMemoryConfiguration(models.Model):
     custom_rules = models.JSONField(default=dict, blank=True)
     minimum_retention_days = models.IntegerField(default=0)
     maximum_retention_days = models.IntegerField(null=True, blank=True)
+    purge_enabled = models.BooleanField(default=True)
+    legal_hold = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

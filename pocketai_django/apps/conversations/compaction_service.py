@@ -122,6 +122,9 @@ class ContextCompactionService:
             end_pos = self._message_position(conversation, candidates[-1])
             segment_range = f"turns_{start_pos}_to_{end_pos}"
 
+            start_sent_at = getattr(candidates[0], "sent_at", None) or getattr(candidates[0], "created_at", None)
+            end_sent_at = getattr(candidates[-1], "sent_at", None) or getattr(candidates[-1], "created_at", None)
+
             token_count_original = self._estimate_tokens_for_messages(candidates)
             token_count_summary = self._estimate_tokens_for_text(summary_text)
             compression_ratio = (
@@ -134,6 +137,8 @@ class ContextCompactionService:
                     segment_range=segment_range,
                     start_message_id=candidates[0].id,
                     end_message_id=candidates[-1].id,
+                    start_message_sent_at=start_sent_at,
+                    end_message_sent_at=end_sent_at,
                     summary=summary_text,
                     full_messages=full_messages,
                     embedding=embedding_vector,
