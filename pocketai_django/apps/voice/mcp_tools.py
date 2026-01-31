@@ -21,6 +21,7 @@ from apps.voice.models import (
     VoiceSuppressionEntry,
     VoiceTrustTier,
 )
+from apps.voice.policy_engine import audit_policy_decision, evaluate_voice_compliance_policy
 from apps.voice.phone_utils import detect_country_iso2, is_valid_e164
 from apps.voice.twilio import load_twilio_config
 
@@ -75,6 +76,7 @@ def _ensure_voice_config(business_id: object) -> VoiceConfiguration | None:
         monthly_budget_usd=Decimal("50.00"),
         default_language="en",
         ai_disclosure_template="",
+        ai_disclosure_template_ar="",
         recording_consent_required=True,
     )
 
@@ -223,6 +225,28 @@ def initiate_phone_call_tool(
             "error": "suppressed_number",
             "error_code": "suppressed_number",
             "hint": "This number is suppressed (do-not-call).",
+        }
+
+    decision = evaluate_voice_compliance_policy(
+        business_profile_id=business_id,
+        agent_profile_id=agent_id,
+        call_type=call_type,
+        country=country,
+    )
+    audit_policy_decision(
+        business_profile_id=business_id,
+        call_session_id=None,
+        actor_user_id=None,
+        actor_agent_id=agent_id,
+        decision=decision,
+    )
+    if not decision.allowed:
+        return {
+            "tool": "initiate_phone_call",
+            "status": "error",
+            "error": decision.reason_code,
+            "error_code": decision.reason_code,
+            "hint": "Call blocked by compliance policy.",
         }
 
     owner_max_concurrent = int(getattr(settings, "VOICE_OWNER_MAX_CONCURRENT_CALLS", 0) or 0)

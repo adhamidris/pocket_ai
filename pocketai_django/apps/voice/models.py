@@ -68,6 +68,7 @@ class VoiceConfiguration(models.Model):
 
     # AI disclosure is mandatory everywhere; copy defaults from settings if blank.
     ai_disclosure_template = models.TextField(blank=True, default="")
+    ai_disclosure_template_ar = models.TextField(blank=True, default="")
     # Recording consent collection is mandatory everywhere for now.
     recording_consent_required = models.BooleanField(default=True)
 
@@ -76,6 +77,117 @@ class VoiceConfiguration(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"VoiceConfiguration<{self.business_profile_id}>"
+
+
+class VoiceCountryPolicy(models.Model):
+    """
+    Owner-defined country policy module.
+
+    This is the "Phase 3 compliance engine" configuration surface.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    country = models.CharField(max_length=2, unique=True, db_index=True)  # ISO 3166-1 alpha-2
+    timezone = models.CharField(max_length=64, blank=True, default="")  # IANA TZ (e.g., Africa/Cairo)
+
+    is_active = models.BooleanField(default=True)
+
+    service_calls_allowed = models.BooleanField(default=True)
+    marketing_calls_allowed = models.BooleanField(default=False)
+
+    # Recording + consent rules.
+    recording_allowed = models.BooleanField(default=True)
+    recording_consent_required = models.BooleanField(default=True)
+
+    # AI disclosure is mandatory, but keep a flag for future flexibility.
+    ai_disclosure_required = models.BooleanField(default=True)
+
+    # Optional country-local call window enforcement (empty/null = no restriction).
+    allowed_weekdays = models.JSONField(default=list, blank=True)  # [0..6] Monday=0
+    allowed_call_time_start = models.TimeField(null=True, blank=True)
+    allowed_call_time_end = models.TimeField(null=True, blank=True)
+
+    policy_config = models.JSONField(default=dict, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"VoiceCountryPolicy<{self.country}>"
+
+
+class VoiceCallAuditAction(models.TextChoices):
+    POLICY_EVALUATED = "policy_evaluated", "Policy Evaluated"
+    POLICY_BLOCKED = "policy_blocked", "Policy Blocked"
+    DISCLOSURE_REQUIRED = "disclosure_required", "Disclosure Required"
+    CONSENT_REQUIRED = "consent_required", "Consent Required"
+
+
+class VoiceCallAuditEvent(models.Model):
+    """
+    Immutable log of key voice compliance events for audit/debugging.
+
+    Avoid storing raw call audio/transcripts in metadata.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        "accounts.BusinessProfile",
+        related_name="voice_call_audit_events",
+        on_delete=models.CASCADE,
+    )
+    call_session = models.ForeignKey(
+        "voice.CallSession",
+        related_name="audit_events",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    call_session_id_snapshot = models.UUIDField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Snapshot of the CallSession UUID for retention when the session is deleted.",
+    )
+    actor_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="voice_call_audit_events",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    actor_agent = models.ForeignKey(
+        "accounts.AgentProfile",
+        related_name="voice_call_audit_events",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    action = models.CharField(max_length=32, choices=VoiceCallAuditAction.choices)
+    description = models.TextField(blank=True, default="")
+    metadata = models.JSONField(default=dict, blank=True)
+    occurred_at = models.DateTimeField(default=timezone.now, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-occurred_at",)
+        indexes = [
+            models.Index(fields=["call_session", "action"]),
+            models.Index(fields=["call_session_id_snapshot", "action"]),
+            models.Index(fields=["business_profile", "occurred_at"]),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.call_session_id and not self.call_session_id_snapshot:
+            try:
+                self.call_session_id_snapshot = self.call_session_id
+            except Exception:
+                pass
+        super().save(*args, **kwargs)
+
+    def __str__(self) -> str:  # pragma: no cover
+        ref = self.call_session_id_snapshot or self.call_session_id or "unknown-call"
+        return f"{ref} - {self.get_action_display()}"
 
 
 class VoicePhoneNumber(models.Model):

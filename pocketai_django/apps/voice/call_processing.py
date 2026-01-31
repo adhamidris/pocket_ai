@@ -14,6 +14,7 @@ from django.utils import timezone
 from core.tenancy import tenant_bypass, tenant_context
 
 from apps.voice.models import CallEvent, CallSession, CallStatus, CallType, VoiceConfiguration, VoiceSuppressionEntry
+from apps.voice.policy_engine import audit_policy_decision, evaluate_voice_compliance_policy
 from apps.voice.twilio import load_twilio_config
 
 
@@ -186,6 +187,29 @@ class VoiceCallWorkerService:
             session.save(update_fields=["status", "last_error", "lease_expires_at", "updated_at"])
             _log_event(session, "guard.suppressed", {})
             raise _VoiceCallRequeue("suppressed_number")
+
+        decision = evaluate_voice_compliance_policy(
+            business_profile_id=session.business_profile_id,
+            agent_profile_id=session.agent_profile_id,
+            call_type=str(session.call_type or ""),
+            country=str(session.country or ""),
+        )
+        audit_policy_decision(
+            business_profile_id=session.business_profile_id,
+            call_session_id=session.id,
+            actor_user_id=session.created_by_id,
+            actor_agent_id=session.agent_profile_id,
+            decision=decision,
+        )
+        if isinstance(session.metadata, dict):
+            session.metadata["policy"] = decision.to_dict()
+        if not decision.allowed:
+            session.status = CallStatus.CANCELLED
+            session.last_error = decision.reason_code
+            session.lease_expires_at = None
+            session.save(update_fields=["status", "last_error", "lease_expires_at", "metadata", "updated_at"])
+            _log_event(session, "guard.policy_blocked", {"reason": decision.reason_code, "details": decision.details})
+            raise _VoiceCallRequeue(decision.reason_code)
 
         owner_max_concurrent = int(getattr(settings, "VOICE_OWNER_MAX_CONCURRENT_CALLS", 0) or 0)
         effective_concurrent = _effective_owner_cap(int(config.max_concurrent_calls or 0), owner_max_concurrent)

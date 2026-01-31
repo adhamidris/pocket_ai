@@ -354,5 +354,10 @@ This repository now contains:
   - Arabic TwiML consent/disclosure prompts: `pocketai_django/apps/voice/views_twilio.py`
   - STT dual-stream for Arabic calls (ar + en) and per-chunk TTS voice selection: `pocketai_django/apps/voice/runtime.py`
   - QA checklist/runbook: `pocketai_django/docs/voice/phase2_arabic_qa.md`
+- Phase 3 (implemented here): Compliance Policy Engine
+  - Country policies (DB-backed): `pocketai_django/apps/voice/models.py` (`VoiceCountryPolicy`)
+  - Policy evaluation + audit trail: `pocketai_django/apps/voice/policy_engine.py` + `pocketai_django/apps/voice/models.py` (`VoiceCallAuditEvent`)
+  - Seeded launch-country modules: `pocketai_django/apps/voice/migrations/0005_seed_voice_country_policies.py`
+  - Runbook: `pocketai_django/docs/voice/phase3_policy_engine.md`
 
 Runbook: `pocketai_django/docs/voice/phase1_mvp.md`

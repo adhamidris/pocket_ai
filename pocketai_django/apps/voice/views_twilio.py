@@ -11,7 +11,7 @@ from django.utils import timezone as dj_timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
-from apps.voice.models import CallSession, CallStatus
+from apps.voice.models import CallSession, CallStatus, VoiceConfiguration
 from apps.voice.twilio import load_twilio_config, validate_twilio_request
 
 
@@ -90,6 +90,7 @@ def _twilio_language_tag(*, session: CallSession) -> str | None:
         "QA": "ar-QA",
         "KW": "ar-KW",
         "JO": "ar-JO",
+        "OM": "ar-OM",
     }
     return mapping.get(country, "ar-SA")
 
@@ -112,6 +113,20 @@ def _twiml_gather_consent(*, session: CallSession, cfg) -> str:
 
     lang = str(session.language or "").strip().lower()
     disclosure = default_disclosure_ar if lang == "ar" else default_disclosure_en
+
+    disclosure_override = ""
+    if session.business_profile_id:
+        voice_cfg = VoiceConfiguration.objects.filter(business_profile_id=session.business_profile_id).first()
+        if voice_cfg:
+            if lang == "ar":
+                disclosure_override = str(voice_cfg.ai_disclosure_template_ar or "").strip() or str(
+                    voice_cfg.ai_disclosure_template or ""
+                ).strip()
+            else:
+                disclosure_override = str(voice_cfg.ai_disclosure_template or "").strip()
+    if disclosure_override:
+        disclosure = disclosure_override
+
     disclosure_env_key = "VOICE_AI_DISCLOSURE_DEFAULT_AR" if lang == "ar" else "VOICE_AI_DISCLOSURE_DEFAULT"
     disclosure = (os.getenv(disclosure_env_key) or "").strip() or disclosure
 

@@ -9,6 +9,7 @@ Phase 1 turns the Phase 0 spike into a production-shaped subsystem:
 - `voice_post_call_worker` → transcript finalization + summary + optional R2 upload
 
 Arabic + dialect QA (Phase 2): `docs/voice/phase2_arabic_qa.md`
+Compliance engine (Phase 3): `docs/voice/phase3_policy_engine.md`
 
 ## Environment variables
 

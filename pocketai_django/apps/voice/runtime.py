@@ -395,6 +395,7 @@ def _arabic_bcp47_for_country(country: str) -> str:
         "QA": "ar-QA",
         "KW": "ar-KW",
         "JO": "ar-JO",
+        "OM": "ar-OM",
     }
     return mapping.get(country_norm, "ar")
 
