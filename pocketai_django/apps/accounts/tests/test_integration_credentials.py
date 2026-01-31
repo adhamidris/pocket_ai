@@ -57,7 +57,8 @@ class KnowledgeIntegrationCredentialTests(TestCase):
         self.assertEqual(integration.credential_error_count, 1)
         self.assertEqual(integration.status, KnowledgeIntegrationStatus.DISCONNECTED)
         self.assertIn("bad token", integration.sync_error or "")
-        event = IntegrationCredentialEvent.objects.filter(integration=integration).last()
+        # IntegrationCredentialEvent orders by -created_at, so the "first" record is the most recent.
+        event = IntegrationCredentialEvent.objects.filter(integration=integration).first()
         self.assertIsNotNone(event)
         self.assertEqual(event.event_type, IntegrationCredentialEventType.ROTATION_REQUIRED)
 

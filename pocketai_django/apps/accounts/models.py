@@ -8,6 +8,7 @@ from typing import Any, TypedDict
 
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.contrib.postgres.indexes import GinIndex
+from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models
 from django.utils import timezone
@@ -299,12 +300,12 @@ class TenantMemoryConfiguration(models.Model):
         related_name="memory_config",
         on_delete=models.CASCADE,
     )
-    default_hot_period_days = models.IntegerField(default=7)
-    default_warm_period_days = models.IntegerField(default=30)
-    default_archive_after_days = models.IntegerField(default=90)
+    default_hot_period_days = models.IntegerField(default=7, validators=[MinValueValidator(0)])
+    default_warm_period_days = models.IntegerField(default=30, validators=[MinValueValidator(0)])
+    default_archive_after_days = models.IntegerField(default=90, validators=[MinValueValidator(0)])
     custom_rules = models.JSONField(default=dict, blank=True)
-    minimum_retention_days = models.IntegerField(default=0)
-    maximum_retention_days = models.IntegerField(null=True, blank=True)
+    minimum_retention_days = models.IntegerField(default=0, validators=[MinValueValidator(0)])
+    maximum_retention_days = models.IntegerField(null=True, blank=True, validators=[MinValueValidator(0)])
     purge_enabled = models.BooleanField(default=True)
     legal_hold = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -316,6 +317,101 @@ class TenantMemoryConfiguration(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - human readable only
         return f"TenantMemoryConfiguration<{self.business_profile_id}>"
+
+    def clean(self) -> None:
+        super().clean()
+
+        errors: dict[str, list[str]] = {}
+
+        hot = int(self.default_hot_period_days or 0)
+        warm = int(self.default_warm_period_days or 0)
+        archive = int(self.default_archive_after_days or 0)
+        minimum_retention = int(self.minimum_retention_days or 0)
+        maximum_retention: int | None = (
+            int(self.maximum_retention_days) if self.maximum_retention_days is not None else None
+        )
+
+        if warm < hot:
+            errors.setdefault("default_warm_period_days", []).append(
+                "Warm period must be greater than or equal to hot period."
+            )
+
+        if archive < warm:
+            errors.setdefault("default_archive_after_days", []).append(
+                "Archive-after period must be greater than or equal to warm period."
+            )
+
+        if maximum_retention is not None:
+            if maximum_retention < minimum_retention:
+                errors.setdefault("maximum_retention_days", []).append(
+                    "Maximum retention must be greater than or equal to minimum retention."
+                )
+
+            # Keeping these aligned avoids confusing configurations where the tenant
+            # can't ever reach the configured hot/warm/archive windows.
+            if maximum_retention < hot:
+                errors.setdefault("maximum_retention_days", []).append(
+                    "Maximum retention must be greater than or equal to the hot period."
+                )
+            if maximum_retention < warm:
+                errors.setdefault("maximum_retention_days", []).append(
+                    "Maximum retention must be greater than or equal to the warm period."
+                )
+            if maximum_retention < archive:
+                errors.setdefault("maximum_retention_days", []).append(
+                    "Maximum retention must be greater than or equal to the archive-after period."
+                )
+
+        if self.custom_rules and not isinstance(self.custom_rules, dict):
+            errors.setdefault("custom_rules", []).append("Custom rules must be a JSON object (dictionary).")
+
+        if errors:
+            raise ValidationError(errors)
+
+
+class TenantMemoryConfigurationAuditEvent(models.Model):
+    """
+    Phase 8: immutable audit log for per-tenant memory policy changes.
+
+    Stored as a separate table so changes are queryable/reviewable without
+    relying on Django admin LogEntry formatting.
+    """
+
+    class ActionChoices(models.TextChoices):
+        CREATED = "created", "Created"
+        UPDATED = "updated", "Updated"
+        PRESET_APPLIED = "preset_applied", "Preset applied"
+        DELETED = "deleted", "Deleted"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        BusinessProfile,
+        related_name="memory_config_audit_events",
+        on_delete=models.CASCADE,
+    )
+    actor_user = models.ForeignKey(
+        User,
+        related_name="memory_config_audit_events",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    action = models.CharField(max_length=32, choices=ActionChoices.choices)
+    description = models.TextField(blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    occurred_at = models.DateTimeField(default=timezone.now, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "accounts_tenant_memory_configuration_audit_event"
+        ordering = ("-occurred_at",)
+        indexes = [
+            models.Index(fields=["business_profile", "occurred_at"], name="memcfg_audit_bp_time_idx"),
+            models.Index(fields=["actor_user", "occurred_at"], name="memcfg_audit_actor_time_idx"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - human readable only
+        return f"TenantMemoryConfigurationAuditEvent<{self.business_profile_id}:{self.action}>"
 
 
 class AgentProfile(models.Model):

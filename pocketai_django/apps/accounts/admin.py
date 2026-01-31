@@ -29,9 +29,15 @@ from .models import (
     OAuthProvider,
     RAGEvaluationRun,
     RegistrationSession,
+    TenantMemoryConfiguration,
+    TenantMemoryConfigurationAuditEvent,
     User,
 )
 from apps.rag.evaluation.harness import RAGEvaluationHarness
+from apps.accounts.memory_policy_presets import (
+    TENANT_MEMORY_POLICY_PRESETS,
+    get_tenant_memory_policy_preset,
+)
 
 
 admin.site.site_header = "PocketAI Operations Console"
@@ -182,6 +188,228 @@ class KnowledgeIntegrationAdminForm(forms.ModelForm):
             self.save_m2m()
         return instance
 
+
+TENANT_MEMORY_CONFIG_AUDIT_FIELDS: tuple[str, ...] = (
+    "default_hot_period_days",
+    "default_warm_period_days",
+    "default_archive_after_days",
+    "custom_rules",
+    "minimum_retention_days",
+    "maximum_retention_days",
+    "purge_enabled",
+    "legal_hold",
+)
+
+
+def _snapshot_tenant_memory_config(config: TenantMemoryConfiguration) -> dict[str, object]:
+    return {field: getattr(config, field) for field in TENANT_MEMORY_CONFIG_AUDIT_FIELDS}
+
+
+def _diff_tenant_memory_config(before: dict[str, object], after: dict[str, object]) -> list[str]:
+    changed: list[str] = []
+    for field in TENANT_MEMORY_CONFIG_AUDIT_FIELDS:
+        if before.get(field) != after.get(field):
+            changed.append(field)
+    return changed
+
+
+def _log_tenant_memory_config_audit_event(
+    *,
+    business_profile: BusinessProfile,
+    actor_user: User | None,
+    action: str,
+    before: dict[str, object] | None,
+    after: dict[str, object] | None,
+    description: str = "",
+    preset_key: str | None = None,
+) -> None:
+    before_payload = before or {}
+    after_payload = after or {}
+    metadata: dict[str, object] = {
+        "before": before_payload,
+        "after": after_payload,
+    }
+    changed_fields = _diff_tenant_memory_config(before_payload, after_payload)
+    if changed_fields:
+        metadata["changed_fields"] = changed_fields
+    if preset_key:
+        metadata["preset_key"] = preset_key
+
+    TenantMemoryConfigurationAuditEvent.objects.create(
+        business_profile=business_profile,
+        actor_user=actor_user,
+        action=action,
+        description=description or "",
+        metadata=metadata,
+    )
+
+
+class TenantMemoryConfigurationAdminForm(forms.ModelForm):
+    custom_rules = forms.JSONField(
+        required=False,
+        widget=MonospaceJSONWidget,
+        help_text=(
+            "JSON object mapping rule keys to {hot,warm,archive} overrides. "
+            "Keys can be 'kind:<memory_kind>' (e.g. kind:workflow_state) or substrings."
+        ),
+    )
+
+    class Meta:
+        model = TenantMemoryConfiguration
+        fields = "__all__"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        rules = getattr(self.instance, "custom_rules", None) if self.instance and self.instance.pk else None
+        if rules:
+            self.fields["custom_rules"].initial = json.dumps(rules, indent=2)
+        else:
+            self.fields["custom_rules"].initial = json.dumps({}, indent=2)
+
+    def clean_custom_rules(self):
+        rules = self.cleaned_data.get("custom_rules") or {}
+        if not rules:
+            return {}
+        if not isinstance(rules, dict):
+            raise forms.ValidationError("Custom rules must be a JSON object (dictionary).")
+        return rules
+
+
+class TenantMemoryConfigurationInline(admin.StackedInline):
+    model = TenantMemoryConfiguration
+    form = TenantMemoryConfigurationAdminForm
+    extra = 0
+    max_num = 1
+    can_delete = True
+    verbose_name_plural = "Memory policy"
+    fieldsets = (
+        (
+            None,
+            {
+                "fields": (
+                    "default_hot_period_days",
+                    "default_warm_period_days",
+                    "default_archive_after_days",
+                    "minimum_retention_days",
+                    "maximum_retention_days",
+                    "purge_enabled",
+                    "legal_hold",
+                    "custom_rules",
+                )
+            },
+        ),
+    )
+
+
+@admin.register(TenantMemoryConfiguration)
+class TenantMemoryConfigurationAdmin(admin.ModelAdmin):
+    form = TenantMemoryConfigurationAdminForm
+    list_display = (
+        "business_profile",
+        "maximum_retention_days",
+        "purge_enabled",
+        "legal_hold",
+        "updated_at",
+    )
+    list_filter = ("purge_enabled", "legal_hold")
+    search_fields = ("business_profile__name", "business_profile__user__email", "business_profile__id")
+    readonly_fields = ("id", "created_at", "updated_at")
+    ordering = ("-updated_at",)
+    actions = (
+        "apply_preset_general",
+        "apply_preset_banking",
+        "apply_preset_healthcare",
+        "apply_preset_enterprise",
+    )
+
+    def save_model(self, request, obj: TenantMemoryConfiguration, form, change):
+        before: dict[str, object] | None = None
+        if change and obj.pk:
+            try:
+                before_obj = TenantMemoryConfiguration.objects.get(pk=obj.pk)
+                before = _snapshot_tenant_memory_config(before_obj)
+            except TenantMemoryConfiguration.DoesNotExist:
+                before = None
+
+        super().save_model(request, obj, form, change)
+
+        after = _snapshot_tenant_memory_config(obj)
+        action = (
+            TenantMemoryConfigurationAuditEvent.ActionChoices.UPDATED
+            if change
+            else TenantMemoryConfigurationAuditEvent.ActionChoices.CREATED
+        )
+        if not change or before != after:
+            _log_tenant_memory_config_audit_event(
+                business_profile=obj.business_profile,
+                actor_user=request.user,
+                action=action,
+                before=before,
+                after=after,
+            )
+
+    def delete_model(self, request, obj: TenantMemoryConfiguration):
+        before = _snapshot_tenant_memory_config(obj)
+        business_profile = obj.business_profile
+        super().delete_model(request, obj)
+        _log_tenant_memory_config_audit_event(
+            business_profile=business_profile,
+            actor_user=request.user,
+            action=TenantMemoryConfigurationAuditEvent.ActionChoices.DELETED,
+            before=before,
+            after=None,
+        )
+
+    def _apply_preset(self, request, queryset, preset_key: str) -> None:
+        preset = get_tenant_memory_policy_preset(preset_key)
+        if preset is None:
+            self.message_user(request, f"Unknown preset '{preset_key}'.", level=messages.ERROR)
+            return
+
+        updated = 0
+        for config in queryset:
+            before = _snapshot_tenant_memory_config(config)
+            for field, value in preset.values.items():
+                setattr(config, field, value)
+            config.save()
+            after = _snapshot_tenant_memory_config(config)
+            _log_tenant_memory_config_audit_event(
+                business_profile=config.business_profile,
+                actor_user=request.user,
+                action=TenantMemoryConfigurationAuditEvent.ActionChoices.PRESET_APPLIED,
+                before=before,
+                after=after,
+                preset_key=preset_key,
+            )
+            updated += 1
+
+        self.message_user(request, f"Applied '{preset.label}' to {updated} tenant(s).", level=messages.SUCCESS)
+
+    @admin.action(description="Apply memory preset: General (Default)")
+    def apply_preset_general(self, request, queryset):
+        return self._apply_preset(request, queryset, "general")
+
+    @admin.action(description="Apply memory preset: Banking / FinTech (Conservative)")
+    def apply_preset_banking(self, request, queryset):
+        return self._apply_preset(request, queryset, "banking")
+
+    @admin.action(description="Apply memory preset: Healthcare (Conservative)")
+    def apply_preset_healthcare(self, request, queryset):
+        return self._apply_preset(request, queryset, "healthcare")
+
+    @admin.action(description="Apply memory preset: Enterprise (Longer Retention)")
+    def apply_preset_enterprise(self, request, queryset):
+        return self._apply_preset(request, queryset, "enterprise")
+
+
+@admin.register(TenantMemoryConfigurationAuditEvent)
+class TenantMemoryConfigurationAuditEventAdmin(admin.ModelAdmin):
+    list_display = ("occurred_at", "business_profile", "action", "actor_user")
+    list_filter = ("action",)
+    search_fields = ("business_profile__name", "business_profile__id", "actor_user__email")
+    ordering = ("-occurred_at",)
+    readonly_fields = ("id", "business_profile", "actor_user", "action", "description", "metadata", "occurred_at", "created_at")
+
 @admin.register(User)
 class UserAdmin(DjangoUserAdmin):
     model = User
@@ -233,6 +461,72 @@ class BusinessProfileAdmin(admin.ModelAdmin):
     list_filter = ("status", "industry")
     search_fields = ("name", "user__email", "registration_session__id")
     ordering = ("-updated_at",)
+    inlines = (TenantMemoryConfigurationInline,)
+
+    def save_formset(self, request, form, formset, change):
+        if getattr(formset, "model", None) is TenantMemoryConfiguration:
+            actor_user = request.user if getattr(request, "user", None) and request.user.is_authenticated else None
+
+            before_by_pk: dict[object, dict[str, object]] = {}
+            for inline_form in formset.forms:
+                if not inline_form.has_changed():
+                    continue
+                instance: TenantMemoryConfiguration = inline_form.instance
+                if not instance.pk:
+                    continue
+                try:
+                    before_obj = TenantMemoryConfiguration.objects.get(pk=instance.pk)
+                    before_by_pk[instance.pk] = _snapshot_tenant_memory_config(before_obj)
+                except TenantMemoryConfiguration.DoesNotExist:
+                    before_by_pk[instance.pk] = _snapshot_tenant_memory_config(instance)
+
+            deleted_snapshots: dict[object, dict[str, object]] = {}
+            for obj in getattr(formset, "deleted_objects", []):
+                if not getattr(obj, "pk", None):
+                    continue
+                try:
+                    deleted_snapshots[obj.pk] = _snapshot_tenant_memory_config(
+                        TenantMemoryConfiguration.objects.get(pk=obj.pk)
+                    )
+                except TenantMemoryConfiguration.DoesNotExist:
+                    deleted_snapshots[obj.pk] = _snapshot_tenant_memory_config(obj)
+
+            instances = formset.save(commit=False)
+            for obj in instances:
+                created = obj.pk is None
+                before = None if created else before_by_pk.get(obj.pk)
+                obj.save()
+                after = _snapshot_tenant_memory_config(obj)
+                action = (
+                    TenantMemoryConfigurationAuditEvent.ActionChoices.CREATED
+                    if created
+                    else TenantMemoryConfigurationAuditEvent.ActionChoices.UPDATED
+                )
+                if created or before != after:
+                    _log_tenant_memory_config_audit_event(
+                        business_profile=obj.business_profile,
+                        actor_user=actor_user,
+                        action=action,
+                        before=before,
+                        after=after,
+                    )
+
+            formset.save_m2m()
+
+            for obj in getattr(formset, "deleted_objects", []):
+                before = deleted_snapshots.get(getattr(obj, "pk", None), _snapshot_tenant_memory_config(obj))
+                business_profile = obj.business_profile
+                obj.delete()
+                _log_tenant_memory_config_audit_event(
+                    business_profile=business_profile,
+                    actor_user=actor_user,
+                    action=TenantMemoryConfigurationAuditEvent.ActionChoices.DELETED,
+                    before=before,
+                    after=None,
+                )
+            return
+
+        super().save_formset(request, form, formset, change)
 
 
 @admin.register(AgentProfile)
