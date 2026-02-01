@@ -16,7 +16,7 @@ from apps.voice.runtime import VoiceCallRuntime
 
 logger = logging.getLogger(__name__)
 
-PATH_RE = re.compile(r"^/voice/stream/(?P<session_id>[0-9a-fA-F-]{36})/?$")
+PATH_RE = re.compile(r"^/voice/stream/(?P<session_id>[0-9a-fA-F-]{36})(?:/(?P<token>[A-Za-z0-9_-]+))?/?$")
 
 
 class Command(BaseCommand):
@@ -38,7 +38,9 @@ class Command(BaseCommand):
                 await ws.close(code=1008, reason="invalid_path")
                 return
 
-            token = (parse_qs(parsed.query or "").get("token") or [""])[0]
+            path_token = (match.group("token") or "").strip()
+            query_token = (parse_qs(parsed.query or "").get("token") or [""])[0]
+            token = path_token or query_token
             if not token:
                 await ws.close(code=1008, reason="missing_token")
                 return
@@ -65,4 +67,3 @@ class Command(BaseCommand):
                 await asyncio.Future()
 
         asyncio.run(_run())
-

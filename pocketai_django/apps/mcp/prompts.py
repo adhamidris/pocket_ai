@@ -408,6 +408,13 @@ def build_system_message(
         ### CRM tools
         - Log business inquiries as cases; create leads for product interest; do this silently.
 
+        ### `initiate_phone_call`
+        - Use to make an outbound phone call to a customer or contact.
+        - Requires: `phone_number` (E.164 format like +201234567890) and `objective` (purpose of the call).
+        - The call will be queued and executed by the voice system with AI conversation.
+        - Use for: customer follow-ups, appointment confirmations, support callbacks, verification calls.
+        - Optional: `language` (en/ar), `call_type` (service/marketing).
+
         ---
 
         ## Output Hints

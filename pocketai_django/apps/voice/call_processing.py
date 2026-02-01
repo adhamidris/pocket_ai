@@ -13,6 +13,8 @@ from django.utils import timezone
 
 from core.tenancy import tenant_bypass, tenant_context
 
+from apps.conversations.models import AgentRunEventStream, AgentRunEventType
+from apps.voice.agent_run_bridge import append_agent_run_event, get_agent_run_id_from_call_session_metadata
 from apps.voice.models import CallEvent, CallSession, CallStatus, CallType, VoiceConfiguration, VoiceSuppressionEntry
 from apps.voice.policy_engine import audit_policy_decision, evaluate_voice_compliance_policy
 from apps.voice.twilio import load_twilio_config
@@ -96,9 +98,20 @@ class VoiceCallWorkerService:
 
         try:
             with tenant_context(session.business_profile_id):
+                self._emit_agent_run_progress(session, label="Initiating phone call", payload={"status": session.status})
                 self._apply_worker_guardrails(session)
                 self._initiate_twilio_call(session)
+                self._emit_agent_run_progress(
+                    session,
+                    label="Dialing…",
+                    payload={"status": session.status, "twilio_call_sid": session.twilio_call_sid},
+                )
         except _VoiceCallRequeue as exc:
+            self._emit_agent_run_progress(
+                session,
+                label="Call deferred",
+                payload={"status": session.status, "reason": str(exc)},
+            )
             return VoiceCallWorkerResult(
                 call_session_id=str(session.id),
                 status=session.status,
@@ -108,9 +121,42 @@ class VoiceCallWorkerService:
         except Exception as exc:
             logger.exception("voice.call_worker_failed session=%s", session.id)
             self._mark_failed_or_requeue(session, error=str(exc) or "worker_failed")
+            self._emit_agent_run_progress(
+                session,
+                label="Call failed to start",
+                payload={"status": session.status, "error": str(exc)[:600]},
+                event_type=AgentRunEventType.ERROR,
+            )
             return VoiceCallWorkerResult(call_session_id=str(session.id), status=session.status, requeued=session.status == CallStatus.QUEUED, error=str(exc))
 
         return VoiceCallWorkerResult(call_session_id=str(session.id), status=session.status)
+
+    def _emit_agent_run_progress(
+        self,
+        session: CallSession,
+        *,
+        label: str,
+        payload: dict[str, object] | None = None,
+        event_type: str = AgentRunEventType.PROGRESS,
+    ) -> None:
+        run_id = get_agent_run_id_from_call_session_metadata(session)
+        if not run_id or not session.business_profile_id:
+            return
+        try:
+            append_agent_run_event(
+                run_id=run_id,
+                business_id=session.business_profile_id,
+                stream=AgentRunEventStream.EXECUTED,
+                event_type=event_type,
+                label=label,
+                payload={
+                    "call_session_id": str(session.id),
+                    "to_phone_number": session.to_phone_number,
+                    **(payload or {}),
+                },
+            )
+        except Exception:  # pragma: no cover - best effort only
+            logger.exception("voice.agent_run_event_failed session=%s", session.id)
 
     def _claim_next_session(self) -> CallSession | None:
         now = timezone.now()

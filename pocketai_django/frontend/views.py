@@ -2003,6 +2003,7 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
 
     context = {
         "user_name": user_name,
+        "business_id": str(getattr(business, "id", "")) if business else "",
         "agents_stats": stats,
         "agents_filters": {
             "search_placeholder": "Search name, ID, role…",

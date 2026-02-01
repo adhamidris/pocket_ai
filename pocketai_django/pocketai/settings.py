@@ -81,6 +81,22 @@ else:
             stacklevel=2,
         )
 
+# Auto-allow Twilio webhook/voice WS hosts in dev to avoid DisallowedHost during local testing.
+try:
+    from urllib.parse import urlparse
+
+    if DEBUG and ALLOWED_HOSTS != ["*"]:
+        for _env_key in ("TWILIO_WEBHOOK_BASE_URL", "VOICE_WS_BASE_URL"):
+            _raw = (os.getenv(_env_key) or "").strip()
+            if not _raw:
+                continue
+            _parsed = urlparse(_raw)
+            _host = _parsed.hostname
+            if _host and _host not in ALLOWED_HOSTS:
+                ALLOWED_HOSTS.append(_host)
+except Exception:
+    pass
+
 
 # ==============================================================================
 # ERROR MONITORING (Sentry)

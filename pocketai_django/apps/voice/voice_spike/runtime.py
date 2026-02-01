@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 from dataclasses import dataclass
 from typing import AsyncIterator, Callable
 
@@ -11,6 +12,7 @@ from asgiref.sync import sync_to_async
 
 from apps.llm.ai_prompt_builder import PromptBundle
 from apps.llm.llm_provider import DeepSeekChatProvider, OpenAIChatProvider, _ResponseTextExtractor, load_default_provider
+from apps.voice.audio_frames import iter_audio_frames
 from apps.voice.models import CallSession
 from apps.voice.voice_spike.deepgram_stt import DeepgramConfig, deepgram_transcripts
 from apps.voice.voice_spike.elevenlabs_tts import ElevenLabsConfig, stream_tts_audio
@@ -252,10 +254,18 @@ class VoiceSpikeRuntime:
     async def _stream_tts_to_twilio(self, twilio_ws, text: str, *, config: ElevenLabsConfig) -> None:
         if not self._stream_sid:
             return
-        async for audio in stream_tts_audio(text, config=config):
-            # Twilio expects base64-encoded audio bytes.
-            payload = base64.b64encode(audio).decode("ascii")
+        frame_ms = int((os.getenv("VOICE_TTS_FRAME_MS") or "20").strip() or 20)
+        pace_raw = (os.getenv("VOICE_TTS_PACE") or "").strip().lower()
+        pace = False if pace_raw in {"0", "false", "no"} else True
+        async for frame in iter_audio_frames(
+            stream_tts_audio(text, config=config),
+            output_format=config.output_format,
+            frame_ms=frame_ms,
+        ):
+            payload = base64.b64encode(frame).decode("ascii")
             await _twilio_send(twilio_ws, {"event": "media", "streamSid": self._stream_sid, "media": {"payload": payload}})
+            if pace:
+                await asyncio.sleep(frame_ms / 1000.0)
 
     async def _get_session(self) -> CallSession:
         session_id = self.session_id

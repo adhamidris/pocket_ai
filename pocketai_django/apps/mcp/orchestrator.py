@@ -433,6 +433,7 @@ class McpOrchestratorService:
                 "email_get_thread",
                 "email_create_draft",
                 "email_send_draft",
+                "initiate_phone_call",
             }
             internal_tool_defs = [
                 tool_def for tool_def in internal_tool_defs if self._tool_schema_name(tool_def) in allowed

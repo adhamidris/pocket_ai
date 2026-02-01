@@ -693,6 +693,31 @@ def identifier_schema_reject(request: HttpRequest, business_id: uuid.UUID, schem
 @require_http_methods(["PUT"])
 def configure_agent(request: HttpRequest, business_id: str) -> JsonResponse:
     """Persist the agent configuration for the given business profile."""
+    if not request.user.is_authenticated:
+        return JsonResponse(
+            {"error": "UNAUTHORIZED", "message": "Login required."},
+            status=HTTPStatus.UNAUTHORIZED,
+        )
+
+    business = None
+    try:
+        business_uuid = business_id if isinstance(business_id, uuid.UUID) else uuid.UUID(str(business_id))
+        business = BusinessProfile.objects.filter(id=business_uuid).first()
+    except (TypeError, ValueError):
+        business = None
+
+    if business is None:
+        return JsonResponse(
+            {"error": "BUSINESS_NOT_FOUND", "message": "Business profile not found."},
+            status=HTTPStatus.NOT_FOUND,
+        )
+
+    if not (request.user.is_staff or request.user.business_profiles.filter(id=business.id).exists()):
+        return JsonResponse(
+            {"error": "FORBIDDEN", "message": "You do not have access to this business profile."},
+            status=HTTPStatus.FORBIDDEN,
+        )
+
     try:
         payload = json.loads(request.body.decode("utf-8") or "{}")
     except (json.JSONDecodeError, UnicodeDecodeError):
@@ -715,7 +740,7 @@ def configure_agent(request: HttpRequest, business_id: str) -> JsonResponse:
 
     try:
         result: AgentProfileResult = configure_agent_profile(
-            business_id=business_id,
+            business_id=str(business.id),
             name=agent_name,
             role=agent_role,
             tone=agent_tone,

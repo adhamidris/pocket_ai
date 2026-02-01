@@ -11,6 +11,10 @@ from django.utils import timezone as dj_timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
+from core.tenancy import tenant_context
+
+from apps.conversations.models import AgentRun, AgentRunEventStream, AgentRunEventType, AgentRunStatus
+from apps.voice.agent_run_bridge import append_agent_run_event, get_agent_run_id_from_call_session_metadata
 from apps.voice.models import CallSession, CallStatus, VoiceConfiguration
 from apps.voice.twilio import load_twilio_config, validate_twilio_request
 
@@ -173,7 +177,7 @@ def _twiml_after_consent(*, session: CallSession, cfg) -> str:
         session.stream_token = token
         session.save(update_fields=["stream_token", "updated_at"])
 
-    stream_url = f"{ws_base}/voice/stream/{session.id}?token={token}"
+    stream_url = f"{ws_base}/voice/stream/{session.id}/{token}"
     recording_cb = f"{cfg.webhook_base_url}/voice/twilio/recording/{session.id}/"
 
     lang = str(session.language or "").strip().lower()
@@ -200,6 +204,63 @@ def _twiml_after_consent(*, session: CallSession, cfg) -> str:
     )
 
 
+def _emit_agent_run_event(
+    session: CallSession,
+    *,
+    label: str,
+    payload: dict[str, object] | None = None,
+    event_type: str = AgentRunEventType.PROGRESS,
+    update_run_fields: dict[str, object] | None = None,
+) -> None:
+    run_id = get_agent_run_id_from_call_session_metadata(session)
+    if not run_id or not session.business_profile_id:
+        return
+    try:
+        append_agent_run_event(
+            run_id=run_id,
+            business_id=session.business_profile_id,
+            stream=AgentRunEventStream.EXECUTED,
+            event_type=event_type,
+            label=label,
+            payload={"call_session_id": str(session.id), **(payload or {})},
+            update_run_fields=update_run_fields,
+        )
+    except Exception:  # pragma: no cover - best effort only
+        logger.exception("voice.agent_run_event_failed session=%s", session.id)
+
+
+def _run_update_for_terminal_call(session: CallSession) -> dict[str, object] | None:
+    run_id = get_agent_run_id_from_call_session_metadata(session)
+    if not run_id or not session.business_profile_id:
+        return None
+
+    with tenant_context(session.business_profile_id):
+        run = AgentRun.objects.filter(id=run_id).only("metadata").first()
+        if not run:
+            return None
+        meta = run.metadata if isinstance(getattr(run, "metadata", None), dict) else {}
+        if str(meta.get("kind") or "").strip().lower() != "voice_call":
+            return None
+        voice_session_id = str(meta.get("voice_call_session_id") or "").strip()
+        if voice_session_id and voice_session_id != str(session.id):
+            return None
+
+    now = dj_timezone.now()
+    if session.status == CallStatus.COMPLETED:
+        return {"status": AgentRunStatus.COMPLETED, "finished_at": now, "run_after": None, "lease_expires_at": None}
+    if session.status == CallStatus.CANCELLED:
+        return {"status": AgentRunStatus.CANCELLED, "finished_at": now, "run_after": None, "lease_expires_at": None}
+    if session.status == CallStatus.FAILED:
+        return {
+            "status": AgentRunStatus.FAILED,
+            "finished_at": now,
+            "run_after": None,
+            "lease_expires_at": None,
+            "error_detail": (session.last_error or "")[:2000],
+        }
+    return None
+
+
 @csrf_exempt
 @require_http_methods(["POST", "GET"])
 def twilio_twiml(request: HttpRequest, session_id: uuid.UUID) -> HttpResponse:
@@ -221,6 +282,7 @@ def twilio_twiml(request: HttpRequest, session_id: uuid.UUID) -> HttpResponse:
 
     session.status = CallStatus.IN_PROGRESS
     session.save(update_fields=["twilio_call_sid", "status", "updated_at"])
+    _emit_agent_run_event(session, label="Call connected", payload={"status": session.status, "call_sid": call_sid})
 
     return _twiml_response(_twiml_gather_consent(session=session, cfg=cfg))
 
@@ -246,10 +308,18 @@ def twilio_consent(request: HttpRequest, session_id: uuid.UUID) -> HttpResponse:
         session.consent_obtained_at = _now()
         session.consent_method = "dtmf"
         session.save(update_fields=["consent_obtained", "consent_obtained_at", "consent_method", "updated_at"])
+        _emit_agent_run_event(session, label="Consent obtained", payload={"consent": True})
         return _twiml_response(_twiml_after_consent(session=session, cfg=cfg))
 
     session.status = CallStatus.CANCELLED
     session.save(update_fields=["status", "updated_at"])
+    _emit_agent_run_event(
+        session,
+        label="Consent denied",
+        payload={"consent": False},
+        event_type=AgentRunEventType.CANCELLED,
+        update_run_fields=_run_update_for_terminal_call(session),
+    )
     return _twiml_response(_twiml_decline())
 
 
@@ -288,6 +358,35 @@ def twilio_status(request: HttpRequest, session_id: uuid.UUID) -> HttpResponse:
         session.ended_at = dj_timezone.now()
 
     session.save(update_fields=["twilio_call_sid", "status", "ended_at", "updated_at"])
+
+    label = ""
+    evt_type = AgentRunEventType.PROGRESS
+    update_fields = None
+    if session.status == CallStatus.RINGING:
+        label = "Ringing…"
+    elif session.status == CallStatus.IN_PROGRESS:
+        label = "In progress"
+    elif session.status == CallStatus.COMPLETED:
+        label = "Call completed"
+        evt_type = AgentRunEventType.RESULT
+        update_fields = _run_update_for_terminal_call(session)
+    elif session.status == CallStatus.CANCELLED:
+        label = "Call cancelled"
+        evt_type = AgentRunEventType.CANCELLED
+        update_fields = _run_update_for_terminal_call(session)
+    elif session.status == CallStatus.FAILED:
+        label = "Call failed"
+        evt_type = AgentRunEventType.ERROR
+        update_fields = _run_update_for_terminal_call(session)
+
+    if label:
+        _emit_agent_run_event(
+            session,
+            label=label,
+            payload={"status": session.status, "twilio_status": call_status},
+            event_type=evt_type,
+            update_run_fields=update_fields,
+        )
     return HttpResponse(status=204)
 
 

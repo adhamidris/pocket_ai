@@ -63,19 +63,24 @@ async def stream_tts_audio(text: str, *, config: ElevenLabsConfig) -> AsyncItera
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{config.voice_id}/stream"
     headers = {
         "xi-api-key": config.api_key,
-        "accept": "audio/mpeg",
+        "accept": f"audio/{config.output_format}",
         "content-type": "application/json",
     }
     payload = {
         "text": text,
         "model_id": config.model_id,
-        "output_format": config.output_format,
         # Voice settings can be overridden later; keep defaults for spike.
     }
 
     timeout = httpx.Timeout(connect=10.0, read=60.0, write=20.0, pool=10.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
-        async with client.stream("POST", url, headers=headers, json=payload) as resp:
+        async with client.stream(
+            "POST",
+            url,
+            headers=headers,
+            params={"output_format": config.output_format},
+            json=payload,
+        ) as resp:
             resp.raise_for_status()
             async for chunk in resp.aiter_bytes():
                 if chunk:

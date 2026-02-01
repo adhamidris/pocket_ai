@@ -12,6 +12,7 @@ from django.utils import timezone
 
 from core.tenancy import tenant_context
 
+from apps.conversations.models import AgentRun, AgentRunEventStream, AgentRunEventType, AgentRunStatus
 from apps.conversations.models import (
     Conversation,
     ConversationChannel,
@@ -22,6 +23,7 @@ from apps.conversations.models import (
 from apps.llm.ai_prompt_builder import PromptBundle
 from apps.llm.llm_provider import load_default_provider
 from apps.voice.models import CallEvent, CallSession
+from apps.voice.agent_run_bridge import append_agent_run_event, get_agent_run_id_from_call_session_metadata
 from apps.voice.r2_storage import build_r2_client, load_r2_config
 from apps.voice.twilio import load_twilio_config
 
@@ -251,6 +253,54 @@ def process_post_call(session: CallSession) -> PostCallProcessingResult:
             logger.exception("voice.recording_upload_failed session=%s error=%s", session.id, exc)
             session.post_processing_error = f"recording_upload_failed:{exc}"
             session.save(update_fields=["post_processing_error", "updated_at"])
+
+        # Bridge the completed call into the Tasks panel (AgentRun) when the call
+        # was initiated via a sub-agent task.
+        try:
+            from apps.voice.models import CallStatus
+
+            run_id = get_agent_run_id_from_call_session_metadata(session)
+            if run_id and session.business_profile_id:
+                run = AgentRun.objects.filter(id=run_id).only("metadata").first()
+                meta = run.metadata if run and isinstance(getattr(run, "metadata", None), dict) else {}
+                is_voice_run = str(meta.get("kind") or "").strip().lower() == "voice_call"
+                voice_session_id = str(meta.get("voice_call_session_id") or "").strip()
+                if is_voice_run and (not voice_session_id or voice_session_id == str(session.id)):
+                    terminal_status = None
+                    if session.status == CallStatus.COMPLETED:
+                        terminal_status = AgentRunStatus.COMPLETED
+                    elif session.status == CallStatus.CANCELLED:
+                        terminal_status = AgentRunStatus.CANCELLED
+                    elif session.status == CallStatus.FAILED:
+                        terminal_status = AgentRunStatus.FAILED
+
+                    update_fields: dict[str, object] = {
+                        "execution_conversation_id": conversation.id,
+                    }
+                    if terminal_status:
+                        update_fields["status"] = terminal_status
+                        update_fields["finished_at"] = timezone.now()
+                        if terminal_status == AgentRunStatus.FAILED:
+                            update_fields["error_detail"] = (session.post_processing_error or session.last_error or "")[:2000]
+                    if session.summary:
+                        update_fields["result"] = {"response_text": str(session.summary)[:6000]}
+
+                    append_agent_run_event(
+                        run_id=run_id,
+                        business_id=session.business_profile_id,
+                        stream=AgentRunEventStream.EXECUTED,
+                        event_type=AgentRunEventType.RESULT if session.summary else AgentRunEventType.PROGRESS,
+                        label="Call summary ready" if session.summary else "Call transcript saved",
+                        payload={
+                            "call_session_id": str(session.id),
+                            "status": session.status,
+                            "transcript_messages_written": int(messages_written),
+                            "recording_uploaded": bool(recording_uploaded),
+                        },
+                        update_run_fields=update_fields,
+                    )
+        except Exception:  # pragma: no cover - best effort only
+            logger.exception("voice.post_call_agent_run_bridge_failed session=%s", session.id)
 
         return PostCallProcessingResult(
             transcript_messages_written=messages_written,

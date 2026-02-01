@@ -1,16 +1,36 @@
 from __future__ import annotations
 
 import os
+import uuid
 from datetime import timedelta
 from decimal import Decimal
 from typing import Mapping
 
+import logging
+
 from django.conf import settings
+from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
 
+from core.tenancy import tenant_context
+
 from apps.conversations.models import Conversation
+from apps.conversations.models import (
+    AgentRun,
+    AgentRunEventStream,
+    AgentRunEventType,
+    AgentRunSource,
+    AgentRunStatus,
+    AgentRunVisibility,
+)
 from apps.mcp.types import ToolExecutionContext
+from apps.voice.agent_run_bridge import (
+    append_agent_run_event,
+    get_actor_user_id_from_conversation_metadata,
+    get_agent_run_id_from_conversation_metadata,
+    resolve_agent_run,
+)
 from apps.voice.models import (
     CallEvent,
     CallSession,
@@ -24,6 +44,9 @@ from apps.voice.models import (
 from apps.voice.policy_engine import audit_policy_decision, evaluate_voice_compliance_policy
 from apps.voice.phone_utils import detect_country_iso2, is_valid_e164
 from apps.voice.twilio import load_twilio_config
+
+
+logger = logging.getLogger(__name__)
 
 
 def _decimal(value: object, default: str) -> Decimal:
@@ -51,6 +74,53 @@ def _effective_owner_cap(value: int, owner_cap: int) -> int:
             return cap_int
         return min(value_int, cap_int)
     return value_int
+
+
+def _cleanup_stale_active_calls(*, business_id: object) -> int:
+    now = timezone.now()
+    pre_stream_timeout = int(getattr(settings, "VOICE_CALL_PRE_STREAM_TIMEOUT_SECONDS", 120) or 120)
+    stale_grace = int(getattr(settings, "VOICE_CALL_STALE_GRACE_SECONDS", 120) or 120)
+    active_statuses = {CallStatus.INITIATING, CallStatus.RINGING, CallStatus.IN_PROGRESS}
+
+    stale_ids: list[uuid.UUID] = []
+    sessions = CallSession.objects.filter(business_profile_id=business_id, status__in=active_statuses).only(
+        "id",
+        "status",
+        "updated_at",
+        "started_at",
+        "queued_at",
+        "max_duration_seconds",
+        "twilio_stream_sid",
+        "consent_obtained",
+    )
+    for session in sessions:
+        base_time = session.started_at or session.updated_at or session.queued_at or now
+        if not session.twilio_stream_sid:
+            if session.updated_at and session.updated_at < now - timedelta(seconds=pre_stream_timeout):
+                stale_ids.append(session.id)
+                continue
+        max_duration = int(session.max_duration_seconds or 0) or 600
+        if base_time + timedelta(seconds=max_duration + stale_grace) < now:
+            stale_ids.append(session.id)
+
+    if not stale_ids:
+        return 0
+
+    with tenant_context(business_id):
+        for session in CallSession.objects.filter(id__in=stale_ids):
+            session.status = CallStatus.FAILED
+            session.last_error = "stale_call_timeout"
+            session.ended_at = now
+            session.lease_expires_at = None
+            session.save(update_fields=["status", "last_error", "ended_at", "lease_expires_at", "updated_at"])
+            CallEvent.objects.create(
+                call_session=session,
+                business_profile_id=business_id,
+                event_type="call.auto_failed_stale",
+                payload={"reason": "stale_call_timeout"},
+            )
+    logger.warning("voice.stale_calls_cleared business=%s count=%s", business_id, len(stale_ids))
+    return len(stale_ids)
 
 
 def _ensure_voice_config(business_id: object) -> VoiceConfiguration | None:
@@ -249,6 +319,8 @@ def initiate_phone_call_tool(
             "hint": "Call blocked by compliance policy.",
         }
 
+    _cleanup_stale_active_calls(business_id=business_id)
+
     owner_max_concurrent = int(getattr(settings, "VOICE_OWNER_MAX_CONCURRENT_CALLS", 0) or 0)
     effective_concurrent = _effective_owner_cap(int(config.max_concurrent_calls or 0), owner_max_concurrent)
     if effective_concurrent > 0:
@@ -334,31 +406,123 @@ def initiate_phone_call_tool(
     if language not in {"en", "ar"}:
         language = "en"
 
-    now = timezone.now()
-    session = CallSession.objects.create(
-        business_profile_id=business_id,
-        agent_profile_id=agent_id,
-        initiating_conversation_id=conversation.id,
-        objective=objective,
-        call_type=call_type,
-        language=language,
-        country=country,
-        to_phone_number=phone_number,
-        from_phone_number=from_number,
-        voice_phone_number_id=voice_number_id,
-        status=CallStatus.QUEUED,
-        queued_at=now,
-        run_after=now,
-        max_duration_seconds=effective_duration,
-        cost_estimate_usd=estimate,
-        metadata={
-            "source": "mcp_tool",
-            "conversation_id": str(conversation.id),
-            "agent_profile_id": str(agent_id),
-        },
-        context_items=context_items,
+    actor_user_id = get_actor_user_id_from_conversation_metadata(conversation)
+
+    existing_run_id = get_agent_run_id_from_conversation_metadata(conversation)
+    existing_run = None
+    if existing_run_id:
+        existing_run = resolve_agent_run(agent_run_id=existing_run_id, business_id=business_id)
+
+    anchor_conversation_id = (
+        getattr(existing_run, "conversation_id", None) or getattr(conversation, "id", None)
     )
-    CallEvent.objects.create(call_session=session, business_profile_id=business_id, event_type="call.queued", payload={})
+
+    call_run: AgentRun | None = existing_run
+    created_run = False
+
+    with tenant_context(business_id):
+        with transaction.atomic():
+            if call_run is None:
+                title_parts = []
+                if phone_number:
+                    title_parts.append(f"Call {phone_number}")
+                if objective:
+                    title_parts.append(objective.strip())
+                title = " — ".join(title_parts).strip()[:200] or "Phone call"
+                call_run = AgentRun.objects.create(
+                    business_profile_id=business_id,
+                    agent_profile_id=agent_id,
+                    conversation_id=anchor_conversation_id,
+                    created_by_id=actor_user_id,
+                    title=title,
+                    source=AgentRunSource.CHAT,
+                    status=AgentRunStatus.WAITING_EXTERNAL,
+                    visibility=AgentRunVisibility.INITIATOR,
+                    plan={
+                        "steps": [
+                            {"title": "Dial the number"},
+                            {"title": "AI disclosure + recording consent"},
+                            {"title": "Conduct the call"},
+                            {"title": "Save transcript + summary"},
+                        ]
+                    },
+                    metadata={
+                        "kind": "voice_call",
+                        "to_phone_number": phone_number,
+                        "objective": objective[:600],
+                        "call_type": call_type,
+                        "country": country,
+                        "language": language,
+                        "source": "mcp_tool",
+                    },
+                )
+                created_run = True
+
+            now = timezone.now()
+            session = CallSession.objects.create(
+                business_profile_id=business_id,
+                agent_profile_id=agent_id,
+                created_by_id=actor_user_id,
+                initiating_conversation_id=anchor_conversation_id,
+                objective=objective,
+                call_type=call_type,
+                language=language,
+                country=country,
+                to_phone_number=phone_number,
+                from_phone_number=from_number,
+                voice_phone_number_id=voice_number_id,
+                status=CallStatus.QUEUED,
+                queued_at=now,
+                run_after=now,
+                max_duration_seconds=effective_duration,
+                cost_estimate_usd=estimate,
+                metadata={
+                    "source": "mcp_tool",
+                    "conversation_id": str(anchor_conversation_id) if anchor_conversation_id else "",
+                    "agent_profile_id": str(agent_id),
+                    "agent_run_id": str(call_run.id) if call_run else "",
+                },
+                context_items=context_items,
+            )
+            CallEvent.objects.create(
+                call_session=session,
+                business_profile_id=business_id,
+                event_type="call.queued",
+                payload={"agent_run_id": str(call_run.id) if call_run else ""},
+            )
+
+    if call_run:
+        payload = {
+            "call_session_id": str(session.id),
+            "to_phone_number": phone_number,
+            "country": country,
+            "call_type": call_type,
+            "objective": objective[:600],
+        }
+        update_fields = None
+        if created_run:
+            next_meta = dict(call_run.metadata or {}) if isinstance(call_run.metadata, dict) else {}
+            next_meta["voice_call_session_id"] = str(session.id)
+            update_fields = {
+                "metadata": next_meta,
+                "status": AgentRunStatus.WAITING_EXTERNAL,
+                "run_after": None,
+                "lease_expires_at": None,
+                "finished_at": None,
+                "error_detail": "",
+            }
+        try:
+            append_agent_run_event(
+                run_id=uuid.UUID(str(call_run.id)),
+                business_id=business_id,
+                stream=AgentRunEventStream.EXECUTED,
+                event_type=AgentRunEventType.PROGRESS,
+                label="Phone call queued",
+                payload=payload,
+                update_run_fields=update_fields,
+            )
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("voice.tool.agent_run_event_failed run=%s", getattr(call_run, "id", None))
 
     return {
         "tool": "initiate_phone_call",
@@ -367,6 +531,8 @@ def initiate_phone_call_tool(
         "callSessionId": str(session.id),
         "call_status": session.status,
         "callStatus": session.status,
+        "agent_run_id": str(call_run.id) if call_run else None,
+        "agentRunId": str(call_run.id) if call_run else None,
         "country": country,
         "from_phone_number": from_number,
         "to_phone_number": phone_number,

@@ -48,6 +48,12 @@ Read canonical evidence for specific refs from `search_knowledge.refs[]`.
 - Batch all relevant refs into ONE call.
 - Set `max_chars` using `read_budget_hint.total_suggested_max_chars` from the search results. For "list all" / large tables, prefer a higher `max_chars` (up to `read_budget_hint.max_chars_allowed`) to avoid repeat reads.
 
+### initiate_phone_call(phone_number, objective)
+Make an outbound phone call to a customer or contact.
+- `phone_number`: E.164 format (e.g., +201234567890).
+- `objective`: Purpose of the call (what needs to be accomplished).
+- Use for: customer follow-ups, appointment confirmations, support callbacks, verification calls.
+
 ## Workflow Rules
 
 1. Search once per user intent (batch variants using `queries=[...]`).
@@ -126,6 +132,12 @@ Read canonical evidence for specific refs from `search_knowledge.refs[]`.
 - You can continue multiple partial refs in ONE call by including multiple `{{id,cursor}}` entries in `refs`.
 - Batch all relevant items into ONE call.
 - Set `max_chars` using `read_budget_hint.total_suggested_max_chars` from the search results. For "list all" / large tables, prefer a higher `max_chars` (up to `read_budget_hint.max_chars_allowed`) to avoid repeat reads.
+
+### initiate_phone_call(phone_number, objective)
+Make an outbound phone call to a customer or contact.
+- `phone_number`: E.164 format (e.g., +201234567890).
+- `objective`: Purpose of the call (what needs to be accomplished).
+- Use for: customer follow-ups, appointment confirmations, support callbacks, verification calls.
 
 ## Workflow Rules
 
@@ -234,6 +246,7 @@ You are {agent_name}{for_business}.
 - **search_knowledge(queries)** — find what exists. Returns refs (IDs + labels, no content). Batch variants in ONE call.
 - If the tool returns `has_more=true` and a `next_cursor`, fetch more results using `search_knowledge(cursor=next_cursor)` instead of repeating the same search.
 - **read_knowledge(refs, max_chars)** — read content for refs from search results. Batch all refs in ONE call. Use `read_budget_hint.total_suggested_max_chars` for `max_chars`.
+- **initiate_phone_call(phone_number, objective)** — make an outbound phone call. Requires E.164 format (e.g., +201234567890) and call objective. Use for customer follow-ups, confirmations, or callbacks.
 
 ## Workflow (follow this order)
 
@@ -287,6 +300,12 @@ Read canonical evidence for specific refs from `search_knowledge.refs[]`.
 - You can continue multiple partial refs in ONE call by including multiple `{{id,cursor}}` entries in `refs`.
 - Batch all relevant items into ONE call.
 - Set `max_chars` using `read_budget_hint.total_suggested_max_chars` from the search results. For "list all" / large tables, prefer a higher `max_chars` (up to `read_budget_hint.max_chars_allowed`) to avoid repeat reads.
+
+### initiate_phone_call(phone_number, objective)
+Make an outbound phone call to a customer or contact.
+- `phone_number`: E.164 format (e.g., +201234567890).
+- `objective`: Purpose of the call (what needs to be accomplished).
+- Use for: customer follow-ups, appointment confirmations, support callbacks, verification calls.
 
 ## Workflow Rules
 
@@ -366,6 +385,12 @@ Read canonical evidence for specific refs from `search_knowledge.refs[]`.
 - You can continue multiple partial refs in ONE call by including multiple `{{id,cursor}}` entries in `refs`.
 - Batch all relevant items into ONE call.
 - Set `max_chars` using `read_budget_hint.total_suggested_max_chars` from the search results. For "list all" / large tables, prefer a higher `max_chars` (up to `read_budget_hint.max_chars_allowed`) to avoid repeat reads.
+
+### initiate_phone_call(phone_number, objective)
+Make an outbound phone call to a customer or contact.
+- `phone_number`: E.164 format (e.g., +201234567890).
+- `objective`: Purpose of the call (what needs to be accomplished).
+- Use for: customer follow-ups, appointment confirmations, support callbacks, verification calls.
 
 ## Workflow Rules
 

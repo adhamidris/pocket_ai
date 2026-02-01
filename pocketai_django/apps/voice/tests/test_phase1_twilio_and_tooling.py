@@ -8,6 +8,7 @@ from django.test import RequestFactory, TestCase, override_settings
 from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
 from apps.conversations.models import Conversation, ConversationChannel
+from apps.conversations.models import AgentRun, AgentRunEvent, AgentRunStatus
 from apps.voice.mcp_tools import initiate_phone_call_tool
 from apps.voice.models import CallSession, CallStatus
 from apps.voice.twilio import build_twilio_signature
@@ -74,11 +75,12 @@ class VoicePhase1TwilioAndToolingTests(TestCase):
         self.assertEqual(response.status_code, 200)
         body = response.content.decode("utf-8")
         self.assertIn("<Record", body)
-        self.assertIn(f"/voice/stream/{session.id}?token=", body)
+        self.assertIn(f"/voice/stream/{session.id}", body)
 
         session.refresh_from_db()
         self.assertTrue(session.consent_obtained)
         self.assertTrue(session.stream_token)
+        self.assertIn(session.stream_token, body)
 
     @override_settings(VOICE_GLOBAL_ENABLED=True, VOICE_AUTO_CREATE_CONFIG=True)
     def test_initiate_phone_call_tool_creates_queued_session(self) -> None:
@@ -109,7 +111,20 @@ class VoicePhase1TwilioAndToolingTests(TestCase):
         self.assertEqual(result.get("status"), "ok", msg=str(result))
         call_session_id = result.get("call_session_id")
         self.assertTrue(call_session_id)
+        agent_run_id = result.get("agent_run_id")
+        self.assertTrue(agent_run_id, msg=str(result))
 
         call = CallSession.objects.get(id=call_session_id)
         self.assertEqual(call.status, CallStatus.QUEUED)
         self.assertEqual(call.country, "EG")
+        self.assertEqual(str(call.metadata.get("agent_run_id") or ""), str(agent_run_id))
+
+        run = AgentRun.objects.get(id=agent_run_id)
+        self.assertEqual(run.status, AgentRunStatus.WAITING_EXTERNAL)
+        self.assertEqual(run.metadata.get("kind"), "voice_call")
+        self.assertEqual(run.metadata.get("voice_call_session_id"), str(call.id))
+
+        self.assertTrue(
+            AgentRunEvent.objects.filter(run_id=run.id).exists(),
+            msg="Expected at least one AgentRunEvent so the Tasks panel can render the run.",
+        )

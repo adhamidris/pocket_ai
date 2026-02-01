@@ -601,26 +601,43 @@
     <div class="px-6 py-5 space-y-4 text-sm text-muted-foreground">
       <div class="space-y-2">
         <label class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">Agent name</label>
-        <input type="text" class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" placeholder="e.g. Onboarding Specialist" disabled>
+        <input
+          type="text"
+          class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+          placeholder="e.g. Salah"
+          data-create-agent-input="name"
+          autocomplete="off"
+        >
+        <p class="hidden text-xs text-destructive" data-create-agent-error="name"></p>
       </div>
       <div class="space-y-2">
         <label class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">Primary role</label>
         <div class="grid grid-cols-2 gap-2">
           {% for option in agents_modal_roles %}
-            <button type="button" class="rounded-lg border border-border/60 bg-muted/40 px-3 py-2 text-left text-sm hover:border-primary/60 hover:text-primary transition-colors" disabled>
+            <button
+              type="button"
+              class="rounded-lg border border-border/60 bg-muted/40 px-3 py-2 text-left text-sm hover:border-primary/60 hover:text-primary transition-colors"
+              data-create-agent-role="{{ option }}"
+            >
               {{ option }}
             </button>
           {% endfor %}
         </div>
       </div>
-      <div class="rounded-lg border border-dashed border-border/60 bg-muted/20 p-4 text-xs leading-relaxed text-muted-foreground">
-        The interactive agent builder will appear here once backend wiring is connected. For now, this modal acts as a visual placeholder for the upcoming flow.
+      <div class="rounded-lg border border-border/60 bg-muted/20 p-4 text-xs leading-relaxed text-muted-foreground">
+        This will (re)create the workspace’s primary agent profile and restore the public portal route.
       </div>
+      <p class="hidden text-xs text-destructive" data-create-agent-error="request"></p>
     </div>
     <div class="px-6 py-4 border-t border-border/70 flex items-center justify-end gap-2">
       <button type="button" class="inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-muted-foreground" data-dialog-close>Cancel</button>
-      <button type="button" class="inline-flex items-center justify-center rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-medium opacity-60 cursor-not-allowed">
-        Continue
+      <button
+        type="button"
+        class="inline-flex items-center justify-center rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-medium opacity-60 cursor-not-allowed"
+        data-create-agent-submit
+        disabled
+      >
+        Create agent
       </button>
     </div>
   </div>
@@ -630,6 +647,7 @@
 {% block extra_js %}
 <script>
   document.addEventListener("DOMContentLoaded", function () {
+    var businessId = "{{ business_id|default:''|escapejs }}";
     var grid = document.querySelector("[data-agents-grid]");
     var panel = document.querySelector("[data-agent-panel]");
     var overlay = document.querySelector("[data-agent-overlay]");
@@ -710,10 +728,206 @@
 		    var knowledgeCollectionsBaseline = new Set();
 		    var knowledgeCollectionsDirty = false;
 		    var knowledgeCollectionsSaving = false;
-		    var knowledgeCollectionsStatusTimer = null;
+	    var knowledgeCollectionsStatusTimer = null;
 
 		    var tabActiveClasses = ["bg-background", "text-foreground", "shadow-sm"];
 		    var tabInactiveClasses = ["text-muted-foreground", "hover:text-foreground", "hover:bg-background/60"];
+
+      // ------------------------------------------------------------
+      // Minimal dialog wiring (create agent)
+      // ------------------------------------------------------------
+
+      var dialogRoot = document.querySelector('[data-dialog="create-agent"]');
+      var dialogTrigger = document.querySelector('[data-dialog-target="create-agent"]');
+      var dialogCloseButtons = dialogRoot
+        ? Array.prototype.slice.call(dialogRoot.querySelectorAll("[data-dialog-close]") || [])
+        : [];
+
+      var createNameInput = dialogRoot ? dialogRoot.querySelector('[data-create-agent-input="name"]') : null;
+      var createRoleButtons = dialogRoot
+        ? Array.prototype.slice.call(dialogRoot.querySelectorAll("[data-create-agent-role]") || [])
+        : [];
+      var createSubmitButton = dialogRoot ? dialogRoot.querySelector("[data-create-agent-submit]") : null;
+      var createNameError = dialogRoot ? dialogRoot.querySelector('[data-create-agent-error="name"]') : null;
+      var createRequestError = dialogRoot ? dialogRoot.querySelector('[data-create-agent-error="request"]') : null;
+
+      var createSelectedRole = "";
+      var createRoleSelectedClasses = ["ring-1", "ring-primary/60", "bg-primary/5", "border-primary/60", "text-primary"];
+
+      function setCreateError(key, message) {
+        if (key === "name" && createNameError) {
+          createNameError.textContent = message || "";
+          createNameError.classList.toggle("hidden", !message);
+        }
+        if (key === "request" && createRequestError) {
+          createRequestError.textContent = message || "";
+          createRequestError.classList.toggle("hidden", !message);
+        }
+      }
+
+      function clearCreateErrors() {
+        setCreateError("name", "");
+        setCreateError("request", "");
+      }
+
+      function openDialog() {
+        if (!dialogRoot) return;
+        dialogRoot.classList.remove("hidden");
+        dialogRoot.classList.add("flex");
+        if (body) body.classList.add("overflow-hidden");
+        try {
+          if (createNameInput) createNameInput.focus({ preventScroll: true });
+        } catch (_err) {
+          if (createNameInput) createNameInput.focus();
+        }
+      }
+
+      function closeDialog() {
+        if (!dialogRoot) return;
+        dialogRoot.classList.add("hidden");
+        dialogRoot.classList.remove("flex");
+        if (body) body.classList.remove("overflow-hidden");
+        clearCreateErrors();
+      }
+
+      if (dialogTrigger && dialogRoot) {
+        dialogTrigger.addEventListener("click", function () {
+          openDialog();
+        });
+      }
+
+      dialogCloseButtons.forEach(function (button) {
+        button.addEventListener("click", function () {
+          closeDialog();
+        });
+      });
+
+      if (dialogRoot) {
+        dialogRoot.addEventListener("click", function (event) {
+          if (event.target === dialogRoot) {
+            closeDialog();
+          }
+        });
+      }
+
+      function validateCreateForm() {
+        var nameValue = createNameInput ? (createNameInput.value || "").trim() : "";
+        if (nameValue.length < 2) {
+          setCreateError("name", "Agent name must be at least 2 characters.");
+          return false;
+        }
+        setCreateError("name", "");
+        return true;
+      }
+
+      function updateCreateSubmitState() {
+        if (!createSubmitButton) return;
+        var valid = validateCreateForm();
+        createSubmitButton.disabled = !valid;
+        createSubmitButton.classList.toggle("opacity-60", !valid);
+        createSubmitButton.classList.toggle("cursor-not-allowed", !valid);
+      }
+
+      if (createNameInput) {
+        createNameInput.addEventListener("input", function () {
+          updateCreateSubmitState();
+        });
+      }
+
+      createRoleButtons.forEach(function (button) {
+        button.addEventListener("click", function () {
+          var role = (button.getAttribute("data-create-agent-role") || "").trim();
+          createSelectedRole = role;
+          createRoleButtons.forEach(function (btn) {
+            createRoleSelectedClasses.forEach(function (cls) {
+              btn.classList.remove(cls);
+            });
+          });
+          createRoleSelectedClasses.forEach(function (cls) {
+            button.classList.add(cls);
+          });
+        });
+      });
+
+      function submitCreateAgent() {
+        if (!businessId) {
+          setCreateError("request", "No business selected. Refresh the page and try again.");
+          return;
+        }
+        if (!createSubmitButton || !createNameInput) {
+          return;
+        }
+        clearCreateErrors();
+        if (!validateCreateForm()) {
+          return;
+        }
+
+        createSubmitButton.disabled = true;
+        createSubmitButton.classList.add("opacity-60", "cursor-not-allowed");
+        createSubmitButton.textContent = "Creating…";
+
+        fetch("/api/register/businesses/" + encodeURIComponent(businessId) + "/agent/", {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "X-CSRFToken": getCsrfToken(),
+          },
+          credentials: "same-origin",
+          body: JSON.stringify({
+            agentName: (createNameInput.value || "").trim(),
+            agentTitle: createSelectedRole || "",
+            agentTone: "",
+            agentTraits: [],
+            agentEscalation: "",
+          }),
+        })
+          .then(function (response) {
+            if (response.ok) {
+              return response.json();
+            }
+            return response
+              .json()
+              .catch(function () {
+                return null;
+              })
+              .then(function (data) {
+                var message = (data && data.message) || "We couldn't save your agent. Try again.";
+                throw new Error(message);
+              });
+          })
+          .then(function () {
+            window.location.reload();
+          })
+          .catch(function (error) {
+            setCreateError("request", (error && error.message) || "Unable to create agent right now.");
+          })
+          .finally(function () {
+            createSubmitButton.disabled = false;
+            updateCreateSubmitState();
+            createSubmitButton.textContent = "Create agent";
+          });
+      }
+
+      if (createSubmitButton) {
+        createSubmitButton.addEventListener("click", function () {
+          submitCreateAgent();
+        });
+      }
+
+      if (dialogRoot) {
+        dialogRoot.addEventListener("keydown", function (event) {
+          if (event.key === "Escape") {
+            closeDialog();
+          }
+          if (event.key === "Enter" && event.target === createNameInput) {
+            event.preventDefault();
+            submitCreateAgent();
+          }
+        });
+      }
+
+      updateCreateSubmitState();
 
 	    function setActiveTab(nextTab, options) {
 	      if (!tabsButtons.length || !tabsPanels.length) {
