@@ -144,6 +144,9 @@ class ChatPortalClient {
     this.agentRequests = new Map(); // requestId -> { request, expanded }
     this.inboxRenderRaf = null;
     this.inboxPanelUserHidden = false;
+
+    // Voice call transcript state
+    this.activeVoiceCalls = new Map(); // sessionId -> { transcripts: [], expanded }
   }
 
   async init() {
@@ -3589,6 +3592,15 @@ class ChatPortalClient {
           console.warn("Failed to parse agent request event", error);
         }
       });
+
+      this.eventSource.addEventListener("voiceCallTranscript", (event) => {
+        try {
+          const payload = event && event.data ? JSON.parse(event.data) : null;
+          this.handleVoiceCallTranscript(payload);
+        } catch (error) {
+          console.warn("Failed to parse voice call transcript event", error);
+        }
+      });
     }
   }
 
@@ -3726,6 +3738,15 @@ class ChatPortalClient {
         return;
       }
 
+      const voiceToggleEl = target.closest("[data-voice-toggle]");
+      if (voiceToggleEl) {
+        const sessionId = (voiceToggleEl.getAttribute("data-voice-toggle") || "").trim();
+        if (sessionId) {
+          this.toggleVoiceCallExpanded(sessionId);
+        }
+        return;
+      }
+
       const toggleEl = target.closest("[data-request-toggle]");
       if (!toggleEl) return;
       const requestId = (toggleEl.getAttribute("data-request-toggle") || "").trim();
@@ -3734,6 +3755,13 @@ class ChatPortalClient {
     });
 
     this.setInboxPanelVisible(false);
+  }
+
+  toggleVoiceCallExpanded(sessionId) {
+    const state = this.activeVoiceCalls.get(sessionId);
+    if (!state) return;
+    state.expanded = !state.expanded;
+    this.scheduleInboxRender();
   }
 
   getLatestRunEvent(state, predicate) {
@@ -4172,8 +4200,12 @@ class ChatPortalClient {
     const btn = this.elements.inboxOpenBtn;
     if (!btn) return;
 
-    const hasAny = this.agentRequests && this.agentRequests.size > 0;
-    const activeCount = this.getActiveRequestCount();
+    const hasRequests = this.agentRequests && this.agentRequests.size > 0;
+    const hasVoiceCalls = this.activeVoiceCalls && this.activeVoiceCalls.size > 0;
+    const hasAny = hasRequests || hasVoiceCalls;
+    const activeRequestCount = this.getActiveRequestCount();
+    const activeVoiceCount = this.activeVoiceCalls ? this.activeVoiceCalls.size : 0;
+    const activeCount = activeRequestCount + activeVoiceCount;
     const panelVisible = this.elements.inboxPanel && !this.elements.inboxPanel.hasAttribute("hidden");
 
     if (!hasAny) {
@@ -4311,6 +4343,40 @@ class ChatPortalClient {
     const req = payload.request && typeof payload.request === "object" ? payload.request : null;
     if (!req) return;
     this.upsertAgentRequest(req);
+    this.updateInboxOpenButton();
+    this.scheduleInboxRender();
+  }
+
+  handleVoiceCallTranscript(payload) {
+    if (!payload || typeof payload !== "object") return;
+    const sessionId = typeof payload.session_id === "string" ? payload.session_id.trim() : "";
+    if (!sessionId) return;
+
+    const role = payload.role || "agent";
+    const text = typeof payload.text === "string" ? payload.text.trim() : "";
+    if (!text) return;
+
+    let state = this.activeVoiceCalls.get(sessionId);
+    if (!state) {
+      state = { transcripts: [], expanded: true };
+      this.activeVoiceCalls.set(sessionId, state);
+    }
+
+    state.transcripts.push({
+      role,
+      text,
+      timestamp: payload.timestamp || Date.now() / 1000,
+    });
+
+    // Keep only the last 50 transcript entries per call
+    if (state.transcripts.length > 50) {
+      state.transcripts = state.transcripts.slice(-50);
+    }
+
+    // Show inbox panel when transcript arrives
+    if (!this.inboxPanelUserHidden) {
+      this.setInboxPanelVisible(true);
+    }
     this.updateInboxOpenButton();
     this.scheduleInboxRender();
   }
@@ -4465,7 +4531,14 @@ class ChatPortalClient {
       request: state && state.request ? state.request : {},
     }));
 
-    if (!requests.length) {
+    const voiceCalls = Array.from(this.activeVoiceCalls.entries()).map(([id, state]) => ({
+      id,
+      state,
+    }));
+
+    const hasContent = requests.length > 0 || voiceCalls.length > 0;
+
+    if (!hasContent) {
       if (this.elements.inboxEmpty) {
         this.elements.inboxEmpty.removeAttribute("hidden");
       }
@@ -4495,12 +4568,53 @@ class ChatPortalClient {
       return bTime - aTime;
     });
 
-    const cardsHtml = requests
+    // Render voice call transcript cards first (active calls)
+    const voiceCardsHtml = voiceCalls
+      .map(({ id, state }) => this.renderVoiceCallTranscriptCardHtml(id, state))
+      .join("");
+
+    const requestCardsHtml = requests
       .map(({ id, state, request }) => this.renderRequestCardHtml(id, state, request))
       .join("");
 
-    list.innerHTML = cardsHtml;
+    list.innerHTML = voiceCardsHtml + requestCardsHtml;
     this.updateInboxOpenButton();
+  }
+
+  renderVoiceCallTranscriptCardHtml(sessionId, state) {
+    const transcripts = state && Array.isArray(state.transcripts) ? state.transcripts : [];
+    const expanded = Boolean(state && state.expanded);
+
+    const transcriptLinesHtml = transcripts
+      .slice(-20) // Show last 20 lines
+      .map((t) => {
+        const roleClass = t.role === "customer" ? "transcript-customer" : "transcript-agent";
+        const roleLabel = t.role === "customer" ? "Customer" : "Agent";
+        return `<div class="portal-transcript-line ${roleClass}"><span class="portal-transcript-role">${this.escapeHtml(roleLabel)}:</span> ${this.escapeHtml(t.text)}</div>`;
+      })
+      .join("");
+
+    return `
+      <div class="portal-task portal-voice-call" data-voice-session-id="${this.escapeHtml(sessionId)}" data-expanded="${expanded ? "true" : "false"}">
+        <button type="button" class="portal-task__header" data-voice-toggle="${this.escapeHtml(sessionId)}">
+          <div class="portal-task__meta">
+            <div class="portal-task__title-row">
+              <div class="portal-task__title">Active Voice Call</div>
+              <span class="portal-task__status portal-task__status--running">Live</span>
+            </div>
+            <div class="portal-task__subtitle">Real-time transcript</div>
+          </div>
+        </button>
+        <div class="portal-task__body">
+          <div class="portal-task__section">
+            <div class="portal-task__section-title">Transcript</div>
+            <div class="portal-transcript-container">
+              ${transcriptLinesHtml || '<div class="portal-transcript-empty">Waiting for speech...</div>'}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
   }
 
   renderRunCardHtml(runId, state, run) {

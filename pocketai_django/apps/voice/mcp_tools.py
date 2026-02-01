@@ -16,6 +16,7 @@ from django.utils import timezone
 from core.tenancy import tenant_context
 
 from apps.conversations.models import Conversation
+from apps.conversations.models import ConversationMessage, ConversationSender
 from apps.conversations.models import (
     AgentRun,
     AgentRunEventStream,
@@ -409,6 +410,8 @@ def initiate_phone_call_tool(
     actor_user_id = get_actor_user_id_from_conversation_metadata(conversation)
 
     existing_run_id = get_agent_run_id_from_conversation_metadata(conversation)
+    convo_meta = conversation.metadata if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
+    is_agent_run_conversation = bool(existing_run_id) or str(convo_meta.get("source") or "").strip().lower() == "agent_run"
     existing_run = None
     if existing_run_id:
         existing_run = resolve_agent_run(agent_run_id=existing_run_id, business_id=business_id)
@@ -524,9 +527,37 @@ def initiate_phone_call_tool(
         except Exception:  # pragma: no cover - best effort
             logger.exception("voice.tool.agent_run_event_failed run=%s", getattr(call_run, "id", None))
 
-    return {
+    if not is_agent_run_conversation and anchor_conversation_id:
+        try:
+            with tenant_context(business_id):
+                notice_exists = ConversationMessage.objects.filter(
+                    conversation_id=anchor_conversation_id,
+                    metadata__type="call_notice",
+                    metadata__call_session_id=str(session.id),
+                ).exists()
+                if not notice_exists:
+                    notice_text = (
+                        "📞 I'm placing the call now. "
+                        "I'll share a summary here once it's finished."
+                    )
+                    ConversationMessage.objects.create(
+                        conversation_id=anchor_conversation_id,
+                        sender=ConversationSender.AI,
+                        body=notice_text,
+                        metadata={
+                            "source": "voice_call",
+                            "type": "call_notice",
+                            "call_session_id": str(session.id),
+                        },
+                    )
+                    Conversation.objects.filter(id=anchor_conversation_id).update(last_activity_at=timezone.now())
+        except Exception:  # pragma: no cover - best effort only
+            logger.exception("voice.tool.notice_message_failed session=%s", getattr(session, "id", None))
+
+    status_value = "needs_external" if is_agent_run_conversation else "ok"
+    result: dict[str, object] = {
         "tool": "initiate_phone_call",
-        "status": "ok",
+        "status": status_value,
         "call_session_id": str(session.id),
         "callSessionId": str(session.id),
         "call_status": session.status,
@@ -538,3 +569,12 @@ def initiate_phone_call_tool(
         "to_phone_number": phone_number,
         "estimate_usd": str(estimate),
     }
+    if status_value == "needs_external":
+        result["request"] = {
+            "id": str(session.id),
+            "type": "phone_call",
+            "to_phone_number": phone_number,
+            "objective": objective[:240],
+        }
+        result["hint"] = "Call queued. Await call completion, then continue with the workflow."
+    return result

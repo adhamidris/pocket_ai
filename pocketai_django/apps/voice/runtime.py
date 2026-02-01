@@ -7,10 +7,11 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from typing import AsyncIterator, Callable
+from typing import AsyncIterator, Callable, Mapping
 
 from asgiref.sync import sync_to_async
 
+from apps.conversations.models import ConversationMessage
 from apps.llm.ai_prompt_builder import PromptBundle
 from apps.llm.llm_provider import DeepSeekChatProvider, OpenAIChatProvider, _ResponseTextExtractor, load_default_provider
 from apps.voice.audio_frames import iter_audio_frames
@@ -43,12 +44,16 @@ class VoiceCallRuntime:
         self._history: list[tuple[str, str]] = []  # ("customer"|"agent", text)
         self._current_speak_task: asyncio.Task | None = None
         self._greeted: bool = False
+        self._identity_confirmed: bool = False  # Identity confirmation flow
         self._goal_delivered: bool = False
         self._goal_acknowledged: bool = False
         self._interim_task: asyncio.Task | None = None
         self._interim_version: int = 0
         self._last_handled_text: str = ""
         self._last_handled_at: float = 0.0
+        self._context_loaded: bool = False
+        self._context_block: str = ""
+        self._session_cache: CallSession | None = None  # Cache session to avoid repeated DB queries
 
     async def run_twilio_stream(self, twilio_ws) -> None:
         session = await self._get_session()
@@ -203,6 +208,12 @@ class VoiceCallRuntime:
         if not session.consent_obtained:
             return
         self._greeted = True
+
+        # If no recipient name in context, skip identity confirmation phase
+        recipient_name = _extract_recipient_name(session.context_items)
+        if not recipient_name:
+            self._identity_confirmed = True
+
         await self._interrupt_speech(twilio_ws)
         lang_hint = _normalize_lang_for_prompt((session.language or "").strip().lower())
         self._current_speak_task = asyncio.create_task(
@@ -229,7 +240,9 @@ class VoiceCallRuntime:
 
         system_prompt = (
             "You are a phone-call agent for a business. Be natural, concise, and helpful.\n"
-            "Never hallucinate. If you don't know something, say you'll check and follow up.\n"
+            "Never hallucinate. Never invent prices, fees, policies, dates, or promises.\n"
+            "Only state facts that are explicitly present in the provided context or said by the customer.\n"
+            "If you don't have confirmed information, say you don't have it and offer a follow-up call.\n"
             "Language policy: respond in the customer's language (Arabic or English). If the customer code-switches, you may code-switch.\n"
             "If speaking Arabic, prefer clear Modern Standard Arabic unless the customer uses a dialect.\n"
             "Ask short clarifying questions when needed.\n"
@@ -237,32 +250,85 @@ class VoiceCallRuntime:
         )
         history_lines = "\n".join(f"{role}: {text}" for role, text in self._history[-12:])
         customer_language_hint = (customer_language or session.language or "").strip().lower()
-        deliver_goal = is_greeting or not self._goal_delivered
+        context_block = await self._build_context_block()
+
+        # Extract recipient name for identity confirmation flow
+        recipient_name = _extract_recipient_name(session.context_items)
+        identity_status = f"identity_confirmed={self._identity_confirmed}"
+        goal_status = f"goal_delivered={self._goal_delivered}, goal_acknowledged={self._goal_acknowledged}"
+
         if is_greeting:
+            # Phase 1: Ask for identity confirmation first
+            if recipient_name:
+                greeting_instruction = (
+                    f"No customer speech yet. Greet briefly and ask to confirm identity: "
+                    f"'Hello, am I speaking with {recipient_name}?' or equivalent in the appropriate language. "
+                    "Do NOT deliver the objective yet - wait for identity confirmation first."
+                )
+            else:
+                # No recipient name, skip identity confirmation
+                greeting_instruction = (
+                    "No customer speech yet. Start the call with a brief greeting and deliver the objective. "
+                    "Ask for confirmation/acknowledgement."
+                )
             user_prompt = (
                 f"Call objective: {session.objective}\n"
                 f"Workspace default language: {session.language}\n"
                 f"Customer language hint: {customer_language_hint}\n"
                 f"Country: {session.country}\n\n"
+                f"{context_block}\n\n"
                 "Conversation so far:\n"
                 f"{history_lines}\n\n"
-                f"Goal status: delivered={self._goal_delivered}, acknowledged={self._goal_acknowledged}\n\n"
-                "No customer speech yet. Start the call with a brief greeting and explicitly deliver the objective. "
-                "Ask for confirmation/acknowledgement, then a short opening question.\n"
+                f"Status: {identity_status}, {goal_status}\n\n"
+                f"{greeting_instruction}\n"
             )
         else:
-            user_prompt = (
-                f"Call objective: {session.objective}\n"
-                f"Workspace default language: {session.language}\n"
-                f"Customer language hint: {customer_language_hint}\n"
-                f"Country: {session.country}\n\n"
-                "Conversation so far:\n"
-                f"{history_lines}\n\n"
-                f"Customer just said: {customer_text}\n\n"
-                f"Goal status: delivered={self._goal_delivered}, acknowledged={self._goal_acknowledged}\n"
-                "If the objective has not been delivered yet, deliver it now in one concise sentence. "
-                "If delivered but not acknowledged, ask for acknowledgement before moving on.\n"
-            )
+            # Phase 2+: Handle based on identity and goal status
+            if not self._identity_confirmed and recipient_name:
+                # Awaiting identity confirmation
+                user_prompt = (
+                    f"Call objective: {session.objective}\n"
+                    f"Workspace default language: {session.language}\n"
+                    f"Customer language hint: {customer_language_hint}\n"
+                    f"Country: {session.country}\n\n"
+                    f"{context_block}\n\n"
+                    "Conversation so far:\n"
+                    f"{history_lines}\n\n"
+                    f"Customer just said: {customer_text}\n\n"
+                    f"Status: {identity_status}, {goal_status}\n\n"
+                    "If the customer confirmed their identity (e.g., 'yes', 'speaking'), now deliver the objective. "
+                    "If the customer denied or said 'wrong number', apologize politely and indicate the call will end. "
+                    "If unclear, politely ask again to confirm if this is the right person.\n"
+                )
+            elif not self._goal_delivered:
+                # Identity confirmed (or no name to check), deliver objective
+                user_prompt = (
+                    f"Call objective: {session.objective}\n"
+                    f"Workspace default language: {session.language}\n"
+                    f"Customer language hint: {customer_language_hint}\n"
+                    f"Country: {session.country}\n\n"
+                    f"{context_block}\n\n"
+                    "Conversation so far:\n"
+                    f"{history_lines}\n\n"
+                    f"Customer just said: {customer_text}\n\n"
+                    f"Status: {identity_status}, {goal_status}\n\n"
+                    "Now deliver the objective in one concise sentence and ask for acknowledgement.\n"
+                )
+            else:
+                # Objective delivered, continue conversation
+                user_prompt = (
+                    f"Call objective: {session.objective}\n"
+                    f"Workspace default language: {session.language}\n"
+                    f"Customer language hint: {customer_language_hint}\n"
+                    f"Country: {session.country}\n\n"
+                    f"{context_block}\n\n"
+                    "Conversation so far:\n"
+                    f"{history_lines}\n\n"
+                    f"Customer just said: {customer_text}\n\n"
+                    f"Status: {identity_status}, {goal_status}\n\n"
+                    "If the goal has not been acknowledged, ask for acknowledgement. "
+                    "Otherwise, continue the conversation naturally and helpfully.\n"
+                )
         bundle = PromptBundle(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -377,8 +443,13 @@ class VoiceCallRuntime:
             if pace:
                 await asyncio.sleep(frame_ms / 1000.0)
 
-    async def _get_session(self) -> CallSession:
-        return await sync_to_async(CallSession.objects.get)(id=self.session_id)
+    async def _get_session(self, *, force_refresh: bool = False) -> CallSession:
+        """Get session with caching to reduce DB queries in critical path."""
+        if self._session_cache is not None and not force_refresh:
+            return self._session_cache
+        session = await sync_to_async(CallSession.objects.get)(id=self.session_id)
+        self._session_cache = session
+        return session
 
     async def _update_stream_ids(self, *, stream_sid: str, call_sid: str) -> None:
         def _update() -> None:
@@ -386,12 +457,143 @@ class VoiceCallRuntime:
 
         await sync_to_async(_update)()
 
-    async def _log_event(self, event_type: str, payload: dict) -> None:
-        def _create() -> None:
-            session = CallSession.objects.get(id=self.session_id)
-            session.events.create(event_type=event_type, payload=payload)
+    async def _log_event(self, event_type: str, payload: dict, *, blocking: bool = False) -> None:
+        """
+        Log call event to database.
 
-        await sync_to_async(_create)()
+        By default, runs in fire-and-forget mode to avoid blocking the critical path.
+        Set blocking=True for events that must complete before proceeding.
+        """
+        session_id = self.session_id
+        conversation_id = None
+        if self._session_cache:
+            conversation_id = getattr(self._session_cache, "initiating_conversation_id", None)
+
+        def _create() -> CallSession | None:
+            try:
+                session = CallSession.objects.get(id=session_id)
+                session.events.create(event_type=event_type, payload=payload)
+                return session
+            except Exception:
+                logger.exception("Failed to log event %s", event_type)
+                return None
+
+        if blocking:
+            session = await sync_to_async(_create)()
+            if session and event_type in ("stt.final", "llm.response.final"):
+                await self._broadcast_transcript_sse(session, event_type, payload)
+        else:
+            # Fire-and-forget: don't block the critical path
+            async def _log_async() -> None:
+                session = await sync_to_async(_create)()
+                if session and event_type in ("stt.final", "llm.response.final"):
+                    # Broadcast to SSE (also fire-and-forget)
+                    asyncio.create_task(self._broadcast_transcript_sse(session, event_type, payload))
+
+            asyncio.create_task(_log_async())
+
+    async def _broadcast_transcript_sse(self, session: CallSession, event_type: str, payload: dict) -> None:
+        """Push transcript events to cache for SSE polling."""
+        from django.core.cache import cache
+
+        conversation_id = getattr(session, "initiating_conversation_id", None)
+        if not conversation_id:
+            return
+
+        role = "customer" if event_type == "stt.final" else "agent"
+        text = str(payload.get("text") or "").strip()
+        if not text:
+            return
+
+        cache_key = f"voice_transcript:{conversation_id}"
+        event_data = {
+            "session_id": str(session.id),
+            "event_type": event_type,
+            "role": role,
+            "text": text,
+            "timestamp": time.time(),
+        }
+
+        def _push_to_cache() -> None:
+            existing = cache.get(cache_key) or []
+            if not isinstance(existing, list):
+                existing = []
+            existing.append(event_data)
+            # Keep only recent events (last 100)
+            if len(existing) > 100:
+                existing = existing[-100:]
+            cache.set(cache_key, existing, timeout=300)  # 5 minute TTL
+
+        await sync_to_async(_push_to_cache)()
+
+    async def _build_context_block(self) -> str:
+        if self._context_loaded:
+            return self._context_block
+        self._context_loaded = True
+
+        def _load() -> str:
+            call_session = (
+                CallSession.objects.select_related("agent_profile", "initiating_conversation")
+                .filter(id=self.session_id)
+                .first()
+            )
+            if not call_session:
+                return ""
+            parts: list[str] = []
+
+            agent = call_session.agent_profile
+            if agent:
+                persona_lines = []
+                if agent.name:
+                    persona_lines.append(f"Name: {agent.name}")
+                if agent.role:
+                    persona_lines.append(f"Role: {agent.role}")
+                if agent.tone:
+                    persona_lines.append(f"Tone: {agent.tone}")
+                if agent.traits:
+                    traits = ", ".join(str(t).strip() for t in agent.traits if str(t).strip())
+                    if traits:
+                        persona_lines.append(f"Traits: {traits}")
+                if persona_lines:
+                    parts.append("Agent persona:\n" + "\n".join(persona_lines))
+
+            context_items = _format_context_items(call_session.context_items)
+            if context_items:
+                parts.append("Call context items:\n" + context_items)
+
+            convo = call_session.initiating_conversation
+            summary = ""
+            if convo and convo.summary:
+                summary = _clip_text(str(convo.summary), _context_summary_max_chars())
+                if summary:
+                    parts.append("Conversation summary:\n" + summary)
+
+            if convo:
+                max_messages = _context_recent_messages()
+                if max_messages > 0:
+                    messages = (
+                        ConversationMessage.objects.filter(conversation_id=convo.id)
+                        .order_by("-sent_at", "-created_at")
+                        .values_list("sender", "body")[: max_messages]
+                    )
+                    if messages:
+                        lines = []
+                        for sender, body in reversed(list(messages)):
+                            sender_label = str(sender or "unknown")
+                            body_text = _clip_text(str(body or ""), _context_message_max_chars())
+                            if body_text:
+                                lines.append(f"{sender_label}: {body_text}")
+                        if lines:
+                            parts.append("Recent conversation messages:\n" + "\n".join(lines))
+
+            block = "\n\n".join(parts).strip()
+            if not block:
+                return ""
+            max_chars = _context_block_max_chars()
+            return "Context:\n" + _clip_text(block, max_chars)
+
+        self._context_block = await sync_to_async(_load)()
+        return self._context_block
 
     async def _handle_transcript(self, payload: dict[str, object], twilio_ws, *, source: str) -> None:
         text = str(payload.get("text") or "").strip()
@@ -403,10 +605,22 @@ class VoiceCallRuntime:
         stt_language = str(payload.get("stt_language") or "").strip()
         event_type = "stt.final" if source == "final" else "stt.interim"
         await self._log_event(event_type, {"text": text, "confidence": confidence, "stt_language": stt_language})
+
+        # Identity confirmation flow: check before goal acknowledgement
+        if not self._identity_confirmed:
+            if _is_identity_confirmation(text, stt_language or "en"):
+                self._identity_confirmed = True
+                await self._log_event("identity.confirmed", {"text": text})
+            elif _is_identity_denial(text, stt_language or "en"):
+                await self._log_event("identity.denied", {"text": text})
+                # The LLM prompt will handle the apology and call ending
+
+        # Goal acknowledgement (only relevant after identity is confirmed or no name check needed)
         if self._goal_delivered and not self._goal_acknowledged:
             if _is_acknowledgement(text, stt_language or "en"):
                 self._goal_acknowledged = True
                 await self._log_event("goal.acknowledged", {"text": text})
+
         self._history.append(("customer", text))
         self._history = self._history[-(self.runtime_config.max_history_turns * 2) :]
         self._last_handled_text = text
@@ -429,13 +643,30 @@ async def _twilio_send(ws, payload: dict) -> None:
     await ws.send(json.dumps(payload))
 
 
+def _extract_channel(payload: Mapping[str, object]) -> Mapping[str, object]:
+    channel = payload.get("channel")
+    if isinstance(channel, Mapping):
+        return channel
+    if isinstance(channel, list):
+        for item in channel:
+            if isinstance(item, Mapping):
+                return item
+        return {}
+    channels = payload.get("channels")
+    if isinstance(channels, list):
+        for item in channels:
+            if isinstance(item, Mapping):
+                return item
+    return {}
+
+
 def _extract_final_transcript(payload: dict) -> str:
     if payload.get("type") == "UtteranceEnd":
         return ""
     is_final = bool(payload.get("is_final") or payload.get("speech_final"))
     if not is_final:
         return ""
-    channel = payload.get("channel") or {}
+    channel = _extract_channel(payload)
     alternatives = channel.get("alternatives") or []
     if not alternatives or not isinstance(alternatives, list):
         return ""
@@ -448,7 +679,7 @@ def _extract_final_transcript_with_confidence(payload: dict) -> tuple[str, float
     transcript = _extract_final_transcript(payload)
     if not transcript:
         return "", 0.0
-    channel = payload.get("channel") or {}
+    channel = _extract_channel(payload)
     alternatives = channel.get("alternatives") or []
     if not alternatives or not isinstance(alternatives, list):
         return transcript, 0.0
@@ -463,7 +694,7 @@ def _extract_final_transcript_with_confidence(payload: dict) -> tuple[str, float
 def _extract_transcript_with_confidence(payload: dict) -> tuple[str, float, bool]:
     if payload.get("type") == "UtteranceEnd":
         return "", 0.0, False
-    channel = payload.get("channel") or {}
+    channel = _extract_channel(payload)
     alternatives = channel.get("alternatives") or []
     if not alternatives or not isinstance(alternatives, list):
         return "", 0.0, False
@@ -605,6 +836,94 @@ def _is_acknowledgement(text: str, language_hint: str | None = None) -> bool:
     return any(token in normalized for token in en_tokens)
 
 
+def _is_identity_confirmation(text: str, language_hint: str | None = None) -> bool:
+    """Detect if customer confirms their identity (e.g., 'yes', 'speaking', 'this is X')."""
+    normalized = (text or "").strip().lower()
+    if not normalized:
+        return False
+
+    # Arabic identity confirmations
+    if language_hint and language_hint.lower().startswith("ar"):
+        ar_tokens = {
+            "نعم",
+            "أيوا",
+            "ايوا",
+            "أيوه",
+            "ايوه",
+            "معاك",
+            "معك",
+            "أنا",
+            "انا",
+            "نفسي",
+            "بنفسي",
+            "موجود",
+            "حاضر",
+            "تمام",
+            "صحيح",
+        }
+        return any(token in text for token in ar_tokens)
+
+    # English identity confirmations
+    en_tokens = {
+        "yes",
+        "yeah",
+        "yep",
+        "speaking",
+        "this is",
+        "that's me",
+        "thats me",
+        "it's me",
+        "its me",
+        "i am",
+        "correct",
+        "right",
+        "here",
+        "present",
+    }
+    return any(token in normalized for token in en_tokens)
+
+
+def _is_identity_denial(text: str, language_hint: str | None = None) -> bool:
+    """Detect if customer denies their identity (e.g., 'wrong number', 'not me')."""
+    normalized = (text or "").strip().lower()
+    if not normalized:
+        return False
+
+    # Arabic identity denials
+    if language_hint and language_hint.lower().startswith("ar"):
+        ar_tokens = {
+            "رقم غلط",
+            "غلط",
+            "مش انا",
+            "مش أنا",
+            "لأ",
+            "لا",
+            "رقم خاطئ",
+            "خطأ",
+            "مفيش",
+            "مش هنا",
+            "مش موجود",
+        }
+        return any(token in text for token in ar_tokens)
+
+    # English identity denials
+    en_tokens = {
+        "wrong number",
+        "not me",
+        "no",
+        "nope",
+        "wrong person",
+        "who",
+        "who is this",
+        "not here",
+        "doesn't live here",
+        "doesn't live",
+        "not available",
+        "you have the wrong",
+    }
+    return any(token in normalized for token in en_tokens)
+
+
 def _interim_min_chars() -> int:
     raw = (os.getenv("VOICE_STT_INTERIM_MIN_CHARS") or "12").strip()
     try:
@@ -663,3 +982,123 @@ def _should_skip_duplicate(text: str, *, last_text: str, last_at: float) -> bool
     if text.startswith(last_text) and (len(text) - len(last_text)) <= 8:
         return True
     return False
+
+
+def _clip_text(text: str, max_chars: int) -> str:
+    clean = str(text or "").strip()
+    if not clean:
+        return ""
+    if max_chars <= 0:
+        return clean
+    if len(clean) <= max_chars:
+        return clean
+    return clean[:max_chars].rstrip() + "…"
+
+
+def _context_block_max_chars() -> int:
+    raw = (os.getenv("VOICE_CALL_CONTEXT_MAX_CHARS") or "1200").strip()
+    try:
+        value = int(raw)
+    except Exception:
+        value = 1200
+    return max(200, min(4000, value))
+
+
+def _context_summary_max_chars() -> int:
+    raw = (os.getenv("VOICE_CALL_CONTEXT_SUMMARY_MAX_CHARS") or "600").strip()
+    try:
+        value = int(raw)
+    except Exception:
+        value = 600
+    return max(100, min(2000, value))
+
+
+def _context_recent_messages() -> int:
+    raw = (os.getenv("VOICE_CALL_CONTEXT_RECENT_MESSAGES") or "6").strip()
+    try:
+        value = int(raw)
+    except Exception:
+        value = 6
+    return max(0, min(20, value))
+
+
+def _context_message_max_chars() -> int:
+    raw = (os.getenv("VOICE_CALL_CONTEXT_MESSAGE_MAX_CHARS") or "200").strip()
+    try:
+        value = int(raw)
+    except Exception:
+        value = 200
+    return max(80, min(600, value))
+
+
+def _context_items_max_items() -> int:
+    raw = (os.getenv("VOICE_CALL_CONTEXT_ITEMS_MAX") or "8").strip()
+    try:
+        value = int(raw)
+    except Exception:
+        value = 8
+    return max(1, min(20, value))
+
+
+def _context_item_max_chars() -> int:
+    raw = (os.getenv("VOICE_CALL_CONTEXT_ITEM_MAX_CHARS") or "220").strip()
+    try:
+        value = int(raw)
+    except Exception:
+        value = 220
+    return max(80, min(600, value))
+
+
+def _format_context_items(items: object) -> str:
+    if not isinstance(items, list) or not items:
+        return ""
+    max_items = _context_items_max_items()
+    lines: list[str] = []
+    for item in items[:max_items]:
+        text = _stringify_context_item(item)
+        text = _clip_text(text, _context_item_max_chars())
+        if text:
+            lines.append(f"- {text}")
+    return "\n".join(lines).strip()
+
+
+def _stringify_context_item(item: object) -> str:
+    if isinstance(item, str):
+        return item.strip()
+    if isinstance(item, dict):
+        title = str(item.get("title") or item.get("label") or item.get("name") or "").strip()
+        value = str(item.get("value") or item.get("content") or item.get("text") or "").strip()
+        if title and value:
+            return f"{title}: {value}"
+        if value:
+            return value
+        if title:
+            return title
+        parts = []
+        for key, val in list(item.items())[:3]:
+            key_text = str(key).strip()
+            val_text = str(val).strip()
+            if key_text and val_text:
+                parts.append(f"{key_text}: {val_text}")
+        return "; ".join(parts).strip()
+    return str(item or "").strip()
+
+
+def _extract_recipient_name(context_items: object) -> str:
+    """Extract recipient/customer name from context_items if available."""
+    if not isinstance(context_items, list):
+        return ""
+    name_keys = {"name", "customer_name", "recipient_name", "contact_name", "customer", "recipient", "اسم", "العميل"}
+    for item in context_items:
+        if isinstance(item, dict):
+            for key in name_keys:
+                val = item.get(key)
+                if val and isinstance(val, str) and val.strip():
+                    return val.strip()
+            # Also check title/label patterns like {"title": "Customer Name", "value": "John"}
+            title = str(item.get("title") or item.get("label") or "").strip().lower()
+            if any(k in title for k in ("name", "customer", "recipient", "اسم", "عميل")):
+                val = str(item.get("value") or item.get("content") or item.get("text") or "").strip()
+                if val:
+                    return val
+    return ""

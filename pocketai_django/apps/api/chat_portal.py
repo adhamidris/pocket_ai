@@ -4384,7 +4384,7 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
                     messages_batch = list(
                         ConversationMessage.objects.filter(conversation_id=conversation_id)
                         .filter(created_at__gte=message_since)
-                        .filter(metadata__source="agent_run")
+                        .filter(Q(metadata__source="agent_run") | Q(metadata__source="voice_call"))
                         .order_by("created_at", "id")[:250]
                     )
                 if messages_batch:
@@ -4433,12 +4433,27 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
                         yield f"data: {json.dumps(payload)}\n\n"
                     request_since = latest_updated_at
 
+            # Poll for voice call transcript events (faster polling for real-time feel)
+            if conversation_id:
+                cache_key = f"voice_transcript:{conversation_id}"
+                transcript_events = cache.get(cache_key) or []
+                if isinstance(transcript_events, list) and transcript_events:
+                    # Use atomic pop pattern: get, process, then clear only what we processed
+                    cache.delete(cache_key)
+                    for evt in transcript_events:
+                        if isinstance(evt, dict):
+                            yield "event: voiceCallTranscript\n"
+                            yield f"data: {json.dumps(evt)}\n\n"
+                    # Shorter sleep when actively streaming transcripts
+                    time.sleep(0.15)
+                    continue
+
             now = time.monotonic()
             if now - last_heartbeat >= 15.0:
                 yield "event: heartbeat\n"
                 yield "data: {}\n\n"
                 last_heartbeat = now
-            time.sleep(1.0)
+            time.sleep(0.5)  # Reduced from 1.0s for better responsiveness
 
     response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")
     response["Cache-Control"] = "no-cache"

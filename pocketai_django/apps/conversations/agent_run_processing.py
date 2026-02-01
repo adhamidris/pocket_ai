@@ -185,6 +185,62 @@ def _build_email_approval_preview(arguments: Mapping[str, object]) -> dict[str, 
     return preview
 
 
+def _build_phone_call_approval_preview(arguments: Mapping[str, object]) -> dict[str, object] | None:
+    if not isinstance(arguments, Mapping):
+        return None
+    phone_number = str(arguments.get("phone_number") or arguments.get("phoneNumber") or "").strip()
+    objective = str(arguments.get("objective") or "").strip()
+    call_type = str(arguments.get("call_type") or arguments.get("callType") or "").strip()
+    language = str(arguments.get("language") or "").strip()
+    max_duration = arguments.get("max_duration_minutes") or arguments.get("maxDurationMinutes")
+    try:
+        max_duration_value = int(max_duration) if max_duration is not None else None
+    except (TypeError, ValueError):
+        max_duration_value = None
+
+    fields: list[dict[str, str]] = []
+    if phone_number:
+        fields.append({"label": "To", "value": _clip_text(phone_number, 80)})
+    if objective:
+        fields.append({"label": "Objective", "value": _clip_text(objective, 360)})
+    if call_type:
+        fields.append({"label": "Type", "value": _clip_text(call_type, 80)})
+    if language:
+        fields.append({"label": "Language", "value": _clip_text(language, 40)})
+    if max_duration_value:
+        fields.append({"label": "Max duration", "value": f"{max_duration_value} min"})
+
+    context_items = arguments.get("context_items") or arguments.get("contextItems") or []
+    context_lines: list[str] = []
+    if isinstance(context_items, list):
+        for item in context_items[:8]:
+            line = ""
+            if isinstance(item, Mapping):
+                for key in ("label", "title", "name", "summary", "note", "value"):
+                    value = item.get(key)
+                    if isinstance(value, str) and value.strip():
+                        line = value.strip()
+                        break
+                if not line:
+                    try:
+                        line = json.dumps(item, ensure_ascii=False)
+                    except Exception:
+                        line = str(item)
+            elif isinstance(item, str):
+                line = item.strip()
+            elif item is not None:
+                line = str(item).strip()
+            if line:
+                context_lines.append(_clip_text(line, 220))
+
+    preview: dict[str, object] = {"type": "phone_call", "title": "Phone call", "fields": fields}
+    if context_lines:
+        preview["body"] = _clip_text("\n".join(context_lines), 1400)
+    if not fields and not context_lines:
+        return None
+    return preview
+
+
 def _build_approval_preview(
     tool_name: str,
     approval_event: Mapping[str, object] | None,
@@ -205,6 +261,8 @@ def _build_approval_preview(
         return None
     if "email" in tool_norm or kind == "email":
         return _build_email_approval_preview(arguments)
+    if tool_norm in {"initiate_phone_call", "phone_call"} or "phone" in tool_norm or kind in {"phone", "voice"}:
+        return _build_phone_call_approval_preview(arguments)
     return None
 
 
@@ -1169,7 +1227,7 @@ class AgentRunProcessingService:
                 phase = str(event.get("phase") or "").strip().lower()
                 tool_name = str(event.get("tool_name") or "").strip()
                 status_value = str(event.get("status") or "").strip().lower()
-                if phase == "approval_requested" and status_value == "pending_approval":
+                if phase == "approval_requested":
                     pause_state["approval_event"] = dict(event)
                 if tool_name == "email_create_draft" and phase == "finished":
                     input_payload = event.get("input") if isinstance(event.get("input"), Mapping) else None
@@ -1203,6 +1261,15 @@ class AgentRunProcessingService:
                     elif to_name:
                         prefix = f"Agent → {to_name}"
                     label = f"{prefix}: {subject}" if subject else prefix
+                if tool_name == "initiate_phone_call" and phase == "finished":
+                    output_payload = event.get("output") if isinstance(event.get("output"), Mapping) else {}
+                    call_session_id = ""
+                    if isinstance(output_payload, Mapping):
+                        call_session_id = str(
+                            output_payload.get("call_session_id") or output_payload.get("callSessionId") or ""
+                        ).strip()
+                    if status_value == "needs_external" or call_session_id:
+                        pause_state["external_request_event"] = dict(event)
                 self._append_event(
                     run,
                     stream=AgentRunEventStream.EXECUTED,
@@ -1513,6 +1580,47 @@ class AgentRunProcessingService:
                     approval_event.get("approval") if isinstance(approval_event.get("approval"), Mapping) else None
                 )
                 approval_id = str(approval_payload.get("id") if approval_payload else "" or "").strip()
+            if not approval_id:
+                tool_trace = list(getattr(turn, "tool_trace", None) or ())
+                for entry in tool_trace:
+                    if not isinstance(entry, Mapping):
+                        continue
+                    tool_name_value = str(entry.get("tool") or entry.get("tool_name") or "").strip().lower()
+                    status_value = str(entry.get("status") or "").strip().lower()
+                    if tool_name_value != "initiate_phone_call":
+                        continue
+                    if status_value not in {"pending", "pending_approval"}:
+                        continue
+                    try:
+                        with tenant_context(business_id):
+                            approval = (
+                                ConversationToolApproval.objects.filter(
+                                    conversation_id=execution_conversation.id,
+                                    tool_name="initiate_phone_call",
+                                    status=ConversationToolApprovalStatus.PENDING,
+                                )
+                                .order_by("-requested_at")
+                                .first()
+                            )
+                        if approval:
+                            approval_payload = {
+                                "id": str(approval.id),
+                                "status": approval.status,
+                                "operation_type": str((approval.metadata or {}).get("operation_type") or ""),
+                                "reason": str((approval.metadata or {}).get("reason") or ""),
+                            }
+                            approval_event = {
+                                "phase": "approval_requested",
+                                "status": approval.status,
+                                "tool_name": "initiate_phone_call",
+                                "approval": approval_payload,
+                            }
+                            pause_state["approval_event"] = dict(approval_event)
+                            approval_id = str(approval.id)
+                            break
+                    except Exception:  # pragma: no cover - best effort only
+                        logger.exception("agent_run approval fallback lookup failed run=%s", run.id)
+                    break
 
             user_input_payload: dict[str, object] | None = None
             if isinstance(user_input_event, Mapping):
@@ -1522,10 +1630,17 @@ class AgentRunProcessingService:
 
             external_request_id = ""
             external_request_payload: dict[str, object] | None = None
+            external_request_tool = ""
             if isinstance(external_request_event, Mapping):
+                external_request_tool = str(external_request_event.get("tool_name") or "").strip().lower()
                 output = external_request_event.get("output") if isinstance(external_request_event.get("output"), Mapping) else None
                 if isinstance(output, Mapping):
-                    external_request_id = str(output.get("agent_request_id") or "").strip()
+                    external_request_id = str(
+                        output.get("agent_request_id")
+                        or output.get("call_session_id")
+                        or output.get("callSessionId")
+                        or ""
+                    ).strip()
                     request_payload = output.get("request") if isinstance(output.get("request"), Mapping) else None
                     if not external_request_id and isinstance(request_payload, Mapping):
                         external_request_id = str(request_payload.get("id") or "").strip()
@@ -1587,7 +1702,14 @@ class AgentRunProcessingService:
                     and isinstance(approval_payload, Mapping)
                     and isinstance(approval_payload.get("preview"), Mapping)
                 ):
-                    approval_preview = _build_email_approval_preview(dict(approval_payload.get("preview") or {}))
+                    preview_payload = dict(approval_payload.get("preview") or {})
+                    tool_name_value = ""
+                    if isinstance(pause_payload, dict):
+                        tool_name_value = str(pause_payload.get("tool_name") or "").strip().lower()
+                    if tool_name_value == "email_send_draft":
+                        approval_preview = _build_email_approval_preview(preview_payload) or preview_payload
+                    else:
+                        approval_preview = preview_payload
                 if not approval_preview and isinstance(pause_payload, dict):
                     tool_name_value = str(pause_payload.get("tool_name") or "").strip().lower()
                     if tool_name_value == "email_send_draft":
@@ -1603,9 +1725,12 @@ class AgentRunProcessingService:
             if next_status == AgentRunStatus.WAITING_USER and isinstance(pause_payload, dict):
                 next_metadata["pending_user_input"] = dict(pause_payload)
             if next_status == AgentRunStatus.WAITING_EXTERNAL and external_request_id:
-                next_metadata["pending_agent_request_id"] = external_request_id
-                if external_request_payload:
-                    next_metadata["pending_agent_request"] = external_request_payload
+                if external_request_tool == "initiate_phone_call":
+                    next_metadata["pending_call_session_id"] = external_request_id
+                else:
+                    next_metadata["pending_agent_request_id"] = external_request_id
+                    if external_request_payload:
+                        next_metadata["pending_agent_request"] = external_request_payload
             if latest_email_draft_preview:
                 next_metadata["last_email_draft_preview"] = latest_email_draft_preview
 

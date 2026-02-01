@@ -254,6 +254,7 @@ def process_post_call(session: CallSession) -> PostCallProcessingResult:
             session.post_processing_error = f"recording_upload_failed:{exc}"
             session.save(update_fields=["post_processing_error", "updated_at"])
 
+        post_summary_to_initiator = True
         # Bridge the completed call into the Tasks panel (AgentRun) when the call
         # was initiated via a sub-agent task.
         try:
@@ -261,46 +262,125 @@ def process_post_call(session: CallSession) -> PostCallProcessingResult:
 
             run_id = get_agent_run_id_from_call_session_metadata(session)
             if run_id and session.business_profile_id:
-                run = AgentRun.objects.filter(id=run_id).only("metadata").first()
+                run = AgentRun.objects.filter(id=run_id).only("metadata", "status").first()
                 meta = run.metadata if run and isinstance(getattr(run, "metadata", None), dict) else {}
                 is_voice_run = str(meta.get("kind") or "").strip().lower() == "voice_call"
                 voice_session_id = str(meta.get("voice_call_session_id") or "").strip()
-                if is_voice_run and (not voice_session_id or voice_session_id == str(session.id)):
-                    terminal_status = None
-                    if session.status == CallStatus.COMPLETED:
-                        terminal_status = AgentRunStatus.COMPLETED
-                    elif session.status == CallStatus.CANCELLED:
-                        terminal_status = AgentRunStatus.CANCELLED
-                    elif session.status == CallStatus.FAILED:
-                        terminal_status = AgentRunStatus.FAILED
+                if is_voice_run:
+                    post_summary_to_initiator = True
+                    if not voice_session_id or voice_session_id == str(session.id):
+                        terminal_status = None
+                        if session.status == CallStatus.COMPLETED:
+                            terminal_status = AgentRunStatus.COMPLETED
+                        elif session.status == CallStatus.CANCELLED:
+                            terminal_status = AgentRunStatus.CANCELLED
+                        elif session.status == CallStatus.FAILED:
+                            terminal_status = AgentRunStatus.FAILED
 
-                    update_fields: dict[str, object] = {
-                        "execution_conversation_id": conversation.id,
-                    }
-                    if terminal_status:
-                        update_fields["status"] = terminal_status
-                        update_fields["finished_at"] = timezone.now()
-                        if terminal_status == AgentRunStatus.FAILED:
-                            update_fields["error_detail"] = (session.post_processing_error or session.last_error or "")[:2000]
-                    if session.summary:
-                        update_fields["result"] = {"response_text": str(session.summary)[:6000]}
+                        update_fields: dict[str, object] = {
+                            "execution_conversation_id": conversation.id,
+                        }
+                        if terminal_status:
+                            update_fields["status"] = terminal_status
+                            update_fields["finished_at"] = timezone.now()
+                            if terminal_status == AgentRunStatus.FAILED:
+                                update_fields["error_detail"] = (session.post_processing_error or session.last_error or "")[
+                                    :2000
+                                ]
+                        if session.summary:
+                            update_fields["result"] = {"response_text": str(session.summary)[:6000]}
 
+                        append_agent_run_event(
+                            run_id=run_id,
+                            business_id=session.business_profile_id,
+                            stream=AgentRunEventStream.EXECUTED,
+                            event_type=AgentRunEventType.RESULT if session.summary else AgentRunEventType.PROGRESS,
+                            label="Call summary ready" if session.summary else "Call transcript saved",
+                            payload={
+                                "call_session_id": str(session.id),
+                                "status": session.status,
+                                "transcript_messages_written": int(messages_written),
+                                "recording_uploaded": bool(recording_uploaded),
+                            },
+                            update_run_fields=update_fields,
+                        )
+                elif run and run.status in {AgentRunStatus.WAITING_EXTERNAL, AgentRunStatus.PAUSED}:
+                    post_summary_to_initiator = False
+                    now = timezone.now()
+                    next_meta = dict(meta) if isinstance(meta, dict) else {}
+                    inputs = next_meta.get("external_inputs")
+                    if not isinstance(inputs, list):
+                        inputs = []
+                    already = any(
+                        isinstance(item, dict)
+                        and str(item.get("type") or "").strip() == "phone_call"
+                        and str(item.get("id") or "").strip() == str(session.id)
+                        for item in inputs
+                    )
+                    if not already:
+                        resolution_text = (session.summary or "").strip()
+                        if not resolution_text:
+                            resolution_text = f"Call completed. Status: {session.status}."
+                        inputs.append(
+                            {
+                                "type": "phone_call",
+                                "id": str(session.id),
+                                "subject": "Phone call summary",
+                                "resolution": resolution_text[:4000],
+                                "at": now.isoformat(),
+                            }
+                        )
+                    next_meta["external_inputs"] = inputs[-10:]
+                    next_meta.pop("pending_call_session_id", None)
                     append_agent_run_event(
                         run_id=run_id,
                         business_id=session.business_profile_id,
                         stream=AgentRunEventStream.EXECUTED,
-                        event_type=AgentRunEventType.RESULT if session.summary else AgentRunEventType.PROGRESS,
-                        label="Call summary ready" if session.summary else "Call transcript saved",
+                        event_type=AgentRunEventType.PROGRESS,
+                        label="Call summary ready",
                         payload={
                             "call_session_id": str(session.id),
                             "status": session.status,
                             "transcript_messages_written": int(messages_written),
                             "recording_uploaded": bool(recording_uploaded),
                         },
-                        update_run_fields=update_fields,
+                        update_run_fields={
+                            "status": AgentRunStatus.QUEUED,
+                            "run_after": now,
+                            "lease_expires_at": None,
+                            "error_detail": "",
+                            "metadata": next_meta,
+                        },
                     )
         except Exception:  # pragma: no cover - best effort only
             logger.exception("voice.post_call_agent_run_bridge_failed session=%s", session.id)
+
+        if post_summary_to_initiator and session.summary and session.initiating_conversation_id:
+            try:
+                summary_text = str(session.summary).strip()
+                if summary_text:
+                    exists = ConversationMessage.objects.filter(
+                        conversation_id=session.initiating_conversation_id,
+                        metadata__type="call_summary",
+                        metadata__call_session_id=str(session.id),
+                    ).exists()
+                    if not exists:
+                        body = f"📞 Call completed.\n\nSummary:\n{summary_text}"
+                        ConversationMessage.objects.create(
+                            conversation_id=session.initiating_conversation_id,
+                            sender=ConversationSender.AI,
+                            body=body,
+                            metadata={
+                                "source": "voice_call",
+                                "type": "call_summary",
+                                "call_session_id": str(session.id),
+                            },
+                        )
+                        Conversation.objects.filter(id=session.initiating_conversation_id).update(
+                            last_activity_at=timezone.now()
+                        )
+            except Exception:  # pragma: no cover - best effort only
+                logger.exception("voice.post_call_summary_message_failed session=%s", session.id)
 
         return PostCallProcessingResult(
             transcript_messages_written=messages_written,
