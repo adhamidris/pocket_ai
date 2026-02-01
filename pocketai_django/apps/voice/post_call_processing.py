@@ -116,6 +116,11 @@ def write_call_insights_message(*, session: CallSession, conversation: Conversat
     body = format_call_insights_message(insights)
     if not body:
         return False
+    outcome = ""
+    if isinstance(insights, dict):
+        outcome_obj = insights.get("outcome")
+        if isinstance(outcome_obj, dict):
+            outcome = str(outcome_obj.get("label") or "").strip()
     ConversationMessage.objects.create(
         conversation_id=conversation.id,
         sender=ConversationSender.AI,
@@ -125,7 +130,7 @@ def write_call_insights_message(*, session: CallSession, conversation: Conversat
             "type": "call_insights",
             "schema_version": CALL_INSIGHTS_SCHEMA_VERSION,
             "call_session_id": str(session.id),
-            "outcome": (insights.get("outcome") or {}).get("label") if isinstance(insights, dict) else "",
+            "outcome": outcome,
         },
         sent_at=timezone.now(),
     )
