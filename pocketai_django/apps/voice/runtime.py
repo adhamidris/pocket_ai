@@ -5,10 +5,12 @@ import base64
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass
 from typing import AsyncIterator, Callable, Mapping
 
+import requests
 from asgiref.sync import sync_to_async
 
 from apps.conversations.models import ConversationMessage
@@ -16,6 +18,7 @@ from apps.llm.ai_prompt_builder import PromptBundle
 from apps.llm.llm_provider import DeepSeekChatProvider, OpenAIChatProvider, _ResponseTextExtractor, load_default_provider
 from apps.voice.audio_frames import iter_audio_frames
 from apps.voice.models import CallSession
+from apps.voice.twilio import load_twilio_config
 from apps.voice.voice_spike.deepgram_stt import DeepgramConfig, deepgram_transcripts
 from apps.voice.voice_spike.elevenlabs_tts import ElevenLabsConfig, stream_tts_audio
 
@@ -44,16 +47,27 @@ class VoiceCallRuntime:
         self._history: list[tuple[str, str]] = []  # ("customer"|"agent", text)
         self._current_speak_task: asyncio.Task | None = None
         self._greeted: bool = False
-        self._identity_confirmed: bool = False  # Identity confirmation flow
         self._goal_delivered: bool = False
-        self._goal_acknowledged: bool = False
-        self._interim_task: asyncio.Task | None = None
-        self._interim_version: int = 0
         self._last_handled_text: str = ""
         self._last_handled_at: float = 0.0
         self._context_loaded: bool = False
         self._context_block: str = ""
         self._session_cache: CallSession | None = None  # Cache session to avoid repeated DB queries
+        self._pending_final_text: str = ""
+        self._pending_final_confidence: float = 0.0
+        self._pending_final_language: str = ""
+        self._pending_final_updated_at: float = 0.0  # monotonic
+        self._pending_final_task: asyncio.Task | None = None
+        self._last_customer_activity_at: float = 0.0  # monotonic
+        self._last_agent_speech_end_at: float = 0.0  # monotonic
+        self._awaiting_first_customer: bool = False
+        self._no_engagement_task: asyncio.Task | None = None
+        self._silence_close_task: asyncio.Task | None = None
+        self._closing_waiting_for_customer: bool = False
+        self._closing_question_asked_at: float = 0.0  # monotonic
+        self._waiting_for_callback_time: bool = False
+        self._callback_time_text: str = ""
+        self._terminated: bool = False
 
     async def run_twilio_stream(self, twilio_ws) -> None:
         session = await self._get_session()
@@ -152,9 +166,15 @@ class VoiceCallRuntime:
                     queue.put_nowait(b"")
                 except Exception:
                     pass
-            if self._interim_task:
-                self._interim_task.cancel()
-                self._interim_task = None
+            if self._pending_final_task:
+                self._pending_final_task.cancel()
+                self._pending_final_task = None
+            if self._no_engagement_task:
+                self._no_engagement_task.cancel()
+                self._no_engagement_task = None
+            if self._silence_close_task:
+                self._silence_close_task.cancel()
+                self._silence_close_task = None
             if self._current_speak_task:
                 self._current_speak_task.cancel()
             for task in stt_tasks:
@@ -173,27 +193,77 @@ class VoiceCallRuntime:
         final_items = [item for item in drained if bool(item.get("is_final"))]
         interim_items = [item for item in drained if not bool(item.get("is_final"))]
 
-        if final_items:
-            if self._interim_task:
-                self._interim_task.cancel()
-                self._interim_task = None
-            best = _pick_best_utterance(final_items)
-            await self._handle_transcript(best, twilio_ws, source="final")
-            return
-
         if interim_items:
+            # Phase 1 turn-taking: use interim STT for barge-in only. Do not respond until a
+            # debounced final utterance is ready.
             best = _pick_best_utterance(interim_items)
             text = str(best.get("text") or "").strip()
-            if not text:
+            if text and _should_barge_in(text, min_chars=_barge_in_min_chars()):
+                self._last_customer_activity_at = time.monotonic()
+                if self._awaiting_first_customer:
+                    self._awaiting_first_customer = False
+                await self._interrupt_speech(twilio_ws)
+                # If we already have a pending final transcript, keep pushing the debounce
+                # window forward while the customer is still speaking (prevents cutoffs when
+                # endpointing is aggressive).
+                if self._pending_final_text:
+                    self._pending_final_updated_at = time.monotonic()
+
+        if final_items:
+            self._last_customer_activity_at = time.monotonic()
+            best = _pick_best_utterance(final_items)
+            self._enqueue_final(best, twilio_ws)
+
+    def _enqueue_final(self, payload: dict[str, object], twilio_ws) -> None:
+        text = str(payload.get("text") or "").strip()
+        if not text:
+            return
+        self._pending_final_text = _merge_transcript_segments(self._pending_final_text, text)
+        try:
+            confidence = float(payload.get("confidence") or 0.0)
+        except Exception:
+            confidence = 0.0
+        self._pending_final_confidence = max(self._pending_final_confidence, confidence)
+        self._pending_final_language = str(payload.get("stt_language") or self._pending_final_language or "").strip()
+        self._pending_final_updated_at = time.monotonic()
+
+        if self._pending_final_task and not self._pending_final_task.done():
+            return
+        self._pending_final_task = asyncio.create_task(self._flush_pending_final(twilio_ws))
+
+    async def _flush_pending_final(self, twilio_ws) -> None:
+        """
+        Debounce final transcripts to avoid responding mid-sentence when the STT
+        engine emits short finals (aggressive endpointing) and continues emitting
+        interims/finals as the customer keeps speaking.
+        """
+        stable_ms = _final_stable_ms()
+        stable_s = stable_ms / 1000.0
+        try:
+            while True:
+                await asyncio.sleep(stable_s)
+                now = time.monotonic()
+                if not self._pending_final_text:
+                    return
+                if (now - self._pending_final_updated_at) < stable_s:
+                    continue
+                text = self._pending_final_text.strip()
+                confidence = float(self._pending_final_confidence or 0.0)
+                stt_language = str(self._pending_final_language or "").strip()
+
+                self._pending_final_text = ""
+                self._pending_final_confidence = 0.0
+                self._pending_final_language = ""
+                self._pending_final_updated_at = 0.0
+
+                await self._handle_transcript(
+                    {"text": text, "confidence": confidence, "stt_language": stt_language, "is_final": True},
+                    twilio_ws,
+                    source="final",
+                )
                 return
-            min_chars = _interim_min_chars()
-            if len(text) < min_chars:
-                return
-            self._interim_version += 1
-            version = self._interim_version
-            if self._interim_task:
-                self._interim_task.cancel()
-            self._interim_task = asyncio.create_task(self._debounced_interim(best, twilio_ws, version))
+        finally:
+            self._pending_final_task = None
 
     async def _interrupt_speech(self, twilio_ws) -> None:
         if self._current_speak_task and not self._current_speak_task.done():
@@ -202,23 +272,243 @@ class VoiceCallRuntime:
             await _twilio_send(twilio_ws, {"event": "clear", "streamSid": self._stream_sid})
 
     async def _maybe_greet(self, twilio_ws) -> None:
-        if self._greeted:
+        if self._greeted or self._terminated:
             return
         session = await self._get_session()
         if not session.consent_obtained:
             return
         self._greeted = True
+        self._awaiting_first_customer = True
+        self._closing_waiting_for_customer = False
+        self._waiting_for_callback_time = False
+        self._callback_time_text = ""
 
-        # If no recipient name in context, skip identity confirmation phase
-        recipient_name = _extract_recipient_name(session.context_items)
-        if not recipient_name:
-            self._identity_confirmed = True
+        if not self._no_engagement_task or self._no_engagement_task.done():
+            self._no_engagement_task = asyncio.create_task(self._watch_no_engagement(twilio_ws))
+        if not self._silence_close_task or self._silence_close_task.done():
+            self._silence_close_task = asyncio.create_task(self._watch_silence_close(twilio_ws))
 
         await self._interrupt_speech(twilio_ws)
         lang_hint = _normalize_lang_for_prompt((session.language or "").strip().lower())
         self._current_speak_task = asyncio.create_task(
-            self._respond_and_speak(twilio_ws, customer_text="", customer_language=lang_hint, is_greeting=True)
+            self._respond_and_speak(
+                twilio_ws,
+                customer_text="",
+                customer_language=lang_hint,
+                is_greeting=True,
+            )
         )
+
+    async def _watch_no_engagement(self, twilio_ws) -> None:
+        """
+        Human-style "no answer" behavior after greeting:
+        - wait ~4s, say "Hello?"
+        - wait ~4s, say goodbye + hang up
+        """
+        try:
+            # Don't start timers until the greeting finishes speaking.
+            while not self._terminated and self._awaiting_first_customer:
+                speak_task = self._current_speak_task
+                if speak_task and not speak_task.done():
+                    await asyncio.sleep(0.1)
+                    continue
+                break
+
+            if self._terminated or not self._awaiting_first_customer:
+                return
+
+            hello_delay = _no_engagement_hello_seconds()
+            goodbye_delay = _no_engagement_goodbye_seconds()
+            session = await self._get_session()
+            lang_hint = _normalize_lang_for_prompt(session.language or "") or "en"
+
+            start = time.monotonic()
+            while not self._terminated and self._awaiting_first_customer and (time.monotonic() - start) < hello_delay:
+                await asyncio.sleep(0.1)
+            if self._terminated or not self._awaiting_first_customer:
+                return
+
+            await self._log_event("call.no_engagement.hello", {})
+            await self._interrupt_speech(twilio_ws)
+            hello_text = "Hello?" if lang_hint == "en" else "ألو؟"
+            self._current_speak_task = asyncio.create_task(
+                self._speak_text(twilio_ws, text=hello_text, language_hint=lang_hint, event_type="tts.static.hello")
+            )
+            try:
+                await self._current_speak_task
+            except asyncio.CancelledError:
+                return
+
+            if self._terminated or not self._awaiting_first_customer:
+                return
+
+            start = time.monotonic()
+            while not self._terminated and self._awaiting_first_customer and (time.monotonic() - start) < goodbye_delay:
+                await asyncio.sleep(0.1)
+            if self._terminated or not self._awaiting_first_customer:
+                return
+
+            await self._log_event("call.no_engagement.goodbye", {})
+            await self._interrupt_speech(twilio_ws)
+            goodbye_text = "Okay, I'll let you go. Goodbye." if lang_hint == "en" else "حسنًا، سأغلق الآن. مع السلامة."
+            self._current_speak_task = asyncio.create_task(
+                self._speak_then_hangup(
+                    twilio_ws,
+                    text=goodbye_text,
+                    language_hint=lang_hint,
+                    reason="no_engagement",
+                )
+            )
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            await self._log_event("call.no_engagement.error", {"error": str(exc)})
+
+    async def _watch_silence_close(self, twilio_ws) -> None:
+        """
+        Silence-triggered closing:
+        - after ~6–8s of silence (both parties), ask: "Anything else before I let you go?"
+        - if still no response for another window, say goodbye + hang up
+        """
+        poll_s = 0.25
+        close_after_s = _silence_close_seconds()
+        hangup_after_close_s = _silence_hangup_after_close_seconds()
+        try:
+            while not self._terminated:
+                await asyncio.sleep(poll_s)
+                if self._terminated:
+                    return
+                if self._awaiting_first_customer:
+                    continue
+                if self._waiting_for_callback_time:
+                    continue
+                speak_task = self._current_speak_task
+                if speak_task and not speak_task.done():
+                    continue
+
+                now = time.monotonic()
+                last_activity = max(self._last_customer_activity_at, self._last_agent_speech_end_at, 0.0)
+                if last_activity <= 0.0:
+                    continue
+
+                if self._closing_waiting_for_customer:
+                    if hangup_after_close_s > 0 and (now - max(last_activity, self._closing_question_asked_at)) >= hangup_after_close_s:
+                        session = await self._get_session()
+                        lang_hint = _normalize_lang_for_prompt(session.language or "") or "en"
+                        await self._log_event("call.closing.silence_hangup", {})
+                        await self._interrupt_speech(twilio_ws)
+                        goodbye_text = "Okay, I'll let you go. Goodbye." if lang_hint == "en" else "حسنًا، سأغلق الآن. مع السلامة."
+                        self._current_speak_task = asyncio.create_task(
+                            self._speak_then_hangup(
+                                twilio_ws,
+                                text=goodbye_text,
+                                language_hint=lang_hint,
+                                reason="silence_after_closing",
+                            )
+                        )
+                        return
+                    continue
+
+                if (now - last_activity) >= close_after_s:
+                    session = await self._get_session()
+                    lang_hint = _normalize_lang_for_prompt(session.language or "") or "en"
+                    self._closing_waiting_for_customer = True
+                    self._closing_question_asked_at = now
+                    await self._log_event("call.closing.prompt", {"after_seconds": close_after_s})
+                    await self._interrupt_speech(twilio_ws)
+                    self._current_speak_task = asyncio.create_task(
+                        self._respond_and_speak(
+                            twilio_ws,
+                            customer_text="",
+                            customer_language=lang_hint,
+                            is_closing_prompt=True,
+                        )
+                    )
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            await self._log_event("call.silence_close.error", {"error": str(exc)})
+
+    async def _speak_text(self, twilio_ws, *, text: str, language_hint: str | None, event_type: str) -> None:
+        try:
+            await self._log_event(event_type, {"text": text})
+            tts_lang = _detect_text_language(text, fallback=language_hint)
+            tts_cfg = ElevenLabsConfig.from_env(language=tts_lang)
+            await self._stream_tts_to_twilio(twilio_ws, text, config=tts_cfg)
+            self._last_agent_speech_end_at = time.monotonic()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            await self._log_event("tts.static.error", {"error": str(exc), "event_type": event_type})
+
+    async def _speak_then_hangup(self, twilio_ws, *, text: str, language_hint: str | None, reason: str) -> None:
+        try:
+            if text:
+                await self._speak_text(twilio_ws, text=text, language_hint=language_hint, event_type="tts.static.hangup")
+        finally:
+            await self._hangup_call(reason=reason)
+
+    async def _hangup_call(self, *, reason: str) -> None:
+        if self._terminated:
+            return
+        self._terminated = True
+        await self._log_event("call.hangup.requested", {"reason": reason})
+        session = await self._get_session()
+        call_sid = str(session.twilio_call_sid or "").strip()
+        if not call_sid:
+            await self._log_event("call.hangup.missing_call_sid", {"reason": reason})
+            return
+        try:
+            cfg = load_twilio_config(require_from_number=False)
+        except Exception as exc:
+            await self._log_event("call.hangup.missing_twilio_config", {"reason": reason, "error": str(exc)})
+            return
+
+        url = f"https://api.twilio.com/2010-04-01/Accounts/{cfg.account_sid}/Calls/{call_sid}.json"
+
+        def _post() -> requests.Response:
+            return requests.post(
+                url,
+                auth=(cfg.account_sid, cfg.auth_token),
+                data={"Status": "completed"},
+                timeout=20,
+            )
+
+        try:
+            resp = await asyncio.to_thread(_post)
+        except Exception as exc:
+            await self._log_event("call.hangup.request_failed", {"reason": reason, "error": str(exc)})
+            return
+
+        if resp.status_code >= 400:
+            await self._log_event(
+                "call.hangup.failed",
+                {"reason": reason, "status": int(resp.status_code), "body": str(resp.text or "")[:300]},
+            )
+            return
+        await self._log_event("call.hangup.ok", {"reason": reason})
+
+    async def _store_callback_time(self, text: str) -> None:
+        value = str(text or "").strip()
+        if not value:
+            return
+
+        def _update() -> None:
+            session = CallSession.objects.filter(id=self.session_id).first()
+            if not session:
+                return
+            meta = session.metadata if isinstance(session.metadata, dict) else {}
+            meta = dict(meta)
+            insights = meta.get("call_insights")
+            if not isinstance(insights, dict):
+                insights = {}
+            insights = dict(insights)
+            insights["callback_time"] = value
+            meta["call_insights"] = insights
+            session.metadata = meta
+            session.save(update_fields=["metadata", "updated_at"])
+
+        await sync_to_async(_update)()
 
     async def _respond_and_speak(
         self,
@@ -227,6 +517,8 @@ class VoiceCallRuntime:
         customer_text: str,
         customer_language: str | None = None,
         is_greeting: bool = False,
+        is_closing_prompt: bool = False,
+        closing_check: bool = False,
     ) -> None:
         session = await self._get_session()
         if not session.consent_obtained:
@@ -246,31 +538,17 @@ class VoiceCallRuntime:
             "Language policy: respond in the customer's language (Arabic or English). If the customer code-switches, you may code-switch.\n"
             "If speaking Arabic, prefer clear Modern Standard Arabic unless the customer uses a dialect.\n"
             "Ask short clarifying questions when needed.\n"
-            "Return JSON with keys: response_text (string), actions (empty array), extractions (empty array).\n"
+            "Return JSON with keys: response_text (string), actions (array), extractions (empty array).\n"
+            "Allowed actions: hangup (payload may be empty). Use hangup only if you are ending the call.\n"
         )
         history_lines = "\n".join(f"{role}: {text}" for role, text in self._history[-12:])
         customer_language_hint = (customer_language or session.language or "").strip().lower()
         context_block = await self._build_context_block()
 
-        # Extract recipient name for identity confirmation flow
         recipient_name = _extract_recipient_name(session.context_items)
-        identity_status = f"identity_confirmed={self._identity_confirmed}"
-        goal_status = f"goal_delivered={self._goal_delivered}, goal_acknowledged={self._goal_acknowledged}"
+        deliver_goal = bool(not is_closing_prompt and (is_greeting or (not self._goal_delivered and not closing_check)))
 
-        if is_greeting:
-            # Phase 1: Ask for identity confirmation first
-            if recipient_name:
-                greeting_instruction = (
-                    f"No customer speech yet. Greet briefly and ask to confirm identity: "
-                    f"'Hello, am I speaking with {recipient_name}?' or equivalent in the appropriate language. "
-                    "Do NOT deliver the objective yet - wait for identity confirmation first."
-                )
-            else:
-                # No recipient name, skip identity confirmation
-                greeting_instruction = (
-                    "No customer speech yet. Start the call with a brief greeting and deliver the objective. "
-                    "Ask for confirmation/acknowledgement."
-                )
+        if is_closing_prompt:
             user_prompt = (
                 f"Call objective: {session.objective}\n"
                 f"Workspace default language: {session.language}\n"
@@ -279,56 +557,53 @@ class VoiceCallRuntime:
                 f"{context_block}\n\n"
                 "Conversation so far:\n"
                 f"{history_lines}\n\n"
-                f"Status: {identity_status}, {goal_status}\n\n"
-                f"{greeting_instruction}\n"
+                "The customer has been silent for a while.\n"
+                "Ask a short closing question: 'Anything else before I let you go?'\n"
+                "Do NOT restate the objective and do NOT hang up yet.\n"
+            )
+        elif is_greeting:
+            name_note = f"Recipient name (optional to mention): {recipient_name}\n" if recipient_name else ""
+            user_prompt = (
+                f"Call objective: {session.objective}\n"
+                f"Workspace default language: {session.language}\n"
+                f"Customer language hint: {customer_language_hint}\n"
+                f"Country: {session.country}\n"
+                f"{name_note}\n"
+                f"{context_block}\n\n"
+                "No customer speech yet.\n"
+                "Greet briefly. You may mention the recipient name if available, but do not ask for confirmation.\n"
+                "Deliver the objective once, then invite questions naturally (no forced acknowledgement).\n"
             )
         else:
-            # Phase 2+: Handle based on identity and goal status
-            if not self._identity_confirmed and recipient_name:
-                # Awaiting identity confirmation
-                user_prompt = (
-                    f"Call objective: {session.objective}\n"
-                    f"Workspace default language: {session.language}\n"
-                    f"Customer language hint: {customer_language_hint}\n"
-                    f"Country: {session.country}\n\n"
-                    f"{context_block}\n\n"
-                    "Conversation so far:\n"
-                    f"{history_lines}\n\n"
-                    f"Customer just said: {customer_text}\n\n"
-                    f"Status: {identity_status}, {goal_status}\n\n"
-                    "If the customer confirmed their identity (e.g., 'yes', 'speaking'), now deliver the objective. "
-                    "If the customer denied or said 'wrong number', apologize politely and indicate the call will end. "
-                    "If unclear, politely ask again to confirm if this is the right person.\n"
+            closing_instructions = ""
+            if closing_check:
+                closing_instructions = (
+                    "You previously asked: 'Anything else before I let you go?'\n"
+                    "If the customer indicates 'no' or that they are done, say goodbye and include a hangup action.\n"
+                    "If the customer has another request/question, continue naturally and do NOT hang up.\n\n"
                 )
-            elif not self._goal_delivered:
-                # Identity confirmed (or no name to check), deliver objective
-                user_prompt = (
-                    f"Call objective: {session.objective}\n"
-                    f"Workspace default language: {session.language}\n"
-                    f"Customer language hint: {customer_language_hint}\n"
-                    f"Country: {session.country}\n\n"
-                    f"{context_block}\n\n"
-                    "Conversation so far:\n"
-                    f"{history_lines}\n\n"
-                    f"Customer just said: {customer_text}\n\n"
-                    f"Status: {identity_status}, {goal_status}\n\n"
-                    "Now deliver the objective in one concise sentence and ask for acknowledgement.\n"
+            goal_instruction = ""
+            if deliver_goal:
+                goal_instruction = (
+                    "The objective has not been delivered yet. Deliver it once, briefly, as part of your response.\n\n"
                 )
-            else:
-                # Objective delivered, continue conversation
-                user_prompt = (
-                    f"Call objective: {session.objective}\n"
-                    f"Workspace default language: {session.language}\n"
-                    f"Customer language hint: {customer_language_hint}\n"
-                    f"Country: {session.country}\n\n"
-                    f"{context_block}\n\n"
-                    "Conversation so far:\n"
-                    f"{history_lines}\n\n"
-                    f"Customer just said: {customer_text}\n\n"
-                    f"Status: {identity_status}, {goal_status}\n\n"
-                    "If the goal has not been acknowledged, ask for acknowledgement. "
-                    "Otherwise, continue the conversation naturally and helpfully.\n"
-                )
+
+            user_prompt = (
+                f"Call objective: {session.objective}\n"
+                f"Workspace default language: {session.language}\n"
+                f"Customer language hint: {customer_language_hint}\n"
+                f"Country: {session.country}\n\n"
+                f"{context_block}\n\n"
+                "Conversation so far:\n"
+                f"{history_lines}\n\n"
+                f"Customer just said: {customer_text}\n\n"
+                f"{closing_instructions}"
+                f"{goal_instruction}"
+                "Rules:\n"
+                "- Be natural, concise, and helpful. Avoid sounding like an IVR.\n"
+                "- Do NOT ask the customer to confirm they've received information unless they asked you to repeat/clarify.\n"
+                "- If the customer asks something not supported by the provided context, say you will follow up.\n"
+            )
         bundle = PromptBundle(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -405,6 +680,8 @@ class VoiceCallRuntime:
                 tts_cfg = tts_config_ar if tts_lang == "ar" else tts_config_en
                 await self._stream_tts_to_twilio(twilio_ws, final, config=tts_cfg)
                 spoke_any = True
+            if spoke_any:
+                self._last_agent_speech_end_at = time.monotonic()
             if deliver_goal and spoke_any:
                 if not self._goal_delivered:
                     self._goal_delivered = True
@@ -426,6 +703,10 @@ class VoiceCallRuntime:
                 if full_text:
                     self._history.append(("agent", full_text))
                     self._history = self._history[-(self.runtime_config.max_history_turns * 2) :]
+                actions = llm_result.get("actions")
+                if _has_hangup_action(actions):
+                    await self._log_event("call.hangup.action", {"actions": actions})
+                    await self._hangup_call(reason="llm_action")
 
     async def _stream_tts_to_twilio(self, twilio_ws, text: str, *, config: ElevenLabsConfig) -> None:
         if not self._stream_sid:
@@ -596,6 +877,8 @@ class VoiceCallRuntime:
         return self._context_block
 
     async def _handle_transcript(self, payload: dict[str, object], twilio_ws, *, source: str) -> None:
+        if self._terminated:
+            return
         text = str(payload.get("text") or "").strip()
         if not text:
             return
@@ -606,20 +889,68 @@ class VoiceCallRuntime:
         event_type = "stt.final" if source == "final" else "stt.interim"
         await self._log_event(event_type, {"text": text, "confidence": confidence, "stt_language": stt_language})
 
-        # Identity confirmation flow: check before goal acknowledgement
-        if not self._identity_confirmed:
-            if _is_identity_confirmation(text, stt_language or "en"):
-                self._identity_confirmed = True
-                await self._log_event("identity.confirmed", {"text": text})
-            elif _is_identity_denial(text, stt_language or "en"):
-                await self._log_event("identity.denied", {"text": text})
-                # The LLM prompt will handle the apology and call ending
+        self._last_customer_activity_at = time.monotonic()
 
-        # Goal acknowledgement (only relevant after identity is confirmed or no name check needed)
-        if self._goal_delivered and not self._goal_acknowledged:
-            if _is_acknowledgement(text, stt_language or "en"):
-                self._goal_acknowledged = True
-                await self._log_event("goal.acknowledged", {"text": text})
+        session = await self._get_session()
+        language_hint = _normalize_lang_for_prompt(stt_language or session.language or "") or "en"
+        recipient_name = _extract_recipient_name(session.context_items)
+
+        # Any customer turn cancels a pending close-wait state; we'll re-enter later if silence persists.
+        closing_check = False
+        if self._closing_waiting_for_customer:
+            closing_check = True
+            self._closing_waiting_for_customer = False
+            self._closing_question_asked_at = 0.0
+
+        if self._awaiting_first_customer:
+            self._awaiting_first_customer = False
+            await self._log_event("call.customer.engaged", {"text": text})
+
+        if self._waiting_for_callback_time:
+            self._waiting_for_callback_time = False
+            self._callback_time_text = text
+            await self._store_callback_time(text)
+            await self._log_event("call.callback_time.captured", {"text": text})
+            await self._interrupt_speech(twilio_ws)
+            confirm_text = "Thanks — when it’s convenient, I’ll call you back. Goodbye." if language_hint == "en" else "شكرًا، سأتصل بك في الوقت المناسب. مع السلامة."
+            self._current_speak_task = asyncio.create_task(
+                self._speak_then_hangup(
+                    twilio_ws,
+                    text=confirm_text,
+                    language_hint=language_hint,
+                    reason="callback_time_captured",
+                )
+            )
+            return
+
+        if _is_wrong_person_strong(text, language_hint=stt_language or session.language or "", recipient_name=recipient_name):
+            await self._log_event("call.wrong_person", {"text": text, "recipient_name": recipient_name})
+            await self._interrupt_speech(twilio_ws)
+            apology = "Sorry about that — I’ll update our records. Goodbye." if language_hint == "en" else "أعتذر عن الإزعاج—سأقوم بتحديث بياناتنا. مع السلامة."
+            self._current_speak_task = asyncio.create_task(
+                self._speak_then_hangup(
+                    twilio_ws,
+                    text=apology,
+                    language_hint=language_hint,
+                    reason="wrong_person",
+                )
+            )
+            return
+
+        if _is_busy_signal(text, stt_language or session.language or ""):
+            await self._log_event("call.busy", {"text": text})
+            self._waiting_for_callback_time = True
+            await self._interrupt_speech(twilio_ws)
+            prompt_text = "No problem — when should I call you back?" if language_hint == "en" else "تمام، متى تحب أن أتصل بك مرة أخرى؟"
+            self._current_speak_task = asyncio.create_task(
+                self._speak_text(
+                    twilio_ws,
+                    text=prompt_text,
+                    language_hint=language_hint,
+                    event_type="call.busy.ask_callback",
+                )
+            )
+            return
 
         self._history.append(("customer", text))
         self._history = self._history[-(self.runtime_config.max_history_turns * 2) :]
@@ -628,15 +959,16 @@ class VoiceCallRuntime:
 
         await self._interrupt_speech(twilio_ws)
         self._current_speak_task = asyncio.create_task(
-            self._respond_and_speak(twilio_ws, customer_text=text, customer_language=_normalize_lang_for_prompt(stt_language))
+            self._respond_and_speak(
+                twilio_ws,
+                customer_text=text,
+                customer_language=_normalize_lang_for_prompt(stt_language),
+                closing_check=closing_check,
+            )
         )
 
-    async def _debounced_interim(self, payload: dict[str, object], twilio_ws, version: int) -> None:
-        delay_ms = _interim_stable_ms()
-        await asyncio.sleep(delay_ms / 1000.0)
-        if version != self._interim_version:
-            return
-        await self._handle_transcript(payload, twilio_ws, source="interim")
+    # Note: Phase 1 disables responding to interim transcripts. We keep the
+    # previous interim debounce implementation around for future experimentation.
 
 
 async def _twilio_send(ws, payload: dict) -> None:
@@ -798,130 +1130,120 @@ def _detect_text_language(text: str, *, fallback: str | None = None) -> str:
     return "en"
 
 
-def _is_acknowledgement(text: str, language_hint: str | None = None) -> bool:
-    normalized = (text or "").strip().lower()
-    if not normalized:
+def _has_hangup_action(actions: object) -> bool:
+    """
+    Accept either:
+    - ["hangup"]
+    - [{"type": "hangup"}]
+    """
+    if not actions:
         return False
-    if language_hint and language_hint.lower().startswith("ar"):
-        ar_tokens = {
-            "نعم",
-            "تمام",
-            "حاضر",
-            "اوكي",
-            "أوكي",
-            "ماشي",
-            "موافق",
-            "فهمت",
-            "تمام فهمت",
-            "شكرا",
-            "شكرًا",
-        }
-        return any(token in text for token in ar_tokens)
-    en_tokens = {
-        "yes",
-        "yeah",
-        "yep",
-        "ok",
-        "okay",
-        "sure",
-        "alright",
-        "sounds good",
-        "got it",
-        "understood",
-        "i understand",
-        "fine",
-        "thanks",
-        "thank you",
-    }
-    return any(token in normalized for token in en_tokens)
+    if isinstance(actions, str):
+        return actions.strip().lower() == "hangup"
+    if not isinstance(actions, list):
+        return False
+    for item in actions:
+        if isinstance(item, str) and item.strip().lower() == "hangup":
+            return True
+        if isinstance(item, dict):
+            action_type = str(item.get("type") or item.get("action") or "").strip().lower()
+            if action_type == "hangup":
+                return True
+    return False
 
 
-def _is_identity_confirmation(text: str, language_hint: str | None = None) -> bool:
-    """Detect if customer confirms their identity (e.g., 'yes', 'speaking', 'this is X')."""
+def _is_busy_signal(text: str, language_hint: str | None = None) -> bool:
     normalized = (text or "").strip().lower()
     if not normalized:
         return False
 
-    # Arabic identity confirmations
-    if language_hint and language_hint.lower().startswith("ar"):
-        ar_tokens = {
-            "نعم",
-            "أيوا",
-            "ايوا",
-            "أيوه",
-            "ايوه",
-            "معاك",
-            "معك",
-            "أنا",
-            "انا",
-            "نفسي",
-            "بنفسي",
-            "موجود",
-            "حاضر",
-            "تمام",
-            "صحيح",
-        }
+    if language_hint and str(language_hint).lower().startswith("ar"):
+        ar_tokens = (
+            "مشغول",
+            "في اجتماع",
+            "فى اجتماع",
+            "في مكالمة",
+            "فى مكالمة",
+            "اتصل بعدين",
+            "اتصل لاحق",
+            "اتصل لاحقًا",
+            "كلمك بعدين",
+            "مش وقته",
+            "مش وقت مناسب",
+        )
         return any(token in text for token in ar_tokens)
 
-    # English identity confirmations
-    en_tokens = {
-        "yes",
-        "yeah",
-        "yep",
-        "speaking",
-        "this is",
-        "that's me",
-        "thats me",
-        "it's me",
-        "its me",
-        "i am",
-        "correct",
-        "right",
-        "here",
-        "present",
-    }
-    return any(token in normalized for token in en_tokens)
+    # Avoid false positives like "I'm not busy"
+    if "not busy" in normalized or "i am not busy" in normalized or "i'm not busy" in normalized or "im not busy" in normalized:
+        return False
+
+    patterns = (
+        r"\bi[' ]?m busy\b",
+        r"\bim busy\b",
+        r"\bbusy right now\b",
+        r"\bin a meeting\b",
+        r"\bin meeting\b",
+        r"\bon a call\b",
+        r"\bcan't talk\b",
+        r"\bcant talk\b",
+        r"\bnot a good time\b",
+        r"\bcall (me )?back\b",
+        r"\bcall back later\b",
+        r"\bcall later\b",
+        r"\banother time\b",
+    )
+    return any(re.search(pat, normalized) for pat in patterns)
 
 
-def _is_identity_denial(text: str, language_hint: str | None = None) -> bool:
-    """Detect if customer denies their identity (e.g., 'wrong number', 'not me')."""
+def _is_wrong_person_strong(text: str, *, language_hint: str | None = None, recipient_name: str = "") -> bool:
     normalized = (text or "").strip().lower()
     if not normalized:
         return False
 
-    # Arabic identity denials
-    if language_hint and language_hint.lower().startswith("ar"):
-        ar_tokens = {
+    if normalized in {"no", "no.", "nope", "nah"}:
+        return False
+
+    if language_hint and str(language_hint).lower().startswith("ar"):
+        ar_phrases = (
             "رقم غلط",
-            "غلط",
+            "رقم خاطئ",
             "مش انا",
             "مش أنا",
-            "لأ",
-            "لا",
-            "رقم خاطئ",
-            "خطأ",
-            "مفيش",
-            "مش هنا",
+            "مش الشخص",
+            "مش هو",
+            "مش هي",
             "مش موجود",
-        }
-        return any(token in text for token in ar_tokens)
+            "مش هنا",
+        )
+        return any(phrase in text for phrase in ar_phrases)
 
-    # English identity denials
-    en_tokens = {
-        "wrong number",
-        "not me",
-        "no",
-        "nope",
-        "wrong person",
-        "who",
-        "who is this",
-        "not here",
-        "doesn't live here",
-        "doesn't live",
-        "not available",
-        "you have the wrong",
-    }
-    return any(token in normalized for token in en_tokens)
+    if re.search(r"\bwrong (number|person)\b", normalized):
+        return True
+    if re.search(r"\byou (have|got) (the )?wrong\b", normalized):
+        return True
+    if re.search(r"\bnot (him|her|me)\b", normalized):
+        return True
+    if re.search(r"\bdoesn'?t (live|work) here\b", normalized):
+        return True
+
+    # Name-based strong denial (preferred when we know who we intended to reach).
+    name_norm = (recipient_name or "").strip().lower()
+    if name_norm:
+        name_tokens = [t for t in re.split(r"[^a-z0-9]+", name_norm) if len(t) >= 3]
+        if any(tok in normalized for tok in name_tokens) and "not" in normalized:
+            if re.search(r"\b(this is|i am|i'?m|im)\s+not\b", normalized):
+                return True
+            if re.search(r"\bnot\s+(mr|mister|ms|mrs)\b", normalized):
+                return True
+            return True
+
+    # Generic wrong-person language without name context (avoid matching "I'm not interested/sure").
+    if "the person" in normalized and ("not" in normalized or "isn't" in normalized or "isnt" in normalized):
+        return True
+    if re.search(r"\bnot\s+(mr|mister|ms|mrs)\b", normalized):
+        return True
+
+    return False
 
 
 def _interim_min_chars() -> int:
@@ -940,6 +1262,98 @@ def _interim_stable_ms() -> int:
     except Exception:
         value = 450
     return max(120, min(2000, value))
+
+def _final_stable_ms() -> int:
+    raw = (os.getenv("VOICE_STT_FINAL_STABLE_MS") or "700").strip()
+    try:
+        value = int(raw)
+    except Exception:
+        value = 700
+    return max(200, min(2000, value))
+
+
+def _barge_in_min_chars() -> int:
+    raw = (os.getenv("VOICE_STT_BARGE_IN_MIN_CHARS") or "2").strip()
+    try:
+        value = int(raw)
+    except Exception:
+        value = 2
+    return max(1, min(40, value))
+
+
+def _should_barge_in(text: str, *, min_chars: int) -> bool:
+    clean = (text or "").strip()
+    if not clean:
+        return False
+    if not any(ch.isalnum() for ch in clean):
+        return False
+    return len(clean) >= max(1, int(min_chars))
+
+
+def _no_engagement_hello_seconds() -> float:
+    raw = (os.getenv("VOICE_CALL_NO_ENGAGEMENT_HELLO_SECONDS") or "4").strip()
+    try:
+        value = float(raw)
+    except Exception:
+        value = 4.0
+    return max(0.5, min(20.0, value))
+
+
+def _no_engagement_goodbye_seconds() -> float:
+    raw = (os.getenv("VOICE_CALL_NO_ENGAGEMENT_GOODBYE_SECONDS") or "4").strip()
+    try:
+        value = float(raw)
+    except Exception:
+        value = 4.0
+    return max(0.5, min(30.0, value))
+
+
+def _silence_close_seconds() -> float:
+    raw = (os.getenv("VOICE_CALL_SILENCE_CLOSE_SECONDS") or "7").strip()
+    try:
+        value = float(raw)
+    except Exception:
+        value = 7.0
+    return max(2.0, min(60.0, value))
+
+
+def _silence_hangup_after_close_seconds() -> float:
+    raw = (os.getenv("VOICE_CALL_SILENCE_HANGUP_AFTER_CLOSE_SECONDS") or "7").strip()
+    try:
+        value = float(raw)
+    except Exception:
+        value = 7.0
+    return max(2.0, min(120.0, value))
+
+
+def _merge_transcript_segments(existing: str, incoming: str) -> str:
+    """
+    Merge STT segments that may arrive as multiple finals for a single user
+    utterance.
+
+    Deepgram sometimes emits a short final (e.g., "I am not") followed by
+    additional finals/interims as the customer continues speaking. This helper
+    tries to keep a single, coherent utterance without duplicating text.
+    """
+    left = (existing or "").strip()
+    right = (incoming or "").strip()
+    if not right:
+        return left
+    if not left:
+        return right
+
+    left_norm = " ".join(left.split())
+    right_norm = " ".join(right.split())
+
+    if right_norm == left_norm:
+        return left
+    if right_norm.startswith(left_norm):
+        return incoming.strip()
+    if left_norm.startswith(right_norm):
+        return left
+
+    joined = f"{left.rstrip()} {right.lstrip()}".strip()
+    return joined
 
 
 def _tts_chunk_min_chars() -> int:
