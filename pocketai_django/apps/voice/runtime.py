@@ -607,7 +607,8 @@ class VoiceCallRuntime:
         context_block = await self._build_context_block()
 
         recipient_name = _extract_recipient_name(session.context_items)
-        deliver_goal = bool(not is_closing_prompt and (is_greeting or (not self._goal_delivered and not closing_check)))
+        # Humanized flow: greet first, then deliver the objective on the customer's first reply.
+        deliver_goal = bool(not is_closing_prompt and not is_greeting and (not self._goal_delivered and not closing_check))
 
         if is_closing_prompt:
             user_prompt = (
@@ -632,8 +633,9 @@ class VoiceCallRuntime:
                 f"{name_note}\n"
                 f"{context_block}\n\n"
                 "No customer speech yet.\n"
-                "Greet briefly. You may mention the recipient name if available, but do not ask for confirmation.\n"
-                "Deliver the objective once, then invite questions naturally (no forced acknowledgement).\n"
+                "Greet briefly and naturally. You may mention the recipient name if available, but do not ask for confirmation.\n"
+                "Do NOT deliver the objective yet — wait for the customer's first reply before explaining the reason for the call.\n"
+                "Ask a short, natural opener to elicit a first response (avoid sounding like an IVR).\n"
             )
         else:
             closing_instructions = ""
