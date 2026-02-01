@@ -43,9 +43,11 @@ class VoiceCallRuntime:
     def __init__(self, *, session_id: str, runtime_config: VoiceCallRuntimeConfig | None = None) -> None:
         self.session_id = session_id
         self.runtime_config = runtime_config or VoiceCallRuntimeConfig()
+        self._agent_response_seq: int = 0
         self._stream_sid: str | None = None
         self._history: list[tuple[str, str]] = []  # ("customer"|"agent", text)
         self._current_speak_task: asyncio.Task | None = None
+        self._speaking_response_id: int = 0
         self._greeted: bool = False
         self._goal_delivered: bool = False
         self._last_handled_text: str = ""
@@ -59,7 +61,11 @@ class VoiceCallRuntime:
         self._pending_final_updated_at: float = 0.0  # monotonic
         self._pending_final_task: asyncio.Task | None = None
         self._last_customer_activity_at: float = 0.0  # monotonic
+        self._last_customer_final_at: float = 0.0  # monotonic
         self._last_agent_speech_end_at: float = 0.0  # monotonic
+        self._customer_speaking: bool = False
+        self._last_vad_speech_started_at: float = 0.0  # monotonic
+        self._last_vad_utterance_end_at: float = 0.0  # monotonic
         self._awaiting_first_customer: bool = False
         self._no_engagement_task: asyncio.Task | None = None
         self._silence_close_task: asyncio.Task | None = None
@@ -67,6 +73,18 @@ class VoiceCallRuntime:
         self._closing_question_asked_at: float = 0.0  # monotonic
         self._waiting_for_callback_time: bool = False
         self._callback_time_text: str = ""
+        self._auto_resume_task: asyncio.Task | None = None
+        self._auto_resume_text: str = ""
+        self._auto_resume_response_id: int = 0
+        self._auto_resume_marks_goal_delivered: bool = False
+        self._auto_resume_expected_response_id: int = 0
+        self._auto_resume_expected_barge_in_at: float = 0.0  # monotonic
+        self._interrupted_agent_remaining: str = ""
+        self._interrupted_agent_remaining_at: float = 0.0  # monotonic
+        self._interrupted_agent_response_id: int = 0
+        self._interrupted_agent_marks_goal_delivered: bool = False
+        self._last_barge_in_at: float = 0.0  # monotonic
+        self._last_barge_in_text: str = ""
         self._terminated: bool = False
 
     async def run_twilio_stream(self, twilio_ws) -> None:
@@ -104,6 +122,10 @@ class VoiceCallRuntime:
                 try:
                     dg_config = DeepgramConfig.from_env(language=_lang)
                     async for payload in deepgram_transcripts(config=dg_config, audio_source=_source()):
+                        if payload.get("type") == "SpeechStarted":
+                            await utterance_queue.put({"event": "vad.speech_started", "stt_language": _lang})
+                        if payload.get("type") == "UtteranceEnd":
+                            await utterance_queue.put({"event": "vad.utterance_end", "stt_language": _lang})
                         text, confidence, is_final = _extract_transcript_with_confidence(payload)
                         if text:
                             await utterance_queue.put(
@@ -190,8 +212,22 @@ class VoiceCallRuntime:
         if not drained:
             return
 
-        final_items = [item for item in drained if bool(item.get("is_final"))]
-        interim_items = [item for item in drained if not bool(item.get("is_final"))]
+        now = time.monotonic()
+        vad_items = [item for item in drained if str(item.get("event") or "").strip()]
+        transcript_items = [item for item in drained if not str(item.get("event") or "").strip()]
+
+        for item in vad_items:
+            ev = str(item.get("event") or "").strip()
+            if ev == "vad.speech_started":
+                self._customer_speaking = True
+                self._last_vad_speech_started_at = now
+                self._last_customer_activity_at = now
+            elif ev == "vad.utterance_end":
+                self._customer_speaking = False
+                self._last_vad_utterance_end_at = now
+
+        final_items = [item for item in transcript_items if bool(item.get("is_final"))]
+        interim_items = [item for item in transcript_items if not bool(item.get("is_final"))]
 
         if interim_items:
             # Phase 1 turn-taking: use interim STT for barge-in only. Do not respond until a
@@ -200,7 +236,10 @@ class VoiceCallRuntime:
             text = str(best.get("text") or "").strip()
             if text and _should_barge_in(text, min_chars=_barge_in_min_chars()):
                 active_speech = bool(self._current_speak_task and not self._current_speak_task.done())
+                barge_in_at = time.monotonic()
                 if active_speech:
+                    self._last_barge_in_at = barge_in_at
+                    self._last_barge_in_text = _clip_text(text, 120)
                     await self._log_event(
                         "call.barge_in",
                         {
@@ -213,6 +252,12 @@ class VoiceCallRuntime:
                 if self._awaiting_first_customer:
                     self._awaiting_first_customer = False
                 await self._interrupt_speech(twilio_ws)
+                if active_speech:
+                    await self._schedule_auto_resume_after_barge_in(
+                        twilio_ws,
+                        barge_in_at=barge_in_at,
+                        response_id=self._speaking_response_id,
+                    )
                 # If we already have a pending final transcript, keep pushing the debounce
                 # window forward while the customer is still speaking (prevents cutoffs when
                 # endpointing is aggressive).
@@ -278,8 +323,183 @@ class VoiceCallRuntime:
     async def _interrupt_speech(self, twilio_ws) -> None:
         if self._current_speak_task and not self._current_speak_task.done():
             self._current_speak_task.cancel()
+            self._last_agent_speech_end_at = time.monotonic()
         if self._stream_sid:
             await _twilio_send(twilio_ws, {"event": "clear", "streamSid": self._stream_sid})
+
+    async def _schedule_auto_resume_after_barge_in(self, twilio_ws, *, barge_in_at: float, response_id: int) -> None:
+        if response_id <= 0:
+            return
+        self._auto_resume_expected_response_id = response_id
+        self._auto_resume_expected_barge_in_at = float(barge_in_at or 0.0)
+        if self._auto_resume_task and not self._auto_resume_task.done():
+            self._auto_resume_task.cancel()
+        self._auto_resume_task = asyncio.create_task(
+            self._auto_resume_after_barge_in(twilio_ws, barge_in_at=barge_in_at, response_id=response_id)
+        )
+
+    async def _auto_resume_after_barge_in(self, twilio_ws, *, barge_in_at: float, response_id: int) -> None:
+        """
+        If barge-in was triggered by noise/echo (no real customer final follows),
+        continue speaking the remaining text from the interrupted agent response.
+        """
+        delay = _resume_after_barge_in_seconds()
+        max_wait_for_text_s = 2.0
+        try:
+            await asyncio.sleep(delay)
+            if self._terminated:
+                return
+            if self._waiting_for_callback_time:
+                return
+            if self._last_customer_final_at > barge_in_at:
+                return
+            if self._customer_speaking:
+                return
+            if self._pending_final_text or (self._pending_final_task and not self._pending_final_task.done()):
+                return
+
+            deadline = time.monotonic() + max_wait_for_text_s
+            while time.monotonic() < deadline:
+                if self._terminated:
+                    return
+                if self._last_customer_final_at > barge_in_at:
+                    return
+                if self._customer_speaking:
+                    return
+                if self._auto_resume_response_id == response_id and self._auto_resume_text:
+                    break
+                await asyncio.sleep(0.1)
+
+            if not (self._auto_resume_response_id == response_id and self._auto_resume_text):
+                return
+            if self._current_speak_task and not self._current_speak_task.done():
+                return
+
+            session = await self._get_session()
+            lang_hint = _normalize_lang_for_prompt(session.language or "") or "en"
+            await self._log_event(
+                "call.resume.start",
+                {
+                    "response_id": response_id,
+                    "remaining_chars": len(self._auto_resume_text),
+                },
+            )
+            self._current_speak_task = asyncio.create_task(
+                self._speak_auto_resume(
+                    twilio_ws,
+                    response_id=response_id,
+                    text=self._auto_resume_text,
+                    language_hint=lang_hint,
+                )
+            )
+        except asyncio.CancelledError:
+            return
+        finally:
+            current = asyncio.current_task()
+            if self._auto_resume_task is current:
+                self._auto_resume_task = None
+
+    async def _speak_auto_resume(self, twilio_ws, *, response_id: int, text: str, language_hint: str | None) -> None:
+        self._speaking_response_id = response_id
+        chunks = _chunk_text_for_tts(text)
+        completed = 0
+        try:
+            for idx, chunk in enumerate(chunks):
+                await self._log_event(
+                    "tts.resume.chunk",
+                    {"response_id": response_id, "chunk_index": idx, "text": _clip_text(chunk, 160)},
+                )
+                tts_lang = _detect_text_language(chunk, fallback=language_hint)
+                tts_cfg = ElevenLabsConfig.from_env(language=tts_lang)
+                await self._stream_tts_to_twilio(twilio_ws, chunk, config=tts_cfg)
+                completed = idx + 1
+            if chunks:
+                spoken_text = " ".join(chunks[:completed]).strip()
+                if spoken_text:
+                    self._history.append(("agent", spoken_text))
+                    self._history = self._history[-(self.runtime_config.max_history_turns * 2) :]
+            self._last_agent_speech_end_at = time.monotonic()
+            if self._auto_resume_marks_goal_delivered and not self._goal_delivered:
+                self._goal_delivered = True
+                session = await self._get_session()
+                await self._log_event("goal.delivered", {"objective": session.objective})
+            await self._log_event("call.resume.completed", {"response_id": response_id})
+            self._auto_resume_text = ""
+            self._auto_resume_response_id = 0
+            self._auto_resume_marks_goal_delivered = False
+            self._auto_resume_expected_response_id = 0
+            self._auto_resume_expected_barge_in_at = 0.0
+            self._interrupted_agent_remaining = ""
+            self._interrupted_agent_remaining_at = 0.0
+            self._interrupted_agent_response_id = 0
+            self._interrupted_agent_marks_goal_delivered = False
+        except asyncio.CancelledError:
+            self._last_agent_speech_end_at = time.monotonic()
+            spoken_text = " ".join(chunks[:completed]).strip()
+            if spoken_text:
+                self._history.append(("agent", spoken_text))
+                self._history = self._history[-(self.runtime_config.max_history_turns * 2) :]
+            remaining = " ".join(chunks[completed:]).strip()
+            if remaining:
+                self._auto_resume_text = remaining
+                self._auto_resume_response_id = response_id
+                self._interrupted_agent_remaining = remaining
+                self._interrupted_agent_remaining_at = time.monotonic()
+                self._interrupted_agent_response_id = response_id
+            await self._log_event(
+                "call.resume.interrupted",
+                {"response_id": response_id, "remaining_chars": len(remaining)},
+            )
+            raise
+        finally:
+            if self._speaking_response_id == response_id:
+                self._speaking_response_id = 0
+
+    async def _finalize_interrupted_llm_response(
+        self,
+        *,
+        response_id: int,
+        llm_task: asyncio.Task,
+        response_text_parts: list[str],
+        spoken_chunk_count: int,
+        deliver_goal: bool,
+    ) -> None:
+        try:
+            await llm_task
+        except Exception:
+            return
+
+        full_text = "".join(response_text_parts).strip()
+        if not full_text:
+            return
+
+        await self._log_event("llm.response.final", {"text": full_text, "interrupted": True, "response_id": response_id})
+
+        chunks = _chunk_text_for_tts(full_text)
+        remaining = " ".join(chunks[int(spoken_chunk_count) :]).strip()
+        if not remaining:
+            return
+
+        self._interrupted_agent_remaining = remaining
+        self._interrupted_agent_remaining_at = time.monotonic()
+        self._interrupted_agent_response_id = response_id
+        self._interrupted_agent_marks_goal_delivered = deliver_goal
+
+        if self._auto_resume_expected_response_id == response_id and self._auto_resume_expected_barge_in_at > 0:
+            self._auto_resume_text = remaining
+            self._auto_resume_response_id = response_id
+            self._auto_resume_marks_goal_delivered = deliver_goal
+
+        await self._log_event(
+            "call.agent_speech.interrupted",
+            {
+                "response_id": response_id,
+                "spoken_chunks": int(spoken_chunk_count),
+                "total_chunks": len(chunks),
+                "remaining_chars": len(remaining),
+                "barge_in_text": self._last_barge_in_text,
+            },
+        )
 
     async def _maybe_greet(self, twilio_ws) -> None:
         if self._greeted or self._terminated:
@@ -428,6 +648,8 @@ class VoiceCallRuntime:
                 if self._awaiting_first_customer:
                     continue
                 if self._waiting_for_callback_time:
+                    continue
+                if self._auto_resume_task and not self._auto_resume_task.done():
                     continue
                 speak_task = self._current_speak_task
                 if speak_task and not speak_task.done():
@@ -590,6 +812,9 @@ class VoiceCallRuntime:
         if not provider:
             await self._log_event("llm.disabled", {})
             return
+        self._agent_response_seq += 1
+        response_id = self._agent_response_seq
+        self._speaking_response_id = response_id
 
         system_prompt = (
             "You are a phone-call agent for a business. Be natural, concise, and helpful.\n"
@@ -645,6 +870,17 @@ class VoiceCallRuntime:
                     "If the customer indicates 'no' or that they are done, say goodbye and include a hangup action.\n"
                     "If the customer has another request/question, continue naturally and do NOT hang up.\n\n"
                 )
+            interrupted_note = ""
+            if not closing_check and self._interrupted_agent_remaining and self._interrupted_agent_remaining_at:
+                if (time.monotonic() - self._interrupted_agent_remaining_at) <= 120.0:
+                    clip = _clip_text(self._interrupted_agent_remaining, 600)
+                    if clip:
+                        interrupted_note = (
+                            "You were interrupted earlier and may not have finished saying this (not yet delivered):\n"
+                            f"{clip}\n\n"
+                            "First respond to the customer's latest message. Then, if it feels natural to continue the interrupted "
+                            "information, continue briefly. If it does NOT feel appropriate, do not continue it.\n\n"
+                        )
             goal_instruction = ""
             if deliver_goal:
                 goal_instruction = (
@@ -661,6 +897,7 @@ class VoiceCallRuntime:
                 f"{history_lines}\n\n"
                 f"Customer just said: {customer_text}\n\n"
                 f"{closing_instructions}"
+                f"{interrupted_note}"
                 f"{goal_instruction}"
                 "Rules:\n"
                 "- Be natural, concise, and helpful. Avoid sounding like an IVR.\n"
@@ -676,16 +913,30 @@ class VoiceCallRuntime:
             agent_traits={},
         )
 
+        await self._log_event(
+            "call.agent_speech.started",
+            {
+                "response_id": response_id,
+                "is_greeting": bool(is_greeting),
+                "is_closing_prompt": bool(is_closing_prompt),
+                "closing_check": bool(closing_check),
+                "deliver_goal": bool(deliver_goal),
+            },
+        )
+
         loop = asyncio.get_running_loop()
         delta_queue: asyncio.Queue[str] = asyncio.Queue()
         response_text_parts: list[str] = []
         llm_result: dict | None = None
+        streaming_to_tts = True
 
         def _emit_text(delta: str) -> None:
+            nonlocal streaming_to_tts
             if not delta:
                 return
             response_text_parts.append(delta)
-            loop.call_soon_threadsafe(delta_queue.put_nowait, delta)
+            if streaming_to_tts:
+                loop.call_soon_threadsafe(delta_queue.put_nowait, delta)
 
         def _build_stream_callback() -> Callable[[str], None]:
             if isinstance(provider, DeepSeekChatProvider):
@@ -718,9 +969,12 @@ class VoiceCallRuntime:
         except Exception as exc:
             await self._log_event("tts.disabled", {"error": str(exc)})
             await llm_task
+            if self._speaking_response_id == response_id:
+                self._speaking_response_id = 0
             return
 
         buffer = ""
+        spoken_chunks: list[str] = []
         spoke_any = False
         try:
             while True:
@@ -730,46 +984,80 @@ class VoiceCallRuntime:
                 buffer += delta
                 chunk, buffer = _maybe_extract_speakable_chunk(buffer)
                 if chunk:
-                    await self._log_event("tts.chunk", {"text": chunk})
+                    await self._log_event("tts.chunk", {"response_id": response_id, "text": chunk})
                     tts_lang = _detect_text_language(chunk, fallback=customer_language_hint)
                     tts_cfg = tts_config_ar if tts_lang == "ar" else tts_config_en
                     await self._stream_tts_to_twilio(twilio_ws, chunk, config=tts_cfg)
+                    spoken_chunks.append(chunk)
+                    await self._log_event("tts.chunk.done", {"response_id": response_id, "text": _clip_text(chunk, 160)})
                     spoke_any = True
 
             final = buffer.strip()
             if final:
-                await self._log_event("tts.chunk.final", {"text": final})
+                await self._log_event("tts.chunk.final", {"response_id": response_id, "text": final})
                 tts_lang = _detect_text_language(final, fallback=customer_language_hint)
                 tts_cfg = tts_config_ar if tts_lang == "ar" else tts_config_en
                 await self._stream_tts_to_twilio(twilio_ws, final, config=tts_cfg)
+                spoken_chunks.append(final)
                 spoke_any = True
             if spoke_any:
                 self._last_agent_speech_end_at = time.monotonic()
-            if deliver_goal and spoke_any:
-                if not self._goal_delivered:
-                    self._goal_delivered = True
-                    await self._log_event("goal.delivered", {"objective": session.objective})
+            if deliver_goal and spoke_any and not self._goal_delivered:
+                self._goal_delivered = True
+                await self._log_event("goal.delivered", {"objective": session.objective})
         except asyncio.CancelledError:
-            raise
+            streaming_to_tts = False
+            self._last_agent_speech_end_at = time.monotonic()
+            spoken_text = " ".join(spoken_chunks).strip()
+            if spoken_text:
+                self._history.append(("agent", spoken_text))
+                self._history = self._history[-(self.runtime_config.max_history_turns * 2) :]
+            await self._log_event(
+                "call.agent_speech.cancelled",
+                {
+                    "response_id": response_id,
+                    "spoken_chunks": len(spoken_chunks),
+                    "barge_in_text": self._last_barge_in_text,
+                },
+            )
+            asyncio.create_task(
+                self._finalize_interrupted_llm_response(
+                    response_id=response_id,
+                    llm_task=llm_task,
+                    response_text_parts=response_text_parts,
+                    spoken_chunk_count=len(spoken_chunks),
+                    deliver_goal=deliver_goal,
+                )
+            )
+            if self._speaking_response_id == response_id:
+                self._speaking_response_id = 0
+            return
         except Exception as exc:
             await self._log_event("tts.error", {"error": str(exc)})
         finally:
-            await llm_task
-            full_text = ""
-            if isinstance(llm_result, dict):
-                full_text = str(llm_result.get("response_text") or "").strip()
-                usage = llm_result.get("llm_usage")
-                if full_text:
-                    await self._log_event("llm.response.final", {"text": full_text, "llm_usage": usage or {}})
-                if not full_text:
-                    full_text = "".join(response_text_parts).strip()
-                if full_text:
-                    self._history.append(("agent", full_text))
-                    self._history = self._history[-(self.runtime_config.max_history_turns * 2) :]
-                actions = llm_result.get("actions")
-                if _has_hangup_action(actions):
-                    await self._log_event("call.hangup.action", {"actions": actions})
-                    await self._hangup_call(reason="llm_action")
+            if self._speaking_response_id == response_id:
+                self._speaking_response_id = 0
+
+        await llm_task
+        full_text = ""
+        if isinstance(llm_result, dict):
+            full_text = str(llm_result.get("response_text") or "").strip()
+            usage = llm_result.get("llm_usage")
+            if full_text:
+                await self._log_event("llm.response.final", {"text": full_text, "llm_usage": usage or {}, "response_id": response_id})
+            if not full_text:
+                full_text = "".join(response_text_parts).strip()
+            spoken_text = " ".join(spoken_chunks).strip() if spoken_chunks else ""
+            if spoken_text:
+                self._history.append(("agent", spoken_text))
+                self._history = self._history[-(self.runtime_config.max_history_turns * 2) :]
+            elif full_text:
+                self._history.append(("agent", full_text))
+                self._history = self._history[-(self.runtime_config.max_history_turns * 2) :]
+            actions = llm_result.get("actions")
+            if _has_hangup_action(actions):
+                await self._log_event("call.hangup.action", {"actions": actions})
+                await self._hangup_call(reason="llm_action")
 
     async def _stream_tts_to_twilio(self, twilio_ws, text: str, *, config: ElevenLabsConfig) -> None:
         if not self._stream_sid:
@@ -952,7 +1240,17 @@ class VoiceCallRuntime:
         event_type = "stt.final" if source == "final" else "stt.interim"
         await self._log_event(event_type, {"text": text, "confidence": confidence, "stt_language": stt_language})
 
-        self._last_customer_activity_at = time.monotonic()
+        now = time.monotonic()
+        self._last_customer_activity_at = now
+        self._last_customer_final_at = now
+        self._customer_speaking = False
+        if self._auto_resume_task and not self._auto_resume_task.done():
+            self._auto_resume_task.cancel()
+        self._auto_resume_text = ""
+        self._auto_resume_response_id = 0
+        self._auto_resume_marks_goal_delivered = False
+        self._auto_resume_expected_response_id = 0
+        self._auto_resume_expected_barge_in_at = 0.0
 
         session = await self._get_session()
         language_hint = _normalize_lang_for_prompt(stt_language or session.language or "") or "en"
@@ -1125,6 +1423,20 @@ def _maybe_extract_speakable_chunk(buffer: str) -> tuple[str, str]:
             rest = text[last_space + 1 :].lstrip()
             return chunk, rest
     return "", buffer
+
+
+def _chunk_text_for_tts(text: str) -> list[str]:
+    buffer = str(text or "")
+    chunks: list[str] = []
+    while True:
+        chunk, buffer = _maybe_extract_speakable_chunk(buffer)
+        if not chunk:
+            break
+        chunks.append(chunk)
+    final = buffer.strip()
+    if final:
+        chunks.append(final)
+    return chunks
 
 
 def _normalize_lang_for_prompt(stt_language: str) -> str | None:
@@ -1342,6 +1654,15 @@ def _barge_in_min_chars() -> int:
     except Exception:
         value = 2
     return max(1, min(40, value))
+
+
+def _resume_after_barge_in_seconds() -> float:
+    raw = (os.getenv("VOICE_CALL_RESUME_AFTER_BARGE_IN_SECONDS") or "1.8").strip()
+    try:
+        value = float(raw)
+    except Exception:
+        value = 1.8
+    return max(0.5, min(8.0, value))
 
 
 def _should_barge_in(text: str, *, min_chars: int) -> bool:
