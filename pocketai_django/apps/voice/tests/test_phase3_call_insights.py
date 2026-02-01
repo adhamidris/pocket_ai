@@ -10,6 +10,7 @@ from django.utils import timezone
 from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
 from apps.conversations.models import ConversationMessage
+from apps.voice.call_insights import generate_call_insights
 from apps.voice.models import CallSession, CallStatus
 from apps.voice.post_call_processing import process_post_call
 
@@ -89,3 +90,45 @@ class VoicePhase3CallInsightsTests(TestCase):
             metadata__call_session_id=str(session.id),
         ).exists()
         self.assertTrue(exists)
+
+    def test_insights_schema_stability_without_llm(self) -> None:
+        user = User.objects.create_user(email="owner2@example.com", password="changeme123", first_name="Owner")
+        registration = RegistrationSession.objects.create(user=user)
+        business = BusinessProfile.objects.create(
+            user=user,
+            registration_session=registration,
+            name="Acme Co",
+            industry="Retail",
+            status="active",
+            metadata={FEATURE_FLAG_METADATA_KEY: {"sub_agents_v1": True}},
+        )
+        agent = AgentProfile.objects.create(business_profile=business, user=user, name="Ops Agent", status="active")
+
+        session = CallSession.objects.create(
+            business_profile=business,
+            agent_profile=agent,
+            objective="Inform customer about fees",
+            to_phone_number="+15551230001",
+            from_phone_number="+15551234567",
+            status=CallStatus.CANCELLED,
+            consent_obtained=True,
+            twilio_call_sid="CA_TEST",
+        )
+        wrong_ev = session.events.create(event_type="call.wrong_person", payload={"text": "wrong number"})
+
+        insights = generate_call_insights(session)
+        self.assertIsInstance(insights, dict)
+        self.assertEqual(insights.get("schema_version"), 1)
+        self.assertIsInstance(insights.get("generated_at"), str)
+        self.assertTrue(insights.get("generated_at"))
+        self.assertIsInstance(insights.get("language"), str)
+        self.assertIsInstance(insights.get("country"), str)
+
+        outcome = insights.get("outcome")
+        self.assertIsInstance(outcome, dict)
+        assert isinstance(outcome, dict)
+        self.assertEqual(outcome.get("label"), "wrong_person")
+        self.assertEqual(outcome.get("source_event_ids"), [int(wrong_ev.id)])
+
+        self.assertIsInstance(insights.get("topics"), list)
+        self.assertIsInstance(insights.get("follow_ups"), list)

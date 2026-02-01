@@ -38,6 +38,11 @@ class VoicePhase1TurnTakingTests(IsolatedAsyncioTestCase):
         runtime._stream_sid = "stream"
         runtime._current_speak_task = asyncio.create_task(asyncio.sleep(10))
 
+        async def _fake_log_event(*args, **kwargs) -> None:
+            return None
+
+        runtime._log_event = _fake_log_event  # type: ignore[method-assign]
+
         ws = _FakeTwilioWs()
 
         called: list[str] = []
@@ -54,6 +59,29 @@ class VoicePhase1TurnTakingTests(IsolatedAsyncioTestCase):
         await asyncio.sleep(0.25)
         self.assertEqual(called, [])
         self.assertTrue(any(msg.get("event") == "clear" for msg in ws.sent))
+
+    async def test_barge_in_extends_pending_final_debounce_window(self) -> None:
+        runtime = VoiceCallRuntime(session_id="session-test")
+        runtime._stream_sid = "stream"
+        runtime._current_speak_task = asyncio.create_task(asyncio.sleep(10))
+        runtime._awaiting_first_customer = True
+        runtime._pending_final_text = "I am not"
+        runtime._pending_final_updated_at = 0.01
+
+        async def _fake_log_event(*args, **kwargs) -> None:
+            return None
+
+        runtime._log_event = _fake_log_event  # type: ignore[method-assign]
+
+        ws = _FakeTwilioWs()
+
+        q: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+        await q.put({"text": "no", "confidence": 0.6, "stt_language": "en", "is_final": False})
+        await runtime._drain_utterances(q, ws)
+
+        self.assertFalse(runtime._awaiting_first_customer)
+        self.assertGreater(runtime._last_customer_activity_at, 0.0)
+        self.assertGreater(runtime._pending_final_updated_at, 0.01)
 
     async def test_final_transcripts_are_debounced_and_merged(self) -> None:
         runtime = VoiceCallRuntime(session_id="session-test")
@@ -72,4 +100,3 @@ class VoicePhase1TurnTakingTests(IsolatedAsyncioTestCase):
 
         await asyncio.sleep(0.5)
         self.assertEqual(called, ["I am not Adham Idris"])
-

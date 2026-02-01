@@ -91,6 +91,52 @@ class VoicePhase2ConversationPolicyTests(IsolatedAsyncioTestCase):
         self.assertEqual(hangups, ["wrong_person"])
         self.assertEqual(called_llm, [])
 
+    async def test_plain_no_does_not_trigger_wrong_person_hangup(self) -> None:
+        runtime = VoiceCallRuntime(session_id="session-test")
+        runtime._stream_sid = "stream"
+
+        session = _FakeSession(context_items=[{"customer_name": "Adham Idris"}])
+
+        async def _get_session(*, force_refresh: bool = False):
+            return session
+
+        runtime._get_session = _get_session  # type: ignore[method-assign]
+
+        async def _fake_log_event(*args, **kwargs) -> None:
+            return None
+
+        runtime._log_event = _fake_log_event  # type: ignore[method-assign]
+
+        async def _fake_interrupt_speech(*args, **kwargs) -> None:
+            return None
+
+        runtime._interrupt_speech = _fake_interrupt_speech  # type: ignore[method-assign]
+
+        hangups: list[str] = []
+
+        async def _fake_hangup_call(*, reason: str) -> None:
+            hangups.append(reason)
+            runtime._terminated = True
+
+        runtime._hangup_call = _fake_hangup_call  # type: ignore[method-assign]
+
+        called_llm: list[bool] = []
+
+        async def _fake_respond_and_speak(*args, **kwargs) -> None:
+            called_llm.append(True)
+
+        runtime._respond_and_speak = _fake_respond_and_speak  # type: ignore[method-assign]
+
+        ws = _FakeTwilioWs()
+        await runtime._handle_transcript(
+            {"text": "No.", "confidence": 0.9, "stt_language": "en", "is_final": True},
+            ws,
+            source="final",
+        )
+        await asyncio.sleep(0.05)
+        self.assertEqual(hangups, [])
+        self.assertEqual(called_llm, [True])
+
     async def test_busy_asks_callback_then_hangup_on_answer(self) -> None:
         runtime = VoiceCallRuntime(session_id="session-test")
         runtime._stream_sid = "stream"
@@ -251,6 +297,53 @@ class VoicePhase2ConversationPolicyTests(IsolatedAsyncioTestCase):
 
         self.assertTrue(any(entry.get("is_closing_prompt") for entry in called))
         self.assertTrue(runtime._closing_waiting_for_customer)
+
+    async def test_silence_close_does_not_trigger_before_threshold(self) -> None:
+        runtime = VoiceCallRuntime(session_id="session-test")
+        runtime._stream_sid = "stream"
+        runtime._awaiting_first_customer = False
+        runtime._last_customer_activity_at = time.monotonic()
+        runtime._last_agent_speech_end_at = time.monotonic()
+
+        session = _FakeSession()
+
+        async def _get_session(*, force_refresh: bool = False):
+            return session
+
+        runtime._get_session = _get_session  # type: ignore[method-assign]
+
+        called: list[dict] = []
+
+        async def _fake_respond_and_speak(
+            _ws,
+            *,
+            customer_text: str,
+            customer_language: str | None = None,
+            is_greeting: bool = False,
+            is_closing_prompt: bool = False,
+            closing_check: bool = False,
+        ) -> None:
+            called.append({"is_closing_prompt": is_closing_prompt, "closing_check": closing_check})
+
+        runtime._respond_and_speak = _fake_respond_and_speak  # type: ignore[method-assign]
+
+        async def _fake_log_event(*args, **kwargs) -> None:
+            return None
+
+        runtime._log_event = _fake_log_event  # type: ignore[method-assign]
+
+        async def _fake_interrupt_speech(*args, **kwargs) -> None:
+            return None
+
+        runtime._interrupt_speech = _fake_interrupt_speech  # type: ignore[method-assign]
+
+        ws = _FakeTwilioWs()
+        task = asyncio.create_task(runtime._watch_silence_close(ws))
+        await asyncio.sleep(1.2)
+        task.cancel()
+
+        self.assertEqual(called, [])
+        self.assertFalse(runtime._closing_waiting_for_customer)
 
     def test_has_hangup_action_accepts_strings_and_dicts(self) -> None:
         self.assertTrue(_has_hangup_action(["hangup"]))

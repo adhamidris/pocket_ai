@@ -199,6 +199,16 @@ class VoiceCallRuntime:
             best = _pick_best_utterance(interim_items)
             text = str(best.get("text") or "").strip()
             if text and _should_barge_in(text, min_chars=_barge_in_min_chars()):
+                active_speech = bool(self._current_speak_task and not self._current_speak_task.done())
+                if active_speech:
+                    await self._log_event(
+                        "call.barge_in",
+                        {
+                            "text": _clip_text(text, 80),
+                            "stt_language": str(best.get("stt_language") or ""),
+                            "has_pending_final": bool(self._pending_final_text),
+                        },
+                    )
                 self._last_customer_activity_at = time.monotonic()
                 if self._awaiting_first_customer:
                     self._awaiting_first_customer = False
@@ -287,6 +297,17 @@ class VoiceCallRuntime:
             self._no_engagement_task = asyncio.create_task(self._watch_no_engagement(twilio_ws))
         if not self._silence_close_task or self._silence_close_task.done():
             self._silence_close_task = asyncio.create_task(self._watch_silence_close(twilio_ws))
+        await self._log_event(
+            "call.timer.no_engagement.started",
+            {"hello_seconds": _no_engagement_hello_seconds(), "goodbye_seconds": _no_engagement_goodbye_seconds()},
+        )
+        await self._log_event(
+            "call.timer.silence_close.started",
+            {
+                "close_seconds": _silence_close_seconds(),
+                "hangup_after_close_seconds": _silence_hangup_after_close_seconds(),
+            },
+        )
 
         await self._interrupt_speech(twilio_ws)
         lang_hint = _normalize_lang_for_prompt((session.language or "").strip().lower())
@@ -314,18 +335,30 @@ class VoiceCallRuntime:
                     continue
                 break
 
-            if self._terminated or not self._awaiting_first_customer:
+            if self._terminated:
+                await self._log_event("call.timer.no_engagement.cancelled", {"reason": "terminated"})
+                return
+            if not self._awaiting_first_customer:
+                await self._log_event("call.timer.no_engagement.cancelled", {"reason": "customer_engaged"})
                 return
 
             hello_delay = _no_engagement_hello_seconds()
             goodbye_delay = _no_engagement_goodbye_seconds()
             session = await self._get_session()
             lang_hint = _normalize_lang_for_prompt(session.language or "") or "en"
+            await self._log_event(
+                "call.timer.no_engagement.armed",
+                {"hello_seconds": hello_delay, "goodbye_seconds": goodbye_delay},
+            )
 
             start = time.monotonic()
             while not self._terminated and self._awaiting_first_customer and (time.monotonic() - start) < hello_delay:
                 await asyncio.sleep(0.1)
-            if self._terminated or not self._awaiting_first_customer:
+            if self._terminated:
+                await self._log_event("call.timer.no_engagement.cancelled", {"reason": "terminated"})
+                return
+            if not self._awaiting_first_customer:
+                await self._log_event("call.timer.no_engagement.cancelled", {"reason": "customer_engaged"})
                 return
 
             await self._log_event("call.no_engagement.hello", {})
@@ -339,13 +372,22 @@ class VoiceCallRuntime:
             except asyncio.CancelledError:
                 return
 
-            if self._terminated or not self._awaiting_first_customer:
+            if self._terminated:
+                await self._log_event("call.timer.no_engagement.cancelled", {"reason": "terminated"})
                 return
+            if not self._awaiting_first_customer:
+                await self._log_event("call.timer.no_engagement.cancelled", {"reason": "customer_engaged"})
+                return
+            await self._log_event("call.timer.no_engagement.goodbye_armed", {"goodbye_seconds": goodbye_delay})
 
             start = time.monotonic()
             while not self._terminated and self._awaiting_first_customer and (time.monotonic() - start) < goodbye_delay:
                 await asyncio.sleep(0.1)
-            if self._terminated or not self._awaiting_first_customer:
+            if self._terminated:
+                await self._log_event("call.timer.no_engagement.cancelled", {"reason": "terminated"})
+                return
+            if not self._awaiting_first_customer:
+                await self._log_event("call.timer.no_engagement.cancelled", {"reason": "customer_engaged"})
                 return
 
             await self._log_event("call.no_engagement.goodbye", {})
@@ -374,9 +416,14 @@ class VoiceCallRuntime:
         close_after_s = _silence_close_seconds()
         hangup_after_close_s = _silence_hangup_after_close_seconds()
         try:
+            await self._log_event(
+                "call.timer.silence_close.running",
+                {"close_seconds": close_after_s, "hangup_after_close_seconds": hangup_after_close_s},
+            )
             while not self._terminated:
                 await asyncio.sleep(poll_s)
                 if self._terminated:
+                    await self._log_event("call.timer.silence_close.stopped", {"reason": "terminated"})
                     return
                 if self._awaiting_first_customer:
                     continue
@@ -395,7 +442,13 @@ class VoiceCallRuntime:
                     if hangup_after_close_s > 0 and (now - max(last_activity, self._closing_question_asked_at)) >= hangup_after_close_s:
                         session = await self._get_session()
                         lang_hint = _normalize_lang_for_prompt(session.language or "") or "en"
-                        await self._log_event("call.closing.silence_hangup", {})
+                        await self._log_event(
+                            "call.closing.silence_hangup",
+                            {
+                                "hangup_after_close_seconds": hangup_after_close_s,
+                                "silence_seconds": now - max(last_activity, self._closing_question_asked_at),
+                            },
+                        )
                         await self._interrupt_speech(twilio_ws)
                         goodbye_text = "Okay, I'll let you go. Goodbye." if lang_hint == "en" else "حسنًا، سأغلق الآن. مع السلامة."
                         self._current_speak_task = asyncio.create_task(
@@ -414,7 +467,14 @@ class VoiceCallRuntime:
                     lang_hint = _normalize_lang_for_prompt(session.language or "") or "en"
                     self._closing_waiting_for_customer = True
                     self._closing_question_asked_at = now
-                    await self._log_event("call.closing.prompt", {"after_seconds": close_after_s})
+                    await self._log_event(
+                        "call.closing.prompt",
+                        {
+                            "after_seconds": close_after_s,
+                            "silence_seconds": now - last_activity,
+                            "hangup_after_close_seconds": hangup_after_close_s,
+                        },
+                    )
                     await self._interrupt_speech(twilio_ws)
                     self._current_speak_task = asyncio.create_task(
                         self._respond_and_speak(
