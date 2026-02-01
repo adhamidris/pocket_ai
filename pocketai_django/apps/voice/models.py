@@ -369,6 +369,8 @@ class CallSession(models.Model):
     # Post-call artifacts.
     summary = models.TextField(blank=True, default="")
     action_items = models.JSONField(default=list, blank=True)
+    # Structured post-call insights (versioned schema).
+    insights = models.JSONField(default=dict, blank=True)
 
     # Post-call processing status.
     post_processed = models.BooleanField(default=False, db_index=True)

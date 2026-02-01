@@ -24,6 +24,7 @@ from apps.llm.ai_prompt_builder import PromptBundle
 from apps.llm.llm_provider import load_default_provider
 from apps.voice.models import CallEvent, CallSession
 from apps.voice.agent_run_bridge import append_agent_run_event, get_agent_run_id_from_call_session_metadata
+from apps.voice.call_insights import CALL_INSIGHTS_SCHEMA_VERSION, format_call_insights_message, generate_call_insights
 from apps.voice.r2_storage import build_r2_client, load_r2_config
 from apps.voice.twilio import load_twilio_config
 
@@ -109,6 +110,27 @@ def write_transcript_messages(*, session: CallSession, conversation: Conversatio
     if messages:
         ConversationMessage.objects.bulk_create(messages, batch_size=200)
     return len(messages)
+
+
+def write_call_insights_message(*, session: CallSession, conversation: Conversation, insights: dict[str, object]) -> bool:
+    body = format_call_insights_message(insights)
+    if not body:
+        return False
+    ConversationMessage.objects.create(
+        conversation_id=conversation.id,
+        sender=ConversationSender.AI,
+        body=body,
+        metadata={
+            "source": "voice_call",
+            "type": "call_insights",
+            "schema_version": CALL_INSIGHTS_SCHEMA_VERSION,
+            "call_session_id": str(session.id),
+            "outcome": (insights.get("outcome") or {}).get("label") if isinstance(insights, dict) else "",
+        },
+        sent_at=timezone.now(),
+    )
+    Conversation.objects.filter(id=conversation.id).update(last_activity_at=timezone.now())
+    return True
 
 
 def generate_summary_and_actions(session: CallSession) -> tuple[str, list[dict[str, object]]]:
@@ -229,20 +251,33 @@ def process_post_call(session: CallSession) -> PostCallProcessingResult:
 
         recording_uploaded = False
         summary_written = False
+        insights_payload: dict[str, object] = {}
 
         with transaction.atomic():
             conversation = ensure_execution_conversation(session)
             messages_written = write_transcript_messages(session=session, conversation=conversation)
 
-            if not session.summary:
-                summary, actions = generate_summary_and_actions(session)
-                if summary:
-                    session.summary = summary
-                    session.action_items = actions
-                    summary_written = True
+        if not session.summary:
+            summary, actions = generate_summary_and_actions(session)
+            if summary:
+                session.summary = summary
+                session.action_items = actions
+                summary_written = True
 
-            session.cost_total_usd = compute_cost_total_usd(session)
-            session.save(update_fields=["summary", "action_items", "cost_total_usd", "updated_at"])
+        try:
+            insights_payload = generate_call_insights(session)
+            session.insights = insights_payload
+        except Exception:  # pragma: no cover - best effort only
+            logger.exception("voice.post_call_insights_failed session=%s", session.id)
+
+        session.cost_total_usd = compute_cost_total_usd(session)
+        with transaction.atomic():
+            session.save(update_fields=["summary", "action_items", "insights", "cost_total_usd", "updated_at"])
+            try:
+                if insights_payload:
+                    write_call_insights_message(session=session, conversation=conversation, insights=insights_payload)
+            except Exception:  # pragma: no cover - best effort only
+                logger.exception("voice.post_call_insights_message_failed session=%s", session.id)
 
         try:
             uploaded, bucket, key, etag = maybe_upload_recording_to_r2(session)

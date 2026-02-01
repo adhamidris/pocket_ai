@@ -497,16 +497,17 @@ class VoiceCallRuntime:
             session = CallSession.objects.filter(id=self.session_id).first()
             if not session:
                 return
-            meta = session.metadata if isinstance(session.metadata, dict) else {}
-            meta = dict(meta)
-            insights = meta.get("call_insights")
-            if not isinstance(insights, dict):
-                insights = {}
+            insights = session.insights if isinstance(getattr(session, "insights", None), dict) else {}
             insights = dict(insights)
-            insights["callback_time"] = value
-            meta["call_insights"] = insights
-            session.metadata = meta
-            session.save(update_fields=["metadata", "updated_at"])
+            follow_ups = insights.get("follow_ups")
+            if not isinstance(follow_ups, list):
+                follow_ups = []
+            follow_ups = [item for item in follow_ups if not (isinstance(item, dict) and item.get("type") == "callback")]
+            follow_ups.append({"type": "callback", "callback_time_text": value, "captured_during_call": True})
+            insights.setdefault("schema_version", 1)
+            insights["follow_ups"] = follow_ups
+            session.insights = insights
+            session.save(update_fields=["insights", "updated_at"])
 
         await sync_to_async(_update)()
 
