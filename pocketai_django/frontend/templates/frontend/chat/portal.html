@@ -1002,15 +1002,26 @@
   }
 
   [data-chat-portal] .portal-call-approval__btn {
-    width: 2.5rem;
-    height: 2.5rem;
+    min-width: 5.15rem;
+    height: 2.25rem;
+    padding: 0 0.85rem;
     border-radius: 999px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     border: 1px solid hsl(var(--border));
     box-shadow: 0 1px 0 hsl(var(--border) / 0.25);
+    font-size: var(--portal-font-xs);
+    font-weight: 650;
+    letter-spacing: 0.01em;
+    cursor: pointer;
+    user-select: none;
     transition: transform 120ms ease, filter 120ms ease, box-shadow 120ms ease;
+  }
+
+  [data-chat-portal] .portal-call-approval__btn[disabled] {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
 
   [data-chat-portal] .portal-call-approval__btn:active {

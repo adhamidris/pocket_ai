@@ -1984,7 +1984,7 @@ class ChatPortalClient {
     approveButton.className = "portal-call-approval__btn portal-call-approval__btn--accept";
     approveButton.setAttribute("aria-label", "Accept call request");
     approveButton.title = "Accept";
-    approveButton.innerHTML = `<svg class="portal-call-approval__btn-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8.5 3.75c.4-.36.98-.46 1.48-.26l.2.1 2.2 1.35c.55.33.78 1 .54 1.6l-.08.18-1.06 2.06c.9 1.55 2.08 2.9 3.5 4 .56-.36 1.2-.66 1.9-.9l.23-.08 2.25-.68c.64-.2 1.32.05 1.7.62l.1.18 1.07 2.22c.23.47.16 1.04-.18 1.44l-.14.14-1.2 1.18c-.64.62-1.57.88-2.46.67-6.8-1.6-12.1-6.8-13.68-13.68-.2-.9.05-1.82.67-2.46l1.2-1.2z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    approveButton.textContent = "Accept";
 
     const denyButton = document.createElement("button");
     denyButton.type = "button";
@@ -1992,7 +1992,7 @@ class ChatPortalClient {
     denyButton.className = "portal-call-approval__btn portal-call-approval__btn--deny";
     denyButton.setAttribute("aria-label", "Reject call request");
     denyButton.title = "Reject";
-    denyButton.innerHTML = `<svg class="portal-call-approval__btn-icon portal-call-approval__btn-icon--hangup" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8.5 3.75c.4-.36.98-.46 1.48-.26l.2.1 2.2 1.35c.55.33.78 1 .54 1.6l-.08.18-1.06 2.06c.9 1.55 2.08 2.9 3.5 4 .56-.36 1.2-.66 1.9-.9l.23-.08 2.25-.68c.64-.2 1.32.05 1.7.62l.1.18 1.07 2.22c.23.47.16 1.04-.18 1.44l-.14.14-1.2 1.18c-.64.62-1.57.88-2.46.67-6.8-1.6-12.1-6.8-13.68-13.68-.2-.9.05-1.82.67-2.46l1.2-1.2z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    denyButton.textContent = "Reject";
 
     actions.appendChild(approveButton);
     actions.appendChild(denyButton);
