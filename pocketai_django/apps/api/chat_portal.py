@@ -3494,7 +3494,13 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             if tool_use_block_id:
                 for key in candidate_keys:
                     tool_use_block_id_by_event_id[key] = tool_use_block_id
-            tool_use_block["payload"] = dict(payload)
+            # Merge updates into the existing tool payload so subsequent events that omit fields
+            # (e.g. internal "finished" events without approval metadata) don't erase previously
+            # captured context needed for UI hydration after a refresh.
+            existing_payload = tool_use_block.get("payload")
+            merged_payload: dict[str, object] = dict(existing_payload) if isinstance(existing_payload, Mapping) else {}
+            merged_payload.update(payload)
+            tool_use_block["payload"] = merged_payload
             if phase in {"finished", "approval_resolved"}:
                 duration = event.get("duration_ms")
                 try:
@@ -3556,7 +3562,10 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                 if output_preview is not None:
                     payload["output_preview"] = output_preview
 
-                tool_use_block["payload"] = dict(payload)
+                existing_payload = tool_use_block.get("payload")
+                merged_payload = dict(existing_payload) if isinstance(existing_payload, Mapping) else {}
+                merged_payload.update(payload)
+                tool_use_block["payload"] = merged_payload
 
                 stream_queue.put(
                     {
