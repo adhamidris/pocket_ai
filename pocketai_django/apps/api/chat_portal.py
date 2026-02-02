@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 
 from django.conf import settings
 from django.core.cache import cache
-from django.db import close_old_connections, transaction
+from django.db import IntegrityError, close_old_connections, transaction
 from django.db.models import Max, Q
 from django.http import HttpRequest, HttpResponse, JsonResponse, StreamingHttpResponse
 from django.utils import timezone
@@ -3219,6 +3219,64 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             payload["message_id"] = message_id
             stream_queue.put({"type": event_type, "payload": payload})
 
+    def _persist_inflight_message_snapshot(*, approval_id: str | None = None) -> None:
+        """
+        Persist the in-flight assistant message while waiting for tool approval.
+
+        Why:
+        - The portal streams assistant blocks over a POST SSE stream, but the DB message is
+          normally persisted only after the turn finalizes.
+        - Tool approvals can keep the stream idle long enough for clients/proxies to drop it.
+        - If the visitor refreshes mid-approval, the transcript is reconstructed from DB
+          messages only, causing the streamed assistant text to disappear.
+
+        This helper upserts the assistant message (using the reserved message id) with the
+        current block snapshot so refresh hydration stays consistent.
+        """
+
+        message_id = plan_holder.get("pending_message_id")
+        if not message_id:
+            return
+        with blocks_lock:
+            blocks_snapshot = copy.deepcopy(content_blocks)
+        if not blocks_snapshot:
+            return
+
+        body_text = extract_text_from_content_blocks(blocks_snapshot)
+        if not body_text:
+            body_text = "Approval required."
+
+        existing_metadata = plan_holder.get("message_metadata") if isinstance(plan_holder.get("message_metadata"), dict) else {}
+        message_metadata = dict(existing_metadata or {})
+        message_metadata["portal_turn_state"] = "waiting_approval"
+        if approval_id:
+            message_metadata["pending_approval_id"] = approval_id
+
+        try:
+            service.append_message(
+                session_token=session_token,
+                sender=ConversationSender.AI,
+                body=body_text,
+                metadata=message_metadata,
+                content_blocks=blocks_snapshot,
+                conversation=conversation,
+                message_id=message_id,
+            )
+        except IntegrityError:
+            try:
+                service.update_message(
+                    session_token=session_token,
+                    message_id=message_id,
+                    body=body_text,
+                    metadata=message_metadata,
+                    content_blocks=blocks_snapshot,
+                    conversation=conversation,
+                )
+            except Exception:  # pragma: no cover - best effort only
+                logger.exception("portal inflight message update failed")
+        except Exception:  # pragma: no cover - best effort only
+            logger.exception("portal inflight message persist failed")
+
     def on_reasoning_event(event: Mapping[str, object] | None) -> None:
         if not event or not isinstance(event, Mapping):
             return
@@ -3841,6 +3899,8 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                         },
                     }
                 )
+                if phase == "approval_requested":
+                    _persist_inflight_message_snapshot(approval_id=str(approval_id).strip() if approval_id else None)
         except Exception:  # pragma: no cover - defensive
             logger.exception("portal tool event serialization failed")
 
@@ -4133,15 +4193,25 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                         )
 
                 with TRACER.start_as_current_span("portal.finalize.persist") as persist_span:
-                    ai_message = service.append_message(
-                        session_token=session_token,
-                        sender=ConversationSender.AI,
-                        body=response_text,
-                        metadata=message_metadata,
-                        content_blocks=blocks_snapshot,
-                        conversation=conversation,
-                        message_id=plan_holder.get("pending_message_id"),
-                    )
+                    try:
+                        ai_message = service.append_message(
+                            session_token=session_token,
+                            sender=ConversationSender.AI,
+                            body=response_text,
+                            metadata=message_metadata,
+                            content_blocks=blocks_snapshot,
+                            conversation=conversation,
+                            message_id=plan_holder.get("pending_message_id"),
+                        )
+                    except IntegrityError:
+                        ai_message = service.update_message(
+                            session_token=session_token,
+                            message_id=plan_holder.get("pending_message_id"),
+                            body=response_text,
+                            metadata=message_metadata,
+                            content_blocks=blocks_snapshot,
+                            conversation=conversation,
+                        )
                     if persist_span.is_recording():
                         persist_span.set_attribute("portal.actions.pending", len(pending_actions))
                 try:
@@ -4270,10 +4340,21 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
         # Force an early flush so proxies (or WSGI servers) don't buffer the first real event.
         # This is a valid SSE "comment" line that the client safely ignores.
         yield ": stream_open\n\n"
+        keepalive_setting = getattr(settings, "PORTAL_STREAM_KEEPALIVE_SECONDS", 15.0)
+        try:
+            keepalive_seconds = float(keepalive_setting)
+        except (TypeError, ValueError):
+            keepalive_seconds = 15.0
+        if keepalive_seconds < 0:
+            keepalive_seconds = 0.0
+        last_keepalive = time.monotonic()
         while True:
             try:
                 chunk = stream_queue.get(timeout=0.25)
             except Empty:
+                if keepalive_seconds and time.monotonic() - last_keepalive >= keepalive_seconds:
+                    last_keepalive = time.monotonic()
+                    yield ": keepalive\n\n"
                 continue
             if chunk is stream_sentinel:
                 break
@@ -4281,6 +4362,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                 continue
 
             chunk_type = str(chunk.get("type") or "").strip()
+            last_keepalive = time.monotonic()
             if chunk_type in {"block_start", "block_delta", "block_end", "block_tool_use", "block_tool_result"}:
                 payload = chunk.get("payload") or {}
                 yield f"event: {chunk_type}\n"
