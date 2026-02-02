@@ -1013,6 +1013,11 @@ class ChatPortalClient {
       if (normalized === "thinking…" || normalized === "thinking..." || normalized === "thinking") {
         text = "";
       }
+      if (normalized.startsWith("waiting for approval")) {
+        // Approval CTAs are rendered inline in the tool card; the extra spinner is redundant.
+        this.setSpinnerText("", { pending: false, force: true });
+        return;
+      }
 	    const pending = payload.pending !== false;
       if (text) {
         this.clearStreamingIdleStatusTimer();
@@ -1258,16 +1263,22 @@ class ChatPortalClient {
     const blockPayload = block.payload && typeof block.payload === "object" ? block.payload : {};
     const phase = (blockPayload.phase || "").toString().trim().toLowerCase();
     const status = (blockPayload.status || "").toString().trim().toLowerCase();
+    const isApprovalPending = phase === "approval_requested" || status === "pending_approval" || status === "pending";
     if (blockId && (phase === "started" || phase === "approval_requested" || status === "running" || status === "pending_approval" || status === "pending")) {
       this.streamingToolBlockActiveIds.add(blockId);
       this.hadToolsThisTurn = true;
     }
     if (!this.isAssistantTextStreaming()) {
-      this.setSpinnerText(this.spinnerDesiredText || "", {
-        pending: true,
-        isError: this.spinnerDesiredIsError,
-        force: true,
-      });
+      if (isApprovalPending) {
+        // Approval CTAs are visible on the tool card; avoid redundant "waiting" spinner rows.
+        this.setSpinnerText("", { pending: false, force: true });
+      } else {
+        this.setSpinnerText(this.spinnerDesiredText || "", {
+          pending: true,
+          isError: this.spinnerDesiredIsError,
+          force: true,
+        });
+      }
     }
     this.upsertStreamingContentBlock(block);
     this.repositionStreamingStatusRow();

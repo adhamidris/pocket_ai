@@ -3308,7 +3308,8 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
 
                 spinner_label: str | None = None
                 if phase_lower == "approval_requested" or status_lower in {"pending_approval", "pending"}:
-                    spinner_label = "Waiting for approval…"
+                    # Approval cards render their own CTAs; extra "waiting" spinners are redundant/noisy.
+                    spinner_label = None
                 elif phase_lower == "started":
                     remote_meta = event.get("remote") if isinstance(event.get("remote"), Mapping) else None
                     if remote_meta:

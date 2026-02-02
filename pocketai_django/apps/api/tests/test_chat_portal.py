@@ -226,7 +226,31 @@ class ChatPortalStreamingTests(TestCase):
         self.assertIsNotNone(persisted_event)
 
         delta_payload = json.loads(first_text_delta)
-        self.assertEqual(delta_payload.get("delta"), self.plan.response_text)
+        ops = delta_payload.get("ops") if isinstance(delta_payload, dict) else None
+        streamed_text_parts: list[str] = []
+        if isinstance(ops, list):
+            for op in ops:
+                if not isinstance(op, dict):
+                    continue
+                op_type = op.get("op")
+                if op_type == "append_code":
+                    text = op.get("text")
+                    if isinstance(text, str) and text:
+                        streamed_text_parts.append(text)
+                    continue
+                if op_type != "append_inline":
+                    continue
+                nodes = op.get("nodes") or op.get("node") or []
+                if isinstance(nodes, dict):
+                    nodes = [nodes]
+                if not isinstance(nodes, list):
+                    continue
+                for node in nodes:
+                    if isinstance(node, dict):
+                        text = node.get("text")
+                        if isinstance(text, str) and text:
+                            streamed_text_parts.append(text)
+        self.assertEqual("".join(streamed_text_parts), self.plan.response_text)
 
         persisted_payload = json.loads(persisted_event)
         self.assertFalse(persisted_payload.get("pending"))
