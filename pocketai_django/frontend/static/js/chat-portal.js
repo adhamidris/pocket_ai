@@ -96,6 +96,8 @@ class ChatPortalClient {
     this.streamingDirtyTextBlocks = new Set();
     this.streamingBlockRenderRaf = null;
     this.activeStreamingTextBlockId = null;
+    // Snapshot of content blocks when a tool approval is pending (preserves text before approval card)
+    this.preApprovalContentBlocksSnapshot = new Map();
     this.followScrollEnabled = false;
 	    this.spinnerDesiredText = "";
 	    this.spinnerDesiredPending = false;
@@ -1267,6 +1269,15 @@ class ChatPortalClient {
     if (blockId && (phase === "started" || phase === "approval_requested" || status === "running" || status === "pending_approval" || status === "pending")) {
       this.streamingToolBlockActiveIds.add(blockId);
       this.hadToolsThisTurn = true;
+    }
+    // When a tool approval is requested, save a snapshot of content blocks that existed before it.
+    // This ensures the pre-approval text is preserved when the approval is resolved and the turn continues.
+    if (isApprovalPending && this.streamingContentBlocksById && this.streamingContentBlocksById.size > 0) {
+      this.streamingContentBlocksById.forEach((blockData, id) => {
+        if (!this.preApprovalContentBlocksSnapshot.has(id)) {
+          this.preApprovalContentBlocksSnapshot.set(id, JSON.parse(JSON.stringify(blockData)));
+        }
+      });
     }
     if (!this.isAssistantTextStreaming()) {
       if (isApprovalPending) {
@@ -6166,10 +6177,22 @@ class ChatPortalClient {
       }
     });
 
-    // Remove any remaining blocks not present in canonical output.
+    // Remove blocks not present in canonical output, but preserve blocks that existed
+    // before a tool approval. This prevents text that appeared before an approval card
+    // from being wiped when the approval is resolved and a new turn continues.
+    // Post-approval blocks should always come from canonical (server's source of truth).
     existingById.forEach((node, id) => {
       if (!keepIds.has(id) && node && node.parentNode) {
-        node.remove();
+        // Check if this block was part of the pre-approval snapshot
+        const wasPreApprovalBlock = this.preApprovalContentBlocksSnapshot && this.preApprovalContentBlocksSnapshot.has(id);
+        // Preserve only pre-approval blocks (not post-approval streamed blocks)
+        if (wasPreApprovalBlock) {
+          // Keep the block but mark it as preserved
+          node.dataset.preservedFromStream = "true";
+          keepIds.add(id);
+        } else {
+          node.remove();
+        }
       }
     });
 
@@ -8458,6 +8481,7 @@ class ChatPortalClient {
 				    this.usingBlockStream = false;
 				    this.streamingContentBlockEls.clear();
           this.streamingContentBlocksById.clear();
+          this.preApprovalContentBlocksSnapshot.clear();
 			    this.streamingPendingBlockOps.clear();
 			    this.streamingTextBlockActiveIds.clear();
 			    this.streamingToolBlockActiveIds.clear();

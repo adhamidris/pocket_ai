@@ -1,5 +1,7 @@
 # Voice Calls — Phase 1 MVP Runbook
 
+**Status:** Implemented; dev‑only (not production).
+
 Phase 1 turns the Phase 0 spike into a production-shaped subsystem:
 
 - `initiate_phone_call` MCP tool → creates `CallSession(status=queued)`

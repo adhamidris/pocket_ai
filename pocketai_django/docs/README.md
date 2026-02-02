@@ -1,27 +1,22 @@
 # Docs Index
 
-## Product
-- `product/saas_brief.md` — product brief / scope
-- `product/technical.md` — technical overview (architecture, RAG, ops targets)
-- `product/business-flow-10092025.md`, `product/final-business-flow.md` — flows and notes
+## Start Here
+- `product/saas_brief.md` — business brief (beta status)
+- `product/technical.md` — technical overview (MCP + agentic v2)
+- `architecture/llm_conversation_backend_flow.md` — portal turn flow
+- `apps/mcp/README.md` — MCP runtime + tool surface (agentic allowlist)
+- `prompts/prompt_catalog.md` — active prompt surfaces
 
-## Architecture
-- `architecture/investigation-mcp-flow-latency.md` — MCP flow + latency notes
-- `architecture/llm_conversation_backend_flow.md` — end-to-end request flow
-- `architecture/portal_stream_state.md` — portal streaming state machine
-- `architecture/chat_portal_content_blocks.md` — content blocks contract + migration plan
+## Core Areas
+- `architecture/` — portal content blocks + streaming state
+- `mcp/` — MCP connector beta checklist + validation plan
+- `rag/` — RAG rollout + ops (Azure Search optional)
+- `ingestion/` — ingestion + normalization
+- `integrations/` — integrations APIs + email connectors (live)
+- `ops/` — QA + load testing
+- `voice/` — **dev-only** voice stack (phases 0–3)
+- `prompts/` — prompt catalog
 
-## Ops
-- `ops/` — operational docs (load testing, QA playbooks)
-- `rag/` — RAG rollout + evaluation docs
-- `ingestion/` — ingestion + normalization docs
-- `integrations/` — integrations docs (Google, etc.)
-  - `integrations/email-connectors.md` — first‑party email connector design (Google/Microsoft)
-- `mcp/` — MCP-specific prompt/validation docs
-- `voice/phase0_spike.md` — Phase 0 voice calling spike (Twilio/Deepgram/ElevenLabs)
-- `voice/phase1_mvp.md` — Phase 1 voice calling MVP (queue + workers + monitoring)
-- `voice/phase2_arabic_qa.md` — Phase 2 Arabic + dialect QA (Arabic/English + code-switch)
-- `voice/phase3_policy_engine.md` — Phase 3 compliance policy engine (country modules + audit)
-
-## Prompts
-- `prompts/` — prompt catalogs and reviews
+## Archived / Legacy
+- `archive/` — old prompts, architecture investigations, mobile docs, legacy product flows
+- Repo root `archive/notes/` — investigation notes and experiments

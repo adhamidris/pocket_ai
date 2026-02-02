@@ -43,6 +43,9 @@ Tool rate limits (per business/tenant):
 - `MCP_DATASET_QUERY_CALLS_PER_MINUTE`
 - `MCP_TABLE_AGGREGATE_CALLS_PER_MINUTE`
 
+Note: dataset/table tool limits above are **backend/legacy-only**. In agentic mode the LLM-facing
+toolset is `search_knowledge` + `read_knowledge` (datasets are handled server-side).
+
 Orchestrator hard caps:
 - `MCP_MAX_TOOL_ITERATIONS`
 - `RAG_MAX_CHUNK_READS_PER_TURN`

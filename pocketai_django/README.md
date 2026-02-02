@@ -2,6 +2,12 @@
 
 This is the Django backend + web portal for PocketAI (Chat Portal, RAG, ingestion, admin).
 
+Status highlights:
+- MCP orchestrator only (legacy orchestration is deprecated).
+- Agentic read v2 is enabled via `MCP_AGENTIC_READ_V2_ENABLED=true` in the root `.env`.
+- Voice stack is **dev-only** right now (phases 0–3 implemented).
+- Platform is **beta**.
+
 ## Quickstart
 
 ```sh
@@ -13,13 +19,19 @@ python manage.py migrate
 python manage.py runserver 127.0.0.1:3000
 ```
 
-## Local dev processes (Portal + Sub-agents + Voice Calls)
+## Local dev processes (Portal + Ingestion + Sub-agents + Voice Calls)
 
 Run these in separate terminals (with `cd pocketai_django` and `.venv` activated):
 
 ```sh
 # Web / Portal
 .venv/bin/python manage.py runserver 127.0.0.1:3000
+
+# Knowledge ingestion worker (required for uploads)
+.venv/bin/python manage.py process_knowledge_ingestion --watch
+
+# Knowledge integrations sync (Google Drive, etc.)
+.venv/bin/python manage.py sync_knowledge_integrations --watch --sleep 300
 
 # Sub-agents background worker (Tasks panel)
 .venv/bin/python manage.py process_agent_runs --watch
@@ -34,7 +46,7 @@ Run these in separate terminals (with `cd pocketai_django` and `.venv` activated
 .venv/bin/python manage.py voice_post_call_worker --watch
 ```
 
-### ngrok (one session, two tunnels)
+### ngrok (voice dev-only, one session, two tunnels)
 
 If you’re testing Twilio webhooks + the voice WS server locally, run both tunnels in a single ngrok session:
 
@@ -69,4 +81,5 @@ ngrok start --all
 ## Notes
 
 - Environment variables are loaded from the repository root `.env` via `pocketai/env.py`.
+- MCP chat provider uses `MCP_PROVIDER`; non‑MCP flows (voice/post‑call) use `LLM_PROVIDER` if set (otherwise auto‑pick based on available keys).
 - Do not commit virtualenvs or runtime artifacts (`.venv/`, `var/`).

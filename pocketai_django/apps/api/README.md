@@ -22,7 +22,7 @@ Directory Map
 Key Flows
 ---------
 1) Chat streaming
-   /api/chat/stream/send/ -> MCP or legacy orchestrator -> streamed response.
+   /api/chat/stream/send/ -> MCP orchestrator (agentic mode) -> streamed response.
 
 2) Portal bootstrap
    /api/chat/portal/sessions/ -> ChatPortalService.bootstrap_session().
@@ -38,7 +38,7 @@ Key Flows
 
 Configuration Touchpoints
 -------------------------
-- RAG_USE_MCP_ORCHESTRATOR (MCP vs legacy)
+- RAG_USE_MCP_ORCHESTRATOR (legacy path is deprecated; MCP is the active runtime)
 - PORTAL_STREAM_STATE_MACHINE (status streaming)
 - MCP_MAX_TOOL_ITERATIONS / MCP_*_CALLS_PER_MINUTE
 

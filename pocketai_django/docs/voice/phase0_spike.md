@@ -1,5 +1,7 @@
 # Voice Calls — Phase 0 Spike (Twilio ↔ Deepgram ↔ LLM ↔ ElevenLabs)
 
+**Status:** Implemented; dev‑only (not production).
+
 This doc explains how to run the **Phase 0** voice spike locally. It validates:
 
 - Twilio outbound call initiation + webhook flow
@@ -152,4 +154,3 @@ You should see:
 - If STT never produces text, verify Deepgram config:
   - `DEEPGRAM_API_KEY` present
   - model supports your language
-

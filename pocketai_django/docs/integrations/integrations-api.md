@@ -38,7 +38,6 @@ Persists selection + privacy metadata. Body expects `resources`, `defaultVisibil
 - **Worker selection:** We standardize on the `sync_knowledge_integrations` management command so teams can run a long-lived watcher or schedule periodic syncs using existing tooling.
   - Long-running (systemd/container): `python manage.py sync_knowledge_integrations --watch --sleep 300` keeps a single process alive, polling due integrations per tenant cadence while honoring advisory locks.
   - Cron/supercronic: `*/30 * * * * source /app/.venv/bin/activate && cd /app && python manage.py sync_knowledge_integrations --ignore-schedule` ensures a periodic sweep even if the watcher is offline.
-  - Celery Beat: add an entry that periodically invokes `call_command("sync_knowledge_integrations")` from a Celery task; the command itself coordinates locking so multiple workers can’t process the same integration concurrently.
 - **Sync now API:** `POST /api/integrations/google/sync/` triggers the same service path used by the scheduler (locks + dedupe). The response includes `rowsIngested`, per-resource statuses, and the newly computed `nextSyncAt` so the UI can render “Sync started / finishing at HH:MM”.
 - **Metrics to UI:** `/api/integrations/` summaries now bundle `metrics` (`resourcesAttempted`, `successCount`, `failureCount`, `bytesWritten`, `rowsIngested`, `durationMs`, `lastRunAt`) plus `schedule.nextRunAt`. This enables dashboards to show “Last synced 3m ago · 2 sheets · 1.4K rows” alongside CTA buttons.
 

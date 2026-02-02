@@ -1,5 +1,7 @@
 # Phase 2 — Arabic + Dialect QA (Deepgram + ElevenLabs)
 
+**Status:** Implemented; dev‑only (not production).
+
 Phase 2 goals:
 
 - Support **Arabic + English** calls in production.
@@ -93,4 +95,3 @@ Measure:
 
 - If you see English being transcribed poorly on Arabic calls, keep `VOICE_STT_DUAL_STREAM_AR_EN=true`.
 - If STT cost becomes an issue, disable dual streaming and require “Arabic-only” sessions for now.
-

@@ -1,5 +1,7 @@
 # Phase 3 — Compliance Policy Engine (Country Modules + Audit)
 
+**Status:** Implemented; dev‑only (not production).
+
 Phase 3 adds a **compliance gating layer** on top of Phase 1/2 voice calling.
 
 Goals:
@@ -94,4 +96,3 @@ For a given `VoiceCountryPolicy` row:
 - Marketing calls are blocked unless:
   - Workspace enables them (`VoiceConfiguration.marketing_calls_enabled=true`)
   - AND the country policy allows them (`VoiceCountryPolicy.marketing_calls_allowed=true`)
-

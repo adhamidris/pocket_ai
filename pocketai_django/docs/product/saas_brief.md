@@ -3,6 +3,12 @@
 ## One‑liner
 PocketAI is a multi‑tenant B2B SaaS that lets any business launch an AI agent grounded in their own knowledge in minutes—then share it as a link or embed it to handle support and sales conversations at scale.
 
+## Current Status (Beta)
+- Web chat portal is live and in active use.
+- Email connectors (Google/Microsoft) are live for search + draft workflows.
+- Voice calling is implemented but currently **dev‑only**.
+- Mobile app is paused; web portal is the primary channel.
+
 ## Problem
 Businesses lose leads and overwhelm support teams when answers are scattered across PDFs, policies, spreadsheets, and internal docs. Hiring and training is expensive, and response times on social channels are often too slow.
 
@@ -20,8 +26,9 @@ PocketAI gives each tenant a configurable AI agent that:
 1. Sign up and create one or more agents (each agent can represent a brand, department, or use case).
 2. Create collections (knowledge libraries) and assign collections to agents for tighter relevance and control.
 3. Upload knowledge (PDF, DOCX, TXT/MD, scanned images/PDFs, CSV/XLSX, JSON).
-4. Publish the agent via a hosted portal link (and later: embedded widget / additional channels).
-5. Monitor usage, quality, and operational metrics from the dashboard.
+4. (Optional) Connect business email (Gmail/Outlook) for search + draft workflows.
+5. Publish the agent via a hosted portal link (and later: embedded widget / additional channels).
+6. Monitor usage, quality, and operational metrics from the dashboard.
 
 ## End‑User Experience
 - Fast “live” chat experience with immediate feedback and a complete answer after retrieval.

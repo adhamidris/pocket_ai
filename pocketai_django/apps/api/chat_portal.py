@@ -1350,13 +1350,13 @@ def _bootstrap_to_dict(result: PortalSessionBootstrap) -> dict:
         "messages": [_message_to_dict(msg) for msg in result.messages],
     }
     try:
-        pending_message = _pending_tool_approvals_message(
+        # Inject pending tool approvals into existing messages to preserve ordering.
+        # This keeps approval cards in the same message as the text that preceded them.
+        _inject_pending_tool_approvals_into_messages(
+            messages=payload["messages"],
             conversation_id=result.session.conversation_id,
             business_id=result.business.id,
-            existing_messages=payload["messages"],
         )
-        if pending_message is not None:
-            payload["messages"].append(pending_message)
     except Exception:  # pragma: no cover - best effort only
         pass
     try:
@@ -1369,6 +1369,170 @@ def _bootstrap_to_dict(result: PortalSessionBootstrap) -> dict:
     except Exception:  # pragma: no cover - best effort only
         payload["capabilities"] = {"subAgentsEnabled": False}
     return payload
+
+
+def _inject_pending_tool_approvals_into_messages(
+    *,
+    messages: list[dict],
+    conversation_id: uuid.UUID,
+    business_id: uuid.UUID,
+    limit: int = 20,
+) -> None:
+    """
+    Inject pending approval blocks into existing AI messages to preserve ordering.
+
+    Instead of creating a synthetic message (which causes ordering issues on refresh),
+    this function finds the last AI message and appends any pending approval blocks
+    to its content_blocks array. This keeps the approval card in the same position
+    relative to the text that preceded it during streaming.
+    """
+    if not conversation_id or not business_id or not isinstance(messages, list):
+        return
+    limit = max(1, min(int(limit or 0), 50))
+
+    # Find approval IDs already rendered in existing messages
+    already_rendered: set[str] = set()
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        blocks = msg.get("content_blocks") or msg.get("contentBlocks") or []
+        if not isinstance(blocks, list):
+            continue
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            if str(block.get("type") or "").strip().lower() not in {"tool_use", "tool_result"}:
+                continue
+            payload = block.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            approval = payload.get("approval")
+            approval_id = ""
+            if isinstance(approval, dict):
+                approval_id = str(approval.get("id") or "").strip()
+            if not approval_id:
+                approval_id = str(payload.get("approval_id") or payload.get("approvalId") or "").strip()
+            if approval_id:
+                already_rendered.add(approval_id)
+
+    # Fetch pending approvals from database
+    now = timezone.now()
+    with tenant_context(business_id):
+        approvals = list(
+            ConversationToolApproval.objects.select_related("connection")
+            .filter(conversation_id=conversation_id, status=ConversationToolApprovalStatus.PENDING)
+            .order_by("requested_at", "id")[:limit]
+        )
+
+    if not approvals:
+        return
+
+    # Build approval blocks
+    approval_blocks: list[dict[str, object]] = []
+    for approval in approvals:
+        approval_id = str(getattr(approval, "id", "") or "").strip()
+        if not approval_id or approval_id in already_rendered:
+            continue
+
+        approval_meta = approval.metadata if isinstance(getattr(approval, "metadata", None), dict) else {}
+        operation_type = approval_meta.get("operation_type") or approval_meta.get("operationType")
+        reason = approval_meta.get("reason")
+        mode = approval_meta.get("approval_mode") or approval_meta.get("approvalMode") or approval_meta.get("mode")
+        preview = approval_meta.get("preview") if isinstance(approval_meta.get("preview"), dict) else None
+
+        is_expired = bool(approval.expires_at and approval.expires_at <= now)
+        approval_payload: dict[str, object] = {
+            "id": approval_id,
+            "status": ConversationToolApprovalStatus.EXPIRED if is_expired else ConversationToolApprovalStatus.PENDING,
+            "expires_at": approval.expires_at.isoformat() if approval.expires_at else None,
+        }
+        if operation_type:
+            approval_payload["operation_type"] = operation_type
+        if reason:
+            approval_payload["reason"] = reason
+        if mode:
+            approval_payload["mode"] = mode
+        if preview:
+            approval_payload["preview"] = preview
+
+        tool_name = str(approval.tool_name or "").strip()
+        remote_tool_name = str(approval.remote_tool_name or "").strip()
+        tool_call_id = str(approval.tool_call_id or "").strip()
+        event_id = str(approval.event_id or "").strip() or f"approval_{approval_id}"
+
+        input_payload = approval.input_payload if isinstance(getattr(approval, "input_payload", None), dict) else {}
+
+        kind = "tool"
+        remote: dict[str, object] | None = None
+        if approval.connection_id and remote_tool_name:
+            kind = "mcp_remote"
+            connection = getattr(approval, "connection", None)
+            remote = {
+                "connection_name": str(getattr(connection, "name", "") or "").strip(),
+                "remote_tool": remote_tool_name,
+            }
+        elif tool_name == "initiate_phone_call":
+            kind = "phone"
+        elif tool_name.startswith("email_"):
+            kind = "email"
+
+        phase_value = "approval_resolved" if is_expired else "approval_requested"
+        status_value = ConversationToolApprovalStatus.EXPIRED if is_expired else "pending_approval"
+
+        tool_event_payload: dict[str, object] = {
+            "event_id": event_id,
+            "phase": phase_value,
+            "status": status_value,
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name,
+            "kind": kind,
+            "approval": approval_payload,
+            "input": input_payload,
+        }
+        if remote and (remote.get("connection_name") or remote.get("remote_tool")):
+            tool_event_payload["remote"] = remote
+
+        approval_blocks.append(
+            {
+                "block_id": f"tool_approval_{approval_id}",
+                "type": "tool_use",
+                "created_at": approval.requested_at.isoformat() if approval.requested_at else now.isoformat(),
+                "payload": tool_event_payload,
+            }
+        )
+
+    if not approval_blocks:
+        return
+
+    # Find the last AI message to inject blocks into
+    last_ai_message: dict | None = None
+    for msg in reversed(messages):
+        if not isinstance(msg, dict):
+            continue
+        sender = str(msg.get("sender") or "").strip().lower()
+        if sender in {"ai", "assistant"}:
+            last_ai_message = msg
+            break
+
+    if last_ai_message is not None:
+        # Inject approval blocks into the last AI message's content_blocks
+        existing_blocks = last_ai_message.get("content_blocks")
+        if not isinstance(existing_blocks, list):
+            existing_blocks = []
+            last_ai_message["content_blocks"] = existing_blocks
+        # Append approval blocks at the end (preserving text → approval order)
+        existing_blocks.extend(approval_blocks)
+    else:
+        # Fallback: create a synthetic message if no AI message exists
+        message_id = uuid.uuid5(uuid.NAMESPACE_URL, f"pending_tool_approvals:{conversation_id}")
+        messages.append({
+            "id": str(message_id),
+            "sender": "ai",
+            "body": "",
+            "sent_at": now.isoformat(),
+            "metadata": {"type": "pending_tool_approvals"},
+            "content_blocks": approval_blocks,
+        })
 
 
 def _pending_tool_approvals_message(

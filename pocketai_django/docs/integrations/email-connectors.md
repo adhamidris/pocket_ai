@@ -1,5 +1,7 @@
 # Email Connectors (Google + Microsoft)
 
+**Status:** Live and used (platform still in beta).
+
 Goal: let non-technical end users connect their business email via OAuth and then use PocketAI for **read + search + send** workflows (agentic automation) with production-safe defaults.
 
 This design intentionally avoids “hosted third‑party MCP Gmail servers” for core email. Instead, PocketAI runs first‑party connectors that call **official provider APIs**:

@@ -185,7 +185,7 @@ This starts:
 - Django web server (gunicorn)
 - PostgreSQL with pgvector
 - Redis
-- Ingestion worker (Celery)
+- Ingestion worker (Django management command)
 
 **3. Run migrations:**
 
@@ -319,7 +319,7 @@ Your code already implements business-level isolation via `BusinessProfile` fore
 
 ## 🔧 Background Workers
 
-### Start Celery Worker (Required for File Ingestion)
+### Start Ingestion Worker (Required for File Ingestion)
 
 **If using Docker Compose:**
 Already running via `docker-compose.yml`.
@@ -328,14 +328,13 @@ Already running via `docker-compose.yml`.
 
 ```bash
 cd pocketai_django
-celery -A pocketai worker --loglevel=info --concurrency=2
-```
-
-**Or use Django's built-in worker command:**
-
-```bash
 python manage.py knowledge_ingestion_worker --watch
 ```
+
+**Optional (feature-based) workers:**
+- Integrations sync: `python manage.py sync_knowledge_integrations --watch --sleep 300`
+- Sub-agents: `python manage.py process_agent_runs --watch`
+- Voice (dev-only): `python manage.py voice_call_worker --watch` + `python manage.py voice_ws_server --port 8081`
 
 ### Scheduled Tasks (Optional)
 
@@ -596,7 +595,7 @@ docker service scale pocketai_web=3
 
 **2. Add ingestion workers:**
 
-Scale the Celery worker separately:
+Scale the ingestion worker separately:
 
 ```bash
 # In docker-compose.yml
@@ -695,7 +694,7 @@ Before accepting real traffic:
 - ✅ Free PostgreSQL tier available
 - ✅ Auto-deploy from GitHub
 - ⚠️ pgvector requires manual extension install
-- 💡 Use "Background Worker" service type for Celery
+- 💡 Use a background worker service for `knowledge_ingestion_worker`
 
 ### Fly.io
 - ✅ Multi-region deployment
@@ -818,8 +817,8 @@ The following phases can be completed **after** initial staging deployment based
 ### Phase 5: Async Processing Optimization (Week 4)
 **Priority: MEDIUM** - For better UX with large files
 
-- [ ] **Celery worker verification**
-  - Confirm Celery workers running in production
+- [ ] **Ingestion worker verification**
+  - Confirm ingestion workers running in production
   - Monitor worker queue depth
   - Setup dead letter queue for failed jobs
   
@@ -931,21 +930,16 @@ curl http://localhost:8000/api/health/
 
 ## 📊 Current Status Summary
 
-| Phase | Status | Completion | Blocking? |
-|-------|--------|------------|-----------|
-| **Phase 0: Security** | ✅ Complete | 100% | ❌ No |
-| **Phase 1: Docker** | ✅ Complete | 100% | ❌ No |
-| **Phase 2: Monitoring** | ✅ Complete | 95% | ❌ No |
-| **Phase 3: Database** | ⏳ Pending | 0% | ⚠️ For scale |
-| **Phase 4: Scaling** | ⏳ Pending | 0% | ⚠️ For 100+ users |
-| **Phase 5: Async** | ⏳ Pending | 0% | ❌ No |
-| **Phase 6: Operations** | ⏳ Pending | 0% | ❌ No |
+- Platform is **beta**.
+- MCP is the only active orchestrator; agentic read v2 is enabled.
+- Voice stack is implemented but **dev-only**.
+- Mobile app is paused.
 
-**Overall Production Readiness: 85-90%** 🎯
-
-You can deploy to staging/production **now** and complete Phases 3-6 as you scale!
+Before production traffic, validate:
+- Ingestion worker health + queue latency
+- RAG latency and tool budgets under load
+- Verified lookup policies for sensitive data
 
 ---
 
 **Happy deploying! 🚀**
-

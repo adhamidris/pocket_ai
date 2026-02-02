@@ -4,6 +4,8 @@ This document explains how the PocketAI platform works from a technical perspect
 
 If you want a business-only description (for sales, onboarding, or investors), use `docs/product/saas_brief.md`.
 
+**Status note:** Platform is in **beta**. MCP is the only active orchestrator path. Agentic read v2 is enabled (`MCP_AGENTIC_READ_V2_ENABLED=true`), and the LLM tool surface is intentionally limited in agentic mode.
+
 ---
 
 ## Goals
@@ -50,7 +52,8 @@ If you want a business-only description (for sales, onboarding, or investors), u
 1. Visitor sends a message to the chat portal.
 2. Backend records the customer message to the conversation timeline (tenant-scoped).
 3. Orchestrator builds a prompt window (system + recent history) and calls the LLM provider with tools enabled.
-4. LLM may call tools (e.g., `search_knowledge`, `read_document`, `query_dataset`) to retrieve evidence.
+4. LLM may call tools (e.g., `search_knowledge`, `read_knowledge`) to retrieve evidence.
+   - In agentic mode (default), table/dataset tools are not exposed to the LLM.
 5. Orchestrator executes tools server-side and returns tool outputs to the LLM.
 6. LLM streams the final answer to the visitor.
 7. A planner step may run after the answer to propose internal actions (cases/leads/appointments) and extractions.
@@ -84,8 +87,8 @@ The orchestration design aims to be:
 Typical “knowledge question”:
 1. `search_knowledge` (batched `queries[]` variants)
 2. Targeted read depending on source type:
-   - `read_document` for document/chunk reads (PDF/DOCX/TXT and extracted page windows)
-   - `query_dataset` for structured datasets/spreadsheets (CSV/XLSX/JSONL), optionally preceded by `list_tables`
+   - `read_knowledge` for document/chunk reads (agentic v2 refs)
+   - Dataset/table operations are handled server‑side; the LLM does **not** receive `list_tables`, `query_dataset`, or `table_aggregate` in agentic mode.
 3. Final answer (tools disabled in the final pass when possible)
 
 ### Tool budgets and policies
@@ -132,7 +135,8 @@ Tool outputs are intentionally constrained:
 The platform can support dataset-style operations (filters/sorts/top‑k/sum/avg/date ranges) for internal tenant workflows.
 
 Constraints:
-- Not exposed to anonymous portal visitors by default.
+- **Not LLM‑facing in agentic mode** (tool surface is restricted).
+- Available only in non‑agentic/legacy/internal flows when enabled.
 - Must be gated by role (tenant admin) and/or verification when it touches sensitive datasets.
 - Must produce explainable outputs: what was filtered, how it was computed, and which dataset/columns were used.
 
@@ -153,7 +157,7 @@ Verified lookup is a capability that tenants can enable:
 - Once verified, retrieval may be scoped to matching records/uploads and may expose allowed fields.
 
 Current repo behavior:
-- Tabular tools (`query_dataset` / `dataset_query`, legacy `read_knowledge` tabular engines) enforce “verified lookup required” when the model requests sensitive columns (PII).
+- Tabular tools (`query_dataset` / `dataset_query`) enforce “verified lookup required” when sensitive columns (PII) are requested. These tools are **not exposed** in agentic mode.
 - Unstructured/document snippets are additionally protected with best-effort PII pattern masking before tool evidence is returned to the LLM (configurable via `MCP_TEXT_PII_REDACTION_*`).
 
 Portal verification API (for the public web widget):

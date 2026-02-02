@@ -1,6 +1,6 @@
 # 🚀 Quick Deploy Guide
 
-This file provides quick commands to deploy your multi-tenant AI platform using Docker.
+This file provides quick commands to deploy your multi-tenant AI platform using Docker (beta).
 
 ## Prerequisites
 
@@ -23,6 +23,11 @@ docker-compose exec web python manage.py createsuperuser
 # 4. Access the application
 open http://localhost:8000
 ```
+
+Notes:
+- `docker-compose` includes the ingestion worker.
+- Optional workers: `python manage.py sync_knowledge_integrations --watch --sleep 300` and `python manage.py process_agent_runs --watch`.
+- Voice stack is dev-only.
 
 ## Production Deployment
 

@@ -3,9 +3,13 @@
 This repo contains:
 
 - `pocketai_django/`: Django backend + web portal (Chat Portal, RAG, ingestion, admin).
-- `mobile/`: React Native / Expo mobile app.
+- `mobile/`: **Paused** (not actively maintained right now).
 
-Legacy FastAPI + web frontend code has been removed from the monorepo.
+MCP is the only active orchestrator path (legacy orchestration is deprecated).
+
+Status:
+- Platform is **beta**.
+- Voice stack is implemented but **dev-only**.
 
 ## Django (pocketai_django)
 
@@ -22,15 +26,7 @@ python manage.py runserver 127.0.0.1:3000
 
 See `pocketai_django/README.md` for the full list of processes to run (portal + `process_agent_runs` + voice workers + ngrok).
 
-Docs index: `pocketai_django/docs/README.md` (includes voice runbooks under `docs/voice/`).
-
-## Mobile (mobile)
-
-```sh
-cd mobile
-npm install
-npm run start
-```
+Docs index: `pocketai_django/docs/README.md` (voice docs are **dev-only**).
 
 ## Django LLM configuration
 

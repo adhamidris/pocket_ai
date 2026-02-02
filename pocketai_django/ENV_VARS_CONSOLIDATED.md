@@ -1,19 +1,27 @@
 # Consolidated Environment Variables Guide
 
-## Changes Made
-1. **Removed `LLM_PROVIDER`** - Use only `MCP_PROVIDER`
-2. **Removed `OPENAI_TEMPERATURE` and `DEEPSEEK_TEMPERATURE`** - Use only `LLM_TEMPERATURE`
-3. **Clarified search controls** - Use LLM-driven approach
+## Status Note
+This guide reflects current usage:
+- **MCP** uses `MCP_PROVIDER`.
+- **Non‑MCP flows (voice/post‑call)** may use `LLM_PROVIDER`.
+- `LLM_TEMPERATURE` applies across providers.
 
 ---
 
 ## Required Environment Variables
 
-### Provider Selection
+### Provider Selection (MCP)
 ```bash
 # Which LLM provider to use for MCP orchestration
 # Options: "openai" or "deepseek"
 MCP_PROVIDER=openai
+```
+
+### Provider Selection (Non‑MCP / Voice)
+```bash
+# Optional: legacy/voice provider selection
+# Options: "openai" or "deepseek"
+LLM_PROVIDER=openai
 ```
 
 ### OpenAI Configuration
@@ -39,6 +47,15 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com  # Optional
 # Controls randomness: 0.0 = deterministic, 1.0 = very creative
 # Recommended: 0.3 for customer service
 LLM_TEMPERATURE=0.3
+```
+
+### Agentic Read v2 (MCP)
+```bash
+# Enable refs-first read contract (read_knowledge)
+MCP_AGENTIC_READ_V2_ENABLED=true
+
+# Master contract gate (defaults to true in settings)
+MCP_NEW_CONTRACT_ENABLED=true
 ```
 
 ### Search Controls (Recommended: LLM-Driven)
@@ -78,7 +95,6 @@ MCP_SLO_SEARCH_WARN_MS=1200
 
 ## Removed Variables (No Longer Needed)
 
-❌ `LLM_PROVIDER` - Replaced by `MCP_PROVIDER`
 ❌ `OPENAI_TEMPERATURE` - Replaced by `LLM_TEMPERATURE`
 ❌ `DEEPSEEK_TEMPERATURE` - Replaced by `LLM_TEMPERATURE`
 
@@ -111,7 +127,6 @@ If you have these old vars in your `.env`:
 
 ### Before:
 ```bash
-LLM_PROVIDER=openai
 OPENAI_TEMPERATURE=0.3
 DEEPSEEK_TEMPERATURE=0.3
 ```
