@@ -15,8 +15,12 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 python manage.py migrate
-python manage.py runserver
+python manage.py runserver 127.0.0.1:3000
 ```
+
+### Local dev workers (sub-agents + voice calls)
+
+See `pocketai_django/README.md` for the full list of processes to run (portal + `process_agent_runs` + voice workers + ngrok).
 
 Docs index: `pocketai_django/docs/README.md` (includes voice runbooks under `docs/voice/`).
 

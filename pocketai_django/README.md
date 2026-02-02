@@ -10,7 +10,51 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 python manage.py migrate
-python manage.py runserver
+python manage.py runserver 127.0.0.1:3000
+```
+
+## Local dev processes (Portal + Sub-agents + Voice Calls)
+
+Run these in separate terminals (with `cd pocketai_django` and `.venv` activated):
+
+```sh
+# Web / Portal
+.venv/bin/python manage.py runserver 127.0.0.1:3000
+
+# Sub-agents background worker (Tasks panel)
+.venv/bin/python manage.py process_agent_runs --watch
+
+# Voice calls: queue worker
+.venv/bin/python manage.py voice_call_worker --watch
+
+# Voice calls: Twilio Media Streams WebSocket server
+.venv/bin/python manage.py voice_ws_server --port 8081
+
+# Voice calls: post-call processing (transcript/summary/recording ingest)
+.venv/bin/python manage.py voice_post_call_worker --watch
+```
+
+### ngrok (one session, two tunnels)
+
+If you’re testing Twilio webhooks + the voice WS server locally, run both tunnels in a single ngrok session:
+
+1) Add this to your ngrok config file (usually `~/.config/ngrok/ngrok.yml`):
+
+```yaml
+version: "2"
+tunnels:
+  web:
+    proto: http
+    addr: 3000
+  voice_ws:
+    proto: http
+    addr: 8081
+```
+
+2) Start ngrok:
+
+```sh
+ngrok start --all
 ```
 
 ## Docs
