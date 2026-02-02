@@ -5,6 +5,7 @@ import json
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
 from apps.accounts.models import (
@@ -18,7 +19,15 @@ from apps.accounts.models import (
     RegistrationSession,
 )
 from apps.accounts.models import AgentProfile
-from apps.conversations.models import AgentRun, AgentRunStatus, Conversation, ConversationToolApproval, ConversationToolApprovalStatus
+from apps.conversations.models import (
+    AgentRun,
+    AgentRunStatus,
+    Conversation,
+    ConversationMessage,
+    ConversationSender,
+    ConversationToolApproval,
+    ConversationToolApprovalStatus,
+)
 
 
 User = get_user_model()
@@ -393,3 +402,118 @@ class ChatPortalPendingToolExecutionTests(TestCase):
 
         # pending_tool_call is still there (run is cancelled, no cleanup needed)
         self.assertIn("pending_tool_call", self.run.metadata)
+
+
+class ChatPortalBootstrapPendingApprovalsTests(TestCase):
+    def setUp(self) -> None:
+        self.user = User.objects.create_user(email="bootstrap-approvals@example.com", password="changeme123", first_name="Bootstrap")
+        self.registration = RegistrationSession.objects.create(user=self.user)
+        self.business = BusinessProfile.objects.create(
+            user=self.user,
+            registration_session=self.registration,
+            name="Bootstrap Corp",
+            industry="Support",
+        )
+        self.agent = AgentProfile.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            name="Bootstrap Agent",
+            status="active",
+        )
+
+    def _bootstrap(self, *, session_token: str | None = None) -> dict:
+        url = reverse("api:chat-portal-session")
+        payload: dict[str, object] = {
+            "business_slug": self.business.slug,
+            "agent_slug": self.agent.slug,
+        }
+        if session_token:
+            payload["session_token"] = session_token
+        response = self.client.post(url, data=json.dumps(payload), content_type="application/json")
+        self.assertEqual(response.status_code, 200)
+        return response.json()
+
+    def test_bootstrap_injects_pending_approval_cards(self) -> None:
+        payload = self._bootstrap()
+        session_token = payload["session"]["session_token"]
+        conversation_id = payload["session"]["conversation_id"]
+        conversation = Conversation.objects.get(id=conversation_id)
+
+        approval = ConversationToolApproval.objects.create(
+            conversation=conversation,
+            connection=None,
+            tool_name="initiate_phone_call",
+            status=ConversationToolApprovalStatus.PENDING,
+            tool_call_id="call_abc",
+            event_id="evt_abc",
+            input_payload={"phone_number": "+201000000000", "objective": "Test call"},
+        )
+
+        payload2 = self._bootstrap(session_token=session_token)
+        messages = payload2.get("messages") or []
+        pending_message = next(
+            (
+                msg
+                for msg in messages
+                if isinstance(msg, dict) and (msg.get("metadata") or {}).get("type") == "pending_tool_approvals"
+            ),
+            None,
+        )
+        self.assertIsNotNone(pending_message)
+        blocks = pending_message.get("content_blocks") or []
+        approval_blocks = [
+            block
+            for block in blocks
+            if isinstance(block, dict)
+            and isinstance(block.get("payload"), dict)
+            and isinstance(block["payload"].get("approval"), dict)
+            and block["payload"]["approval"].get("id") == str(approval.id)
+        ]
+        self.assertEqual(len(approval_blocks), 1)
+        block_payload = approval_blocks[0]["payload"]
+        self.assertEqual(block_payload.get("tool_name"), "initiate_phone_call")
+        self.assertEqual(block_payload.get("phase"), "approval_requested")
+        self.assertEqual(block_payload.get("status"), "pending_approval")
+
+    def test_bootstrap_dedupes_when_approval_already_in_messages(self) -> None:
+        payload = self._bootstrap()
+        session_token = payload["session"]["session_token"]
+        conversation_id = payload["session"]["conversation_id"]
+        conversation = Conversation.objects.get(id=conversation_id)
+
+        approval = ConversationToolApproval.objects.create(
+            conversation=conversation,
+            connection=None,
+            tool_name="initiate_phone_call",
+            status=ConversationToolApprovalStatus.PENDING,
+            tool_call_id="call_dedupe",
+            event_id="evt_dedupe",
+            input_payload={"phone_number": "+201000000001", "objective": "Test call"},
+        )
+        ConversationMessage.objects.create(
+            conversation=conversation,
+            sender=ConversationSender.AI,
+            body="",
+            sent_at=timezone.now(),
+            content_blocks=[
+                {
+                    "block_id": "blk_tool_dedupe",
+                    "type": "tool_use",
+                    "created_at": timezone.now().isoformat(),
+                    "payload": {
+                        "event_id": "evt_dedupe",
+                        "phase": "approval_requested",
+                        "status": "pending_approval",
+                        "tool_call_id": "call_dedupe",
+                        "tool_name": "initiate_phone_call",
+                        "kind": "phone",
+                        "approval": {"id": str(approval.id), "status": ConversationToolApprovalStatus.PENDING},
+                        "input": {"phone_number": "+201000000001", "objective": "Test call"},
+                    },
+                }
+            ],
+        )
+
+        payload2 = self._bootstrap(session_token=session_token)
+        messages = payload2.get("messages") or []
+        self.assertFalse(any((msg.get("metadata") or {}).get("type") == "pending_tool_approvals" for msg in messages if isinstance(msg, dict)))
