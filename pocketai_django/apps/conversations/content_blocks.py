@@ -119,9 +119,9 @@ def ensure_assistant_text_blocks(body: str, *, existing_blocks: object | None = 
 
     Strategy:
     - Keep non-text blocks (tool_use, tool_result, reasoning, table, kv) from existing_blocks
-    - Always regenerate text blocks from body using rich_blocks_from_text
-      (which applies markdown formatting fixes like proper list formatting)
-    - This ensures consistent formatting regardless of how blocks were originally created
+    - If existing_blocks has a valid structure with both text and non-text blocks,
+      preserve it as-is to maintain correct ordering (e.g., pre-approval text → tool → post-approval text)
+    - Only regenerate text blocks from body if existing_blocks are missing or invalid
     """
     blocks = _coerce_block_list(existing_blocks)
     body_value = body.strip()
@@ -129,7 +129,22 @@ def ensure_assistant_text_blocks(body: str, *, existing_blocks: object | None = 
     # Types that should be preserved (not regenerated from body text)
     non_text_block_types = {"tool_use", "tool_result", "reasoning", "table", "kv"}
 
-    # Separate non-text blocks (to preserve) from text blocks (to regenerate)
+    # Check if existing blocks have a valid structure
+    has_non_text = any(
+        isinstance(block, Mapping) and str(block.get("type") or "").strip().lower() in non_text_block_types
+        for block in blocks
+    )
+    has_text = any(
+        isinstance(block, Mapping) and _is_rich_text_block(block)
+        for block in blocks
+    )
+
+    # If existing blocks contain both text and non-text blocks, preserve them as-is
+    # This maintains the exact ordering from the persisted state
+    if has_non_text and has_text and blocks:
+        return blocks
+
+    # Otherwise, regenerate text blocks from body
     non_text_blocks = [
         block for block in blocks
         if isinstance(block, Mapping) and str(block.get("type") or "").strip().lower() in non_text_block_types

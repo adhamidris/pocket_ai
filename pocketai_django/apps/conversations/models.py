@@ -308,6 +308,13 @@ class ConversationToolApproval(models.Model):
         related_name="tool_approvals",
         on_delete=models.CASCADE,
     )
+    turn = models.ForeignKey(
+        "PortalTurn",
+        related_name="turn_approvals",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
     connection = models.ForeignKey(
         "accounts.McpConnection",
         related_name="tool_approvals",
@@ -341,6 +348,95 @@ class ConversationToolApproval(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - human readable only
         return f"{self.conversation_id}:{self.tool_name}:{self.status}"
+
+
+class PortalTurnStatus(models.TextChoices):
+    STREAMING = "streaming", "Streaming"
+    WAITING_APPROVAL = "waiting_approval", "Waiting approval"
+    FINALIZING = "finalizing", "Finalizing"
+    FINALIZED = "finalized", "Finalized"
+    FAILED = "failed", "Failed"
+    CANCELLED = "cancelled", "Cancelled"
+
+
+class PortalTurn(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    conversation = models.ForeignKey(
+        Conversation,
+        related_name="portal_turns",
+        on_delete=models.CASCADE,
+    )
+    message = models.ForeignKey(
+        ConversationMessage,
+        related_name="portal_turns",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    user_message = models.TextField(blank=True, default="")
+    agent_profile = models.ForeignKey(
+        "accounts.AgentProfile",
+        related_name="portal_turns",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    status = models.CharField(
+        max_length=24,
+        choices=PortalTurnStatus.choices,
+        default=PortalTurnStatus.STREAMING,
+    )
+    last_event_seq = models.PositiveIntegerField(default=0)
+    started_at = models.DateTimeField(default=timezone.now, db_index=True)
+    finalized_at = models.DateTimeField(null=True, blank=True)
+    run_after = models.DateTimeField(default=timezone.now, db_index=True)
+    lease_expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    attempt_count = models.PositiveIntegerField(default=0)
+    max_attempts = models.PositiveIntegerField(default=5)
+    error_detail = models.TextField(blank=True, default="")
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "conversations_portal_turn"
+        ordering = ("-started_at",)
+        indexes = [
+            models.Index(fields=["conversation", "status"], name="portal_turn_conv_status_idx"),
+            models.Index(fields=["status", "run_after"], name="portal_turn_status_run_idx"),
+            models.Index(fields=["status", "lease_expires_at"], name="portal_turn_status_lease_idx"),
+            models.Index(fields=["conversation", "created_at"], name="portal_turn_conv_created_idx"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - human readable only
+        return f"{self.conversation_id}:{self.status}"
+
+
+class PortalTurnEvent(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    turn = models.ForeignKey(
+        PortalTurn,
+        related_name="events",
+        on_delete=models.CASCADE,
+    )
+    seq = models.PositiveIntegerField()
+    type = models.CharField(max_length=64)
+    payload = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "conversations_portal_turn_event"
+        ordering = ("seq",)
+        indexes = [
+            models.Index(fields=["turn", "created_at"], name="portal_turn_event_time_idx"),
+            models.Index(fields=["turn", "type"], name="portal_turn_event_type_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(fields=["turn", "seq"], name="portal_turn_event_seq_unique"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - human readable only
+        return f"{self.turn_id}:{self.type}:{self.seq}"
 
 
 class ConversationExtraction(models.Model):

@@ -54,6 +54,8 @@ from apps.conversations.models import (
     ConversationSender,
     ConversationToolApproval,
     ConversationToolApprovalStatus,
+    PortalTurn,
+    PortalTurnStatus,
 )
 from apps.core.logging_utils import LogEmoji
 from apps.rag.ai_orchestrator import (
@@ -75,6 +77,8 @@ from apps.conversations.portal import (
     PortalSessionState,
     PortalValidationError,
 )
+from apps.conversations.portal_turn_events import list_turn_events
+from apps.conversations.portal_turn_runner import run_turn_background
 from core.tenancy import tenant_context
 
 logger = logging.getLogger(__name__)
@@ -997,6 +1001,17 @@ def _session_to_dict(session: PortalSessionState) -> dict:
         "status": session.status,
         "started_at": session.started_at.isoformat(),
         "expires_at": session.expires_at.isoformat() if session.expires_at else None,
+    }
+
+
+def _portal_turn_to_dict(turn: PortalTurn) -> dict[str, object]:
+    return {
+        "id": str(turn.id),
+        "status": turn.status,
+        "last_event_seq": int(turn.last_event_seq or 0),
+        "message_id": str(turn.message_id) if getattr(turn, "message_id", None) else None,
+        "started_at": turn.started_at.isoformat() if getattr(turn, "started_at", None) else None,
+        "finalized_at": turn.finalized_at.isoformat() if getattr(turn, "finalized_at", None) else None,
     }
 
 
@@ -4526,22 +4541,47 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
 
                 blocks_snapshot = _normalize_portal_content_blocks(blocks_snapshot)
 
+                # Preserve pre-approval text when updating message body after approval resolution.
+                # When a turn continues after tool approval, the new response_text only contains
+                # the post-approval content. We need to prepend any existing pre-approval text
+                # to maintain correct content ordering on page refresh.
+                final_body = response_text
+                pending_message_id = plan_holder.get("pending_message_id")
+                if pending_message_id:
+                    try:
+                        existing_message = conversation.messages.filter(id=pending_message_id).first()
+                        if existing_message and existing_message.body:
+                            # Check if this message had pre-approval text by looking at content_blocks
+                            existing_blocks = existing_message.content_blocks if isinstance(getattr(existing_message, "content_blocks", None), list) else []
+                            has_tool_blocks = any(
+                                isinstance(block, dict) and str(block.get("type") or "").strip().lower() in {"tool_use", "tool_result"}
+                                for block in existing_blocks
+                            )
+                            # If there were tool blocks and existing body text, preserve the pre-approval text
+                            if has_tool_blocks and existing_message.body.strip():
+                                pre_approval_text = existing_message.body.strip()
+                                # Only prepend if the new response doesn't already contain the pre-approval text
+                                if pre_approval_text and pre_approval_text not in response_text:
+                                    final_body = f"{pre_approval_text}\n\n{response_text}"
+                    except Exception:  # pragma: no cover - best effort only
+                        logger.exception("portal pre-approval text preservation failed")
+
                 with TRACER.start_as_current_span("portal.finalize.persist") as persist_span:
                     try:
                         ai_message = service.append_message(
                             session_token=session_token,
                             sender=ConversationSender.AI,
-                            body=response_text,
+                            body=final_body,
                             metadata=message_metadata,
                             content_blocks=blocks_snapshot,
                             conversation=conversation,
-                            message_id=plan_holder.get("pending_message_id"),
+                            message_id=pending_message_id,
                         )
                     except IntegrityError:
                         ai_message = service.update_message(
                             session_token=session_token,
-                            message_id=plan_holder.get("pending_message_id"),
-                            body=response_text,
+                            message_id=pending_message_id,
+                            body=final_body,
                             metadata=message_metadata,
                             content_blocks=blocks_snapshot,
                             conversation=conversation,
@@ -5158,4 +5198,153 @@ def create_portal_session(request: HttpRequest) -> JsonResponse:
         secure=False,
         samesite="Lax",
     )
+    return response
+
+
+@csrf_exempt
+@require_POST
+def portal_turn_create(request: HttpRequest) -> JsonResponse:
+    """
+    Create a new portal turn (event-sourced streaming).
+
+    Request body:
+    {
+        "session_token": "...",
+        "body": "...",
+        "metadata": {}
+    }
+    """
+    service = _service()
+    try:
+        payload = _parse_json_body(request)
+    except PortalValidationError as exc:
+        return _json_error("invalid_json", str(exc))
+
+    session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
+    body = (payload.get("body") or "").strip()
+    metadata_raw = payload.get("metadata") or {}
+    metadata: dict[str, object] = dict(metadata_raw) if isinstance(metadata_raw, Mapping) else {}
+
+    if not session_token or not body:
+        return _json_error("validation_error", "session_token and body are required.")
+
+    try:
+        conversation = service.get_conversation(session_token=session_token, include_messages=False)
+        session = service.get_session_state(session_token=session_token, conversation=conversation)
+    except PortalNotFoundError as exc:
+        return _json_error("not_found", str(exc), status=404)
+
+    customer_message: PortalMessage | None = None
+    try:
+        customer_message = service.append_message(
+            session_token=session_token,
+            sender=ConversationSender.CUSTOMER,
+            body=body,
+            metadata=metadata,
+            conversation=conversation,
+        )
+    except PortalValidationError as exc:
+        return _json_error("validation_error", str(exc))
+
+    agent = conversation.agent_profile
+    if not agent:
+        return _json_error("validation_error", "Agent profile is missing.", status=500)
+
+    business_id = getattr(conversation, "business_profile_id", None)
+    with tenant_context(business_id):
+        turn = PortalTurn.objects.create(
+            conversation=conversation,
+            agent_profile=agent,
+            status=PortalTurnStatus.STREAMING,
+            run_after=timezone.now(),
+            user_message=body,
+            metadata={"source": "portal", "origin": "turn_create"},
+        )
+    run_turn_background(turn_id=turn.id, business_id=business_id)
+
+    return JsonResponse(
+        {
+            "session": _session_to_dict(session),
+            "turn": _portal_turn_to_dict(turn),
+            "customer_message_id": str(customer_message.id) if customer_message else None,
+        },
+        status=201,
+    )
+
+
+def _parse_turn_since_seq(request: HttpRequest) -> int:
+    raw = request.GET.get("since") or request.GET.get("since_seq") or ""
+    if not raw:
+        raw = request.META.get("HTTP_LAST_EVENT_ID", "")
+    try:
+        value = int(str(raw).strip())
+        return value if value >= 0 else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+@require_GET
+def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHttpResponse:
+    service = _service()
+    session_token = (request.GET.get("session_token") or request.GET.get("sessionToken") or "").strip()
+    if not session_token:
+        return StreamingHttpResponse(status=400)
+
+    try:
+        conversation = service.get_conversation(session_token=session_token, include_messages=False)
+    except PortalNotFoundError:
+        return StreamingHttpResponse(status=404)
+
+    business_id = getattr(conversation, "business_profile_id", None)
+    with tenant_context(business_id):
+        turn = PortalTurn.objects.filter(id=turn_id, conversation_id=conversation.id).first()
+    if not turn:
+        return StreamingHttpResponse(status=404)
+
+    since = _parse_turn_since_seq(request)
+
+    def event_stream() -> Iterable[str]:
+        yield ": stream_open\n\n"
+        last_seq = int(since or 0)
+        keepalive_seconds = 15.0
+        last_keepalive = time.monotonic()
+
+        while True:
+            with tenant_context(business_id):
+                events = list(list_turn_events(turn_id=turn.id, since_seq=last_seq, limit=250))
+            if events:
+                for evt in events:
+                    last_seq = int(evt.seq or 0)
+                    payload = {
+                        "turn_id": str(turn.id),
+                        "seq": last_seq,
+                        "type": evt.type,
+                        "payload": evt.payload or {},
+                    }
+                    yield f"id: {last_seq}\n"
+                    yield "event: turnEvent\n"
+                    yield f"data: {json.dumps(payload)}\n\n"
+                continue
+
+            with tenant_context(business_id):
+                latest = (
+                    PortalTurn.objects.filter(id=turn.id)
+                    .values_list("status", "last_event_seq")
+                    .first()
+                )
+            if latest:
+                latest_status, latest_seq = latest
+                if latest_status in {PortalTurnStatus.FINALIZED, PortalTurnStatus.FAILED, PortalTurnStatus.CANCELLED}:
+                    if int(latest_seq or 0) <= last_seq:
+                        break
+
+            now = time.monotonic()
+            if now - last_keepalive >= keepalive_seconds:
+                yield ": keepalive\n\n"
+                last_keepalive = now
+            time.sleep(0.5)
+
+    response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")
+    response["Cache-Control"] = "no-cache"
+    response["X-Accel-Buffering"] = "no"
     return response
