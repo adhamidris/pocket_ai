@@ -2084,10 +2084,27 @@ class ChatPortalClient {
     const actionsEl = card.querySelector("[data-tool-approval-actions]");
     const pillEl = card.querySelector("[data-call-approval-pill]");
 
-    const isPending = Boolean(approvalId) && (approvalStatus === "pending" || statusRaw === "pending_approval" || statusRaw === "pending" || phase === "approval_requested");
     const isApproved = approvalStatus === "approved" || statusRaw === "approved";
     const isDenied = approvalStatus === "denied" || statusRaw === "denied";
-    const isExpired = approvalStatus === "expired" || statusRaw === "expired";
+
+    const expiresAtRaw =
+      (approvalData && (approvalData.expires_at || approvalData.expiresAt)) ||
+      payload.expires_at ||
+      payload.expiresAt ||
+      "";
+    let expiredByTime = false;
+    if (expiresAtRaw) {
+      const parsed = new Date(expiresAtRaw.toString());
+      if (!Number.isNaN(parsed.getTime())) {
+        expiredByTime = Date.now() >= parsed.getTime();
+      }
+    }
+
+    const isExpired = approvalStatus === "expired" || statusRaw === "expired" || (expiredByTime && !isApproved && !isDenied);
+    const isPending =
+      Boolean(approvalId) &&
+      !isExpired &&
+      (approvalStatus === "pending" || statusRaw === "pending_approval" || statusRaw === "pending" || phase === "approval_requested");
 
     if (actionsEl) {
       actionsEl.hidden = !isPending;

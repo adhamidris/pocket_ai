@@ -50,6 +50,7 @@ from apps.conversations.models import (
     AgentRunMemoryKind,
     AgentRunStatus,
     Conversation,
+    ConversationMessage,
     ConversationSender,
     ConversationToolApproval,
     ConversationToolApprovalStatus,
@@ -1013,6 +1014,135 @@ def _serialize_tool_approval(approval: ConversationToolApproval) -> dict[str, ob
         "metadata": approval.metadata or {},
     }
 
+
+def _normalize_portal_content_blocks(blocks: list[dict[str, object]]) -> list[dict[str, object]]:
+    """
+    Normalize portal `content_blocks` ordering for consistent UX on refresh.
+
+    The portal streams tool cards as they arrive. When the assistant text is persisted
+    after a tool approval request, we want the content blocks to render in the same
+    order after a refresh (e.g. lead-in text followed by an approval card).
+
+    Current normalization:
+    - Move "initiate_phone_call" tool cards to the end of the message (stable),
+      unless they have child blocks.
+    """
+
+    if not isinstance(blocks, list) or not blocks:
+        return blocks
+
+    tool_names = {"initiate_phone_call", "phone_call"}
+    call_block_ids: list[str] = []
+    child_parent_ids: set[str] = set()
+
+    for entry in blocks:
+        if not isinstance(entry, Mapping):
+            continue
+        parent_id = str(entry.get("parent_block_id") or entry.get("parentBlockId") or "").strip()
+        if parent_id:
+            child_parent_ids.add(parent_id)
+
+        if str(entry.get("type") or "").strip().lower() != "tool_use":
+            continue
+        payload = entry.get("payload")
+        if not isinstance(payload, Mapping):
+            continue
+        tool_name = str(payload.get("tool_name") or payload.get("toolName") or "").strip().lower()
+        if tool_name in tool_names:
+            block_id = str(entry.get("block_id") or entry.get("blockId") or "").strip()
+            if block_id:
+                call_block_ids.append(block_id)
+
+    if not call_block_ids:
+        return blocks
+
+    movable_ids = {block_id for block_id in call_block_ids if block_id and block_id not in child_parent_ids}
+    if not movable_ids:
+        return blocks
+
+    head: list[dict[str, object]] = []
+    tail: list[dict[str, object]] = []
+    for entry in blocks:
+        block_id = str(entry.get("block_id") or entry.get("blockId") or "").strip() if isinstance(entry, Mapping) else ""
+        if block_id and block_id in movable_ids:
+            tail.append(entry)
+        else:
+            head.append(entry)
+    return [*head, *tail]
+
+
+def _apply_portal_tool_approval_state(
+    blocks: list[dict[str, object]],
+    *,
+    approval: ConversationToolApproval,
+    phase: str = "approval_resolved",
+) -> tuple[list[dict[str, object]], bool]:
+    """
+    Update persisted portal content blocks when a tool approval resolves.
+
+    Without this, the UI can regress on refresh (e.g., denied approvals show CTAs again)
+    because the last persisted message still contains `approval_requested` payloads.
+    """
+
+    if not isinstance(blocks, list) or not blocks:
+        return blocks, False
+
+    approval_id = str(getattr(approval, "id", "") or "").strip()
+    if not approval_id:
+        return blocks, False
+    approval_event_id = str(getattr(approval, "event_id", "") or "").strip()
+    approval_tool_call_id = str(getattr(approval, "tool_call_id", "") or "").strip()
+
+    status = str(getattr(approval, "status", "") or "").strip().lower()
+    if not status:
+        return blocks, False
+
+    mutated = False
+    resolved_at = approval.resolved_at.isoformat() if approval.resolved_at else None
+    expires_at = approval.expires_at.isoformat() if approval.expires_at else None
+
+    for entry in blocks:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("type") or "").strip().lower() != "tool_use":
+            continue
+        payload = entry.get("payload")
+        if not isinstance(payload, dict):
+            continue
+
+        match_id = str(payload.get("approval_id") or payload.get("approvalId") or "").strip()
+        nested = payload.get("approval")
+        nested_id = str(nested.get("id") or "").strip() if isinstance(nested, Mapping) else ""
+        payload_event_id = str(payload.get("event_id") or payload.get("eventId") or "").strip()
+        payload_tool_call_id = str(payload.get("tool_call_id") or payload.get("toolCallId") or "").strip()
+        matches = match_id == approval_id or nested_id == approval_id
+        if not matches and approval_event_id and payload_event_id and payload_event_id == approval_event_id:
+            matches = True
+        if not matches and approval_tool_call_id and payload_tool_call_id and payload_tool_call_id == approval_tool_call_id:
+            matches = True
+        if not matches:
+            continue
+
+        payload["approval_id"] = approval_id
+        payload["phase"] = phase
+        payload["status"] = status
+
+        approval_payload: dict[str, object] = dict(nested) if isinstance(nested, Mapping) else {}
+        approval_payload["id"] = approval_id
+        approval_payload["status"] = status
+        if resolved_at:
+            approval_payload["resolved_at"] = resolved_at
+        if expires_at:
+            approval_payload["expires_at"] = expires_at
+        payload["approval"] = approval_payload
+        entry["payload"] = payload
+        mutated = True
+
+    if mutated:
+        blocks = _normalize_portal_content_blocks(blocks)
+    return blocks, mutated
+
+
 def _clip_portal_text(value: str, limit: int) -> str:
     text = (value or "").strip()
     if not text:
@@ -1282,9 +1412,11 @@ def _pending_tool_approvals_message(
                 if not isinstance(payload, dict):
                     continue
                 approval = payload.get("approval")
-                if not isinstance(approval, dict):
-                    continue
-                approval_id = str(approval.get("id") or "").strip()
+                approval_id = ""
+                if isinstance(approval, dict):
+                    approval_id = str(approval.get("id") or "").strip()
+                if not approval_id:
+                    approval_id = str(payload.get("approval_id") or payload.get("approvalId") or "").strip()
                 if approval_id:
                     already_rendered.add(approval_id)
 
@@ -1344,10 +1476,13 @@ def _pending_tool_approvals_message(
         elif tool_name.startswith("email_"):
             kind = "email"
 
+        phase_value = "approval_resolved" if is_expired else "approval_requested"
+        status_value = ConversationToolApprovalStatus.EXPIRED if is_expired else "pending_approval"
+
         tool_event_payload: dict[str, object] = {
             "event_id": event_id,
-            "phase": "approval_requested",
-            "status": "pending_approval",
+            "phase": phase_value,
+            "status": status_value,
             "tool_call_id": tool_call_id,
             "tool_name": tool_name,
             "kind": kind,
@@ -2112,6 +2247,37 @@ def portal_tool_approval(request: HttpRequest) -> JsonResponse:
             )
         except Exception:  # pragma: no cover - observability must not block portal responses
             pass
+
+    # Patch any persisted in-flight assistant message blocks so refresh reflects the latest decision.
+    # Without this, visitors can see stale "pending" CTAs after a deny/expire.
+    if approval and business_id:
+        try:
+            approval_id_str = str(approval.id)
+            with tenant_context(business_id):
+                base_qs = (
+                    ConversationMessage.objects.filter(conversation_id=conversation.id, sender=ConversationSender.AI)
+                    .order_by("-sent_at", "-created_at")
+                )
+                candidates = list(base_qs.filter(metadata__pending_approval_id=approval_id_str)[:6])
+                if not candidates:
+                    candidates = list(base_qs[:30])
+                for msg in candidates:
+                    blocks_raw = msg.content_blocks if isinstance(getattr(msg, "content_blocks", None), list) else []
+                    updated_blocks, mutated = _apply_portal_tool_approval_state(blocks_raw, approval=approval)
+                    if not mutated:
+                        continue
+                    meta_in = msg.metadata if isinstance(getattr(msg, "metadata", None), dict) else {}
+                    meta_out = dict(meta_in)
+                    if str(meta_out.get("pending_approval_id") or "").strip() == approval_id_str:
+                        meta_out.pop("pending_approval_id", None)
+                    if meta_out.get("portal_turn_state") == "waiting_approval":
+                        meta_out["portal_turn_state"] = "approval_resolved"
+                    ConversationMessage.objects.filter(id=msg.id).update(
+                        content_blocks=updated_blocks,
+                        metadata=meta_out,
+                    )
+        except Exception:  # pragma: no cover - best effort only
+            logger.exception("portal tool approval message patch failed approval=%s", getattr(approval, "id", None))
 
     return JsonResponse(
         {
@@ -3241,6 +3407,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             blocks_snapshot = copy.deepcopy(content_blocks)
         if not blocks_snapshot:
             return
+        blocks_snapshot = _normalize_portal_content_blocks(blocks_snapshot)
 
         body_text = extract_text_from_content_blocks(blocks_snapshot)
         if not body_text:
@@ -4175,7 +4342,8 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                     str(entry.get("type") or "").strip().lower() == "text" for entry in blocks_snapshot if isinstance(entry, Mapping)
                 )
                 if not has_rich_text and not has_legacy_text and response_text:
-                    blocks_snapshot.extend(rich_blocks_from_text(response_text))
+                    # Ensure assistant text renders before tool cards on refresh.
+                    blocks_snapshot = [*rich_blocks_from_text(response_text), *blocks_snapshot]
 
                 # Structured outputs (tables/kv) should render as content blocks, not markdown.
                 structured_blocks = content_blocks_from_response_blocks(list(base_plan.response_blocks))
@@ -4191,6 +4359,8 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                                 },
                             }
                         )
+
+                blocks_snapshot = _normalize_portal_content_blocks(blocks_snapshot)
 
                 with TRACER.start_as_current_span("portal.finalize.persist") as persist_span:
                     try:

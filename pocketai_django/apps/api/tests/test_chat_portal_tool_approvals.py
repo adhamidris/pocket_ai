@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
@@ -111,6 +112,80 @@ class ChatPortalToolApprovalTests(TestCase):
         self.assertEqual(response.status_code, 200)
         approval.refresh_from_db()
         self.assertEqual(approval.status, ConversationToolApprovalStatus.DENIED)
+
+    def test_portal_tool_approval_deny_patches_inflight_message_blocks(self) -> None:
+        approval = ConversationToolApproval.objects.create(
+            conversation=self.conversation,
+            connection=self.connection,
+            tool_name="initiate_phone_call",
+            remote_tool_name="",
+            status=ConversationToolApprovalStatus.PENDING,
+            tool_call_id="call_phone_123",
+            event_id="event_phone_123",
+            expires_at=timezone.now() + timedelta(seconds=60),
+            metadata={},
+            input_payload={"phone_number": "+201092129119", "objective": "Test call", "language": "en"},
+        )
+
+        # Simulate the persisted in-flight assistant message created during approval request.
+        tool_block = {
+            "block_id": "blk_tool_1",
+            "type": "tool_use",
+            "created_at": timezone.now().isoformat(),
+            "payload": {
+                "event_id": approval.event_id,
+                "phase": "approval_requested",
+                "status": "pending_approval",
+                "tool_call_id": approval.tool_call_id,
+                "tool_name": approval.tool_name,
+                "approval_id": str(approval.id),
+                "approval": {"id": str(approval.id), "status": "pending", "expires_at": approval.expires_at.isoformat()},
+                "input": approval.input_payload,
+            },
+        }
+        paragraph_block = {
+            "block_id": "blk_text_1",
+            "type": "paragraph",
+            "created_at": timezone.now().isoformat(),
+            "payload": {"content": [{"text": "I'll help you place this call."}]},
+        }
+
+        message = ConversationMessage.objects.create(
+            conversation=self.conversation,
+            sender=ConversationSender.AI,
+            body="I'll help you place this call.",
+            metadata={"portal_turn_state": "waiting_approval", "pending_approval_id": str(approval.id)},
+            # Intentionally reversed order: tool card first, then text.
+            content_blocks=[tool_block, paragraph_block],
+        )
+
+        url = reverse("api:chat-portal-tools-approve")
+        response = self.client.post(
+            url,
+            data=json.dumps(
+                {
+                    "session_token": self.conversation.session_token,
+                    "approval_id": str(approval.id),
+                    "decision": "deny",
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+
+        approval.refresh_from_db()
+        self.assertEqual(approval.status, ConversationToolApprovalStatus.DENIED)
+
+        message.refresh_from_db()
+        blocks = message.content_blocks
+        self.assertEqual(blocks[0]["type"], "paragraph")
+        self.assertEqual(blocks[1]["type"], "tool_use")
+        payload = blocks[1]["payload"]
+        self.assertEqual(payload["phase"], "approval_resolved")
+        self.assertEqual(payload["status"], "denied")
+        self.assertEqual(payload["approval"]["status"], "denied")
+        self.assertNotIn("pending_approval_id", message.metadata)
+        self.assertEqual(message.metadata.get("portal_turn_state"), "approval_resolved")
 
     @override_settings(PORTAL_ALLOW_MCP_TOOL_PREFERENCES=False)
     def test_portal_tool_approval_remember_saves_preference_when_authenticated(self) -> None:
