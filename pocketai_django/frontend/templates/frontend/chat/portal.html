@@ -899,6 +899,158 @@
     color: hsl(var(--foreground) / 0.9);
   }
 
+  /* Voice call approval: compact chip with accept/reject CTAs (mobile-inspired). */
+  [data-chat-portal] .portal-call-approval {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    width: 100%;
+    max-width: 100%;
+    border-radius: 1rem;
+    border: 1px solid hsl(var(--border));
+    background: hsl(var(--background));
+    padding: 0.65rem 0.75rem;
+    overflow: hidden;
+    box-shadow: 0 1px 0 hsl(var(--border) / 0.25);
+  }
+
+  [data-chat-portal] .portal-call-approval__left {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    min-width: 0;
+  }
+
+  [data-chat-portal] .portal-call-approval__icon {
+    width: 2.25rem;
+    height: 2.25rem;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid hsl(var(--border));
+    background: hsl(var(--muted) / 0.25);
+    color: hsl(var(--foreground) / 0.85);
+    flex-shrink: 0;
+  }
+
+  [data-chat-portal] .portal-call-approval__icon svg {
+    width: 1.05rem;
+    height: 1.05rem;
+  }
+
+  [data-chat-portal] .portal-call-approval__meta {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    min-width: 0;
+  }
+
+  [data-chat-portal] .portal-call-approval__title {
+    font-size: var(--portal-font-sm);
+    font-weight: 650;
+    line-height: var(--portal-line-tight);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  [data-chat-portal] .portal-call-approval__subtitle {
+    font-size: var(--portal-font-xs);
+    color: hsl(var(--muted-foreground));
+    line-height: var(--portal-line-tight);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  [data-chat-portal] .portal-call-approval__right {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+  }
+
+  [data-chat-portal] .portal-call-approval__pill {
+    font-size: var(--portal-font-xs);
+    border: 1px solid hsl(var(--border));
+    background: hsl(var(--background));
+    padding: 0.18rem 0.55rem;
+    border-radius: 999px;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+    color: hsl(var(--muted-foreground));
+  }
+
+  [data-chat-portal] .portal-call-approval__pill[data-variant="success"] {
+    border-color: hsl(var(--success) / 0.55);
+    background: hsl(var(--success) / 0.16);
+    color: hsl(var(--success));
+  }
+
+  [data-chat-portal] .portal-call-approval__pill[data-variant="error"] {
+    border-color: hsl(var(--destructive) / 0.55);
+    background: hsl(var(--destructive) / 0.12);
+    color: hsl(var(--destructive));
+  }
+
+  [data-chat-portal] .portal-call-approval__actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+  }
+
+  [data-chat-portal] .portal-call-approval__btn {
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid hsl(var(--border));
+    box-shadow: 0 1px 0 hsl(var(--border) / 0.25);
+    transition: transform 120ms ease, filter 120ms ease, box-shadow 120ms ease;
+  }
+
+  [data-chat-portal] .portal-call-approval__btn:active {
+    transform: scale(0.98);
+  }
+
+  [data-chat-portal] .portal-call-approval__btn:focus-visible {
+    outline: 2px solid hsl(var(--primary) / 0.35);
+    outline-offset: 2px;
+  }
+
+  [data-chat-portal] .portal-call-approval__btn-icon {
+    width: 1.1rem;
+    height: 1.1rem;
+  }
+
+  [data-chat-portal] .portal-call-approval__btn-icon--hangup {
+    transform: rotate(135deg);
+  }
+
+  [data-chat-portal] .portal-call-approval__btn--accept {
+    border-color: hsl(var(--success) / 0.55);
+    background: hsl(var(--success) / 0.2);
+    color: hsl(var(--success));
+  }
+
+  [data-chat-portal] .portal-call-approval__btn--accept:hover {
+    filter: brightness(1.05);
+  }
+
+  [data-chat-portal] .portal-call-approval__btn--deny {
+    border-color: hsl(var(--destructive) / 0.55);
+    background: hsl(var(--destructive) / 0.16);
+    color: hsl(var(--destructive));
+  }
+
+  [data-chat-portal] .portal-call-approval__btn--deny:hover {
+    filter: brightness(1.03);
+  }
+
   [data-chat-portal] [data-message-meta],
   [data-chat-portal] [data-message-debug] {
     font-size: var(--portal-font-xs);

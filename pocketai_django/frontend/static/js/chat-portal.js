@@ -1808,6 +1808,9 @@ class ChatPortalClient {
     if (toolName === "email_create_draft" || toolName === "email_send_draft") {
       return this.buildEmailPreviewCard(payload, toolName);
     }
+    if (toolName === "initiate_phone_call" || toolName === "phone_call") {
+      return this.buildPhoneCallApprovalCard(payload);
+    }
     const eventId = (payload.event_id || payload.eventId || "").toString().trim();
     if (!eventId) return null;
 
@@ -1877,6 +1880,265 @@ class ChatPortalClient {
     card.appendChild(row);
     this.attachToolCardEvents(card);
     return card;
+  }
+
+  buildPhoneCallApprovalCard(payload) {
+    const eventId = (payload?.event_id || payload?.eventId || "").toString().trim();
+    if (!eventId) return null;
+
+    const input = payload && typeof payload.input === "object" ? payload.input : {};
+    const output = payload && typeof payload.output === "object" ? payload.output : {};
+    const phoneNumber = (
+      input.phone_number ||
+      input.phoneNumber ||
+      input.to_phone_number ||
+      input.toPhoneNumber ||
+      input.phone ||
+      input.to ||
+      output.to_phone_number ||
+      output.toPhoneNumber ||
+      output.phone_number ||
+      output.phoneNumber ||
+      output.to ||
+      ""
+    )
+      .toString()
+      .trim();
+    const contactName = (input.contact_name || input.contactName || input.name || input.recipient_name || input.recipientName || "")
+      .toString()
+      .trim();
+    const objective = (input.objective || input.reason || input.topic || output.objective || output.reason || output.topic || "")
+      .toString()
+      .trim();
+    const language = (input.language || output.language || "").toString().trim().toLowerCase();
+    const rtl = language.startsWith("ar") || /[\u0600-\u06FF]/.test(objective);
+
+    const card = document.createElement("div");
+    card.dataset.toolCard = "true";
+    card.dataset.toolEventId = eventId;
+    card.dataset.toolName = "initiate_phone_call";
+    card.dataset.callApprovalCard = "true";
+    card.className = "portal-call-approval";
+    if (rtl) {
+      card.dir = "rtl";
+    }
+
+    const left = document.createElement("div");
+    left.className = "portal-call-approval__left";
+
+    const icon = document.createElement("span");
+    icon.className = "portal-call-approval__icon";
+    icon.innerHTML = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M8.5 3.75c.4-.36.98-.46 1.48-.26l.2.1 2.2 1.35c.55.33.78 1 .54 1.6l-.08.18-1.06 2.06c.9 1.55 2.08 2.9 3.5 4 .56-.36 1.2-.66 1.9-.9l.23-.08 2.25-.68c.64-.2 1.32.05 1.7.62l.1.18 1.07 2.22c.23.47.16 1.04-.18 1.44l-.14.14-1.2 1.18c-.64.62-1.57.88-2.46.67-6.8-1.6-12.1-6.8-13.68-13.68-.2-.9.05-1.82.67-2.46l1.2-1.2z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
+    const meta = document.createElement("div");
+    meta.className = "portal-call-approval__meta";
+
+    const title = document.createElement("div");
+    title.className = "portal-call-approval__title";
+    title.dataset.callApprovalTitle = "true";
+    title.textContent = contactName || phoneNumber || "Phone call";
+
+    const subtitle = document.createElement("div");
+    subtitle.className = "portal-call-approval__subtitle";
+    subtitle.dataset.callApprovalSubtitle = "true";
+    const subtitleParts = [];
+    if (objective) subtitleParts.push(objective);
+    if (phoneNumber && contactName) subtitleParts.push(phoneNumber);
+    subtitle.textContent = subtitleParts.join(" · ") || "Outgoing call";
+    if (objective) subtitle.title = objective;
+
+    meta.appendChild(title);
+    if (subtitle.textContent) meta.appendChild(subtitle);
+
+    left.appendChild(icon);
+    left.appendChild(meta);
+
+    const right = document.createElement("div");
+    right.className = "portal-call-approval__right";
+
+    const pill = document.createElement("span");
+    pill.className = "portal-call-approval__pill";
+    pill.dataset.callApprovalPill = "true";
+    pill.hidden = true;
+
+    const actions = document.createElement("div");
+    actions.className = "portal-call-approval__actions";
+    actions.dataset.toolApprovalActions = "true";
+    actions.hidden = true;
+    actions.setAttribute("aria-hidden", "true");
+
+    const approveButton = document.createElement("button");
+    approveButton.type = "button";
+    approveButton.dataset.toolApprovalAction = "approve";
+    approveButton.className = "portal-call-approval__btn portal-call-approval__btn--accept";
+    approveButton.setAttribute("aria-label", "Accept call request");
+    approveButton.title = "Accept";
+    approveButton.innerHTML = `<svg class="portal-call-approval__btn-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8.5 3.75c.4-.36.98-.46 1.48-.26l.2.1 2.2 1.35c.55.33.78 1 .54 1.6l-.08.18-1.06 2.06c.9 1.55 2.08 2.9 3.5 4 .56-.36 1.2-.66 1.9-.9l.23-.08 2.25-.68c.64-.2 1.32.05 1.7.62l.1.18 1.07 2.22c.23.47.16 1.04-.18 1.44l-.14.14-1.2 1.18c-.64.62-1.57.88-2.46.67-6.8-1.6-12.1-6.8-13.68-13.68-.2-.9.05-1.82.67-2.46l1.2-1.2z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
+    const denyButton = document.createElement("button");
+    denyButton.type = "button";
+    denyButton.dataset.toolApprovalAction = "deny";
+    denyButton.className = "portal-call-approval__btn portal-call-approval__btn--deny";
+    denyButton.setAttribute("aria-label", "Reject call request");
+    denyButton.title = "Reject";
+    denyButton.innerHTML = `<svg class="portal-call-approval__btn-icon portal-call-approval__btn-icon--hangup" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8.5 3.75c.4-.36.98-.46 1.48-.26l.2.1 2.2 1.35c.55.33.78 1 .54 1.6l-.08.18-1.06 2.06c.9 1.55 2.08 2.9 3.5 4 .56-.36 1.2-.66 1.9-.9l.23-.08 2.25-.68c.64-.2 1.32.05 1.7.62l.1.18 1.07 2.22c.23.47.16 1.04-.18 1.44l-.14.14-1.2 1.18c-.64.62-1.57.88-2.46.67-6.8-1.6-12.1-6.8-13.68-13.68-.2-.9.05-1.82.67-2.46l1.2-1.2z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
+    actions.appendChild(approveButton);
+    actions.appendChild(denyButton);
+
+    right.appendChild(pill);
+    right.appendChild(actions);
+
+    card.appendChild(left);
+    card.appendChild(right);
+
+    this.attachToolCardEvents(card);
+    return card;
+  }
+
+  updatePhoneCallApprovalCard(card, payload) {
+    if (!card || !payload) return;
+
+    const phase = (payload.phase || "").toString().trim().toLowerCase();
+    const statusRaw = (payload.status || "").toString().trim().toLowerCase();
+    const approvalData = payload.approval && typeof payload.approval === "object" ? payload.approval : null;
+
+    const approvalId =
+      (payload.approval_id || payload.approvalId || (approvalData && approvalData.id) || card.dataset.approvalId || "")
+        .toString()
+        .trim();
+    if (approvalId) {
+      card.dataset.approvalId = approvalId;
+    }
+
+    let approvalStatus = "";
+    if (approvalData && approvalData.status) {
+      approvalStatus = approvalData.status.toString().trim().toLowerCase();
+    } else if (payload.approval_status || payload.approvalStatus) {
+      approvalStatus = (payload.approval_status || payload.approvalStatus || "").toString().trim().toLowerCase();
+    } else if (card.dataset.approvalStatus) {
+      approvalStatus = card.dataset.approvalStatus.toString().trim().toLowerCase();
+    }
+    if (approvalStatus) {
+      card.dataset.approvalStatus = approvalStatus;
+    }
+
+    const input = payload && typeof payload.input === "object" ? payload.input : {};
+    const output = payload && typeof payload.output === "object" ? payload.output : {};
+    const phoneNumber = (
+      input.phone_number ||
+      input.phoneNumber ||
+      input.to_phone_number ||
+      input.toPhoneNumber ||
+      input.phone ||
+      input.to ||
+      output.to_phone_number ||
+      output.toPhoneNumber ||
+      output.phone_number ||
+      output.phoneNumber ||
+      output.to ||
+      ""
+    )
+      .toString()
+      .trim();
+    const contactName = (input.contact_name || input.contactName || input.name || input.recipient_name || input.recipientName || "")
+      .toString()
+      .trim();
+    const objective = (input.objective || input.reason || input.topic || output.objective || output.reason || output.topic || "")
+      .toString()
+      .trim();
+    const language = (input.language || output.language || "").toString().trim().toLowerCase();
+    const rtl = language.startsWith("ar") || /[\u0600-\u06FF]/.test(objective);
+    if (rtl) {
+      card.dir = "rtl";
+    } else if (card.getAttribute("dir") === "rtl") {
+      card.removeAttribute("dir");
+    }
+
+    const titleEl = card.querySelector("[data-call-approval-title]");
+    const subtitleEl = card.querySelector("[data-call-approval-subtitle]");
+    if (titleEl) {
+      titleEl.textContent = contactName || phoneNumber || "Phone call";
+    }
+    if (subtitleEl) {
+      const subtitleParts = [];
+      if (objective) subtitleParts.push(objective);
+      if (phoneNumber && contactName) subtitleParts.push(phoneNumber);
+      subtitleEl.textContent = subtitleParts.join(" · ") || "Outgoing call";
+      subtitleEl.title = objective || subtitleEl.textContent;
+    }
+
+    const approveBtn = card.querySelector('[data-tool-approval-action="approve"]');
+    const denyBtn = card.querySelector('[data-tool-approval-action="deny"]');
+    const actionsEl = card.querySelector("[data-tool-approval-actions]");
+    const pillEl = card.querySelector("[data-call-approval-pill]");
+
+    const isPending = Boolean(approvalId) && (approvalStatus === "pending" || statusRaw === "pending_approval" || statusRaw === "pending" || phase === "approval_requested");
+    const isApproved = approvalStatus === "approved" || statusRaw === "approved";
+    const isDenied = approvalStatus === "denied" || statusRaw === "denied";
+    const isExpired = approvalStatus === "expired" || statusRaw === "expired";
+
+    if (actionsEl) {
+      actionsEl.hidden = !isPending;
+      actionsEl.setAttribute("aria-hidden", isPending ? "false" : "true");
+    }
+
+    if (approveBtn) {
+      approveBtn.disabled = !isPending;
+      approveBtn.classList.toggle("opacity-60", !isPending);
+      approveBtn.classList.toggle("cursor-not-allowed", !isPending);
+    }
+    if (denyBtn) {
+      denyBtn.disabled = !isPending;
+      denyBtn.classList.toggle("opacity-60", !isPending);
+      denyBtn.classList.toggle("cursor-not-allowed", !isPending);
+    }
+
+    let pillLabel = "";
+    let pillVariant = "muted";
+
+    const hasCallSession =
+      output &&
+      (output.call_session_id ||
+        output.callSessionId ||
+        output.call_session ||
+        output.callSession ||
+        output.request_id ||
+        output.requestId);
+
+    if (isPending) {
+      pillLabel = "";
+    } else if (isDenied) {
+      pillLabel = "Rejected";
+      pillVariant = "error";
+    } else if (isExpired) {
+      pillLabel = "Expired";
+      pillVariant = "muted";
+    } else if (isApproved && (statusRaw === "running" || phase === "started")) {
+      pillLabel = "Calling…";
+      pillVariant = "muted";
+    } else if (isApproved) {
+      pillLabel = "Approved";
+      pillVariant = "success";
+    } else if (statusRaw === "running" || phase === "started") {
+      pillLabel = "Calling…";
+      pillVariant = "muted";
+    } else if (hasCallSession && (statusRaw === "ok" || statusRaw === "needs_external" || phase === "finished")) {
+      pillLabel = "Queued";
+      pillVariant = "muted";
+    } else if (statusRaw === "throttled") {
+      pillLabel = "Throttled";
+      pillVariant = "error";
+    } else if (statusRaw === "error" || statusRaw === "failed" || statusRaw === "failure") {
+      pillLabel = "Failed";
+      pillVariant = "error";
+    }
+
+    if (pillEl) {
+      pillEl.textContent = pillLabel;
+      pillEl.hidden = Boolean(isPending) || !pillLabel;
+      pillEl.dataset.variant = pillVariant;
+    }
   }
 
   buildEmailPreviewCard(payload, toolName) {
@@ -2144,6 +2406,10 @@ class ChatPortalClient {
 	      this.updateEmailPreviewCard(card, payload);
 	      return;
 	    }
+      if (card.dataset.callApprovalCard === "true") {
+        this.updatePhoneCallApprovalCard(card, payload);
+        return;
+      }
 	    const phase = (payload.phase || "").toString().trim().toLowerCase();
 	    const statusRaw = (payload.status || "").toString().trim().toLowerCase();
 	    const remote = payload.remote && typeof payload.remote === "object" ? payload.remote : null;
