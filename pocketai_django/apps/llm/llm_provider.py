@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass
 import time
 from threading import Lock
@@ -695,9 +696,46 @@ class DeepSeekChatProvider(OpenAIChatProvider):
         content = content.strip()
         if not content:
             raise PromptGenerationError("DeepSeek response was empty.")
+
+        def _strip_code_fences(value: str) -> str:
+            """
+            DeepSeek sometimes wraps JSON in Markdown fences:
+            ```json
+            {...}
+            ```
+            """
+
+            if not value.startswith("```"):
+                return value
+            match = re.match(r"^```[a-zA-Z0-9_-]*\n(?P<body>.*)\n```$", value, flags=re.DOTALL)
+            if not match:
+                return value
+            return str(match.group("body") or "").strip()
+
+        def _extract_json_object(value: str) -> str | None:
+            start = value.find("{")
+            end = value.rfind("}")
+            if start == -1 or end == -1 or end <= start:
+                return None
+            return value[start : end + 1].strip()
+
         try:
             return json.loads(content)
         except json.JSONDecodeError:
+            cleaned = _strip_code_fences(content)
+            if cleaned and cleaned != content:
+                try:
+                    return json.loads(cleaned)
+                except json.JSONDecodeError:
+                    pass
+
+            extracted = _extract_json_object(cleaned)
+            if extracted and extracted != cleaned:
+                try:
+                    return json.loads(extracted)
+                except json.JSONDecodeError:
+                    pass
+
             structured_log(
                 "llm",
                 "warning",

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import json
+import re
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
@@ -48,6 +50,84 @@ def _decimal(value: object, default: str) -> Decimal:
 
 def _safe_text(value: object) -> str:
     text = str(value or "").strip()
+    return text
+
+
+def _extract_recipient_name(context_items: object) -> str:
+    """
+    Best-effort extraction of a recipient/customer name from CallSession.context_items.
+
+    Keep this logic aligned with `apps.voice.runtime._extract_recipient_name` but
+    duplicated here to avoid importing the realtime runtime into post-call code.
+    """
+
+    if not isinstance(context_items, list):
+        return ""
+    name_keys = {"name", "customer_name", "recipient_name", "contact_name", "customer", "recipient", "اسم", "العميل"}
+    for item in context_items:
+        if isinstance(item, dict):
+            for key in name_keys:
+                val = item.get(key)
+                if val and isinstance(val, str) and val.strip():
+                    return val.strip()
+            title = str(item.get("title") or item.get("label") or "").strip().lower()
+            if any(k in title for k in ("name", "customer", "recipient", "اسم", "عميل")):
+                val = str(item.get("value") or item.get("content") or item.get("text") or "").strip()
+                if val:
+                    return val
+    return ""
+
+
+def _topic_two_words(*, objective: str, insights: object) -> str:
+    """
+    Return a short "topic" label (~2 words) for compact UI chips.
+    Prefers LLM-derived insights topic when available, otherwise falls back to the objective.
+    """
+
+    candidate = ""
+    if isinstance(insights, dict):
+        topics = insights.get("topics")
+        if isinstance(topics, list) and topics:
+            first = topics[0]
+            if isinstance(first, dict):
+                candidate = str(first.get("topic") or "").strip()
+    if not candidate:
+        candidate = str(objective or "").strip()
+    if not candidate:
+        return ""
+
+    cleaned = re.sub(r"[—–-]+", " ", candidate)
+    parts = [p for p in cleaned.split() if p]
+    if not parts:
+        return ""
+    return " ".join(parts[:2])
+
+
+def _clean_summary_text(raw: str) -> str:
+    """
+    Normalize legacy summary payloads (sometimes wrapped in ```json fences).
+    """
+
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+
+    if text.startswith("```"):
+        # ```json\n{...}\n```
+        fence_match = re.match(r"^```[a-zA-Z0-9_-]*\n(?P<body>.*)\n```$", text, flags=re.DOTALL)
+        if fence_match:
+            text = str(fence_match.group("body") or "").strip()
+
+    # If the whole thing is still a JSON object, prefer extracting response_text.
+    if text.startswith("{") and text.endswith("}"):
+        try:
+            payload = json.loads(text)
+        except Exception:
+            payload = None
+        if isinstance(payload, dict):
+            candidate = payload.get("response_text")
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
     return text
 
 
@@ -397,7 +477,7 @@ def process_post_call(session: CallSession) -> PostCallProcessingResult:
 
         if post_summary_to_initiator and session.summary and session.initiating_conversation_id:
             try:
-                summary_text = str(session.summary).strip()
+                summary_text = _clean_summary_text(str(session.summary))
                 if summary_text:
                     exists = ConversationMessage.objects.filter(
                         conversation_id=session.initiating_conversation_id,
@@ -405,16 +485,48 @@ def process_post_call(session: CallSession) -> PostCallProcessingResult:
                         metadata__call_session_id=str(session.id),
                     ).exists()
                     if not exists:
-                        body = f"📞 Call completed.\n\nSummary:\n{summary_text}"
+                        duration_seconds = 0
+                        try:
+                            if session.started_at and session.ended_at:
+                                duration_seconds = int((session.ended_at - session.started_at).total_seconds())
+                        except Exception:
+                            duration_seconds = 0
+                        duration_seconds = max(0, min(24 * 60 * 60, duration_seconds))
+
+                        contact_name = _extract_recipient_name(session.context_items) or ""
+                        topic = _topic_two_words(objective=session.objective, insights=insights_payload)
+
+                        blocks = [
+                            {
+                                "block_id": f"call_summary_{session.id}",
+                                "type": "call_summary",
+                                "created_at": timezone.now().isoformat(),
+                                "payload": {
+                                    "call_session_id": str(session.id),
+                                    "contact_name": contact_name,
+                                    "to_phone_number": str(session.to_phone_number or ""),
+                                    "topic": topic,
+                                    "duration_seconds": duration_seconds,
+                                    "summary": summary_text,
+                                    "language": str(session.language or "en"),
+                                },
+                            }
+                        ]
                         ConversationMessage.objects.create(
                             conversation_id=session.initiating_conversation_id,
                             sender=ConversationSender.AI,
-                            body=body,
+                            body=summary_text,
                             metadata={
                                 "source": "voice_call",
                                 "type": "call_summary",
                                 "call_session_id": str(session.id),
+                                "contact_name": contact_name,
+                                "topic": topic,
+                                "duration_seconds": duration_seconds,
+                                "to_phone_number": str(session.to_phone_number or ""),
+                                "language": str(session.language or "en"),
                             },
+                            content_blocks=blocks,
                         )
                         Conversation.objects.filter(id=session.initiating_conversation_id).update(
                             last_activity_at=timezone.now()

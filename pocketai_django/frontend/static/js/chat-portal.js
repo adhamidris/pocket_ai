@@ -5489,6 +5489,61 @@ class ChatPortalClient {
     ];
   }
 
+  maybeCoerceCallSummaryBlocks(message, blocks) {
+    const meta = message && message.metadata && typeof message.metadata === "object" ? message.metadata : {};
+    const metaType = (meta.type || "").toString().trim().toLowerCase();
+    if (metaType !== "call_summary") return blocks;
+
+    const hasCallBlock = Array.isArray(blocks) && blocks.some((b) => (b && (b.type || "").toString().trim().toLowerCase() === "call_summary"));
+    if (hasCallBlock) return blocks;
+
+    const callSessionId = (meta.call_session_id || meta.callSessionId || "").toString().trim();
+    const contactName = (meta.contact_name || meta.contactName || "").toString().trim();
+    const topic = (meta.topic || "").toString().trim();
+    const durationSeconds = Number(meta.duration_seconds || meta.durationSeconds || 0);
+    const toPhone = (meta.to_phone_number || meta.toPhoneNumber || "").toString().trim();
+    const language = (meta.language || "").toString().trim().toLowerCase();
+
+    const rawBody = typeof message.body === "string" ? message.body : message.body == null ? "" : String(message.body);
+    let summaryText = rawBody;
+    const summaryIdx = rawBody.toLowerCase().indexOf("summary:");
+    if (summaryIdx !== -1) {
+      summaryText = rawBody.slice(summaryIdx + "summary:".length).trim();
+    }
+    summaryText = summaryText.trim();
+    if (summaryText.startsWith("```")) {
+      const match = summaryText.match(/^```[a-z0-9_-]*\\n([\\s\\S]*?)\\n```$/i);
+      if (match && match[1]) summaryText = match[1].trim();
+    }
+    if (summaryText.startsWith("{") && summaryText.endsWith("}")) {
+      try {
+        const parsed = JSON.parse(summaryText);
+        if (parsed && typeof parsed === "object" && typeof parsed.response_text === "string" && parsed.response_text.trim()) {
+          summaryText = parsed.response_text.trim();
+        }
+      } catch (_err) {
+        // ignore
+      }
+    }
+
+    return [
+      {
+        block_id: callSessionId ? `call_summary_${callSessionId}` : `call_summary_${Math.random().toString(16).slice(2)}`,
+        type: "call_summary",
+        created_at: new Date().toISOString(),
+        payload: {
+          call_session_id: callSessionId,
+          contact_name: contactName,
+          to_phone_number: toPhone,
+          topic,
+          duration_seconds: Number.isFinite(durationSeconds) ? durationSeconds : 0,
+          summary: summaryText,
+          language,
+        },
+      },
+    ];
+  }
+
   renderMessageContentBlocks(messageBodyEl, blocks) {
     if (!messageBodyEl) return;
     const blocksRoot =
@@ -5833,6 +5888,82 @@ class ChatPortalClient {
     const type = (block.type || "").toString().trim().toLowerCase();
     const blockId = (block.block_id || block.blockId || "").toString().trim();
     const payload = block.payload && typeof block.payload === "object" ? block.payload : {};
+
+    if (type === "call_summary") {
+      const callSessionId = (payload.call_session_id || payload.callSessionId || "").toString().trim();
+      const contactName = (payload.contact_name || payload.contactName || "").toString().trim();
+      const topic = (payload.topic || "").toString().trim();
+      const toPhone = (payload.to_phone_number || payload.toPhoneNumber || "").toString().trim();
+      const durationSeconds = Number(payload.duration_seconds || payload.durationSeconds || 0);
+      const durationLabel = Number.isFinite(durationSeconds) && durationSeconds > 0 ? this.formatDurationMs(durationSeconds * 1000) : "";
+      const summaryText = typeof payload.summary === "string" ? payload.summary.trim() : "";
+      const language = (payload.language || "").toString().trim().toLowerCase();
+      const rtl = payload.rtl === true || language.startsWith("ar");
+
+      const wrapper = document.createElement("details");
+      wrapper.dataset.contentBlock = "true";
+      wrapper.dataset.blockType = "call_summary";
+      if (blockId) wrapper.dataset.blockId = blockId;
+      if (callSessionId) wrapper.dataset.callSessionId = callSessionId;
+      wrapper.className = "portal-call-summary";
+      if (rtl) {
+        wrapper.dir = "rtl";
+      }
+
+      const summary = document.createElement("summary");
+      summary.className = "portal-call-summary__summary";
+
+      const left = document.createElement("div");
+      left.className = "portal-call-summary__left";
+
+      const icon = document.createElement("span");
+      icon.className = "portal-call-summary__icon";
+      icon.innerHTML = `<svg viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\" aria-hidden=\"true\"><path d=\"M8.5 3.75c.4-.36.98-.46 1.48-.26l.2.1 2.2 1.35c.55.33.78 1 .54 1.6l-.08.18-1.06 2.06c.9 1.55 2.08 2.9 3.5 4 .56-.36 1.2-.66 1.9-.9l.23-.08 2.25-.68c.64-.2 1.32.05 1.7.62l.1.18 1.07 2.22c.23.47.16 1.04-.18 1.44l-.14.14-1.2 1.18c-.64.62-1.57.88-2.46.67-6.8-1.6-12.1-6.8-13.68-13.68-.2-.9.05-1.82.67-2.46l1.2-1.2z\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>`;
+
+      const meta = document.createElement("div");
+      meta.className = "portal-call-summary__meta";
+
+      const titleRow = document.createElement("div");
+      titleRow.className = "portal-call-summary__title";
+      const nameText = contactName || toPhone || "Phone call";
+      titleRow.textContent = nameText;
+
+      const subtitleRow = document.createElement("div");
+      subtitleRow.className = "portal-call-summary__subtitle";
+      const subtitleParts = [];
+      if (topic) subtitleParts.push(topic);
+      if (toPhone && contactName) subtitleParts.push(toPhone);
+      subtitleRow.textContent = subtitleParts.join(" · ");
+
+      meta.appendChild(titleRow);
+      if (subtitleRow.textContent) meta.appendChild(subtitleRow);
+
+      left.appendChild(icon);
+      left.appendChild(meta);
+
+      const right = document.createElement("div");
+      right.className = "portal-call-summary__right";
+      if (durationLabel) {
+        const dur = document.createElement("span");
+        dur.className = "portal-call-summary__duration";
+        dur.textContent = durationLabel;
+        right.appendChild(dur);
+      }
+
+      summary.appendChild(left);
+      summary.appendChild(right);
+
+      const drawer = document.createElement("div");
+      drawer.className = "portal-call-summary__drawer";
+      const body = document.createElement("div");
+      body.className = "portal-call-summary__body";
+      body.innerHTML = this.renderMarkdown(summaryText || "");
+      drawer.appendChild(body);
+
+      wrapper.appendChild(summary);
+      wrapper.appendChild(drawer);
+      return wrapper;
+    }
 
 	    if (type === "paragraph" || type === "heading" || type === "list_item") {
 	      let wrapper = null;
@@ -6465,7 +6596,8 @@ class ChatPortalClient {
       blocksRoot.className = "space-y-2";
       body.appendChild(blocksRoot);
 
-      const blocks = this.coerceContentBlocks(message.contentBlocks, message.body);
+      let blocks = this.coerceContentBlocks(message.contentBlocks, message.body);
+      blocks = this.maybeCoerceCallSummaryBlocks(message, blocks);
       if (blocks.length) {
         this.renderContentBlocksInto(blocksRoot, blocks);
       }
