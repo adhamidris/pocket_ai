@@ -2122,13 +2122,13 @@ class ChatPortalClient {
     } else if (isDenied) {
       pillLabel = "Rejected";
       pillVariant = "error";
-    } else if (isExpired) {
-      pillLabel = "Expired";
-      pillVariant = "muted";
-    } else if (isApproved && (statusRaw === "running" || phase === "started")) {
-      pillLabel = "Calling…";
-      pillVariant = "muted";
-    } else if (isApproved) {
+	    } else if (isExpired) {
+	      pillLabel = "Approval Expired";
+	      pillVariant = "muted";
+	    } else if (isApproved && (statusRaw === "running" || phase === "started")) {
+	      pillLabel = "Calling…";
+	      pillVariant = "muted";
+	    } else if (isApproved) {
       pillLabel = "Approved";
       pillVariant = "success";
     } else if (statusRaw === "running" || phase === "started") {
