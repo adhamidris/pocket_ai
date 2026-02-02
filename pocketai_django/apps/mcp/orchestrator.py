@@ -9518,27 +9518,37 @@ class McpOrchestratorService:
     def _approval_blocked_payload(tool_name: str, status: str) -> Mapping[str, object]:
         normalized = str(status or "").strip().lower()
         if normalized == ConversationToolApprovalStatus.DENIED:
+            hint = "Inform the user the action was not approved and ask how to proceed."
             return {
                 "tool": tool_name,
                 "status": "blocked",
                 "error_code": "approval_denied",
                 "error": "Tool call was denied.",
-                "hint": "Inform the user the action was not approved and ask how to proceed.",
+                "hint": hint,
+                "llm_hint": hint,
             }
         if normalized == ConversationToolApprovalStatus.EXPIRED:
+            hint = (
+                "The approval request expired because there was no response. "
+                "Acknowledge the expiry briefly and ask how the user wants to proceed "
+                "(retry, change details, or cancel). Avoid repeating the full request unless asked."
+            )
             return {
                 "tool": tool_name,
                 "status": "blocked",
                 "error_code": "approval_timeout",
                 "error": "Tool approval timed out.",
-                "hint": "Ask the user to approve again if they still want this action.",
+                "hint": hint,
+                "llm_hint": hint,
             }
+        hint = "Ask the user to approve the tool call before retrying."
         return {
             "tool": tool_name,
             "status": "blocked",
             "error_code": "approval_unavailable",
             "error": "Tool approval was not granted.",
-            "hint": "Ask the user to approve the tool call before retrying.",
+            "hint": hint,
+            "llm_hint": hint,
         }
 
     def _get_or_create_tool_approval(
