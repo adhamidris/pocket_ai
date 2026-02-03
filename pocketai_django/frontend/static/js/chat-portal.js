@@ -4256,6 +4256,15 @@ class ChatPortalClient {
         return;
       }
 
+      const voiceToggleEl = target.closest("[data-voice-toggle]");
+      if (voiceToggleEl) {
+        const sessionId = (voiceToggleEl.getAttribute("data-voice-toggle") || "").trim();
+        if (sessionId) {
+          this.toggleVoiceCallExpanded(sessionId);
+        }
+        return;
+      }
+
       const toggleEl = target.closest("[data-run-toggle]");
       if (!toggleEl) return;
       const runId = (toggleEl.getAttribute("data-run-toggle") || "").trim();
@@ -4340,7 +4349,7 @@ class ChatPortalClient {
     const state = this.activeVoiceCalls.get(sessionId);
     if (!state) return;
     state.expanded = !state.expanded;
-    this.scheduleInboxRender();
+    this.scheduleTasksRender();
   }
 
   getLatestRunEvent(state, predicate) {
@@ -4750,9 +4759,10 @@ class ChatPortalClient {
     if (!btn) return;
 
     const hasRuns = this.agentRuns && this.agentRuns.size > 0;
+    const hasVoiceCalls = this.activeVoiceCalls && this.activeVoiceCalls.size > 0;
     const panelVisible = this.elements.tasksPanel && !this.elements.tasksPanel.hasAttribute("hidden");
 
-    if (!hasRuns) {
+    if (!hasRuns && !hasVoiceCalls) {
       btn.setAttribute("hidden", "");
       return;
     }
@@ -4763,7 +4773,10 @@ class ChatPortalClient {
       btn.removeAttribute("hidden");
     }
 
-    const activeCount = this.getActiveRunCount();
+    let activeCount = this.getActiveRunCount();
+    if (!hasRuns && hasVoiceCalls) {
+      activeCount = this.activeVoiceCalls.size;
+    }
     if (this.elements.tasksCount) {
       if (activeCount > 0) {
         this.elements.tasksCount.textContent = String(activeCount);
@@ -4780,11 +4793,9 @@ class ChatPortalClient {
     if (!btn) return;
 
     const hasRequests = this.agentRequests && this.agentRequests.size > 0;
-    const hasVoiceCalls = this.activeVoiceCalls && this.activeVoiceCalls.size > 0;
-    const hasAny = hasRequests || hasVoiceCalls;
+    const hasAny = hasRequests;
     const activeRequestCount = this.getActiveRequestCount();
-    const activeVoiceCount = this.activeVoiceCalls ? this.activeVoiceCalls.size : 0;
-    const activeCount = activeRequestCount + activeVoiceCount;
+    const activeCount = activeRequestCount;
     const panelVisible = this.elements.inboxPanel && !this.elements.inboxPanel.hasAttribute("hidden");
 
     if (!hasAny) {
@@ -4952,12 +4963,13 @@ class ChatPortalClient {
       state.transcripts = state.transcripts.slice(-50);
     }
 
-    // Show inbox panel when transcript arrives
-    if (!this.inboxPanelUserHidden) {
-      this.setInboxPanelVisible(true);
+    // Voice calling runs in the background; surface transcript updates in the Tasks panel.
+    if (!this.tasksPanelUserHidden) {
+      this.setInboxPanelVisible(false);
+      this.setTasksPanelVisible(true);
     }
-    this.updateInboxOpenButton();
-    this.scheduleInboxRender();
+    this.updateTasksOpenButton();
+    this.scheduleTasksRender();
   }
 
   upsertAgentRun(run) {
@@ -5056,7 +5068,12 @@ class ChatPortalClient {
       run: state && state.run ? state.run : {},
     }));
 
-    if (!runs.length) {
+    const voiceCalls = Array.from(this.activeVoiceCalls.entries()).map(([id, state]) => ({
+      id,
+      state,
+    }));
+
+    if (!runs.length && !voiceCalls.length) {
       if (this.elements.tasksEmpty) {
         this.elements.tasksEmpty.removeAttribute("hidden");
       }
@@ -5092,11 +5109,24 @@ class ChatPortalClient {
       return bTime - aTime;
     });
 
-    const cardsHtml = runs
-      .map(({ id, state, run }) => this.renderRunCardHtml(id, state, run))
+    const voiceSessionsInRuns = new Set();
+    const runCardsHtml = runs
+      .map(({ id, state, run }) => {
+        const voiceInfo = this.extractVoiceCallRunInfo(state, run);
+        if (voiceInfo && voiceInfo.sessionId) {
+          voiceSessionsInRuns.add(voiceInfo.sessionId);
+          return this.renderVoiceCallRunCardHtml(id, state, run, voiceInfo);
+        }
+        return this.renderRunCardHtml(id, state, run);
+      })
       .join("");
 
-    list.innerHTML = cardsHtml;
+    const extraVoiceCardsHtml = voiceCalls
+      .filter(({ id }) => id && !voiceSessionsInRuns.has(id))
+      .map(({ id, state }) => this.renderVoiceCallTranscriptCardHtml(id, state))
+      .join("");
+
+    list.innerHTML = runCardsHtml + extraVoiceCardsHtml;
     this.updateTasksOpenButton();
   }
 
@@ -5110,12 +5140,7 @@ class ChatPortalClient {
       request: state && state.request ? state.request : {},
     }));
 
-    const voiceCalls = Array.from(this.activeVoiceCalls.entries()).map(([id, state]) => ({
-      id,
-      state,
-    }));
-
-    const hasContent = requests.length > 0 || voiceCalls.length > 0;
+    const hasContent = requests.length > 0;
 
     if (!hasContent) {
       if (this.elements.inboxEmpty) {
@@ -5147,16 +5172,11 @@ class ChatPortalClient {
       return bTime - aTime;
     });
 
-    // Render voice call transcript cards first (active calls)
-    const voiceCardsHtml = voiceCalls
-      .map(({ id, state }) => this.renderVoiceCallTranscriptCardHtml(id, state))
-      .join("");
-
     const requestCardsHtml = requests
       .map(({ id, state, request }) => this.renderRequestCardHtml(id, state, request))
       .join("");
 
-    list.innerHTML = voiceCardsHtml + requestCardsHtml;
+    list.innerHTML = requestCardsHtml;
     this.updateInboxOpenButton();
   }
 
@@ -5191,6 +5211,261 @@ class ChatPortalClient {
               ${transcriptLinesHtml || '<div class="portal-transcript-empty">Waiting for speech...</div>'}
             </div>
           </div>
+        </div>
+      </div>
+    `;
+  }
+
+  extractVoiceCallRunInfo(state, run) {
+    const events = state && Array.isArray(state.events) ? state.events : [];
+    let sessionId = "";
+    let toPhone = "";
+    let objective = "";
+    let callType = "";
+    let language = "";
+    let country = "";
+    let callStatus = "";
+
+    for (let idx = events.length - 1; idx >= 0; idx -= 1) {
+      const evt = events[idx];
+      if (!evt || typeof evt !== "object") continue;
+      const payload = evt.payload && typeof evt.payload === "object" ? evt.payload : null;
+      if (!payload) continue;
+
+      if (!sessionId) {
+        sessionId = (
+          payload.call_session_id ||
+          payload.callSessionId ||
+          payload.voice_call_session_id ||
+          payload.voiceCallSessionId ||
+          ""
+        )
+          .toString()
+          .trim();
+      }
+      if (!toPhone) {
+        toPhone = (
+          payload.to_phone_number ||
+          payload.toPhoneNumber ||
+          payload.phone_number ||
+          payload.phoneNumber ||
+          payload.to ||
+          ""
+        )
+          .toString()
+          .trim();
+      }
+      if (!objective) {
+        objective = (payload.objective || payload.reason || payload.topic || "")
+          .toString()
+          .trim();
+      }
+      if (!callType) {
+        callType = (payload.call_type || payload.callType || "")
+          .toString()
+          .trim();
+      }
+      if (!language) {
+        language = (payload.language || "").toString().trim();
+      }
+      if (!country) {
+        country = (payload.country || "").toString().trim();
+      }
+      if (!callStatus) {
+        callStatus = (
+          payload.status ||
+          payload.call_status ||
+          payload.callStatus ||
+          ""
+        )
+          .toString()
+          .trim();
+      }
+
+      if (sessionId && toPhone && objective && callType && language && country && callStatus) {
+        break;
+      }
+    }
+
+    if (!sessionId) return null;
+    return {
+      sessionId,
+      toPhone,
+      objective,
+      callType,
+      language,
+      country,
+      callStatus,
+      runTitle: run && run.title ? String(run.title) : "",
+    };
+  }
+
+  renderVoiceCallStatusPill({ callStatus = "", runStatus = "", hasTranscript = false } = {}) {
+    const normalize = (raw) => (raw || "").toString().trim().toLowerCase();
+    const call = normalize(callStatus);
+    const run = normalize(runStatus);
+
+    let statusKey = "";
+    let label = "";
+
+    if (call) {
+      if (["in_progress", "in-progress", "inprogress"].includes(call)) {
+        statusKey = "running";
+        label = "Live";
+      } else if (call === "ringing") {
+        statusKey = "running";
+        label = "Ringing";
+      } else if (call === "initiating") {
+        statusKey = "running";
+        label = "Dialing";
+      } else if (call === "queued") {
+        statusKey = "queued";
+        label = "Queued";
+      } else if (["completed", "finished", "done"].includes(call)) {
+        statusKey = "completed";
+        label = "Done";
+      } else if (["cancelled", "canceled"].includes(call)) {
+        statusKey = "cancelled";
+        label = "Cancelled";
+      } else if (["failed", "error"].includes(call)) {
+        statusKey = "failed";
+        label = "Failed";
+      } else {
+        statusKey = call;
+        label = call.replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
+      }
+    } else if (hasTranscript) {
+      statusKey = "running";
+      label = "Live";
+    } else if (run) {
+      if (run === "waiting_external") {
+        statusKey = "queued";
+        label = "Queued";
+      } else {
+        statusKey = run;
+        label = this.formatRunStatusLabel(run);
+      }
+    } else {
+      statusKey = "queued";
+      label = "Queued";
+    }
+
+    if (statusKey === "completed") {
+      return `
+        <span class="portal-task__status-pill portal-task__status-pill--icon" data-status="completed" aria-label="${this.escapeHtml(label)}">
+          <span class="portal-task__status-pill-icon" aria-hidden="true">${this.getSuccessCircleIconMarkup()}</span>
+        </span>
+      `;
+    }
+
+    return `
+      <span class="portal-task__status-pill" data-status="${this.escapeHtml(statusKey)}">${this.escapeHtml(label)}</span>
+    `;
+  }
+
+  getVoiceTranscriptEmptyMessage({ callStatus = "", runStatus = "" } = {}) {
+    const normalize = (raw) => (raw || "").toString().trim().toLowerCase();
+    const call = normalize(callStatus);
+    const run = normalize(runStatus);
+
+    if (["cancelled", "canceled"].includes(call) || ["cancelled", "canceled"].includes(run)) {
+      return "Call cancelled.";
+    }
+    if (["failed", "error"].includes(call) || ["failed", "error"].includes(run)) {
+      return "Call failed.";
+    }
+    if (["completed", "finished", "done"].includes(call) || ["completed", "succeeded", "success"].includes(run)) {
+      return "Call completed.";
+    }
+    if (call === "ringing") return "Ringing…";
+    if (call === "initiating") return "Dialing…";
+    if (call === "queued" || run === "waiting_external") {
+      return "Waiting for the call to start…";
+    }
+    return "Waiting for speech…";
+  }
+
+  renderVoiceCallRunCardHtml(runId, state, run, info) {
+    const expanded = Boolean(state && state.expanded);
+    const runStatus = (run && run.status ? run.status : "").toString().trim();
+    const sessionId = info && info.sessionId ? String(info.sessionId).trim() : "";
+    const toPhone = info && info.toPhone ? String(info.toPhone).trim() : "";
+    const objective = info && info.objective ? String(info.objective).trim() : "";
+    const callType = info && info.callType ? String(info.callType).trim() : "";
+    const language = info && info.language ? String(info.language).trim() : "";
+    const country = info && info.country ? String(info.country).trim() : "";
+    const callStatus = info && info.callStatus ? String(info.callStatus).trim() : "";
+
+    const transcriptState = sessionId ? this.activeVoiceCalls.get(sessionId) : null;
+    const transcripts = transcriptState && Array.isArray(transcriptState.transcripts) ? transcriptState.transcripts : [];
+    const hasTranscript = transcripts.length > 0;
+
+    const title = run && run.title ? String(run.title) : toPhone ? `Call ${toPhone}` : "Phone call";
+
+    const subtitleParts = [];
+    if (objective) subtitleParts.push(objective);
+    if (toPhone && !title.includes(toPhone)) subtitleParts.push(toPhone);
+    const subtitle = subtitleParts.join(" · ") || this.formatRunStatusLabel(runStatus || "queued");
+
+    const detailsItems = [];
+    if (toPhone) detailsItems.push(`To: ${toPhone}`);
+    if (objective) detailsItems.push(`Objective: ${objective}`);
+    if (callType) detailsItems.push(`Type: ${callType}`);
+    if (language) detailsItems.push(`Language: ${language}`);
+    if (country) detailsItems.push(`Country: ${country}`);
+    const detailsHtml = detailsItems.length
+      ? `
+        <div class="portal-task__section">
+          <div class="portal-task__section-title">Details</div>
+          <div class="portal-task__list">
+            ${detailsItems.map((line) => `<div class="portal-task__list-item">${this.escapeHtml(line)}</div>`).join("")}
+          </div>
+        </div>
+      `
+      : "";
+
+    const transcriptLinesHtml = transcripts
+      .slice(-20)
+      .map((t) => {
+        const roleClass = t.role === "customer" ? "transcript-customer" : "transcript-agent";
+        const roleLabel = t.role === "customer" ? "Customer" : "Agent";
+        return `<div class="portal-transcript-line ${roleClass}"><span class="portal-transcript-role">${this.escapeHtml(roleLabel)}:</span> ${this.escapeHtml(
+          t.text
+        )}</div>`;
+      })
+      .join("");
+
+    const transcriptEmpty = this.getVoiceTranscriptEmptyMessage({ callStatus, runStatus });
+    const transcriptHtml = `
+      <div class="portal-task__section">
+        <div class="portal-task__section-title">Transcript</div>
+        <div class="portal-transcript-container">
+          ${transcriptLinesHtml || `<div class="portal-transcript-empty">${this.escapeHtml(transcriptEmpty)}</div>`}
+        </div>
+      </div>
+    `;
+
+    const planHtml = this.renderRunPlanHtml(run);
+    const logHtml = this.renderRunLogHtml(state, run);
+
+    return `
+      <div class="portal-task portal-voice-call" data-run-id="${this.escapeHtml(runId)}" data-voice-session-id="${this.escapeHtml(
+      sessionId
+    )}" data-expanded="${expanded ? "true" : "false"}">
+        <button type="button" class="portal-task__header" data-run-toggle="${this.escapeHtml(runId)}">
+          <div class="portal-task__meta">
+            <div class="portal-task__title-row">
+              <div class="portal-task__title">${this.escapeHtml(title)}</div>
+              ${this.renderVoiceCallStatusPill({ callStatus, runStatus, hasTranscript })}
+            </div>
+            <div class="portal-task__subtitle">${this.escapeHtml(subtitle)}</div>
+          </div>
+        </button>
+        <div class="portal-task__body">
+          ${planHtml}
+          ${logHtml}
+          ${detailsHtml}
+          ${transcriptHtml}
         </div>
       </div>
     `;
