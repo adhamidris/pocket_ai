@@ -8,25 +8,18 @@ will replace segment-based tool chip reconstruction.
 
 ### Streaming endpoint
 
-- Backend entrypoint: `apps/api/chat_portal.py` (`stream_send`)
-- Transport: Server-Sent Events (SSE)
+- Backend entrypoint: `apps/api/chat_portal.py` (`portal_turn_create` + `portal_turn_events`)
+- Transport: Server-Sent Events (SSE) for turn events
 
 #### SSE events (common)
 
-- `context_progress`
-  - Payload: `{ "state": "...", "label": "...", "meta": {...} }`
-- `status`
-  - Payload: `{ "state": "...", "label": "...", "meta": {...} }`
-- `spinnerStatus`
-  - Payload: `{ "message_id": "<uuid>", "text": "...", "pending": true|false }`
-- `block_start` / `block_delta` / `block_end`
-  - Ordered streaming events for text-like blocks (`text`, `reasoning`, rich text).
-- `block_tool_use` / `block_tool_result`
-  - Ordered streaming events for tool lifecycle + results.
-- `turnPersisted`
-  - Fired exactly once after persistence; includes `content_blocks`.
-- `turnUpdated`, `actionsComplete`, `actionsError`
-  - Optional post-processing events (planner/actions).
+- `turnEvent`
+  - Payload: `{ "turn_id": "<uuid>", "seq": <int>, "type": "<event_type>", "payload": {...} }`
+  - `type` values include:
+    - `block_start` / `block_delta` / `block_end` for text-like blocks (`text`, `reasoning`, rich text).
+    - `block_tool_use` / `block_tool_result` for tool lifecycle + results.
+    - `status` for orchestrator status updates.
+    - `turn_persisted` for final persistence (includes `content_blocks`).
 
 ### Persistence paths
 

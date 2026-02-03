@@ -11,7 +11,7 @@ This document walks through a **single chat turn** in the SaaS portal — from t
 This doc covers only the **public chat portal → LLM → knowledge tools** workflow:
 
 - Session bootstrap for the portal widget.
-- A single **message send** using `POST /api/chat/stream/send/`.
+- A single **message send** using `POST /api/chat/turns/` plus SSE from `/api/chat/turns/<turn_id>/events/`.
 - The **MCP orchestrator** path with `search_knowledge` + `read_knowledge`.
 - How streaming, planning, actions, and extractions are stitched together and persisted.
 
@@ -57,7 +57,7 @@ Out of scope:
    Widget resolves business/agent handle and calls `bootstrap_session`.
 
 2. **Message send**  
-   Widget sends `POST /api/chat/stream/send/` with `session_token`, `body`, and optional metadata.
+   Widget sends `POST /api/chat/turns/` with `session_token`, `body`, and optional metadata, then opens `/api/chat/turns/<turn_id>/events/`.
 
 3. **MCP tool loop**  
    - `search_knowledge` returns refs (IDs only).
@@ -78,18 +78,13 @@ Out of scope:
 
 ```text
 Browser
-  ↓ POST /api/chat/stream/send (session_token, body)
-Django: apps/api/chat_portal.stream_send
+  ↓ POST /api/chat/turns (session_token, body)
+Django: apps/api/chat_portal.portal_turn_create
   ↓ ChatPortalService.append_message (persist customer message)
-  ↓ Decide orchestrator (MCP)
-  ↓ McpOrchestratorService.stream_turn(...)
-       - search_knowledge → read_knowledge
-       - Streams answer deltas via on_response_text_delta
-  ↓ finalize_stream_context(...)
-       - run_planner_only → JSON actions/extractions
-       - Persist assistant message + metadata
-  ↓ SSE writer (event_stream)
-       - block_start/block_delta/block_end + turnPersisted + turnUpdated
+  ↓ PortalTurn + PortalTurnEvent created
+  ↓ PortalTurnRunner streams events + persists assistant message
+  ↓ SSE: /api/chat/turns/<turn_id>/events
+       - block_start/block_delta/block_end + turn_persisted
 Browser renders streaming answer
 ```
 

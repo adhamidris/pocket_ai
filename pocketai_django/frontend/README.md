@@ -48,7 +48,7 @@ payload = _call_portal_bootstrap_api(request, business_slug, agent_slug, existin
 Portal page (client-side flow):
 - Template: `frontend/templates/frontend/chat/portal.html`
 - JS bundle: `frontend/static/js/chat-portal.js`
-- API endpoints: `/api/chat/portal/sessions/` + `/api/chat/stream/send/`
+- API endpoints: `/api/chat/portal/sessions/` + `/api/chat/turns/`
 
 Troubleshooting
 ---------------

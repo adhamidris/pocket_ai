@@ -3072,8 +3072,15 @@ def chat_portal(request: HttpRequest, business_slug: str, agent_slug: str) -> Ht
         "endpoints": {
             "bootstrap": reverse("api:chat-portal-session"),
             "messages": reverse("api:chat-messages"),
-            "stream_send": reverse("api:chat-stream-send"),
-            "stream_stop": reverse("api:chat-stream-stop"),
+            "turns_create": reverse("api:chat-turns-create"),
+            "turn_events_template": reverse(
+                "api:chat-turns-events",
+                args=["00000000-0000-0000-0000-000000000000"],
+            ).replace("00000000-0000-0000-0000-000000000000", "{turn_id}"),
+            "turn_cancel": reverse(
+                "api:chat-turns-cancel",
+                args=["00000000-0000-0000-0000-000000000000"],
+            ).replace("00000000-0000-0000-0000-000000000000", "{turn_id}"),
             "events": reverse("api:chat-events"),
             "csat": reverse("api:chat-csat"),
             "tool_approval": reverse("api:chat-portal-tools-approve"),

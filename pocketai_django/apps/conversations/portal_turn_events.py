@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Iterable
 
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone
 
 from .models import PortalTurn, PortalTurnEvent
+
+
+PORTAL_TURN_EVENTS_NOTIFY_CHANNEL = "portal_turn_events"
 
 
 def append_turn_event(*, turn_id: uuid.UUID, event_type: str, payload: dict | None = None) -> PortalTurnEvent:
@@ -24,6 +28,14 @@ def append_turn_event(*, turn_id: uuid.UUID, event_type: str, payload: dict | No
             payload=payload_out,
         )
         PortalTurn.objects.filter(id=turn.id).update(last_event_seq=seq, updated_at=timezone.now())
+        # Transactional NOTIFY: delivered only after this transaction commits.
+        try:
+            notify_payload = json.dumps({"turn_id": str(turn.id), "seq": seq}, separators=(",", ":"))
+            with connection.cursor() as cursor:
+                cursor.execute(f"NOTIFY {PORTAL_TURN_EVENTS_NOTIFY_CHANNEL}, %s", [notify_payload])
+        except Exception:  # pragma: no cover - best effort only
+            # Streaming must not fail if NOTIFY is unavailable (e.g., during migrations/tests).
+            pass
     return event
 
 

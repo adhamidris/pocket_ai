@@ -28,6 +28,8 @@ from apps.conversations.models import (
     ConversationSender,
     ConversationToolApproval,
     ConversationToolApprovalStatus,
+    PortalTurn,
+    PortalTurnStatus,
 )
 
 
@@ -508,13 +510,13 @@ class ChatPortalBootstrapPendingApprovalsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         return response.json()
 
-    def test_bootstrap_injects_pending_approval_cards(self) -> None:
+    def test_bootstrap_does_not_inject_pending_approval_cards(self) -> None:
         payload = self._bootstrap()
         session_token = payload["session"]["session_token"]
         conversation_id = payload["session"]["conversation_id"]
         conversation = Conversation.objects.get(id=conversation_id)
 
-        approval = ConversationToolApproval.objects.create(
+        ConversationToolApproval.objects.create(
             conversation=conversation,
             connection=None,
             tool_name="initiate_phone_call",
@@ -526,69 +528,28 @@ class ChatPortalBootstrapPendingApprovalsTests(TestCase):
 
         payload2 = self._bootstrap(session_token=session_token)
         messages = payload2.get("messages") or []
-        pending_message = next(
-            (
-                msg
+        self.assertFalse(
+            any(
+                (msg.get("metadata") or {}).get("type") == "pending_tool_approvals"
                 for msg in messages
-                if isinstance(msg, dict) and (msg.get("metadata") or {}).get("type") == "pending_tool_approvals"
-            ),
-            None,
+                if isinstance(msg, dict)
+            )
         )
-        self.assertIsNotNone(pending_message)
-        blocks = pending_message.get("content_blocks") or []
-        approval_blocks = [
-            block
-            for block in blocks
-            if isinstance(block, dict)
-            and isinstance(block.get("payload"), dict)
-            and isinstance(block["payload"].get("approval"), dict)
-            and block["payload"]["approval"].get("id") == str(approval.id)
-        ]
-        self.assertEqual(len(approval_blocks), 1)
-        block_payload = approval_blocks[0]["payload"]
-        self.assertEqual(block_payload.get("tool_name"), "initiate_phone_call")
-        self.assertEqual(block_payload.get("phase"), "approval_requested")
-        self.assertEqual(block_payload.get("status"), "pending_approval")
+        self.assertIsNone(payload2.get("active_turn"))
 
-    def test_bootstrap_dedupes_when_approval_already_in_messages(self) -> None:
+    def test_bootstrap_includes_active_turn_when_streaming(self) -> None:
         payload = self._bootstrap()
         session_token = payload["session"]["session_token"]
         conversation_id = payload["session"]["conversation_id"]
         conversation = Conversation.objects.get(id=conversation_id)
 
-        approval = ConversationToolApproval.objects.create(
+        turn = PortalTurn.objects.create(
             conversation=conversation,
-            connection=None,
-            tool_name="initiate_phone_call",
-            status=ConversationToolApprovalStatus.PENDING,
-            tool_call_id="call_dedupe",
-            event_id="evt_dedupe",
-            input_payload={"phone_number": "+201000000001", "objective": "Test call"},
-        )
-        ConversationMessage.objects.create(
-            conversation=conversation,
-            sender=ConversationSender.AI,
-            body="",
-            sent_at=timezone.now(),
-            content_blocks=[
-                {
-                    "block_id": "blk_tool_dedupe",
-                    "type": "tool_use",
-                    "created_at": timezone.now().isoformat(),
-                    "payload": {
-                        "event_id": "evt_dedupe",
-                        "phase": "approval_requested",
-                        "status": "pending_approval",
-                        "tool_call_id": "call_dedupe",
-                        "tool_name": "initiate_phone_call",
-                        "kind": "phone",
-                        "approval": {"id": str(approval.id), "status": ConversationToolApprovalStatus.PENDING},
-                        "input": {"phone_number": "+201000000001", "objective": "Test call"},
-                    },
-                }
-            ],
+            status=PortalTurnStatus.WAITING_APPROVAL,
+            user_message="test",
         )
 
         payload2 = self._bootstrap(session_token=session_token)
-        messages = payload2.get("messages") or []
-        self.assertFalse(any((msg.get("metadata") or {}).get("type") == "pending_tool_approvals" for msg in messages if isinstance(msg, dict)))
+        active_turn = payload2.get("active_turn") or {}
+        self.assertEqual(active_turn.get("id"), str(turn.id))
+        self.assertEqual(active_turn.get("status"), PortalTurnStatus.WAITING_APPROVAL)

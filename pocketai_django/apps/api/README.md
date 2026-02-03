@@ -21,8 +21,8 @@ Directory Map
 
 Key Flows
 ---------
-1) Chat streaming
-   /api/chat/stream/send/ -> MCP orchestrator (agentic mode) -> streamed response.
+1) Chat turns (event-sourced)
+   /api/chat/turns/ -> create turn, then stream from /api/chat/turns/<turn_id>/events/.
 
 2) Portal bootstrap
    /api/chat/portal/sessions/ -> ChatPortalService.bootstrap_session().
@@ -39,15 +39,16 @@ Key Flows
 Configuration Touchpoints
 -------------------------
 - RAG_USE_MCP_ORCHESTRATOR (legacy path is deprecated; MCP is the active runtime)
-- PORTAL_STREAM_STATE_MACHINE (status streaming)
 - MCP_MAX_TOOL_ITERATIONS / MCP_*_CALLS_PER_MINUTE
 
 Quick Start (Dev)
 ----------------
 - Chat session bootstrap:
   POST /api/chat/portal/sessions/
-- Stream message:
-  POST /api/chat/stream/send/
+- Create turn:
+  POST /api/chat/turns/
+- Stream turn events:
+  GET /api/chat/turns/<turn_id>/events/
 - List documents:
   GET /api/knowledge/documents/
 
@@ -60,11 +61,16 @@ curl -s -X POST http://localhost:8000/api/chat/portal/sessions/ \
   -d '{"business_slug":"aug-pharma","agent_slug":"ahmed","metadata":{}}'
 ```
 
-Stream chat message:
+Create a turn:
 ```bash
-curl -N -X POST http://localhost:8000/api/chat/stream/send/ \
+curl -s -X POST http://localhost:8000/api/chat/turns/ \
   -H "Content-Type: application/json" \
-  -d '{"session_token":"<token>","message":"check invoice 9125779195"}'
+  -d '{"session_token":"<token>","body":"check invoice 9125779195"}'
+```
+
+Stream turn events:
+```bash
+curl -N "http://localhost:8000/api/chat/turns/<turn_id>/events/?session_token=<token>"
 ```
 
 ASCII Flow
@@ -112,9 +118,11 @@ Endpoints (by section)
 Chat + Portal
 - POST `/api/chat/portal/sessions/` — bootstrap a portal session
 - GET  `/api/chat/portal/resolve/<business>/<agent>/` — validate handle
-- POST `/api/chat/stream/send/` — stream chat response
+- POST `/api/chat/turns/` — create a portal turn
+- GET  `/api/chat/turns/<turn_id>/events/` — stream turn events (SSE)
+- POST `/api/chat/turns/<turn_id>/cancel/` — cancel an active turn
 - POST `/api/chat/messages/` — persist non-stream messages
-- GET  `/api/chat/events/` — long-poll/stream status events
+- GET  `/api/chat/events/` — portal status + sub-agent events
 - POST `/api/chat/csat/` — submit CSAT rating
 - POST `/api/chat/feedback/` — submit feedback (e.g., incorrect answer)
 
@@ -181,10 +189,13 @@ curl -s -X POST http://localhost:8000/api/chat/portal/sessions/ \
   -H "Content-Type: application/json" \
   -d '{"business_slug":"acme","agent_slug":"agent-1","metadata":{}}'
 
-# Send chat message (stream)
-curl -N -X POST http://localhost:8000/api/chat/stream/send/ \
+# Create a turn
+curl -s -X POST http://localhost:8000/api/chat/turns/ \
   -H "Content-Type: application/json" \
   -d '{"session_token":"<token>","body":"check invoice 9125779195"}'
+
+# Stream turn events (replace <turn_id>)
+curl -N "http://localhost:8000/api/chat/turns/<turn_id>/events/?session_token=<token>"
 
 # Send chat message (store only)
 curl -s -X POST http://localhost:8000/api/chat/messages/ \

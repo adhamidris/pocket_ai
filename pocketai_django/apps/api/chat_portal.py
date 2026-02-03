@@ -7,11 +7,10 @@ import json
 import logging
 import re
 import secrets
-import threading
+import select
 import time
 import uuid
 from datetime import datetime, timedelta
-from queue import Empty, Queue
 from typing import Any, Callable, Iterable, Mapping
 from zoneinfo import ZoneInfo
 
@@ -33,12 +32,6 @@ from apps.accounts.models import (
     McpConnectionAuditEvent,
     McpToolOperationType,
 )
-from apps.conversations.content_blocks import (
-    content_blocks_from_response_blocks,
-    extract_text_from_content_blocks,
-    new_block_id,
-)
-from apps.conversations.rich_blocks import RichBlockStreamBuilder, apply_block_ops, coerce_block_event, rich_blocks_from_text
 from apps.conversations.models import (
     AgentRequest,
     AgentRequestStatus,
@@ -57,16 +50,7 @@ from apps.conversations.models import (
     PortalTurn,
     PortalTurnStatus,
 )
-from apps.core.logging_utils import LogEmoji
-from apps.rag.ai_orchestrator import (
-    ActionDispatcher,
-    AiOrchestratorService,
-    StreamingTurnContext,
-)
 from apps.rag.rag_logging import structured_log
-from apps.mcp.sanitizer import sanitize_placeholder_thinking, sanitize_text, sanitize_with_diagnostics
-from apps.mcp.tool_artifacts import store_remote_tool_output_artifact
-from apps.llm.llm_provider import load_default_provider
 from apps.conversations.portal import (
     ChatPortalService,
     PortalAgentSummary,
@@ -77,20 +61,16 @@ from apps.conversations.portal import (
     PortalSessionState,
     PortalValidationError,
 )
-from apps.conversations.portal_turn_events import list_turn_events
+from apps.conversations.portal_turn_events import (
+    PORTAL_TURN_EVENTS_NOTIFY_CHANNEL,
+    append_turn_event,
+    list_turn_events,
+)
 from apps.conversations.portal_turn_runner import run_turn_background
 from core.tenancy import tenant_context
 
 logger = logging.getLogger(__name__)
 TRACER = otel_trace.get_tracer(__name__)
-
-# Active streaming turn cancellation registry.
-#
-# The portal UI supports an explicit "Stop" action. A parallel HTTP request can
-# set the cancellation event for the active streaming turn so the backend stops
-# generating and persists the partial transcript (including reasoning blocks).
-_ACTIVE_STREAM_CANCEL_EVENTS: dict[str, threading.Event] = {}
-_ACTIVE_STREAM_CANCEL_LOCK = threading.Lock()
 
 CONTEXT_STATUS_CODES = {
     "searching_knowledge",
@@ -1365,15 +1345,18 @@ def _bootstrap_to_dict(result: PortalSessionBootstrap) -> dict:
         "messages": [_message_to_dict(msg) for msg in result.messages],
     }
     try:
-        # Inject pending tool approvals into existing messages to preserve ordering.
-        # This keeps approval cards in the same message as the text that preceded them.
-        _inject_pending_tool_approvals_into_messages(
-            messages=payload["messages"],
-            conversation_id=result.session.conversation_id,
-            business_id=result.business.id,
-        )
+        # If a portal turn is currently streaming (e.g., waiting for tool approval),
+        # expose it so the frontend can resume by replaying the turn event log.
+        with tenant_context(result.business.id):
+            active_turn = (
+                PortalTurn.objects.filter(conversation_id=result.session.conversation_id)
+                .filter(status__in={PortalTurnStatus.STREAMING, PortalTurnStatus.WAITING_APPROVAL})
+                .order_by("-started_at")
+                .first()
+            )
+        payload["active_turn"] = _portal_turn_to_dict(active_turn) if active_turn else None
     except Exception:  # pragma: no cover - best effort only
-        pass
+        payload["active_turn"] = None
     try:
         from apps.accounts.feature_flags import FeatureFlagService
 
@@ -1385,313 +1368,6 @@ def _bootstrap_to_dict(result: PortalSessionBootstrap) -> dict:
         payload["capabilities"] = {"subAgentsEnabled": False}
     return payload
 
-
-def _inject_pending_tool_approvals_into_messages(
-    *,
-    messages: list[dict],
-    conversation_id: uuid.UUID,
-    business_id: uuid.UUID,
-    limit: int = 20,
-) -> None:
-    """
-    Inject pending approval blocks into existing AI messages to preserve ordering.
-
-    Instead of creating a synthetic message (which causes ordering issues on refresh),
-    this function finds the last AI message and appends any pending approval blocks
-    to its content_blocks array. This keeps the approval card in the same position
-    relative to the text that preceded it during streaming.
-    """
-    if not conversation_id or not business_id or not isinstance(messages, list):
-        return
-    limit = max(1, min(int(limit or 0), 50))
-
-    # Find approval IDs already rendered in existing messages
-    already_rendered: set[str] = set()
-    for msg in messages:
-        if not isinstance(msg, dict):
-            continue
-        blocks = msg.get("content_blocks") or msg.get("contentBlocks") or []
-        if not isinstance(blocks, list):
-            continue
-        for block in blocks:
-            if not isinstance(block, dict):
-                continue
-            if str(block.get("type") or "").strip().lower() not in {"tool_use", "tool_result"}:
-                continue
-            payload = block.get("payload")
-            if not isinstance(payload, dict):
-                continue
-            approval = payload.get("approval")
-            approval_id = ""
-            if isinstance(approval, dict):
-                approval_id = str(approval.get("id") or "").strip()
-            if not approval_id:
-                approval_id = str(payload.get("approval_id") or payload.get("approvalId") or "").strip()
-            if approval_id:
-                already_rendered.add(approval_id)
-
-    # Fetch pending approvals from database
-    now = timezone.now()
-    with tenant_context(business_id):
-        approvals = list(
-            ConversationToolApproval.objects.select_related("connection")
-            .filter(conversation_id=conversation_id, status=ConversationToolApprovalStatus.PENDING)
-            .order_by("requested_at", "id")[:limit]
-        )
-
-    if not approvals:
-        return
-
-    # Build approval blocks
-    approval_blocks: list[dict[str, object]] = []
-    for approval in approvals:
-        approval_id = str(getattr(approval, "id", "") or "").strip()
-        if not approval_id or approval_id in already_rendered:
-            continue
-
-        approval_meta = approval.metadata if isinstance(getattr(approval, "metadata", None), dict) else {}
-        operation_type = approval_meta.get("operation_type") or approval_meta.get("operationType")
-        reason = approval_meta.get("reason")
-        mode = approval_meta.get("approval_mode") or approval_meta.get("approvalMode") or approval_meta.get("mode")
-        preview = approval_meta.get("preview") if isinstance(approval_meta.get("preview"), dict) else None
-
-        is_expired = bool(approval.expires_at and approval.expires_at <= now)
-        approval_payload: dict[str, object] = {
-            "id": approval_id,
-            "status": ConversationToolApprovalStatus.EXPIRED if is_expired else ConversationToolApprovalStatus.PENDING,
-            "expires_at": approval.expires_at.isoformat() if approval.expires_at else None,
-        }
-        if operation_type:
-            approval_payload["operation_type"] = operation_type
-        if reason:
-            approval_payload["reason"] = reason
-        if mode:
-            approval_payload["mode"] = mode
-        if preview:
-            approval_payload["preview"] = preview
-
-        tool_name = str(approval.tool_name or "").strip()
-        remote_tool_name = str(approval.remote_tool_name or "").strip()
-        tool_call_id = str(approval.tool_call_id or "").strip()
-        event_id = str(approval.event_id or "").strip() or f"approval_{approval_id}"
-
-        input_payload = approval.input_payload if isinstance(getattr(approval, "input_payload", None), dict) else {}
-
-        kind = "tool"
-        remote: dict[str, object] | None = None
-        if approval.connection_id and remote_tool_name:
-            kind = "mcp_remote"
-            connection = getattr(approval, "connection", None)
-            remote = {
-                "connection_name": str(getattr(connection, "name", "") or "").strip(),
-                "remote_tool": remote_tool_name,
-            }
-        elif tool_name == "initiate_phone_call":
-            kind = "phone"
-        elif tool_name.startswith("email_"):
-            kind = "email"
-
-        phase_value = "approval_resolved" if is_expired else "approval_requested"
-        status_value = ConversationToolApprovalStatus.EXPIRED if is_expired else "pending_approval"
-
-        tool_event_payload: dict[str, object] = {
-            "event_id": event_id,
-            "phase": phase_value,
-            "status": status_value,
-            "tool_call_id": tool_call_id,
-            "tool_name": tool_name,
-            "kind": kind,
-            "approval": approval_payload,
-            "input": input_payload,
-        }
-        if remote and (remote.get("connection_name") or remote.get("remote_tool")):
-            tool_event_payload["remote"] = remote
-
-        approval_blocks.append(
-            {
-                "block_id": f"tool_approval_{approval_id}",
-                "type": "tool_use",
-                "created_at": approval.requested_at.isoformat() if approval.requested_at else now.isoformat(),
-                "payload": tool_event_payload,
-            }
-        )
-
-    if not approval_blocks:
-        return
-
-    # Find the last AI message to inject blocks into
-    last_ai_message: dict | None = None
-    for msg in reversed(messages):
-        if not isinstance(msg, dict):
-            continue
-        sender = str(msg.get("sender") or "").strip().lower()
-        if sender in {"ai", "assistant"}:
-            last_ai_message = msg
-            break
-
-    if last_ai_message is not None:
-        # Inject approval blocks into the last AI message's content_blocks
-        existing_blocks = last_ai_message.get("content_blocks")
-        if not isinstance(existing_blocks, list):
-            existing_blocks = []
-            last_ai_message["content_blocks"] = existing_blocks
-        # Append approval blocks at the end (preserving text → approval order)
-        existing_blocks.extend(approval_blocks)
-    else:
-        # Fallback: create a synthetic message if no AI message exists
-        message_id = uuid.uuid5(uuid.NAMESPACE_URL, f"pending_tool_approvals:{conversation_id}")
-        messages.append({
-            "id": str(message_id),
-            "sender": "ai",
-            "body": "",
-            "sent_at": now.isoformat(),
-            "metadata": {"type": "pending_tool_approvals"},
-            "content_blocks": approval_blocks,
-        })
-
-
-def _pending_tool_approvals_message(
-    *,
-    conversation_id: uuid.UUID,
-    business_id: uuid.UUID,
-    existing_messages: list[dict] | None,
-    limit: int = 20,
-) -> dict | None:
-    """
-    Surface pending approvals in the portal transcript on refresh.
-
-    Why:
-    - During an interactive tool approval, the portal turn can be "in-flight" while waiting.
-      Tool cards exist only in the live stream until the turn finalizes and persists a message.
-    - If the visitor refreshes mid-approval, those cards disappear even though the approval
-      still exists in the database.
-
-    This helper rebuilds minimal tool_use blocks from ConversationToolApproval rows so the
-    UI stays in sync after a refresh.
-    """
-
-    if not conversation_id or not business_id:
-        return None
-    limit = max(1, min(int(limit or 0), 50))
-
-    already_rendered: set[str] = set()
-    if isinstance(existing_messages, list):
-        for msg in existing_messages:
-            if not isinstance(msg, dict):
-                continue
-            blocks = msg.get("content_blocks") or msg.get("contentBlocks") or []
-            if not isinstance(blocks, list):
-                continue
-            for block in blocks:
-                if not isinstance(block, dict):
-                    continue
-                if str(block.get("type") or "").strip().lower() not in {"tool_use", "tool_result"}:
-                    continue
-                payload = block.get("payload")
-                if not isinstance(payload, dict):
-                    continue
-                approval = payload.get("approval")
-                approval_id = ""
-                if isinstance(approval, dict):
-                    approval_id = str(approval.get("id") or "").strip()
-                if not approval_id:
-                    approval_id = str(payload.get("approval_id") or payload.get("approvalId") or "").strip()
-                if approval_id:
-                    already_rendered.add(approval_id)
-
-    now = timezone.now()
-    with tenant_context(business_id):
-        approvals = list(
-            ConversationToolApproval.objects.select_related("connection")
-            .filter(conversation_id=conversation_id, status=ConversationToolApprovalStatus.PENDING)
-            .order_by("requested_at", "id")[:limit]
-        )
-
-    blocks: list[dict[str, object]] = []
-    for approval in approvals:
-        approval_id = str(getattr(approval, "id", "") or "").strip()
-        if not approval_id or approval_id in already_rendered:
-            continue
-
-        approval_meta = approval.metadata if isinstance(getattr(approval, "metadata", None), dict) else {}
-        operation_type = approval_meta.get("operation_type") or approval_meta.get("operationType")
-        reason = approval_meta.get("reason")
-        mode = approval_meta.get("approval_mode") or approval_meta.get("approvalMode") or approval_meta.get("mode")
-        preview = approval_meta.get("preview") if isinstance(approval_meta.get("preview"), dict) else None
-
-        is_expired = bool(approval.expires_at and approval.expires_at <= now)
-        approval_payload: dict[str, object] = {
-            "id": approval_id,
-            "status": ConversationToolApprovalStatus.EXPIRED if is_expired else ConversationToolApprovalStatus.PENDING,
-            "expires_at": approval.expires_at.isoformat() if approval.expires_at else None,
-        }
-        if operation_type:
-            approval_payload["operation_type"] = operation_type
-        if reason:
-            approval_payload["reason"] = reason
-        if mode:
-            approval_payload["mode"] = mode
-        if preview:
-            approval_payload["preview"] = preview
-
-        tool_name = str(approval.tool_name or "").strip()
-        remote_tool_name = str(approval.remote_tool_name or "").strip()
-        tool_call_id = str(approval.tool_call_id or "").strip()
-        event_id = str(approval.event_id or "").strip() or f"approval_{approval_id}"
-
-        input_payload = approval.input_payload if isinstance(getattr(approval, "input_payload", None), dict) else {}
-
-        kind = "tool"
-        remote: dict[str, object] | None = None
-        if approval.connection_id and remote_tool_name:
-            kind = "mcp_remote"
-            connection = getattr(approval, "connection", None)
-            remote = {
-                "connection_name": str(getattr(connection, "name", "") or "").strip(),
-                "remote_tool": remote_tool_name,
-            }
-        elif tool_name == "initiate_phone_call":
-            kind = "phone"
-        elif tool_name.startswith("email_"):
-            kind = "email"
-
-        phase_value = "approval_resolved" if is_expired else "approval_requested"
-        status_value = ConversationToolApprovalStatus.EXPIRED if is_expired else "pending_approval"
-
-        tool_event_payload: dict[str, object] = {
-            "event_id": event_id,
-            "phase": phase_value,
-            "status": status_value,
-            "tool_call_id": tool_call_id,
-            "tool_name": tool_name,
-            "kind": kind,
-            "approval": approval_payload,
-            "input": input_payload,
-        }
-        if remote and (remote.get("connection_name") or remote.get("remote_tool")):
-            tool_event_payload["remote"] = remote
-
-        blocks.append(
-            {
-                "block_id": f"tool_approval_{approval_id}",
-                "type": "tool_use",
-                "created_at": approval.requested_at.isoformat() if approval.requested_at else now.isoformat(),
-                "payload": tool_event_payload,
-            }
-        )
-
-    if not blocks:
-        return None
-
-    message_id = uuid.uuid5(uuid.NAMESPACE_URL, f"pending_tool_approvals:{conversation_id}")
-    return {
-        "id": str(message_id),
-        "sender": "ai",
-        "body": "",
-        "sent_at": now.isoformat(),
-        "metadata": {"type": "pending_tool_approvals"},
-        "content_blocks": blocks,
-    }
 
 
 @require_GET
@@ -3156,1703 +2832,6 @@ def portal_email_discard_draft(request: HttpRequest) -> JsonResponse:
     )
 
 
-@csrf_exempt
-@require_POST
-def stream_stop(request: HttpRequest) -> JsonResponse:
-    """
-    Request cancellation of the currently active streaming turn for a session.
-
-    This is best-effort: if no active stream is registered the call succeeds
-    with `cancelled=false`.
-    """
-
-    try:
-        payload = _parse_json_body(request)
-    except PortalValidationError:
-        return _json_error("invalid_payload", "Invalid JSON payload")
-
-    session_token = str(payload.get("session_token") or payload.get("sessionToken") or "").strip()
-    if not session_token:
-        return _json_error("missing_session_token", "session_token is required")
-
-    cancel_event = None
-    with _ACTIVE_STREAM_CANCEL_LOCK:
-        cancel_event = _ACTIVE_STREAM_CANCEL_EVENTS.get(session_token)
-
-    if cancel_event is not None:
-        cancel_event.set()
-        return JsonResponse({"ok": True, "cancelled": True})
-    return JsonResponse({"ok": True, "cancelled": False})
-
-
-@csrf_exempt
-@require_POST
-def stream_send(request: HttpRequest) -> StreamingHttpResponse:
-    service = _service()
-    try:
-        payload = _parse_json_body(request)
-    except PortalValidationError:
-        return StreamingHttpResponse(status=400)
-
-    session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
-    body = (payload.get("body") or "").strip()
-    metadata = payload.get("metadata") or {}
-    debug_tool_trace_enabled = _portal_debug_tool_trace_enabled(request, payload, metadata if isinstance(metadata, Mapping) else {})
-
-    try:
-        conversation = service.get_conversation(session_token=session_token, include_messages=False)
-    except PortalNotFoundError:
-        return StreamingHttpResponse(status=404)
-
-    customer_message: PortalMessage | None = None
-    try:
-        customer_message = service.append_message(
-            session_token=session_token,
-            sender=ConversationSender.CUSTOMER,
-            body=body,
-            metadata=metadata,
-            conversation=conversation,
-        )
-    except PortalValidationError:
-        return StreamingHttpResponse(status=400)
-    except PortalNotFoundError:
-        return StreamingHttpResponse(status=404)
-
-    agent = conversation.agent_profile
-    if not agent:
-        return StreamingHttpResponse(status=500)
-
-    use_mcp = _business_prefers_mcp(conversation.business_profile, conversation=conversation)
-    trace_logger = PortalTraceLogger(
-        conversation=conversation,
-        agent=agent,
-        session_token=session_token,
-        orchestrator_mode="mcp" if use_mcp else "legacy",
-    )
-    trace_logger.log("request.received", detail=f"body={body}")
-    if metadata:
-        trace_logger.log("request.metadata", detail=trace_logger.format_data(metadata), indent=1)
-    if customer_message:
-        trace_logger.log("customer.message_recorded", detail=f"id={customer_message.id}", indent=1)
-    def _provider_label(provider_obj: Any) -> str:
-        if provider_obj is None:
-            return "unknown"
-        for attr in ("name", "label", "model_name"):
-            value = getattr(provider_obj, attr, None)
-            if isinstance(value, str) and value:
-                return value
-        return provider_obj.__class__.__name__
-
-    if use_mcp:
-        from apps.llm.llm_provider import load_mcp_provider
-        from apps.mcp.orchestrator import McpOrchestratorService
-
-        provider = load_mcp_provider()
-        orchestrator = McpOrchestratorService(agent=agent, provider=provider)
-        trace_logger.log(
-            "orchestrator.selected",
-            detail=f"mode=mcp provider={_provider_label(provider)}",
-            indent=1,
-        )
-    else:
-        provider = load_default_provider()
-        orchestrator = AiOrchestratorService(agent=agent, provider=provider)
-        trace_logger.log(
-            "orchestrator.selected",
-            detail=f"mode=legacy provider={_provider_label(provider)}",
-            indent=1,
-        )
-    dispatcher = ActionDispatcher(agent=agent)
-
-    def serialize_action_results(results):
-        payloads = []
-        for result in results:
-            payloads.append(
-                {
-                    "action": result.action.value,
-                    "status": result.status,
-                    "metadata": result.metadata,
-                    "error": result.error,
-                }
-            )
-        return payloads
-
-    def serialize_planned_actions(planned):
-        payloads = []
-        for action in planned:
-            payloads.append(
-                {
-                    "action": action.action.value,
-                    "status": "queued",
-                    "metadata": action.payload,
-                    "error": None,
-                }
-            )
-        return payloads
-
-    stream_queue: Queue = Queue()
-    stream_sentinel = object()
-    finalize_queue: Queue = Queue()
-    finalize_sentinel = object()
-    actions_queue: Queue = Queue()
-    actions_sentinel = object()
-    stream_complete = threading.Event()
-    stream_stopped = threading.Event()
-    cancel_requested = threading.Event()
-    plan_holder: dict[str, Any] = {}
-    state_machine_enabled = getattr(settings, "PORTAL_STREAM_STATE_MACHINE", False)
-    plan_holder["metadata_version"] = 1
-    plan_holder["session_status"] = conversation.status
-    plan_holder["spinner_text"] = None
-    reserved_message_id = uuid.uuid4()
-    plan_holder["pending_message_id"] = reserved_message_id
-
-    # Register cancel handle so a parallel HTTP request can stop this turn.
-    with _ACTIVE_STREAM_CANCEL_LOCK:
-        _ACTIVE_STREAM_CANCEL_EVENTS[session_token] = cancel_requested
-
-    def _unregister_cancel_handle() -> None:
-        with _ACTIVE_STREAM_CANCEL_LOCK:
-            current = _ACTIVE_STREAM_CANCEL_EVENTS.get(session_token)
-            if current is cancel_requested:
-                _ACTIVE_STREAM_CANCEL_EVENTS.pop(session_token, None)
-
-    blocks_lock = threading.Lock()
-    content_blocks: list[dict[str, object]] = []
-    content_blocks_by_id: dict[str, dict[str, object]] = {}
-    rich_builder = RichBlockStreamBuilder()
-    block_ops_active = False
-    tool_use_block_id_by_event_id: dict[str, str] = {}
-    reasoning_block_id_by_call_id: dict[str, str] = {}
-    spinner_state = {
-        "text": None,
-        "pending": True,
-        "tool_inflight": 0,
-    }
-    spinner_phase_state = {
-        "searching": {"active": False, "index": 0, "label": None, "meta": None, "timer": None},
-        "reading": {"active": False, "index": 0, "label": None, "meta": None, "timer": None},
-    }
-    spinner_phase_interval_setting = getattr(settings, "PORTAL_SPINNER_PHASE_INTERVAL", 5.5)
-    try:
-        spinner_phase_interval = float(spinner_phase_interval_setting)
-    except (TypeError, ValueError):
-        spinner_phase_interval = 5.5
-    if spinner_phase_interval < 0:
-        spinner_phase_interval = 0.0
-
-    def _search_base_text(label: str | None, meta: dict | None) -> str:
-        return label or "Searching knowledge…"
-
-    def _search_variant_text(label: str | None, meta: dict | None) -> str:
-        query_text = ""
-        if isinstance(meta, dict):
-            raw_query = meta.get("query")
-            if isinstance(raw_query, str):
-                query_text = raw_query.strip()
-        if query_text:
-            return f"Exploring deeper insights for {query_text[:60]}…"
-        return "Exploring deeper insights…"
-
-    def _reading_base_text(label: str | None, meta: dict | None) -> str:
-        return label or "Reading knowledge…"
-
-    def _reading_variant_text(label: str | None, meta: dict | None) -> str:
-        doc_hint = ""
-        if isinstance(meta, dict):
-            doc_hint = str(meta.get("document_id") or "").strip()
-        if not doc_hint and isinstance(label, str):
-            parts = label.split(":", 1)
-            if len(parts) == 2:
-                doc_hint = parts[1].strip()
-        hint_suffix = f" ({doc_hint[:40]})" if doc_hint else ""
-        return f"Gathering more context…{hint_suffix}"
-
-    SPINNER_PHASE_VARIANTS: dict[str, tuple[Callable[[str | None, dict | None], str], ...]] = {
-        "searching": (_search_base_text, _search_variant_text),
-        "reading": (_reading_base_text, _reading_variant_text),
-    }
-
-    def _current_message_id() -> str:
-        raw_id = plan_holder.get("ai_message_id") or plan_holder.get("pending_message_id")
-        if raw_id:
-            return str(raw_id)
-        return ""
-
-    def _current_session_status() -> str | None:
-        status = plan_holder.get("session_status")
-        if status:
-            return status
-        return conversation.status
-
-    def _next_metadata_version() -> int:
-        version = int(plan_holder.get("metadata_version") or 1) + 1
-        plan_holder["metadata_version"] = version
-        return version
-
-    def _emit_spinner_status(
-        raw_text: str | None,
-        *,
-        pending: bool = True,
-        fallback: str | None = "Working...",
-        allow_empty: bool = False,
-        reason: str | None = None,
-        force: bool = False,
-    ) -> None:
-        if not state_machine_enabled and not force:
-            return
-        # Do not trim spinner labels (keep full text and let the UI wrap naturally).
-        text_value = sanitize_placeholder_thinking(raw_text, fallback=fallback, limit=0)
-        if text_value:
-            lowered = text_value.strip().lower()
-            if lowered.startswith("drafting") or lowered.startswith("responding"):
-                text_value = ""
-        if text_value is None and allow_empty:
-            text_value = ""
-        if text_value is None:
-            return
-        if spinner_state["text"] == text_value and spinner_state["pending"] == pending:
-            return
-        prev_text = spinner_state.get("text")
-        spinner_state["text"] = text_value
-        spinner_state["pending"] = pending
-        plan_holder["spinner_text"] = text_value or None
-        try:
-            trace_logger.log_spinner(
-                text_value,
-                pending=pending,
-                prev_text=str(prev_text) if prev_text is not None else None,
-                reason=reason,
-            )
-        except Exception:  # pragma: no cover - logging must never break streaming
-            logger.exception("portal spinner trace log failed")
-        payload = {
-            "type": "spinnerStatus",
-            "message_id": _current_message_id(),
-            "spinner_text": text_value,
-            "pending": pending,
-        }
-        stream_queue.put(payload)
-
-    def _phase_variant_text(phase: str, index: int, label: str | None, meta: dict | None) -> str:
-        variants = SPINNER_PHASE_VARIANTS.get(phase)
-        if not variants:
-            return label or "Working..."
-        variant_fn = variants[index % len(variants)]
-        try:
-            return variant_fn(label, meta)
-        except Exception:
-            return label or "Working..."
-
-    def _cancel_phase_timer(phase: str) -> None:
-        state = spinner_phase_state.get(phase)
-        if not state:
-            return
-        timer = state.get("timer")
-        if timer:
-            timer.cancel()
-            state["timer"] = None
-
-    def _advance_phase_spinner(phase: str) -> None:
-        state = spinner_phase_state.get(phase)
-        if not state or not state.get("active"):
-            return
-        variants = SPINNER_PHASE_VARIANTS.get(phase)
-        if not variants:
-            return
-        if state["index"] + 1 >= len(variants):
-            state["active"] = False
-            return
-        state["index"] += 1
-        text = _phase_variant_text(phase, state["index"], state.get("label"), state.get("meta"))
-        _emit_spinner_status(text)
-        _schedule_phase_rotation(phase)
-
-    def _schedule_phase_rotation(phase: str) -> None:
-        state = spinner_phase_state.get(phase)
-        if not state or not state.get("active"):
-            return
-        variants = SPINNER_PHASE_VARIANTS.get(phase)
-        if not variants or len(variants) <= 1 or spinner_phase_interval <= 0:
-            return
-        if state["index"] >= len(variants) - 1:
-            return
-        _cancel_phase_timer(phase)
-        timer = threading.Timer(spinner_phase_interval, lambda: _advance_phase_spinner(phase))
-        timer.daemon = True
-        state["timer"] = timer
-        timer.start()
-
-    def _set_phase_spinner(phase: str, label: str | None, meta: dict | None, *, reset_index: bool) -> None:
-        state = spinner_phase_state.setdefault(
-            phase,
-            {"active": False, "index": 0, "label": None, "meta": None, "timer": None},
-        )
-        if reset_index or not state["active"]:
-            state["index"] = 0
-        state["active"] = True
-        state["label"] = label or state.get("label")
-        if isinstance(meta, dict) and meta:
-            state["meta"] = meta
-        elif not state.get("meta"):
-            state["meta"] = {}
-        text = _phase_variant_text(phase, state["index"], state.get("label"), state.get("meta"))
-        _emit_spinner_status(text)
-        _schedule_phase_rotation(phase)
-
-    def _reset_phase_spinner(phase: str) -> None:
-        state = spinner_phase_state.get(phase)
-        if not state:
-            return
-        _cancel_phase_timer(phase)
-        state["active"] = False
-        state["index"] = 0
-        state["label"] = None
-        state["meta"] = None
-
-    def _progressive_spinner_update(code: str | None, label: str | None, meta: dict | None) -> bool:
-        if not state_machine_enabled:
-            return False
-        phase_map = {
-            "searching_start": ("searching", True),
-            "searching_knowledge": ("searching", False),
-            "reading_start": ("reading", True),
-            "reading_document": ("reading", False),
-        }
-        reset_map = {
-            "searching_complete": "searching",
-            "reading_complete": "reading",
-        }
-        phase_entry = phase_map.get(code or "")
-        if phase_entry:
-            phase, reset_index = phase_entry
-            _set_phase_spinner(phase, label, meta, reset_index=reset_index)
-            return True
-        reset_phase = reset_map.get(code or "")
-        if reset_phase:
-            _reset_phase_spinner(reset_phase)
-        return False
-
-    def _append_content_block(block: dict[str, object]) -> dict[str, object]:
-        block_id = str(block.get("block_id") or "").strip()
-        if not block_id:
-            block_id = new_block_id()
-            block["block_id"] = block_id
-        with blocks_lock:
-            content_blocks.append(block)
-            content_blocks_by_id[block_id] = block
-        return block
-
-    def _get_content_block(block_id: str) -> dict[str, object] | None:
-        key = (block_id or "").strip()
-        if not key:
-            return None
-        with blocks_lock:
-            return content_blocks_by_id.get(key)
-
-    def _emit_block_events(events: list[dict[str, object]]) -> None:
-        if not events:
-            return
-        message_id = _current_message_id()
-        for event in events:
-            if not event or not isinstance(event, Mapping):
-                continue
-            event_type = event.get("type")
-            payload = dict(event.get("payload") or {})
-            if event_type in {"block_start", "block_delta", "block_end"}:
-                _apply_block_event({"type": event_type, "payload": payload})
-            payload["message_id"] = message_id
-            stream_queue.put({"type": event_type, "payload": payload})
-
-    def _persist_inflight_message_snapshot(*, approval_id: str | None = None) -> None:
-        """
-        Persist the in-flight assistant message while waiting for tool approval.
-
-        Why:
-        - The portal streams assistant blocks over a POST SSE stream, but the DB message is
-          normally persisted only after the turn finalizes.
-        - Tool approvals can keep the stream idle long enough for clients/proxies to drop it.
-        - If the visitor refreshes mid-approval, the transcript is reconstructed from DB
-          messages only, causing the streamed assistant text to disappear.
-
-        This helper upserts the assistant message (using the reserved message id) with the
-        current block snapshot so refresh hydration stays consistent.
-        """
-
-        message_id = plan_holder.get("pending_message_id")
-        if not message_id:
-            return
-        with blocks_lock:
-            blocks_snapshot = copy.deepcopy(content_blocks)
-        if not blocks_snapshot:
-            return
-        blocks_snapshot = _normalize_portal_content_blocks(blocks_snapshot)
-
-        body_text = extract_text_from_content_blocks(blocks_snapshot)
-        if not body_text:
-            body_text = "Approval required."
-
-        existing_metadata = plan_holder.get("message_metadata") if isinstance(plan_holder.get("message_metadata"), dict) else {}
-        message_metadata = dict(existing_metadata or {})
-        message_metadata["portal_turn_state"] = "waiting_approval"
-        if approval_id:
-            message_metadata["pending_approval_id"] = approval_id
-
-        try:
-            service.append_message(
-                session_token=session_token,
-                sender=ConversationSender.AI,
-                body=body_text,
-                metadata=message_metadata,
-                content_blocks=blocks_snapshot,
-                conversation=conversation,
-                message_id=message_id,
-            )
-        except IntegrityError:
-            try:
-                service.update_message(
-                    session_token=session_token,
-                    message_id=message_id,
-                    body=body_text,
-                    metadata=message_metadata,
-                    content_blocks=blocks_snapshot,
-                    conversation=conversation,
-                )
-            except Exception:  # pragma: no cover - best effort only
-                logger.exception("portal inflight message update failed")
-        except Exception:  # pragma: no cover - best effort only
-            logger.exception("portal inflight message persist failed")
-
-    def on_reasoning_event(event: Mapping[str, object] | None) -> None:
-        if not event or not isinstance(event, Mapping):
-            return
-        event_type = str(event.get("type") or "").strip().lower()
-        if event_type not in {"reasoning_delta", "reasoning_end"}:
-            return
-        call_id = str(event.get("call_id") or "").strip()
-        if not call_id:
-            return
-        stage = str(event.get("stage") or "").strip() or "llm"
-        label = str(event.get("label") or "").strip() or stage.replace("_", " ").strip() or "LLM"
-        block_id = reasoning_block_id_by_call_id.get(call_id)
-
-        if event_type == "reasoning_delta":
-            delta = event.get("delta")
-            if not isinstance(delta, str) or not delta:
-                return
-            if not block_id:
-                block = {
-                    "block_id": new_block_id(),
-                    "type": "reasoning",
-                    "created_at": timezone.now().isoformat(),
-                    "payload": {
-                        "title": label,
-                        "stage": stage,
-                        "collapsed": False,
-                        "code": "",
-                    },
-                }
-                _append_content_block(block)
-                block_id = str(block.get("block_id") or "").strip()
-                if not block_id:
-                    return
-                reasoning_block_id_by_call_id[call_id] = block_id
-                stream_queue.put(
-                    {
-                        "type": "block_start",
-                        "payload": {
-                            "message_id": _current_message_id(),
-                            "block": copy.deepcopy(block),
-                        },
-                    }
-                )
-            block = _get_content_block(block_id)
-            if not block:
-                return
-            ops = [{"op": "append_code", "text": delta}]
-            with blocks_lock:
-                apply_block_ops(block, ops)
-            stream_queue.put(
-                {
-                    "type": "block_delta",
-                    "payload": {
-                        "message_id": _current_message_id(),
-                        "block_id": block_id,
-                        "ops": ops,
-                    },
-                }
-            )
-            return
-
-        if event_type == "reasoning_end":
-            if not block_id:
-                return
-            block = _get_content_block(block_id)
-            if block:
-                payload_raw = block.get("payload")
-                payload = payload_raw if isinstance(payload_raw, dict) else {}
-                payload["collapsed"] = True
-                payload["completed_at"] = timezone.now().isoformat()
-                block["payload"] = payload
-            stream_queue.put(
-                {
-                    "type": "block_end",
-                    "payload": {
-                        "message_id": _current_message_id(),
-                        "block_id": block_id,
-                    },
-                }
-            )
-            return
-
-    def _apply_block_event(event: Mapping[str, object]) -> bool:
-        event_type = str(event.get("type") or "").strip()
-        payload = event.get("payload") or {}
-        if event_type == "block_start":
-            block = payload.get("block")
-            if not isinstance(block, Mapping):
-                return False
-            block_id = str(block.get("block_id") or "").strip()
-            if not block_id:
-                return False
-            with blocks_lock:
-                existing = content_blocks_by_id.get(block_id)
-                if existing is not None:
-                    existing.clear()
-                    existing.update(block)
-                else:
-                    content_blocks.append(dict(block))
-                    content_blocks_by_id[block_id] = content_blocks[-1]
-            return True
-        if event_type == "block_delta":
-            block_id = str(payload.get("block_id") or "").strip()
-            if not block_id:
-                return False
-            ops = payload.get("ops")
-            if not isinstance(ops, list):
-                return False
-            with blocks_lock:
-                block = content_blocks_by_id.get(block_id)
-                if not block:
-                    return False
-                apply_block_ops(block, ops)
-            return True
-        if event_type == "block_end":
-            block_id = str(payload.get("block_id") or "").strip()
-            return bool(block_id)
-        return False
-
-    def on_block_event(event: Mapping[str, object] | None) -> None:
-        nonlocal block_ops_active
-        if not event:
-            return
-        normalized = coerce_block_event(event)
-        if not normalized:
-            return
-        if not block_ops_active:
-            block_ops_active = True
-        _emit_block_events([normalized])
-
-    def on_response_text_delta(chunk: str) -> None:
-        if not chunk:
-            return
-        if block_ops_active:
-            return
-        events = rich_builder.feed_text(chunk)
-        _emit_block_events(events)
-
-    def on_status_change(state) -> None:
-        if not state:
-            return
-        code: str | None = None
-        label: str | None = None
-        meta: dict | None = None
-        if isinstance(state, str):
-            code = state.strip()
-        elif isinstance(state, dict):
-            raw_code = state.get("code") or state.get("state")
-            if isinstance(raw_code, str):
-                code = raw_code.strip()
-            raw_label = state.get("label")
-            if isinstance(raw_label, str):
-                label = raw_label.strip()
-            raw_meta = state.get("meta")
-            if isinstance(raw_meta, dict):
-                meta = raw_meta
-        if not code:
-            return
-        trace_logger.log_status(code, label=label, meta=meta)
-        # Ensure any buffered tail text is flushed before the UI sees `stream_complete`.
-        # Otherwise the final paragraph/list item (often missing a trailing newline) can
-        # appear *after* the stream_complete status and spinner shutdown.
-        if code == "stream_complete" and not block_ops_active:
-            _emit_block_events(rich_builder.finalize())
-        _enqueue_status_events(stream_queue, code=code, label=label, meta=meta)
-        if state_machine_enabled:
-            if int(spinner_state.get("tool_inflight") or 0) > 0 and code not in {"answer_started", "stream_complete", "complete"}:
-                return
-            if _progressive_spinner_update(code, label, meta):
-                return
-            if code == "thinking":
-                _emit_spinner_status(
-                    "",
-                    pending=True,
-                    fallback=None,
-                    allow_empty=True,
-                    reason="status:thinking",
-                )
-                return
-            if code in {"searching_complete", "reading_complete"}:
-                # Keep the last spinner label until the next concrete step replaces it.
-                return
-            if code in {"stream_complete", "complete"}:
-                _emit_spinner_status("", pending=False, fallback=None, allow_empty=True, reason=f"status:{code}")
-
-    def on_tool_event(event: Mapping[str, object] | None) -> None:
-        """
-        Stream external tool lifecycle events to the portal UI.
-
-        Payloads must be JSON-safe and redacted; never emit secrets.
-        """
-        if not event or not isinstance(event, Mapping):
-            return
-        try:
-            phase = str(event.get("phase") or "").strip().lower()
-            if phase not in TOOL_EVENT_PHASES:
-                return
-            tool_name = str(event.get("tool_name") or "").strip()
-            kind = str(event.get("kind") or "").strip() or "tool"
-            status_value = str(event.get("status") or "").strip()
-            if not status_value:
-                if phase == "started":
-                    status_value = "running"
-                elif phase == "approval_requested":
-                    status_value = "pending_approval"
-            event_id_value = str(event.get("event_id") or "").strip()
-            tool_call_id_value = str(event.get("tool_call_id") or "").strip()
-            candidate_keys: list[str] = []
-            if tool_call_id_value:
-                candidate_keys.append(tool_call_id_value)
-            if event_id_value and event_id_value not in candidate_keys:
-                candidate_keys.append(event_id_value)
-            if not candidate_keys:
-                return
-            block_key = candidate_keys[0]
-            deferred_spinner_label: str | None = None
-            deferred_spinner_reason: str | None = None
-            deferred_bridge_thinking = False
-
-            is_tool_discovery = tool_name.strip().lower() == "mcp_search_tools"
-            # Ensure tool discovery spinner renders even if the assistant was mid-streaming
-            # a text block (close the block first so the frontend doesn't hide the spinner).
-            if is_tool_discovery and phase in {"started", "approval_requested"}:
-                if not block_ops_active:
-                    _emit_block_events(rich_builder.break_flow())
-
-            if state_machine_enabled or is_tool_discovery:
-                phase_lower = phase
-                status_lower = status_value.lower()
-                defer_spinner_update = phase_lower in {"finished", "approval_resolved"}
-                if phase in {"started", "approval_requested"}:
-                    spinner_state["tool_inflight"] = int(spinner_state.get("tool_inflight") or 0) + 1
-                elif phase in {"finished", "approval_resolved"}:
-                    previous_inflight = int(spinner_state.get("tool_inflight") or 0)
-                    spinner_state["tool_inflight"] = max(0, previous_inflight - 1)
-
-                spinner_label: str | None = None
-                if phase_lower == "approval_requested" or status_lower in {"pending_approval", "pending"}:
-                    # Approval cards render their own CTAs; extra "waiting" spinners are redundant/noisy.
-                    spinner_label = None
-                elif phase_lower == "started":
-                    remote_meta = event.get("remote") if isinstance(event.get("remote"), Mapping) else None
-                    if remote_meta:
-                        raw_connection_name = str(remote_meta.get("connection_name") or remote_meta.get("connectionName") or "").strip()
-                        connection_name = re.sub(r"\s*\(mcp\)\s*$", "", raw_connection_name, flags=re.IGNORECASE).strip()
-                        raw_remote_tool = str(
-                            remote_meta.get("remote_tool")
-                            or remote_meta.get("remoteTool")
-                            or remote_meta.get("tool")
-                            or remote_meta.get("tool_name")
-                            or remote_meta.get("toolName")
-                            or ""
-                        ).strip()
-                        remote_tool_key = raw_remote_tool.lower().strip()
-
-                        # Keep the spinner high-level and non-redundant with the tool chip.
-                        # Tool chip shows the exact tool name; spinner should explain the general action.
-                        if connection_name:
-                            if remote_tool_key in {"get_me", "whoami"}:
-                                spinner_label = f"Checking {connection_name}…"
-                            elif remote_tool_key.startswith(("search_", "find_", "query_")) or "search" in remote_tool_key:
-                                spinner_label = f"Searching {connection_name}…"
-                            elif remote_tool_key.startswith(("list_", "get_", "read_", "fetch_", "retrieve_")):
-                                spinner_label = f"Fetching from {connection_name}…"
-                            elif remote_tool_key.startswith(
-                                (
-                                    "create_",
-                                    "update_",
-                                    "delete_",
-                                    "add_",
-                                    "remove_",
-                                    "set_",
-                                    "fork_",
-                                    "merge_",
-                                    "close_",
-                                    "open_",
-                                )
-                            ):
-                                spinner_label = f"Updating {connection_name}…"
-                            else:
-                                spinner_label = f"Working with {connection_name}…"
-                    elif tool_name == "search_knowledge":
-                        spinner_label = "Searching knowledge…"
-                    elif tool_name == "read_document":
-                        spinner_label = "Reading knowledge…"
-                    elif tool_name == "mcp_search_tools":
-                        spinner_label = "Searching tools…"
-                    # Email operations
-                    elif tool_name == "email_search":
-                        spinner_label = "Searching emails…"
-                    elif tool_name == "email_get_message":
-                        spinner_label = "Retrieving email…"
-                    elif tool_name == "email_get_thread":
-                        spinner_label = "Retrieving email thread…"
-                    elif tool_name == "email_create_draft":
-                        spinner_label = "Creating email draft…"
-                    elif tool_name == "email_send_draft":
-                        spinner_label = "Sending email…"
-                    # PDF/Document operations
-                    elif tool_name == "pdf_generate":
-                        spinner_label = "Generating PDF…"
-                    elif tool_name == "pdf_merge":
-                        spinner_label = "Merging PDFs…"
-                    elif tool_name == "pdf_extract_pages":
-                        spinner_label = "Extracting PDF pages…"
-                    elif tool_name == "pdf_extract_text":
-                        spinner_label = "Extracting text from PDF…"
-                    else:
-                        spinner_label = "Working…"
-                elif phase_lower == "finished":
-                    if status_lower in {"error", "failed", "tool_failed", "mcp_remote_error", "constraint_error"}:
-                        spinner_label = "Trying another approach…"
-
-                inflight_now = int(spinner_state.get("tool_inflight") or 0)
-                terminal_error_statuses = {"error", "failed", "tool_failed", "mcp_remote_error", "constraint_error"}
-                deferred_bridge_thinking = (
-                    not stream_complete.is_set()
-                    and inflight_now == 0
-                    and not spinner_label
-                    and (
-                        (phase_lower == "finished" and status_lower not in terminal_error_statuses)
-                        or (phase_lower == "approval_resolved" and status_lower not in {"approved"})
-                    )
-                )
-
-                # Tool discovery is an internal gateway step; render it as spinner only (no tool block).
-                # Emit spinner updates immediately because there is no follow-on block event.
-                if spinner_label and (not defer_spinner_update or is_tool_discovery):
-                    _emit_spinner_status(
-                        spinner_label,
-                        pending=True,
-                        fallback="Working...",
-                        reason=f"tool:{tool_name}:{phase_lower}:{status_lower}",
-                        force=is_tool_discovery,
-                    )
-                elif defer_spinner_update:
-                    deferred_spinner_label = spinner_label
-                    deferred_spinner_reason = f"tool:{tool_name}:{phase_lower}:{status_lower}"
-
-            # Tool discovery is an internal gateway step; render it as spinner only (no tool block).
-            if is_tool_discovery:
-                return
-
-            payload: dict[str, object] = {
-                "event_id": event_id_value or block_key,
-                "phase": phase,
-                "status": status_value,
-                "tool_call_id": tool_call_id_value,
-                "kind": kind,
-                "tool_name": tool_name,
-            }
-            remote = event.get("remote") if isinstance(event.get("remote"), Mapping) else None
-            if not remote:
-                output_hint = event.get("output") if isinstance(event.get("output"), Mapping) else None
-                remote_hint = output_hint.get("remote") if isinstance(output_hint, Mapping) else None
-                if isinstance(remote_hint, Mapping):
-                    remote = remote_hint
-            if remote:
-                # Never leak internal connection IDs/URLs to public portal visitors.
-                safe_remote: dict[str, object] = {}
-                connection_name = remote.get("connection_name") or remote.get("connectionName")
-                remote_tool = (
-                    remote.get("remote_tool")
-                    or remote.get("remoteTool")
-                    or remote.get("tool")
-                    or remote.get("tool_name")
-                    or remote.get("toolName")
-                )
-                if connection_name:
-                    safe_remote["connection_name"] = _clip_debug_text(connection_name, limit=120)
-                if remote_tool:
-                    safe_remote["remote_tool"] = _clip_debug_text(remote_tool, limit=120)
-                if safe_remote:
-                    payload["remote"] = safe_remote
-            approval_payload = event.get("approval") if isinstance(event.get("approval"), Mapping) else None
-            approval_id = event.get("approval_id") or event.get("approvalId")
-            if approval_payload:
-                payload["approval"] = _json_safe_debug(approval_payload, depth=4, string_limit=480, list_limit=24)
-                if not approval_id:
-                    approval_id = approval_payload.get("id")
-            if approval_id:
-                payload["approval_id"] = str(approval_id)
-
-            input_payload = event.get("input")
-            if input_payload is not None and phase in {"started", "approval_requested", "finished", "approval_resolved"}:
-                input_string_limit = 720
-                input_list_limit = 32
-                if tool_name.strip().lower() == "email_create_draft":
-                    # Email drafts are user-facing; allow the portal to render the full draft body
-                    # (still bounded by tool-side truncation at 12k chars).
-                    input_string_limit = 12_000
-                    input_list_limit = 96
-                payload["input"] = _json_safe_debug(
-                    input_payload,
-                    depth=3,
-                    string_limit=input_string_limit,
-                    list_limit=input_list_limit,
-                )
-
-            tool_use_block_id: str | None = None
-            for key in candidate_keys:
-                tool_use_block_id = tool_use_block_id_by_event_id.get(key)
-                if tool_use_block_id:
-                    break
-            tool_use_block = _get_content_block(tool_use_block_id) if tool_use_block_id else None
-            if not tool_use_block:
-                # If the assistant already started streaming text, close the active text block so the
-                # new tool block is inserted in-order without offset-based reconstruction hacks.
-                if not block_ops_active:
-                    _emit_block_events(rich_builder.break_flow())
-                tool_use_block = {
-                    "block_id": new_block_id(),
-                    "type": "tool_use",
-                    "created_at": timezone.now().isoformat(),
-                    "payload": {},
-                }
-                _append_content_block(tool_use_block)
-                tool_use_block_id = str(tool_use_block.get("block_id") or "").strip()
-                if tool_use_block_id:
-                    for key in candidate_keys:
-                        tool_use_block_id_by_event_id[key] = tool_use_block_id
-            if tool_use_block_id:
-                for key in candidate_keys:
-                    tool_use_block_id_by_event_id[key] = tool_use_block_id
-            # Merge updates into the existing tool payload so subsequent events that omit fields
-            # (e.g. internal "finished" events without approval metadata) don't erase previously
-            # captured context needed for UI hydration after a refresh.
-            existing_payload = tool_use_block.get("payload")
-            merged_payload: dict[str, object] = dict(existing_payload) if isinstance(existing_payload, Mapping) else {}
-            merged_payload.update(payload)
-            tool_use_block["payload"] = merged_payload
-            if phase in {"finished", "approval_resolved"}:
-                duration = event.get("duration_ms")
-                try:
-                    payload["duration_ms"] = int(duration) if duration is not None else 0
-                except (TypeError, ValueError):
-                    payload["duration_ms"] = 0
-                output_payload = event.get("output")
-                artifact_id: str | None = None
-                output_preview: object | None = None
-                if output_payload is not None:
-                    scrubbed_output: object = output_payload
-                    if isinstance(output_payload, Mapping):
-                        # Never leak internal connection IDs/URLs to public portal visitors.
-                        output_copy: dict[str, object] = dict(output_payload)
-                        remote_out = output_copy.get("remote")
-                        if isinstance(remote_out, Mapping):
-                            safe_out_remote: dict[str, object] = {}
-                            connection_name = remote_out.get("connection_name")
-                            remote_tool = remote_out.get("tool") or remote_out.get("remote_tool")
-                            if connection_name:
-                                safe_out_remote["connection_name"] = _clip_debug_text(connection_name, limit=120)
-                            if remote_tool:
-                                safe_out_remote["remote_tool"] = _clip_debug_text(remote_tool, limit=120)
-                            if safe_out_remote:
-                                output_copy["remote"] = safe_out_remote
-                            else:
-                                output_copy.pop("remote", None)
-                        scrubbed_output = output_copy
-
-                    output_preview = _json_safe_debug(scrubbed_output, depth=3, string_limit=720, list_limit=24)
-                    kind_lower = kind.lower().strip()
-                    if isinstance(output_payload, Mapping):
-                        artifact_raw = output_payload.get("artifact_id") or output_payload.get("artifactId")
-                        if isinstance(artifact_raw, str) and artifact_raw.strip():
-                            artifact_id = artifact_raw.strip()
-                        prompt_view = output_payload.get("prompt_view") or output_payload.get("promptView")
-                        if prompt_view is not None:
-                            output_preview = _json_safe_debug(prompt_view, depth=3, string_limit=720, list_limit=24)
-
-                    if artifact_id is None and kind_lower.startswith("mcp"):
-                        try:
-                            output_artifact = _json_safe_debug(scrubbed_output, depth=6, string_limit=4800, list_limit=96)
-                            with tenant_context(getattr(conversation, "business_profile_id", None)):
-                                artifact_id = store_remote_tool_output_artifact(
-                                    conversation=conversation,
-                                    tool_call_id=tool_call_id_value,
-                                    tool_event_id=event_id_value or block_key,
-                                    invoked_tool=tool_name,
-                                    remote_event_payload=payload,
-                                    tool_result=output_artifact
-                                    if isinstance(output_artifact, Mapping)
-                                    else {"output": output_artifact},
-                                )
-                        except Exception:  # pragma: no cover - best effort only
-                            artifact_id = None
-
-                if artifact_id:
-                    payload["artifact_id"] = artifact_id
-                if output_preview is not None:
-                    payload["output_preview"] = output_preview
-
-                existing_payload = tool_use_block.get("payload")
-                merged_payload = dict(existing_payload) if isinstance(existing_payload, Mapping) else {}
-                merged_payload.update(payload)
-                tool_use_block["payload"] = merged_payload
-
-                stream_queue.put(
-                    {
-                        "type": "block_tool_result",
-                        "payload": {
-                            "message_id": _current_message_id(),
-                            "block": copy.deepcopy(tool_use_block),
-                        },
-                    }
-                )
-
-                # File-oriented internal tools should render user-facing attachment blocks
-                # (download buttons, extracted text, etc.) separately from tool cards.
-                try:
-                    if isinstance(output_payload, Mapping) and str(payload.get("status") or "").strip().lower() in {"ok", "success"}:
-                        created_blocks: list[dict[str, object]] = []
-                        tool_lower = tool_name.strip().lower()
-
-                        if tool_lower in {"pdf_generate", "pdf_merge", "pdf_extract_pages"}:
-                            artifact = output_payload.get("artifact")
-                            if isinstance(artifact, Mapping):
-                                file_id_raw = artifact.get("file_id") or artifact.get("fileId") or artifact.get("id")
-                                filename = str(artifact.get("filename") or "").strip()
-                                try:
-                                    file_uuid = uuid.UUID(str(file_id_raw))
-                                except (TypeError, ValueError):
-                                    file_uuid = None
-                                if file_uuid:
-                                    from apps.conversations.models import ConversationFile
-                                    from apps.conversations.portal_files import portal_file_block
-
-                                    with tenant_context(getattr(conversation, "business_profile_id", None)):
-                                        file_obj = ConversationFile.objects.filter(
-                                            id=file_uuid, conversation=conversation
-                                        ).first()
-                                    if file_obj is not None:
-                                        label_map = {
-                                            "pdf_generate": "Generated",
-                                            "pdf_merge": "Merged",
-                                            "pdf_extract_pages": "Extracted pages",
-                                        }
-                                        created_blocks.append(portal_file_block(file_obj, label=label_map.get(tool_lower, "Generated")))
-                                    else:
-                                        # Fallback if the artifact record isn't readable (should be rare).
-                                        created_blocks.append(
-                                            {
-                                                "block_id": new_block_id(),
-                                                "type": "file",
-                                                "created_at": timezone.now().isoformat(),
-                                                "payload": {
-                                                    "file_id": str(file_uuid),
-                                                    "filename": filename or "document.pdf",
-                                                    "content_type": "application/pdf",
-                                                    "size_bytes": 0,
-                                                    "page_count": 0,
-                                                    "kind": "artifact",
-                                                    "status": "ready",
-                                                    "label": "Generated",
-                                                },
-                                            }
-                                        )
-
-                        elif tool_lower == "pdf_extract_text":
-                            file_meta = output_payload.get("file")
-                            text_value = output_payload.get("text")
-                            if isinstance(file_meta, Mapping) and isinstance(text_value, str) and text_value.strip():
-                                file_id_raw = file_meta.get("id") or file_meta.get("file_id") or file_meta.get("fileId")
-                                filename = str(file_meta.get("filename") or "").strip() or "document.pdf"
-                                try:
-                                    file_uuid = uuid.UUID(str(file_id_raw))
-                                except (TypeError, ValueError):
-                                    file_uuid = None
-                                if file_uuid:
-                                    from apps.conversations.portal_files import portal_file_text_block
-
-                                    created_blocks.append(
-                                        portal_file_text_block(
-                                            file_id=file_uuid,
-                                            filename=filename,
-                                            page_count=int(file_meta.get("page_count") or 0),
-                                            text=text_value.strip(),
-                                            title=f"Extracted text from {filename}",
-                                            collapsed=True,
-                                        )
-                                    )
-
-                        for block in created_blocks:
-                            _append_content_block(block)
-                            stream_queue.put(
-                                {
-                                    "type": "block_start",
-                                    "payload": {
-                                        "message_id": _current_message_id(),
-                                        "block": copy.deepcopy(block),
-                                    },
-                                }
-                            )
-                except Exception:  # pragma: no cover - best effort only
-                    logger.exception("portal file block creation failed for tool=%s", tool_name)
-
-                if state_machine_enabled and not stream_complete.is_set():
-                    if deferred_spinner_label:
-                        _emit_spinner_status(
-                            deferred_spinner_label,
-                            pending=True,
-                            fallback="Working...",
-                            reason=deferred_spinner_reason,
-                        )
-                    elif deferred_bridge_thinking and inflight_now == 0:
-                        _emit_spinner_status(
-                            "",
-                            pending=True,
-                            fallback=None,
-                            allow_empty=True,
-                            reason=f"tool:{tool_name}:{phase}:bridge_thinking",
-                        )
-            else:
-                stream_queue.put(
-                    {
-                        "type": "block_tool_use",
-                        "payload": {
-                            "message_id": _current_message_id(),
-                            "block": copy.deepcopy(tool_use_block),
-                        },
-                    }
-                )
-                if phase == "approval_requested":
-                    _persist_inflight_message_snapshot(approval_id=str(approval_id).strip() if approval_id else None)
-        except Exception:  # pragma: no cover - defensive
-            logger.exception("portal tool event serialization failed")
-
-    def signal_stream_complete() -> None:
-        if stream_complete.is_set():
-            return
-        if not block_ops_active:
-            _emit_block_events(rich_builder.finalize())
-        stream_complete.set()
-        trace_logger.log("stream.completed", indent=1)
-        stream_queue.put({"type": "status", "state": "complete", "label": ""})
-        logger.debug("Stream completion signaled for conversation %s", conversation.id)
-
-    def signal_stream_stop() -> None:
-        if stream_stopped.is_set():
-            return
-        stream_stopped.set()
-        stream_queue.put(stream_sentinel)
-
-    def on_placeholder_response(text: str) -> None:
-        # Placeholder thinking is no longer surfaced via the spinner.
-        return
-
-    def on_spinner_update(text: str) -> None:
-        # Portal spinner text is provided by the LLM via tool-call UI hints.
-        if int(spinner_state.get("tool_inflight") or 0) > 0:
-            return
-        _emit_spinner_status(text, pending=True, fallback=None)
-
-    def run_planner_async(
-        stream_context: StreamingTurnContext,
-        persisted_text: str,
-        ai_message_id: uuid.UUID | None,
-        parent_ctx,
-    ) -> None:
-        close_old_connections()
-        token = None
-        if parent_ctx is not None:
-            token = otel_context.attach(parent_ctx)
-        try:
-            should_run_planner, skip_reason = _planner_decision(
-                conversation=conversation,
-                user_message=body,
-                stream_context=stream_context,
-            )
-            if not should_run_planner:
-                trace_logger.log(
-                    "planner.skipped",
-                    indent=1,
-                    extra={"reason": skip_reason or "auto"},
-                )
-                plan_holder["planner_skipped"] = True
-                return
-            tool_context = getattr(stream_context, "tool_context", None)
-            plan = orchestrator.run_planner_only(
-                conversation=conversation,
-                user_message=body,
-                answer_text=persisted_text,
-                tool_context=tool_context,
-            )
-            if plan is None:
-                trace_logger.log("planner.skipped", indent=1)
-                return
-            plan_holder["plan"] = plan
-            trace_logger.log(
-                "planner.completed",
-                detail=f"planned_actions={len(plan.planned_actions)} extractions={len(plan.extractions)}",
-                indent=1,
-            )
-            trace_logger.log(
-                "plan.ready",
-                detail=f"actions={len(plan.planned_actions)} extractions={len(plan.extractions)}",
-                indent=1,
-            )
-
-            pending_actions = serialize_planned_actions(plan.planned_actions)
-            existing_metadata = plan_holder.get("message_metadata") if isinstance(plan_holder.get("message_metadata"), dict) else {}
-            message_metadata = dict(existing_metadata or {})
-            message_metadata.update(
-                {
-                    "citations": [snippet.title for snippet in plan.citations],
-                    "actions": pending_actions,
-                    "diagnostics": plan.diagnostics,
-                }
-            )
-            verification_snapshot = None
-            if tool_context is not None:
-                verification = getattr(tool_context, "verification", None)
-                if isinstance(verification, Mapping) and verification:
-                    verification_snapshot = dict(verification)
-            if verification_snapshot:
-                missing_points = verification_snapshot.get("missing_points")
-                missing_list: list[str] = []
-                if isinstance(missing_points, list):
-                    for entry in missing_points[:8]:
-                        if isinstance(entry, str) and entry.strip():
-                            missing_list.append(entry.strip())
-                message_metadata["verification"] = {
-                    "verdict": _clip_debug_text(str(verification_snapshot.get("verdict") or ""), limit=48),
-                    "missing_points": missing_list,
-                    "final_response": _clip_debug_text(str(verification_snapshot.get("final_response") or ""), limit=480),
-                    "notes": _clip_debug_text(str(verification_snapshot.get("notes") or ""), limit=480),
-                }
-            answer_confidence = None
-            if plan.diagnostics:
-                answer_confidence = plan.diagnostics.get("answer_confidence")
-            if answer_confidence is not None:
-                message_metadata["answer_confidence"] = answer_confidence
-            if plan.ingestion_warnings:
-                message_metadata["ingestion_warnings"] = [dict(item) for item in plan.ingestion_warnings]
-
-            if ai_message_id:
-                service.update_message(
-                    session_token=session_token,
-                    message_id=ai_message_id,
-                    metadata=message_metadata,
-                    conversation=conversation,
-                )
-            plan_holder["message_metadata"] = message_metadata
-
-            updated_payload = dict(plan_holder.get("final_payload") or {})
-            if answer_confidence is not None:
-                updated_payload["answer_confidence"] = answer_confidence
-            if plan.ingestion_warnings:
-                updated_payload["ingestion_warnings"] = [dict(item) for item in plan.ingestion_warnings]
-            plan_holder["final_payload"] = updated_payload or None
-            if updated_payload:
-                version = _next_metadata_version()
-                updated_payload["metadata_version"] = version
-                actions_queue.put(
-                    {
-                        "type": "turnUpdated",
-                        "payload": {
-                            "message_id": str(updated_payload.get("message_id") or ai_message_id or ""),
-                            "text": updated_payload.get("text"),
-                            "session_status": updated_payload.get("session_status"),
-                            "answer_confidence": updated_payload.get("answer_confidence"),
-                            "ingestion_warnings": updated_payload.get("ingestion_warnings"),
-                            "metadata_version": version,
-                        },
-                    }
-                )
-
-            action_results = []
-            if plan.planned_actions:
-                action_results = dispatcher.execute(conversation=conversation, planned_actions=plan.planned_actions)
-                trace_logger.log(
-                    "actions.executed",
-                    detail=f"count={len(action_results)}",
-                    indent=2,
-                    extra=[
-                        {
-                            "action": result.action.value,
-                            "status": result.status,
-                            "error": result.error,
-                        }
-                        for result in action_results
-                    ],
-                )
-            if plan.extractions:
-                service.store_extractions(
-                    session_token=session_token,
-                    items=((extraction.extraction_type, extraction.payload) for extraction in plan.extractions),
-                    conversation=conversation,
-                )
-                logger.info(
-                    "portal extractions stored conversation=%s count=%s",
-                    conversation.id,
-                    len(plan.extractions),
-                )
-                trace_logger.log(
-                    "extractions.stored",
-                    detail=f"count={len(plan.extractions)}",
-                    indent=2,
-                )
-
-            if plan.planned_actions:
-                serialized_actions = serialize_action_results(action_results)
-                updated_metadata = copy.deepcopy(message_metadata)
-                updated_metadata["actions"] = serialized_actions
-                if ai_message_id:
-                    service.update_message(
-                        session_token=session_token,
-                        message_id=ai_message_id,
-                        metadata=updated_metadata,
-                        conversation=conversation,
-                    )
-                actions_queue.put(
-                    {
-                        "type": "actionsComplete",
-                        "message_id": str(ai_message_id or ""),
-                        "actions": serialized_actions,
-                    }
-                )
-            elif plan.extractions:
-                actions_queue.put(
-                    {
-                        "type": "actionsComplete",
-                        "message_id": str(ai_message_id or ""),
-                        "actions": [],
-                    }
-                )
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.exception("planner async failed: %s", exc)
-            trace_logger.log_error("planner", exc, indent=1)
-            actions_queue.put(
-                {
-                    "type": "actionsError",
-                    "message_id": str(ai_message_id or ""),
-                    "error": str(exc),
-                }
-            )
-        finally:
-            if token is not None:
-                otel_context.detach(token)
-            close_old_connections()
-            actions_queue.put(actions_sentinel)
-
-    def persist_initial_response(stream_context: StreamingTurnContext, parent_ctx) -> None:
-        close_old_connections()
-        token = None
-        if parent_ctx is not None:
-            token = otel_context.attach(parent_ctx)
-        trace_logger.log("finalize.started", indent=1)
-        try:
-            with TRACER.start_as_current_span("portal.finalize_turn") as finalize_span:
-                if finalize_span.is_recording():
-                    finalize_span.set_attribute("conversation.id", str(conversation.id))
-                    finalize_span.set_attribute("business.id", str(conversation.business_profile_id))
-                base_plan = orchestrator.finalize_turn(stream_context)
-                plan_holder["plan"] = base_plan
-                persist_text = base_plan.response_text or ""
-                if not persist_text:
-                    streamed_text = "".join(stream_context.streamed_chunks).strip() if stream_context.streamed_chunks else ""
-                    if streamed_text:
-                        persist_text = streamed_text
-                with blocks_lock:
-                    blocks_snapshot = copy.deepcopy(content_blocks)
-                if not persist_text:
-                    derived_text = extract_text_from_content_blocks(blocks_snapshot)
-                    if derived_text:
-                        persist_text = derived_text
-                if not persist_text:
-                    persist_text = "(no content)"
-                with TRACER.start_as_current_span("portal.finalize.sanitize") as sanitize_span:
-                    response_text, _ = sanitize_with_diagnostics(
-                        persist_text,
-                        conversation=conversation,
-                        stage="persisted_message",
-                    )
-                    if sanitize_span.is_recording():
-                        sanitize_span.set_attribute("portal.sanitize_chars", len(persist_text))
-                pending_actions = serialize_planned_actions(base_plan.planned_actions)
-                message_metadata = {
-                    "citations": [snippet.title for snippet in base_plan.citations],
-                    "actions": pending_actions,
-                    "diagnostics": base_plan.diagnostics,
-                }
-                if base_plan.diagnostics and base_plan.diagnostics.get("answer_confidence") is not None:
-                    message_metadata["answer_confidence"] = base_plan.diagnostics.get("answer_confidence")
-                if base_plan.ingestion_warnings:
-                    message_metadata["ingestion_warnings"] = [dict(item) for item in base_plan.ingestion_warnings]
-
-                # Ensure we persist a rich block representation of the answer.
-                has_rich_text = any(
-                    str(entry.get("type") or "").strip().lower()
-                    in {"paragraph", "heading", "list", "list_item", "quote", "code_block"}
-                    for entry in blocks_snapshot
-                    if isinstance(entry, Mapping)
-                )
-                has_legacy_text = any(
-                    str(entry.get("type") or "").strip().lower() == "text" for entry in blocks_snapshot if isinstance(entry, Mapping)
-                )
-                if not has_rich_text and not has_legacy_text and response_text:
-                    # Ensure assistant text renders before tool cards on refresh.
-                    blocks_snapshot = [*rich_blocks_from_text(response_text), *blocks_snapshot]
-
-                # Structured outputs (tables/kv) should render as content blocks, not markdown.
-                structured_blocks = content_blocks_from_response_blocks(list(base_plan.response_blocks))
-                if structured_blocks:
-                    blocks_snapshot.extend(structured_blocks)
-                    for block in structured_blocks:
-                        stream_queue.put(
-                            {
-                                "type": "block_start",
-                                "payload": {
-                                    "message_id": _current_message_id(),
-                                    "block": copy.deepcopy(block),
-                                },
-                            }
-                        )
-
-                blocks_snapshot = _normalize_portal_content_blocks(blocks_snapshot)
-
-                # Preserve pre-approval text when updating message body after approval resolution.
-                # When a turn continues after tool approval, the new response_text only contains
-                # the post-approval content. We need to prepend any existing pre-approval text
-                # to maintain correct content ordering on page refresh.
-                final_body = response_text
-                pending_message_id = plan_holder.get("pending_message_id")
-                if pending_message_id:
-                    try:
-                        existing_message = conversation.messages.filter(id=pending_message_id).first()
-                        if existing_message and existing_message.body:
-                            # Check if this message had pre-approval text by looking at content_blocks
-                            existing_blocks = existing_message.content_blocks if isinstance(getattr(existing_message, "content_blocks", None), list) else []
-                            has_tool_blocks = any(
-                                isinstance(block, dict) and str(block.get("type") or "").strip().lower() in {"tool_use", "tool_result"}
-                                for block in existing_blocks
-                            )
-                            # If there were tool blocks and existing body text, preserve the pre-approval text
-                            if has_tool_blocks and existing_message.body.strip():
-                                pre_approval_text = existing_message.body.strip()
-                                # Only prepend if the new response doesn't already contain the pre-approval text
-                                if pre_approval_text and pre_approval_text not in response_text:
-                                    final_body = f"{pre_approval_text}\n\n{response_text}"
-                    except Exception:  # pragma: no cover - best effort only
-                        logger.exception("portal pre-approval text preservation failed")
-
-                with TRACER.start_as_current_span("portal.finalize.persist") as persist_span:
-                    try:
-                        ai_message = service.append_message(
-                            session_token=session_token,
-                            sender=ConversationSender.AI,
-                            body=final_body,
-                            metadata=message_metadata,
-                            content_blocks=blocks_snapshot,
-                            conversation=conversation,
-                            message_id=pending_message_id,
-                        )
-                    except IntegrityError:
-                        ai_message = service.update_message(
-                            session_token=session_token,
-                            message_id=pending_message_id,
-                            body=final_body,
-                            metadata=message_metadata,
-                            content_blocks=blocks_snapshot,
-                            conversation=conversation,
-                        )
-                    if persist_span.is_recording():
-                        persist_span.set_attribute("portal.actions.pending", len(pending_actions))
-                try:
-                    schedule_memory = getattr(orchestrator, "schedule_memory_update", None)
-                    if callable(schedule_memory):
-                        schedule_memory(
-                            conversation=conversation,
-                            user_message=body,
-                            assistant_message=response_text,
-                            expected_last_message_id=ai_message.id,
-                        )
-                except Exception:  # pragma: no cover - best effort background task
-                    logger.exception("portal memory update scheduling failed")
-
-                session_state = service.get_session_state(session_token=session_token, conversation=conversation)
-                final_payload = {
-                    "text": response_text,
-                    "message_id": str(ai_message.id),
-                    "session_status": session_state.status,
-                    "metadata_version": plan_holder.get("metadata_version", 1),
-                    "content_blocks": ai_message.content_blocks,
-                }
-                if base_plan.diagnostics:
-                    answer_confidence = base_plan.diagnostics.get("answer_confidence")
-                    if answer_confidence is not None:
-                        final_payload["answer_confidence"] = answer_confidence
-                if base_plan.ingestion_warnings:
-                    final_payload["ingestion_warnings"] = [dict(item) for item in base_plan.ingestion_warnings]
-                if debug_tool_trace_enabled:
-                    debug_payload = _serialize_debug_tools_payload(stream_context)
-                    final_payload["debug_tools"] = debug_payload or {
-                        "tool_trace": [],
-                        "search_history": [],
-                        "knowledge_results": [],
-                        "knowledge_reads": [],
-                        "coverage_ledger": [],
-                        "table_aggregate_rows": [],
-                    }
-                plan_holder["session_status"] = session_state.status
-                extra_payload: dict[str, Any] = {
-                    "citations": [snippet.title for snippet in base_plan.citations],
-                    "pending_actions": len(base_plan.planned_actions),
-                }
-                trace_logger.log(
-                    "response.persisted",
-                    detail=f"message_id={ai_message.id}",
-                    indent=1,
-                    extra=extra_payload,
-                )
-                plan_holder["message_metadata"] = message_metadata
-                plan_holder["final_payload"] = final_payload
-                plan_holder["ai_message_id"] = ai_message.id
-                plan_holder["pending_message_id"] = ai_message.id
-
-                if not cancel_requested.is_set():
-                    threading.Thread(
-                        target=run_planner_async,
-                        args=(
-                            stream_context,
-                            response_text,
-                            ai_message.id,
-                            otel_context.get_current(),
-                        ),
-                        daemon=True,
-                    ).start()
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.exception("Orchestrator finalize failed: %s", exc)
-            trace_logger.log_error("finalize", exc, indent=1)
-            plan_holder["final_error"] = str(exc)
-            actions_queue.put(actions_sentinel)
-        finally:
-            if token is not None:
-                otel_context.detach(token)
-            close_old_connections()
-            signal_stream_complete()
-            signal_stream_stop()
-            finalize_queue.put(finalize_sentinel)
-
-    def orchestrate(parent_ctx) -> None:
-        close_old_connections()
-        token = None
-        if parent_ctx is not None:
-            token = otel_context.attach(parent_ctx)
-        try:
-            trace_logger.log("orchestrator.turn.start", indent=1)
-            with TRACER.start_as_current_span("portal.orchestrator.turn"):
-                stream_context = orchestrator.stream_turn(
-                    conversation=conversation,
-                    user_message=body,
-                    on_response_text_delta=on_response_text_delta,
-                    on_status_change=on_status_change,
-                    on_placeholder_response=on_placeholder_response,
-                    on_stream_complete=signal_stream_complete,
-                    on_spinner_update=on_spinner_update,
-                    on_tool_event=on_tool_event,
-                    on_block_event=on_block_event,
-                    on_reasoning_event=on_reasoning_event,
-                    should_cancel=cancel_requested.is_set,
-                )
-                plan_holder["context"] = stream_context
-                threading.Thread(
-                    target=persist_initial_response,
-                    args=(stream_context, otel_context.get_current()),
-                    daemon=True,
-                ).start()
-                signal_stream_complete()
-                trace_logger.log("orchestrator.turn.complete", indent=1)
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.exception("Orchestrator turn failed: %s", exc)
-            plan_holder["error"] = str(exc)
-            trace_logger.log_error("orchestrator.turn", exc, indent=1)
-            signal_stream_complete()
-            signal_stream_stop()
-            finalize_queue.put(finalize_sentinel)
-            actions_queue.put(actions_sentinel)
-        finally:
-            if token is not None:
-                otel_context.detach(token)
-            close_old_connections()
-
-    request_context = otel_context.get_current()
-    worker = threading.Thread(target=orchestrate, args=(request_context,), daemon=True)
-    worker.start()
-
-    def _block_event_stream() -> Iterable[str]:
-        # Force an early flush so proxies (or WSGI servers) don't buffer the first real event.
-        # This is a valid SSE "comment" line that the client safely ignores.
-        yield ": stream_open\n\n"
-        keepalive_setting = getattr(settings, "PORTAL_STREAM_KEEPALIVE_SECONDS", 15.0)
-        try:
-            keepalive_seconds = float(keepalive_setting)
-        except (TypeError, ValueError):
-            keepalive_seconds = 15.0
-        if keepalive_seconds < 0:
-            keepalive_seconds = 0.0
-        last_keepalive = time.monotonic()
-        while True:
-            try:
-                chunk = stream_queue.get(timeout=0.25)
-            except Empty:
-                if keepalive_seconds and time.monotonic() - last_keepalive >= keepalive_seconds:
-                    last_keepalive = time.monotonic()
-                    yield ": keepalive\n\n"
-                continue
-            if chunk is stream_sentinel:
-                break
-            if not isinstance(chunk, dict):
-                continue
-
-            chunk_type = str(chunk.get("type") or "").strip()
-            last_keepalive = time.monotonic()
-            if chunk_type in {"block_start", "block_delta", "block_end", "block_tool_use", "block_tool_result"}:
-                payload = chunk.get("payload") or {}
-                yield f"event: {chunk_type}\n"
-                yield f"data: {json.dumps(payload)}\n\n"
-                continue
-
-            if chunk_type == "context_progress":
-                state_value = chunk.get("state")
-                label_value = chunk.get("label")
-                data: dict[str, object] = {}
-                if isinstance(state_value, str):
-                    data["state"] = state_value
-                if isinstance(label_value, str):
-                    data["label"] = label_value
-                meta_value = chunk.get("meta")
-                if isinstance(meta_value, dict):
-                    data["meta"] = meta_value
-                yield "event: context_progress\n"
-                yield f"data: {json.dumps(data)}\n\n"
-                continue
-
-            if chunk_type == "status":
-                state_value = chunk.get("state")
-                label_value = chunk.get("label")
-                data: dict[str, object] = {}
-                if isinstance(state_value, str):
-                    data["state"] = state_value
-                if isinstance(label_value, str):
-                    data["label"] = label_value
-                meta_value = chunk.get("meta")
-                if isinstance(meta_value, dict):
-                    data["meta"] = meta_value
-                yield "event: status\n"
-                yield f"data: {json.dumps(data)}\n\n"
-                continue
-
-            if chunk_type == "spinnerStatus":
-                payload = {
-                    "message_id": chunk.get("message_id"),
-                    "text": chunk.get("spinner_text"),
-                    "pending": chunk.get("pending"),
-                }
-                yield "event: spinnerStatus\n"
-                yield f"data: {json.dumps(payload)}\n\n"
-                continue
-
-            # Unknown structured event: ignore rather than corrupting the transcript.
-
-        worker.join()
-        finalize_queue.get()
-        final_payload = plan_holder.get("final_payload")
-        if not final_payload:
-            error_message = plan_holder.get("final_error") or plan_holder.get("error") or "AI finalization failed"
-            yield "event: error\n"
-            yield f"data: {json.dumps(str(error_message))}\n\n"
-            return
-
-        final_payload = dict(final_payload)
-        final_payload["pending"] = False
-        if "metadata_version" not in final_payload:
-            final_payload["metadata_version"] = plan_holder.get("metadata_version", 1)
-        trace_logger.log(
-            "response.dispatched",
-            detail=f"message_id={final_payload.get('message_id')}",
-            indent=1,
-        )
-        _emit_spinner_status("", pending=False, fallback=None, allow_empty=True)
-        yield "event: turnPersisted\n"
-        yield f"data: {json.dumps(final_payload)}\n\n"
-
-        while True:
-            post_event = actions_queue.get()
-            if post_event is actions_sentinel:
-                break
-            if post_event.get("type") == "turnUpdated":
-                payload = post_event.get("payload") or {}
-                yield "event: turnUpdated\n"
-                yield f"data: {json.dumps(payload)}\n\n"
-            elif post_event.get("type") == "actionsComplete":
-                payload = {
-                    "message_id": post_event.get("message_id"),
-                    "actions": post_event.get("actions", []),
-                    "label": "Follow-up tasks completed.",
-                }
-                trace_logger.log(
-                    "actions.completed",
-                    detail=f"message_id={payload['message_id']} count={len(payload['actions'])}",
-                    indent=2,
-                )
-                yield "event: actionsComplete\n"
-                yield f"data: {json.dumps(payload)}\n\n"
-            elif post_event.get("type") == "actionsError":
-                payload = {
-                    "message_id": post_event.get("message_id"),
-                    "error": post_event.get("error", "Background workflow failed."),
-                }
-                trace_logger.log_error(
-                    "actions",
-                    payload.get("error") or "actions failed",
-                    indent=2,
-                )
-                yield "event: actionsError\n"
-                yield f"data: {json.dumps(payload)}\n\n"
-
-    def event_stream() -> Iterable[str]:
-        try:
-            yield from _block_event_stream()
-        finally:
-            _unregister_cancel_handle()
-
-    response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")
-    response["Cache-Control"] = "no-cache"
-    response["X-Accel-Buffering"] = "no"
-    return response
-
-
 @require_GET
 def events(request: HttpRequest) -> StreamingHttpResponse:
     session_token = request.GET.get("session_token") or request.GET.get("sessionToken")
@@ -5283,6 +3262,49 @@ def _parse_turn_since_seq(request: HttpRequest) -> int:
         return 0
 
 
+def _open_portal_turn_listen_connection():
+    """
+    Open a dedicated Postgres connection for LISTEN/NOTIFY.
+
+    Why:
+    - The portal turn runner appends events in the background and persists them to Postgres.
+    - Streaming should be push-based (LISTEN/NOTIFY), not DB-polling, to feel like modern token streaming.
+    - We intentionally do not reuse Django's ORM connection for LISTEN to avoid interfering with request queries.
+    """
+    try:
+        import psycopg2
+        from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+        from django.db import connections
+
+        db = connections["default"].settings_dict
+        options = db.get("OPTIONS") if isinstance(db.get("OPTIONS"), dict) else {}
+        connect_kwargs: dict[str, object] = {
+            "dbname": db.get("NAME") or "",
+            "user": db.get("USER") or "",
+            "password": db.get("PASSWORD") or "",
+            "host": db.get("HOST") or "",
+            "port": db.get("PORT") or "",
+        }
+        for key in (
+            "sslmode",
+            "sslrootcert",
+            "sslcert",
+            "sslkey",
+            "sslcrl",
+            "application_name",
+        ):
+            value = options.get(key)
+            if value:
+                connect_kwargs[key] = value
+        conn = psycopg2.connect(**connect_kwargs)  # type: ignore[arg-type]
+        conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+        with conn.cursor() as cursor:
+            cursor.execute(f"LISTEN {PORTAL_TURN_EVENTS_NOTIFY_CHANNEL}")
+        return conn
+    except Exception:  # pragma: no cover - best effort only
+        return None
+
+
 @require_GET
 def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHttpResponse:
     service = _service()
@@ -5308,43 +3330,143 @@ def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHtt
         last_seq = int(since or 0)
         keepalive_seconds = 15.0
         last_keepalive = time.monotonic()
+        listen_conn = _open_portal_turn_listen_connection()
 
-        while True:
-            with tenant_context(business_id):
-                events = list(list_turn_events(turn_id=turn.id, since_seq=last_seq, limit=250))
-            if events:
-                for evt in events:
-                    last_seq = int(evt.seq or 0)
-                    payload = {
-                        "turn_id": str(turn.id),
-                        "seq": last_seq,
-                        "type": evt.type,
-                        "payload": evt.payload or {},
-                    }
-                    yield f"id: {last_seq}\n"
-                    yield "event: turnEvent\n"
-                    yield f"data: {json.dumps(payload)}\n\n"
-                continue
+        try:
+            while True:
+                with tenant_context(business_id):
+                    events = list(list_turn_events(turn_id=turn.id, since_seq=last_seq, limit=250))
+                if events:
+                    for evt in events:
+                        last_seq = int(evt.seq or 0)
+                        payload = {
+                            "turn_id": str(turn.id),
+                            "seq": last_seq,
+                            "type": evt.type,
+                            "payload": evt.payload or {},
+                        }
+                        yield f"id: {last_seq}\n"
+                        yield "event: turnEvent\n"
+                        yield f"data: {json.dumps(payload)}\n\n"
+                    continue
 
-            with tenant_context(business_id):
-                latest = (
-                    PortalTurn.objects.filter(id=turn.id)
-                    .values_list("status", "last_event_seq")
-                    .first()
-                )
-            if latest:
-                latest_status, latest_seq = latest
-                if latest_status in {PortalTurnStatus.FINALIZED, PortalTurnStatus.FAILED, PortalTurnStatus.CANCELLED}:
-                    if int(latest_seq or 0) <= last_seq:
-                        break
+                with tenant_context(business_id):
+                    latest = (
+                        PortalTurn.objects.filter(id=turn.id)
+                        .values_list("status", "last_event_seq")
+                        .first()
+                    )
+                if latest:
+                    latest_status, latest_seq = latest
+                    if latest_status in {PortalTurnStatus.FINALIZED, PortalTurnStatus.FAILED, PortalTurnStatus.CANCELLED}:
+                        if int(latest_seq or 0) <= last_seq:
+                            break
 
-            now = time.monotonic()
-            if now - last_keepalive >= keepalive_seconds:
-                yield ": keepalive\n\n"
-                last_keepalive = now
-            time.sleep(0.5)
+                if listen_conn is not None:
+                    now = time.monotonic()
+                    timeout = max(0.0, keepalive_seconds - (now - last_keepalive))
+                    try:
+                        readable, _, _ = select.select([listen_conn], [], [], timeout)
+                    except Exception:
+                        readable = []
+                    if not readable:
+                        # Keep the SSE connection warm.
+                        yield ": keepalive\n\n"
+                        last_keepalive = time.monotonic()
+                        continue
+
+                    try:
+                        listen_conn.poll()
+                    except Exception:
+                        # On any LISTEN connection issue, fall back to keepalive pacing.
+                        yield ": keepalive\n\n"
+                        last_keepalive = time.monotonic()
+                        continue
+
+                    matched = False
+                    try:
+                        while getattr(listen_conn, "notifies", None):
+                            notify = listen_conn.notifies.pop(0)
+                            raw = getattr(notify, "payload", "") or ""
+                            try:
+                                note = json.loads(raw) if raw else {}
+                            except Exception:
+                                note = {}
+                            if str(note.get("turn_id") or "") == str(turn.id):
+                                matched = True
+                                break
+                    except Exception:
+                        matched = True
+                    if matched:
+                        continue
+                    # Notification was for a different turn; keep waiting.
+                    continue
+
+                # Fallback: if LISTEN isn't available, yield periodic keepalives and re-check.
+                now = time.monotonic()
+                if now - last_keepalive >= keepalive_seconds:
+                    yield ": keepalive\n\n"
+                    last_keepalive = now
+                time.sleep(0.15)
+        finally:
+            if listen_conn is not None:
+                try:
+                    listen_conn.close()
+                except Exception:
+                    pass
 
     response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")
     response["Cache-Control"] = "no-cache"
     response["X-Accel-Buffering"] = "no"
     return response
+
+
+@csrf_exempt
+@require_POST
+def portal_turn_cancel(request: HttpRequest, turn_id: uuid.UUID) -> JsonResponse:
+    service = _service()
+    try:
+        payload = _parse_json_body(request)
+    except PortalValidationError as exc:
+        return _json_error("invalid_json", str(exc))
+
+    session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
+    if not session_token:
+        return _json_error("validation_error", "session_token is required.")
+
+    try:
+        conversation = service.get_conversation(session_token=session_token, include_messages=False)
+    except PortalNotFoundError as exc:
+        return _json_error("not_found", str(exc), status=404)
+
+    business_id = getattr(conversation, "business_profile_id", None)
+    with tenant_context(business_id):
+        turn = PortalTurn.objects.filter(id=turn_id, conversation_id=conversation.id).first()
+        if not turn:
+            return _json_error("not_found", "Turn not found.", status=404)
+        if turn.status in {PortalTurnStatus.FINALIZED, PortalTurnStatus.FAILED, PortalTurnStatus.CANCELLED}:
+            return JsonResponse(
+                {
+                    "turn": _portal_turn_to_dict(turn),
+                    "cancelled": False,
+                }
+            )
+        PortalTurn.objects.filter(id=turn.id).update(
+            status=PortalTurnStatus.CANCELLED,
+            updated_at=timezone.now(),
+        )
+        try:
+            append_turn_event(
+                turn_id=turn.id,
+                event_type="turn_cancelled",
+                payload={"turn_id": str(turn.id)},
+            )
+        except Exception:  # pragma: no cover - best effort only
+            logger.exception("portal turn cancel event failed turn=%s", turn.id)
+
+    return JsonResponse(
+        {
+            "turn": _portal_turn_to_dict(turn),
+            "cancelled": True,
+        }
+    )

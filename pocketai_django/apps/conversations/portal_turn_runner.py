@@ -4,7 +4,6 @@ import copy
 import inspect
 import logging
 import threading
-import re
 import time
 import uuid
 from typing import Any, Callable, Mapping
@@ -592,7 +591,30 @@ class PortalTurnRunner:
         if not user_message:
             raise ValueError("PortalTurn.user_message is empty")
 
+        current_status = (
+            PortalTurn.objects.filter(id=self.turn.id)
+            .values_list("status", flat=True)
+            .first()
+        )
+        if current_status == PortalTurnStatus.CANCELLED:
+            return
+
         PortalTurn.objects.filter(id=self.turn.id).update(status=PortalTurnStatus.STREAMING, updated_at=timezone.now())
+
+        cancel_state = {"last_check": 0.0, "cancelled": False}
+
+        def _should_cancel() -> bool:
+            now = time.monotonic()
+            if now - cancel_state["last_check"] < 0.5:
+                return cancel_state["cancelled"]
+            cancel_state["last_check"] = now
+            status = (
+                PortalTurn.objects.filter(id=self.turn.id)
+                .values_list("status", flat=True)
+                .first()
+            )
+            cancel_state["cancelled"] = status == PortalTurnStatus.CANCELLED
+            return cancel_state["cancelled"]
 
         stream_kwargs = {
             "conversation": self.conversation,
@@ -605,7 +627,7 @@ class PortalTurnRunner:
             "on_tool_event": self.builder.on_tool_event,
             "on_block_event": self.builder.on_block_event,
             "on_reasoning_event": self.builder.on_reasoning_event,
-            "should_cancel": lambda: False,
+            "should_cancel": _should_cancel,
         }
         try:
             parameters = inspect.signature(orchestrator.stream_turn).parameters
@@ -617,7 +639,16 @@ class PortalTurnRunner:
 
         self.builder.finalize_text()
 
-        PortalTurn.objects.filter(id=self.turn.id).update(status=PortalTurnStatus.FINALIZING, updated_at=timezone.now())
+        current_status = (
+            PortalTurn.objects.filter(id=self.turn.id)
+            .values_list("status", flat=True)
+            .first()
+        )
+        if current_status != PortalTurnStatus.CANCELLED:
+            PortalTurn.objects.filter(id=self.turn.id).update(
+                status=PortalTurnStatus.FINALIZING,
+                updated_at=timezone.now(),
+            )
 
         # Materialize content blocks from the event log for deterministic persistence.
         with tenant_context(getattr(self.conversation, "business_profile_id", None)):
@@ -651,8 +682,30 @@ class PortalTurnRunner:
             message_id = message.id
             PortalTurn.objects.filter(id=self.turn.id).update(message_id=message_id)
 
+        try:
+            session_state = self.service.get_session_state(
+                session_token=self.conversation.session_token,
+                conversation=self.conversation,
+            )
+        except Exception:  # pragma: no cover - session snapshot is best effort
+            session_state = None
+        final_payload = {
+            "text": body_text,
+            "message_id": str(message_id),
+            "session_status": getattr(session_state, "status", None) if session_state else None,
+            "metadata_version": 1,
+            "content_blocks": blocks,
+        }
+        self.builder.append_event("turn_persisted", final_payload)
+
+        latest_status = (
+            PortalTurn.objects.filter(id=self.turn.id)
+            .values_list("status", flat=True)
+            .first()
+        )
+        final_status = PortalTurnStatus.CANCELLED if latest_status == PortalTurnStatus.CANCELLED else PortalTurnStatus.FINALIZED
         PortalTurn.objects.filter(id=self.turn.id).update(
-            status=PortalTurnStatus.FINALIZED,
+            status=final_status,
             finalized_at=timezone.now(),
             updated_at=timezone.now(),
         )

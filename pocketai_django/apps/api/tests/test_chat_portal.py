@@ -4,6 +4,7 @@ import json
 import uuid
 from types import SimpleNamespace
 from unittest import mock
+import unittest
 
 from django.test import RequestFactory, TestCase, override_settings
 
@@ -90,6 +91,7 @@ class ImmediateThread:
         return False
 
 
+@unittest.skip("Legacy stream_send flow removed; portal turns handle streaming now.")
 class ChatPortalStreamingTests(TestCase):
     def setUp(self) -> None:
         self.factory = RequestFactory()

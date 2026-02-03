@@ -4,8 +4,9 @@ class ChatPortalClient {
 	    this.endpoints = {
 	      bootstrap: container.getAttribute("data-endpoint-bootstrap"),
 	      messages: container.getAttribute("data-endpoint-messages"),
-	      streamSend: container.getAttribute("data-endpoint-stream-send"),
-	      streamStop: container.getAttribute("data-endpoint-stream-stop"),
+      turnCreate: container.getAttribute("data-endpoint-turns-create"),
+      turnEventsTemplate: container.getAttribute("data-endpoint-turn-events-template"),
+      turnCancelTemplate: container.getAttribute("data-endpoint-turn-cancel"),
 	      events: container.getAttribute("data-endpoint-events"),
 	      csat: container.getAttribute("data-endpoint-csat"),
 	      toolApproval: container.getAttribute("data-endpoint-tool-approval"),
@@ -30,7 +31,7 @@ class ChatPortalClient {
     this.currentStatus = container.getAttribute("data-initial-status") || "new";
     this.eventSource = null;
 	    this.awaitingReply = false;
-	    this.streamController = null;
+	    this.turnEventSource = null;
 	    this.stopRequested = false;
 	    this.bootstrapPayload = null;
     this.elements = {
@@ -77,6 +78,7 @@ class ChatPortalClient {
 	    this.sessionTokens = [];
 	    this.currentSessionToken = null;
 	    this.sessionStorageKey = `chat_sessions_${this.businessSlug}_${this.agentSlug}`;
+    this.turnStateStorageKeyPrefix = `portal_turn_state_${this.businessSlug}_${this.agentSlug}_`;
 	    this.toolsVisibilityKey = `chat_tools_visible_${this.businessSlug}_${this.agentSlug}`;
 	    this.globalToolsVisible = this.readGlobalToolsPreference();
 	    this.streamingMessageNode = null;
@@ -85,6 +87,9 @@ class ChatPortalClient {
     this.streamingStatusTextEl = null;
     this.streamingStatusDotEl = null;
 	    this.streamingMessageId = null;
+    this.activeTurnId = null;
+    this.activeTurnLastSeq = 0;
+    this.turnCancelled = false;
 	    this.streamingBlocksEl = null;
 	    // Canonical block streaming state (block_id -> DOM + buffers)
 	    this.usingBlockStream = false;
@@ -192,6 +197,7 @@ class ChatPortalClient {
         if (this.elements.inboxOpenBtn) this.elements.inboxOpenBtn.setAttribute("hidden", "");
       }
       this.connectEventStream();
+      this.resumeActiveTurnIfNeeded();
     } catch (error) {
       this.showToast("Unable to load chat", error.message || "Please refresh and try again.", true);
     }
@@ -558,7 +564,6 @@ class ChatPortalClient {
 	      const wasEmpty = this.isCurrentSessionEmpty();
 	      if (this.isSending || this.isStreaming) {
 	        this.enqueueMessage(message);
-	        void this.requestStop();
 	        return;
 	      }
       if (wasEmpty) {
@@ -804,6 +809,11 @@ class ChatPortalClient {
 
 		  async sendMessage(message) {
 		    if (!this.sessionToken) return;
+        if (!this.endpoints.turnCreate) {
+          this.showToast("Send failed", "Turn endpoint is not configured.", true);
+          return;
+        }
+        this.clearActiveTurnState();
 		    this.stopRequested = false;
 		    this.clearStreamingStatus();
 		    this.resetStreamingState(true, false);
@@ -815,6 +825,7 @@ class ChatPortalClient {
 	    this.awaitingReply = true;
 	    this.isSending = true;
 	    this.isStreaming = true;
+      this.flushQueueAfterTurn = false;
 	    this.updateSendButtonState(true);
 	    this.updateComposerNotice(true);
 	    this.appendMessage({
@@ -824,78 +835,59 @@ class ChatPortalClient {
 	    });
 	    // Instant feedback before the first SSE event arrives.
 	    this.setSpinnerText("", { pending: true });
-	    const controller = new AbortController();
-	    this.streamController = controller;
 
     try {
       const requestBody = {
         session_token: this.sessionToken,
         body: message,
       };
-      const response = await fetch(this.endpoints.streamSend, {
+      const response = await fetch(this.endpoints.turnCreate, {
         method: "POST",
-        headers: {
-          ...this.jsonHeaders(),
-          Accept: "text/event-stream",
-        },
+        headers: this.jsonHeaders(),
         body: JSON.stringify(requestBody),
-        signal: controller.signal,
       });
 
-      if (!response.ok || !response.body) {
-        throw new Error("Stream failed to initialise");
+      if (!response.ok) {
+        throw new Error("Turn creation failed");
       }
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        let index;
-        while ((index = buffer.indexOf("\n\n")) !== -1) {
-          const rawEvent = buffer.slice(0, index);
-          buffer = buffer.slice(index + 2);
-          this.processStreamEvent(rawEvent);
-        }
+      const data = await response.json();
+      const turn = data && data.turn ? data.turn : null;
+      const turnId = turn && turn.id ? turn.id : null;
+      if (!turnId) {
+        throw new Error("Turn id missing from response");
       }
+
+      if (data && data.session && data.session.status) {
+        this.updateStatus(data.session.status);
+        this.updateCsatVisibility(data.session.status);
+      }
+      if (data && data.customer_message_id) {
+        this.updateLatestCustomerMessageId(data.customer_message_id);
+      }
+
+      this.isSending = false;
+      this.startTurnEventStream(turnId, { since: 0 });
     } catch (error) {
-      if (error.name !== "AbortError") {
-        this.showToast("Send failed", error.message || "Message could not be delivered.", true);
-      }
-      this.isStreaming = false;
-      this.flushQueueAfterTurn = true;
-    } finally {
       this.awaitingReply = false;
       this.isSending = false;
+      this.isStreaming = false;
+      this.streamFinished = true;
       this.updateSendButtonState(false);
-      // Composer availability is controlled by stream finalization; do not lock here.
-      if (this.streamingMessageNode) {
-        this.resetStreamingState(true, false);
+      this.setComposerAvailability(true);
+      this.updateComposerNotice(false);
+      this.resetStreamingState(true, false);
+      this.clearActiveTurnState();
+      if (error && error.name !== "AbortError") {
+        this.showToast("Send failed", error.message || "Message could not be delivered.", true);
       }
-      if (!this.isStreaming && this.flushQueueAfterTurn) {
+      this.flushQueueAfterTurn = true;
+      this.turnCancelled = false;
+      if (this.flushQueueAfterTurn) {
         this.flushQueueAfterTurn = false;
-        const next = this.pendingMessages.shift();
-        if (next) {
-          this.sendMessage(next);
-        }
+        this.flushQueuedMessageIfReady();
       }
     }
-  }
-
-  processStreamEvent(rawEvent) {
-    const lines = rawEvent.split(/\r?\n/);
-    let eventType = "message";
-    let data = "";
-    for (const line of lines) {
-      if (line.startsWith("event:")) {
-        eventType = line.replace("event:", "").trim();
-      } else if (line.startsWith("data:")) {
-        data += line.replace("data:", "").trim();
-      }
-    }
-    this.handleStreamEvent(eventType, data);
   }
 
   handleStreamEvent(eventType, data) {
@@ -1032,14 +1024,22 @@ class ChatPortalClient {
 	    if (this.stopRequested) return;
 	    if (!this.sessionToken) return;
 	    if (!this.awaitingReply && !this.isStreaming) return;
-	    if (!this.endpoints.streamStop) {
-	      this.showToast("Stop unavailable", "Stop endpoint is not configured.", true);
+      if (!this.activeTurnId) {
+        this.showToast("Stop unavailable", "No active turn to stop.", true);
+        return;
+      }
+	    if (!this.endpoints.turnCancelTemplate) {
+	      this.showToast("Stop unavailable", "Turn cancel endpoint is not configured.", true);
 	      return;
 	    }
 	    this.stopRequested = true;
 	    this.setSpinnerText("Stopping…", { pending: true, force: true });
 	    try {
-	      const response = await fetch(this.endpoints.streamStop, {
+        const endpoint = this.buildTurnCancelUrl(this.activeTurnId);
+        if (!endpoint) {
+          throw new Error("Turn cancel endpoint unavailable");
+        }
+	      const response = await fetch(endpoint, {
 	        method: "POST",
 	        headers: this.jsonHeaders(),
 	        body: JSON.stringify({ session_token: this.sessionToken }),
@@ -3767,6 +3767,18 @@ class ChatPortalClient {
 		      const payload = data ? JSON.parse(data) : null;
 		      if (!payload) return;
 		      const messageId = payload.message_id || this.pendingMessageId || this.streamingMessageId || null;
+          if (messageId) {
+            const existingBody = this.getMessageBodyElement(messageId);
+            const existingRow = existingBody ? existingBody.closest(".message-row") : null;
+            if (existingRow) {
+              if (this.streamingMessageNode && existingRow !== this.streamingMessageNode) {
+                this.streamingMessageNode.remove();
+              }
+              this.streamingMessageNode = existingRow;
+              this.streamingMessageBodyEl = existingBody;
+              this.streamingMessageId = messageId;
+            }
+          }
 		      if (typeof payload.metadata_version === "number") {
 		        this.pendingMetadataVersion = payload.metadata_version;
 		      }
@@ -3817,11 +3829,18 @@ class ChatPortalClient {
 	      this.usingBlockStream = false;
 	      this.streamFinished = true;
 	      this.isStreaming = false;
+        this.awaitingReply = false;
 	      this.workflowLocked = false;
 	      this.updateSendButtonState(false);
 	      this.setComposerAvailability(true);
 	      this.updateComposerNotice(false);
 	      this.flushQueueAfterTurn = true;
+        if (this.flushQueueAfterTurn) {
+          this.flushQueueAfterTurn = false;
+          this.flushQueuedMessageIfReady();
+        }
+        this.clearActiveTurnState();
+        this.closeTurnEventStream();
 	    } catch (error) {
 	      console.warn("Failed to parse persisted turn", error);
 	    } finally {
@@ -7253,6 +7272,23 @@ class ChatPortalClient {
     this.injectCopyButton(body);
   }
 
+  updateLatestCustomerMessageId(messageId) {
+    if (!messageId || !this.elements.messages) return;
+    const rows = Array.from(this.elements.messages.querySelectorAll(".message-row"));
+    for (let idx = rows.length - 1; idx >= 0; idx -= 1) {
+      const row = rows[idx];
+      if (!row || !row.classList.contains("flex-row-reverse")) {
+        continue;
+      }
+      row.dataset.messageId = messageId;
+      const body = row.querySelector("[data-message-body]");
+      if (body) {
+        body.dataset.messageId = messageId;
+      }
+      break;
+    }
+  }
+
   getMessageBodyElement(messageId) {
     if (!messageId || !this.elements.messages) return null;
     const wrapper = this.elements.messages.querySelector(`[data-message-id="${messageId}"]`);
@@ -8952,10 +8988,9 @@ class ChatPortalClient {
   }
 
   abortStreaming() {
-    if (!this.awaitingReply) return;
-    if (this.streamController) {
-      this.streamController.abort();
-    }
+    if (!this.awaitingReply && !this.isStreaming) return;
+    this.closeTurnEventStream();
+    this.clearActiveTurnState();
     this.awaitingReply = false;
     this.streamFinished = true;
     this.workflowLocked = true;
@@ -9011,6 +9046,202 @@ class ChatPortalClient {
     } catch (error) {
       console.warn("Unable to persist session token", error);
     }
+  }
+
+  getTurnStateKey() {
+    if (!this.sessionToken) return null;
+    return `${this.turnStateStorageKeyPrefix}${this.sessionToken}`;
+  }
+
+  loadActiveTurnState() {
+    const key = this.getTurnStateKey();
+    if (!key) return null;
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") return null;
+      if (!parsed.turn_id) return null;
+      return parsed;
+    } catch (error) {
+      console.warn("Failed to load active turn state", error);
+      return null;
+    }
+  }
+
+  storeActiveTurnState(turnId, lastSeq = 0) {
+    const key = this.getTurnStateKey();
+    if (!key || !turnId) return;
+    const payload = {
+      turn_id: turnId,
+      last_seq: Number.isFinite(Number(lastSeq)) ? Number(lastSeq) : 0,
+      updated_at: new Date().toISOString(),
+    };
+    try {
+      window.localStorage.setItem(key, JSON.stringify(payload));
+    } catch (error) {
+      console.warn("Failed to store active turn state", error);
+    }
+  }
+
+  clearActiveTurnState() {
+    const key = this.getTurnStateKey();
+    if (key) {
+      try {
+        window.localStorage.removeItem(key);
+      } catch (error) {
+        console.warn("Failed to clear active turn state", error);
+      }
+    }
+    this.activeTurnId = null;
+    this.activeTurnLastSeq = 0;
+    this.turnCancelled = false;
+  }
+
+  buildTurnEventsUrl(turnId, { since = 0 } = {}) {
+    if (!turnId) return "";
+    const template = (this.endpoints.turnEventsTemplate || "").toString().trim();
+    const encodedId = encodeURIComponent(turnId);
+    let path = template && template.includes("{turn_id}")
+      ? template.replace("{turn_id}", encodedId)
+      : `/api/chat/turns/${encodedId}/events/`;
+    const url = new URL(path, window.location.origin);
+    if (this.sessionToken) {
+      url.searchParams.set("session_token", this.sessionToken);
+    }
+    if (Number.isFinite(Number(since)) && Number(since) > 0) {
+      url.searchParams.set("since", String(Number(since)));
+    }
+    return url.toString();
+  }
+
+  buildTurnCancelUrl(turnId) {
+    if (!turnId) return "";
+    const template = (this.endpoints.turnCancelTemplate || "").toString().trim();
+    const encodedId = encodeURIComponent(turnId);
+    if (template && template.includes("{turn_id}")) {
+      return template.replace("{turn_id}", encodedId);
+    }
+    return `/api/chat/turns/${encodedId}/cancel/`;
+  }
+
+  closeTurnEventStream() {
+    if (this.turnEventSource) {
+      this.turnEventSource.close();
+      this.turnEventSource = null;
+    }
+  }
+
+  startTurnEventStream(turnId, { since = 0 } = {}) {
+    if (!turnId) return;
+    this.closeTurnEventStream();
+    this.activeTurnId = turnId;
+    this.activeTurnLastSeq = Number.isFinite(Number(since)) ? Number(since) : 0;
+    this.turnCancelled = false;
+    this.storeActiveTurnState(turnId, this.activeTurnLastSeq);
+    const url = this.buildTurnEventsUrl(turnId, { since: this.activeTurnLastSeq });
+    if (!url) return;
+    const source = new EventSource(url);
+    this.turnEventSource = source;
+
+    source.addEventListener("turnEvent", (event) => {
+      let payload = null;
+      try {
+        payload = event && event.data ? JSON.parse(event.data) : null;
+      } catch (error) {
+        console.warn("Failed to parse turn event", error);
+        return;
+      }
+      this.handleTurnEventPayload(payload);
+    });
+
+    source.onerror = () => {
+      if (!this.turnEventSource) return;
+      if (this.turnEventSource.readyState === EventSource.CLOSED) {
+        if (this.streamFinished || !this.activeTurnId) {
+          this.closeTurnEventStream();
+          return;
+        }
+        if (this.turnCancelled) {
+          this.awaitingReply = false;
+          this.isStreaming = false;
+          this.streamFinished = true;
+          this.updateSendButtonState(false);
+          this.setComposerAvailability(true);
+          this.updateComposerNotice(false);
+          this.resetStreamingState(true, false);
+          this.clearActiveTurnState();
+          this.closeTurnEventStream();
+        }
+      }
+    };
+  }
+
+  resumeActiveTurnIfNeeded() {
+    if (!this.sessionToken) return;
+    if (this.isStreaming || this.isSending) return;
+    let state = this.loadActiveTurnState();
+    let turnId = state && state.turn_id ? state.turn_id : null;
+    if (!turnId) {
+      const bootstrapTurn =
+        this.bootstrapPayload && this.bootstrapPayload.active_turn && typeof this.bootstrapPayload.active_turn === "object"
+          ? this.bootstrapPayload.active_turn
+          : null;
+      const bootstrapTurnId = bootstrapTurn && bootstrapTurn.id ? bootstrapTurn.id.toString().trim() : "";
+      if (bootstrapTurnId) {
+        // Persist so subsequent refreshes can resume instantly, even if bootstrap is slow.
+        this.storeActiveTurnState(bootstrapTurnId, 0);
+        state = { turn_id: bootstrapTurnId, last_seq: 0 };
+        turnId = bootstrapTurnId;
+      }
+    }
+    if (!turnId) return;
+
+    this.awaitingReply = true;
+    this.isStreaming = true;
+    this.streamFinished = false;
+    this.flushQueueAfterTurn = false;
+    this.updateSendButtonState(true);
+    this.setComposerAvailability(false);
+    this.updateComposerNotice(true);
+    this.setSpinnerText("", { pending: true });
+
+    // Rehydrate from the start to reconstruct the streamed blocks.
+    this.startTurnEventStream(turnId, { since: 0 });
+  }
+
+  handleTurnEventPayload(payload) {
+    if (!payload || typeof payload !== "object") return;
+    const turnId = payload.turn_id || payload.turnId || this.activeTurnId;
+    if (this.activeTurnId && turnId && this.activeTurnId !== turnId) {
+      return;
+    }
+    if (turnId && !this.activeTurnId) {
+      this.activeTurnId = turnId;
+    }
+    const seq = Number(payload.seq);
+    if (Number.isFinite(seq)) {
+      this.activeTurnLastSeq = Math.max(this.activeTurnLastSeq || 0, seq);
+      if (turnId) {
+        this.storeActiveTurnState(turnId, this.activeTurnLastSeq);
+      }
+    }
+    const type = (payload.type || "").toString().trim();
+    const eventPayload = payload.payload && typeof payload.payload === "object" ? payload.payload : {};
+    if (!type) return;
+
+    if (type === "turn_persisted" || type === "turnPersisted" || type === "turn_finalized") {
+      this.handleTurnPersistedEvent(JSON.stringify(eventPayload));
+      return;
+    }
+
+    if (type === "turn_cancelled") {
+      this.turnCancelled = true;
+      this.setSpinnerText("Stopped", { pending: false, force: true });
+      return;
+    }
+
+    this.handleStreamEvent(type, JSON.stringify(eventPayload));
   }
 
 
@@ -9583,6 +9814,7 @@ class ChatPortalClient {
       if (!data || this.sessionLoadId !== loadId) return;
       this.setSessionLoadingState(false);
       this.connectEventStream();
+      this.resumeActiveTurnIfNeeded();
     } catch (error) {
       if (this.sessionLoadId !== loadId) return;
       this.setSessionLoadingState(false);
@@ -9709,14 +9941,8 @@ class ChatPortalClient {
   }
 
   prepareForSessionSwitch() {
-    if (this.streamController) {
-      try {
-        this.streamController.abort();
-      } catch (_err) {
-        // Ignore abort errors
-      }
-    }
-    this.streamController = null;
+    this.closeTurnEventStream();
+    this.clearActiveTurnState();
     this.awaitingReply = false;
     this.isSending = false;
     this.isStreaming = false;
