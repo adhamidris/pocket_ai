@@ -1950,7 +1950,7 @@ class ChatPortalClient {
 
     const icon = document.createElement("span");
     icon.className = "portal-call-approval__icon";
-    icon.innerHTML = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M8.5 3.75c.4-.36.98-.46 1.48-.26l.2.1 2.2 1.35c.55.33.78 1 .54 1.6l-.08.18-1.06 2.06c.9 1.55 2.08 2.9 3.5 4 .56-.36 1.2-.66 1.9-.9l.23-.08 2.25-.68c.64-.2 1.32.05 1.7.62l.1.18 1.07 2.22c.23.47.16 1.04-.18 1.44l-.14.14-1.2 1.18c-.64.62-1.57.88-2.46.67-6.8-1.6-12.1-6.8-13.68-13.68-.2-.9.05-1.82.67-2.46l1.2-1.2z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    icon.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640"><!--!Font Awesome Free v7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free Copyright 2026 Fonticons, Inc.--><path d="M224.2 89C216.3 70.1 195.7 60.1 176.1 65.4L170.6 66.9C106 84.5 50.8 147.1 66.9 223.3C104 398.3 241.7 536 416.7 573.1C493 589.3 555.5 534 573.1 469.4L574.6 463.9C580 444.2 569.9 423.6 551.1 415.8L453.8 375.3C437.3 368.4 418.2 373.2 406.8 387.1L368.2 434.3C297.9 399.4 241.3 341 208.8 269.3L253 233.3C266.9 222 271.6 202.9 264.8 186.3L224.2 89z"/></svg>`;
 
     const meta = document.createElement("div");
     meta.className = "portal-call-approval__meta";
@@ -6784,7 +6784,7 @@ class ChatPortalClient {
 
       const icon = document.createElement("span");
       icon.className = "portal-call-summary__icon";
-      icon.innerHTML = `<svg viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\" aria-hidden=\"true\"><path d=\"M8.5 3.75c.4-.36.98-.46 1.48-.26l.2.1 2.2 1.35c.55.33.78 1 .54 1.6l-.08.18-1.06 2.06c.9 1.55 2.08 2.9 3.5 4 .56-.36 1.2-.66 1.9-.9l.23-.08 2.25-.68c.64-.2 1.32.05 1.7.62l.1.18 1.07 2.22c.23.47.16 1.04-.18 1.44l-.14.14-1.2 1.18c-.64.62-1.57.88-2.46.67-6.8-1.6-12.1-6.8-13.68-13.68-.2-.9.05-1.82.67-2.46l1.2-1.2z\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>`;
+      icon.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640"><!--!Font Awesome Free v7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free Copyright 2026 Fonticons, Inc.--><path d="M224.2 89C216.3 70.1 195.7 60.1 176.1 65.4L170.6 66.9C106 84.5 50.8 147.1 66.9 223.3C104 398.3 241.7 536 416.7 573.1C493 589.3 555.5 534 573.1 469.4L574.6 463.9C580 444.2 569.9 423.6 551.1 415.8L453.8 375.3C437.3 368.4 418.2 373.2 406.8 387.1L368.2 434.3C297.9 399.4 241.3 341 208.8 269.3L253 233.3C266.9 222 271.6 202.9 264.8 186.3L224.2 89z"/></svg>`;
 
       const meta = document.createElement("div");
       meta.className = "portal-call-summary__meta";
