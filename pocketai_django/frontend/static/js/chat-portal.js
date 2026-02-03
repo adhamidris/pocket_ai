@@ -1279,18 +1279,13 @@ class ChatPortalClient {
         }
       });
     }
-    if (!this.isAssistantTextStreaming()) {
-      if (isApprovalPending) {
-        // Approval CTAs are visible on the tool card; avoid redundant "waiting" spinner rows.
-        this.setSpinnerText("", { pending: false, force: true });
-      } else {
-        this.setSpinnerText(this.spinnerDesiredText || "", {
-          pending: true,
-          isError: this.spinnerDesiredIsError,
-          force: true,
-        });
-      }
-    }
+    // Keep the overall turn in a "pending" state, but let tool cards own the visible indicator.
+    // The global spinner row will re-appear only when no tool is active (between tool hops).
+    this.setSpinnerText(this.spinnerDesiredText || "", {
+      pending: true,
+      isError: this.spinnerDesiredIsError,
+      force: true,
+    });
     this.upsertStreamingContentBlock(block);
     this.repositionStreamingStatusRow();
     this.scheduleScrollToBottom({ behavior: "auto" });
@@ -1325,6 +1320,9 @@ class ChatPortalClient {
     }
     this.upsertStreamingContentBlock(block);
     this.repositionStreamingStatusRow();
+    if (this.streamingToolBlockActiveIds.size === 0) {
+      this.scheduleStreamingIdleStatusReveal();
+    }
     this.scheduleScrollToBottom({ behavior: "auto" });
   }
 
@@ -2327,6 +2325,7 @@ class ChatPortalClient {
     wrap.appendChild(grid);
 
     if (previewBody) {
+      const formattedContext = this.formatCallApprovalContextText(previewBody);
       const context = document.createElement("div");
       context.className = "portal-call-approval__context";
 
@@ -2336,7 +2335,7 @@ class ChatPortalClient {
 
       const contextBody = document.createElement("div");
       contextBody.className = "portal-call-approval__context-body";
-      contextBody.textContent = previewBody;
+      contextBody.textContent = formattedContext || previewBody;
 
       context.appendChild(contextLabel);
       context.appendChild(contextBody);
@@ -2349,6 +2348,119 @@ class ChatPortalClient {
       // otherwise keep it collapsed.
       this.setCallApprovalDetailsOpen(card, Boolean(isPending), { userAction: false });
     }
+  }
+
+  formatCallApprovalContextText(text) {
+    const raw = (text || "").toString().trim();
+    if (!raw) return "";
+
+    const formatKey = (key) => {
+      const src = (key || "").toString().trim();
+      if (!src) return "";
+      const normalized = src
+        .replace(/[_-]+/g, " ")
+        .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (!normalized) return "";
+      return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+    };
+
+    const stringifyValue = (val) => {
+      if (val == null) return "";
+      if (typeof val === "string") return val.trim();
+      if (typeof val === "number" || typeof val === "boolean") return String(val);
+      if (Array.isArray(val)) {
+        const simple = val.every((item) => item == null || ["string", "number", "boolean"].includes(typeof item));
+        if (simple) {
+          return val
+            .map((item) => (item == null ? "" : String(item).trim()))
+            .filter(Boolean)
+            .join(", ")
+            .trim();
+        }
+        try {
+          return JSON.stringify(val);
+        } catch (err) {
+          return String(val).trim();
+        }
+      }
+      if (typeof val === "object") {
+        const obj = val;
+        const title = (obj.title || obj.label || obj.name || "").toString().trim();
+        const value = (obj.value || obj.content || obj.text || "").toString().trim();
+        if (title && value) return `${title}: ${value}`;
+        if (value) return value;
+        if (title) return title;
+        try {
+          return JSON.stringify(obj);
+        } catch (err) {
+          return String(obj).trim();
+        }
+      }
+      return String(val).trim();
+    };
+
+    const tryParseJson = (line) => {
+      const trimmed = (line || "").toString().trim();
+      if (!trimmed) return null;
+      const looksJson =
+        (trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"));
+      if (!looksJson) return null;
+      try {
+        return JSON.parse(trimmed);
+      } catch (err) {
+        return null;
+      }
+    };
+
+    const outputLines = [];
+    const pushLine = (line) => {
+      const val = (line || "").toString();
+      if (!val.trim()) return;
+      outputLines.push(val);
+    };
+
+    raw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .forEach((line) => {
+        const parsed = tryParseJson(line);
+        if (parsed && typeof parsed === "object") {
+          if (Array.isArray(parsed)) {
+            parsed.forEach((item) => {
+              const textVal = stringifyValue(item);
+              if (textVal) pushLine(`- ${textVal}`);
+            });
+          } else {
+            Object.entries(parsed).forEach(([key, val]) => {
+              const textVal = stringifyValue(val);
+              if (!textVal) return;
+              const label = formatKey(key);
+              pushLine(label ? `${label}: ${textVal}` : textVal);
+            });
+          }
+          return;
+        }
+
+        // Heuristic: treat short "Label: Value" lines as structured.
+        const colonIndex = line.indexOf(":");
+        if (colonIndex > 0 && colonIndex < 40) {
+          const left = line.slice(0, colonIndex).trim();
+          const right = line.slice(colonIndex + 1).trim();
+          const leftHasUrl = left.includes("http") || left.includes("://");
+          if (left && right && !leftHasUrl) {
+            const label = formatKey(left);
+            pushLine(label ? `${label}: ${right}` : line);
+            return;
+          }
+        }
+
+        pushLine(line);
+      });
+
+    return outputLines.join("\n").trim();
   }
 
   setCallApprovalDetailsOpen(card, open, { userAction = true } = {}) {
@@ -2693,7 +2805,7 @@ class ChatPortalClient {
     element._streamInterval = streamInterval;
   }
 
-	  updateToolEventCard(card, payload) {
+	  updateToolEventCard(card, payload, { skipMinRunDelay = false } = {}) {
 	    if (!card || !payload) return;
 	    // Handle email preview cards with custom logic
 	    if (card.dataset.emailCard === "true") {
@@ -2770,7 +2882,55 @@ class ChatPortalClient {
     } else {
       toolState = "success";
     }
+
+    // Ensure "running" is perceptible even when the tool completes extremely fast.
+    // Without this, started->finished can happen before the browser paints, and the user
+    // only ever sees the final dot. Modern UIs typically enforce a small minimum.
+    const nowMs = Date.now();
+    const minRunningMs = 180;
+    if (toolState === "running") {
+      if (!card._toolRunningSince) {
+        card._toolRunningSince = nowMs;
+      }
+      if (card._toolFinalizeTimer) {
+        clearTimeout(card._toolFinalizeTimer);
+        card._toolFinalizeTimer = null;
+      }
+      card._toolFinalizePendingPayload = null;
+    } else if (
+      !skipMinRunDelay &&
+      this.isStreaming &&
+      !this.finalizingTurn &&
+      previousToolState === "running" &&
+      (toolState === "success" || toolState === "error")
+    ) {
+      const startedAt = Number(card._toolRunningSince || 0) || nowMs;
+      const elapsed = nowMs - startedAt;
+      if (elapsed >= 0 && elapsed < minRunningMs) {
+        const delay = Math.max(0, minRunningMs - elapsed);
+        card._toolFinalizePendingPayload = payload;
+        if (card._toolFinalizeTimer) {
+          clearTimeout(card._toolFinalizeTimer);
+        }
+        card._toolFinalizeTimer = setTimeout(() => {
+          card._toolFinalizeTimer = null;
+          const pendingPayload = card._toolFinalizePendingPayload;
+          card._toolFinalizePendingPayload = null;
+          if (!pendingPayload || !card.isConnected) return;
+          this.updateToolEventCard(card, pendingPayload, { skipMinRunDelay: true });
+        }, delay);
+        return;
+      }
+    }
     card.dataset.toolState = toolState;
+    if (toolState !== "running") {
+      card._toolRunningSince = null;
+    }
+    if (card._toolFinalizeTimer) {
+      clearTimeout(card._toolFinalizeTimer);
+      card._toolFinalizeTimer = null;
+    }
+    card._toolFinalizePendingPayload = null;
 
     const shouldCelebrateFinish =
       previousToolState === "running" && (toolState === "success" || toolState === "error") && card.dataset.toolJustFinished !== "true";
@@ -9197,6 +9357,13 @@ class ChatPortalClient {
     this.spinnerDesiredText = label;
     this.spinnerDesiredPending = pending;
     this.spinnerDesiredIsError = isError;
+
+    // While tools are active (running or waiting approval), the tool card rail owns the indicator.
+    // Avoid showing a second, global spinner row at the same time.
+    if (pending && this.streamingToolBlockActiveIds && this.streamingToolBlockActiveIds.size) {
+      this.streamingStatusEl.classList.add("hidden");
+      return;
+    }
     if (!label) {
       if (!pending) {
         this.clearStreamingStatus();
