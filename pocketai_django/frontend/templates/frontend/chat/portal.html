@@ -910,12 +910,31 @@
     gap: 0.55rem;
     width: 100%;
     max-width: 100%;
-    border-radius: 1rem;
-    border: 1px solid hsl(var(--border));
-    background: hsl(var(--background));
     padding: 0.65rem 0.75rem;
-    overflow: hidden;
-    box-shadow: 0 1px 0 hsl(var(--border) / 0.25);
+    border-radius: 0;
+    border: none;
+    background: transparent;
+    box-shadow: none;
+    position: relative;
+  }
+
+  /* Left rail (match tool calls + sub-agents). */
+  [data-chat-portal] .portal-call-approval::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 1.5px;
+    height: auto;
+    border-radius: 999px;
+    background: hsl(var(--primary) / 0.5);
+    pointer-events: none;
+  }
+
+  [data-chat-portal] .portal-call-approval[dir="rtl"]::after {
+    left: auto;
+    right: 0;
   }
 
   [data-chat-portal] .portal-call-approval__row {
@@ -1411,6 +1430,30 @@
   [data-chat-portal] .mcp-tool-row {
     padding: 0.2rem 0;
     gap: 0.5rem;
+    position: relative;
+  }
+
+  /* Connected rail for sequential tool calls. */
+  [data-chat-portal] .mcp-tool-row::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 1.5px;
+    border-radius: 999px;
+    background: hsl(var(--primary) / 0.32);
+    pointer-events: none;
+  }
+
+  /* Bridge the inter-block spacing when multiple tool rows are consecutive. */
+  [data-chat-portal] .mcp-tool-row + .mcp-tool-row::before {
+    top: calc(-1 * var(--portal-gap-1));
+  }
+
+  [data-chat-portal] .mcp-tool-row[dir="rtl"]::before {
+    left: auto;
+    right: 0;
   }
 
   [data-chat-portal] .mcp-tool-row-line {
@@ -1426,29 +1469,22 @@
   }
 
   [data-chat-portal] .mcp-tool-row-line::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 22%;
-    width: 1.5px;
-    height: 56%;
-    border-radius: 999px;
-    background: hsl(var(--primary) / 0.32);
+    content: none;
   }
 
-  [data-chat-portal] .mcp-tool-row[data-tool-state="running"] .mcp-tool-row-line::before {
+  [data-chat-portal] .mcp-tool-row[data-tool-state="running"]::before {
     background: hsl(var(--primary) / 0.6);
   }
 
-  [data-chat-portal] .mcp-tool-row[data-tool-state="pending"] .mcp-tool-row-line::before {
+  [data-chat-portal] .mcp-tool-row[data-tool-state="pending"]::before {
     background: hsl(var(--primary) / 0.5);
   }
 
-  [data-chat-portal] .mcp-tool-row[data-tool-state="success"] .mcp-tool-row-line::before {
+  [data-chat-portal] .mcp-tool-row[data-tool-state="success"]::before {
     background: hsl(var(--primary) / 0.5);
   }
 
-  [data-chat-portal] .mcp-tool-row[data-tool-state="error"] .mcp-tool-row-line::before {
+  [data-chat-portal] .mcp-tool-row[data-tool-state="error"]::before {
     background: hsl(var(--primary) / 0.5);
   }
 
