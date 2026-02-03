@@ -396,6 +396,16 @@ class PortalTurnEventBuilder:
                 break
         tool_use_block = self._get_content_block(tool_use_block_id) if tool_use_block_id else None
         if not tool_use_block:
+            # Tools are first-class UI blocks. If we're still streaming assistant text using
+            # the RichBlockStreamBuilder (text → block ops), we must end the active text flow
+            # before inserting the tool card so post-tool text cannot append "above" it.
+            if not self.block_ops_active:
+                try:
+                    boundary_events = self.rich_builder.break_flow()
+                except Exception:  # pragma: no cover - defensive
+                    boundary_events = []
+                if boundary_events:
+                    self.emit_block_events(boundary_events)
             tool_use_block = {
                 "block_id": new_block_id(),
                 "type": "tool_use",
