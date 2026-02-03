@@ -2779,8 +2779,8 @@
   }
 
   [data-chat-portal] .portal-task__status-pill--icon {
-    padding: 0.2rem;
-    border-color: transparent;
+    padding: 0;
+    border: none;
     background: transparent;
   }
 
@@ -2802,10 +2802,16 @@
     display: block;
   }
 
-  .dark [data-chat-portal] .portal-task__status-pill {
+  .dark [data-chat-portal] .portal-task__status-pill:not(.portal-task__status-pill--icon) {
     border-color: hsl(var(--primary) / 0.45);
     background: hsl(var(--primary) / 0.12);
     color: hsl(var(--primary));
+  }
+
+  .dark [data-chat-portal] .portal-task__status-pill--icon {
+    border: none;
+    background: transparent;
+    padding: 0;
   }
 
   [data-chat-portal] .portal-task__status-pill::before {

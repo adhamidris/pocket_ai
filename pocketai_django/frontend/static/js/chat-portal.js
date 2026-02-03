@@ -5228,27 +5228,14 @@ class ChatPortalClient {
       this.elements.tasksEmpty.setAttribute("hidden", "");
     }
 
-    const statusPriority = {
-      running: 0,
-      waiting_approval: 1,
-      waiting_user: 2,
-      queued: 3,
-      waiting_external: 4,
-      paused: 5,
-      failed: 6,
-      cancelled: 7,
-      completed: 8,
-    };
-
+    // Order tasks chronologically (first initiated at the top).
     runs.sort((a, b) => {
-      const aStatus = (a.run.status || "").toString().toLowerCase();
-      const bStatus = (b.run.status || "").toString().toLowerCase();
-      const ap = Object.prototype.hasOwnProperty.call(statusPriority, aStatus) ? statusPriority[aStatus] : 50;
-      const bp = Object.prototype.hasOwnProperty.call(statusPriority, bStatus) ? statusPriority[bStatus] : 50;
-      if (ap !== bp) return ap - bp;
-      const aTime = Date.parse(a.run.updatedAt || a.run.createdAt || "") || 0;
-      const bTime = Date.parse(b.run.updatedAt || b.run.createdAt || "") || 0;
-      return bTime - aTime;
+      const aTime = Date.parse(a.run.createdAt || a.run.updatedAt || "") || 0;
+      const bTime = Date.parse(b.run.createdAt || b.run.updatedAt || "") || 0;
+      if (aTime !== bTime) return aTime - bTime;
+      const aId = (a.id || "").toString();
+      const bId = (b.id || "").toString();
+      return aId.localeCompare(bId);
     });
 
     const voiceSessionsInRuns = new Set();
