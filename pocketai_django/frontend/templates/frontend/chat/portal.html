@@ -902,9 +902,9 @@
   /* Voice call approval: compact chip with accept/reject CTAs (mobile-inspired). */
   [data-chat-portal] .portal-call-approval {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.55rem;
     width: 100%;
     max-width: 100%;
     border-radius: 1rem;
@@ -913,6 +913,15 @@
     padding: 0.65rem 0.75rem;
     overflow: hidden;
     box-shadow: 0 1px 0 hsl(var(--border) / 0.25);
+  }
+
+  [data-chat-portal] .portal-call-approval__row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    width: 100%;
+    min-width: 0;
   }
 
   [data-chat-portal] .portal-call-approval__left {
@@ -970,6 +979,44 @@
     align-items: center;
     gap: 0.5rem;
     flex-shrink: 0;
+  }
+
+  [data-chat-portal] .portal-call-approval__toggle {
+    width: 2.25rem;
+    height: 2.25rem;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid hsl(var(--border));
+    background: hsl(var(--muted) / 0.2);
+    color: hsl(var(--foreground) / 0.75);
+    cursor: pointer;
+    transition: transform 120ms ease, filter 120ms ease;
+    flex-shrink: 0;
+  }
+
+  [data-chat-portal] .portal-call-approval__toggle:hover {
+    filter: brightness(1.05);
+  }
+
+  [data-chat-portal] .portal-call-approval__toggle:active {
+    transform: scale(0.98);
+  }
+
+  [data-chat-portal] .portal-call-approval__toggle:focus-visible {
+    outline: 2px solid hsl(var(--primary) / 0.35);
+    outline-offset: 2px;
+  }
+
+  [data-chat-portal] .portal-call-approval__toggle-icon {
+    width: 1.25rem;
+    height: 1.25rem;
+    transition: transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  [data-chat-portal] .portal-call-approval__toggle[aria-expanded="true"] .portal-call-approval__toggle-icon {
+    transform: rotate(180deg);
   }
 
   [data-chat-portal] .portal-call-approval__pill {
@@ -1064,6 +1111,129 @@
 
   [data-chat-portal] .portal-call-approval__btn--deny:hover {
     filter: brightness(1.03);
+  }
+
+  [data-chat-portal] .portal-call-approval__details {
+    padding-inline-start: 3.05rem; /* align with text block after icon */
+    padding-block: 0.2rem 0.05rem;
+  }
+
+  [data-chat-portal] .portal-call-approval__details[hidden] {
+    display: none !important;
+  }
+
+  [data-chat-portal] .portal-call-approval__kv {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    border-top: 1px solid hsl(var(--border) / 0.55);
+    padding-top: 0.55rem;
+  }
+
+  [data-chat-portal] .portal-call-approval__kv-row {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    min-width: 0;
+  }
+
+  [data-chat-portal] .portal-call-approval__kv-key {
+    width: 6.4rem;
+    flex-shrink: 0;
+    font-size: var(--portal-font-xs);
+    font-weight: 650;
+    color: hsl(var(--muted-foreground));
+    letter-spacing: 0.01em;
+  }
+
+  [data-chat-portal] .portal-call-approval__kv-val {
+    flex: 1;
+    min-width: 0;
+    font-size: var(--portal-font-sm);
+    line-height: var(--portal-line-tight);
+    color: hsl(var(--foreground) / 0.9);
+    word-break: break-word;
+  }
+
+  [data-chat-portal] .portal-call-approval__context {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin-top: 0.55rem;
+    border-top: 1px solid hsl(var(--border) / 0.55);
+    padding-top: 0.55rem;
+  }
+
+  [data-chat-portal] .portal-call-approval__context-label {
+    font-size: var(--portal-font-xs);
+    font-weight: 650;
+    color: hsl(var(--muted-foreground));
+    letter-spacing: 0.01em;
+  }
+
+  [data-chat-portal] .portal-call-approval__context-body {
+    font-size: var(--portal-font-xs);
+    line-height: var(--portal-line-body);
+    color: hsl(var(--foreground) / 0.88);
+    border: 1px solid hsl(var(--border));
+    background: hsl(var(--muted) / 0.18);
+    border-radius: 0.75rem;
+    padding: 0.55rem 0.65rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 10.5rem;
+    overflow: auto;
+  }
+
+  /* Suggested next actions under a denied/expired approval card. */
+  [data-chat-portal] .portal-call-approval__next {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    align-items: center;
+    padding-inline-start: 3.05rem; /* align with text block after icon */
+  }
+
+  [data-chat-portal] .portal-call-approval__next[hidden] {
+    display: none !important;
+  }
+
+  [data-chat-portal] .portal-call-approval__next-label {
+    font-size: var(--portal-font-xs);
+    font-weight: 650;
+    color: hsl(var(--muted-foreground));
+    letter-spacing: 0.01em;
+    margin-inline-end: 0.15rem;
+    white-space: nowrap;
+  }
+
+  [data-chat-portal] .portal-next-action-chip {
+    height: 2.05rem;
+    padding: 0 0.75rem;
+    border-radius: 999px;
+    border: 1px solid hsl(var(--border));
+    background: hsl(var(--muted) / 0.25);
+    color: hsl(var(--foreground) / 0.9);
+    font-size: var(--portal-font-xs);
+    font-weight: 650;
+    letter-spacing: 0.01em;
+    cursor: pointer;
+    user-select: none;
+    transition: transform 120ms ease, filter 120ms ease, box-shadow 120ms ease;
+    box-shadow: 0 1px 0 hsl(var(--border) / 0.2);
+  }
+
+  [data-chat-portal] .portal-next-action-chip:hover {
+    filter: brightness(1.04);
+  }
+
+  [data-chat-portal] .portal-next-action-chip:active {
+    transform: scale(0.98);
+  }
+
+  [data-chat-portal] .portal-next-action-chip:focus-visible {
+    outline: 2px solid hsl(var(--primary) / 0.35);
+    outline-offset: 2px;
   }
 
   [data-chat-portal] [data-message-meta],

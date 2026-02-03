@@ -158,7 +158,7 @@ class PromptBuilder:
         - Use headings "##" or "###" for sections.
         - For bullets use "- " (not "•"); for numbered lists use "1. " (not "1)").
         - Put a blank line before and after lists.
-        - Never embed list markers inside a sentence (bad: "you 1. ... 2. ..."). If you introduce steps, end the lead-in with ":" then start the list on the next line.
+        - Never embed list markers inside a sentence (bad: "I 1. ... 2. ...", "you 1. ... 2. ..."). If you introduce steps or options, end the lead-in with ":" then start the list on the next line.
         - Use fenced code blocks (```...```) for code/logs.
         """
     ).strip()

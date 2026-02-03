@@ -84,6 +84,7 @@ Make an outbound phone call to a customer or contact.
 ❌ WRONG: "The options are 1. Option A 2. Option B 3. Option C"
 ❌ WRONG: "You can - do this - or that - or another thing"
 ❌ WRONG: "It refers to 1. First thing 2. Second thing"
+❌ WRONG: "For example, I 1. Option A 2. Option B 3. Option C"
 
 ✅ CORRECT:
 "The options are:
@@ -169,6 +170,7 @@ Make an outbound phone call to a customer or contact.
 ❌ WRONG: "The options are 1. Option A 2. Option B 3. Option C"
 ❌ WRONG: "You can - do this - or that - or another thing"
 ❌ WRONG: "It refers to 1. First thing 2. Second thing"
+❌ WRONG: "For example, I 1. Option A 2. Option B 3. Option C"
 
 ✅ CORRECT:
 "The options are:
@@ -337,6 +339,7 @@ Make an outbound phone call to a customer or contact.
 ❌ WRONG: "The options are 1. Option A 2. Option B 3. Option C"
 ❌ WRONG: "You can - do this - or that - or another thing"
 ❌ WRONG: "It refers to 1. First thing 2. Second thing"
+❌ WRONG: "For example, I 1. Option A 2. Option B 3. Option C"
 
 ✅ CORRECT:
 "The options are:
@@ -422,6 +425,7 @@ Make an outbound phone call to a customer or contact.
 ❌ WRONG: "The options are 1. Option A 2. Option B 3. Option C"
 ❌ WRONG: "You can - do this - or that - or another thing"
 ❌ WRONG: "It refers to 1. First thing 2. Second thing"
+❌ WRONG: "For example, I 1. Option A 2. Option B 3. Option C"
 
 ✅ CORRECT:
 "The options are:

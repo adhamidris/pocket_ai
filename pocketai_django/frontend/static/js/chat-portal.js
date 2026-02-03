@@ -1978,6 +1978,14 @@ class ChatPortalClient {
     const right = document.createElement("div");
     right.className = "portal-call-approval__right";
 
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "portal-call-approval__toggle";
+    toggle.dataset.callApprovalToggle = "true";
+    toggle.setAttribute("aria-label", "Toggle call details");
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.innerHTML = `<svg class="portal-call-approval__toggle-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M6.5 8.25l3.5 3.5 3.5-3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
     const pill = document.createElement("span");
     pill.className = "portal-call-approval__pill";
     pill.dataset.callApprovalPill = "true";
@@ -2008,13 +2016,38 @@ class ChatPortalClient {
     actions.appendChild(approveButton);
     actions.appendChild(denyButton);
 
+    right.appendChild(toggle);
     right.appendChild(pill);
     right.appendChild(actions);
 
-    card.appendChild(left);
-    card.appendChild(right);
+    const row = document.createElement("div");
+    row.className = "portal-call-approval__row";
+    row.appendChild(left);
+    row.appendChild(right);
+    card.appendChild(row);
+
+    const details = document.createElement("div");
+    details.className = "portal-call-approval__details";
+    details.dataset.callApprovalDetails = "true";
+    details.hidden = true;
+    details.setAttribute("aria-hidden", "true");
+    card.appendChild(details);
+
+    const nextActions = document.createElement("div");
+    nextActions.className = "portal-call-approval__next";
+    nextActions.dataset.callApprovalNext = "true";
+    nextActions.hidden = true;
+    nextActions.setAttribute("aria-hidden", "true");
+    card.appendChild(nextActions);
+
+    toggle.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.toggleCallApprovalDetails(card);
+    });
 
     this.attachToolCardEvents(card);
+    this.updatePhoneCallApprovalCard(card, payload);
     return card;
   }
 
@@ -2178,6 +2211,228 @@ class ChatPortalClient {
       pillEl.hidden = Boolean(isPending) || !pillLabel;
       pillEl.dataset.variant = pillVariant;
     }
+
+    this.updateCallApprovalDetails(card, {
+      input,
+      approvalData,
+      phoneNumber,
+      contactName,
+      objective,
+      isPending,
+    });
+
+    this.updateCallApprovalNextActions(card, {
+      show: isDenied || isExpired,
+      contactName,
+      phoneNumber,
+      objective,
+    });
+  }
+
+  queueOrSendSuggestedMessage(message) {
+    const text = (message || "").toString().trim();
+    if (!text) return;
+    if (this.isStreaming || this.isSending) {
+      this.enqueueMessage(text);
+      return;
+    }
+    void this.sendMessage(text);
+  }
+
+  updateCallApprovalDetails(card, { input, approvalData, phoneNumber, contactName, objective, isPending } = {}) {
+    if (!card) return;
+    const wrap = card.querySelector("[data-call-approval-details]");
+    if (!wrap) return;
+
+    const preview = approvalData && typeof approvalData.preview === "object" ? approvalData.preview : null;
+    const previewFields = preview && Array.isArray(preview.fields) ? preview.fields : null;
+    const previewBody =
+      preview && typeof preview.body === "string"
+        ? preview.body.toString().trim()
+        : preview && typeof preview.body_text === "string"
+          ? preview.body_text.toString().trim()
+          : preview && typeof preview.bodyText === "string"
+            ? preview.bodyText.toString().trim()
+            : "";
+    const items = [];
+
+    const pushItem = (label, value) => {
+      const key = (label || "").toString().trim();
+      const val = value != null ? value.toString().trim() : "";
+      if (!key || !val) return;
+      items.push({ key, val });
+    };
+
+    const seenKeys = new Set();
+    const recordKey = (label) => {
+      const normalized = (label || "").toString().trim().toLowerCase();
+      if (!normalized) return;
+      seenKeys.add(normalized);
+    };
+
+    if (previewFields && previewFields.length) {
+      previewFields.forEach((field) => {
+        if (!field || typeof field !== "object") return;
+        const label = field.label;
+        const value = field.value;
+        pushItem(label, value);
+        recordKey(label);
+      });
+    }
+
+    // Ensure core call inputs are always visible, even if the tool preview is incomplete.
+    const inputObj = input && typeof input === "object" ? input : {};
+    const ensureItem = (label, value) => {
+      const normalized = (label || "").toString().trim().toLowerCase();
+      if (!normalized) return;
+      if (seenKeys.has(normalized)) return;
+      pushItem(label, value);
+      recordKey(label);
+    };
+
+    ensureItem("To", phoneNumber || "");
+    ensureItem("Contact", contactName || "");
+    ensureItem("Objective", objective || "");
+    ensureItem("Type", (inputObj.call_type || inputObj.callType || "").toString().trim());
+    ensureItem("Language", (inputObj.language || "").toString().trim());
+    const maxDuration = inputObj.max_duration_minutes || inputObj.maxDurationMinutes || inputObj.max_duration || "";
+    if (maxDuration !== "" && maxDuration != null) {
+      const num = Number(maxDuration);
+      const label = Number.isFinite(num) && num > 0 ? `${num} min` : maxDuration.toString();
+      ensureItem("Max duration", label);
+    }
+
+    wrap.innerHTML = "";
+    if (!items.length) {
+      // If we have no details, keep it hidden and keep the toggle but inert.
+      this.setCallApprovalDetailsOpen(card, false, { userAction: false });
+      return;
+    }
+
+    const grid = document.createElement("div");
+    grid.className = "portal-call-approval__kv";
+    items.forEach((item) => {
+      const row = document.createElement("div");
+      row.className = "portal-call-approval__kv-row";
+      const keyEl = document.createElement("div");
+      keyEl.className = "portal-call-approval__kv-key";
+      keyEl.textContent = item.key;
+      const valEl = document.createElement("div");
+      valEl.className = "portal-call-approval__kv-val";
+      valEl.textContent = item.val;
+      row.appendChild(keyEl);
+      row.appendChild(valEl);
+      grid.appendChild(row);
+    });
+    wrap.appendChild(grid);
+
+    if (previewBody) {
+      const context = document.createElement("div");
+      context.className = "portal-call-approval__context";
+
+      const contextLabel = document.createElement("div");
+      contextLabel.className = "portal-call-approval__context-label";
+      contextLabel.textContent = "Context";
+
+      const contextBody = document.createElement("div");
+      contextBody.className = "portal-call-approval__context-body";
+      contextBody.textContent = previewBody;
+
+      context.appendChild(contextLabel);
+      context.appendChild(contextBody);
+      wrap.appendChild(context);
+    }
+
+    const hasUserOverride = card.dataset.callApprovalDetailsUser === "true";
+    if (!hasUserOverride) {
+      // Default: open while pending (so the user can review what they're approving),
+      // otherwise keep it collapsed.
+      this.setCallApprovalDetailsOpen(card, Boolean(isPending), { userAction: false });
+    }
+  }
+
+  setCallApprovalDetailsOpen(card, open, { userAction = true } = {}) {
+    if (!card) return;
+    const wrap = card.querySelector("[data-call-approval-details]");
+    const toggle = card.querySelector("[data-call-approval-toggle]");
+    const desired = Boolean(open);
+
+    if (wrap) {
+      wrap.hidden = !desired;
+      wrap.setAttribute("aria-hidden", desired ? "false" : "true");
+    }
+    if (toggle) {
+      toggle.setAttribute("aria-expanded", desired ? "true" : "false");
+      toggle.title = desired ? "Hide details" : "Show details";
+    }
+    card.dataset.callApprovalDetailsOpen = desired ? "true" : "false";
+    if (userAction) {
+      card.dataset.callApprovalDetailsUser = "true";
+    }
+  }
+
+  toggleCallApprovalDetails(card) {
+    if (!card) return;
+    const current = card.dataset.callApprovalDetailsOpen === "true";
+    this.setCallApprovalDetailsOpen(card, !current, { userAction: true });
+  }
+
+  updateCallApprovalNextActions(card, { show = false, contactName = "", phoneNumber = "", objective = "" } = {}) {
+    if (!card) return;
+    let wrap = card.querySelector("[data-call-approval-next]");
+    if (!wrap) {
+      wrap = document.createElement("div");
+      wrap.className = "portal-call-approval__next";
+      wrap.dataset.callApprovalNext = "true";
+      wrap.hidden = true;
+      wrap.setAttribute("aria-hidden", "true");
+      card.appendChild(wrap);
+    }
+
+    const shouldShow = Boolean(show);
+    wrap.hidden = !shouldShow;
+    wrap.setAttribute("aria-hidden", shouldShow ? "false" : "true");
+    if (!shouldShow) return;
+
+    const name = (contactName || "").toString().trim();
+    const phone = (phoneNumber || "").toString().trim();
+    const goal = (objective || "").toString().trim();
+    const contactLabel = name || phone || "the contact";
+    const objectiveSuffix = goal ? ` Objective: ${goal}.` : "";
+
+    const suggestions = [
+      {
+        label: "Draft intro message",
+        message: `Draft a short message I can send to ${contactLabel} to introduce myself as the new account manager.${objectiveSuffix} Keep it friendly and under 80 words.`,
+      },
+      {
+        label: "Write call script",
+        message: `Write a concise 30-second call script to introduce myself as the new account manager to ${contactLabel}.${objectiveSuffix}`,
+      },
+      {
+        label: "Suggest alternatives",
+        message: `What are the best alternatives to reach ${contactLabel} without placing a phone call (e.g., email/SMS/WhatsApp)? Draft the best option.${objectiveSuffix}`,
+      },
+    ];
+
+    wrap.innerHTML = "";
+    const labelEl = document.createElement("div");
+    labelEl.className = "portal-call-approval__next-label";
+    labelEl.textContent = "Next:";
+    wrap.appendChild(labelEl);
+
+    suggestions.forEach((item) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "portal-next-action-chip";
+      btn.textContent = item.label;
+      btn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.queueOrSendSuggestedMessage(item.message);
+      });
+      wrap.appendChild(btn);
+    });
   }
 
   buildEmailPreviewCard(payload, toolName) {
