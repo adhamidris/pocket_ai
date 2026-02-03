@@ -1906,6 +1906,7 @@ class ChatPortalClient {
     const eventId = (payload?.event_id || payload?.eventId || "").toString().trim();
     if (!eventId) return null;
 
+    const runId = (payload?.run_id || payload?.runId || "").toString().trim();
     const input = payload && typeof payload.input === "object" ? payload.input : {};
     const output = payload && typeof payload.output === "object" ? payload.output : {};
     const phoneNumber = (
@@ -1939,6 +1940,9 @@ class ChatPortalClient {
     card.dataset.toolName = "initiate_phone_call";
     card.dataset.callApprovalCard = "true";
     card.className = "portal-call-approval";
+    if (runId) {
+      card.dataset.runId = runId;
+    }
     if (rtl) {
       card.dir = "rtl";
     }
@@ -2031,13 +2035,6 @@ class ChatPortalClient {
     details.setAttribute("aria-hidden", "true");
     card.appendChild(details);
 
-    const nextActions = document.createElement("div");
-    nextActions.className = "portal-call-approval__next";
-    nextActions.dataset.callApprovalNext = "true";
-    nextActions.hidden = true;
-    nextActions.setAttribute("aria-hidden", "true");
-    card.appendChild(nextActions);
-
     toggle.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -2051,6 +2048,20 @@ class ChatPortalClient {
 
   updatePhoneCallApprovalCard(card, payload) {
     if (!card || !payload) return;
+
+    // Preserve the latest payload so manual approval actions (e.g., run approvals) can
+    // update the card without losing the original input fields.
+    if (payload && typeof payload === "object") {
+      const previous = card._callApprovalLastPayload && typeof card._callApprovalLastPayload === "object" ? card._callApprovalLastPayload : {};
+      const merged = { ...previous, ...payload };
+      card._callApprovalLastPayload = merged;
+      payload = merged;
+    }
+
+    const runIdRaw = (payload.run_id || payload.runId || "").toString().trim();
+    if (runIdRaw) {
+      card.dataset.runId = runIdRaw;
+    }
 
     const phase = (payload.phase || "").toString().trim().toLowerCase();
     const statusRaw = (payload.status || "").toString().trim().toLowerCase();
@@ -2218,23 +2229,6 @@ class ChatPortalClient {
       objective,
       isPending,
     });
-
-    this.updateCallApprovalNextActions(card, {
-      show: isDenied || isExpired,
-      contactName,
-      phoneNumber,
-      objective,
-    });
-  }
-
-  queueOrSendSuggestedMessage(message) {
-    const text = (message || "").toString().trim();
-    if (!text) return;
-    if (this.isStreaming || this.isSending) {
-      this.enqueueMessage(text);
-      return;
-    }
-    void this.sendMessage(text);
   }
 
   updateCallApprovalDetails(card, { input, approvalData, phoneNumber, contactName, objective, isPending } = {}) {
@@ -2487,64 +2481,6 @@ class ChatPortalClient {
     if (!card) return;
     const current = card.dataset.callApprovalDetailsOpen === "true";
     this.setCallApprovalDetailsOpen(card, !current, { userAction: true });
-  }
-
-  updateCallApprovalNextActions(card, { show = false, contactName = "", phoneNumber = "", objective = "" } = {}) {
-    if (!card) return;
-    let wrap = card.querySelector("[data-call-approval-next]");
-    if (!wrap) {
-      wrap = document.createElement("div");
-      wrap.className = "portal-call-approval__next";
-      wrap.dataset.callApprovalNext = "true";
-      wrap.hidden = true;
-      wrap.setAttribute("aria-hidden", "true");
-      card.appendChild(wrap);
-    }
-
-    const shouldShow = Boolean(show);
-    wrap.hidden = !shouldShow;
-    wrap.setAttribute("aria-hidden", shouldShow ? "false" : "true");
-    if (!shouldShow) return;
-
-    const name = (contactName || "").toString().trim();
-    const phone = (phoneNumber || "").toString().trim();
-    const goal = (objective || "").toString().trim();
-    const contactLabel = name || phone || "the contact";
-    const objectiveSuffix = goal ? ` Objective: ${goal}.` : "";
-
-    const suggestions = [
-      {
-        label: "Draft intro message",
-        message: `Draft a short message I can send to ${contactLabel} to introduce myself as the new account manager.${objectiveSuffix} Keep it friendly and under 80 words.`,
-      },
-      {
-        label: "Write call script",
-        message: `Write a concise 30-second call script to introduce myself as the new account manager to ${contactLabel}.${objectiveSuffix}`,
-      },
-      {
-        label: "Suggest alternatives",
-        message: `What are the best alternatives to reach ${contactLabel} without placing a phone call (e.g., email/SMS/WhatsApp)? Draft the best option.${objectiveSuffix}`,
-      },
-    ];
-
-    wrap.innerHTML = "";
-    const labelEl = document.createElement("div");
-    labelEl.className = "portal-call-approval__next-label";
-    labelEl.textContent = "Next:";
-    wrap.appendChild(labelEl);
-
-    suggestions.forEach((item) => {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "portal-next-action-chip";
-      btn.textContent = item.label;
-      btn.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        this.queueOrSendSuggestedMessage(item.message);
-      });
-      wrap.appendChild(btn);
-    });
   }
 
   buildEmailPreviewCard(payload, toolName) {
@@ -3354,6 +3290,11 @@ class ChatPortalClient {
         const approvalId = card.dataset.approvalId;
         if (!approvalId) {
           this.showToast("Approval unavailable", "Approval request is missing an identifier.", true);
+          return;
+        }
+        const runId = (card.dataset.runId || "").toString().trim();
+        if (runId) {
+          this.submitRunApproval(runId, approvalId, decision, card);
           return;
         }
         this.submitToolApproval(approvalId, decision, card);
@@ -4551,12 +4492,13 @@ class ChatPortalClient {
     if (cardEl) {
       cardEl.dataset.runApprovalBusy = "true";
     }
-    const buttons = cardEl ? cardEl.querySelectorAll("[data-run-approval-action]") : [];
+    const buttons = cardEl ? cardEl.querySelectorAll("[data-run-approval-action], [data-tool-approval-action]") : [];
     buttons.forEach((btn) => {
       btn.disabled = true;
     });
 
     try {
+      const action = decision.toString().trim().toLowerCase();
       const response = await fetch(this.endpoints.runApproval, {
         method: "POST",
         headers: this.jsonHeaders(),
@@ -4564,7 +4506,7 @@ class ChatPortalClient {
           session_token: this.sessionToken,
           run_id: runId,
           approval_id: approvalId,
-          decision: decision.toString().trim().toLowerCase(),
+          decision: action,
         }),
       });
       const payload = await response.json().catch(() => null);
@@ -4573,6 +4515,11 @@ class ChatPortalClient {
         throw new Error(message);
       }
       this.showToast("Saved", "Approval recorded.", false);
+
+      const resolved = action === "approve" ? "approved" : "denied";
+      if (approvalId) {
+        this.updateCallApprovalCardsForRunApproval(runId, approvalId, resolved);
+      }
     } catch (error) {
       console.warn("Run approval failed", error);
       this.showToast("Approval failed", error.message || "Please try again.", true);
@@ -4584,6 +4531,41 @@ class ChatPortalClient {
         btn.disabled = false;
       });
     }
+  }
+
+  updateCallApprovalCardsForRunApproval(runId, approvalId, status) {
+    const safeRunId = (runId || "").toString().trim();
+    const safeApprovalId = (approvalId || "").toString().trim();
+    const resolvedStatus = (status || "").toString().trim().toLowerCase();
+    if (!safeApprovalId || !resolvedStatus) return;
+
+    const root = this.elements.messagesInner || this.elements.messages || this.container;
+    if (!root || !root.querySelectorAll) return;
+
+    const escape = window.CSS && typeof window.CSS.escape === "function" ? window.CSS.escape : (value) => value;
+    const selector = `[data-call-approval-card="true"][data-approval-id="${escape(safeApprovalId)}"]`;
+    const cards = root.querySelectorAll(selector);
+    if (!cards.length) return;
+
+    cards.forEach((card) => {
+      if (!card) return;
+      const cardRun = (card.dataset.runId || "").toString().trim();
+      if (safeRunId && cardRun && cardRun !== safeRunId) return;
+
+      const base = card._callApprovalLastPayload && typeof card._callApprovalLastPayload === "object" ? card._callApprovalLastPayload : null;
+      if (!base || typeof base !== "object") return;
+      const approvalData = base.approval && typeof base.approval === "object" ? base.approval : {};
+
+      const mergedPayload = {
+        ...base,
+        phase: "approval_resolved",
+        status: resolvedStatus,
+        approval_id: safeApprovalId,
+        approval: { ...approvalData, id: safeApprovalId, status: resolvedStatus },
+        run_id: safeRunId || base.run_id || base.runId || "",
+      };
+      this.updatePhoneCallApprovalCard(card, mergedPayload);
+    });
   }
 
   async submitRunUserInput(runId, message, textareaEl, buttonEl) {
@@ -8592,6 +8574,88 @@ class ChatPortalClient {
     `;
   }
 
+  buildAgentRunPhoneCallPreviewPayload(summary) {
+    const preview =
+      summary && summary.approvalPreview && typeof summary.approvalPreview === "object" ? summary.approvalPreview : null;
+    if (!preview) return null;
+
+    const runId = (summary && summary.runId ? summary.runId : "").toString().trim();
+    const approvalId = (summary && summary.approvalId ? summary.approvalId : "").toString().trim();
+    const pill = (summary && summary.pillLabel ? summary.pillLabel : "").toString().trim().toLowerCase();
+
+    let approvalStatus = "pending";
+    if (pill === "approved") approvalStatus = "approved";
+    if (pill === "denied" || pill === "rejected") approvalStatus = "denied";
+
+    const resolved = approvalStatus !== "pending";
+    const phase = resolved ? "approval_resolved" : "approval_requested";
+    const status = resolved ? approvalStatus : "pending_approval";
+
+    const fields = Array.isArray(preview.fields) ? preview.fields : [];
+    const findFieldValue = (labels) => {
+      const wanted = Array.isArray(labels)
+        ? labels
+            .map((label) => (label == null ? "" : label.toString().trim().toLowerCase()))
+            .filter(Boolean)
+        : [];
+      if (!wanted.length) return "";
+      for (const field of fields) {
+        if (!field || typeof field !== "object") continue;
+        const label = (field.label || "").toString().trim().toLowerCase();
+        if (!label || !wanted.includes(label)) continue;
+        const value = (field.value || "").toString().trim();
+        if (value) return value;
+      }
+      return "";
+    };
+
+    const phoneNumber = findFieldValue(["to", "phone", "phone number", "number"]);
+    const objective = findFieldValue(["objective", "reason", "topic"]);
+    const callType = findFieldValue(["type", "call type"]);
+    const language = findFieldValue(["language", "lang"]);
+    const maxDurationRaw = findFieldValue(["max duration", "duration", "max_duration"]);
+    let maxDurationMinutes = null;
+    if (maxDurationRaw) {
+      const match = maxDurationRaw.match(/(\d+)/);
+      if (match) {
+        const parsed = Number(match[1]);
+        if (Number.isFinite(parsed) && parsed > 0) maxDurationMinutes = parsed;
+      }
+    }
+
+    const input = {};
+    if (phoneNumber) input.phone_number = phoneNumber;
+    if (objective) input.objective = objective;
+    if (callType) input.call_type = callType;
+    if (language) input.language = language;
+    if (maxDurationMinutes != null) input.max_duration_minutes = maxDurationMinutes;
+
+    const sanitizeIdSegment = (value) => {
+      return (value || "")
+        .toString()
+        .trim()
+        .replace(/[^a-z0-9_-]+/gi, "-")
+        .replace(/-+/g, "-")
+        .replace(/^[-_]+|[-_]+$/g, "");
+    };
+    const eventId = `run-${sanitizeIdSegment(runId) || "unknown"}-approval-${sanitizeIdSegment(approvalId) || "unknown"}`;
+
+    return {
+      event_id: eventId,
+      tool_name: "initiate_phone_call",
+      phase,
+      status,
+      approval_id: approvalId,
+      approval: {
+        id: approvalId,
+        status: approvalStatus,
+        preview,
+      },
+      input,
+      run_id: runId,
+    };
+  }
+
   updateAgentRunApprovalPreview(detailsEl, summary) {
     if (!detailsEl) return;
     const container = detailsEl.querySelector("[data-agent-run-content]");
@@ -8613,7 +8677,48 @@ class ChatPortalClient {
       previewEl.className = "portal-agent-run__preview";
       blocksRoot.insertBefore(previewEl, blocksRoot.firstChild);
     }
-    previewEl.innerHTML = this.renderAgentRunApprovalPreview(summary.approvalPreview);
+
+    const previewType = (summary.approvalPreview.type || "").toString().trim().toLowerCase();
+    const isPhoneCall = previewType === "phone_call";
+    if (!isPhoneCall) {
+      previewEl.className = "portal-agent-run__preview";
+      previewEl.innerHTML = this.renderAgentRunApprovalPreview(summary.approvalPreview);
+      return;
+    }
+
+    previewEl.className = "portal-agent-run__preview portal-agent-run__preview--call";
+
+    const payload = this.buildAgentRunPhoneCallPreviewPayload(summary);
+    if (!payload) {
+      previewEl.className = "portal-agent-run__preview";
+      previewEl.innerHTML = this.renderAgentRunApprovalPreview(summary.approvalPreview);
+      return;
+    }
+
+    let card = previewEl.querySelector('[data-call-approval-card="true"]');
+    if (!card) {
+      previewEl.innerHTML = "";
+      card = this.buildPhoneCallApprovalCard(payload);
+      if (!card) {
+        previewEl.className = "portal-agent-run__preview";
+        previewEl.innerHTML = this.renderAgentRunApprovalPreview(summary.approvalPreview);
+        return;
+      }
+      previewEl.appendChild(card);
+    } else {
+      this.updatePhoneCallApprovalCard(card, payload);
+    }
+
+    // In agent-run previews, rely on the parent approval CTAs (avoid redundant accept/reject buttons).
+    const actions = card.querySelector("[data-tool-approval-actions]");
+    if (actions) actions.remove();
+
+    // Default: collapsed in sub-agent previews until the user explicitly expands.
+    if (card.dataset.agentRunPreviewInit !== "true") {
+      card.dataset.agentRunPreviewInit = "true";
+      card.dataset.callApprovalDetailsUser = "true";
+      this.setCallApprovalDetailsOpen(card, false, { userAction: false });
+    }
   }
 
   updateAgentRunApprovalActions(detailsEl, summary) {

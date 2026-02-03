@@ -52,6 +52,10 @@ Read canonical evidence for specific refs from `search_knowledge.refs[]`.
 Make an outbound phone call to a customer or contact.
 - `phone_number`: E.164 format (e.g., +201234567890).
 - `objective`: Purpose of the call (what needs to be accomplished).
+- Optional: `call_type` (service/marketing), `language` (en/ar), `max_duration_minutes`.
+- Recommended: include `context_items=[...]` as structured notes (facts, numbers, evidence snippets, talking points).
+  - Keep `objective` short (one sentence). Put details into `context_items` so they are preserved for approvals and the call runtime.
+  - Use a consistent shape such as `{title: "...", value: "..."}`.
 - Use for: customer follow-ups, appointment confirmations, support callbacks, verification calls.
 
 ## Workflow Rules
@@ -138,6 +142,10 @@ Read canonical evidence for specific refs from `search_knowledge.refs[]`.
 Make an outbound phone call to a customer or contact.
 - `phone_number`: E.164 format (e.g., +201234567890).
 - `objective`: Purpose of the call (what needs to be accomplished).
+- Optional: `call_type` (service/marketing), `language` (en/ar), `max_duration_minutes`.
+- Recommended: include `context_items=[...]` as structured notes (facts, numbers, evidence snippets, talking points).
+  - Keep `objective` short (one sentence). Put details into `context_items` so they are preserved for approvals and the call runtime.
+  - Use a consistent shape such as `{title: "...", value: "..."}`.
 - Use for: customer follow-ups, appointment confirmations, support callbacks, verification calls.
 
 ## Workflow Rules
@@ -248,7 +256,7 @@ You are {agent_name}{for_business}.
 - **search_knowledge(queries)** — find what exists. Returns refs (IDs + labels, no content). Batch variants in ONE call.
 - If the tool returns `has_more=true` and a `next_cursor`, fetch more results using `search_knowledge(cursor=next_cursor)` instead of repeating the same search.
 - **read_knowledge(refs, max_chars)** — read content for refs from search results. Batch all refs in ONE call. Use `read_budget_hint.total_suggested_max_chars` for `max_chars`.
-- **initiate_phone_call(phone_number, objective)** — make an outbound phone call. Requires E.164 format (e.g., +201234567890) and call objective. Use for customer follow-ups, confirmations, or callbacks.
+- **initiate_phone_call(phone_number, objective)** — make an outbound phone call. Requires E.164 format (e.g., +201234567890) and a short call objective. Optional: `call_type`, `language`, `max_duration_minutes`. Recommended: include `context_items=[...]` for facts/talking points so they are preserved for approvals and the call runtime.
 
 ## Workflow (follow this order)
 
@@ -307,6 +315,10 @@ Read canonical evidence for specific refs from `search_knowledge.refs[]`.
 Make an outbound phone call to a customer or contact.
 - `phone_number`: E.164 format (e.g., +201234567890).
 - `objective`: Purpose of the call (what needs to be accomplished).
+- Optional: `call_type` (service/marketing), `language` (en/ar), `max_duration_minutes`.
+- Recommended: include `context_items=[...]` as structured notes (facts, numbers, evidence snippets, talking points).
+  - Keep `objective` short (one sentence). Put details into `context_items` so they are preserved for approvals and the call runtime.
+  - Use a consistent shape such as `{title: "...", value: "..."}`.
 - Use for: customer follow-ups, appointment confirmations, support callbacks, verification calls.
 
 ## Workflow Rules
@@ -393,6 +405,10 @@ Read canonical evidence for specific refs from `search_knowledge.refs[]`.
 Make an outbound phone call to a customer or contact.
 - `phone_number`: E.164 format (e.g., +201234567890).
 - `objective`: Purpose of the call (what needs to be accomplished).
+- Optional: `call_type` (service/marketing), `language` (en/ar), `max_duration_minutes`.
+- Recommended: include `context_items=[...]` as structured notes (facts, numbers, evidence snippets, talking points).
+  - Keep `objective` short (one sentence). Put details into `context_items` so they are preserved for approvals and the call runtime.
+  - Use a consistent shape such as `{title: "...", value: "..."}`.
 - Use for: customer follow-ups, appointment confirmations, support callbacks, verification calls.
 
 ## Workflow Rules

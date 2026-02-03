@@ -4370,16 +4370,29 @@ class McpOrchestratorService:
             for item in context_items[:8]:
                 line = ""
                 if isinstance(item, Mapping):
-                    for key in ("label", "title", "name", "summary", "note", "value"):
-                        value = item.get(key)
-                        if isinstance(value, str) and value.strip():
-                            line = value.strip()
-                            break
-                    if not line:
-                        try:
-                            line = json.dumps(item, ensure_ascii=False)
-                        except Exception:
-                            line = str(item)
+                    title = str(item.get("title") or item.get("label") or item.get("name") or "").strip()
+                    value = item.get("value") or item.get("content") or item.get("text") or item.get("summary") or item.get("note")
+                    value_text = str(value).strip() if value is not None else ""
+
+                    if title and value_text:
+                        line = f"{title}: {value_text}"
+                    elif value_text:
+                        line = value_text
+                    elif title:
+                        line = title
+                    else:
+                        parts: list[str] = []
+                        for key, val in list(item.items())[:3]:
+                            key_text = str(key).strip()
+                            val_text = str(val).strip() if val is not None else ""
+                            if key_text and val_text:
+                                parts.append(f"{key_text}: {val_text}")
+                        line = "; ".join(parts).strip()
+                        if not line:
+                            try:
+                                line = json.dumps(item, ensure_ascii=False)
+                            except Exception:
+                                line = str(item)
                 elif isinstance(item, str):
                     line = item.strip()
                 elif item is not None:

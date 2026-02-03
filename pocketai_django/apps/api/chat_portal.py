@@ -2457,6 +2457,36 @@ def portal_agent_run_approval(request: HttpRequest) -> JsonResponse:
             )
         except Exception:  # pragma: no cover - observability must not block portal responses
             pass
+
+    # Patch any persisted in-flight portal message blocks so refresh reflects the latest decision.
+    # This mirrors `portal_tool_approval` behavior for chat-thread approval cards created by runs.
+    if approval is not None and business_id:
+        try:
+            approval_id_str = str(approval.id)
+            with tenant_context(business_id):
+                base_qs = (
+                    ConversationMessage.objects.filter(conversation_id=conversation.id, sender=ConversationSender.AI)
+                    .order_by("-sent_at", "-created_at")
+                )
+                candidates = list(base_qs.filter(metadata__pending_approval_id=approval_id_str)[:6])
+                if not candidates:
+                    candidates = list(base_qs[:30])
+                for msg in candidates:
+                    blocks_raw = msg.content_blocks if isinstance(getattr(msg, "content_blocks", None), list) else []
+                    updated_blocks, mutated = _apply_portal_tool_approval_state(blocks_raw, approval=approval)
+                    if not mutated:
+                        continue
+                    meta_in = msg.metadata if isinstance(getattr(msg, "metadata", None), dict) else {}
+                    meta_out = dict(meta_in)
+                    if str(meta_out.get("pending_approval_id") or "").strip() == approval_id_str:
+                        meta_out.pop("pending_approval_id", None)
+                    ConversationMessage.objects.filter(id=msg.id).update(
+                        content_blocks=updated_blocks,
+                        metadata=meta_out,
+                    )
+        except Exception:  # pragma: no cover - best effort only
+            logger.exception("portal run approval message patch failed approval=%s", getattr(approval, "id", None))
+
     return JsonResponse({"session": _session_to_dict(session), "run": _serialize_agent_run_for_portal(run)}, status=200)
 
 

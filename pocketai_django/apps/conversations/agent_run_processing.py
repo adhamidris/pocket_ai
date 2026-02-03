@@ -1917,11 +1917,15 @@ class AgentRunProcessingService:
                             if isinstance(pause_payload, Mapping)
                             else ""
                         )
-                        prompt_text = (
-                            "This task needs your approval to continue."
-                            + (f" Tool: {tool_label}." if tool_label else "")
-                            + " Please approve/deny from the Tasks panel."
-                        )
+                        tool_norm = tool_label.strip().lower()
+                        if tool_norm in {"initiate_phone_call", "phone_call"}:
+                            prompt_text = "This task wants to place a phone call. Please review the details and approve or reject."
+                        else:
+                            prompt_text = (
+                                "This task needs your approval to continue."
+                                + (f" Tool: {tool_label}." if tool_label else "")
+                                + " Please approve/deny from the Tasks panel."
+                            )
                     else:
                         questions = []
                         if isinstance(pause_payload, Mapping):
@@ -1941,9 +1945,30 @@ class AgentRunProcessingService:
                 followup_meta = next_metadata if isinstance(next_metadata, Mapping) else {}
                 delegate_intent = str(followup_meta.get("delegate_intent") or "").strip().lower()
                 followup_requested = bool(followup_meta.get("followup_requested") or delegate_intent == "explicit")
-                should_post_followup = bool(
-                    run.source in {AgentRunSource.AUTOMATION, AgentRunSource.WATCHER} or followup_requested
+                tool_name_value = ""
+                if isinstance(pause_payload, Mapping):
+                    tool_name_value = str(pause_payload.get("tool_name") or "").strip().lower()
+                force_followup = bool(
+                    approval_id
+                    and next_status == AgentRunStatus.WAITING_APPROVAL
+                    and tool_name_value in {"initiate_phone_call", "phone_call"}
                 )
+                should_post_followup = bool(
+                    run.source in {AgentRunSource.AUTOMATION, AgentRunSource.WATCHER} or followup_requested or force_followup
+                )
+                if should_post_followup:
+                    already_posted = False
+                    if approval_id:
+                        already_posted = ConversationMessage.objects.filter(
+                            conversation_id=anchor_conversation.id,
+                            metadata__agent_run_id=str(run.id),
+                            metadata__pending_approval_id=approval_id,
+                            metadata__type="needs_approval",
+                        ).exists()
+                    if already_posted:
+                        # Avoid duplicating approval prompts when a run retries the same pause event.
+                        should_post_followup = False
+
                 if should_post_followup:
                     message_meta = {
                         "source": "agent_run",
@@ -1954,12 +1979,52 @@ class AgentRunProcessingService:
                         message_meta["pending_approval_id"] = approval_id
                     if approval_preview:
                         message_meta["approval_preview"] = approval_preview
+
+                    content_blocks = ensure_assistant_text_blocks(prompt_text)
+                    if force_followup:
+                        try:
+                            from apps.conversations.content_blocks import make_structured_block
+
+                            approval_event_data = pause_state.get("approval_event") or {}
+                            if isinstance(approval_event_data, Mapping):
+                                event_id_value = str(
+                                    approval_event_data.get("event_id") or approval_event_data.get("eventId") or ""
+                                ).strip()
+                                tool_call_id_value = str(
+                                    approval_event_data.get("tool_call_id") or approval_event_data.get("toolCallId") or ""
+                                ).strip()
+                                kind_value = str(approval_event_data.get("kind") or "phone").strip()
+                                status_value = str(approval_event_data.get("status") or "pending_approval").strip()
+                                input_payload = approval_event_data.get("input")
+                                safe_input = dict(input_payload) if isinstance(input_payload, Mapping) else {}
+                                approval_payload = approval_event_data.get("approval")
+                                safe_approval = dict(approval_payload) if isinstance(approval_payload, Mapping) else {}
+                                remote_payload = approval_event_data.get("remote")
+                                safe_remote = dict(remote_payload) if isinstance(remote_payload, Mapping) else {}
+                                payload_out: dict[str, object] = {
+                                    "event_id": event_id_value or f"evt_{uuid.uuid4().hex[:12]}",
+                                    "phase": "approval_requested",
+                                    "status": status_value or "pending_approval",
+                                    "tool_call_id": tool_call_id_value,
+                                    "tool_name": tool_name_value or "initiate_phone_call",
+                                    "kind": kind_value or "phone",
+                                    "input": safe_input,
+                                    "approval": safe_approval,
+                                    "approval_id": approval_id,
+                                    "run_id": str(run.id),
+                                }
+                                if safe_remote:
+                                    payload_out["remote"] = safe_remote
+                                content_blocks.append(make_structured_block("tool_use", payload_out))
+                        except Exception:  # pragma: no cover - best effort UI card
+                            logger.exception("agent_run_portal_call_approval_block_failed run=%s", run.id)
+
                     ConversationMessage.objects.create(
                         conversation=anchor_conversation,
                         sender=ConversationSender.AI,
                         body=prompt_text,
                         metadata=message_meta,
-                        content_blocks=ensure_assistant_text_blocks(prompt_text),
+                        content_blocks=content_blocks,
                     )
                     Conversation.objects.filter(id=anchor_conversation.id).update(last_activity_at=now)
 

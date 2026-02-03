@@ -390,9 +390,21 @@
     gap: 0.35rem;
   }
 
+  [data-chat-portal] .portal-agent-run__preview--call {
+    padding: 0;
+    border: none;
+    background: transparent;
+    display: block;
+  }
+
   .dark [data-chat-portal] .portal-agent-run__preview {
     border-color: hsl(var(--border) / 0.35);
     background: hsl(var(--card) / 0.92);
+  }
+
+  .dark [data-chat-portal] .portal-agent-run__preview--call {
+    background: transparent;
+    border: none;
   }
 
   [data-chat-portal] .portal-agent-run__preview-title {
@@ -1149,7 +1161,8 @@
   }
 
   [data-chat-portal] .portal-call-approval__details {
-    padding-inline-start: 3.05rem; /* align with text block after icon */
+    /* Align details with the card/rail (avoid a big blank column under the icon). */
+    padding-inline-start: 0;
     padding-block: 0.2rem 0.05rem;
   }
 
@@ -1218,57 +1231,6 @@
     word-break: break-word;
     max-height: 10.5rem;
     overflow: auto;
-  }
-
-  /* Suggested next actions under a denied/expired approval card. */
-  [data-chat-portal] .portal-call-approval__next {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.45rem;
-    align-items: center;
-    padding-inline-start: 3.05rem; /* align with text block after icon */
-  }
-
-  [data-chat-portal] .portal-call-approval__next[hidden] {
-    display: none !important;
-  }
-
-  [data-chat-portal] .portal-call-approval__next-label {
-    font-size: var(--portal-font-xs);
-    font-weight: 650;
-    color: hsl(var(--muted-foreground));
-    letter-spacing: 0.01em;
-    margin-inline-end: 0.15rem;
-    white-space: nowrap;
-  }
-
-  [data-chat-portal] .portal-next-action-chip {
-    height: 2.05rem;
-    padding: 0 0.75rem;
-    border-radius: 999px;
-    border: 1px solid hsl(var(--border));
-    background: hsl(var(--muted) / 0.25);
-    color: hsl(var(--foreground) / 0.9);
-    font-size: var(--portal-font-xs);
-    font-weight: 650;
-    letter-spacing: 0.01em;
-    cursor: pointer;
-    user-select: none;
-    transition: transform 120ms ease, filter 120ms ease, box-shadow 120ms ease;
-    box-shadow: 0 1px 0 hsl(var(--border) / 0.2);
-  }
-
-  [data-chat-portal] .portal-next-action-chip:hover {
-    filter: brightness(1.04);
-  }
-
-  [data-chat-portal] .portal-next-action-chip:active {
-    transform: scale(0.98);
-  }
-
-  [data-chat-portal] .portal-next-action-chip:focus-visible {
-    outline: 2px solid hsl(var(--primary) / 0.35);
-    outline-offset: 2px;
   }
 
   [data-chat-portal] [data-message-meta],
