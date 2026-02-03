@@ -2845,6 +2845,16 @@
     display: inline-block;
   }
 
+  /* Negative outcomes (cancelled/failed) should read as destructive, not primary. */
+  [data-chat-portal] .portal-task__status-pill[data-status="cancelled"],
+  [data-chat-portal] .portal-task__status-pill[data-status="canceled"],
+  [data-chat-portal] .portal-task__status-pill[data-status="failed"],
+  [data-chat-portal] .portal-task__status-pill[data-status="error"] {
+    border-color: hsl(var(--destructive) / 0.55);
+    background: hsl(var(--destructive) / 0.12);
+    color: hsl(var(--destructive));
+  }
+
   [data-chat-portal] .portal-task__status-pill[data-status="open"]::before {
     content: "•";
     display: inline-block;
@@ -3023,13 +3033,13 @@
   }
 
   [data-chat-portal] .portal-task__step[data-step-status="cancelled"] {
-    color: hsl(var(--muted-foreground));
+    color: hsl(var(--destructive));
   }
 
   [data-chat-portal] .portal-task__step[data-step-status="cancelled"] .portal-task__step-icon {
-    border-color: hsl(var(--muted-foreground) / 0.5);
-    background: hsl(var(--muted) / 0.3);
-    color: hsl(var(--muted-foreground));
+    border-color: hsl(var(--destructive) / 0.6);
+    background: hsl(var(--destructive) / 0.12);
+    color: hsl(var(--destructive));
   }
 
   [data-chat-portal] .portal-task__step[data-step-status="cancelled"] .portal-task__step-icon::after {

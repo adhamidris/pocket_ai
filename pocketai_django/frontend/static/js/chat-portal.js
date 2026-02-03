@@ -5826,6 +5826,33 @@ class ChatPortalClient {
     const statusRaw = (run && run.status ? run.status : "").toString().trim().toLowerCase();
     const events = state && Array.isArray(state.events) ? state.events : [];
     const recent = events.slice(-80);
+    const approvalResolutionById = new Map();
+    recent.forEach((evt) => {
+      if (!evt || typeof evt !== "object") return;
+      const stream = (evt.stream || "").toString().trim().toLowerCase();
+      if (stream !== "executed") return;
+      const payload = evt.payload && typeof evt.payload === "object" ? evt.payload : {};
+      const approvalId = (payload.approval_id || payload.approvalId || payload.approvalID || "")
+        .toString()
+        .trim();
+      if (!approvalId) return;
+
+      const phase = (payload.phase || "").toString().trim().toLowerCase();
+      const status = (payload.status || "").toString().trim().toLowerCase();
+      const decision = (payload.decision || "").toString().trim().toLowerCase();
+
+      if (phase === "approval_resolved" && (status === "approved" || status === "denied")) {
+        approvalResolutionById.set(approvalId, status === "approved" ? "Approved" : "Denied");
+        return;
+      }
+      if (decision === "approve") {
+        approvalResolutionById.set(approvalId, "Approved");
+        return;
+      }
+      if (decision === "deny") {
+        approvalResolutionById.set(approvalId, "Denied");
+      }
+    });
 
     const normalizeSystemLabel = (raw) => {
       const textRaw = (raw || "").toString().trim();
@@ -5894,7 +5921,11 @@ class ChatPortalClient {
 
       if (stream === "system") {
         let line = "";
-        if (type === "needs_approval") line = "Needs approval";
+        if (type === "needs_approval") {
+          const approvalPayload = payload.approval && typeof payload.approval === "object" ? payload.approval : null;
+          const approvalId = approvalPayload && approvalPayload.id ? approvalPayload.id.toString().trim() : "";
+          line = approvalId && approvalResolutionById.has(approvalId) ? approvalResolutionById.get(approvalId) : "Needs approval";
+        }
         else if (type === "needs_user") line = "Needs your input";
         else if (type === "result") line = "Completed";
         else if (type === "error") line = "Error";
