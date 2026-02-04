@@ -45,6 +45,7 @@ from apps.conversations.models import (
     ConversationExtractionType,
     ConversationMessage,
     ConversationSender,
+    PortalTurn,
     ConversationToolApproval,
     ConversationToolApprovalStatus,
 )
@@ -9621,6 +9622,11 @@ class McpOrchestratorService:
         poll_interval = self._tool_approval_poll_interval()
         deadline = time.monotonic() + timeout_seconds
         business_id = getattr(conversation, "business_profile_id", None)
+        last_lease_refresh = 0.0
+        lease_refresh_every = float(getattr(settings, "PORTAL_TURN_WORKER_LEASE_REFRESH_SECONDS", 15.0) or 15.0)
+        lease_seconds = int(getattr(settings, "PORTAL_TURN_WORKER_LEASE_SECONDS", 60) or 60)
+        lease_refresh_every = max(1.0, lease_refresh_every)
+        lease_seconds = max(10, lease_seconds)
 
         while True:
             close_old_connections()
@@ -9634,6 +9640,22 @@ class McpOrchestratorService:
             approval = refreshed
             if approval.status != ConversationToolApprovalStatus.PENDING:
                 return approval
+
+            # Portal turns may hold a DB lease while waiting for approval. Refresh it
+            # occasionally so another worker does not double-run the same turn.
+            turn_id = getattr(approval, "turn_id", None)
+            if turn_id and (time.monotonic() - last_lease_refresh) >= lease_refresh_every:
+                last_lease_refresh = time.monotonic()
+                lease_until = timezone.now() + timedelta(seconds=lease_seconds)
+                try:
+                    with tenant_context(business_id):
+                        PortalTurn.objects.filter(id=turn_id).update(
+                            lease_expires_at=lease_until,
+                            updated_at=timezone.now(),
+                        )
+                except Exception:  # pragma: no cover - best effort
+                    logger.debug("portal turn lease refresh failed turn=%s approval=%s", turn_id, approval.id)
+
             now = timezone.now()
             if approval.expires_at and now >= approval.expires_at:
                 approval.status = ConversationToolApprovalStatus.EXPIRED

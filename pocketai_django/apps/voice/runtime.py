@@ -1146,6 +1146,19 @@ class VoiceCallRuntime:
             "timestamp": time.time(),
         }
 
+        # Phase 4: Prefer publishing transcript updates to the portal session Redis event bus.
+        # Keep cache fallback for the legacy DB-polling session stream.
+        try:
+            from apps.conversations.portal_session_event_bus import publish_portal_conversation_event
+
+            publish_portal_conversation_event(
+                conversation_id=conversation_id,
+                event_name="voiceCallTranscript",
+                payload=event_data,
+            )
+        except Exception:
+            pass
+
         def _push_to_cache() -> None:
             existing = cache.get(cache_key) or []
             if not isinstance(existing, list):

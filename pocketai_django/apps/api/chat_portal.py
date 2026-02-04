@@ -64,7 +64,13 @@ from apps.conversations.portal import (
 from apps.conversations.portal_turn_events import (
     PORTAL_TURN_EVENTS_NOTIFY_CHANNEL,
     append_turn_event,
+    get_portal_redis_client,
     list_turn_events,
+    portal_turn_redis_stream_key,
+)
+from apps.conversations.portal_session_event_bus import (
+    portal_session_agent_requests_stream_key,
+    portal_session_conversation_stream_key,
 )
 from apps.conversations.portal_turn_runner import run_turn_background
 from core.tenancy import tenant_context
@@ -2890,6 +2896,11 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
         subagents_enabled = False
 
     def event_stream() -> Iterable[str]:
+        metrics_enabled = bool(getattr(settings, "PORTAL_STREAM_METRICS", False))
+        started_at = time.perf_counter()
+        first_event_at: float | None = None
+        events_sent = 0
+        keepalives_sent = 0
         yield "event: statusChanged\n"
         yield f"data: {json.dumps({'status': session.status})}\n\n"
         run_since = timezone.now()
@@ -2958,130 +2969,288 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
         seen_messages: set[str] = set()
         seen_messages_order: list[str] = []
         last_heartbeat = time.monotonic()
+        session_bus = str(getattr(settings, "PORTAL_SESSION_EVENT_BUS", "postgres") or "postgres").strip().lower()
+        redis_conn = None
+        redis_stream_positions: dict[str, str] = {}
+        if session_bus == "redis":
+            redis_conn = get_portal_redis_client(socket_timeout_seconds=20.0)
+            if redis_conn is not None and conversation_id:
+                start_id = _parse_session_since_id(request)
+                if not start_id:
+                    start_ms = max(0, int(time.time() * 1000) - 1)
+                    start_id = f"{start_ms}-0"
+                redis_stream_positions[portal_session_conversation_stream_key(conversation_id=conversation_id)] = start_id
+                if subagents_enabled and agent_profile_id:
+                    redis_stream_positions[portal_session_agent_requests_stream_key(agent_profile_id=agent_profile_id)] = start_id
+            else:
+                redis_conn = None
+                session_bus = "postgres"
 
-        while True:
-            close_old_connections()
-            if conversation_id and subagents_enabled:
-                with tenant_context(business_id):
-                    events_batch = list(
-                        AgentRunEvent.objects.select_related("run")
-                        .filter(run__conversation_id=conversation_id)
-                        .filter(created_at__gte=run_since)
-                        .order_by("created_at", "run_id", "sequence_index")[:250]
-                    )
-                if events_batch:
-                    latest_created_at = run_since
-                    for event in events_batch:
-                        if event.created_at and event.created_at > latest_created_at:
-                            latest_created_at = event.created_at
-                        key = (str(event.run_id), int(event.sequence_index))
-                        if key in seen:
-                            continue
-                        seen.add(key)
-                        seen_order.append(key)
-                        if len(seen_order) > seen_limit:
-                            old = seen_order.pop(0)
-                            seen.discard(old)
-                        run_obj = getattr(event, "run", None)
-                        payload = {
-                            "run": _serialize_agent_run_for_portal(run_obj) if run_obj else {"id": str(event.run_id)},
-                            "event": _serialize_agent_run_event_for_portal(event),
-                        }
-                        yield "event: agentRunEvent\n"
-                        yield f"data: {json.dumps(payload)}\n\n"
-                    run_since = latest_created_at
+        try:
+            while True:
+                close_old_connections()
+                if redis_conn is not None and redis_stream_positions:
+                    try:
+                        entries = redis_conn.xread(redis_stream_positions, count=250, block=15_000)
+                    except Exception:
+                        redis_conn = None
+                        session_bus = "postgres"
+                        continue
 
-            if conversation_id and subagents_enabled:
-                from apps.conversations.models import ConversationMessage
+                    if entries:
+                        for raw_stream, raw_entries in entries:
+                            stream_key = (
+                                raw_stream.decode("utf-8", errors="replace")
+                                if isinstance(raw_stream, (bytes, bytearray))
+                                else str(raw_stream)
+                            )
+                            for raw_id, fields in raw_entries:
+                                entry_id = (
+                                    raw_id.decode("utf-8", errors="replace")
+                                    if isinstance(raw_id, (bytes, bytearray))
+                                    else str(raw_id)
+                                )
+                                redis_stream_positions[stream_key] = entry_id
 
-                def _serialize_message(msg: ConversationMessage) -> dict[str, object]:
-                    return {
-                        "id": str(msg.id),
-                        "sender": msg.sender,
-                        "body": msg.body or "",
-                        "sent_at": msg.sent_at.isoformat() if msg.sent_at else None,
-                        "metadata": msg.metadata if isinstance(getattr(msg, "metadata", None), dict) else {},
-                        "content_blocks": msg.content_blocks if isinstance(getattr(msg, "content_blocks", None), list) else [],
-                    }
+                                raw_event = fields.get(b"event") if isinstance(fields, dict) else None
+                                if raw_event is None and isinstance(fields, dict):
+                                    raw_event = fields.get("event")  # type: ignore[index]
+                                event_name = (
+                                    raw_event.decode("utf-8", errors="replace")
+                                    if isinstance(raw_event, (bytes, bytearray))
+                                    else str(raw_event or "")
+                                ).strip()
+                                if not event_name:
+                                    continue
+                                if not subagents_enabled and event_name in {"agentRunEvent", "agentRequestEvent", "conversationMessage"}:
+                                    # Keep behavior compatible with legacy polling mode:
+                                    # when sub-agents are disabled, don't surface Tasks/Inbox messages.
+                                    continue
 
-                with tenant_context(business_id):
-                    messages_batch = list(
-                        ConversationMessage.objects.filter(conversation_id=conversation_id)
-                        .filter(created_at__gte=message_since)
-                        .filter(Q(metadata__source="agent_run") | Q(metadata__source="voice_call"))
-                        .order_by("created_at", "id")[:250]
-                    )
-                if messages_batch:
-                    latest_created_at = message_since
-                    for msg in messages_batch:
-                        if msg.created_at and msg.created_at > latest_created_at:
-                            latest_created_at = msg.created_at
-                        key = str(msg.id)
-                        if key in seen_messages:
-                            continue
-                        seen_messages.add(key)
-                        seen_messages_order.append(key)
-                        if len(seen_messages_order) > seen_limit:
-                            old = seen_messages_order.pop(0)
-                            seen_messages.discard(old)
-                        payload = {"message": _serialize_message(msg)}
-                        yield "event: conversationMessage\n"
-                        yield f"data: {json.dumps(payload)}\n\n"
-                    message_since = latest_created_at
+                                raw_payload = fields.get(b"payload") if isinstance(fields, dict) else None
+                                if raw_payload is None and isinstance(fields, dict):
+                                    raw_payload = fields.get("payload")  # type: ignore[index]
+                                payload_text = (
+                                    raw_payload.decode("utf-8", errors="replace")
+                                    if isinstance(raw_payload, (bytes, bytearray))
+                                    else str(raw_payload or "")
+                                )
+                                try:
+                                    payload = json.loads(payload_text) if payload_text else {}
+                                except Exception:
+                                    payload = {}
 
-            if business_id and agent_profile_id and subagents_enabled:
-                with tenant_context(business_id):
-                    requests_batch = list(
-                        AgentRequest.objects.select_related("from_agent_profile", "to_agent_profile")
-                        .filter(business_profile_id=business_id)
-                        .filter(Q(to_agent_profile_id=agent_profile_id) | Q(from_agent_profile_id=agent_profile_id))
-                        .filter(updated_at__gte=request_since)
-                        .order_by("updated_at", "id")[:250]
-                    )
-                if requests_batch:
-                    latest_updated_at = request_since
-                    for req in requests_batch:
-                        if req.updated_at and req.updated_at > latest_updated_at:
-                            latest_updated_at = req.updated_at
-                        updated_key = req.updated_at.isoformat() if req.updated_at else ""
-                        key = (str(req.id), updated_key)
-                        if key in seen_requests:
-                            continue
-                        seen_requests.add(key)
-                        seen_requests_order.append(key)
-                        if len(seen_requests_order) > seen_limit:
-                            old = seen_requests_order.pop(0)
-                            seen_requests.discard(old)
-                        payload = {"request": _serialize_agent_request_for_portal(req)}
-                        yield "event: agentRequestEvent\n"
-                        yield f"data: {json.dumps(payload)}\n\n"
-                    request_since = latest_updated_at
+                                if event_name == "agentRunEvent" and isinstance(payload, dict):
+                                    event_obj = payload.get("event") if isinstance(payload.get("event"), dict) else {}
+                                    key = (str(event_obj.get("runId") or ""), int(event_obj.get("sequenceIndex") or 0))
+                                    if key in seen:
+                                        continue
+                                    seen.add(key)
+                                    seen_order.append(key)
+                                    if len(seen_order) > seen_limit:
+                                        old = seen_order.pop(0)
+                                        seen.discard(old)
+                                elif event_name == "agentRequestEvent" and isinstance(payload, dict):
+                                    req_obj = payload.get("request") if isinstance(payload.get("request"), dict) else {}
+                                    key = (str(req_obj.get("id") or ""), str(req_obj.get("updatedAt") or ""))
+                                    if key in seen_requests:
+                                        continue
+                                    seen_requests.add(key)
+                                    seen_requests_order.append(key)
+                                    if len(seen_requests_order) > seen_limit:
+                                        old = seen_requests_order.pop(0)
+                                        seen_requests.discard(old)
+                                elif event_name == "conversationMessage" and isinstance(payload, dict):
+                                    msg_obj = payload.get("message") if isinstance(payload.get("message"), dict) else {}
+                                    msg_id = str(msg_obj.get("id") or "")
+                                    if msg_id and msg_id in seen_messages:
+                                        continue
+                                    if msg_id:
+                                        seen_messages.add(msg_id)
+                                        seen_messages_order.append(msg_id)
+                                        if len(seen_messages_order) > seen_limit:
+                                            old = seen_messages_order.pop(0)
+                                            seen_messages.discard(old)
 
-            # Poll for voice call transcript events (faster polling for real-time feel)
-            if conversation_id:
-                cache_key = f"voice_transcript:{conversation_id}"
-                transcript_events = cache.get(cache_key) or []
-                if isinstance(transcript_events, list) and transcript_events:
-                    # Use atomic pop pattern: get, process, then clear only what we processed
-                    cache.delete(cache_key)
-                    for evt in transcript_events:
-                        if isinstance(evt, dict):
-                            yield "event: voiceCallTranscript\n"
-                            yield f"data: {json.dumps(evt)}\n\n"
-                    # Shorter sleep when actively streaming transcripts
-                    time.sleep(0.15)
+                                if first_event_at is None:
+                                    first_event_at = time.perf_counter()
+                                events_sent += 1
+                                yield f"id: {entry_id}\n"
+                                yield f"event: {event_name}\n"
+                                yield f"data: {json.dumps(payload)}\n\n"
+                        continue
+
+                if session_bus != "postgres":
+                    # Waiting for more Redis stream events.
+                    now = time.monotonic()
+                    if now - last_heartbeat >= 15.0:
+                        keepalives_sent += 1
+                        yield "event: heartbeat\n"
+                        yield "data: {}\n\n"
+                        last_heartbeat = now
                     continue
 
-            now = time.monotonic()
-            if now - last_heartbeat >= 15.0:
-                yield "event: heartbeat\n"
-                yield "data: {}\n\n"
-                last_heartbeat = now
-            time.sleep(0.5)  # Reduced from 1.0s for better responsiveness
+                if conversation_id and subagents_enabled:
+                    with tenant_context(business_id):
+                        events_batch = list(
+                            AgentRunEvent.objects.select_related("run")
+                            .filter(run__conversation_id=conversation_id)
+                            .filter(created_at__gte=run_since)
+                            .order_by("created_at", "run_id", "sequence_index")[:250]
+                        )
+                    if events_batch:
+                        latest_created_at = run_since
+                        for event in events_batch:
+                            if event.created_at and event.created_at > latest_created_at:
+                                latest_created_at = event.created_at
+                            key = (str(event.run_id), int(event.sequence_index))
+                            if key in seen:
+                                continue
+                            seen.add(key)
+                            seen_order.append(key)
+                            if len(seen_order) > seen_limit:
+                                old = seen_order.pop(0)
+                                seen.discard(old)
+                            run_obj = getattr(event, "run", None)
+                            payload = {
+                                "run": _serialize_agent_run_for_portal(run_obj)
+                                if run_obj
+                                else {"id": str(event.run_id)},
+                                "event": _serialize_agent_run_event_for_portal(event),
+                            }
+                            if first_event_at is None:
+                                first_event_at = time.perf_counter()
+                            events_sent += 1
+                            yield "event: agentRunEvent\n"
+                            yield f"data: {json.dumps(payload)}\n\n"
+                        run_since = latest_created_at
+
+                if conversation_id and subagents_enabled:
+                    from apps.conversations.models import ConversationMessage
+
+                    def _serialize_message(msg: ConversationMessage) -> dict[str, object]:
+                        return {
+                            "id": str(msg.id),
+                            "sender": msg.sender,
+                            "body": msg.body or "",
+                            "sent_at": msg.sent_at.isoformat() if msg.sent_at else None,
+                            "metadata": msg.metadata
+                            if isinstance(getattr(msg, "metadata", None), dict)
+                            else {},
+                            "content_blocks": msg.content_blocks
+                            if isinstance(getattr(msg, "content_blocks", None), list)
+                            else [],
+                        }
+
+                    with tenant_context(business_id):
+                        messages_batch = list(
+                            ConversationMessage.objects.filter(conversation_id=conversation_id)
+                            .filter(created_at__gte=message_since)
+                            .filter(Q(metadata__source="agent_run") | Q(metadata__source="voice_call"))
+                            .order_by("created_at", "id")[:250]
+                        )
+                    if messages_batch:
+                        latest_created_at = message_since
+                        for msg in messages_batch:
+                            if msg.created_at and msg.created_at > latest_created_at:
+                                latest_created_at = msg.created_at
+                            key = str(msg.id)
+                            if key in seen_messages:
+                                continue
+                            seen_messages.add(key)
+                            seen_messages_order.append(key)
+                            if len(seen_messages_order) > seen_limit:
+                                old = seen_messages_order.pop(0)
+                                seen_messages.discard(old)
+                            payload = {"message": _serialize_message(msg)}
+                            if first_event_at is None:
+                                first_event_at = time.perf_counter()
+                            events_sent += 1
+                            yield "event: conversationMessage\n"
+                            yield f"data: {json.dumps(payload)}\n\n"
+                        message_since = latest_created_at
+
+                if business_id and agent_profile_id and subagents_enabled:
+                    with tenant_context(business_id):
+                        requests_batch = list(
+                            AgentRequest.objects.select_related("from_agent_profile", "to_agent_profile")
+                            .filter(business_profile_id=business_id)
+                            .filter(
+                                Q(to_agent_profile_id=agent_profile_id)
+                                | Q(from_agent_profile_id=agent_profile_id)
+                            )
+                            .filter(updated_at__gte=request_since)
+                            .order_by("updated_at", "id")[:250]
+                        )
+                    if requests_batch:
+                        latest_updated_at = request_since
+                        for req in requests_batch:
+                            if req.updated_at and req.updated_at > latest_updated_at:
+                                latest_updated_at = req.updated_at
+                            updated_key = req.updated_at.isoformat() if req.updated_at else ""
+                            key = (str(req.id), updated_key)
+                            if key in seen_requests:
+                                continue
+                            seen_requests.add(key)
+                            seen_requests_order.append(key)
+                            if len(seen_requests_order) > seen_limit:
+                                old = seen_requests_order.pop(0)
+                                seen_requests.discard(old)
+                            payload = {"request": _serialize_agent_request_for_portal(req)}
+                            if first_event_at is None:
+                                first_event_at = time.perf_counter()
+                            events_sent += 1
+                            yield "event: agentRequestEvent\n"
+                            yield f"data: {json.dumps(payload)}\n\n"
+                        request_since = latest_updated_at
+
+                # Poll for voice call transcript events (faster polling for real-time feel)
+                if conversation_id:
+                    cache_key = f"voice_transcript:{conversation_id}"
+                    transcript_events = cache.get(cache_key) or []
+                    if isinstance(transcript_events, list) and transcript_events:
+                        # Use atomic pop pattern: get, process, then clear only what we processed
+                        cache.delete(cache_key)
+                        for evt in transcript_events:
+                            if isinstance(evt, dict):
+                                if first_event_at is None:
+                                    first_event_at = time.perf_counter()
+                                events_sent += 1
+                                yield "event: voiceCallTranscript\n"
+                                yield f"data: {json.dumps(evt)}\n\n"
+                        # Shorter sleep when actively streaming transcripts
+                        time.sleep(0.15)
+                        continue
+
+                now = time.monotonic()
+                if now - last_heartbeat >= 15.0:
+                    keepalives_sent += 1
+                    yield "event: heartbeat\n"
+                    yield "data: {}\n\n"
+                    last_heartbeat = now
+                time.sleep(0.5)  # Reduced from 1.0s for better responsiveness
+        finally:
+            if metrics_enabled:
+                structured_log(
+                    "portal",
+                    "stream.session_sse",
+                    {
+                        "conversation_id": str(conversation_id or ""),
+                        "business_id": str(business_id or ""),
+                        "agent_id": str(agent_profile_id or ""),
+                        "elapsed_ms": int(max(0.0, (time.perf_counter() - started_at) * 1000.0)),
+                        "first_event_ms": int(max(0.0, (first_event_at - started_at) * 1000.0)) if first_event_at else None,
+                        "events_sent": int(events_sent),
+                        "heartbeats_sent": int(keepalives_sent),
+                        "subagents_enabled": bool(subagents_enabled),
+                        "event_bus": str(session_bus or "postgres"),
+                    },
+                )
 
     response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")
     response["Cache-Control"] = "no-cache"
     response["X-Accel-Buffering"] = "no"
+    response["X-Portal-Stream-Protocol-Version"] = str(getattr(settings, "PORTAL_STREAM_PROTOCOL_VERSION", 1))
     return response
 
 
@@ -3259,6 +3428,7 @@ def portal_turn_create(request: HttpRequest) -> JsonResponse:
     if not agent:
         return _json_error("validation_error", "Agent profile is missing.", status=500)
 
+    execution_mode = str(getattr(settings, "PORTAL_TURN_EXECUTION_MODE", "thread") or "thread").strip().lower()
     business_id = getattr(conversation, "business_profile_id", None)
     with tenant_context(business_id):
         turn = PortalTurn.objects.create(
@@ -3267,9 +3437,14 @@ def portal_turn_create(request: HttpRequest) -> JsonResponse:
             status=PortalTurnStatus.STREAMING,
             run_after=timezone.now(),
             user_message=body,
-            metadata={"source": "portal", "origin": "turn_create"},
+            metadata={"source": "portal", "origin": "turn_create", "execution_mode": execution_mode},
         )
-    run_turn_background(turn_id=turn.id, business_id=business_id)
+    if execution_mode == "worker":
+        # Phase 2: turn execution is handled by a dedicated DB-leased worker pool.
+        # The portal streams events from Postgres (LISTEN/NOTIFY + event log), so the UX remains identical.
+        pass
+    else:
+        run_turn_background(turn_id=turn.id, business_id=business_id)
 
     return JsonResponse(
         {
@@ -3290,6 +3465,14 @@ def _parse_turn_since_seq(request: HttpRequest) -> int:
         return value if value >= 0 else 0
     except (TypeError, ValueError):
         return 0
+
+
+def _parse_session_since_id(request: HttpRequest) -> str | None:
+    raw = request.GET.get("since") or request.GET.get("since_id") or ""
+    if not raw:
+        raw = request.META.get("HTTP_LAST_EVENT_ID", "")
+    raw = str(raw or "").strip()
+    return raw or None
 
 
 def _open_portal_turn_listen_connection():
@@ -3356,29 +3539,120 @@ def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHtt
     since = _parse_turn_since_seq(request)
 
     def event_stream() -> Iterable[str]:
+        metrics_enabled = bool(getattr(settings, "PORTAL_STREAM_METRICS", False))
+        started_at = time.perf_counter()
+        first_event_at: float | None = None
+        events_sent = 0
+        keepalives_sent = 0
         yield ": stream_open\n\n"
         last_seq = int(since or 0)
         keepalive_seconds = 15.0
         last_keepalive = time.monotonic()
-        listen_conn = _open_portal_turn_listen_connection()
+        event_bus = str(getattr(settings, "PORTAL_TURN_EVENT_BUS", "postgres") or "postgres").strip().lower()
+        turn_log_mode = str(getattr(settings, "PORTAL_TURN_EVENT_LOG_MODE", "db") or "db").strip().lower()
+        redis_conn = None
+        redis_stream_key = None
+        redis_last_id = f"{last_seq}-0"
+        sent_turn_persisted = False
+        if event_bus == "redis":
+            redis_conn = get_portal_redis_client(socket_timeout_seconds=keepalive_seconds + 5.0)
+            if redis_conn is not None:
+                redis_stream_key = portal_turn_redis_stream_key(turn_id=turn.id)
+            else:
+                event_bus = "postgres"
+
+        listen_conn = _open_portal_turn_listen_connection() if event_bus == "postgres" else None
+        listen_enabled = listen_conn is not None
 
         try:
             while True:
-                with tenant_context(business_id):
-                    events = list(list_turn_events(turn_id=turn.id, since_seq=last_seq, limit=250))
-                if events:
-                    for evt in events:
-                        last_seq = int(evt.seq or 0)
-                        payload = {
-                            "turn_id": str(turn.id),
-                            "seq": last_seq,
-                            "type": evt.type,
-                            "payload": evt.payload or {},
-                        }
-                        yield f"id: {last_seq}\n"
-                        yield "event: turnEvent\n"
-                        yield f"data: {json.dumps(payload)}\n\n"
-                    continue
+                if redis_conn is not None and redis_stream_key:
+                    # Avoid "block forever" so we can emit keepalives and survive slow first-token turns.
+                    block_ms = int(max(200, keepalive_seconds * 1000))
+                    try:
+                        entries = redis_conn.xread({redis_stream_key: redis_last_id}, count=250, block=block_ms)
+                    except Exception:
+                        # Degrade to Postgres if Redis is unavailable.
+                        redis_conn = None
+                        redis_stream_key = None
+                        if listen_conn is None:
+                            listen_conn = _open_portal_turn_listen_connection()
+                            listen_enabled = bool(listen_conn is not None)
+                        event_bus = "postgres"
+                        continue
+
+                    if entries:
+                        for _stream_key, stream_entries in entries:
+                            for entry_id, fields in stream_entries:
+                                entry_id_str = (
+                                    entry_id.decode("utf-8", errors="replace") if isinstance(entry_id, (bytes, bytearray)) else str(entry_id)
+                                )
+                                redis_last_id = entry_id_str
+                                seq_value = None
+                                try:
+                                    seq_value = int(entry_id_str.split("-", 1)[0])
+                                except Exception:
+                                    seq_value = None
+
+                                raw_type = fields.get(b"type") if isinstance(fields, dict) else None
+                                if raw_type is None and isinstance(fields, dict):
+                                    raw_type = fields.get("type")  # type: ignore[index]
+                                event_type = (
+                                    raw_type.decode("utf-8", errors="replace") if isinstance(raw_type, (bytes, bytearray)) else str(raw_type or "")
+                                ).strip() or "event"
+
+                                raw_payload = fields.get(b"payload") if isinstance(fields, dict) else None
+                                if raw_payload is None and isinstance(fields, dict):
+                                    raw_payload = fields.get("payload")  # type: ignore[index]
+                                payload_text = raw_payload.decode("utf-8", errors="replace") if isinstance(raw_payload, (bytes, bytearray)) else str(raw_payload or "")
+                                try:
+                                    payload_obj = json.loads(payload_text) if payload_text else {}
+                                except Exception:
+                                    payload_obj = {}
+
+                                if seq_value is None:
+                                    # Fallback: keep Last-Event-ID monotonic even if the Redis stream ID is unexpected.
+                                    seq_value = int(payload_obj.get("seq") or 0) if isinstance(payload_obj, dict) else 0
+                                last_seq = max(last_seq, int(seq_value or 0))
+
+                                payload = {
+                                    "turn_id": str(turn.id),
+                                    "seq": int(seq_value or 0),
+                                    "type": event_type,
+                                    "payload": payload_obj or {},
+                                }
+                                if event_type.strip().lower() == "turn_persisted":
+                                    sent_turn_persisted = True
+                                if first_event_at is None:
+                                    first_event_at = time.perf_counter()
+                                events_sent += 1
+                                yield f"id: {payload['seq']}\n"
+                                yield "event: turnEvent\n"
+                                yield f"data: {json.dumps(payload)}\n\n"
+                        continue
+
+                if redis_conn is None or not redis_stream_key:
+                    # Postgres-backed streaming (Phase 1/2 behavior).
+                    with tenant_context(business_id):
+                        events = list(list_turn_events(turn_id=turn.id, since_seq=last_seq, limit=250))
+                    if events:
+                        for evt in events:
+                            last_seq = int(evt.seq or 0)
+                            payload = {
+                                "turn_id": str(turn.id),
+                                "seq": last_seq,
+                                "type": evt.type,
+                                "payload": evt.payload or {},
+                            }
+                            if str(evt.type or "").strip().lower() == "turn_persisted":
+                                sent_turn_persisted = True
+                            if first_event_at is None:
+                                first_event_at = time.perf_counter()
+                            events_sent += 1
+                            yield f"id: {last_seq}\n"
+                            yield "event: turnEvent\n"
+                            yield f"data: {json.dumps(payload)}\n\n"
+                        continue
 
                 with tenant_context(business_id):
                     latest = (
@@ -3388,9 +3662,139 @@ def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHtt
                     )
                 if latest:
                     latest_status, latest_seq = latest
+                    if redis_conn is not None and redis_stream_key:
+                        # Redis is a live bus; Postgres remains source-of-truth for replay.
+                        # If Redis missed/trimmed events, backfill from Postgres.
+                        if turn_log_mode == "db" and int(latest_seq or 0) > last_seq:
+                            with tenant_context(business_id):
+                                events = list(list_turn_events(turn_id=turn.id, since_seq=last_seq, limit=250))
+                            if events:
+                                for evt in events:
+                                    last_seq = int(evt.seq or 0)
+                                    payload = {
+                                        "turn_id": str(turn.id),
+                                        "seq": last_seq,
+                                        "type": evt.type,
+                                        "payload": evt.payload or {},
+                                    }
+                                    if first_event_at is None:
+                                        first_event_at = time.perf_counter()
+                                    events_sent += 1
+                                    yield f"id: {last_seq}\n"
+                                    yield "event: turnEvent\n"
+                                    yield f"data: {json.dumps(payload)}\n\n"
+                                redis_last_id = f"{last_seq}-0"
+                                continue
                     if latest_status in {PortalTurnStatus.FINALIZED, PortalTurnStatus.FAILED, PortalTurnStatus.CANCELLED}:
-                        if int(latest_seq or 0) <= last_seq:
+                        if redis_conn is not None and redis_stream_key:
+                            drained = False
+                            # Drain any remaining Redis entries (non-blocking) before closing.
+                            while True:
+                                try:
+                                    drain_entries = redis_conn.xread({redis_stream_key: redis_last_id}, count=250, block=0)
+                                except Exception:
+                                    drain_entries = []
+                                if not drain_entries:
+                                    break
+                                drained = True
+                                for _stream_key, stream_entries in drain_entries:
+                                    for entry_id, fields in stream_entries:
+                                        entry_id_str = (
+                                            entry_id.decode("utf-8", errors="replace")
+                                            if isinstance(entry_id, (bytes, bytearray))
+                                            else str(entry_id)
+                                        )
+                                        redis_last_id = entry_id_str
+                                        seq_value = None
+                                        try:
+                                            seq_value = int(entry_id_str.split("-", 1)[0])
+                                        except Exception:
+                                            seq_value = None
+
+                                        raw_type = fields.get(b"type") if isinstance(fields, dict) else None
+                                        if raw_type is None and isinstance(fields, dict):
+                                            raw_type = fields.get("type")  # type: ignore[index]
+                                        event_type = (
+                                            raw_type.decode("utf-8", errors="replace")
+                                            if isinstance(raw_type, (bytes, bytearray))
+                                            else str(raw_type or "")
+                                        ).strip() or "event"
+
+                                        raw_payload = fields.get(b"payload") if isinstance(fields, dict) else None
+                                        if raw_payload is None and isinstance(fields, dict):
+                                            raw_payload = fields.get("payload")  # type: ignore[index]
+                                        payload_text = (
+                                            raw_payload.decode("utf-8", errors="replace")
+                                            if isinstance(raw_payload, (bytes, bytearray))
+                                            else str(raw_payload or "")
+                                        )
+                                        try:
+                                            payload_obj = json.loads(payload_text) if payload_text else {}
+                                        except Exception:
+                                            payload_obj = {}
+
+                                        if seq_value is None:
+                                            seq_value = int(payload_obj.get("seq") or 0) if isinstance(payload_obj, dict) else 0
+                                        last_seq = max(last_seq, int(seq_value or 0))
+
+                                        payload = {
+                                            "turn_id": str(turn.id),
+                                            "seq": int(seq_value or 0),
+                                            "type": event_type,
+                                            "payload": payload_obj or {},
+                                        }
+                                        if first_event_at is None:
+                                            first_event_at = time.perf_counter()
+                                        events_sent += 1
+                                        yield f"id: {payload['seq']}\n"
+                                        yield "event: turnEvent\n"
+                                        yield f"data: {json.dumps(payload)}\n\n"
+                            # If we drained at least once, loop back to status check to avoid a tight close/open race.
+                            if drained:
+                                continue
                             break
+                        else:
+                            # Degraded mode: when turn events aren't persisted to Postgres (Phase 5+),
+                            # still deliver the final persisted assistant message once it's available.
+                            if not sent_turn_persisted and turn_log_mode in {"minimal", "off"} and latest_status == PortalTurnStatus.FINALIZED:
+                                with tenant_context(business_id):
+                                    message_id = (
+                                        PortalTurn.objects.filter(id=turn.id)
+                                        .values_list("message_id", flat=True)
+                                        .first()
+                                    )
+                                    msg = ConversationMessage.objects.filter(id=message_id).first() if message_id else None
+                                if msg is not None:
+                                    last_seq += 1
+                                    payload = {
+                                        "turn_id": str(turn.id),
+                                        "seq": int(last_seq),
+                                        "type": "turn_persisted",
+                                        "payload": {
+                                            "text": msg.body or "",
+                                            "message_id": str(msg.id),
+                                            "session_status": None,
+                                            "metadata_version": 1,
+                                            "content_blocks": msg.content_blocks or [],
+                                        },
+                                    }
+                                    sent_turn_persisted = True
+                                    if first_event_at is None:
+                                        first_event_at = time.perf_counter()
+                                    events_sent += 1
+                                    yield f"id: {payload['seq']}\n"
+                                    yield "event: turnEvent\n"
+                                    yield f"data: {json.dumps(payload)}\n\n"
+                                    break
+                            if (
+                                latest_status == PortalTurnStatus.FINALIZED
+                                and not sent_turn_persisted
+                                and turn_log_mode in {"minimal", "off"}
+                            ):
+                                # Final message not visible yet; keep the stream alive and retry.
+                                continue
+                            if int(latest_seq or 0) <= last_seq:
+                                break
 
                 if listen_conn is not None:
                     now = time.monotonic()
@@ -3401,6 +3805,7 @@ def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHtt
                         readable = []
                     if not readable:
                         # Keep the SSE connection warm.
+                        keepalives_sent += 1
                         yield ": keepalive\n\n"
                         last_keepalive = time.monotonic()
                         continue
@@ -3409,6 +3814,7 @@ def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHtt
                         listen_conn.poll()
                     except Exception:
                         # On any LISTEN connection issue, fall back to keepalive pacing.
+                        keepalives_sent += 1
                         yield ": keepalive\n\n"
                         last_keepalive = time.monotonic()
                         continue
@@ -3435,6 +3841,7 @@ def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHtt
                 # Fallback: if LISTEN isn't available, yield periodic keepalives and re-check.
                 now = time.monotonic()
                 if now - last_keepalive >= keepalive_seconds:
+                    keepalives_sent += 1
                     yield ": keepalive\n\n"
                     last_keepalive = now
                 time.sleep(0.15)
@@ -3444,10 +3851,29 @@ def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHtt
                     listen_conn.close()
                 except Exception:
                     pass
+            if metrics_enabled:
+                structured_log(
+                    "portal",
+                    "stream.turn_sse",
+                    {
+                        "turn_id": str(turn.id),
+                        "conversation_id": str(getattr(conversation, "id", "") or ""),
+                        "business_id": str(business_id or ""),
+                        "elapsed_ms": int(max(0.0, (time.perf_counter() - started_at) * 1000.0)),
+                        "first_event_ms": int(max(0.0, (first_event_at - started_at) * 1000.0)) if first_event_at else None,
+                        "events_sent": int(events_sent),
+                        "keepalives_sent": int(keepalives_sent),
+                        "listen_enabled": bool(listen_enabled),
+                        "event_bus": str(event_bus or "postgres"),
+                        "since_seq": int(since or 0),
+                        "final_seq": int(last_seq),
+                    },
+                )
 
     response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")
     response["Cache-Control"] = "no-cache"
     response["X-Accel-Buffering"] = "no"
+    response["X-Portal-Stream-Protocol-Version"] = str(getattr(settings, "PORTAL_STREAM_PROTOCOL_VERSION", 1))
     return response
 
 

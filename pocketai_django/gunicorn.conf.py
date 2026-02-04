@@ -13,8 +13,8 @@ backlog = 2048
 # Worker Processes
 # Formula: (2 × CPU cores) + 1
 workers = int(os.getenv('WEB_CONCURRENCY', multiprocessing.cpu_count() * 2 + 1))
-worker_class = 'sync'  # Use 'gevent' or 'eventlet' for async if needed
-worker_connections = 1000
+worker_class = os.getenv("GUNICORN_WORKER_CLASS", "gevent")  # "gevent" is recommended for SSE/WebSocket-like workloads
+worker_connections = int(os.getenv("GUNICORN_WORKER_CONNECTIONS", "5000"))
 max_requests = 1000  # Restart workers after N requests (prevents memory leaks)
 max_requests_jitter = 50  # Add randomness to prevent thundering herd
 timeout = 120  # 2 minutes (RAG queries can be slow)

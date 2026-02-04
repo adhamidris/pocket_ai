@@ -55,7 +55,7 @@ Make an outbound phone call to a customer or contact.
 - Optional: `call_type` (service/marketing), `language` (en/ar), `max_duration_minutes`.
 - Recommended: include `context_items=[...]` as structured notes (facts, numbers, evidence snippets, talking points).
   - Keep `objective` short (one sentence). Put details into `context_items` so they are preserved for approvals and the call runtime.
-  - Use a consistent shape such as `{title: "...", value: "..."}`.
+  - Use a consistent shape such as `{{title: "...", value: "..."}}`.
 - Use for: customer follow-ups, appointment confirmations, support callbacks, verification calls.
 
 ## Workflow Rules
@@ -145,7 +145,7 @@ Make an outbound phone call to a customer or contact.
 - Optional: `call_type` (service/marketing), `language` (en/ar), `max_duration_minutes`.
 - Recommended: include `context_items=[...]` as structured notes (facts, numbers, evidence snippets, talking points).
   - Keep `objective` short (one sentence). Put details into `context_items` so they are preserved for approvals and the call runtime.
-  - Use a consistent shape such as `{title: "...", value: "..."}`.
+  - Use a consistent shape such as `{{title: "...", value: "..."}}`.
 - Use for: customer follow-ups, appointment confirmations, support callbacks, verification calls.
 
 ## Workflow Rules
@@ -318,7 +318,7 @@ Make an outbound phone call to a customer or contact.
 - Optional: `call_type` (service/marketing), `language` (en/ar), `max_duration_minutes`.
 - Recommended: include `context_items=[...]` as structured notes (facts, numbers, evidence snippets, talking points).
   - Keep `objective` short (one sentence). Put details into `context_items` so they are preserved for approvals and the call runtime.
-  - Use a consistent shape such as `{title: "...", value: "..."}`.
+  - Use a consistent shape such as `{{title: "...", value: "..."}}`.
 - Use for: customer follow-ups, appointment confirmations, support callbacks, verification calls.
 
 ## Workflow Rules
@@ -408,7 +408,7 @@ Make an outbound phone call to a customer or contact.
 - Optional: `call_type` (service/marketing), `language` (en/ar), `max_duration_minutes`.
 - Recommended: include `context_items=[...]` as structured notes (facts, numbers, evidence snippets, talking points).
   - Keep `objective` short (one sentence). Put details into `context_items` so they are preserved for approvals and the call runtime.
-  - Use a consistent shape such as `{title: "...", value: "..."}`.
+  - Use a consistent shape such as `{{title: "...", value: "..."}}`.
 - Use for: customer follow-ups, appointment confirmations, support callbacks, verification calls.
 
 ## Workflow Rules

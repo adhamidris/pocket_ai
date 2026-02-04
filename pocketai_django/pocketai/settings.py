@@ -312,7 +312,7 @@ INSTALLED_APPS = [
     "apps.accounts",
     "apps.cases",
     "apps.customers",
-    "apps.conversations",
+    "apps.conversations.apps.ConversationsConfig",
     "apps.integrations.apps.IntegrationsConfig",
     "apps.knowledge.apps.KnowledgeConfig",
     "apps.llm.apps.LlmConfig",
@@ -1618,6 +1618,122 @@ RAG_DRIFT_NOT_FOUND_THRESHOLD = float(os.getenv("RAG_DRIFT_NOT_FOUND_THRESHOLD",
 # an environment override disables it.
 # PORTAL_STREAM_STATE_MACHINE: Enable/disable the portal streaming state machine.
 PORTAL_STREAM_STATE_MACHINE = os.getenv("PORTAL_STREAM_STATE_MACHINE", "true").lower() in {"1", "true", "yes"}
+
+# PORTAL_STREAM_PROTOCOL_VERSION: Version tag for the portal SSE payload contract.
+# This is a documentation + compatibility knob (not a feature flag).
+try:
+    PORTAL_STREAM_PROTOCOL_VERSION = int(os.getenv("PORTAL_STREAM_PROTOCOL_VERSION", "1") or 1)
+except (TypeError, ValueError):
+    PORTAL_STREAM_PROTOCOL_VERSION = 1
+
+# PORTAL_STREAM_METRICS: When enabled, emit lightweight stream/turn summary metrics to logs/tracing.
+PORTAL_STREAM_METRICS = os.getenv("PORTAL_STREAM_METRICS", "false").lower() in {"1", "true", "yes"}
+
+# PORTAL_TURN_EXECUTION_MODE: Controls how portal turns are executed.
+# - "thread": legacy in-process daemon thread (simple for local dev; not horizontally scalable).
+# - "worker": enqueue in DB; a separate `process_portal_turns` worker executes turns.
+PORTAL_TURN_EXECUTION_MODE = (os.getenv("PORTAL_TURN_EXECUTION_MODE", "thread") or "thread").strip().lower()
+if PORTAL_TURN_EXECUTION_MODE not in {"thread", "worker"}:
+    PORTAL_TURN_EXECUTION_MODE = "thread"
+
+# PORTAL_TURN_EVENT_BUS: Where live turn events are delivered from for SSE.
+# - "postgres": read from Postgres (PortalTurnEvent table + LISTEN/NOTIFY)
+# - "redis": read from Redis Streams (Postgres remains source of truth for replay/audit)
+PORTAL_TURN_EVENT_BUS = (os.getenv("PORTAL_TURN_EVENT_BUS", "postgres") or "postgres").strip().lower()
+if PORTAL_TURN_EVENT_BUS not in {"postgres", "redis"}:
+    PORTAL_TURN_EVENT_BUS = "postgres"
+
+# PORTAL_TURN_EVENT_LOG_MODE: Where per-event turn logging is persisted.
+# - "db": write every event to Postgres (PortalTurnEvent rows). Useful for debugging, but expensive at scale.
+# - "minimal": write only a small subset of events to Postgres (no per-token deltas); Redis remains the live bus.
+# - "off": do not write PortalTurnEvent rows (Redis-only streaming; final answer persists to ConversationMessage).
+PORTAL_TURN_EVENT_LOG_MODE = (os.getenv("PORTAL_TURN_EVENT_LOG_MODE") or "").strip().lower()
+if not PORTAL_TURN_EVENT_LOG_MODE:
+    # Default to "minimal" when Redis is the live bus to avoid per-token DB writes
+    # while keeping a small audit trail and enabling graceful degraded behavior.
+    PORTAL_TURN_EVENT_LOG_MODE = "minimal" if PORTAL_TURN_EVENT_BUS == "redis" else "db"
+if PORTAL_TURN_EVENT_LOG_MODE not in {"db", "minimal", "off"}:
+    PORTAL_TURN_EVENT_LOG_MODE = "db"
+if PORTAL_TURN_EVENT_BUS == "postgres" and PORTAL_TURN_EVENT_LOG_MODE != "db":
+    # Postgres-backed SSE requires the DB event log.
+    PORTAL_TURN_EVENT_LOG_MODE = "db"
+
+try:
+    # PORTAL_TURN_EVENT_BUS_REDIS_STREAM_TTL_SECONDS: TTL for per-turn Redis Streams keys.
+    # Keeps Redis bounded; old turn streams expire after inactivity.
+    PORTAL_TURN_EVENT_BUS_REDIS_STREAM_TTL_SECONDS = int(os.getenv("PORTAL_TURN_EVENT_BUS_REDIS_STREAM_TTL_SECONDS", "3600") or 3600)
+except (TypeError, ValueError):
+    PORTAL_TURN_EVENT_BUS_REDIS_STREAM_TTL_SECONDS = 3600
+PORTAL_TURN_EVENT_BUS_REDIS_STREAM_TTL_SECONDS = max(60, int(PORTAL_TURN_EVENT_BUS_REDIS_STREAM_TTL_SECONDS))
+
+PORTAL_TURN_EVENT_BUS_REDIS_STREAM_PREFIX = (
+    os.getenv("PORTAL_TURN_EVENT_BUS_REDIS_STREAM_PREFIX", "portal:turn") or "portal:turn"
+).strip()
+
+# PORTAL_TURN_EVENT_BUS_REDIS_STREAM_MAXLEN: Approximate max length for per-turn Redis Streams keys.
+# Caps memory for very long turns; TTL is still the primary bounding mechanism.
+try:
+    PORTAL_TURN_EVENT_BUS_REDIS_STREAM_MAXLEN = int(os.getenv("PORTAL_TURN_EVENT_BUS_REDIS_STREAM_MAXLEN", "20000") or 20000)
+except (TypeError, ValueError):
+    PORTAL_TURN_EVENT_BUS_REDIS_STREAM_MAXLEN = 20000
+PORTAL_TURN_EVENT_BUS_REDIS_STREAM_MAXLEN = max(1000, int(PORTAL_TURN_EVENT_BUS_REDIS_STREAM_MAXLEN))
+
+# PORTAL_TURN_COALESCE_BLOCK_DELTAS: Coalesce adjacent block_delta ops before emitting events.
+# Reduces Redis writes + SSE overhead under high token rates.
+PORTAL_TURN_COALESCE_BLOCK_DELTAS = os.getenv("PORTAL_TURN_COALESCE_BLOCK_DELTAS", "true").lower() in {"1", "true", "yes"}
+try:
+    # PORTAL_TURN_DELTA_FLUSH_INTERVAL_MS: Max time between flushed block_delta events when coalescing.
+    PORTAL_TURN_DELTA_FLUSH_INTERVAL_MS = int(os.getenv("PORTAL_TURN_DELTA_FLUSH_INTERVAL_MS", "50") or 50)
+except (TypeError, ValueError):
+    PORTAL_TURN_DELTA_FLUSH_INTERVAL_MS = 50
+PORTAL_TURN_DELTA_FLUSH_INTERVAL_MS = max(5, int(PORTAL_TURN_DELTA_FLUSH_INTERVAL_MS))
+try:
+    # PORTAL_TURN_DELTA_FLUSH_MAX_OPS: Flush when pending ops exceed this size.
+    PORTAL_TURN_DELTA_FLUSH_MAX_OPS = int(os.getenv("PORTAL_TURN_DELTA_FLUSH_MAX_OPS", "60") or 60)
+except (TypeError, ValueError):
+    PORTAL_TURN_DELTA_FLUSH_MAX_OPS = 60
+PORTAL_TURN_DELTA_FLUSH_MAX_OPS = max(10, int(PORTAL_TURN_DELTA_FLUSH_MAX_OPS))
+
+# PORTAL_SESSION_EVENT_BUS: Where live *session* events are delivered from for `/api/chat/events/`.
+# - "postgres": legacy DB polling (AgentRunEvent/AgentRequest/ConversationMessage + cache)
+# - "redis": Redis Streams (DB is used only for the initial snapshot on connect)
+PORTAL_SESSION_EVENT_BUS = (os.getenv("PORTAL_SESSION_EVENT_BUS", "postgres") or "postgres").strip().lower()
+if PORTAL_SESSION_EVENT_BUS not in {"postgres", "redis"}:
+    PORTAL_SESSION_EVENT_BUS = "postgres"
+
+try:
+    # PORTAL_SESSION_EVENT_BUS_REDIS_STREAM_TTL_SECONDS: TTL for session Redis Streams keys.
+    PORTAL_SESSION_EVENT_BUS_REDIS_STREAM_TTL_SECONDS = int(os.getenv("PORTAL_SESSION_EVENT_BUS_REDIS_STREAM_TTL_SECONDS", "3600") or 3600)
+except (TypeError, ValueError):
+    PORTAL_SESSION_EVENT_BUS_REDIS_STREAM_TTL_SECONDS = 3600
+PORTAL_SESSION_EVENT_BUS_REDIS_STREAM_TTL_SECONDS = max(60, int(PORTAL_SESSION_EVENT_BUS_REDIS_STREAM_TTL_SECONDS))
+
+PORTAL_SESSION_EVENT_BUS_REDIS_STREAM_PREFIX = (
+    os.getenv("PORTAL_SESSION_EVENT_BUS_REDIS_STREAM_PREFIX", "portal:session") or "portal:session"
+).strip()
+
+try:
+    # PORTAL_SESSION_EVENT_BUS_REDIS_STREAM_MAXLEN: Approximate max length for session Redis Streams keys.
+    # Caps memory during long-lived sessions while keeping enough history for reconnects.
+    PORTAL_SESSION_EVENT_BUS_REDIS_STREAM_MAXLEN = int(os.getenv("PORTAL_SESSION_EVENT_BUS_REDIS_STREAM_MAXLEN", "5000") or 5000)
+except (TypeError, ValueError):
+    PORTAL_SESSION_EVENT_BUS_REDIS_STREAM_MAXLEN = 5000
+PORTAL_SESSION_EVENT_BUS_REDIS_STREAM_MAXLEN = max(100, int(PORTAL_SESSION_EVENT_BUS_REDIS_STREAM_MAXLEN))
+
+try:
+    # PORTAL_TURN_WORKER_LEASE_SECONDS: Default lease for a portal turn while a worker is processing it.
+    PORTAL_TURN_WORKER_LEASE_SECONDS = int(os.getenv("PORTAL_TURN_WORKER_LEASE_SECONDS", "60") or 60)
+except (TypeError, ValueError):
+    PORTAL_TURN_WORKER_LEASE_SECONDS = 60
+PORTAL_TURN_WORKER_LEASE_SECONDS = max(10, PORTAL_TURN_WORKER_LEASE_SECONDS)
+
+try:
+    # PORTAL_TURN_WORKER_LEASE_REFRESH_SECONDS: How often a running turn should refresh its lease during long waits
+    # (e.g. tool approvals) to prevent another worker from picking it up.
+    PORTAL_TURN_WORKER_LEASE_REFRESH_SECONDS = float(os.getenv("PORTAL_TURN_WORKER_LEASE_REFRESH_SECONDS", "15") or 15)
+except (TypeError, ValueError):
+    PORTAL_TURN_WORKER_LEASE_REFRESH_SECONDS = 15.0
+PORTAL_TURN_WORKER_LEASE_REFRESH_SECONDS = max(1.0, float(PORTAL_TURN_WORKER_LEASE_REFRESH_SECONDS))
 try:
     # PORTAL_SPINNER_PHASE_INTERVAL: Seconds between spinner/status phase changes in the portal UI.
     PORTAL_SPINNER_PHASE_INTERVAL = float(os.getenv("PORTAL_SPINNER_PHASE_INTERVAL", "5.5"))

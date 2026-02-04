@@ -16,19 +16,21 @@ from apps.conversations.content_blocks import extract_text_from_content_blocks, 
 from apps.conversations.portal import ChatPortalService
 from apps.conversations.rich_blocks import RichBlockStreamBuilder, apply_block_ops, coerce_block_event
 from apps.conversations.portal_turn_events import append_turn_event
-from apps.conversations.portal_turn_folding import fold_turn_events
+from apps.conversations.portal_turn_folding import fold_turn_events, fold_turn_events_from_redis
 from apps.conversations.models import (
     Conversation,
     ConversationMessage,
     ConversationSender,
     ConversationToolApproval,
     PortalTurn,
+    PortalTurnEvent,
     PortalTurnStatus,
 )
 from apps.llm.llm_provider import load_default_provider
 from apps.mcp.sanitizer import sanitize_with_diagnostics
 from apps.mcp.tool_artifacts import store_remote_tool_output_artifact
 from apps.rag.ai_orchestrator import AiOrchestratorService
+from apps.rag.rag_logging import structured_log
 from core.tenancy import tenant_context
 
 logger = logging.getLogger(__name__)
@@ -130,9 +132,48 @@ class PortalTurnEventBuilder:
         self.rich_builder = RichBlockStreamBuilder()
         self.tool_use_block_id_by_event_id: dict[str, str] = {}
         self.reasoning_block_id_by_call_id: dict[str, str] = {}
+        # Backpressure/coalescing: reduce per-token event spam by batching adjacent block_delta ops.
+        self.coalesce_block_deltas = bool(getattr(settings, "PORTAL_TURN_COALESCE_BLOCK_DELTAS", True))
+        self.delta_flush_interval_ms = int(getattr(settings, "PORTAL_TURN_DELTA_FLUSH_INTERVAL_MS", 50) or 50)
+        self.delta_flush_interval_ms = max(5, self.delta_flush_interval_ms)
+        self.delta_flush_max_ops = int(getattr(settings, "PORTAL_TURN_DELTA_FLUSH_MAX_OPS", 60) or 60)
+        self.delta_flush_max_ops = max(10, self.delta_flush_max_ops)
+        self._pending_delta_block_id: str | None = None
+        self._pending_delta_ops: list[dict[str, object]] = []
+        self._pending_delta_last_flush_perf: float | None = None
+        # Metrics (Phase 1 observability): keep low overhead; log once per turn.
+        self.event_count = 0
+        self.db_write_ms = 0.0
+        self.first_event_type: str | None = None
+        self.first_event_at_perf: float | None = None
+        self.last_event_type: str | None = None
+        self.had_tool_events = False
+
+    def _flush_pending_block_delta(self) -> None:
+        if not self.coalesce_block_deltas:
+            return
+        if not self._pending_delta_block_id or not self._pending_delta_ops:
+            return
+        block_id = self._pending_delta_block_id
+        ops = self._pending_delta_ops
+        self._pending_delta_block_id = None
+        self._pending_delta_ops = []
+        self._pending_delta_last_flush_perf = time.perf_counter()
+        # Emit a single merged block_delta event.
+        self.append_event("block_delta", {"block_id": block_id, "ops": ops})
 
     def append_event(self, event_type: str, payload: dict | None = None) -> None:
+        # Preserve strict ordering: flush any pending deltas before emitting a non-delta event.
+        if str(event_type or "").strip().lower() != "block_delta":
+            self._flush_pending_block_delta()
+        start = time.perf_counter()
+        if self.first_event_at_perf is None:
+            self.first_event_at_perf = start
+            self.first_event_type = event_type
         append_turn_event(turn_id=self.turn.id, event_type=event_type, payload=payload or {})
+        self.event_count += 1
+        self.db_write_ms += max(0.0, (time.perf_counter() - start) * 1000.0)
+        self.last_event_type = event_type
 
     def _append_content_block(self, block: dict[str, object]) -> dict[str, object]:
         block_id = str(block.get("block_id") or "").strip()
@@ -188,8 +229,40 @@ class PortalTurnEventBuilder:
                 continue
             event_type = str(event.get("type") or "").strip()
             payload = dict(event.get("payload") or {})
-            if event_type in {"block_start", "block_delta", "block_end"}:
+            lowered = event_type.strip().lower()
+            if lowered in {"block_start", "block_delta", "block_end"}:
                 self._apply_block_event({"type": event_type, "payload": payload})
+
+            if self.coalesce_block_deltas and lowered == "block_delta":
+                block_id = str(payload.get("block_id") or "").strip()
+                ops = payload.get("ops")
+                if block_id and isinstance(ops, list) and ops:
+                    should_flush = False
+                    now = time.perf_counter()
+                    if self._pending_delta_block_id and self._pending_delta_block_id != block_id:
+                        should_flush = True
+                    if self._pending_delta_last_flush_perf is not None:
+                        elapsed_ms = (now - self._pending_delta_last_flush_perf) * 1000.0
+                        if elapsed_ms >= float(self.delta_flush_interval_ms):
+                            should_flush = True
+                    # Flush if we're accumulating too many ops (avoid huge payloads).
+                    if len(self._pending_delta_ops) + len(ops) >= int(self.delta_flush_max_ops):
+                        should_flush = True
+                    if should_flush:
+                        self._flush_pending_block_delta()
+                    if not self._pending_delta_block_id:
+                        self._pending_delta_block_id = block_id
+                    # Copy ops to avoid accidental mutation by upstream components.
+                    for op in ops:
+                        if isinstance(op, dict):
+                            self._pending_delta_ops.append(dict(op))
+                        else:
+                            self._pending_delta_ops.append({"op": str(op)})
+                    if self._pending_delta_last_flush_perf is None:
+                        self._pending_delta_last_flush_perf = now
+                    # Continue without emitting per-op block_delta events.
+                    continue
+
             self.append_event(event_type, payload)
 
     def on_block_event(self, event: Mapping[str, object] | None) -> None:
@@ -298,10 +371,13 @@ class PortalTurnEventBuilder:
             events = self.rich_builder.finalize()
             if events:
                 self.emit_block_events(events)
+        # Ensure any buffered block_delta ops are emitted before finalization persists.
+        self._flush_pending_block_delta()
 
     def on_tool_event(self, event: Mapping[str, object] | None) -> None:
         if not event or not isinstance(event, Mapping):
             return
+        self.had_tool_events = True
         phase = str(event.get("phase") or "").strip().lower()
         if phase not in TOOL_EVENT_PHASES:
             return
@@ -594,20 +670,177 @@ class PortalTurnRunner:
         provider = load_default_provider()
         return AiOrchestratorService(agent=agent, provider=provider)
 
-    def run(self) -> None:
-        close_old_connections()
-        orchestrator = self._select_orchestrator()
-        user_message = str(self.turn.user_message or "").strip()
-        if not user_message:
-            raise ValueError("PortalTurn.user_message is empty")
+    def _has_turn_persisted_event(self) -> bool:
+        # Phase 5: we may not persist PortalTurnEvent rows. Use a durable marker first.
+        try:
+            flagged = PortalTurn.objects.filter(id=self.turn.id, metadata__turn_persisted_emitted=True).exists()
+            if flagged:
+                return True
+        except Exception:
+            pass
+        return PortalTurnEvent.objects.filter(turn_id=self.turn.id, type="turn_persisted").exists()
 
+    def _finalize_turn(self, *, stream_context: object | None) -> None:
         current_status = (
             PortalTurn.objects.filter(id=self.turn.id)
             .values_list("status", flat=True)
             .first()
         )
-        if current_status == PortalTurnStatus.CANCELLED:
+        if current_status != PortalTurnStatus.CANCELLED:
+            PortalTurn.objects.filter(id=self.turn.id).update(
+                status=PortalTurnStatus.FINALIZING,
+                updated_at=timezone.now(),
+            )
+
+        # Materialize content blocks for deterministic persistence.
+        # Phase 5: Prefer in-memory builder state, then Redis stream replay, then Postgres event log.
+        blocks: list[dict[str, object]] = []
+        message_body: str | None = None
+        if self.turn.message_id:
+            with tenant_context(getattr(self.conversation, "business_profile_id", None)):
+                existing = ConversationMessage.objects.filter(id=self.turn.message_id).first()
+            if existing is not None:
+                blocks = existing.content_blocks or []
+                message_body = existing.body
+
+        if not blocks and getattr(self.builder, "blocks", None):
+            try:
+                blocks = copy.deepcopy(self.builder.blocks)
+            except Exception:
+                blocks = list(self.builder.blocks)
+
+        if not blocks:
+            blocks = fold_turn_events_from_redis(turn_id=self.turn.id)
+        if not blocks:
+            with tenant_context(getattr(self.conversation, "business_profile_id", None)):
+                blocks = fold_turn_events(turn_id=self.turn.id)
+
+        body_text = (message_body or "").strip() or extract_text_from_content_blocks(blocks)
+        if not body_text:
+            streamed_text = "".join(getattr(stream_context, "streamed_chunks", None) or ()).strip() if stream_context else ""
+            body_text = streamed_text or "(no content)"
+
+        # Sanitize final text the same way the portal does for persistence.
+        body_text, _ = sanitize_with_diagnostics(
+            body_text,
+            conversation=self.conversation,
+            stage="portal_turn_finalize",
+        )
+
+        if self.turn.message_id:
+            self.service.update_message(
+                session_token=self.conversation.session_token,
+                message_id=self.turn.message_id,
+                body=body_text,
+                content_blocks=blocks,
+                conversation=self.conversation,
+            )
+            message_id = self.turn.message_id
+        else:
+            message = self.service.append_message(
+                session_token=self.conversation.session_token,
+                sender=ConversationSender.AI,
+                body=body_text,
+                content_blocks=blocks,
+                conversation=self.conversation,
+            )
+            message_id = message.id
+            self.turn.message_id = message_id
+            PortalTurn.objects.filter(id=self.turn.id).update(message_id=message_id)
+
+        try:
+            session_state = self.service.get_session_state(
+                session_token=self.conversation.session_token,
+                conversation=self.conversation,
+            )
+        except Exception:  # pragma: no cover - session snapshot is best effort
+            session_state = None
+
+        final_payload = {
+            "text": body_text,
+            "message_id": str(message_id),
+            "session_status": getattr(session_state, "status", None) if session_state else None,
+            "metadata_version": 1,
+            "content_blocks": blocks,
+        }
+        emitted = self._has_turn_persisted_event()
+        if not emitted:
+            self.builder.append_event("turn_persisted", final_payload)
+            try:
+                current_meta = (
+                    PortalTurn.objects.filter(id=self.turn.id)
+                    .values_list("metadata", flat=True)
+                    .first()
+                )
+            except Exception:
+                current_meta = None
+            next_meta = dict(current_meta or {}) if isinstance(current_meta, dict) else {}
+            next_meta["turn_persisted_emitted"] = True
+            PortalTurn.objects.filter(id=self.turn.id).update(metadata=next_meta, updated_at=timezone.now())
+
+        latest_status = (
+            PortalTurn.objects.filter(id=self.turn.id)
+            .values_list("status", flat=True)
+            .first()
+        )
+        final_status = (
+            PortalTurnStatus.CANCELLED if latest_status == PortalTurnStatus.CANCELLED else PortalTurnStatus.FINALIZED
+        )
+        PortalTurn.objects.filter(id=self.turn.id).update(
+            status=final_status,
+            finalized_at=timezone.now(),
+            updated_at=timezone.now(),
+        )
+
+    def run(self) -> None:
+        close_old_connections()
+        run_start = time.perf_counter()
+        error: str | None = None
+        user_message = str(self.turn.user_message or "").strip()
+        current_status = (
+            PortalTurn.objects.filter(id=self.turn.id)
+            .values_list("status", flat=True)
+            .first()
+        )
+        if current_status in {PortalTurnStatus.CANCELLED, PortalTurnStatus.FINALIZED, PortalTurnStatus.FAILED}:
             return
+        if current_status == PortalTurnStatus.FINALIZING:
+            try:
+                self._finalize_turn(stream_context=None)
+            except Exception as exc:
+                error = str(exc or "")
+                raise
+            finally:
+                if getattr(settings, "PORTAL_STREAM_METRICS", False):
+                    first_ms = None
+                    if self.builder.first_event_at_perf is not None:
+                        first_ms = int(max(0.0, (self.builder.first_event_at_perf - run_start) * 1000.0))
+                    structured_log(
+                        "portal",
+                        "stream.turn_runner",
+                        {
+                            "turn_id": str(self.turn.id),
+                            "conversation_id": str(getattr(self.conversation, "id", "") or ""),
+                            "business_id": str(getattr(self.conversation, "business_profile_id", "") or ""),
+                            "agent_id": str(getattr(self.conversation, "agent_profile_id", "") or ""),
+                            "elapsed_ms": int(max(0.0, (time.perf_counter() - run_start) * 1000.0)),
+                            "events": int(self.builder.event_count or 0),
+                            "db_write_ms": int(self.builder.db_write_ms or 0),
+                            "first_event_ms": first_ms,
+                            "first_event_type": self.builder.first_event_type,
+                            "last_event_type": self.builder.last_event_type,
+                            "had_tool_events": bool(self.builder.had_tool_events),
+                            "block_ops_active": bool(self.builder.block_ops_active),
+                            "error": error or None,
+                        },
+                        level=logging.INFO if not error else logging.ERROR,
+                    )
+            return
+
+        if not user_message:
+            raise ValueError("PortalTurn.user_message is empty")
+
+        orchestrator = self._select_orchestrator()
 
         PortalTurn.objects.filter(id=self.turn.id).update(status=PortalTurnStatus.STREAMING, updated_at=timezone.now())
 
@@ -645,80 +878,39 @@ class PortalTurnRunner:
             parameters = {}
         if "wait_for_tool_approval" in parameters:
             stream_kwargs["wait_for_tool_approval"] = True
-        stream_context = orchestrator.stream_turn(**stream_kwargs)
-
-        self.builder.finalize_text()
-
-        current_status = (
-            PortalTurn.objects.filter(id=self.turn.id)
-            .values_list("status", flat=True)
-            .first()
-        )
-        if current_status != PortalTurnStatus.CANCELLED:
-            PortalTurn.objects.filter(id=self.turn.id).update(
-                status=PortalTurnStatus.FINALIZING,
-                updated_at=timezone.now(),
-            )
-
-        # Materialize content blocks from the event log for deterministic persistence.
-        with tenant_context(getattr(self.conversation, "business_profile_id", None)):
-            blocks = fold_turn_events(turn_id=self.turn.id)
-
-        body_text = extract_text_from_content_blocks(blocks)
-        if not body_text:
-            streamed_text = "".join(stream_context.streamed_chunks or ()).strip()
-            body_text = streamed_text or "(no content)"
-
-        # Sanitize final text the same way the portal does for persistence.
-        body_text, _ = sanitize_with_diagnostics(body_text, conversation=self.conversation, stage="portal_turn_finalize")
-
-        if self.turn.message_id:
-            self.service.update_message(
-                session_token=self.conversation.session_token,
-                message_id=self.turn.message_id,
-                body=body_text,
-                content_blocks=blocks,
-                conversation=self.conversation,
-            )
-            message_id = self.turn.message_id
-        else:
-            message = self.service.append_message(
-                session_token=self.conversation.session_token,
-                sender=ConversationSender.AI,
-                body=body_text,
-                content_blocks=blocks,
-                conversation=self.conversation,
-            )
-            message_id = message.id
-            PortalTurn.objects.filter(id=self.turn.id).update(message_id=message_id)
-
+        stream_context = None
         try:
-            session_state = self.service.get_session_state(
-                session_token=self.conversation.session_token,
-                conversation=self.conversation,
-            )
-        except Exception:  # pragma: no cover - session snapshot is best effort
-            session_state = None
-        final_payload = {
-            "text": body_text,
-            "message_id": str(message_id),
-            "session_status": getattr(session_state, "status", None) if session_state else None,
-            "metadata_version": 1,
-            "content_blocks": blocks,
-        }
-        self.builder.append_event("turn_persisted", final_payload)
-
-        latest_status = (
-            PortalTurn.objects.filter(id=self.turn.id)
-            .values_list("status", flat=True)
-            .first()
-        )
-        final_status = PortalTurnStatus.CANCELLED if latest_status == PortalTurnStatus.CANCELLED else PortalTurnStatus.FINALIZED
-        PortalTurn.objects.filter(id=self.turn.id).update(
-            status=final_status,
-            finalized_at=timezone.now(),
-            updated_at=timezone.now(),
-        )
+            stream_context = orchestrator.stream_turn(**stream_kwargs)
+            self.builder.finalize_text()
+            self._finalize_turn(stream_context=stream_context)
+        except Exception as exc:
+            error = str(exc or "")
+            raise
+        finally:
+            if getattr(settings, "PORTAL_STREAM_METRICS", False):
+                first_ms = None
+                if self.builder.first_event_at_perf is not None:
+                    first_ms = int(max(0.0, (self.builder.first_event_at_perf - run_start) * 1000.0))
+                structured_log(
+                    "portal",
+                    "stream.turn_runner",
+                    {
+                        "turn_id": str(self.turn.id),
+                        "conversation_id": str(getattr(self.conversation, "id", "") or ""),
+                        "business_id": str(getattr(self.conversation, "business_profile_id", "") or ""),
+                        "agent_id": str(getattr(self.conversation, "agent_profile_id", "") or ""),
+                        "elapsed_ms": int(max(0.0, (time.perf_counter() - run_start) * 1000.0)),
+                        "events": int(self.builder.event_count or 0),
+                        "db_write_ms": int(self.builder.db_write_ms or 0),
+                        "first_event_ms": first_ms,
+                        "first_event_type": self.builder.first_event_type,
+                        "last_event_type": self.builder.last_event_type,
+                        "had_tool_events": bool(self.builder.had_tool_events),
+                        "block_ops_active": bool(self.builder.block_ops_active),
+                        "error": error or None,
+                    },
+                    level=logging.INFO if not error else logging.ERROR,
+                )
 
 
 def run_turn_background(*, turn_id: uuid.UUID, business_id: object | None = None) -> None:

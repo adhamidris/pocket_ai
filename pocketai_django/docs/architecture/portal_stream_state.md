@@ -1,136 +1,178 @@
-# Streaming Turn State Machine
+# Portal Streaming Protocol (v1)
 
-This document captures the Server-Sent Event (SSE) protocol that powers the
-public chat portal’s streaming UX. The goal is to keep visitors informed
-throughout the turn without leaking internal planner/tool behavior.
+This document captures the **actual** Server-Sent Events (SSE) contract consumed
+by the public chat portal frontend (`frontend/static/js/chat-portal.js`).
 
-## Events
+The portal has two independent SSE streams:
 
-### `block_start`
+1. **Turn stream** (token/block streaming for a single send)
+2. **Session stream** (status + sub-agent/task/inbox + voice transcript updates)
 
-- Fired when a new **text** block begins streaming.
-- Payload:
-  ```json
-  {
-    "message_id": "uuid",
-    "block": {
-      "block_id": "blk_...",
-      "type": "text",
-      "created_at": "iso8601",
-      "payload": { "text": "" }
-    }
-  }
-  ```
+This protocol is intentionally **stable**: later phases can change how events are
+transported (Redis, workers, websockets), but the **event schema** should remain
+compatible.
 
-### `block_delta`
+## Turn Stream (SSE)
 
-- Fired whenever the active text block grows.
-- Payload:
-  ```json
-  {
-    "message_id": "uuid",
+Endpoint:
+- `GET /api/chat/turns/<turn_id>/events/?session_token=...&since=...`
+
+Notes:
+- `session_token` is required.
+- `since` is optional and mirrors `Last-Event-ID` semantics (resume from `seq`).
+- Response includes SSE comments:
+  - `: stream_open`
+  - `: keepalive`
+
+### Envelope
+
+The server emits SSE events named **`turnEvent`**. The SSE `id:` is the monotonic
+turn sequence (`seq`) used for resume.
+
+```text
+id: 12
+event: turnEvent
+data: {"turn_id":"...","seq":12,"type":"block_delta","payload":{...}}
+```
+
+Payload:
+```json
+{
+  "turn_id": "uuid",
+  "seq": 12,
+  "type": "block_delta",
+  "payload": {}
+}
+```
+
+### `type` values (current)
+
+- `status` - human-readable phase updates (searching/reading/responding)
+- `block_start` - a new content block begins
+- `block_delta` - incremental updates for an existing block (op-based)
+- `block_end` - a block has closed
+- `block_tool_use` - tool lifecycle update as a `tool_use` block
+- `block_tool_result` - tool completion update as a `tool_result` block
+- `turn_persisted` - final answer persisted (includes canonical `content_blocks`)
+- `turn_cancelled` - turn cancellation marker (best-effort)
+
+### Block Events
+
+#### `block_start`
+Payload:
+```json
+{
+  "block": {
     "block_id": "blk_...",
-    "delta": "text chunk"
+    "type": "paragraph",
+    "created_at": "iso8601",
+    "payload": {}
   }
-  ```
+}
+```
 
-### `block_end`
+#### `block_delta`
+Payload (op-based, supports incremental rendering without raw markdown leakage):
+```json
+{
+  "block_id": "blk_...",
+  "ops": [
+    { "op": "append_inline", "nodes": [{ "text": "Hello" }] },
+    { "op": "append_code", "text": "print('hi')\\n" }
+  ]
+}
+```
 
-- Fired when the active text block is closed (e.g., stream completion or tool interleaving).
-- Payload:
-  ```json
-  {
-    "message_id": "uuid",
-    "block_id": "blk_..."
-  }
-  ```
+#### `block_end`
+Payload:
+```json
+{ "block_id": "blk_..." }
+```
 
-### `turnPersisted`
+### Tool Block Events
 
-- Fired exactly once after sanitization + persistence succeed.
-- `pending` is `false` and `text` contains the persisted answer. `content_blocks`
-  is the source-of-truth transcript for deterministic refresh.
-- Arrival of this event means the visitor can dismiss spinners; planner/action
-  metadata may continue to stream via `turnUpdated`.
+Tool lifecycle events are streamed as content blocks so the UI can render
+ordered cards inline with text.
 
-### `turnUpdated`
-
-- Sent whenever async planner/action processing adds new metadata.
-- Payload:
-  ```json
-  {
-    "message_id": "uuid",
-    "metadata_version": 4,
-    "answer_confidence": 0.72,
-    "ingestion_warnings": [{"label": "Workbook truncated"}],
-    "actions": [{"action": "create_case", "status": "queued"}]
-  }
-  ```
-- The widget merges these fields into the existing bubble without replacing the
-  answer text.
-
-### `spinnerStatus`
-
-- Optional helper event so the widget can narrate what the model is doing
-  without showing filler in the transcript.
-- Payload:
-  ```json
-  {
-    "message_id": "uuid",
-    "text": "Reading pricing tables…",
-    "pending": true
-  }
-  ```
-- Emitted whenever MCP reports a sanitized `placeholder_thinking` string or the
-  orchestrator detects a tool-specific status change. Sending an empty `text`
-  clears the spinner row.
-
-### `block_tool_use`
-
-- Fired when a tool lifecycle event arrives (started / approval_requested / finished / approval_resolved).
-- Payload:
-  ```json
-  {
-    "message_id": "uuid",
-    "block": {
-      "block_id": "blk_...",
-      "type": "tool_use",
-      "created_at": "iso8601",
-      "payload": {
-        "event_id": "evt_...",
-        "phase": "started",
-        "status": "running",
-        "tool_name": "mcp_demo__tool",
-        "remote": { "connection_name": "GitHub MCP", "remote_tool": "search" },
-        "approval_id": null
-      }
+#### `block_tool_use`
+Payload:
+```json
+{
+  "block": {
+    "block_id": "blk_...",
+    "type": "tool_use",
+    "created_at": "iso8601",
+    "payload": {
+      "event_id": "evt_...",
+      "phase": "started",
+      "status": "running",
+      "tool_name": "search_knowledge"
     }
   }
-  ```
+}
+```
 
-### `block_tool_result`
-
-- Fired when a tool completes (finished / approval_resolved).
-- Payload:
-  ```json
-  {
-    "message_id": "uuid",
-    "block": {
-      "block_id": "blk_...",
-      "type": "tool_result",
-      "created_at": "iso8601",
-      "payload": {
-        "event_id": "evt_...",
-        "status": "ok",
-        "duration_ms": 240,
-        "artifact_id": "uuid-or-null",
-        "output_preview": { "text": "..." }
-      }
+#### `block_tool_result`
+Payload:
+```json
+{
+  "block": {
+    "block_id": "blk_...",
+    "type": "tool_result",
+    "created_at": "iso8601",
+    "payload": {
+      "event_id": "evt_...",
+      "status": "ok",
+      "duration_ms": 240,
+      "artifact_id": "uuid-or-null",
+      "output_preview": {}
     }
   }
-  ```
+}
+```
 
-## Rollout Guidelines
+### Finalization Event
 
-- Treat `content_blocks[]` as the transcript source-of-truth.
-- `spinnerStatus` remains gated behind `PORTAL_STREAM_STATE_MACHINE`.
+#### `turn_persisted`
+Emitted exactly once after sanitization + persistence succeed.
+
+Payload:
+```json
+{
+  "text": "final answer",
+  "message_id": "uuid",
+  "session_status": "open",
+  "metadata_version": 1,
+  "content_blocks": []
+}
+```
+
+## Session Stream (SSE)
+
+Endpoint:
+- `GET /api/chat/events/?session_token=...`
+
+The session stream is a long-lived SSE channel used for:
+- conversation status changes
+- sub-agent run/task updates
+- inbox/request updates
+- voice call transcript updates
+
+### Event Names (current)
+
+- `statusChanged` - `{ "status": "open|closed|..." }`
+- `conversationMessage` - `{ "message": { "id": "...", "sender": "...", "content_blocks": [...] } }` (primarily sub-agent / voice)
+- `agentRunsSnapshot` - initial snapshot of current runs on connect
+- `agentRunEvent` - incremental run events
+- `agentRequestsSnapshot` - initial snapshot of agent requests on connect
+- `agentRequestEvent` - incremental request events
+- `voiceCallTranscript` - incremental transcript events (best-effort)
+- `heartbeat` - keepalive marker
+
+## Compatibility Notes
+
+- Additive-only: new `type` values and new payload fields are allowed; existing
+  fields must remain backward compatible.
+- Ordering: `seq` is monotonic per turn and must remain stable to support resume.
+- The canonical persisted transcript is always `content_blocks[]` on the final
+  persisted assistant message.
