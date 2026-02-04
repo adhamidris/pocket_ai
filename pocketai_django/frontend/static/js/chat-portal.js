@@ -9392,8 +9392,8 @@ class ChatPortalClient {
     if (!this.streamingTextBlockActiveIds.size) return false;
     const lastDeltaAt = this.lastTextDeltaAt || 0;
     if (!lastDeltaAt) return false;
-    // Use a tight threshold (150ms) to show spinner immediately when LLM pauses
-    const threshold = 150;
+    // Hysteresis: avoid flashing the spinner between normal delta bursts.
+    const threshold = 650;
     return Date.now() - lastDeltaAt < threshold;
   }
 
@@ -9407,7 +9407,7 @@ class ChatPortalClient {
     // Calculate delay based on when text last arrived
     const lastDeltaAt = this.lastTextDeltaAt || 0;
     const timeSinceLastDelta = lastDeltaAt ? Date.now() - lastDeltaAt : 999999;
-    const threshold = 150; // How long to wait after last delta before showing spinner
+    const threshold = 650; // How long to wait after last delta before showing spinner
 
     let delay;
     if (timeSinceLastDelta < threshold) {
