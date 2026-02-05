@@ -63,12 +63,19 @@ def get_portal_redis_client(*, socket_timeout_seconds: float) -> object | None:
 
 
 def _redis_event_bus_enabled() -> bool:
-    if str(getattr(settings, "PORTAL_TURN_EVENT_BUS", "postgres") or "postgres").strip().lower() != "redis":
-        return False
-    return bool((os.getenv("REDIS_URL") or "").strip())
+    # Intentionally do not require REDIS_URL here: tests may patch
+    # get_portal_redis_client() directly, and production should fall back
+    # gracefully if Redis is misconfigured/unavailable.
+    return str(getattr(settings, "PORTAL_TURN_EVENT_BUS", "postgres") or "postgres").strip().lower() == "redis"
 
 
 def _turn_event_log_mode() -> str:
+    # Postgres-backed SSE requires the DB event log. This clamp is intentionally
+    # runtime (not import-time only) so tests using `override_settings()` can't
+    # accidentally create an invalid combination.
+    bus = str(getattr(settings, "PORTAL_TURN_EVENT_BUS", "postgres") or "postgres").strip().lower()
+    if bus == "postgres":
+        return "db"
     return str(getattr(settings, "PORTAL_TURN_EVENT_LOG_MODE", "db") or "db").strip().lower()
 
 

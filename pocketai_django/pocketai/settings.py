@@ -1683,16 +1683,32 @@ PORTAL_TURN_EVENT_BUS_REDIS_STREAM_MAXLEN = max(1000, int(PORTAL_TURN_EVENT_BUS_
 PORTAL_TURN_COALESCE_BLOCK_DELTAS = os.getenv("PORTAL_TURN_COALESCE_BLOCK_DELTAS", "true").lower() in {"1", "true", "yes"}
 try:
     # PORTAL_TURN_DELTA_FLUSH_INTERVAL_MS: Max time between flushed block_delta events when coalescing.
-    PORTAL_TURN_DELTA_FLUSH_INTERVAL_MS = int(os.getenv("PORTAL_TURN_DELTA_FLUSH_INTERVAL_MS", "50") or 50)
+    PORTAL_TURN_DELTA_FLUSH_INTERVAL_MS = int(os.getenv("PORTAL_TURN_DELTA_FLUSH_INTERVAL_MS", "25") or 25)
 except (TypeError, ValueError):
-    PORTAL_TURN_DELTA_FLUSH_INTERVAL_MS = 50
+    PORTAL_TURN_DELTA_FLUSH_INTERVAL_MS = 25
 PORTAL_TURN_DELTA_FLUSH_INTERVAL_MS = max(5, int(PORTAL_TURN_DELTA_FLUSH_INTERVAL_MS))
 try:
     # PORTAL_TURN_DELTA_FLUSH_MAX_OPS: Flush when pending ops exceed this size.
-    PORTAL_TURN_DELTA_FLUSH_MAX_OPS = int(os.getenv("PORTAL_TURN_DELTA_FLUSH_MAX_OPS", "60") or 60)
+    PORTAL_TURN_DELTA_FLUSH_MAX_OPS = int(os.getenv("PORTAL_TURN_DELTA_FLUSH_MAX_OPS", "30") or 30)
 except (TypeError, ValueError):
-    PORTAL_TURN_DELTA_FLUSH_MAX_OPS = 60
+    PORTAL_TURN_DELTA_FLUSH_MAX_OPS = 30
 PORTAL_TURN_DELTA_FLUSH_MAX_OPS = max(10, int(PORTAL_TURN_DELTA_FLUSH_MAX_OPS))
+
+# PORTAL_STREAM_TRACE: end-to-end JSONL tracing for portal streaming.
+# Defaults to enabled in DEBUG so we can diagnose chunkiness/bursts quickly.
+PORTAL_STREAM_TRACE = os.getenv("PORTAL_STREAM_TRACE", "true" if DEBUG else "false").lower() in {"1", "true", "yes"}
+PORTAL_STREAM_TRACE_DIR = (os.getenv("PORTAL_STREAM_TRACE_DIR", "") or "").strip() or "/tmp/pocketai/portal_stream_traces"
+PORTAL_STREAM_TRACE_INCLUDE_TEXT = os.getenv("PORTAL_STREAM_TRACE_INCLUDE_TEXT", "false").lower() in {"1", "true", "yes"}
+try:
+    PORTAL_STREAM_TRACE_MAX_BUFFER_LINES = int(os.getenv("PORTAL_STREAM_TRACE_MAX_BUFFER_LINES", "500") or 500)
+except (TypeError, ValueError):
+    PORTAL_STREAM_TRACE_MAX_BUFFER_LINES = 500
+PORTAL_STREAM_TRACE_MAX_BUFFER_LINES = max(10, min(10_000, int(PORTAL_STREAM_TRACE_MAX_BUFFER_LINES)))
+try:
+    PORTAL_STREAM_TRACE_TEXT_PREVIEW_CHARS = int(os.getenv("PORTAL_STREAM_TRACE_TEXT_PREVIEW_CHARS", "120") or 120)
+except (TypeError, ValueError):
+    PORTAL_STREAM_TRACE_TEXT_PREVIEW_CHARS = 120
+PORTAL_STREAM_TRACE_TEXT_PREVIEW_CHARS = max(0, min(1000, int(PORTAL_STREAM_TRACE_TEXT_PREVIEW_CHARS)))
 
 # PORTAL_SESSION_EVENT_BUS: Where live *session* events are delivered from for `/api/chat/events/`.
 # - "postgres": legacy DB polling (AgentRunEvent/AgentRequest/ConversationMessage + cache)

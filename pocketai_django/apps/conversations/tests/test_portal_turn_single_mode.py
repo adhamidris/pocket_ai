@@ -121,7 +121,7 @@ class PortalTurnSingleModeTests(TransactionTestCase):
         started_ids = [b.get("block_id") for b in started if isinstance(b, dict)]
         self.assertNotIn("model-block-fixed-0001", started_ids)
 
-    def test_portal_turn_emits_block_events_and_turn_persisted(self) -> None:
+    def test_portal_turn_emits_stream_events_and_turn_persisted(self) -> None:
         turn = PortalTurn.objects.create(
             conversation=self.conversation,
             agent_profile=self.agent,
@@ -145,7 +145,7 @@ class PortalTurnSingleModeTests(TransactionTestCase):
             runner.run()
 
         event_types = [t for t, _ in events]
-        self.assertIn("block_start", event_types)
+        self.assertIn("text_delta", event_types)
         self.assertIn("turn_persisted", event_types)
 
         turn.refresh_from_db()

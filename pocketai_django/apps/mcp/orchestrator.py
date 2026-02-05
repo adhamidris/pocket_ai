@@ -923,28 +923,8 @@ class McpOrchestratorService:
         def _emit_tokens(text: str) -> None:
             if not text:
                 return
-            nonlocal final_separator_pending, sentence_space_pending
             target = first_pass_streamed_chunks if streaming_mode == "initial" else answer_streamed_chunks
-            if streaming_mode != "initial":
-                if final_separator_pending and not (last_stream_char and last_stream_char.isspace()):
-                    final_separator_pending = False
-                    if first_pass_streamed_chunks:
-                        _append_chunk(" ", target)
-                else:
-                    final_separator_pending = False
-            for token in re.findall(r"\S+\s*|\s+", text, flags=re.MULTILINE):
-                if not token:
-                    continue
-                first_char = token[0]
-                if sentence_space_pending:
-                    if first_char.isspace():
-                        sentence_space_pending = False
-                    else:
-                        _append_chunk(" ", target)
-                        sentence_space_pending = False
-                if last_stream_char and last_stream_char.isalnum() and first_char.isalnum():
-                    _append_chunk(" ", target)
-                _append_chunk(token, target)
+            _append_chunk(text, target)
 
         def _emit_sentence(text: str) -> None:
             if not text:
@@ -1046,49 +1026,7 @@ class McpOrchestratorService:
             if not initial_stream_started:
                 initial_stream_started = True
                 _status_event("responding", "Responding…")
-            stream_buffer = f"{stream_buffer}{chunk}"
-            block_match = INLINE_RESPONSE_BLOCK_PATTERN.search(stream_buffer)
-            if block_match:
-                stream_buffer = stream_buffer[: block_match.start()]
-                inline_response_blocks_detected = True
-            while True:
-                match = re.search(r"(.+?[.!?])([\\s]|$)", stream_buffer)
-                if match:
-                    sentence = match.group(1)
-                    remainder = stream_buffer[match.end(1):]
-                    ensure_spacing = not bool(match.group(2))
-                    stripped = sentence.strip()
-                    if is_investigative_filler_with_level(stripped, filter_level=initial_stream_filter_level):
-                        stream_dropped.append(stripped)
-                        structured_log(
-                            "mcp",
-                            "sanitizer.dropped_sentence",
-                            {
-                                "stage": "streaming_tools",
-                                "text": stripped[:200],
-                            },
-                            indent=1,
-                            context={
-                                "conversation": conversation.id,
-                                "business": conversation.business_profile_id,
-                            },
-                            logger_obj=logger,
-                        )
-                    else:
-                        _emit_sentence(sentence + (match.group(2) or ""))
-                        if ensure_spacing:
-                            sentence_space_pending = True
-                    stream_buffer = remainder
-                    continue
-                if is_investigative_filler_with_level(stream_buffer.strip(), filter_level=initial_stream_filter_level):
-                    break
-                words = stream_buffer.split(" ")
-                if len(words) > 1:
-                    emit_part = " ".join(words[:-1]) + " "
-                    stream_buffer = words[-1]
-                    _emit_tokens(emit_part)
-                    continue
-                break
+            _emit_tokens(chunk)
 
         def _answer_stream_chunk(chunk: str) -> None:
             nonlocal stream_buffer, sentence_space_pending, inline_response_blocks_detected

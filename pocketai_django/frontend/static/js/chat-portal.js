@@ -140,6 +140,29 @@ class ChatPortalClient {
 	    this.textDeltaIntervalEma = 0;
 	    this.hadToolsThisTurn = false;
 
+    // Stream trace (debug): set localStorage.portalStreamTrace="1" to enable.
+    this.streamTraceEnabled = false;
+    this.streamTrace = [];
+    this.streamTraceStartedAt = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+    this.streamTraceLastAt = this.streamTraceStartedAt;
+    try {
+      this.streamTraceEnabled =
+        typeof window !== "undefined" &&
+        window.localStorage &&
+        (window.localStorage.getItem("portalStreamTrace") || "") === "1";
+      if (this.streamTraceEnabled && typeof window !== "undefined") {
+        window.__portalStreamTrace = this.streamTrace;
+      }
+    } catch (_err) {
+      this.streamTraceEnabled = false;
+    }
+
+    // Raw text_delta streaming state (marked.js rendering path)
+    this.streamingTextBuffer = "";
+    this.streamingTextEl = null;
+    this.streamingTextSegmentIndex = 0;
+    this.streamingTextRenderRaf = null;
+
 	    // Agent runs/tasks panel state
 	    this.agentRuns = new Map(); // runId -> { run, events, expanded, seenKeys, lastEventLabel }
     this.tasksRenderRaf = null;
@@ -267,6 +290,11 @@ class ChatPortalClient {
                 : payloadObj && typeof payloadObj.body === "string"
                 ? payloadObj.body
                 : "";
+            this.traceStream("hydrate.message", {
+              messageId,
+              blocks: Array.isArray(contentBlocks) ? contentBlocks.length : 0,
+              bodyLen: bodyText.length,
+            });
             const plainText =
               (Array.isArray(contentBlocks) && contentBlocks.length
                 ? this.extractPlainTextFromContentBlocks(contentBlocks)
@@ -280,6 +308,7 @@ class ChatPortalClient {
             if (Array.isArray(contentBlocks) && contentBlocks.length) {
               this.renderMessageContentBlocks(el, contentBlocks);
             } else if (!isCustomer && bodyText) {
+              this.traceStream("hydrate.fallback_body", { messageId, bodyLen: bodyText.length });
               const blocks = this.coerceContentBlocks([], bodyText);
               this.renderMessageContentBlocks(el, blocks);
             }
@@ -894,6 +923,13 @@ class ChatPortalClient {
       return;
     }
 
+    this.traceStream(eventType, { rawLen: data ? data.length : 0 });
+
+    if (eventType === "text_delta") {
+      this.handleTextDeltaEvent(data);
+      return;
+    }
+
     if (eventType === "block_start") {
       this.usingBlockStream = true;
       this.handleBlockStartEvent(data);
@@ -1065,11 +1101,14 @@ class ChatPortalClient {
 	    const blockType = (block.type || "").toString().trim().toLowerCase();
 	    const blockId = (block.block_id || block.blockId || "").toString().trim();
 	    const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
+	    if (blockType === "reasoning") {
+	      this._finalizeStreamingTextSegment();
+	    }
 	    this.flushStreamingBlockRenders();
 	    this._processBlockStart(payload, block, blockType, blockId, messageId);
 		  }
 
-	  _processBlockStart(payload, block, blockType, blockId, messageId) {
+		  _processBlockStart(payload, block, blockType, blockId, messageId) {
 		    this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
 		    this.upsertStreamingContentBlock(block);
 	    if (blockId) {
@@ -1078,17 +1117,7 @@ class ChatPortalClient {
 		    if (blockId && this.isStreamingTextBlock(blockType)) {
 		      this.streamingTextBlockActiveIds.add(blockId);
 	        this.clearStreamingIdleStatusTimer();
-	        if (this.spinnerDesiredPending) {
-	          // Force-show the orbit loader between block_start and the first block_delta.
-	          // This removes awkward silence before the assistant begins streaming text.
-	          this.setSpinnerText(this.spinnerDesiredText, {
-            pending: this.spinnerDesiredPending,
-            isError: this.spinnerDesiredIsError,
-            force: true,
-          });
-        }
-	        // Keep the loader visible until we actually receive text deltas; otherwise
-	        // the UI can go silent between block_start and the first block_delta.
+	        // Keep the status row pinned after inserting new streaming blocks.
 	        this.repositionStreamingStatusRow();
 		    }
 		  }
@@ -1250,6 +1279,7 @@ class ChatPortalClient {
     if (!payload || typeof payload !== "object") return;
     const block = payload.block && typeof payload.block === "object" ? payload.block : null;
 	    if (!block) return;
+	    this._finalizeStreamingTextSegment();
 	    this.clearStreamingIdleStatusTimer();
 	    const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
 	    this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
@@ -1274,8 +1304,8 @@ class ChatPortalClient {
         }
       });
     }
-    // Keep the overall turn in a "pending" state, but let tool cards own the visible indicator.
-    // The global spinner row will re-appear only when no tool is active (between tool hops).
+    // Keep the overall turn in a "pending" state.
+    // The global spinner row is allowed during tool phases, but it should never show while text deltas are streaming.
     this.setSpinnerText(this.spinnerDesiredText || "", {
       pending: true,
       isError: this.spinnerDesiredIsError,
@@ -1298,6 +1328,7 @@ class ChatPortalClient {
     if (!payload || typeof payload !== "object") return;
     const block = payload.block && typeof payload.block === "object" ? payload.block : null;
 	    if (!block) return;
+	    this._finalizeStreamingTextSegment();
 	    this.clearStreamingIdleStatusTimer();
 	    const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
 	    this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
@@ -1322,6 +1353,116 @@ class ChatPortalClient {
 	    this.repositionStreamingStatusRow();
 	    this.scheduleScrollToBottom({ behavior: "auto" });
 	  }
+
+  // ── Raw text_delta streaming (marked.js path) ──────────────────────────
+
+  traceStream(event, meta) {
+    if (!this.streamTraceEnabled) return;
+    if (this.streamTrace.length >= 20_000) return;
+
+    const now = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+    const dt = now - (this.streamTraceLastAt || now);
+    this.streamTraceLastAt = now;
+    const rec = {
+      t: Math.round(now - (this.streamTraceStartedAt || now)),
+      dt: Math.round(dt),
+      event: (event || "").toString(),
+      ...(meta && typeof meta === "object" ? meta : {}),
+    };
+    this.streamTrace.push(rec);
+
+    // Only spam console on anomalies; full trace remains in window.__portalStreamTrace.
+    const shouldLog =
+      rec.event === "turn_persisted" ||
+      rec.event === "turnUpdated" ||
+      rec.event === "spinnerStatus" ||
+      rec.dt >= 250 ||
+      (rec.event === "text_delta" && rec.textLen >= 64);
+    if (shouldLog) {
+      try {
+        console.debug("[portal stream]", rec);
+      } catch (_err) {
+        // ignore
+      }
+    }
+  }
+
+  handleTextDeltaEvent(data) {
+    let payload = null;
+    try {
+      payload = data ? JSON.parse(data) : null;
+    } catch (_err) {
+      return;
+    }
+    if (!payload || typeof payload !== "object") return;
+    const text = (payload.text || "").toString();
+    if (!text) return;
+
+    this.ensureStreamingMessageNode(this.pendingMessageId);
+    if (!this.streamingTextEl) {
+      this._createStreamingTextEl();
+    }
+    this.streamingTextBuffer += text;
+    this.traceStream("text_delta", { textLen: text.length, bufferLen: this.streamingTextBuffer.length });
+    this.lastTextDeltaAt = Date.now();
+    this.lastStreamEventAt = Date.now();
+
+    // Hide status spinner while text is actively streaming
+    if (this.streamingStatusEl) {
+      this.streamingStatusEl.classList.add("hidden");
+    }
+
+    this.scheduleStreamingTextRender();
+  }
+
+  _createStreamingTextEl() {
+    if (!this.streamingBlocksEl) return;
+    const el = document.createElement("div");
+    el.dataset.contentBlock = "true";
+    el.dataset.blockType = "streaming_text";
+    el.className = "leading-relaxed space-y-2";
+    // Insert before streamingStatusEl so status stays at bottom
+    if (this.streamingStatusEl && this.streamingStatusEl.parentNode === this.streamingBlocksEl) {
+      this.streamingBlocksEl.insertBefore(el, this.streamingStatusEl);
+    } else {
+      this.streamingBlocksEl.appendChild(el);
+    }
+    this.applyStreamingBlockEnterAnimation(el);
+    this.streamingTextEl = el;
+    this.streamingTextSegmentIndex++;
+  }
+
+  scheduleStreamingTextRender() {
+    if (this.streamingTextRenderRaf) return;
+    this.streamingTextRenderRaf = requestAnimationFrame(() => {
+      this.streamingTextRenderRaf = null;
+      this.flushStreamingTextRender();
+    });
+  }
+
+  flushStreamingTextRender() {
+    if (!this.streamingTextEl) return;
+    const t0 = this.streamTraceEnabled && typeof performance !== "undefined" && performance.now ? performance.now() : 0;
+    this.streamingTextEl.innerHTML = this.renderMarkdown(this.streamingTextBuffer);
+    this.applyMarkdownTableStyles(this.streamingTextEl);
+    if (t0) {
+      const dt = (typeof performance !== "undefined" && performance.now ? performance.now() : 0) - t0;
+      this.traceStream("text_render", { ms: Math.round(Math.max(0, dt)), bufferLen: this.streamingTextBuffer.length });
+    }
+    this.scheduleScrollToBottom({ behavior: "auto" });
+  }
+
+  _finalizeStreamingTextSegment() {
+    if (this.streamingTextRenderRaf) {
+      cancelAnimationFrame(this.streamingTextRenderRaf);
+      this.streamingTextRenderRaf = null;
+    }
+    if (this.streamingTextEl) {
+      this.flushStreamingTextRender();
+    }
+    this.streamingTextEl = null;
+    this.streamingTextBuffer = "";
+  }
 
 	  isStreamingTextBlock(type) {
 	    // Leaf text blocks that actually receive block_delta/block_end events.
@@ -4317,6 +4458,7 @@ class ChatPortalClient {
 			    if (this.container && this.container.dataset) {
 			      this.container.dataset.finalizing = "true";
 			    }
+	        this._finalizeStreamingTextSegment();
 	        this.flushStreamingBlockRenders();
 			    this._doTurnPersistedReconcile(data);
 			  }
@@ -4353,7 +4495,8 @@ class ChatPortalClient {
 	          // re-render, and prevent streaming-only animations from firing during finalization.
 	          const streamedBlocks =
 	            this.usingBlockStream && this.streamingBlocksEl && this.streamingContentBlockEls && this.streamingContentBlockEls.size > 0;
-	          if (streamedBlocks) {
+	          const hasStreamedText = this.streamingTextSegmentIndex > 0;
+	          if (streamedBlocks && !hasStreamedText) {
 	            this.reconcileMessageContentBlocks(bodyEl, contentBlocks);
 	          } else {
 	            this.renderMessageContentBlocks(bodyEl, contentBlocks);
@@ -9554,6 +9697,14 @@ class ChatPortalClient {
 		    this.spinnerDesiredText = "";
 		    this.spinnerDesiredPending = false;
 		    this.spinnerDesiredIsError = false;
+    // Clean up raw text_delta streaming state
+    this.streamingTextBuffer = "";
+    this.streamingTextEl = null;
+    this.streamingTextSegmentIndex = 0;
+    if (this.streamingTextRenderRaf) {
+      cancelAnimationFrame(this.streamingTextRenderRaf);
+    }
+    this.streamingTextRenderRaf = null;
 		    if (removeNode) {
 		      this.pendingMessageId = null;
 		    }
@@ -9601,7 +9752,8 @@ class ChatPortalClient {
   }
 
 	  isAssistantTextStreaming() {
-	    if (!this.streamingTextBlockActiveIds.size) return false;
+	    const hasActiveStream = this.streamingTextBlockActiveIds.size > 0 || Boolean(this.streamingTextEl);
+	    if (!hasActiveStream) return false;
 	    const lastDeltaAt = this.lastTextDeltaAt || 0;
 	    if (!lastDeltaAt) return false;
 	    // Hysteresis: avoid flashing the spinner between normal delta bursts.
@@ -9638,13 +9790,6 @@ class ChatPortalClient {
     this.spinnerDesiredText = label;
     this.spinnerDesiredPending = pending;
     this.spinnerDesiredIsError = isError;
-
-    // While tools are active (running or waiting approval), the tool card rail owns the indicator.
-    // Avoid showing a second, global spinner row at the same time.
-    if (pending && this.streamingToolBlockActiveIds && this.streamingToolBlockActiveIds.size) {
-      this.streamingStatusEl.classList.add("hidden");
-      return;
-    }
     if (!label) {
       if (!pending) {
         this.clearStreamingStatus();
@@ -10209,6 +10354,17 @@ class ChatPortalClient {
     if (!type) return;
 
     if (type === "turn_persisted" || type === "turnPersisted" || type === "turn_finalized") {
+      const blocks = Array.isArray(eventPayload.content_blocks)
+        ? eventPayload.content_blocks
+        : Array.isArray(eventPayload.contentBlocks)
+        ? eventPayload.contentBlocks
+        : [];
+      const textLen = typeof eventPayload.text === "string" ? eventPayload.text.length : 0;
+      this.traceStream("turn_persisted", {
+        rawLen: JSON.stringify(eventPayload || {}).length,
+        textLen,
+        blocks: blocks.length,
+      });
       this.handleTurnPersistedEvent(JSON.stringify(eventPayload));
       return;
     }

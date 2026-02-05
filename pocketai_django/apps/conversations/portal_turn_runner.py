@@ -14,6 +14,7 @@ from django.utils import timezone
 
 from apps.conversations.content_blocks import extract_text_from_content_blocks, new_block_id
 from apps.conversations.portal import ChatPortalService
+from apps.conversations.portal_stream_trace import PortalStreamTrace
 from apps.conversations.rich_blocks import RichBlockStreamBuilder, apply_block_ops, coerce_block_event
 from apps.conversations.portal_turn_events import append_turn_event
 from apps.conversations.portal_turn_folding import fold_turn_events, fold_turn_events_from_redis
@@ -126,6 +127,7 @@ class PortalTurnEventBuilder:
     def __init__(self, *, turn: PortalTurn, conversation: Conversation) -> None:
         self.turn = turn
         self.conversation = conversation
+        self.trace = PortalStreamTrace(turn_id=turn.id, component="worker")
         self.blocks: list[dict[str, object]] = []
         self.blocks_by_id: dict[str, dict[str, object]] = {}
         self.block_ops_active = False
@@ -133,10 +135,11 @@ class PortalTurnEventBuilder:
         self.tool_use_block_id_by_event_id: dict[str, str] = {}
         self.reasoning_block_id_by_call_id: dict[str, str] = {}
         # Backpressure/coalescing: reduce per-token event spam by batching adjacent block_delta ops.
-        self.coalesce_block_deltas = bool(getattr(settings, "PORTAL_TURN_COALESCE_BLOCK_DELTAS", True))
-        self.delta_flush_interval_ms = int(getattr(settings, "PORTAL_TURN_DELTA_FLUSH_INTERVAL_MS", 50) or 50)
+        # Force-disable coalescing to ensure normalized (smooth) streaming delta-by-delta.
+        self.coalesce_block_deltas = False
+        self.delta_flush_interval_ms = int(getattr(settings, "PORTAL_TURN_DELTA_FLUSH_INTERVAL_MS", 25) or 25)
         self.delta_flush_interval_ms = max(5, self.delta_flush_interval_ms)
-        self.delta_flush_max_ops = int(getattr(settings, "PORTAL_TURN_DELTA_FLUSH_MAX_OPS", 60) or 60)
+        self.delta_flush_max_ops = int(getattr(settings, "PORTAL_TURN_DELTA_FLUSH_MAX_OPS", 30) or 30)
         self.delta_flush_max_ops = max(10, self.delta_flush_max_ops)
         self._pending_delta_block_id: str | None = None
         self._pending_delta_ops: list[dict[str, object]] = []
@@ -148,6 +151,16 @@ class PortalTurnEventBuilder:
         self.first_event_at_perf: float | None = None
         self.last_event_type: str | None = None
         self.had_tool_events = False
+        self.trace.record(
+            "builder.init",
+            {
+                "event_bus": str(getattr(settings, "PORTAL_TURN_EVENT_BUS", "postgres") or "postgres"),
+                "turn_log_mode": str(getattr(settings, "PORTAL_TURN_EVENT_LOG_MODE", "db") or "db"),
+                "coalesce_block_deltas": bool(self.coalesce_block_deltas),
+                "delta_flush_interval_ms": int(self.delta_flush_interval_ms or 0),
+                "delta_flush_max_ops": int(self.delta_flush_max_ops or 0),
+            },
+        )
 
     def _flush_pending_block_delta(self) -> None:
         if not self.coalesce_block_deltas:
@@ -170,10 +183,37 @@ class PortalTurnEventBuilder:
         if self.first_event_at_perf is None:
             self.first_event_at_perf = start
             self.first_event_type = event_type
-        append_turn_event(turn_id=self.turn.id, event_type=event_type, payload=payload or {})
+        payload_obj = payload or {}
+        # Trace before append so we can see what the worker tried to emit even if persistence fails.
+        trace_meta: dict[str, object] = {"type": str(event_type or "event")}
+        lowered = str(event_type or "").strip().lower()
+        if lowered == "text_delta":
+            trace_meta["text_len"] = int(len(str(payload_obj.get("text") or "")))
+        elif lowered == "block_delta":
+            ops = payload_obj.get("ops")
+            trace_meta["ops"] = int(len(ops)) if isinstance(ops, list) else 0
+        elif lowered == "block_start":
+            block = payload_obj.get("block")
+            if isinstance(block, Mapping):
+                trace_meta["block_type"] = str(block.get("type") or "")
+        elif lowered == "turn_persisted":
+            trace_meta["text_len"] = int(len(str(payload_obj.get("text") or "")))
+            blocks = payload_obj.get("content_blocks")
+            trace_meta["blocks"] = int(len(blocks)) if isinstance(blocks, list) else 0
+        self.trace.record("event.append", trace_meta)
+
+        append_turn_event(turn_id=self.turn.id, event_type=event_type, payload=payload_obj)
         self.event_count += 1
         self.db_write_ms += max(0.0, (time.perf_counter() - start) * 1000.0)
         self.last_event_type = event_type
+        self.trace.record(
+            "event.appended",
+            {
+                "type": str(event_type or "event"),
+                "append_ms": int(max(0.0, (time.perf_counter() - start) * 1000.0)),
+                "event_count": int(self.event_count or 0),
+            },
+        )
 
     def _append_content_block(self, block: dict[str, object]) -> dict[str, object]:
         block_id = str(block.get("block_id") or "").strip()
@@ -222,6 +262,22 @@ class PortalTurnEventBuilder:
             return
         if event_type == "block_end":
             return
+
+    def _apply_block_events_internally(self, events: list[dict[str, object]]) -> None:
+        """Apply block events to internal state (blocks/blocks_by_id) without emitting to Redis."""
+        if events:
+            counts: dict[str, int] = {}
+            for ev in events:
+                if not isinstance(ev, Mapping):
+                    continue
+                t = str(ev.get("type") or "").strip().lower() or "event"
+                counts[t] = counts.get(t, 0) + 1
+            if counts:
+                self.trace.record("blocks.apply_internal", {"events": int(len(events)), "types": counts})
+        for event in events:
+            if not isinstance(event, Mapping):
+                continue
+            self._apply_block_event(event)
 
     def emit_block_events(self, events: list[dict[str, object]]) -> None:
         for event in events:
@@ -279,10 +335,17 @@ class PortalTurnEventBuilder:
         if not chunk:
             return
         if self.block_ops_active:
+            self.trace.record_text("delta.dropped", chunk, {"reason": "block_ops_active"})
             return
+        self.trace.record_text("delta.in", chunk)
+        # Emit raw text_delta to Redis for immediate frontend rendering via marked.js.
+        self.append_event("text_delta", {"text": chunk})
+        # Still feed the rich builder for finalization block building (persistence only).
         events = self.rich_builder.feed_text(chunk)
         if events:
-            self.emit_block_events(events)
+            self.trace.record("rich.feed_text", {"events": int(len(events))})
+        if events:
+            self._apply_block_events_internally(events)
 
     def on_reasoning_event(self, event: Mapping[str, object] | None) -> None:
         if not event or not isinstance(event, Mapping):
@@ -370,9 +433,18 @@ class PortalTurnEventBuilder:
         if not self.block_ops_active:
             events = self.rich_builder.finalize()
             if events:
-                self.emit_block_events(events)
+                self.trace.record("rich.finalize", {"events": int(len(events))})
+                self._apply_block_events_internally(events)
         # Ensure any buffered block_delta ops are emitted before finalization persists.
         self._flush_pending_block_delta()
+        self.trace.record(
+            "builder.finalize_text",
+            {
+                "blocks": int(len(self.blocks)),
+                "block_ops_active": bool(self.block_ops_active),
+                "had_tool_events": bool(self.had_tool_events),
+            },
+        )
 
     def on_tool_event(self, event: Mapping[str, object] | None) -> None:
         if not event or not isinstance(event, Mapping):
@@ -481,7 +553,7 @@ class PortalTurnEventBuilder:
                 except Exception:  # pragma: no cover - defensive
                     boundary_events = []
                 if boundary_events:
-                    self.emit_block_events(boundary_events)
+                    self._apply_block_events_internally(boundary_events)
             tool_use_block = {
                 "block_id": new_block_id(),
                 "type": "tool_use",
@@ -696,35 +768,67 @@ class PortalTurnRunner:
         # Phase 5: Prefer in-memory builder state, then Redis stream replay, then Postgres event log.
         blocks: list[dict[str, object]] = []
         message_body: str | None = None
+        blocks_source = "none"
         if self.turn.message_id:
             with tenant_context(getattr(self.conversation, "business_profile_id", None)):
                 existing = ConversationMessage.objects.filter(id=self.turn.message_id).first()
             if existing is not None:
                 blocks = existing.content_blocks or []
                 message_body = existing.body
+                if blocks:
+                    blocks_source = "existing_message"
 
         if not blocks and getattr(self.builder, "blocks", None):
             try:
                 blocks = copy.deepcopy(self.builder.blocks)
             except Exception:
                 blocks = list(self.builder.blocks)
+            if blocks:
+                blocks_source = "builder"
 
         if not blocks:
             blocks = fold_turn_events_from_redis(turn_id=self.turn.id)
+            if blocks:
+                blocks_source = "redis_fold"
         if not blocks:
             with tenant_context(getattr(self.conversation, "business_profile_id", None)):
                 blocks = fold_turn_events(turn_id=self.turn.id)
+            if blocks:
+                blocks_source = "db_fold"
 
         body_text = (message_body or "").strip() or extract_text_from_content_blocks(blocks)
         if not body_text:
             streamed_text = "".join(getattr(stream_context, "streamed_chunks", None) or ()).strip() if stream_context else ""
             body_text = streamed_text or "(no content)"
+        self.builder.trace.record(
+            "turn.finalize.materialized",
+            {
+                "blocks_source": blocks_source,
+                "blocks": int(len(blocks)),
+                "body_len_pre_sanitize": int(len(body_text or "")),
+            },
+        )
 
         # Sanitize final text the same way the portal does for persistence.
         body_text, _ = sanitize_with_diagnostics(
             body_text,
             conversation=self.conversation,
             stage="portal_turn_finalize",
+        )
+        block_types: dict[str, int] = {}
+        for block in blocks:
+            if not isinstance(block, Mapping):
+                continue
+            t = str(block.get("type") or "").strip().lower() or "unknown"
+            block_types[t] = block_types.get(t, 0) + 1
+        self.builder.trace.record(
+            "turn.finalize.sanitized",
+            {
+                "blocks_source": blocks_source,
+                "blocks": int(len(blocks)),
+                "block_types": block_types,
+                "body_len": int(len(body_text or "")),
+            },
         )
 
         if self.turn.message_id:
@@ -777,6 +881,16 @@ class PortalTurnRunner:
             next_meta = dict(current_meta or {}) if isinstance(current_meta, dict) else {}
             next_meta["turn_persisted_emitted"] = True
             PortalTurn.objects.filter(id=self.turn.id).update(metadata=next_meta, updated_at=timezone.now())
+        self.builder.trace.record(
+            "turn.finalize.done",
+            {
+                "blocks_source": blocks_source,
+                "turn_persisted_emitted": bool(not emitted),
+                "message_id": str(message_id),
+                "blocks": int(len(blocks)),
+                "body_len": int(len(body_text or "")),
+            },
+        )
 
         latest_status = (
             PortalTurn.objects.filter(id=self.turn.id)
@@ -803,6 +917,8 @@ class PortalTurnRunner:
             .first()
         )
         if current_status in {PortalTurnStatus.CANCELLED, PortalTurnStatus.FINALIZED, PortalTurnStatus.FAILED}:
+            self.builder.trace.record("turn.skip", {"status": str(current_status or "")})
+            self.builder.trace.close()
             return
         if current_status == PortalTurnStatus.FINALIZING:
             try:
@@ -835,6 +951,7 @@ class PortalTurnRunner:
                         },
                         level=logging.INFO if not error else logging.ERROR,
                     )
+                self.builder.trace.close()
             return
 
         if not user_message:
@@ -963,10 +1080,11 @@ class PortalTurnRunner:
                         "last_event_type": self.builder.last_event_type,
                         "had_tool_events": bool(self.builder.had_tool_events),
                         "block_ops_active": bool(self.builder.block_ops_active),
-                        "error": error or None,
-                    },
-                    level=logging.INFO if not error else logging.ERROR,
-                )
+                            "error": error or None,
+                        },
+                        level=logging.INFO if not error else logging.ERROR,
+                    )
+            self.builder.trace.close()
 
 
 def run_turn_background(*, turn_id: uuid.UUID, business_id: object | None = None) -> None:

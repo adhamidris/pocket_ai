@@ -68,6 +68,7 @@ from apps.conversations.portal_turn_events import (
     list_turn_events,
     portal_turn_redis_stream_key,
 )
+from apps.conversations.portal_stream_trace import PortalStreamTrace
 from apps.conversations.portal_session_event_bus import (
     portal_session_agent_requests_stream_key,
     portal_session_conversation_stream_key,
@@ -3540,6 +3541,8 @@ def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHtt
 
     def event_stream() -> Iterable[str]:
         metrics_enabled = bool(getattr(settings, "PORTAL_STREAM_METRICS", False))
+        trace = PortalStreamTrace(turn_id=turn.id, component="sse")
+        conn_id = uuid.uuid4().hex[:8]
         started_at = time.perf_counter()
         first_event_at: float | None = None
         events_sent = 0
@@ -3550,6 +3553,11 @@ def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHtt
         last_keepalive = time.monotonic()
         event_bus = str(getattr(settings, "PORTAL_TURN_EVENT_BUS", "postgres") or "postgres").strip().lower()
         turn_log_mode = str(getattr(settings, "PORTAL_TURN_EVENT_LOG_MODE", "db") or "db").strip().lower()
+        if event_bus == "postgres":
+            # Postgres-backed SSE requires the DB event log. This clamp is intentionally
+            # runtime (not import-time only) so tests using `override_settings()` can't
+            # accidentally create an invalid combination.
+            turn_log_mode = "db"
         redis_conn = None
         redis_stream_key = None
         redis_last_id = f"{last_seq}-0"
@@ -3563,12 +3571,24 @@ def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHtt
 
         listen_conn = _open_portal_turn_listen_connection() if event_bus == "postgres" else None
         listen_enabled = listen_conn is not None
+        trace.record(
+            "sse.open",
+            {
+                "conn": conn_id,
+                "since_seq": int(since or 0),
+                "event_bus": str(event_bus or "postgres"),
+                "turn_log_mode": str(turn_log_mode or "db"),
+                "listen_enabled": bool(listen_enabled),
+            },
+        )
 
         try:
             while True:
                 if redis_conn is not None and redis_stream_key:
                     # Avoid "block forever" so we can emit keepalives and survive slow first-token turns.
                     block_ms = int(max(200, keepalive_seconds * 1000))
+                    from_id = str(redis_last_id)
+                    t0 = time.perf_counter()
                     try:
                         entries = redis_conn.xread({redis_stream_key: redis_last_id}, count=250, block=block_ms)
                     except Exception:
@@ -3582,8 +3602,21 @@ def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHtt
                         continue
 
                     if entries:
+                        trace.record(
+                            "sse.redis.xread",
+                            {
+                                "conn": conn_id,
+                                "from_id": from_id,
+                                "dt_ms": int(max(0.0, (time.perf_counter() - t0) * 1000.0)),
+                                "block_ms": int(block_ms),
+                            },
+                        )
+                        entry_count = 0
+                        batch_types: dict[str, int] = {}
+                        batch_text_chars = 0
                         for _stream_key, stream_entries in entries:
                             for entry_id, fields in stream_entries:
+                                entry_count += 1
                                 entry_id_str = (
                                     entry_id.decode("utf-8", errors="replace") if isinstance(entry_id, (bytes, bytearray)) else str(entry_id)
                                 )
@@ -3621,6 +3654,9 @@ def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHtt
                                     "type": event_type,
                                     "payload": payload_obj or {},
                                 }
+                                batch_types[event_type] = batch_types.get(event_type, 0) + 1
+                                if event_type == "text_delta" and isinstance(payload_obj, dict):
+                                    batch_text_chars += len(str(payload_obj.get("text") or ""))
                                 if event_type.strip().lower() == "turn_persisted":
                                     sent_turn_persisted = True
                                 if first_event_at is None:
@@ -3629,13 +3665,36 @@ def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHtt
                                 yield f"id: {payload['seq']}\n"
                                 yield "event: turnEvent\n"
                                 yield f"data: {json.dumps(payload)}\n\n"
+                        trace.record(
+                            "sse.batch",
+                            {
+                                "conn": conn_id,
+                                "source": "redis",
+                                "events": int(entry_count),
+                                "types": batch_types,
+                                "text_chars": int(batch_text_chars),
+                                "last_seq": int(last_seq),
+                            },
+                        )
                         continue
 
                 if redis_conn is None or not redis_stream_key:
                     # Postgres-backed streaming (Phase 1/2 behavior).
+                    t0 = time.perf_counter()
                     with tenant_context(business_id):
                         events = list(list_turn_events(turn_id=turn.id, since_seq=last_seq, limit=250))
+                    trace.record(
+                        "sse.db.poll",
+                        {
+                            "conn": conn_id,
+                            "dt_ms": int(max(0.0, (time.perf_counter() - t0) * 1000.0)),
+                            "events": int(len(events)),
+                            "since_seq": int(last_seq),
+                        },
+                    )
                     if events:
+                        batch_types: dict[str, int] = {}
+                        batch_text_chars = 0
                         for evt in events:
                             last_seq = int(evt.seq or 0)
                             payload = {
@@ -3644,6 +3703,10 @@ def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHtt
                                 "type": evt.type,
                                 "payload": evt.payload or {},
                             }
+                            event_type = str(evt.type or "").strip() or "event"
+                            batch_types[event_type] = batch_types.get(event_type, 0) + 1
+                            if event_type == "text_delta":
+                                batch_text_chars += len(str((evt.payload or {}).get("text") or ""))
                             if str(evt.type or "").strip().lower() == "turn_persisted":
                                 sent_turn_persisted = True
                             if first_event_at is None:
@@ -3652,6 +3715,17 @@ def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHtt
                             yield f"id: {last_seq}\n"
                             yield "event: turnEvent\n"
                             yield f"data: {json.dumps(payload)}\n\n"
+                        trace.record(
+                            "sse.batch",
+                            {
+                                "conn": conn_id,
+                                "source": "db",
+                                "events": int(len(events)),
+                                "types": batch_types,
+                                "text_chars": int(batch_text_chars),
+                                "last_seq": int(last_seq),
+                            },
+                        )
                         continue
 
                 with tenant_context(business_id):
@@ -3689,6 +3763,7 @@ def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHtt
                         if redis_conn is not None and redis_stream_key:
                             drained = False
                             # Drain any remaining Redis entries (non-blocking) before closing.
+                            drained_total = 0
                             while True:
                                 try:
                                     drain_entries = redis_conn.xread({redis_stream_key: redis_last_id}, count=250, block=0)
@@ -3697,8 +3772,10 @@ def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHtt
                                 if not drain_entries:
                                     break
                                 drained = True
+                                drain_batch = 0
                                 for _stream_key, stream_entries in drain_entries:
                                     for entry_id, fields in stream_entries:
+                                        drain_batch += 1
                                         entry_id_str = (
                                             entry_id.decode("utf-8", errors="replace")
                                             if isinstance(entry_id, (bytes, bytearray))
@@ -3749,6 +3826,16 @@ def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHtt
                                         yield f"id: {payload['seq']}\n"
                                         yield "event: turnEvent\n"
                                         yield f"data: {json.dumps(payload)}\n\n"
+                                drained_total += drain_batch
+                                trace.record(
+                                    "sse.drain_batch",
+                                    {
+                                        "conn": conn_id,
+                                        "events": int(drain_batch),
+                                        "drained_total": int(drained_total),
+                                        "last_seq": int(last_seq),
+                                    },
+                                )
                             # If we drained at least once, loop back to status check to avoid a tight close/open race.
                             if drained:
                                 continue
@@ -3846,6 +3933,18 @@ def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHtt
                     last_keepalive = now
                 time.sleep(0.15)
         finally:
+            trace.record(
+                "sse.close",
+                {
+                    "conn": conn_id,
+                    "elapsed_ms": int(max(0.0, (time.perf_counter() - started_at) * 1000.0)),
+                    "events_sent": int(events_sent),
+                    "keepalives_sent": int(keepalives_sent),
+                    "event_bus": str(event_bus or "postgres"),
+                    "final_seq": int(last_seq),
+                },
+            )
+            trace.close()
             if listen_conn is not None:
                 try:
                     listen_conn.close()

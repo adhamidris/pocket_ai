@@ -134,14 +134,16 @@ def ensure_assistant_text_blocks(body: str, *, existing_blocks: object | None = 
         isinstance(block, Mapping) and str(block.get("type") or "").strip().lower() in non_text_block_types
         for block in blocks
     )
-    has_text = any(
-        isinstance(block, Mapping) and _is_rich_text_block(block)
-        for block in blocks
-    )
+    has_rich_text = any(isinstance(block, Mapping) and _is_rich_text_block(block) for block in blocks)
+    has_plain_text = any(isinstance(block, Mapping) and _is_text_block(block) for block in blocks)
 
-    # If existing blocks contain both text and non-text blocks, preserve them as-is
-    # This maintains the exact ordering from the persisted state
-    if has_non_text and has_text and blocks:
+    # Preserve existing blocks when they already include any text content.
+    #
+    # We only regenerate from `body` when the message has no text blocks yet (e.g., tool-only
+    # messages during approval flows, or legacy rows missing content_blocks). Regenerating
+    # from `body` can be lossy because `body` is a plain-text fallback and may not preserve
+    # rich inline marks (bold/italic/code/link).
+    if blocks and (has_rich_text or has_plain_text):
         return blocks
 
     # Otherwise, regenerate text blocks from body
@@ -177,7 +179,7 @@ def extract_text_from_content_blocks(value: object | None) -> str:
         block_type = str(block.get("type") or "").strip().lower()
         payload = block.get("payload")
         payload_map = payload if isinstance(payload, Mapping) else {}
-        text = _inline_nodes_text(payload_map.get("content"))
+        text = _inline_nodes_to_markdown(payload_map.get("content"))
         if block_type == "heading":
             level = payload_map.get("level")
             prefix = "#" * level + " " if isinstance(level, int) and 1 <= level <= 6 else ""
@@ -197,7 +199,8 @@ def extract_text_from_content_blocks(value: object | None) -> str:
         if block_type == "code_block":
             code_value = payload_map.get("code")
             if isinstance(code_value, str) and code_value.strip():
-                lines.append(code_value.strip())
+                lang = str(payload_map.get("language") or "").strip()
+                lines.append(f"```{lang}\n{code_value.strip()}\n```")
             continue
         # Ignore list container/table/kv/tool blocks for plain text fallback.
     return "\n".join(line for line in lines if line).strip()
@@ -222,6 +225,35 @@ def _inline_nodes_text(nodes: object | None) -> str:
             continue
         text_value = node.get("text")
         if isinstance(text_value, str) and text_value:
+            parts.append(text_value)
+    return "".join(parts)
+
+
+def _inline_nodes_to_markdown(nodes: object | None) -> str:
+    """Reconstruct markdown from inline nodes: bold, italic, code, link."""
+    if not isinstance(nodes, list):
+        return ""
+    parts: list[str] = []
+    for node in nodes:
+        if not isinstance(node, Mapping):
+            continue
+        node_type = str(node.get("type") or "").strip().lower()
+        text_value = node.get("text")
+        if not isinstance(text_value, str) or not text_value:
+            continue
+        if node_type == "bold":
+            parts.append(f"**{text_value}**")
+        elif node_type == "italic":
+            parts.append(f"*{text_value}*")
+        elif node_type == "code":
+            parts.append(f"`{text_value}`")
+        elif node_type == "link":
+            href = str(node.get("href") or "").strip()
+            if href:
+                parts.append(f"[{text_value}]({href})")
+            else:
+                parts.append(text_value)
+        else:
             parts.append(text_value)
     return "".join(parts)
 

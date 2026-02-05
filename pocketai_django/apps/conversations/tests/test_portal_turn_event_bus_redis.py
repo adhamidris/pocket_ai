@@ -48,6 +48,7 @@ class PortalTurnRedisEventBusTests(TestCase):
 
     @override_settings(
         PORTAL_TURN_EVENT_BUS="redis",
+        PORTAL_TURN_EVENT_LOG_MODE="db",
         PORTAL_TURN_EVENT_BUS_REDIS_STREAM_TTL_SECONDS=600,
         PORTAL_TURN_EVENT_BUS_REDIS_STREAM_PREFIX="portal:turn",
     )

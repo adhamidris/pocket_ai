@@ -1001,7 +1001,7 @@ class _ResponseTextExtractor:
         return str(content or "").strip()
 
 
-def _emit_stream_chunks(callback: Callable[[str], None], text: str, *, chunk_size: int = 64) -> None:
+def _emit_stream_chunks(callback: Callable[[str], None], text: str, *, chunk_size: int = 1) -> None:
     """
     Emit a text payload to a streaming callback in word-safe chunks.
 

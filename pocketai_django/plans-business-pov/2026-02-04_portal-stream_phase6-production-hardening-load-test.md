@@ -21,8 +21,8 @@ Problem:
 
 Fix:
 - Coalesce adjacent `block_delta` ops in `PortalTurnEventBuilder` and flush:
-  - every `PORTAL_TURN_DELTA_FLUSH_INTERVAL_MS` (default 50ms), or
-  - once `PORTAL_TURN_DELTA_FLUSH_MAX_OPS` is reached (default 60 ops)
+  - every `PORTAL_TURN_DELTA_FLUSH_INTERVAL_MS` (default 25ms), or
+  - once `PORTAL_TURN_DELTA_FLUSH_MAX_OPS` is reached (default 30 ops)
 
 Result:
 - Same UI behavior (op-based rendering, ordered tool cards).
@@ -30,8 +30,8 @@ Result:
 
 Settings:
 - `PORTAL_TURN_COALESCE_BLOCK_DELTAS` (default true)
-- `PORTAL_TURN_DELTA_FLUSH_INTERVAL_MS` (default 50)
-- `PORTAL_TURN_DELTA_FLUSH_MAX_OPS` (default 60)
+- `PORTAL_TURN_DELTA_FLUSH_INTERVAL_MS` (default 25)
+- `PORTAL_TURN_DELTA_FLUSH_MAX_OPS` (default 30)
 
 ### 2) Redis Stream Memory Bounding
 
@@ -106,4 +106,3 @@ python pocketai_django/testing/portal_sse_load_test.py \
 
 - Add a dedicated synthetic turn producer for deterministic turn-stream load tests.
 - Consider per-message “checkpoint” persistence for crash-resume guarantees if needed.
-
