@@ -127,37 +127,39 @@
     padding: 0;
   }
 
-  [data-message-body] table {
+  /* Structured response blocks (table/kv) own table rendering.
+     Keep styles scoped so markdown/user content can't conflict. */
+  [data-message-body] [data-content-block="true"][data-block-type="table"] table,
+  [data-message-body] [data-content-block="true"][data-block-type="kv"] table {
     width: 100%;
     max-width: 100%;
     table-layout: fixed;
     border-collapse: separate;
     border-spacing: 0;
-    margin-bottom: 0.85em;
+    margin: 0;
     font-size: 0.9em;
-    border: 1px solid hsl(var(--border));
-    border-radius: 0.5em;
-    overflow: hidden;
   }
-  [data-message-body] th,
-  [data-message-body] td {
-    border-bottom: 1px solid hsl(var(--border));
-    border-right: 1px solid hsl(var(--border));
-    padding: 0.55em 0.65em;
-    text-align: left;
+
+  [data-message-body] [data-content-block="true"][data-block-type="table"] th,
+  [data-message-body] [data-content-block="true"][data-block-type="table"] td,
+  [data-message-body] [data-content-block="true"][data-block-type="kv"] th,
+  [data-message-body] [data-content-block="true"][data-block-type="kv"] td {
+    border-bottom: 1px solid hsl(var(--border) / 0.6);
+    border-right: 1px solid hsl(var(--border) / 0.6);
     word-break: break-word;
     overflow-wrap: anywhere;
   }
-  [data-message-body] th:last-child,
-  [data-message-body] td:last-child {
+
+  [data-message-body] [data-content-block="true"][data-block-type="table"] th:last-child,
+  [data-message-body] [data-content-block="true"][data-block-type="table"] td:last-child,
+  [data-message-body] [data-content-block="true"][data-block-type="kv"] th:last-child,
+  [data-message-body] [data-content-block="true"][data-block-type="kv"] td:last-child {
     border-right: none;
   }
-  [data-message-body] tr:last-child td {
+
+  [data-message-body] [data-content-block="true"][data-block-type="table"] tr:last-child td,
+  [data-message-body] [data-content-block="true"][data-block-type="kv"] tr:last-child td {
     border-bottom: none;
-  }
-  [data-message-body] th {
-    background: hsl(var(--muted));
-    font-weight: 600;
   }
 
   [data-message-body] blockquote {
@@ -1527,51 +1529,13 @@
     }
   }
 
-  [data-chat-portal] [data-content-block].portal-stream-active::after {
-    content: "";
-    display: inline-block;
-    height: 0.95em;
-    width: 0;
-    border-left: 2px solid hsl(var(--primary));
-    /* Cancel the border's layout width to avoid reflow/wrapping jitter on short lines. */
-    margin-right: -2px;
-    border-radius: 2px;
-    opacity: 0.8;
-    animation: portalStreamCaretBlink 1s step-end infinite;
-    vertical-align: -0.12em;
-  }
-
-  [data-chat-portal] .portal-reasoning.portal-stream-active::after {
-    content: none;
-  }
-
-  [data-chat-portal] .portal-reasoning.portal-stream-active .portal-reasoning__content code::after {
-    content: "";
-    display: inline-block;
-    height: 0.95em;
-    width: 0;
-    border-left: 2px solid hsl(var(--primary));
-    margin-right: -2px;
-    border-radius: 2px;
-    opacity: 0.8;
-    animation: portalStreamCaretBlink 1s step-end infinite;
-    vertical-align: -0.12em;
-  }
-
-  @keyframes portalStreamCaretBlink {
-    0%, 49% { opacity: 0.8; }
-    50%, 100% { opacity: 0.2; }
-  }
+  /* Native streaming: no client-side typewriter caret. */
 
 	  @media (prefers-reduced-motion: reduce) {
 	    [data-chat-portal] [data-chat-messages].portal-follow-scroll {
 	      scroll-behavior: auto;
 	    }
 	    [data-chat-portal] [data-content-block].portal-stream-enter {
-	      animation: none;
-	    }
-	    [data-chat-portal] [data-content-block].portal-stream-active::after,
-	    [data-chat-portal] .portal-reasoning.portal-stream-active .portal-reasoning__content code::after {
 	      animation: none;
 	    }
 	  }

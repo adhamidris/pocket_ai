@@ -97,13 +97,12 @@ class ChatPortalClient {
     this.streamingContentBlocksById = new Map();
     this.streamingPendingBlockOps = new Map();
     this.streamingTextBlockActiveIds = new Set();
-    this.streamingToolBlockActiveIds = new Set();
-    this.streamingDirtyTextBlocks = new Set();
-    this.streamingBlockRenderRaf = null;
-    this.activeStreamingTextBlockId = null;
-    // Snapshot of content blocks when a tool approval is pending (preserves text before approval card)
-    this.preApprovalContentBlocksSnapshot = new Map();
-    this.followScrollEnabled = false;
+	    this.streamingToolBlockActiveIds = new Set();
+	    this.streamingDirtyTextBlocks = new Set();
+	    this.streamingBlockRenderRaf = null;
+	    // Snapshot of content blocks when a tool approval is pending (preserves text before approval card)
+	    this.preApprovalContentBlocksSnapshot = new Map();
+	    this.followScrollEnabled = false;
 	    this.spinnerDesiredText = "";
 	    this.spinnerDesiredPending = false;
 	    this.spinnerDesiredIsError = false;
@@ -134,16 +133,15 @@ class ChatPortalClient {
     // Streaming UX helpers
     this.scrollToBottomRaf = null;
     this.scrollToBottomBehavior = "auto";
-    this.streamingIdleStatusTimer = null;
-    this.streamingIdleStatusDelayMs = 120;
-    this.streamingSilenceStatusDelayMs = 450;
-    this.lastStreamEventAt = 0;
-    this.lastTextDeltaAt = 0;
-    this.textDeltaIntervalEma = 0;
-    this.hadToolsThisTurn = false;
+	    this.streamingIdleStatusTimer = null;
+	    this.streamingIdleStatusDelayMs = 120;
+	    this.lastStreamEventAt = 0;
+	    this.lastTextDeltaAt = 0;
+	    this.textDeltaIntervalEma = 0;
+	    this.hadToolsThisTurn = false;
 
-    // Agent runs/tasks panel state
-    this.agentRuns = new Map(); // runId -> { run, events, expanded, seenKeys, lastEventLabel }
+	    // Agent runs/tasks panel state
+	    this.agentRuns = new Map(); // runId -> { run, events, expanded, seenKeys, lastEventLabel }
     this.tasksRenderRaf = null;
     this.tasksPanelUserHidden = false;
 
@@ -820,7 +818,7 @@ class ChatPortalClient {
 		    this.pendingMessageId = null;
 	    this.pendingMetadataVersion = 0;
 	    this.usingStateMachine = false;
-	    this.workflowLocked = false;
+      this.workflowLocked = false;
 	    this.streamFinished = false;
 	    this.awaitingReply = true;
 	    this.isSending = true;
@@ -1053,60 +1051,64 @@ class ChatPortalClient {
 	    }
 	  }
 
-  handleBlockStartEvent(data) {
-	    let payload = null;
-	    try {
-	      payload = data ? JSON.parse(data) : null;
-    } catch (error) {
-      console.warn("Failed to parse block_start payload", error);
-      return;
-    }
-    if (!payload || typeof payload !== "object") return;
-    const block = payload.block && typeof payload.block === "object" ? payload.block : null;
-    if (!block) return;
-    const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
-	    this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
-	    this.upsertStreamingContentBlock(block);
+	  handleBlockStartEvent(data) {
+		    let payload = null;
+		    try {
+		      payload = data ? JSON.parse(data) : null;
+	    } catch (error) {
+	      console.warn("Failed to parse block_start payload", error);
+	      return;
+	    }
+	    if (!payload || typeof payload !== "object") return;
+	    const block = payload.block && typeof payload.block === "object" ? payload.block : null;
+	    if (!block) return;
 	    const blockType = (block.type || "").toString().trim().toLowerCase();
 	    const blockId = (block.block_id || block.blockId || "").toString().trim();
-    if (blockId) {
-      this.streamingContentBlocksById.set(blockId, block);
-    }
-	    if (blockId && this.isStreamingTextBlock(blockType)) {
-	      this.streamingTextBlockActiveIds.add(blockId);
-        this.setActiveStreamingTextBlock(blockId);
-        this.clearStreamingIdleStatusTimer();
-        if (this.spinnerDesiredPending) {
-          // Force-show the orbit loader between block_start and the first block_delta.
-          // This removes awkward silence before the assistant begins streaming text.
-          this.setSpinnerText(this.spinnerDesiredText, {
+	    const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
+	    this.flushStreamingBlockRenders();
+	    this._processBlockStart(payload, block, blockType, blockId, messageId);
+		  }
+
+	  _processBlockStart(payload, block, blockType, blockId, messageId) {
+		    this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
+		    this.upsertStreamingContentBlock(block);
+	    if (blockId) {
+	      this.streamingContentBlocksById.set(blockId, block);
+	    }
+		    if (blockId && this.isStreamingTextBlock(blockType)) {
+		      this.streamingTextBlockActiveIds.add(blockId);
+	        this.clearStreamingIdleStatusTimer();
+	        if (this.spinnerDesiredPending) {
+	          // Force-show the orbit loader between block_start and the first block_delta.
+	          // This removes awkward silence before the assistant begins streaming text.
+	          this.setSpinnerText(this.spinnerDesiredText, {
             pending: this.spinnerDesiredPending,
             isError: this.spinnerDesiredIsError,
             force: true,
           });
         }
-        // Keep the loader visible until we actually receive text deltas; otherwise
-        // the UI can go silent between block_start and the first block_delta.
-        this.repositionStreamingStatusRow();
-	    }
-	  }
+	        // Keep the loader visible until we actually receive text deltas; otherwise
+	        // the UI can go silent between block_start and the first block_delta.
+	        this.repositionStreamingStatusRow();
+		    }
+		  }
 
-  handleBlockDeltaEvent(data) {
-		    let payload = null;
-		    try {
+	  handleBlockDeltaEvent(data) {
+			    let payload = null;
+			    try {
 		      payload = data ? JSON.parse(data) : null;
 	    } catch (error) {
       console.warn("Failed to parse block_delta payload", error);
       return;
     }
     if (!payload || typeof payload !== "object") return;
-    const blockId = (payload.block_id || payload.blockId || "").toString().trim();
-    const ops = Array.isArray(payload.ops) ? payload.ops : [];
-    if (!blockId || !ops.length) return;
+	    const blockId = (payload.block_id || payload.blockId || "").toString().trim();
+	    const ops = Array.isArray(payload.ops) ? payload.ops : [];
+	    if (!blockId || !ops.length) return;
 
-      const now = Date.now();
-      if (this.lastTextDeltaAt) {
-        const interval = now - this.lastTextDeltaAt;
+	      const now = Date.now();
+	      if (this.lastTextDeltaAt) {
+	        const interval = now - this.lastTextDeltaAt;
         if (interval > 0) {
           this.textDeltaIntervalEma = this.textDeltaIntervalEma
             ? this.textDeltaIntervalEma * 0.85 + interval * 0.15
@@ -1117,54 +1119,47 @@ class ChatPortalClient {
 	    const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
 	    this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
 
-	    const wrapper = this.streamingContentBlockEls.get(blockId);
-      const blockType = wrapper && wrapper.dataset ? (wrapper.dataset.blockType || "").toString().trim().toLowerCase() : "";
-      if (!blockType || this.isStreamingTextBlock(blockType)) {
-	      this.streamingTextBlockActiveIds.add(blockId);
-        this.setActiveStreamingTextBlock(blockId);
-      }
-		    if (this.streamingStatusEl) {
-		      this.streamingStatusEl.classList.add("hidden");
-		    }
+		    const wrapper = this.streamingContentBlockEls.get(blockId);
+	      const blockType = wrapper && wrapper.dataset ? (wrapper.dataset.blockType || "").toString().trim().toLowerCase() : "";
+	      if (!blockType || this.isStreamingTextBlock(blockType)) {
+		      this.streamingTextBlockActiveIds.add(blockId);
+	      }
+			    if (this.streamingStatusEl) {
+			      this.streamingStatusEl.classList.add("hidden");
+			    }
 
 	    const pending = this.streamingPendingBlockOps.get(blockId) || [];
 	    pending.push(...ops);
-	    this.streamingPendingBlockOps.set(blockId, pending);
-	    this.streamingDirtyTextBlocks.add(blockId);
-	    this.scheduleStreamingBlockRender();
-	    this.scheduleStreamingIdleStatusReveal();
-	    this.scheduleScrollToBottom({ behavior: "auto" });
-	  }
+		    this.streamingPendingBlockOps.set(blockId, pending);
+		    this.streamingDirtyTextBlocks.add(blockId);
+		    this.scheduleStreamingBlockRender();
+		    this.scheduleScrollToBottom({ behavior: "auto" });
+		  }
 
-  handleBlockEndEvent(data) {
-	    let payload = null;
-	    try {
-	      payload = data ? JSON.parse(data) : null;
-    } catch (error) {
-      console.warn("Failed to parse block_end payload", error);
-      return;
-    }
-	    if (!payload || typeof payload !== "object") return;
-	    const blockId = (payload.block_id || payload.blockId || "").toString().trim();
-	    if (!blockId) return;
-
-	    const pendingOps = this.streamingPendingBlockOps.get(blockId);
-	    if (pendingOps && pendingOps.length) {
-	      this.streamingPendingBlockOps.delete(blockId);
-	      this.streamingDirtyTextBlocks.delete(blockId);
-	      this.applyBlockOps(blockId, pendingOps);
+	  handleBlockEndEvent(data) {
+		    let payload = null;
+		    try {
+		      payload = data ? JSON.parse(data) : null;
+	    } catch (error) {
+	      console.warn("Failed to parse block_end payload", error);
+	      return;
 	    }
-	    this.streamingTextBlockActiveIds.delete(blockId);
-      this.clearActiveStreamingTextBlock(blockId);
-      if (!this.activeStreamingTextBlockId && this.streamingTextBlockActiveIds.size) {
-        const remaining = Array.from(this.streamingTextBlockActiveIds);
-        this.setActiveStreamingTextBlock(remaining[remaining.length - 1]);
-      }
-      const wrapper = this.streamingContentBlockEls.get(blockId);
-      const type = wrapper && wrapper.dataset ? (wrapper.dataset.blockType || "").toString().trim().toLowerCase() : "";
-	      if (type === "reasoning") {
-	        const details = wrapper ? wrapper.querySelector("details") : null;
-	        if (details) {
+		    if (!payload || typeof payload !== "object") return;
+		    const blockId = (payload.block_id || payload.blockId || "").toString().trim();
+		    if (!blockId) return;
+
+		    const pendingOps = this.streamingPendingBlockOps.get(blockId);
+		    if (pendingOps && pendingOps.length) {
+		      this.streamingPendingBlockOps.delete(blockId);
+		      this.streamingDirtyTextBlocks.delete(blockId);
+		      this.applyBlockOps(blockId, pendingOps);
+		    }
+		    this.streamingTextBlockActiveIds.delete(blockId);
+	      const wrapper = this.streamingContentBlockEls.get(blockId);
+	      const type = wrapper && wrapper.dataset ? (wrapper.dataset.blockType || "").toString().trim().toLowerCase() : "";
+		      if (type === "reasoning") {
+		        const details = wrapper ? wrapper.querySelector("details") : null;
+		        if (details) {
 	          details.dataset.reasoningState = "complete";
 	          const summaryLabel = details.querySelector("[data-reasoning-summary-label]");
 	          if (summaryLabel) {
@@ -1174,12 +1169,9 @@ class ChatPortalClient {
 	            this.animateReasoningAutoCollapse(details);
 	          }
 	        }
-	      }
+		      }
 
-		    if (this.streamingTextBlockActiveIds.size === 0) {
-		      this.scheduleStreamingIdleStatusReveal();
-		    }
-			  }
+				  }
 
 	  animateReasoningAutoCollapse(details) {
 	    if (!details || !details.open) return;
@@ -1247,25 +1239,28 @@ class ChatPortalClient {
 	    );
 	  }
 
-	  handleBlockToolUseEvent(data) {
-	    let payload = null;
-	    try {
-      payload = data ? JSON.parse(data) : null;
-    } catch (error) {
+		  handleBlockToolUseEvent(data) {
+		    let payload = null;
+		    try {
+	      payload = data ? JSON.parse(data) : null;
+	    } catch (error) {
       console.warn("Failed to parse block_tool_use payload", error);
       return;
     }
     if (!payload || typeof payload !== "object") return;
     const block = payload.block && typeof payload.block === "object" ? payload.block : null;
-    if (!block) return;
-    this.clearStreamingIdleStatusTimer();
-    const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
-    this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
-    const blockId = (block.block_id || block.blockId || "").toString().trim();
-    const blockPayload = block.payload && typeof block.payload === "object" ? block.payload : {};
-    const phase = (blockPayload.phase || "").toString().trim().toLowerCase();
-    const status = (blockPayload.status || "").toString().trim().toLowerCase();
-    const isApprovalPending = phase === "approval_requested" || status === "pending_approval" || status === "pending";
+	    if (!block) return;
+	    this.clearStreamingIdleStatusTimer();
+	    const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
+	    this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
+	    const blockId = (block.block_id || block.blockId || "").toString().trim();
+
+	    // Tool cards must not overtake pending text, and approvals should snapshot the latest block model.
+	    this.flushStreamingBlockRenders();
+	    const blockPayload = block.payload && typeof block.payload === "object" ? block.payload : {};
+	    const phase = (blockPayload.phase || "").toString().trim().toLowerCase();
+	    const status = (blockPayload.status || "").toString().trim().toLowerCase();
+	    const isApprovalPending = phase === "approval_requested" || status === "pending_approval" || status === "pending";
     if (blockId && (phase === "started" || phase === "approval_requested" || status === "running" || status === "pending_approval" || status === "pending")) {
       this.streamingToolBlockActiveIds.add(blockId);
       this.hadToolsThisTurn = true;
@@ -1284,12 +1279,13 @@ class ChatPortalClient {
     this.setSpinnerText(this.spinnerDesiredText || "", {
       pending: true,
       isError: this.spinnerDesiredIsError,
-      force: true,
-    });
-    this.upsertStreamingContentBlock(block);
-    this.repositionStreamingStatusRow();
-    this.scheduleScrollToBottom({ behavior: "auto" });
-  }
+	      force: true,
+	    });
+
+	    this.upsertStreamingContentBlock(block);
+	    this.repositionStreamingStatusRow();
+	    this.scheduleScrollToBottom({ behavior: "auto" });
+	  }
 
   handleBlockToolResultEvent(data) {
     let payload = null;
@@ -1301,34 +1297,37 @@ class ChatPortalClient {
     }
     if (!payload || typeof payload !== "object") return;
     const block = payload.block && typeof payload.block === "object" ? payload.block : null;
-    if (!block) return;
-    this.clearStreamingIdleStatusTimer();
-    const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
-    this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
-    const blockId = (block.block_id || block.blockId || "").toString().trim();
-    const blockPayload = block.payload && typeof block.payload === "object" ? block.payload : {};
-    const phase = (blockPayload.phase || "").toString().trim().toLowerCase();
-    const status = (blockPayload.status || "").toString().trim().toLowerCase();
-    if (blockId) {
+	    if (!block) return;
+	    this.clearStreamingIdleStatusTimer();
+	    const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
+	    this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
+	    const blockId = (block.block_id || block.blockId || "").toString().trim();
+
+	    // Ensure tool result cards do not overtake pending text already in the DOM queue.
+	    this.flushStreamingBlockRenders();
+	    const blockPayload = block.payload && typeof block.payload === "object" ? block.payload : {};
+	    const phase = (blockPayload.phase || "").toString().trim().toLowerCase();
+	    const status = (blockPayload.status || "").toString().trim().toLowerCase();
+	    if (blockId) {
       if (phase === "finished") {
         this.streamingToolBlockActiveIds.delete(blockId);
       } else if (phase === "approval_resolved") {
         if (status && status !== "approved") {
           this.streamingToolBlockActiveIds.delete(blockId);
-        }
-      }
-    }
-    this.upsertStreamingContentBlock(block);
-    this.repositionStreamingStatusRow();
-    if (this.streamingToolBlockActiveIds.size === 0) {
-      this.scheduleStreamingIdleStatusReveal();
-    }
-    this.scheduleScrollToBottom({ behavior: "auto" });
-  }
+	        }
+	      }
+	    }
 
-  isStreamingTextBlock(type) {
-    return ["paragraph", "heading", "list_item", "code_block", "text", "reasoning"].includes(type);
-  }
+	    this.upsertStreamingContentBlock(block);
+	    this.repositionStreamingStatusRow();
+	    this.scheduleScrollToBottom({ behavior: "auto" });
+	  }
+
+	  isStreamingTextBlock(type) {
+	    // Leaf text blocks that actually receive block_delta/block_end events.
+	    // (Container blocks like list/quote don't emit block_end; avoid "stuck" active ids.)
+	    return ["paragraph", "heading", "list_item", "code_block", "text", "reasoning"].includes(type);
+	  }
 
   applyBlockOps(blockId, ops) {
     if (!Array.isArray(ops)) return;
@@ -1361,9 +1360,6 @@ class ChatPortalClient {
         }
       }
     });
-    if (blockModel) {
-      this.maybeUpgradeStreamingBlockMarkup(blockId, wrapper, blockModel);
-    }
   }
 
   applyBlockOpsToBlockModel(block, ops) {
@@ -1402,28 +1398,6 @@ class ChatPortalClient {
         payload.code = `${existing}${text}`;
       }
     });
-  }
-
-  maybeUpgradeStreamingBlockMarkup(blockId, wrapper, block) {
-    if (!wrapper || !block || typeof block !== "object") return;
-    const type = (block.type || "").toString().trim().toLowerCase();
-    if (!["paragraph", "heading", "list_item", "text"].includes(type)) return;
-    const payload = block.payload && typeof block.payload === "object" ? block.payload : {};
-    let rawText = "";
-    if (type === "text") {
-      const text = typeof payload.text === "string" ? payload.text : "";
-      rawText = this.stripInlineResponseBlocks(text);
-    } else {
-      const content = Array.isArray(payload.content) ? payload.content : [];
-      rawText = this.inlineNodesToText(content);
-    }
-    if (!rawText || !this.containsMarkdownTable(rawText)) return;
-    const replacement = this.buildContentBlockElement(block);
-    if (!replacement || replacement === wrapper) return;
-    if (wrapper.parentNode) {
-      wrapper.parentNode.replaceChild(replacement, wrapper);
-    }
-    this.streamingContentBlockEls.set(blockId, replacement);
   }
 
   scheduleStreamingBlockRender() {
@@ -1482,6 +1456,22 @@ class ChatPortalClient {
     const existing = this.streamingContentBlockEls.get(blockId);
     if (existing) {
       const payload = block.payload && typeof block.payload === "object" ? block.payload : {};
+      if (blockType === "table") {
+        const updated = this.updateStreamingTableBlock(existing, payload);
+        if (updated && updated !== existing) {
+          this.streamingContentBlockEls.set(blockId, updated);
+        }
+        this.scheduleScrollToBottom({ behavior: "auto" });
+        return;
+      }
+      if (blockType === "kv") {
+        const updated = this.updateStreamingKvBlock(existing, payload);
+        if (updated && updated !== existing) {
+          this.streamingContentBlockEls.set(blockId, updated);
+        }
+        this.scheduleScrollToBottom({ behavior: "auto" });
+        return;
+      }
       if (blockType === "tool_use") {
         this.updateToolEventCard(existing, payload);
       } else if (blockType === "tool_result") {
@@ -1512,6 +1502,214 @@ class ChatPortalClient {
     if (blockType === "tool_use" || blockType === "tool_result") {
       this.updateInlineToolCardsVisibility(this.streamingMessageNode);
     }
+  }
+
+  updateStreamingTableBlock(wrapper, payload) {
+    if (!wrapper || wrapper.nodeType !== Node.ELEMENT_NODE) return null;
+    if (!payload || typeof payload !== "object") return wrapper;
+    const columns = Array.isArray(payload.columns) ? payload.columns : [];
+    const rows = Array.isArray(payload.rows) ? payload.rows : [];
+    if (!columns.length) return wrapper;
+
+    const existingTable = wrapper.querySelector("table");
+    const existingBody = existingTable ? existingTable.querySelector("tbody") : null;
+    const existingHead = existingTable ? existingTable.querySelector("thead") : null;
+
+    // If the structure isn't what we expect, fall back to rebuilding.
+    if (!existingTable || !existingBody || !existingHead) {
+      const replacement = this.buildContentBlockElement({ type: "table", block_id: wrapper.dataset.blockId || "", payload });
+      if (replacement && wrapper.parentNode) {
+        wrapper.replaceWith(replacement);
+        return replacement;
+      }
+      return wrapper;
+    }
+
+    // If column count changed, rebuild to avoid drift.
+    const headCells = existingHead.querySelectorAll("th");
+    if (headCells.length !== columns.length) {
+      const replacement = this.buildContentBlockElement({ type: "table", block_id: wrapper.dataset.blockId || "", payload });
+      if (replacement && wrapper.parentNode) {
+        wrapper.replaceWith(replacement);
+        return replacement;
+      }
+      return wrapper;
+    }
+
+    // Update title (if present/changed).
+    const titleText = typeof payload.title === "string" ? payload.title.trim() : "";
+    const existingTitle = wrapper.firstElementChild && wrapper.firstElementChild.tagName === "DIV" ? wrapper.firstElementChild : null;
+    if (titleText) {
+      if (existingTitle && existingTitle.classList.contains("font-semibold")) {
+        if (existingTitle.textContent !== titleText) existingTitle.textContent = titleText;
+      }
+    }
+
+    // Ensure tbody rows exist and update cell content.
+    const existingRows = Array.from(existingBody.querySelectorAll("tr"));
+    for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+      const row = rows[rowIndex];
+      if (!row || typeof row !== "object") continue;
+      const cells = Array.isArray(row.cells) ? row.cells : [];
+      if (!cells.length) continue;
+
+      let tr = existingRows[rowIndex] || null;
+      if (!tr) {
+        tr = document.createElement("tr");
+        existingBody.appendChild(tr);
+        existingRows.push(tr);
+      }
+      tr.className = rowIndex % 2 === 0 ? "bg-background" : "bg-muted/20";
+      if (row.rtl) {
+        tr.dir = "rtl";
+        tr.classList.add("text-right");
+      } else {
+        tr.removeAttribute("dir");
+        tr.classList.remove("text-right");
+      }
+
+      const tds = Array.from(tr.querySelectorAll("td"));
+      while (tds.length < columns.length) {
+        const td = document.createElement("td");
+        td.className = "px-3 py-2 align-top text-foreground/90";
+        tr.appendChild(td);
+        tds.push(td);
+      }
+
+      for (let colIndex = 0; colIndex < columns.length; colIndex += 1) {
+        const td = tds[colIndex];
+        const cellValue = colIndex < cells.length ? cells[colIndex] : "";
+        const rendered = this.renderInlineMarkdown(typeof cellValue === "string" ? cellValue : cellValue == null ? "" : String(cellValue));
+        if (td.innerHTML !== rendered) {
+          td.innerHTML = rendered;
+        }
+      }
+    }
+
+    // Remove extra DOM rows if the payload shrank (rare, but keep consistent).
+    if (existingRows.length > rows.length) {
+      for (let idx = rows.length; idx < existingRows.length; idx += 1) {
+        existingRows[idx].remove();
+      }
+    }
+
+    // Update note.
+    const noteText = typeof payload.note === "string" ? payload.note.trim() : "";
+    const noteEl = wrapper.querySelector("p.text-xs");
+    if (noteText) {
+      if (noteEl) {
+        if (noteEl.textContent !== noteText) noteEl.textContent = noteText;
+      } else {
+        const note = document.createElement("p");
+        note.className = "px-4 py-2 text-xs text-muted-foreground border-t border-border/40";
+        note.textContent = noteText;
+        wrapper.appendChild(note);
+      }
+    } else if (noteEl) {
+      noteEl.remove();
+    }
+
+    if (payload.rtl) {
+      wrapper.dir = "rtl";
+      wrapper.classList.add("text-right");
+    } else {
+      wrapper.removeAttribute("dir");
+      wrapper.classList.remove("text-right");
+    }
+
+    return wrapper;
+  }
+
+  updateStreamingKvBlock(wrapper, payload) {
+    if (!wrapper || wrapper.nodeType !== Node.ELEMENT_NODE) return null;
+    if (!payload || typeof payload !== "object") return wrapper;
+    const entries = Array.isArray(payload.entries) ? payload.entries : [];
+    if (!entries.length) return wrapper;
+
+    const existingTable = wrapper.querySelector("table");
+    const existingBody = existingTable ? existingTable.querySelector("tbody") : null;
+    if (!existingTable || !existingBody) {
+      const replacement = this.buildContentBlockElement({ type: "kv", block_id: wrapper.dataset.blockId || "", payload });
+      if (replacement && wrapper.parentNode) {
+        wrapper.replaceWith(replacement);
+        return replacement;
+      }
+      return wrapper;
+    }
+
+    const existingRows = Array.from(existingBody.querySelectorAll("tr"));
+    for (let idx = 0; idx < entries.length; idx += 1) {
+      const entry = entries[idx];
+      if (!entry || typeof entry !== "object") continue;
+      const key = typeof entry.key === "string" ? entry.key.trim() : "";
+      if (!key) continue;
+      const value = typeof entry.value === "string" ? entry.value : entry.value == null ? "" : String(entry.value);
+
+      let tr = existingRows[idx] || null;
+      if (!tr) {
+        tr = document.createElement("tr");
+        existingBody.appendChild(tr);
+        existingRows.push(tr);
+      }
+      tr.className = idx % 2 === 0 ? "bg-background" : "bg-muted/20";
+
+      let th = tr.querySelector("th");
+      let td = tr.querySelector("td");
+      if (!th) {
+        th = document.createElement("th");
+        th.className = "px-3 py-2 align-top text-left text-[10px] font-semibold uppercase tracking-wide text-muted-foreground w-24";
+        tr.appendChild(th);
+      }
+      if (!td) {
+        td = document.createElement("td");
+        td.className = "px-3 py-2 align-top text-foreground/90";
+        tr.appendChild(td);
+      }
+
+      if (th.textContent !== key) th.textContent = key;
+      const rendered = this.renderInlineMarkdown(value);
+      if (td.innerHTML !== rendered) td.innerHTML = rendered;
+    }
+
+    if (existingRows.length > entries.length) {
+      for (let idx = entries.length; idx < existingRows.length; idx += 1) {
+        existingRows[idx].remove();
+      }
+    }
+
+    // Update title/note (same approach as table).
+    const titleText = typeof payload.title === "string" ? payload.title.trim() : "";
+    const existingTitle = wrapper.firstElementChild && wrapper.firstElementChild.tagName === "DIV" ? wrapper.firstElementChild : null;
+    if (titleText) {
+      if (existingTitle && existingTitle.classList.contains("font-semibold")) {
+        if (existingTitle.textContent !== titleText) existingTitle.textContent = titleText;
+      }
+    }
+
+    const noteText = typeof payload.note === "string" ? payload.note.trim() : "";
+    const noteEl = wrapper.querySelector("p.text-xs");
+    if (noteText) {
+      if (noteEl) {
+        if (noteEl.textContent !== noteText) noteEl.textContent = noteText;
+      } else {
+        const note = document.createElement("p");
+        note.className = "px-4 py-2 text-xs text-muted-foreground border-t border-border/40";
+        note.textContent = noteText;
+        wrapper.appendChild(note);
+      }
+    } else if (noteEl) {
+      noteEl.remove();
+    }
+
+    if (payload.rtl) {
+      wrapper.dir = "rtl";
+      wrapper.classList.add("text-right");
+    } else {
+      wrapper.removeAttribute("dir");
+      wrapper.classList.remove("text-right");
+    }
+
+    return wrapper;
   }
 
   handleTurnUpdatedEvent(data) {
@@ -4114,13 +4312,18 @@ class ChatPortalClient {
     return `${raw.slice(0, Math.max(0, limit - 1)).trim()}…`;
   }
 
-		  handleTurnPersistedEvent(data) {
-		    this.finalizingTurn = true;
-		    if (this.container && this.container.dataset) {
-		      this.container.dataset.finalizing = "true";
-		    }
-		    try {
-		      const payload = data ? JSON.parse(data) : null;
+			  handleTurnPersistedEvent(data) {
+			    this.finalizingTurn = true;
+			    if (this.container && this.container.dataset) {
+			      this.container.dataset.finalizing = "true";
+			    }
+	        this.flushStreamingBlockRenders();
+			    this._doTurnPersistedReconcile(data);
+			  }
+
+			  _doTurnPersistedReconcile(data) {
+			    try {
+			      const payload = data ? JSON.parse(data) : null;
 		      if (!payload) return;
 		      const messageId = payload.message_id || this.pendingMessageId || this.streamingMessageId || null;
           if (messageId) {
@@ -6374,6 +6577,41 @@ class ChatPortalClient {
     });
   }
 
+  renderInlineMarkdown(text) {
+    const raw = (text || "").toString();
+    if (!raw) return "";
+    const normalized = this.normalizeMarkdownForDisplay(raw);
+    if (typeof marked === "undefined") {
+      return this.renderPlainText(normalized);
+    }
+    let html = "";
+    try {
+      if (typeof marked.parseInline === "function") {
+        html = marked.parseInline(normalized);
+      } else {
+        // Older marked versions: parse() wraps in <p>. Best-effort unwrap for inline contexts.
+        html = marked.parse(normalized);
+        const trimmed = (html || "").trim();
+        const match = trimmed.match(/^<p>([\s\S]*)<\/p>\s*$/i);
+        if (match && match[1] != null) {
+          html = match[1];
+        }
+      }
+    } catch (_err) {
+      return this.renderPlainText(normalized);
+    }
+    if (typeof DOMPurify !== "undefined") {
+      // Inline-only allowlist to avoid layout-breaking tags inside table cells.
+      return DOMPurify.sanitize(html, {
+        ALLOWED_TAGS: ["strong", "em", "code", "a", "br", "span", "del", "kbd"],
+        ALLOWED_ATTR: ["href", "target", "rel"],
+        ADD_ATTR: ["target"],
+        FORBID_ATTR: ["style"],
+      });
+    }
+    return html;
+  }
+
   normalizeMarkdownForDisplay(text) {
     if (!text) return "";
 
@@ -7006,9 +7244,9 @@ class ChatPortalClient {
 	        wrapper = document.createElement("p");
 	        wrapper.className = "leading-relaxed";
 	      }
-	      wrapper.dataset.contentBlock = "true";
-	      wrapper.dataset.blockType = type;
-	      wrapper.dataset.contentBlockText = "true";
+      wrapper.dataset.contentBlock = "true";
+      wrapper.dataset.blockType = type;
+      wrapper.dataset.contentBlockText = "true";
       if (blockId) wrapper.dataset.blockId = blockId;
       const content = Array.isArray(payload.content) ? payload.content : [];
       const rawText = this.inlineNodesToText(content);
@@ -7405,7 +7643,7 @@ class ChatPortalClient {
             td.classList.add("text-right");
           }
           const cellValue = colIndex < cells.length ? cells[colIndex] : "";
-          td.innerHTML = this.renderPlainText(typeof cellValue === "string" ? cellValue : cellValue == null ? "" : String(cellValue));
+          td.innerHTML = this.renderInlineMarkdown(typeof cellValue === "string" ? cellValue : cellValue == null ? "" : String(cellValue));
           tr.appendChild(td);
         });
         if (row.rtl) {
@@ -7468,7 +7706,7 @@ class ChatPortalClient {
 
         const td = document.createElement("td");
         td.className = "px-3 py-2 align-top text-foreground/90";
-        td.innerHTML = this.renderPlainText(value);
+        td.innerHTML = this.renderInlineMarkdown(value);
 
         tr.appendChild(th);
         tr.appendChild(td);
@@ -7668,43 +7906,18 @@ class ChatPortalClient {
     return distance <= thresholdPx;
   }
 
-  setFollowScrollEnabled(enabled) {
-    const scroller = this.elements.messages;
-    if (!scroller) return;
-    const next = Boolean(enabled);
-    if (this.followScrollEnabled === next) return;
-    this.followScrollEnabled = next;
-    scroller.classList.toggle("portal-follow-scroll", next);
-  }
+	  setFollowScrollEnabled(enabled) {
+	    const scroller = this.elements.messages;
+	    if (!scroller) return;
+	    const next = Boolean(enabled);
+	    if (this.followScrollEnabled === next) return;
+	    this.followScrollEnabled = next;
+	    scroller.classList.toggle("portal-follow-scroll", next);
+	  }
 
-  setActiveStreamingTextBlock(blockId) {
-    const nextId = (blockId || "").toString().trim();
-    if (!nextId || this.activeStreamingTextBlockId === nextId) return;
-
-    const prevId = this.activeStreamingTextBlockId;
-    if (prevId) {
-      const prevEl = this.streamingContentBlockEls.get(prevId);
-      if (prevEl) prevEl.classList.remove("portal-stream-active");
-    }
-
-    this.activeStreamingTextBlockId = nextId;
-    const nextEl = this.streamingContentBlockEls.get(nextId);
-    if (nextEl) nextEl.classList.add("portal-stream-active");
-  }
-
-  clearActiveStreamingTextBlock(blockId) {
-    const id = blockId ? (blockId || "").toString().trim() : this.activeStreamingTextBlockId;
-    if (!id) return;
-    const el = this.streamingContentBlockEls.get(id);
-    if (el) el.classList.remove("portal-stream-active");
-    if (!blockId || id === this.activeStreamingTextBlockId) {
-      this.activeStreamingTextBlockId = null;
-    }
-  }
-
-  scheduleScrollToBottom({ behavior = "auto", force = false } = {}) {
-    const scroller = this.elements.messages;
-    if (!scroller) return;
+	  scheduleScrollToBottom({ behavior = "auto", force = false } = {}) {
+	    const scroller = this.elements.messages;
+	    if (!scroller) return;
     const nearBottom = this.isNearBottom(scroller);
     if (!force && !nearBottom) {
       this.setFollowScrollEnabled(false);
@@ -9312,14 +9525,13 @@ class ChatPortalClient {
 		    this.isStreaming = false;
         this.setFollowScrollEnabled(false);
 		    this.textDeltaIntervalEma = 0;
-		    this.lastTextDeltaAt = 0;
-		    this.hadToolsThisTurn = false;
-		    this.clearStreamingIdleStatusTimer();
-		    this.clearStreamingStatus();
-    this.clearActiveStreamingTextBlock();
-    if (removeNode && this.streamingMessageNode && this.streamingMessageNode.parentNode) {
-      this.streamingMessageNode.parentNode.removeChild(this.streamingMessageNode);
-    }
+			    this.lastTextDeltaAt = 0;
+			    this.hadToolsThisTurn = false;
+			    this.clearStreamingIdleStatusTimer();
+			    this.clearStreamingStatus();
+	    if (removeNode && this.streamingMessageNode && this.streamingMessageNode.parentNode) {
+	      this.streamingMessageNode.parentNode.removeChild(this.streamingMessageNode);
+	    }
     this.streamingMessageNode = null;
     this.streamingMessageBodyEl = null;
     this.streamingStatusEl = null;
@@ -9388,67 +9600,13 @@ class ChatPortalClient {
     this.streamingIdleStatusTimer = null;
   }
 
-  isAssistantTextStreaming() {
-    if (!this.streamingTextBlockActiveIds.size) return false;
-    const lastDeltaAt = this.lastTextDeltaAt || 0;
-    if (!lastDeltaAt) return false;
-    // Hysteresis: avoid flashing the spinner between normal delta bursts.
+	  isAssistantTextStreaming() {
+	    if (!this.streamingTextBlockActiveIds.size) return false;
+	    const lastDeltaAt = this.lastTextDeltaAt || 0;
+	    if (!lastDeltaAt) return false;
+	    // Hysteresis: avoid flashing the spinner between normal delta bursts.
     const threshold = 650;
     return Date.now() - lastDeltaAt < threshold;
-  }
-
-  scheduleStreamingIdleStatusReveal() {
-    if (!this.isStreaming || this.streamFinished) return;
-    if (!this.streamingStatusEl || !this.streamingStatusTextEl) return;
-    if (!this.spinnerDesiredPending) return;
-
-    this.clearStreamingIdleStatusTimer();
-
-    // Calculate delay based on when text last arrived
-    const lastDeltaAt = this.lastTextDeltaAt || 0;
-    const timeSinceLastDelta = lastDeltaAt ? Date.now() - lastDeltaAt : 999999;
-    const threshold = 650; // How long to wait after last delta before showing spinner
-
-    let delay;
-    if (timeSinceLastDelta < threshold) {
-      // Text just arrived, wait for it to stop then show spinner quickly
-      delay = threshold - timeSinceLastDelta + 50;
-    } else {
-      // Text has stopped, show spinner very soon
-      delay = 50;
-    }
-
-    this.streamingIdleStatusTimer = setTimeout(() => {
-      this.streamingIdleStatusTimer = null;
-      if (!this.isStreaming || this.streamFinished) return;
-      if (!this.spinnerDesiredPending) return;
-
-      // Re-check if text is still streaming
-      if (this.isAssistantTextStreaming()) {
-        // Still streaming, schedule another check
-        this.scheduleStreamingIdleStatusReveal();
-        return;
-      }
-
-      // Don't show spinner during final answer phase
-      // (tools finished, we had tools this turn, and we're receiving text)
-      const inFinalAnswerPhase =
-        this.hadToolsThisTurn &&
-        this.streamingToolBlockActiveIds.size === 0 &&
-        this.lastTextDeltaAt > 0;
-
-      if (inFinalAnswerPhase) {
-        // Final answer is streaming/paused, don't show spinner
-        return;
-      }
-
-      // Show the spinner
-      this.setSpinnerText(this.spinnerDesiredText, {
-        pending: this.spinnerDesiredPending,
-        isError: this.spinnerDesiredIsError,
-        force: true,
-      });
-    }, delay);
   }
 
   repositionStreamingStatusRow() {

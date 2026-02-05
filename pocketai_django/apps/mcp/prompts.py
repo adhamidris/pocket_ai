@@ -416,7 +416,7 @@ def build_system_message(
         - Optional: `language` (en/ar), `call_type` (service/marketing), `max_duration_minutes`.
         - **Strongly recommended:** include `context_items=[...]` (structured notes) whenever the call depends on facts you just retrieved or details you don't want lost in the chat stream.
           - Keep `objective` short (one sentence). Put facts, numbers, talking points, and evidence snippets into `context_items` instead of stuffing them into `objective`.
-          - Use a consistent shape for each item, e.g. `{title: "Fees", value: "..."}`
+          - Use a consistent shape for each item, e.g. `{{title: "Fees", value: "..."}}`
 
         ---
 

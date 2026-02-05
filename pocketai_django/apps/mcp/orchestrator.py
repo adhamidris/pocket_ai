@@ -330,6 +330,7 @@ class McpOrchestratorService:
         user_message: str,
         allowed_tools: set[str] | None = None,
         wait_for_tool_approval: bool = True,
+        portal_emit_blocks_enabled: bool = True,
         on_response_text_delta: Callable[[str], None] | None = None,
         on_status_change: Callable[[str], None] | None = None,
         on_placeholder_response: Callable[[str], None] | None = None,
@@ -398,6 +399,12 @@ class McpOrchestratorService:
         # Gateway mode is permanently enabled.
         gateway_enabled = True
         internal_tool_defs.extend(mcp_tools.GATEWAY_TOOL_DEFINITIONS)
+        if not portal_emit_blocks_enabled:
+            internal_tool_defs = [
+                tool_def
+                for tool_def in internal_tool_defs
+                if self._tool_schema_name(tool_def) != PORTAL_BLOCK_TOOL_NAME
+            ]
         enable_user_input_tool = not wait_for_tool_approval
         convo_meta = getattr(conversation, "metadata", None)
         convo_meta_map = convo_meta if isinstance(convo_meta, Mapping) else {}
@@ -2782,6 +2789,7 @@ class McpOrchestratorService:
         user_message: str,
         allowed_tools: set[str] | None = None,
         wait_for_tool_approval: bool = True,
+        portal_emit_blocks_enabled: bool = True,
         on_response_text_delta: Callable[[str], None] | None = None,
         on_status_change: Callable[[str], None] | None = None,
         on_placeholder_response: Callable[[str], None] | None = None,
@@ -2798,6 +2806,7 @@ class McpOrchestratorService:
             user_message=user_message,
             allowed_tools=allowed_tools,
             wait_for_tool_approval=wait_for_tool_approval,
+            portal_emit_blocks_enabled=portal_emit_blocks_enabled,
             on_response_text_delta=on_response_text_delta,
             on_status_change=on_status_change,
             on_placeholder_response=on_placeholder_response,

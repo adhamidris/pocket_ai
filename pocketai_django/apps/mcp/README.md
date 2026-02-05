@@ -60,7 +60,7 @@ Workflow tools:
 - Voice: `initiate_phone_call` (dev-only)
 - Background runs: `create_agent_run`, `list_agent_runs`, `get_agent_run`, `continue_agent_run`
 - MCP gateway: `mcp_search_tools`, `mcp_call_tool`
-- Portal output: `portal_emit_blocks`
+- Portal output (deprecated): `portal_emit_blocks` (disabled for portal turns; portal streams **server-built blocks**)
 - Input control: `request_user_input`, `create_agent_request`
 - PDF utilities: `pdf_generate`, `pdf_merge`, `pdf_extract_pages`, `pdf_extract_text`
 
@@ -106,7 +106,7 @@ Streaming Behavior
 ------------------
 - The first response may include a short placeholder.
 - After that, tool calls must emit empty content until final answer.
-- `portal_emit_blocks` can be used for structured streaming.
+- Portal turns stream **server-built blocks**; model-driven `portal_emit_blocks` is disabled to avoid mixed-mode streaming.
 - sanitizer.py removes investigative filler for professional/formal agents.
 
 ASCII Flow

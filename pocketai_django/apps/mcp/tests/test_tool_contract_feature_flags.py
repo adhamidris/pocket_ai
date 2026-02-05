@@ -92,3 +92,18 @@ class McpToolContractFeatureFlagTests(TestCase):
         self.assertIn("read_document", advertised)
         self.assertIn("create_case", advertised)
         self.assertIn("query_dataset", advertised)
+
+    def test_portal_emit_blocks_can_be_disabled_per_turn(self) -> None:
+        conversation = self._build_conversation(rag_agentic_mode=True)
+        provider = _ToolRecordingProvider()
+        orchestrator = McpOrchestratorService(agent=conversation.agent_profile, provider=provider)
+
+        orchestrator.stream_turn(
+            conversation=conversation,
+            user_message="What credit cards do you offer?",
+            portal_emit_blocks_enabled=False,
+        )
+
+        self.assertTrue(provider.tool_name_sets, "Provider never received tool definitions.")
+        advertised = provider.tool_name_sets[0]
+        self.assertNotIn("portal_emit_blocks", advertised)

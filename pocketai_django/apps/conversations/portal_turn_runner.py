@@ -845,6 +845,59 @@ class PortalTurnRunner:
         PortalTurn.objects.filter(id=self.turn.id).update(status=PortalTurnStatus.STREAMING, updated_at=timezone.now())
 
         cancel_state = {"last_check": 0.0, "cancelled": False}
+        portal_block_attempt = {"logged": False, "count": 0}
+
+        def _on_model_block_event(event: Mapping[str, object] | None) -> None:
+            """
+            Portal turns are server-built-blocks only.
+
+            If the model attempts to stream structured portal blocks (via the
+            portal_emit_blocks tool), ignore them to prevent mixed-mode streaming
+            (block_ops_active flips and subsequent text deltas get dropped).
+            """
+
+            if not event:
+                return
+
+            portal_block_attempt["count"] += 1
+            if portal_block_attempt["logged"]:
+                return
+            portal_block_attempt["logged"] = True
+
+            normalized: Mapping[str, object] | None
+            try:
+                normalized = coerce_block_event(event)
+            except Exception:
+                normalized = None
+            debug_event = normalized if isinstance(normalized, Mapping) else event
+
+            event_type = str(debug_event.get("type") or "").strip()
+            payload = debug_event.get("payload") if isinstance(debug_event.get("payload"), Mapping) else {}
+            block_id: str | None = None
+            lowered = event_type.lower()
+            if lowered == "block_start":
+                block = payload.get("block") if isinstance(payload, Mapping) else None
+                if isinstance(block, Mapping):
+                    block_id_value = str(block.get("block_id") or "").strip()
+                    if block_id_value:
+                        block_id = block_id_value
+            elif lowered in {"block_delta", "block_end"}:
+                block_id_value = str(payload.get("block_id") or "").strip()
+                if block_id_value:
+                    block_id = block_id_value
+
+            structured_log(
+                "portal",
+                "stream.portal_emit_blocks_ignored",
+                {
+                    "turn_id": str(self.turn.id),
+                    "conversation_id": str(getattr(self.conversation, "id", "") or ""),
+                    "business_id": str(getattr(self.conversation, "business_profile_id", "") or ""),
+                    "event_type": event_type or None,
+                    "block_id": block_id,
+                },
+                level=logging.WARNING,
+            )
 
         def _should_cancel() -> bool:
             now = time.monotonic()
@@ -868,7 +921,7 @@ class PortalTurnRunner:
             "on_stream_complete": lambda: None,
             "on_spinner_update": lambda _text: None,
             "on_tool_event": self.builder.on_tool_event,
-            "on_block_event": self.builder.on_block_event,
+            "on_block_event": _on_model_block_event,
             "on_reasoning_event": self.builder.on_reasoning_event,
             "should_cancel": _should_cancel,
         }
@@ -878,6 +931,9 @@ class PortalTurnRunner:
             parameters = {}
         if "wait_for_tool_approval" in parameters:
             stream_kwargs["wait_for_tool_approval"] = True
+        if "portal_emit_blocks_enabled" in parameters:
+            # Portal turns stream server-built blocks only (no model-driven portal_emit_blocks).
+            stream_kwargs["portal_emit_blocks_enabled"] = False
         stream_context = None
         try:
             stream_context = orchestrator.stream_turn(**stream_kwargs)
