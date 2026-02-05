@@ -159,9 +159,26 @@ class ChatPortalClient {
 
     // Raw text_delta streaming state (marked.js rendering path)
     this.streamingTextBuffer = "";
+    this.streamingTextQueuedBuffer = "";
+    this.streamingTextSegmentLocked = false;
     this.streamingTextEl = null;
     this.streamingTextSegmentIndex = 0;
     this.streamingTextRenderRaf = null;
+    this.streamingTextVisibleLen = 0;
+    this.streamingTextPacerBudget = 0;
+    this.streamingTextPacerLastAt = 0;
+    this.streamingTextPacerMode = "normal";
+    this.streamingTextDeferredActions = [];
+    this.streamingTextPacerConfig = {
+      baseCharsPerSecond: 42,
+      maxCharsPerSecond: 92,
+      backlogForMaxRate: 300,
+      maxRevealPerTick: 6,
+      maxBudgetChars: 16,
+      boundaryModeMultiplier: 1.1,
+      finalizeModeMultiplier: 1.2,
+      dtCapMs: 50,
+    };
 
 	    // Agent runs/tasks panel state
 	    this.agentRuns = new Map(); // runId -> { run, events, expanded, seenKeys, lastEventLabel }
@@ -299,10 +316,6 @@ class ChatPortalClient {
               (Array.isArray(contentBlocks) && contentBlocks.length
                 ? this.extractPlainTextFromContentBlocks(contentBlocks)
                 : bodyText) || "";
-            const isAgentRunHandoff = this.stripAgentRunHandoffPrefix(plainText) !== plainText;
-            if (isAgentRunHandoff) {
-              this.ensureAgentRunCollapsible(el, { source: "agent_run" }, messageId);
-            }
 
             // Prefer canonical block rendering when available.
             if (Array.isArray(contentBlocks) && contentBlocks.length) {
@@ -1102,7 +1115,15 @@ class ChatPortalClient {
 	    const blockId = (block.block_id || block.blockId || "").toString().trim();
 	    const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
 	    if (blockType === "reasoning") {
-	      this._finalizeStreamingTextSegment();
+	      this._queueAfterStreamingTextDrain(
+	        () => {
+	          this._finalizeStreamingTextSegment();
+	          this.flushStreamingBlockRenders();
+	          this._processBlockStart(payload, block, blockType, blockId, messageId);
+	        },
+	        { mode: "boundary" },
+	      );
+	      return;
 	    }
 	    this.flushStreamingBlockRenders();
 	    this._processBlockStart(payload, block, blockType, blockId, messageId);
@@ -1273,49 +1294,58 @@ class ChatPortalClient {
 		    try {
 	      payload = data ? JSON.parse(data) : null;
 	    } catch (error) {
-      console.warn("Failed to parse block_tool_use payload", error);
-      return;
-    }
-    if (!payload || typeof payload !== "object") return;
-    const block = payload.block && typeof payload.block === "object" ? payload.block : null;
-	    if (!block) return;
-	    this._finalizeStreamingTextSegment();
-	    this.clearStreamingIdleStatusTimer();
-	    const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
-	    this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
-	    const blockId = (block.block_id || block.blockId || "").toString().trim();
+	      console.warn("Failed to parse block_tool_use payload", error);
+	      return;
+	    }
+	    if (!payload || typeof payload !== "object") return;
+	    const block = payload.block && typeof payload.block === "object" ? payload.block : null;
+		    if (!block) return;
+		    this._queueAfterStreamingTextDrain(
+		      () => {
+		        this._finalizeStreamingTextSegment();
+		        this.clearStreamingIdleStatusTimer();
+		        const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
+		        this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
+		        const blockId = (block.block_id || block.blockId || "").toString().trim();
 
-	    // Tool cards must not overtake pending text, and approvals should snapshot the latest block model.
-	    this.flushStreamingBlockRenders();
-	    const blockPayload = block.payload && typeof block.payload === "object" ? block.payload : {};
-	    const phase = (blockPayload.phase || "").toString().trim().toLowerCase();
-	    const status = (blockPayload.status || "").toString().trim().toLowerCase();
-	    const isApprovalPending = phase === "approval_requested" || status === "pending_approval" || status === "pending";
-    if (blockId && (phase === "started" || phase === "approval_requested" || status === "running" || status === "pending_approval" || status === "pending")) {
-      this.streamingToolBlockActiveIds.add(blockId);
-      this.hadToolsThisTurn = true;
-    }
-    // When a tool approval is requested, save a snapshot of content blocks that existed before it.
-    // This ensures the pre-approval text is preserved when the approval is resolved and the turn continues.
-    if (isApprovalPending && this.streamingContentBlocksById && this.streamingContentBlocksById.size > 0) {
-      this.streamingContentBlocksById.forEach((blockData, id) => {
-        if (!this.preApprovalContentBlocksSnapshot.has(id)) {
-          this.preApprovalContentBlocksSnapshot.set(id, JSON.parse(JSON.stringify(blockData)));
-        }
-      });
-    }
-    // Keep the overall turn in a "pending" state.
-    // The global spinner row is allowed during tool phases, but it should never show while text deltas are streaming.
-    this.setSpinnerText(this.spinnerDesiredText || "", {
-      pending: true,
-      isError: this.spinnerDesiredIsError,
-	      force: true,
-	    });
+		        // Tool cards must not overtake pending text, and approvals should snapshot the latest block model.
+		        this.flushStreamingBlockRenders();
+		        const blockPayload = block.payload && typeof block.payload === "object" ? block.payload : {};
+		        const phase = (blockPayload.phase || "").toString().trim().toLowerCase();
+		        const status = (blockPayload.status || "").toString().trim().toLowerCase();
+		        const isApprovalPending = phase === "approval_requested" || status === "pending_approval" || status === "pending";
+		        if (
+		          blockId &&
+		          (phase === "started" || phase === "approval_requested" || status === "running" || status === "pending_approval" || status === "pending")
+		        ) {
+		          this.streamingToolBlockActiveIds.add(blockId);
+		          this.hadToolsThisTurn = true;
+		        }
+		        // When a tool approval is requested, save a snapshot of content blocks that existed before it.
+		        // This ensures the pre-approval text is preserved when the approval is resolved and the turn continues.
+		        if (isApprovalPending && this.streamingContentBlocksById && this.streamingContentBlocksById.size > 0) {
+		          this.streamingContentBlocksById.forEach((blockData, id) => {
+		            if (!this.preApprovalContentBlocksSnapshot.has(id)) {
+		              this.preApprovalContentBlocksSnapshot.set(id, JSON.parse(JSON.stringify(blockData)));
+		            }
+		          });
+		        }
+		        // Keep the overall turn in a "pending" state.
+		        // The global spinner row is allowed during tool phases, but it should never show while text deltas are streaming.
+		        this.setSpinnerText(this.spinnerDesiredText || "", {
+		          pending: true,
+		          isError: this.spinnerDesiredIsError,
+		          force: true,
+		        });
 
-	    this.upsertStreamingContentBlock(block);
-	    this.repositionStreamingStatusRow();
-	    this.scheduleScrollToBottom({ behavior: "auto" });
-	  }
+		        this.upsertStreamingContentBlock(block);
+		        this.repositionStreamingStatusRow();
+		        this.scheduleScrollToBottom({ behavior: "auto" });
+		        this._unlockStreamingTextSegmentAndFlushQueued();
+		      },
+		      { mode: "boundary" },
+		    );
+		  }
 
   handleBlockToolResultEvent(data) {
     let payload = null;
@@ -1327,32 +1357,38 @@ class ChatPortalClient {
     }
     if (!payload || typeof payload !== "object") return;
     const block = payload.block && typeof payload.block === "object" ? payload.block : null;
-	    if (!block) return;
-	    this._finalizeStreamingTextSegment();
-	    this.clearStreamingIdleStatusTimer();
-	    const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
-	    this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
-	    const blockId = (block.block_id || block.blockId || "").toString().trim();
+		    if (!block) return;
+		    this._queueAfterStreamingTextDrain(
+		      () => {
+		        this._finalizeStreamingTextSegment();
+		        this.clearStreamingIdleStatusTimer();
+		        const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
+		        this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
+		        const blockId = (block.block_id || block.blockId || "").toString().trim();
 
-	    // Ensure tool result cards do not overtake pending text already in the DOM queue.
-	    this.flushStreamingBlockRenders();
-	    const blockPayload = block.payload && typeof block.payload === "object" ? block.payload : {};
-	    const phase = (blockPayload.phase || "").toString().trim().toLowerCase();
-	    const status = (blockPayload.status || "").toString().trim().toLowerCase();
-	    if (blockId) {
-      if (phase === "finished") {
-        this.streamingToolBlockActiveIds.delete(blockId);
-      } else if (phase === "approval_resolved") {
-        if (status && status !== "approved") {
-          this.streamingToolBlockActiveIds.delete(blockId);
-	        }
-	      }
-	    }
+		        // Ensure tool result cards do not overtake pending text already in the DOM queue.
+		        this.flushStreamingBlockRenders();
+		        const blockPayload = block.payload && typeof block.payload === "object" ? block.payload : {};
+		        const phase = (blockPayload.phase || "").toString().trim().toLowerCase();
+		        const status = (blockPayload.status || "").toString().trim().toLowerCase();
+		        if (blockId) {
+		          if (phase === "finished") {
+		            this.streamingToolBlockActiveIds.delete(blockId);
+		          } else if (phase === "approval_resolved") {
+		            if (status && status !== "approved") {
+		              this.streamingToolBlockActiveIds.delete(blockId);
+		            }
+		          }
+		        }
 
-	    this.upsertStreamingContentBlock(block);
-	    this.repositionStreamingStatusRow();
-	    this.scheduleScrollToBottom({ behavior: "auto" });
-	  }
+		        this.upsertStreamingContentBlock(block);
+		        this.repositionStreamingStatusRow();
+		        this.scheduleScrollToBottom({ behavior: "auto" });
+		        this._unlockStreamingTextSegmentAndFlushQueued();
+		      },
+		      { mode: "boundary" },
+		    );
+  }
 
   // ── Raw text_delta streaming (marked.js path) ──────────────────────────
 
@@ -1398,12 +1434,22 @@ class ChatPortalClient {
     const text = (payload.text || "").toString();
     if (!text) return;
 
-    this.ensureStreamingMessageNode(this.pendingMessageId);
-    if (!this.streamingTextEl) {
-      this._createStreamingTextEl();
+    const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
+    this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
+    if (this.streamingTextSegmentLocked) {
+      this.streamingTextQueuedBuffer += text;
+      this.traceStream("text_delta", { textLen: text.length, queuedLen: this.streamingTextQueuedBuffer.length, locked: true });
+    } else {
+      if (!this.streamingTextEl) {
+        this._createStreamingTextEl();
+      }
+      this.streamingTextBuffer += text;
+      this.traceStream("text_delta", { textLen: text.length, bufferLen: this.streamingTextBuffer.length });
+      if (this.streamingTextPacerMode !== "finalize") {
+        this.streamingTextPacerMode = "normal";
+      }
+      this.scheduleStreamingTextRender();
     }
-    this.streamingTextBuffer += text;
-    this.traceStream("text_delta", { textLen: text.length, bufferLen: this.streamingTextBuffer.length });
     this.lastTextDeltaAt = Date.now();
     this.lastStreamEventAt = Date.now();
 
@@ -1411,12 +1457,14 @@ class ChatPortalClient {
     if (this.streamingStatusEl) {
       this.streamingStatusEl.classList.add("hidden");
     }
-
-    this.scheduleStreamingTextRender();
   }
 
   _createStreamingTextEl() {
     if (!this.streamingBlocksEl) return;
+    this.streamingTextVisibleLen = 0;
+    this.streamingTextPacerBudget = 0;
+    this.streamingTextPacerLastAt = 0;
+    this.streamingTextPacerMode = "normal";
     const el = document.createElement("div");
     el.dataset.contentBlock = "true";
     el.dataset.blockType = "streaming_text";
@@ -1440,16 +1488,123 @@ class ChatPortalClient {
     });
   }
 
-  flushStreamingTextRender() {
-    if (!this.streamingTextEl) return;
+	  flushStreamingTextRender() {
+	    if (!this.streamingTextEl) return;
+	    const raw = (this.streamingTextBuffer || "").toString();
+	    const rawLen = raw.length;
+    if (!rawLen) {
+      if (this.streamingTextDeferredActions && this.streamingTextDeferredActions.length) {
+        const actions = this.streamingTextDeferredActions.slice(0);
+        this.streamingTextDeferredActions = [];
+        this.streamingTextPacerMode = "normal";
+        actions.forEach((fn) => {
+          try {
+            fn();
+          } catch (_err) {
+            // ignore
+          }
+        });
+      }
+      return;
+    }
+
+	    const now = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+	    const lastAt = this.streamingTextPacerLastAt || now;
+	    let dtMs = now - lastAt;
+	    if (!Number.isFinite(dtMs) || dtMs < 0) dtMs = 0;
+	    const pacerCfg = this.streamingTextPacerConfig || {};
+	    const dtCapMs = Number.isFinite(Number(pacerCfg.dtCapMs)) ? Number(pacerCfg.dtCapMs) : 50;
+	    // Cap dt to prevent huge "catch up" jumps after long stalls/background tabs.
+	    dtMs = Math.min(dtMs, Math.max(1, dtCapMs));
+	    this.streamingTextPacerLastAt = now;
+
+    const prevVisibleLen = Math.max(0, Math.min(this.streamingTextVisibleLen || 0, rawLen));
+    this.streamingTextVisibleLen = prevVisibleLen;
+    const backlogLen = rawLen - prevVisibleLen;
+
+	    if (backlogLen > 0) {
+	      const mode = (this.streamingTextPacerMode || "normal").toString();
+	      const baseCharsPerSecond = Number.isFinite(Number(pacerCfg.baseCharsPerSecond))
+	        ? Number(pacerCfg.baseCharsPerSecond)
+	        : 42;
+	      const maxCharsPerSecond = Number.isFinite(Number(pacerCfg.maxCharsPerSecond))
+	        ? Number(pacerCfg.maxCharsPerSecond)
+	        : 92;
+	      const backlogForMaxRate = Number.isFinite(Number(pacerCfg.backlogForMaxRate))
+	        ? Number(pacerCfg.backlogForMaxRate)
+	        : 300;
+	      const maxRevealPerTick = Number.isFinite(Number(pacerCfg.maxRevealPerTick))
+	        ? Number(pacerCfg.maxRevealPerTick)
+	        : 6;
+	      const maxBudgetChars = Number.isFinite(Number(pacerCfg.maxBudgetChars))
+	        ? Number(pacerCfg.maxBudgetChars)
+	        : 16;
+	      const boundaryModeMultiplier = Number.isFinite(Number(pacerCfg.boundaryModeMultiplier))
+	        ? Number(pacerCfg.boundaryModeMultiplier)
+	        : 1.1;
+	      const finalizeModeMultiplier = Number.isFinite(Number(pacerCfg.finalizeModeMultiplier))
+	        ? Number(pacerCfg.finalizeModeMultiplier)
+	        : 1.2;
+
+	      const backlogFactor = Math.min(1, backlogLen / Math.max(1, backlogForMaxRate));
+	      const effectiveBase = Math.max(1, Math.min(baseCharsPerSecond, maxCharsPerSecond));
+	      const effectiveMax = Math.max(effectiveBase, maxCharsPerSecond);
+	      let charsPerSecond = effectiveBase + (effectiveMax - effectiveBase) * backlogFactor;
+	      if (mode === "boundary") {
+	        charsPerSecond *= boundaryModeMultiplier;
+	      } else if (mode === "finalize") {
+	        charsPerSecond *= finalizeModeMultiplier;
+	      }
+	      charsPerSecond = Math.max(1, charsPerSecond);
+	      this.streamingTextPacerBudget =
+	        (this.streamingTextPacerBudget || 0) + charsPerSecond * (Math.max(0, dtMs || 16) / 1000);
+	      this.streamingTextPacerBudget = Math.min(maxBudgetChars, Math.max(0, this.streamingTextPacerBudget || 0));
+	      let reveal = Math.floor(this.streamingTextPacerBudget);
+	      if (reveal <= 0 && this.streamingTextPacerBudget >= 0.95) reveal = 1;
+	      reveal = Math.min(reveal, maxRevealPerTick, backlogLen);
+	      this.streamingTextVisibleLen = prevVisibleLen + reveal;
+	      this.streamingTextPacerBudget = Math.max(0, (this.streamingTextPacerBudget || 0) - reveal);
+	    } else {
+      this.streamingTextPacerBudget = 0;
+    }
+
+    const visibleText = raw.slice(0, Math.max(0, Math.min(this.streamingTextVisibleLen || 0, rawLen)));
     const t0 = this.streamTraceEnabled && typeof performance !== "undefined" && performance.now ? performance.now() : 0;
-    this.streamingTextEl.innerHTML = this.renderMarkdown(this.streamingTextBuffer);
+    this.streamingTextEl.innerHTML = this.renderMarkdown(visibleText);
     this.applyMarkdownTableStyles(this.streamingTextEl);
     if (t0) {
       const dt = (typeof performance !== "undefined" && performance.now ? performance.now() : 0) - t0;
-      this.traceStream("text_render", { ms: Math.round(Math.max(0, dt)), bufferLen: this.streamingTextBuffer.length });
+      this.traceStream("text_render", {
+        ms: Math.round(Math.max(0, dt)),
+        bufferLen: rawLen,
+        visibleLen: Math.max(0, Math.min(this.streamingTextVisibleLen || 0, rawLen)),
+        backlogLen: Math.max(0, rawLen - Math.max(0, Math.min(this.streamingTextVisibleLen || 0, rawLen))),
+        mode: (this.streamingTextPacerMode || "normal").toString(),
+      });
     }
     this.scheduleScrollToBottom({ behavior: "auto" });
+
+    const remaining = Math.max(0, rawLen - Math.max(0, Math.min(this.streamingTextVisibleLen || 0, rawLen)));
+    if (remaining > 0) {
+      this.scheduleStreamingTextRender();
+      return;
+    }
+    if (this.streamingTextDeferredActions && this.streamingTextDeferredActions.length) {
+      const actions = this.streamingTextDeferredActions.slice(0);
+      this.streamingTextDeferredActions = [];
+      this.streamingTextPacerMode = "normal";
+      actions.forEach((fn) => {
+        try {
+          fn();
+        } catch (_err) {
+          // ignore
+        }
+      });
+      // Deferred actions may enqueue new streaming text (queued buffer). If so, keep ticking.
+      if (this.streamingTextEl && (this.streamingTextBuffer || "").length > (this.streamingTextVisibleLen || 0)) {
+        this.scheduleStreamingTextRender();
+      }
+    }
   }
 
   _finalizeStreamingTextSegment() {
@@ -1458,17 +1613,62 @@ class ChatPortalClient {
       this.streamingTextRenderRaf = null;
     }
     if (this.streamingTextEl) {
-      this.flushStreamingTextRender();
+      this.streamingTextVisibleLen = (this.streamingTextBuffer || "").length;
+      this.streamingTextPacerBudget = 0;
+      this.streamingTextPacerLastAt = 0;
+      this.streamingTextEl.innerHTML = this.renderMarkdown(this.streamingTextBuffer);
+      this.applyMarkdownTableStyles(this.streamingTextEl);
     }
     this.streamingTextEl = null;
     this.streamingTextBuffer = "";
+    this.streamingTextVisibleLen = 0;
+    this.streamingTextPacerBudget = 0;
+    this.streamingTextPacerLastAt = 0;
+    this.streamingTextPacerMode = "normal";
   }
 
-	  isStreamingTextBlock(type) {
-	    // Leaf text blocks that actually receive block_delta/block_end events.
-	    // (Container blocks like list/quote don't emit block_end; avoid "stuck" active ids.)
-	    return ["paragraph", "heading", "list_item", "code_block", "text", "reasoning"].includes(type);
-	  }
+  _queueAfterStreamingTextDrain(fn, { mode = "boundary" } = {}) {
+    if (typeof fn !== "function") return;
+    const backlog =
+      this.streamingTextEl && this.streamingTextBuffer
+        ? Math.max(0, this.streamingTextBuffer.length - (this.streamingTextVisibleLen || 0))
+        : 0;
+    if (!this.streamingTextEl || backlog <= 0) {
+      fn();
+      return;
+    }
+    if (!Array.isArray(this.streamingTextDeferredActions)) {
+      this.streamingTextDeferredActions = [];
+    }
+    this.streamingTextDeferredActions.push(fn);
+    this.streamingTextPacerMode = (mode || "boundary").toString();
+    if (this.streamingTextPacerMode === "boundary") {
+      // Prevent late deltas from blocking the drain; queue them for the next text segment.
+      this.streamingTextSegmentLocked = true;
+    }
+    this.scheduleStreamingTextRender();
+  }
+
+  _unlockStreamingTextSegmentAndFlushQueued() {
+    if (!this.streamingTextSegmentLocked) return;
+    this.streamingTextSegmentLocked = false;
+    if (!this.streamingTextQueuedBuffer) return;
+    this.streamingTextBuffer = this.streamingTextQueuedBuffer;
+    this.streamingTextQueuedBuffer = "";
+    this.streamingTextVisibleLen = 0;
+    this.streamingTextPacerBudget = 0;
+    this.streamingTextPacerLastAt = 0;
+    if (!this.streamingTextEl) {
+      this._createStreamingTextEl();
+    }
+    this.scheduleStreamingTextRender();
+  }
+
+		  isStreamingTextBlock(type) {
+		    // Leaf text blocks that actually receive block_delta/block_end events.
+		    // (Container blocks like list/quote don't emit block_end; avoid "stuck" active ids.)
+		    return ["paragraph", "heading", "list_item", "code_block", "text", "reasoning"].includes(type);
+		  }
 
   applyBlockOps(blockId, ops) {
     if (!Array.isArray(ops)) return;
@@ -4453,15 +4653,20 @@ class ChatPortalClient {
     return `${raw.slice(0, Math.max(0, limit - 1)).trim()}…`;
   }
 
-			  handleTurnPersistedEvent(data) {
-			    this.finalizingTurn = true;
-			    if (this.container && this.container.dataset) {
-			      this.container.dataset.finalizing = "true";
-			    }
-	        this._finalizeStreamingTextSegment();
-	        this.flushStreamingBlockRenders();
-			    this._doTurnPersistedReconcile(data);
-			  }
+				  handleTurnPersistedEvent(data) {
+				    this.finalizingTurn = true;
+				    if (this.container && this.container.dataset) {
+				      this.container.dataset.finalizing = "true";
+				    }
+		        this._queueAfterStreamingTextDrain(
+		          () => {
+		            this._finalizeStreamingTextSegment();
+		            this.flushStreamingBlockRenders();
+		            this._doTurnPersistedReconcile(data);
+		          },
+		          { mode: "finalize" },
+		        );
+				  }
 
 			  _doTurnPersistedReconcile(data) {
 			    try {
@@ -6872,7 +7077,7 @@ class ChatPortalClient {
       return blocks.filter((entry) => entry && typeof entry === "object");
     }
     const body = typeof fallbackBody === "string" ? fallbackBody : fallbackBody == null ? "" : String(fallbackBody);
-    const cleaned = this.stripAgentRunHandoffPrefix(this.stripInlineResponseBlocks(body)).trim();
+    const cleaned = this.stripInlineResponseBlocks(body).trim();
     if (!cleaned) return [];
     return [
       {
@@ -6951,7 +7156,7 @@ class ChatPortalClient {
         messageBodyEl.appendChild(root);
         return root;
       })();
-    const normalizedBlocks = this.stripAgentRunHandoffFromBlocks(blocks);
+    const normalizedBlocks = blocks;
     this.renderContentBlocksInto(blocksRoot, normalizedBlocks);
   }
 
@@ -6992,7 +7197,7 @@ class ChatPortalClient {
         messageBodyEl.appendChild(root);
         return root;
       })();
-    const normalizedBlocks = this.stripAgentRunHandoffFromBlocks(blocks);
+    const normalizedBlocks = blocks;
     this.reconcileContentBlocksInto(blocksRoot, normalizedBlocks);
   }
 
@@ -8387,60 +8592,7 @@ class ChatPortalClient {
     }
   }
 
-  stripAgentRunHandoffPrefix(text) {
-    const raw = (text || "").toString();
-    if (!raw) return "";
-    const trimmed = raw.trim();
-    const lines = trimmed.split(/\r?\n/);
-    if (!lines.length) return trimmed;
-    const first = (lines[0] || "").trim();
-    const handoffPrefixes = [
-      "✅ background run completed:",
-      "background run completed:",
-      "✅ background run update:",
-      "background run update:",
-    ];
-    const normalized = first.toLowerCase();
-    const matched = handoffPrefixes.some((p) => normalized.startsWith(p));
-    if (!matched) return trimmed;
-    const rest = lines.slice(1).join("\n").trim();
-    return rest || "";
-  }
 
-  stripAgentRunHandoffFromBlocks(blocks) {
-    if (!Array.isArray(blocks) || !blocks.length) return blocks;
-    let stripped = false;
-    return blocks.reduce((acc, block) => {
-      if (!block || typeof block !== "object") return acc;
-      const type = (block.type || "").toString().trim().toLowerCase();
-      if (!stripped && ["paragraph", "heading", "list_item"].includes(type)) {
-        const payload = block.payload && typeof block.payload === "object" ? block.payload : {};
-        const content = Array.isArray(payload.content) ? payload.content : [];
-        const isSimpleText = content.length === 1 && content[0] && typeof content[0].text === "string";
-        const rawText = isSimpleText ? content[0].text : this.inlineNodesToText(content);
-        const cleaned = this.stripAgentRunHandoffPrefix(rawText);
-        if (cleaned !== rawText) {
-          stripped = true;
-          if (cleaned) {
-            const nextContent = isSimpleText
-              ? [{ ...content[0], text: cleaned }]
-              : [{ text: cleaned }];
-            acc.push({ ...block, payload: { ...payload, content: nextContent } });
-          }
-          return acc;
-        }
-      }
-      acc.push(block);
-      return acc;
-    }, []);
-  }
-
-  extractAgentRunTitleFromText(text) {
-    const raw = (text || "").toString();
-    if (!raw) return "";
-    const match = raw.match(/Background run (?:completed|update)[^:]*:\s*(.+)\s*$/im);
-    return match && match[1] ? match[1].trim() : "";
-  }
 
   humanizeAgentToolName(toolName) {
     const raw = (toolName || "").toString().trim();
@@ -8587,7 +8739,7 @@ class ChatPortalClient {
 
     const payload = this.getMessageRenderPayload(messageId);
     const rawBlocks = payload && Array.isArray(payload.blocks) ? payload.blocks : [];
-    const cleanedBlocks = this.stripAgentRunHandoffFromBlocks(rawBlocks);
+    const cleanedBlocks = rawBlocks;
     const rawText =
       (payload && payload.blocks && payload.blocks.length
         ? this.extractPlainTextFromContentBlocks(payload.blocks)
@@ -8595,9 +8747,9 @@ class ChatPortalClient {
       (payload ? payload.body : "") ||
       "";
 
-    const cleanedText = this.stripAgentRunHandoffPrefix(rawText);
+    const cleanedText = rawText;
 
-    const title = (run && run.title ? String(run.title).trim() : "") || this.extractAgentRunTitleFromText(rawText);
+    const title = (run && run.title ? String(run.title).trim() : "");
 
     const milestoneTypes = new Set(["needs_approval", "needs_user", "run_handoff", "run_result", "run_summary"]);
     const isMilestone = milestoneTypes.has(metaType);
@@ -9695,16 +9847,23 @@ class ChatPortalClient {
 		    }
 		    this.streamingBlockRenderRaf = null;
 		    this.spinnerDesiredText = "";
-		    this.spinnerDesiredPending = false;
-		    this.spinnerDesiredIsError = false;
+    this.spinnerDesiredPending = false;
+    this.spinnerDesiredIsError = false;
     // Clean up raw text_delta streaming state
     this.streamingTextBuffer = "";
+    this.streamingTextQueuedBuffer = "";
+    this.streamingTextSegmentLocked = false;
     this.streamingTextEl = null;
     this.streamingTextSegmentIndex = 0;
     if (this.streamingTextRenderRaf) {
       cancelAnimationFrame(this.streamingTextRenderRaf);
     }
     this.streamingTextRenderRaf = null;
+    this.streamingTextVisibleLen = 0;
+    this.streamingTextPacerBudget = 0;
+    this.streamingTextPacerLastAt = 0;
+    this.streamingTextPacerMode = "normal";
+    this.streamingTextDeferredActions = [];
 		    if (removeNode) {
 		      this.pendingMessageId = null;
 		    }

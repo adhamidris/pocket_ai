@@ -1868,8 +1868,7 @@ class AgentRunProcessingService:
                         preview = response_text
                         if len(preview) > 6000:
                             preview = preview[:5999].rstrip() + "…"
-                        prefix = f"✅ Background run completed: {run.title or 'Task'}"
-                        handoff_text = f"{prefix}\n\n{preview}"
+                        handoff_text = preview
                         already_handoff = ConversationMessage.objects.filter(
                             conversation_id=anchor_conversation.id,
                             metadata__agent_run_id=str(run.id),
