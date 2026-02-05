@@ -3586,7 +3586,9 @@ def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHtt
             while True:
                 if redis_conn is not None and redis_stream_key:
                     # Avoid "block forever" so we can emit keepalives and survive slow first-token turns.
-                    block_ms = int(max(200, keepalive_seconds * 1000))
+                    # After we deliver `turn_persisted`, prefer a short block window so the
+                    # SSE stream can observe `FINALIZED` and close promptly.
+                    block_ms = 200 if sent_turn_persisted else int(max(200, keepalive_seconds * 1000))
                     from_id = str(redis_last_id)
                     t0 = time.perf_counter()
                     try:
@@ -3766,7 +3768,8 @@ def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHtt
                             drained_total = 0
                             while True:
                                 try:
-                                    drain_entries = redis_conn.xread({redis_stream_key: redis_last_id}, count=250, block=0)
+                                    # Redis Streams: BLOCK 0 means "block forever". Omit BLOCK for a truly non-blocking drain.
+                                    drain_entries = redis_conn.xread({redis_stream_key: redis_last_id}, count=250)
                                 except Exception:
                                     drain_entries = []
                                 if not drain_entries:

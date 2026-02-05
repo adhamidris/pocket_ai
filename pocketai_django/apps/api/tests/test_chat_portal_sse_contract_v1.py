@@ -119,6 +119,50 @@ class PortalSseContractV1Tests(TestCase):
             self.assertIn("type", data)
             self.assertIn("payload", data)
 
+    @override_settings(PORTAL_TURN_EVENT_BUS="redis")
+    def test_turn_events_redis_drain_does_not_block_forever(self) -> None:
+        with tenant_context(self.business.id):
+            turn = PortalTurn.objects.create(
+                conversation=self.conversation,
+                agent_profile=self.agent,
+                status=PortalTurnStatus.FINALIZED,
+                run_after=timezone.now(),
+                user_message="hello",
+                metadata={"source": "test"},
+            )
+
+        request = self.factory.get(
+            f"/api/chat/turns/{turn.id}/events/?session_token={self.conversation.session_token}",
+        )
+
+        stream_key = f"portal:turn:{turn.id}:events"
+        redis_conn = mock.Mock()
+        calls = {"n": 0}
+
+        def _xread(streams, count=None, block=None):
+            del streams, count
+            calls["n"] += 1
+            # Regression: Redis Streams BLOCK 0 means "block forever", which caused the ~35s SSE tail.
+            self.assertNotEqual(block, 0)
+            if calls["n"] == 1:
+                payload = {"message_id": "msg_1", "text": "done", "content_blocks": []}
+                return [(stream_key, [(b"1-0", {b"type": b"turn_persisted", b"payload": json.dumps(payload).encode("utf-8")})])]
+            if calls["n"] == 2:
+                # After turn_persisted is delivered, the SSE loop should use a short block window.
+                self.assertEqual(block, 200)
+                return []
+            # Drain loop: must be non-blocking (no BLOCK 0).
+            return []
+
+        redis_conn.xread.side_effect = _xread
+
+        with mock.patch.object(chat_portal, "get_portal_redis_client", return_value=redis_conn):
+            response = chat_portal.portal_turn_events(request, turn_id=turn.id)
+            raw = b"".join(response.streaming_content)
+        events = _parse_sse_events(raw.decode("utf-8"))
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["data"]["type"], "turn_persisted")
+
     @override_settings(PORTAL_TURN_EVENT_BUS="postgres")
     def test_session_events_stream_starts_with_status_changed(self) -> None:
         request = self.factory.get(f"/api/chat/events/?session_token={self.conversation.session_token}")
