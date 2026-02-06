@@ -9,7 +9,14 @@ from django.test import TransactionTestCase
 
 from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
-from apps.conversations.models import Conversation, ConversationSender, PortalTurn, PortalTurnStatus
+from apps.conversations.models import (
+    Conversation,
+    ConversationSender,
+    ConversationToolApproval,
+    ConversationToolApprovalStatus,
+    PortalTurn,
+    PortalTurnStatus,
+)
 from apps.conversations.portal_turn_runner import PortalTurnRunner
 
 
@@ -154,3 +161,49 @@ class PortalTurnSingleModeTests(TransactionTestCase):
         self.assertIsNotNone(turn.message)
         self.assertEqual(turn.message.sender, ConversationSender.AI)
         self.assertIn("Hello from stream.", turn.message.body)
+
+    def test_tool_approval_link_does_not_overwrite_existing_turn(self) -> None:
+        first_turn = PortalTurn.objects.create(
+            conversation=self.conversation,
+            agent_profile=self.agent,
+            status=PortalTurnStatus.WAITING_APPROVAL,
+            user_message="First",
+        )
+        second_turn = PortalTurn.objects.create(
+            conversation=self.conversation,
+            agent_profile=self.agent,
+            status=PortalTurnStatus.STREAMING,
+            user_message="Second",
+        )
+        approval = ConversationToolApproval.objects.create(
+            conversation=self.conversation,
+            connection=None,
+            tool_name="initiate_phone_call",
+            remote_tool_name="",
+            status=ConversationToolApprovalStatus.PENDING,
+            tool_call_id="call_test_1",
+            event_id="evt_test_1",
+            turn=first_turn,
+            input_payload={"phone_number": "+201092129119", "objective": "Test"},
+            metadata={"approval_mode": "phone_call", "operation_type": "write", "reason": "phone_call"},
+        )
+
+        runner = PortalTurnRunner(turn=second_turn, conversation=self.conversation)
+        runner.builder.on_tool_event(
+            {
+                "event_id": "evt_test_1",
+                "phase": "approval_requested",
+                "status": "pending_approval",
+                "tool_call_id": "call_test_1",
+                "tool_name": "initiate_phone_call",
+                "kind": "phone",
+                "approval_id": str(approval.id),
+                "approval": {
+                    "id": str(approval.id),
+                    "status": "pending",
+                },
+            }
+        )
+
+        approval.refresh_from_db()
+        self.assertEqual(approval.turn_id, first_turn.id)

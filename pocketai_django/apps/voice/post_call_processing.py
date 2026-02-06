@@ -27,7 +27,12 @@ from apps.llm.llm_provider import load_default_provider
 from apps.voice.models import CallEvent, CallSession
 from apps.voice.agent_run_bridge import append_agent_run_event, get_agent_run_id_from_call_session_metadata
 from apps.voice.call_insights import CALL_INSIGHTS_SCHEMA_VERSION, format_call_insights_message, generate_call_insights
-from apps.voice.provider_credentials import resolve_twilio_config
+from apps.voice.provider_credentials import (
+    VOICE_PROVIDER_TELNYX,
+    VOICE_PROVIDER_TWILIO,
+    resolve_telnyx_config,
+    resolve_twilio_config,
+)
 from apps.voice.r2_storage import build_r2_client, load_r2_config
 
 
@@ -288,11 +293,6 @@ def maybe_upload_recording_to_r2(session: CallSession) -> tuple[bool, str, str, 
     if not r2_cfg:
         return False, "", "", ""
 
-    twilio_cfg = resolve_twilio_config(
-        business_id=session.business_profile_id,
-        require_from_number=False,
-    )
-
     url = str(session.recording_url).strip()
     if url and not url.endswith(".mp3") and not url.endswith(".wav"):
         url = url + ".mp3"
@@ -300,7 +300,25 @@ def maybe_upload_recording_to_r2(session: CallSession) -> tuple[bool, str, str, 
     key = f"voice/recordings/{session.business_profile_id}/{session.id}/{session.recording_sid or 'recording'}.mp3"
     client = build_r2_client(r2_cfg)
 
-    resp = requests.get(url, auth=(twilio_cfg.account_sid, twilio_cfg.auth_token), stream=True, timeout=60)
+    provider = str(session.transport_provider or "").strip().lower()
+    if not provider:
+        provider = VOICE_PROVIDER_TWILIO if session.twilio_call_sid else ""
+
+    request_kwargs: dict[str, object] = {"stream": True, "timeout": 60}
+    if provider == VOICE_PROVIDER_TWILIO:
+        twilio_cfg = resolve_twilio_config(
+            business_id=session.business_profile_id,
+            require_from_number=False,
+        )
+        request_kwargs["auth"] = (twilio_cfg.account_sid, twilio_cfg.auth_token)
+    elif provider == VOICE_PROVIDER_TELNYX:
+        telnyx_cfg = resolve_telnyx_config(
+            business_id=session.business_profile_id,
+            require_from_number=False,
+        )
+        request_kwargs["headers"] = {"Authorization": f"Bearer {telnyx_cfg.api_key}"}
+
+    resp = requests.get(url, **request_kwargs)
     resp.raise_for_status()
     try:
         put = client.put_object(

@@ -37,9 +37,9 @@ class VoiceProviderConnectionsApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         providers = payload.get("providers") or []
-        self.assertEqual(len(providers), 3)
+        self.assertEqual(len(providers), 4)
         keys = {item.get("provider") for item in providers}
-        self.assertEqual(keys, {"twilio", "deepgram", "elevenlabs"})
+        self.assertEqual(keys, {"twilio", "telnyx", "deepgram", "elevenlabs"})
         indexed = {item.get("provider"): item for item in providers}
 
         twilio = indexed["twilio"]
@@ -47,6 +47,12 @@ class VoiceProviderConnectionsApiTests(TestCase):
         self.assertFalse(twilio.get("hasCredentials"))
         self.assertTrue(twilio.get("editable"))
         self.assertEqual(twilio.get("managementMode"), "tenant")
+
+        telnyx = indexed["telnyx"]
+        self.assertEqual(telnyx.get("status"), "not_configured")
+        self.assertFalse(telnyx.get("hasCredentials"))
+        self.assertTrue(telnyx.get("editable"))
+        self.assertEqual(telnyx.get("managementMode"), "tenant")
 
         deepgram = indexed["deepgram"]
         self.assertFalse(deepgram.get("editable"))
@@ -88,6 +94,42 @@ class VoiceProviderConnectionsApiTests(TestCase):
             self.assertNotEqual(connection.credentials_encrypted, "")
             self.assertEqual(connection.credentials.get("account_sid"), "AC123")
             self.assertEqual(connection.credentials.get("webhook_base_url"), "https://voice.example.com")
+
+    def test_put_telnyx_provider_can_be_active_transport(self) -> None:
+        url = reverse("api:voice-provider-detail", args=["telnyx"])
+        response = self.client.put(
+            url,
+            data=json.dumps(
+                {
+                    "businessId": str(self.business.id),
+                    "enabled": True,
+                    "setAsActive": True,
+                    "credentials": {
+                        "api_key": "KEY123",
+                        "account_sid": "ACCT123",
+                        "application_sid": "APP123",
+                        "webhook_base_url": "https://voice.example.com",
+                        "from_number": "+15551234567",
+                    },
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload.get("activeTransportProvider"), "telnyx")
+        provider_payload = payload["provider"]
+        self.assertEqual(provider_payload["provider"], "telnyx")
+        self.assertTrue(provider_payload["enabled"])
+        self.assertTrue(provider_payload.get("isActiveTransport"))
+
+        with tenant_context(self.business.id):
+            connection = VoiceProviderConnection.objects.get(
+                business_profile=self.business,
+                provider=VoiceProviderConnection.Provider.TELNYX,
+            )
+            self.assertNotEqual(connection.credentials_encrypted, "")
+            self.assertEqual(connection.credentials.get("account_sid"), "ACCT123")
 
     def test_put_platform_managed_provider_is_rejected(self) -> None:
         url = reverse("api:voice-provider-detail", args=["elevenlabs"])
@@ -185,7 +227,7 @@ class VoiceProviderConnectionsApiTests(TestCase):
             data=json.dumps({"businessId": str(self.business.id)}),
             content_type="application/json",
         )
-        self.assertEqual(delete_response.status_code, 204)
+        self.assertEqual(delete_response.status_code, 200)
 
         with tenant_context(self.business.id):
             connection = VoiceProviderConnection.objects.get(

@@ -165,7 +165,7 @@
               <form method="post" action="{% url 'frontend:dashboard-knowledge-upload' %}" enctype="multipart/form-data" class="space-y-4" data-upload-form>
                 {% csrf_token %}
                 <input type="hidden" name="source_type" value="{{ knowledge_upload_types.0.value }}" data-upload-type-input />
-                <input type="file" name="knowledge_file" class="sr-only" data-upload-file-input />
+                <input type="file" name="knowledge_file" class="sr-only" data-upload-file-input multiple />
                 <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                   <div class="flex items-start gap-4">
                     <div class="rounded-full bg-primary/10 p-3 text-primary">
@@ -1681,6 +1681,14 @@
       return trimmed.replace(/\.[^/.]+$/, "").trim();
     }
 
+    function uploadFileLabel(files) {
+      if (!Array.isArray(files) || !files.length) return "";
+      if (files.length === 1) {
+        return files[0] && files[0].name ? files[0].name : "";
+      }
+      return files.length + " files";
+    }
+
     function applyStatusVariant(variant) {
       if (!uploadStatus || !uploadProgressBar) return;
       uploadStatus.classList.remove("border-emerald-200", "bg-emerald-50/70", "text-emerald-800");
@@ -2061,18 +2069,34 @@
           payload = null;
         }
         if (xhr.status >= 200 && xhr.status < 300 && payload && payload.success !== false) {
+          var uploadedDocuments = [];
+          if (Array.isArray(payload.documents) && payload.documents.length) {
+            uploadedDocuments = payload.documents;
+          } else if (payload.document) {
+            uploadedDocuments = [payload.document];
+          }
           setUploadStatus("success", {
-            label: "Uploaded",
+            label: uploadedDocuments.length > 1 ? "Uploaded " + uploadedDocuments.length + " files" : "Uploaded",
             fileName: options.fileName || "",
             message: payload.message || "Queued for ingestion.",
           });
-          var insertedRow = insertDocumentRow(payload.document || null, payload.documents_total);
-          lastUploadedDocumentId = payload && payload.document ? payload.document.id || "" : "";
-          lastUploadedDocumentName = payload && payload.document ? payload.document.name || "" : "";
-          if (uploadRenameInput) {
-            uploadRenameInput.value = lastUploadedDocumentName;
+          uploadedDocuments.forEach(function (documentData) {
+            insertDocumentRow(documentData, payload.documents_total);
+          });
+
+          if (uploadedDocuments.length === 1) {
+            var createdDocument = uploadedDocuments[0];
+            lastUploadedDocumentId = createdDocument ? createdDocument.id || "" : "";
+            lastUploadedDocumentName = createdDocument ? createdDocument.name || "" : "";
+            if (uploadRenameInput) {
+              uploadRenameInput.value = lastUploadedDocumentName;
+            }
+            setRenameVisible(Boolean(lastUploadedDocumentId));
+          } else {
+            resetRenameState();
+            setRenameVisible(false);
           }
-          setRenameVisible(Boolean(lastUploadedDocumentId));
+
           resetUploadForm();
           uploadStatusTimer = setTimeout(function () {
             setUploadStatus("");
@@ -2100,14 +2124,23 @@
       if (!uploadEnabled || !uploadForm || !uploadFileInput || uploadInFlight) return;
       if (!uploadFileInput.files || !uploadFileInput.files.length) return;
       setUploadType(defaultUploadType);
-      var fileName = uploadFileInput.files[0] ? uploadFileInput.files[0].name : "";
+      var selectedFiles = Array.from(uploadFileInput.files || []);
+      var fileName = uploadFileLabel(selectedFiles);
       if (uploadDisplayName) {
-        var proposedName = deriveDisplayName(fileName);
-        if (!uploadDisplayName.value.trim()) {
-          uploadDisplayName.value = proposedName;
+        if (selectedFiles.length === 1) {
+          var proposedName = deriveDisplayName(fileName);
+          if (!uploadDisplayName.value.trim()) {
+            uploadDisplayName.value = proposedName;
+          }
+        } else {
+          uploadDisplayName.value = "";
         }
       }
-      startUpload({ fileName: fileName, trackProgress: true, message: "Uploading file…" });
+      startUpload({
+        fileName: fileName,
+        trackProgress: true,
+        message: selectedFiles.length > 1 ? "Uploading " + selectedFiles.length + " files…" : "Uploading file…",
+      });
     }
 
     function showRenameForm() {

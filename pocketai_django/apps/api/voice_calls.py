@@ -15,7 +15,12 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 from core.tenancy import tenant_bypass, tenant_context
 
 from apps.voice.models import CallEvent, CallSession, CallStatus
-from apps.voice.provider_credentials import resolve_twilio_config
+from apps.voice.provider_credentials import (
+    VOICE_PROVIDER_TELNYX,
+    VOICE_PROVIDER_TWILIO,
+    resolve_telnyx_config,
+    resolve_twilio_config,
+)
 
 
 def _resolve_call_session(request: HttpRequest, call_id: uuid.UUID) -> tuple[CallSession | None, JsonResponse | None]:
@@ -77,6 +82,7 @@ def voice_calls_collection(request: HttpRequest) -> JsonResponse:
             {
                 "id": str(call.id),
                 "status": call.status,
+                "transport_provider": call.transport_provider,
                 "call_type": call.call_type,
                 "to_phone_number": call.to_phone_number,
                 "country": call.country,
@@ -105,6 +111,8 @@ def voice_call_detail(request: HttpRequest, call_id: uuid.UUID) -> JsonResponse:
         {
             "id": str(call.id),
             "status": call.status,
+            "transport_provider": call.transport_provider,
+            "provider_call_sid": call.provider_call_sid,
             "call_type": call.call_type,
             "language": call.language,
             "country": call.country,
@@ -186,31 +194,69 @@ def voice_call_hangup(request: HttpRequest, call_id: uuid.UUID) -> JsonResponse:
         return error
     assert call is not None
 
-    if not call.twilio_call_sid:
+    provider = str(call.transport_provider or "").strip().lower()
+    provider_call_sid = str(call.provider_call_sid or call.twilio_call_sid or "").strip()
+    if not provider:
+        provider = VOICE_PROVIDER_TWILIO if call.twilio_call_sid else ""
+
+    if not provider_call_sid:
         return JsonResponse({"error": "MISSING_CALL_SID", "message": "Call SID not available yet."}, status=HTTPStatus.CONFLICT)
 
-    try:
-        cfg = resolve_twilio_config(
-            business_id=call.business_profile_id,
-            require_from_number=False,
-        )
-    except Exception as exc:
-        return JsonResponse({"error": "MISSING_TWILIO_CONFIG", "message": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+    if provider == VOICE_PROVIDER_TWILIO:
+        try:
+            cfg = resolve_twilio_config(
+                business_id=call.business_profile_id,
+                require_from_number=False,
+            )
+        except Exception as exc:
+            return JsonResponse({"error": "MISSING_TWILIO_CONFIG", "message": str(exc)}, status=HTTPStatus.BAD_REQUEST)
 
-    try:
-        resp = requests.post(
-            f"https://api.twilio.com/2010-04-01/Accounts/{cfg.account_sid}/Calls/{call.twilio_call_sid}.json",
-            auth=(cfg.account_sid, cfg.auth_token),
-            data={"Status": "completed"},
-            timeout=20,
-        )
-    except Exception as exc:
-        return JsonResponse({"error": "TWILIO_REQUEST_FAILED", "message": str(exc)}, status=HTTPStatus.BAD_GATEWAY)
+        try:
+            resp = requests.post(
+                f"https://api.twilio.com/2010-04-01/Accounts/{cfg.account_sid}/Calls/{provider_call_sid}.json",
+                auth=(cfg.account_sid, cfg.auth_token),
+                data={"Status": "completed"},
+                timeout=20,
+            )
+        except Exception as exc:
+            return JsonResponse({"error": "TWILIO_REQUEST_FAILED", "message": str(exc)}, status=HTTPStatus.BAD_GATEWAY)
 
-    if resp.status_code >= 400:
-        return JsonResponse({"error": "TWILIO_ERROR", "status": resp.status_code, "message": resp.text[:300]}, status=HTTPStatus.BAD_GATEWAY)
+        if resp.status_code >= 400:
+            return JsonResponse(
+                {"error": "TWILIO_ERROR", "status": resp.status_code, "message": resp.text[:300]},
+                status=HTTPStatus.BAD_GATEWAY,
+            )
+    elif provider == VOICE_PROVIDER_TELNYX:
+        try:
+            cfg = resolve_telnyx_config(
+                business_id=call.business_profile_id,
+                require_from_number=False,
+            )
+        except Exception as exc:
+            return JsonResponse({"error": "MISSING_TELNYX_CONFIG", "message": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+
+        try:
+            resp = requests.post(
+                f"https://api.telnyx.com/v2/texml/Accounts/{cfg.account_sid}/Calls/{provider_call_sid}",
+                headers={"Authorization": f"Bearer {cfg.api_key}", "Accept": "application/json"},
+                data={"Status": "completed"},
+                timeout=20,
+            )
+        except Exception as exc:
+            return JsonResponse({"error": "TELNYX_REQUEST_FAILED", "message": str(exc)}, status=HTTPStatus.BAD_GATEWAY)
+
+        if resp.status_code >= 400:
+            return JsonResponse(
+                {"error": "TELNYX_ERROR", "status": resp.status_code, "message": resp.text[:300]},
+                status=HTTPStatus.BAD_GATEWAY,
+            )
+    else:
+        return JsonResponse(
+            {"error": "UNSUPPORTED_PROVIDER", "message": "Call transport provider is unsupported."},
+            status=HTTPStatus.BAD_REQUEST,
+        )
 
     with tenant_context(call.business_profile_id):
         CallSession.objects.filter(id=call_id).update(status=CallStatus.CANCELLED, ended_at=timezone.now())
 
-    return JsonResponse({"ok": True, "status": CallStatus.CANCELLED})
+    return JsonResponse({"ok": True, "status": CallStatus.CANCELLED, "transport_provider": provider})

@@ -2656,32 +2656,52 @@ def dashboard_knowledge_upload(request: HttpRequest) -> HttpResponse:
         return redirect("frontend:dashboard-knowledge")
 
     display_name = (request.POST.get("display_name") or "").strip()
-    upload_record: KnowledgeUpload | None = None
+    upload_records: list[KnowledgeUpload] = []
     try:
         if source_type == KnowledgeSourceType.FILE:
-            upload_record = _create_file_upload(
-                request=request,
-                business=business,
-                display_name=display_name,
-                upload_file=request.FILES.get("knowledge_file"),
-            )
+            upload_files = [
+                uploaded
+                for uploaded in request.FILES.getlist("knowledge_file")
+                if getattr(uploaded, "name", "").strip()
+            ]
+            if not upload_files:
+                fallback_file = request.FILES.get("knowledge_file")
+                if fallback_file and getattr(fallback_file, "name", "").strip():
+                    upload_files = [fallback_file]
+            if not upload_files:
+                raise KnowledgeUploadError("Select a file to upload.", field="knowledge_file")
+
+            per_file_display_name = display_name if len(upload_files) == 1 else ""
+            for upload_file in upload_files:
+                upload_records.append(
+                    _create_file_upload(
+                        request=request,
+                        business=business,
+                        display_name=per_file_display_name,
+                        upload_file=upload_file,
+                    )
+                )
         elif source_type == KnowledgeSourceType.LINK:
             url_value = (request.POST.get("knowledge_url") or "").strip()
             if not url_value:
                 raise KnowledgeUploadError("Add a URL to capture this resource.", field="knowledge_url")
-            upload_record = _create_link_upload(
-                request=request,
-                business=business,
-                display_name=display_name,
-                url_value=url_value,
-            )
+            upload_records = [
+                _create_link_upload(
+                    request=request,
+                    business=business,
+                    display_name=display_name,
+                    url_value=url_value,
+                )
+            ]
         elif source_type == KnowledgeSourceType.TEXT:
-            upload_record = _create_text_upload(
-                request=request,
-                business=business,
-                display_name=display_name,
-                content=request.POST.get("knowledge_text") or "",
-            )
+            upload_records = [
+                _create_text_upload(
+                    request=request,
+                    business=business,
+                    display_name=display_name,
+                    content=request.POST.get("knowledge_text") or "",
+                )
+            ]
         else:  # pragma: no cover - defensive fallback
             raise KnowledgeUploadError("Unsupported knowledge type selected.", field="source_type")
     except (KnowledgeUploadError, ValidationError) as exc:
@@ -2701,19 +2721,31 @@ def dashboard_knowledge_upload(request: HttpRequest) -> HttpResponse:
         messages.error(request, message)
         return redirect("frontend:dashboard-knowledge")
     else:
-        if upload_record:
+        if upload_records:
+            latest_upload = upload_records[-1]
             if wants_json:
                 documents_total = KnowledgeUpload.objects.filter(business_profile=business).count()
+                serialized_uploads = [
+                    _serialize_upload_for_dashboard(upload_record) for upload_record in upload_records
+                ]
+                if len(serialized_uploads) == 1:
+                    message = f'"{latest_upload.display_name}" added to your knowledge base.'
+                else:
+                    message = f"{len(serialized_uploads)} files added to your knowledge base."
                 return JsonResponse(
                     {
                         "success": True,
-                        "message": f'"{upload_record.display_name}" added to your knowledge base.',
-                        "document": _serialize_upload_for_dashboard(upload_record),
+                        "message": message,
+                        "document": serialized_uploads[-1] if serialized_uploads else None,
+                        "documents": serialized_uploads,
                         "documents_total": documents_total,
                     },
                     status=HTTPStatus.CREATED,
                 )
-            messages.success(request, f'"{upload_record.display_name}" added to your knowledge base.')
+            if len(upload_records) == 1:
+                messages.success(request, f'"{latest_upload.display_name}" added to your knowledge base.')
+            else:
+                messages.success(request, f"{len(upload_records)} files added to your knowledge base.")
     return redirect("frontend:dashboard-knowledge")
 
 

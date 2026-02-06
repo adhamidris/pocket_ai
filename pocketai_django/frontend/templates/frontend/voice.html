@@ -45,7 +45,7 @@
         <div class="space-y-1.5">
           <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">Voice Calling Providers</h1>
           <p class="text-sm text-muted-foreground">
-            Configure tenant-owned Twilio credentials and monitor platform-managed voice services.
+            Configure tenant-owned transport providers and monitor platform-managed voice services.
           </p>
         </div>
         <div class="flex flex-wrap items-center gap-2">
@@ -62,9 +62,10 @@
       <section class="rounded-xl border border-border/60 bg-card/60 backdrop-blur p-4 space-y-3">
         <div class="text-sm font-semibold text-foreground">How this works</div>
         <ul class="space-y-1 text-xs text-muted-foreground list-disc list-inside">
-          <li>Each workspace stores its own encrypted Twilio credentials.</li>
+          <li>Each workspace stores its own encrypted transport credentials (Twilio/Telnyx).</li>
+          <li>Pick exactly one active outbound transport provider when multiple are configured.</li>
           <li>Deepgram and ElevenLabs are managed centrally by the platform.</li>
-          <li>Use “Test” on Twilio after setup to validate credentials before live calls.</li>
+          <li>Use “Test” after setup to validate credentials before live calls.</li>
         </ul>
       </section>
 
@@ -101,6 +102,10 @@
         <input type="checkbox" class="h-4 w-4 rounded border-border/60" data-voice-field-enabled />
         Enable this provider for this workspace
       </label>
+      <label class="inline-flex items-center gap-2 text-sm text-muted-foreground">
+        <input type="checkbox" class="h-4 w-4 rounded border-border/60" data-voice-field-active />
+        Set as active outbound transport provider
+      </label>
 
       <div class="rounded-lg border border-border/60 bg-muted/30 p-3 text-xs text-muted-foreground hidden" data-voice-modal-error></div>
 
@@ -124,6 +129,13 @@
       twilio: [
         { key: "account_sid", label: "Account SID", type: "text", placeholder: "ACxxxxxxxxxxxx", secret: false },
         { key: "auth_token", label: "Auth Token", type: "password", placeholder: "Twilio auth token", secret: true },
+        { key: "webhook_base_url", label: "Webhook Base URL", type: "url", placeholder: "https://your-domain.com", secret: false },
+        { key: "from_number", label: "From Number (E.164)", type: "text", placeholder: "+15551234567", secret: false }
+      ],
+      telnyx: [
+        { key: "api_key", label: "API Key", type: "password", placeholder: "KEYxxxxxxxxxxxx", secret: true },
+        { key: "account_sid", label: "Account SID", type: "text", placeholder: "xxxxxxxxxxxx", secret: false },
+        { key: "application_sid", label: "Application SID", type: "text", placeholder: "Appxxxxxxxxxxxx", secret: false },
         { key: "webhook_base_url", label: "Webhook Base URL", type: "url", placeholder: "https://your-domain.com", secret: false },
         { key: "from_number", label: "From Number (E.164)", type: "text", placeholder: "+15551234567", secret: false }
       ]
@@ -218,9 +230,12 @@
         var lastError = String(item.lastError || "");
         var tested = item.lastTestedAt ? ("Tested " + new Date(item.lastTestedAt).toLocaleString()) : "Not tested yet";
         var modeTag = editable ? "Tenant setup" : "Platform managed";
+        var activeTag = item.isActiveTransport ? '<span class="mcp-tag">Active transport</span>' : "";
+        var canSetActive = editable && hasCreds && status !== "not_configured";
         var actionsHtml = editable
           ? (
               '<div class="flex items-center gap-2">' +
+              (canSetActive ? ('  <button class="mcp-btn mcp-btn-outline" type="button" data-voice-set-active="' + escapeHtml(item.provider) + '"' + (item.isActiveTransport ? " disabled" : "") + ">Set Active</button>") : "") +
               '  <button class="mcp-btn mcp-btn-outline" type="button" data-voice-open="' + escapeHtml(item.provider) + '">Configure</button>' +
               '  <button class="mcp-btn mcp-btn-outline" type="button" data-voice-test="' + escapeHtml(item.provider) + '"' + (hasCreds ? "" : " disabled") + ">Test</button>" +
               '  <button class="mcp-btn mcp-btn-outline" type="button" data-voice-disconnect="' + escapeHtml(item.provider) + '"' + (hasCreds ? "" : " disabled") + ">Disconnect</button>" +
@@ -242,6 +257,7 @@
           '  <div class="px-5 pb-2 text-[11px] text-muted-foreground">' + escapeHtml(tested) + "</div>" +
           (lastError ? ('<div class="mx-5 mb-2 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] text-rose-700">' + escapeHtml(lastError) + "</div>") : "") +
           '  <div class="mcp-card-actions">' +
+          activeTag +
           '    <span class="mcp-tag">' + escapeHtml(modeTag) + "</span>" +
           actionsHtml +
           "  </div>" +
@@ -281,6 +297,7 @@
         subtitle: document.querySelector("[data-voice-modal-subtitle]"),
         fields: document.querySelector("[data-voice-fields]"),
         enabled: document.querySelector("[data-voice-field-enabled]"),
+        active: document.querySelector("[data-voice-field-active]"),
         error: document.querySelector("[data-voice-modal-error]")
       };
     }
@@ -311,6 +328,7 @@
       els.title.textContent = "Configure " + (provider.label || provider.provider || "provider");
       els.subtitle.textContent = provider.description || "Store encrypted tenant credentials.";
       els.enabled.checked = !!provider.enabled;
+      if (els.active) els.active.checked = !!provider.isActiveTransport;
       setModalError("");
 
       var fieldDefs = PROVIDER_FIELDS[String(provider.provider || "").toLowerCase()] || [];
@@ -381,6 +399,7 @@
       if (!state.current || !businessId) return;
       var provider = state.current.provider;
       var enabled = !!(document.querySelector("[data-voice-field-enabled]") || {}).checked;
+      var setAsActive = !!(document.querySelector("[data-voice-field-active]") || {}).checked;
       var credentials = collectCredentials(provider);
       setModalError("");
       return apiFetch("/api/voice/providers/" + encodeURIComponent(provider) + "/", {
@@ -388,6 +407,7 @@
         body: JSON.stringify({
           businessId: businessId,
           enabled: enabled,
+          setAsActive: setAsActive,
           credentials: credentials
         })
       }).then(function () {
@@ -426,7 +446,29 @@
       });
     }
 
+    function setActiveProvider(providerKey) {
+      if (!businessId) return;
+      return apiFetch("/api/voice/providers/" + encodeURIComponent(providerKey) + "/", {
+        method: "PUT",
+        body: JSON.stringify({
+          businessId: businessId,
+          enabled: true,
+          setAsActive: true
+        })
+      }).then(function () {
+        setFlash("Active transport provider updated.", "success");
+        return loadProviders();
+      }).catch(function (error) {
+        setFlash(error.message || "Failed to set active provider.", "error");
+      });
+    }
+
     document.addEventListener("click", function (event) {
+      var setActiveBtn = event.target.closest("[data-voice-set-active]");
+      if (setActiveBtn) {
+        setActiveProvider(setActiveBtn.getAttribute("data-voice-set-active"));
+        return;
+      }
       var openBtn = event.target.closest("[data-voice-open]");
       if (openBtn) {
         openModal(openBtn.getAttribute("data-voice-open"));

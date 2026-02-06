@@ -79,6 +79,19 @@ class VoiceConfiguration(models.Model):
     # Recording consent collection is mandatory everywhere for now.
     recording_consent_required = models.BooleanField(default=True)
 
+    class TransportProvider(models.TextChoices):
+        TWILIO = "twilio", "Twilio"
+        TELNYX = "telnyx", "Telnyx"
+
+    # Optional explicit provider selection for outbound call transport.
+    # When blank, runtime may auto-resolve only when exactly one provider is configured.
+    active_transport_provider = models.CharField(
+        max_length=24,
+        choices=TransportProvider.choices,
+        blank=True,
+        default="",
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -95,6 +108,7 @@ class VoiceProviderConnection(models.Model):
 
     class Provider(models.TextChoices):
         TWILIO = "twilio", "Twilio"
+        TELNYX = "telnyx", "Telnyx"
         DEEPGRAM = "deepgram", "Deepgram"
         ELEVENLABS = "elevenlabs", "ElevenLabs"
 
@@ -333,6 +347,7 @@ class VoicePhoneNumber(models.Model):
 
     class Provider(models.TextChoices):
         TWILIO = "twilio", "Twilio"
+        TELNYX = "telnyx", "Telnyx"
 
     class Status(models.TextChoices):
         ACTIVE = "active", "Active"
@@ -464,7 +479,12 @@ class CallSession(models.Model):
     to_phone_number = models.CharField(max_length=32)
     from_phone_number = models.CharField(max_length=32, blank=True, default="")
 
-    # Provider state (Twilio v1)
+    # Provider state
+    transport_provider = models.CharField(max_length=24, blank=True, default="", db_index=True)
+    provider_call_sid = models.CharField(max_length=128, blank=True, default="", db_index=True)
+    provider_stream_sid = models.CharField(max_length=128, blank=True, default="", db_index=True)
+
+    # Twilio compatibility fields retained for backward compatibility.
     twilio_call_sid = models.CharField(max_length=64, blank=True, default="", db_index=True)
     twilio_stream_sid = models.CharField(max_length=64, blank=True, default="", db_index=True)
 

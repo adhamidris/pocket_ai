@@ -43,7 +43,13 @@ from apps.voice.models import (
     VoiceTrustTier,
 )
 from apps.voice.policy_engine import audit_policy_decision, evaluate_voice_compliance_policy
-from apps.voice.provider_credentials import resolve_twilio_config
+from apps.voice.provider_credentials import (
+    VOICE_PROVIDER_TELNYX,
+    VOICE_PROVIDER_TWILIO,
+    resolve_active_transport_provider,
+    resolve_telnyx_config,
+    resolve_twilio_config,
+)
 from apps.voice.phone_utils import detect_country_iso2, is_valid_e164
 
 
@@ -91,12 +97,14 @@ def _cleanup_stale_active_calls(*, business_id: object) -> int:
         "started_at",
         "queued_at",
         "max_duration_seconds",
+        "provider_stream_sid",
         "twilio_stream_sid",
         "consent_obtained",
     )
     for session in sessions:
         base_time = session.started_at or session.updated_at or session.queued_at or now
-        if not session.twilio_stream_sid:
+        active_stream_id = str(session.provider_stream_sid or session.twilio_stream_sid or "").strip()
+        if not active_stream_id:
             if session.updated_at and session.updated_at < now - timedelta(seconds=pre_stream_timeout):
                 stale_ids.append(session.id)
                 continue
@@ -239,17 +247,37 @@ def initiate_phone_call_tool(
         }
 
     try:
-        twilio_cfg = resolve_twilio_config(
-            business_id=business_id,
-            require_from_number=False,
-        )
+        transport_provider = resolve_active_transport_provider(business_id=business_id)
     except Exception as exc:
         return {
             "tool": "initiate_phone_call",
             "status": "error",
-            "error": "missing_twilio_config",
-            "error_code": "missing_twilio_config",
-            "hint": str(exc) or "Configure Twilio in Dashboard > Voice Calling for this workspace.",
+            "error": "missing_transport_provider",
+            "error_code": "missing_transport_provider",
+            "hint": str(exc)
+            or "Configure Twilio or Telnyx in Dashboard > Voice Calling and select an active transport provider.",
+        }
+
+    try:
+        if transport_provider == VOICE_PROVIDER_TWILIO:
+            transport_cfg = resolve_twilio_config(
+                business_id=business_id,
+                require_from_number=False,
+            )
+        elif transport_provider == VOICE_PROVIDER_TELNYX:
+            transport_cfg = resolve_telnyx_config(
+                business_id=business_id,
+                require_from_number=False,
+            )
+        else:
+            raise ValueError(f"Unsupported transport provider: {transport_provider}")
+    except Exception as exc:
+        return {
+            "tool": "initiate_phone_call",
+            "status": "error",
+            "error": "missing_transport_config",
+            "error_code": "missing_transport_config",
+            "hint": str(exc) or "Configure the selected voice transport provider for this workspace.",
         }
 
     config = _ensure_voice_config(business_id)
@@ -386,7 +414,11 @@ def initiate_phone_call_tool(
     from_number = ""
     voice_number_id = None
     active_number = (
-        VoicePhoneNumber.objects.filter(business_profile_id=business_id, status=VoicePhoneNumber.Status.ACTIVE)
+        VoicePhoneNumber.objects.filter(
+            business_profile_id=business_id,
+            status=VoicePhoneNumber.Status.ACTIVE,
+            provider=transport_provider,
+        )
         .order_by("-updated_at")
         .first()
     )
@@ -394,7 +426,7 @@ def initiate_phone_call_tool(
         from_number = active_number.phone_number
         voice_number_id = active_number.id
     else:
-        from_number = twilio_cfg.default_from_number
+        from_number = str(getattr(transport_cfg, "default_from_number", "") or "").strip()
 
     if not from_number:
         return {
@@ -402,7 +434,7 @@ def initiate_phone_call_tool(
             "status": "error",
             "error": "missing_from_number",
             "error_code": "missing_from_number",
-            "hint": "No active VoicePhoneNumber and no Twilio from_number is configured for this workspace.",
+            "hint": "No active VoicePhoneNumber and no provider from_number is configured for this workspace.",
         }
 
     if not language:
@@ -487,8 +519,10 @@ def initiate_phone_call_tool(
                     "conversation_id": str(anchor_conversation_id) if anchor_conversation_id else "",
                     "agent_profile_id": str(agent_id),
                     "agent_run_id": str(call_run.id) if call_run else "",
+                    "transport_provider": transport_provider,
                 },
                 context_items=context_items,
+                transport_provider=transport_provider,
             )
             CallEvent.objects.create(
                 call_session=session,
@@ -503,6 +537,7 @@ def initiate_phone_call_tool(
             "to_phone_number": phone_number,
             "country": country,
             "call_type": call_type,
+            "transport_provider": transport_provider,
             "objective": objective[:600],
         }
         update_fields = None
@@ -544,6 +579,7 @@ def initiate_phone_call_tool(
         "agent_run_id": str(call_run.id) if call_run else None,
         "agentRunId": str(call_run.id) if call_run else None,
         "country": country,
+        "transport_provider": transport_provider,
         "from_phone_number": from_number,
         "to_phone_number": phone_number,
         "estimate_usd": str(estimate),

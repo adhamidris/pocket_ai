@@ -515,7 +515,10 @@ class PortalTurnEventBuilder:
             # Link approval to this turn for traceability.
             try:
                 with tenant_context(getattr(self.conversation, "business_profile_id", None)):
-                    ConversationToolApproval.objects.filter(id=approval_id).update(turn_id=self.turn.id)
+                    ConversationToolApproval.objects.filter(
+                        id=approval_id,
+                        turn_id__isnull=True,
+                    ).update(turn_id=self.turn.id)
             except Exception:  # pragma: no cover - best effort
                 logger.exception("portal turn approval link failed approval=%s", approval_id)
             if phase == "approval_requested":

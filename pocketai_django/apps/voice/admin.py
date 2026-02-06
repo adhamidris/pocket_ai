@@ -78,7 +78,7 @@ class VoiceCallAuditEventAdmin(admin.ModelAdmin):
 
 @admin.register(CallSession)
 class CallSessionAdmin(admin.ModelAdmin):
-    search_fields = ("id", "to_phone_number", "from_phone_number", "twilio_call_sid")
+    search_fields = ("id", "to_phone_number", "from_phone_number", "provider_call_sid", "twilio_call_sid")
     list_display = ("id", "business_profile", "status", "call_type", "country", "to_phone_number", "created_at")
     list_filter = ("status", "call_type", "country")
     ordering = ("-created_at",)

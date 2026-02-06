@@ -17,7 +17,13 @@ from apps.conversations.models import AgentRunEventStream, AgentRunEventType
 from apps.voice.agent_run_bridge import append_agent_run_event, get_agent_run_id_from_call_session_metadata
 from apps.voice.models import CallEvent, CallSession, CallStatus, CallType, VoiceConfiguration, VoiceSuppressionEntry
 from apps.voice.policy_engine import audit_policy_decision, evaluate_voice_compliance_policy
-from apps.voice.provider_credentials import resolve_twilio_config
+from apps.voice.provider_credentials import (
+    VOICE_PROVIDER_TELNYX,
+    VOICE_PROVIDER_TWILIO,
+    resolve_active_transport_provider,
+    resolve_telnyx_config,
+    resolve_twilio_config,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -100,11 +106,16 @@ class VoiceCallWorkerService:
             with tenant_context(session.business_profile_id):
                 self._emit_agent_run_progress(session, label="Initiating phone call", payload={"status": session.status})
                 self._apply_worker_guardrails(session)
-                self._initiate_twilio_call(session)
+                self._initiate_provider_call(session)
                 self._emit_agent_run_progress(
                     session,
                     label="Dialing…",
-                    payload={"status": session.status, "twilio_call_sid": session.twilio_call_sid},
+                    payload={
+                        "status": session.status,
+                        "transport_provider": session.transport_provider,
+                        "provider_call_sid": session.provider_call_sid,
+                        "twilio_call_sid": session.twilio_call_sid,
+                    },
                 )
         except _VoiceCallRequeue as exc:
             self._emit_agent_run_progress(
@@ -317,6 +328,21 @@ class VoiceCallWorkerService:
                 _log_event(session, "guard.budget_exceeded", {"spent": str(spent), "estimate": str(estimate), "budget": str(budget)})
                 raise _VoiceCallRequeue("monthly_budget_exceeded")
 
+    def _initiate_provider_call(self, session: CallSession) -> None:
+        provider = str(session.transport_provider or "").strip().lower()
+        if not provider:
+            provider = resolve_active_transport_provider(business_id=session.business_profile_id)
+            session.transport_provider = provider
+            session.save(update_fields=["transport_provider", "updated_at"])
+
+        if provider == VOICE_PROVIDER_TWILIO:
+            self._initiate_twilio_call(session)
+            return
+        if provider == VOICE_PROVIDER_TELNYX:
+            self._initiate_telnyx_call(session)
+            return
+        raise RuntimeError(f"unsupported_voice_transport_provider:{provider}")
+
     def _initiate_twilio_call(self, session: CallSession) -> None:
         twilio = resolve_twilio_config(
             business_id=session.business_profile_id,
@@ -358,12 +384,100 @@ class VoiceCallWorkerService:
             call_sid = ""
 
         now = timezone.now()
+        session.transport_provider = VOICE_PROVIDER_TWILIO
+        session.provider_call_sid = call_sid
         session.twilio_call_sid = call_sid
         session.status = CallStatus.RINGING
         session.started_at = session.started_at or now
         session.lease_expires_at = None
-        session.save(update_fields=["twilio_call_sid", "status", "started_at", "lease_expires_at", "updated_at"])
+        session.save(
+            update_fields=[
+                "transport_provider",
+                "provider_call_sid",
+                "twilio_call_sid",
+                "status",
+                "started_at",
+                "lease_expires_at",
+                "updated_at",
+            ]
+        )
         _log_event(session, "twilio.call_create.ok", {"call_sid": call_sid})
+
+    def _initiate_telnyx_call(self, session: CallSession) -> None:
+        telnyx = resolve_telnyx_config(
+            business_id=session.business_profile_id,
+            require_from_number=False,
+        )
+        if not session.from_phone_number:
+            session.from_phone_number = telnyx.default_from_number
+            session.save(update_fields=["from_phone_number", "updated_at"])
+        if not session.from_phone_number:
+            raise ValueError("missing_from_phone_number")
+
+        twiml_url = f"{telnyx.webhook_base_url}/voice/telnyx/twiml/{session.id}/"
+        status_cb = f"{telnyx.webhook_base_url}/voice/telnyx/status/{session.id}/"
+        recording_cb = f"{telnyx.webhook_base_url}/voice/telnyx/recording/{session.id}/"
+
+        payload = {
+            "ApplicationSid": telnyx.application_sid,
+            "From": session.from_phone_number,
+            "To": session.to_phone_number,
+            "Url": twiml_url,
+            "UrlMethod": "POST",
+            "StatusCallback": status_cb,
+            "StatusCallbackMethod": "POST",
+            "StatusCallbackEvent": "initiated ringing answered completed",
+            "Record": "true",
+            "RecordingStatusCallback": recording_cb,
+            "RecordingStatusCallbackMethod": "POST",
+            "RecordingStatusCallbackEvent": "completed",
+        }
+
+        resp = requests.post(
+            f"https://api.telnyx.com/v2/texml/Accounts/{telnyx.account_sid}/Calls",
+            headers={
+                "Authorization": f"Bearer {telnyx.api_key}",
+                "Accept": "application/json",
+            },
+            data=payload,
+            timeout=20,
+        )
+
+        if resp.status_code >= 400:
+            raise RuntimeError(f"telnyx_error:{resp.status_code}:{resp.text[:200]}")
+
+        call_sid = ""
+        try:
+            data = resp.json()
+            if isinstance(data, dict):
+                # TeXML compatibility payloads are not always shape-stable; keep tolerant extraction.
+                call_sid = str(
+                    data.get("sid")
+                    or data.get("call_sid")
+                    or data.get("callSid")
+                    or data.get("id")
+                    or ""
+                )
+        except Exception:
+            call_sid = ""
+
+        now = timezone.now()
+        session.transport_provider = VOICE_PROVIDER_TELNYX
+        session.provider_call_sid = call_sid
+        session.status = CallStatus.RINGING
+        session.started_at = session.started_at or now
+        session.lease_expires_at = None
+        session.save(
+            update_fields=[
+                "transport_provider",
+                "provider_call_sid",
+                "status",
+                "started_at",
+                "lease_expires_at",
+                "updated_at",
+            ]
+        )
+        _log_event(session, "telnyx.call_create.ok", {"call_sid": call_sid})
 
     def _mark_failed_or_requeue(self, session: CallSession, *, error: str) -> None:
         attempt = int(session.attempt_count or 0)

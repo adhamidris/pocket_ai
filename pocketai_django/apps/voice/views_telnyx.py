@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 import secrets
@@ -11,13 +12,18 @@ from django.utils import timezone as dj_timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
-from core.tenancy import tenant_context
-
-from apps.conversations.models import AgentRun, AgentRunEventStream, AgentRunEventType, AgentRunStatus
-from apps.voice.agent_run_bridge import append_agent_run_event, get_agent_run_id_from_call_session_metadata
+from apps.conversations.models import AgentRunEventType
 from apps.voice.models import CallSession, CallStatus, VoiceConfiguration
-from apps.voice.provider_credentials import VOICE_PROVIDER_TWILIO, resolve_twilio_config
-from apps.voice.twilio import validate_twilio_request
+from apps.voice.provider_credentials import VOICE_PROVIDER_TELNYX, resolve_telnyx_config
+from apps.voice.views_twilio import (
+    _emit_agent_run_event,
+    _run_update_for_terminal_call,
+    _say,
+    _twilio_language_tag,
+    _twiml_decline,
+    _twiml_response,
+    _xml_escape,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -27,94 +33,40 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _twiml_response(xml: str) -> HttpResponse:
-    return HttpResponse(xml, content_type="text/xml; charset=utf-8", status=200)
-
-
-def _xml_escape(value: str) -> str:
-    return (
-        value.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-        .replace("'", "&apos;")
-    )
-
-
 def _ws_base_url() -> str:
-    """
-    Public WSS base URL for the production Media Streams WebSocket server.
-
-    Example: wss://<domain-or-ngrok>
-    """
-
     return (os.getenv("VOICE_WS_BASE_URL") or "").strip().rstrip("/")
 
 
-def _require_valid_signature(request: HttpRequest, *, business_id: object | None) -> bool:
-    enabled = (os.getenv("TWILIO_VALIDATE_SIGNATURES") or "true").strip().lower() in {"1", "true", "yes"}
+def _require_valid_signature(_request: HttpRequest, *, business_id: object | None) -> bool:
+    """
+    Telnyx webhook verification for TeXML callbacks.
+
+    Default is disabled to keep local setup simple. When enabled, a shared token
+    check can be used as a pragmatic guard.
+    """
+
+    enabled = (os.getenv("TELNYX_VALIDATE_SIGNATURES") or "false").strip().lower() in {"1", "true", "yes"}
     if not enabled:
         return True
-    try:
-        cfg = resolve_twilio_config(
-            business_id=business_id,
-            require_from_number=False,
-        )
-    except Exception:
+    expected = (os.getenv("TELNYX_WEBHOOK_TOKEN") or "").strip()
+    if not expected:
         return False
-    return validate_twilio_request(request, auth_token=cfg.auth_token, webhook_base_url=cfg.webhook_base_url)
+    received = (
+        _request.headers.get("X-Telnyx-Webhook-Token")
+        or _request.POST.get("WebhookToken")
+        or _request.GET.get("WebhookToken")
+        or ""
+    ).strip()
+    if not received:
+        return False
+    return hmac.compare_digest(received, expected)
 
 
-def _twiml_decline() -> str:
-    return (
-        '<?xml version="1.0" encoding="UTF-8"?>'
-        "<Response>"
-        "<Say>Goodbye.</Say>"
-        "<Hangup/>"
-        "</Response>"
-    )
-
-
-def _say(*, text: str, language: str | None = None, voice: str | None = None) -> str:
-    attrs: list[str] = []
-    if language:
-        attrs.append(f'language="{_xml_escape(language)}"')
-    if voice:
-        attrs.append(f'voice="{_xml_escape(voice)}"')
-    attr_text = (" " + " ".join(attrs)) if attrs else ""
-    return f"<Say{attr_text}>{_xml_escape(text)}</Say>"
-
-
-def _twilio_language_tag(*, session: CallSession) -> str | None:
-    lang = str(session.language or "").strip().lower()
-    if lang != "ar":
-        return None
-
-    country = str(session.country or "").strip().upper()
-    mapping = {
-        "EG": "ar-EG",
-        "AE": "ar-AE",
-        "SA": "ar-SA",
-        "QA": "ar-QA",
-        "KW": "ar-KW",
-        "JO": "ar-JO",
-        "OM": "ar-OM",
-    }
-    return mapping.get(country, "ar-SA")
-
-
-def _twilio_voice_name(*, session: CallSession) -> str | None:
-    lang = str(session.language or "").strip().lower()
-    if lang == "ar":
-        return (os.getenv("VOICE_TWILIO_VOICE_AR") or "").strip() or "Polly.Zeina"
-    return (os.getenv("VOICE_TWILIO_VOICE_EN") or "").strip() or None
-
-
-def _twiml_gather_consent(*, session: CallSession, cfg) -> str:
-    consent_url = f"{cfg.webhook_base_url}/voice/twilio/consent/{session.id}/"
+def _telnyx_gather_consent(*, session: CallSession, cfg) -> str:
+    consent_url = f"{cfg.webhook_base_url}/voice/telnyx/consent/{session.id}/"
 
     lang_tag = _twilio_language_tag(session=session)
-    voice_name = _twilio_voice_name(session=session)
+    voice_name = None
 
     default_disclosure_en = "Hello. This is an AI assistant calling."
     default_disclosure_ar = "مرحباً. أنا مساعد ذكاء اصطناعي أتصل بك."
@@ -170,7 +122,7 @@ def _twiml_gather_consent(*, session: CallSession, cfg) -> str:
     )
 
 
-def _twiml_after_consent(*, session: CallSession, cfg) -> str:
+def _telnyx_after_consent(*, session: CallSession, cfg) -> str:
     ws_base = _ws_base_url()
     if not ws_base:
         return _twiml_decline()
@@ -182,15 +134,12 @@ def _twiml_after_consent(*, session: CallSession, cfg) -> str:
         session.save(update_fields=["stream_token", "updated_at"])
 
     stream_url = f"{ws_base}/voice/stream/{session.id}/{token}"
-    recording_cb = f"{cfg.webhook_base_url}/voice/twilio/recording/{session.id}/"
+    recording_cb = f"{cfg.webhook_base_url}/voice/telnyx/recording/{session.id}/"
 
     lang = str(session.language or "").strip().lower()
     lang_tag = _twilio_language_tag(session=session)
-    voice_name = _twilio_voice_name(session=session)
-
-    thanks = "Thank you. Please hold."
-    if lang == "ar":
-        thanks = "شكراً. الرجاء الانتظار."
+    voice_name = None
+    thanks = "Thank you. Please hold." if lang != "ar" else "شكراً. الرجاء الانتظار."
 
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
@@ -208,66 +157,27 @@ def _twiml_after_consent(*, session: CallSession, cfg) -> str:
     )
 
 
-def _emit_agent_run_event(
-    session: CallSession,
-    *,
-    label: str,
-    payload: dict[str, object] | None = None,
-    event_type: str = AgentRunEventType.PROGRESS,
-    update_run_fields: dict[str, object] | None = None,
-) -> None:
-    run_id = get_agent_run_id_from_call_session_metadata(session)
-    if not run_id or not session.business_profile_id:
-        return
-    try:
-        append_agent_run_event(
-            run_id=run_id,
-            business_id=session.business_profile_id,
-            stream=AgentRunEventStream.EXECUTED,
-            event_type=event_type,
-            label=label,
-            payload={"call_session_id": str(session.id), **(payload or {})},
-            update_run_fields=update_run_fields,
-        )
-    except Exception:  # pragma: no cover - best effort only
-        logger.exception("voice.agent_run_event_failed session=%s", session.id)
-
-
-def _run_update_for_terminal_call(session: CallSession) -> dict[str, object] | None:
-    run_id = get_agent_run_id_from_call_session_metadata(session)
-    if not run_id or not session.business_profile_id:
-        return None
-
-    with tenant_context(session.business_profile_id):
-        run = AgentRun.objects.filter(id=run_id).only("metadata").first()
-        if not run:
-            return None
-        meta = run.metadata if isinstance(getattr(run, "metadata", None), dict) else {}
-        if str(meta.get("kind") or "").strip().lower() != "voice_call":
-            return None
-        voice_session_id = str(meta.get("voice_call_session_id") or "").strip()
-        if voice_session_id and voice_session_id != str(session.id):
-            return None
-
-    now = dj_timezone.now()
-    if session.status == CallStatus.COMPLETED:
-        return {"status": AgentRunStatus.COMPLETED, "finished_at": now, "run_after": None, "lease_expires_at": None}
-    if session.status == CallStatus.CANCELLED:
-        return {"status": AgentRunStatus.CANCELLED, "finished_at": now, "run_after": None, "lease_expires_at": None}
-    if session.status == CallStatus.FAILED:
-        return {
-            "status": AgentRunStatus.FAILED,
-            "finished_at": now,
-            "run_after": None,
-            "lease_expires_at": None,
-            "error_detail": (session.last_error or "")[:2000],
-        }
-    return None
+def _extract_telnyx_call_sid(request: HttpRequest) -> str:
+    return str(
+        request.POST.get("CallSid")
+        or request.POST.get("call_sid")
+        or request.POST.get("CallControlId")
+        or request.POST.get("call_control_id")
+        or request.POST.get("CallSessionId")
+        or request.POST.get("call_session_id")
+        or request.GET.get("CallSid")
+        or request.GET.get("call_sid")
+        or request.GET.get("CallControlId")
+        or request.GET.get("call_control_id")
+        or request.GET.get("CallSessionId")
+        or request.GET.get("call_session_id")
+        or ""
+    ).strip()
 
 
 @csrf_exempt
 @require_http_methods(["POST", "GET"])
-def twilio_twiml(request: HttpRequest, session_id: uuid.UUID) -> HttpResponse:
+def telnyx_twiml(request: HttpRequest, session_id: uuid.UUID) -> HttpResponse:
     session = CallSession.objects.filter(id=session_id).first()
     if not session:
         return _twiml_response(_twiml_decline())
@@ -275,32 +185,34 @@ def twilio_twiml(request: HttpRequest, session_id: uuid.UUID) -> HttpResponse:
         return HttpResponse(status=403)
 
     try:
-        cfg = resolve_twilio_config(
+        cfg = resolve_telnyx_config(
             business_id=session.business_profile_id,
             require_from_number=False,
         )
     except Exception:
         return _twiml_response(_twiml_decline())
 
-    call_sid = str(request.POST.get("CallSid") or request.GET.get("CallSid") or "").strip()
+    call_sid = _extract_telnyx_call_sid(request)
     update_fields = ["status", "transport_provider", "updated_at"]
-    session.transport_provider = VOICE_PROVIDER_TWILIO
-    if call_sid and call_sid != session.twilio_call_sid:
-        session.twilio_call_sid = call_sid
-        update_fields.append("twilio_call_sid")
     if call_sid and call_sid != str(session.provider_call_sid or ""):
         session.provider_call_sid = call_sid
         update_fields.append("provider_call_sid")
+    session.transport_provider = VOICE_PROVIDER_TELNYX
     session.status = CallStatus.IN_PROGRESS
     session.save(update_fields=update_fields)
-    _emit_agent_run_event(session, label="Call connected", payload={"status": session.status, "call_sid": call_sid})
 
-    return _twiml_response(_twiml_gather_consent(session=session, cfg=cfg))
+    _emit_agent_run_event(
+        session,
+        label="Call connected",
+        payload={"status": session.status, "call_sid": call_sid, "transport_provider": VOICE_PROVIDER_TELNYX},
+    )
+
+    return _twiml_response(_telnyx_gather_consent(session=session, cfg=cfg))
 
 
 @csrf_exempt
 @require_http_methods(["POST"])
-def twilio_consent(request: HttpRequest, session_id: uuid.UUID) -> HttpResponse:
+def telnyx_consent(request: HttpRequest, session_id: uuid.UUID) -> HttpResponse:
     session = CallSession.objects.filter(id=session_id).first()
     if not session:
         return _twiml_response(_twiml_decline())
@@ -310,7 +222,7 @@ def twilio_consent(request: HttpRequest, session_id: uuid.UUID) -> HttpResponse:
     digits = str(request.POST.get("Digits") or "").strip()
     if digits == "1":
         try:
-            cfg = resolve_twilio_config(
+            cfg = resolve_telnyx_config(
                 business_id=session.business_profile_id,
                 require_from_number=False,
             )
@@ -322,7 +234,7 @@ def twilio_consent(request: HttpRequest, session_id: uuid.UUID) -> HttpResponse:
         session.consent_method = "dtmf"
         session.save(update_fields=["consent_obtained", "consent_obtained_at", "consent_method", "updated_at"])
         _emit_agent_run_event(session, label="Consent obtained", payload={"consent": True})
-        return _twiml_response(_twiml_after_consent(session=session, cfg=cfg))
+        return _twiml_response(_telnyx_after_consent(session=session, cfg=cfg))
 
     session.status = CallStatus.CANCELLED
     session.save(update_fields=["status", "updated_at"])
@@ -338,23 +250,21 @@ def twilio_consent(request: HttpRequest, session_id: uuid.UUID) -> HttpResponse:
 
 @csrf_exempt
 @require_http_methods(["POST"])
-def twilio_status(request: HttpRequest, session_id: uuid.UUID) -> HttpResponse:
+def telnyx_status(request: HttpRequest, session_id: uuid.UUID) -> HttpResponse:
     session = CallSession.objects.filter(id=session_id).first()
     if not session:
         return HttpResponse(status=204)
     if not _require_valid_signature(request, business_id=session.business_profile_id):
         return HttpResponse(status=403)
 
-    call_status = str(request.POST.get("CallStatus") or "").strip().lower()
-    call_sid = str(request.POST.get("CallSid") or "").strip()
-    update_fields = ["transport_provider", "status", "ended_at", "updated_at"]
-    session.transport_provider = VOICE_PROVIDER_TWILIO
-    if call_sid and call_sid != session.twilio_call_sid:
-        session.twilio_call_sid = call_sid
-        update_fields.append("twilio_call_sid")
-    if call_sid and call_sid != str(session.provider_call_sid or ""):
-        session.provider_call_sid = call_sid
-        update_fields.append("provider_call_sid")
+    call_status = str(
+        request.POST.get("CallStatus")
+        or request.POST.get("call_status")
+        or request.POST.get("CallControlState")
+        or request.POST.get("call_control_state")
+        or ""
+    ).strip().lower()
+    call_sid = _extract_telnyx_call_sid(request)
 
     mapped = {
         "queued": CallStatus.QUEUED,
@@ -362,24 +272,32 @@ def twilio_status(request: HttpRequest, session_id: uuid.UUID) -> HttpResponse:
         "ringing": CallStatus.RINGING,
         "in-progress": CallStatus.IN_PROGRESS,
         "answered": CallStatus.IN_PROGRESS,
+        "bridging": CallStatus.IN_PROGRESS,
+        "bridged": CallStatus.IN_PROGRESS,
         "completed": CallStatus.COMPLETED,
+        "ended": CallStatus.COMPLETED,
+        "hangup": CallStatus.COMPLETED,
         "busy": CallStatus.FAILED,
         "failed": CallStatus.FAILED,
         "no-answer": CallStatus.FAILED,
         "canceled": CallStatus.CANCELLED,
         "cancelled": CallStatus.CANCELLED,
     }.get(call_status)
+
+    update_fields = ["transport_provider", "status", "ended_at", "updated_at"]
+    session.transport_provider = VOICE_PROVIDER_TELNYX
+    if call_sid and call_sid != str(session.provider_call_sid or ""):
+        session.provider_call_sid = call_sid
+        update_fields.append("provider_call_sid")
     if mapped:
         session.status = mapped
-
     if session.status in {CallStatus.COMPLETED, CallStatus.CANCELLED, CallStatus.FAILED} and not session.ended_at:
         session.ended_at = dj_timezone.now()
-
     session.save(update_fields=update_fields)
 
     label = ""
     evt_type = AgentRunEventType.PROGRESS
-    update_fields = None
+    update_run_fields = None
     if session.status == CallStatus.RINGING:
         label = "Ringing…"
     elif session.status == CallStatus.IN_PROGRESS:
@@ -387,38 +305,50 @@ def twilio_status(request: HttpRequest, session_id: uuid.UUID) -> HttpResponse:
     elif session.status == CallStatus.COMPLETED:
         label = "Call completed"
         evt_type = AgentRunEventType.RESULT
-        update_fields = _run_update_for_terminal_call(session)
+        update_run_fields = _run_update_for_terminal_call(session)
     elif session.status == CallStatus.CANCELLED:
         label = "Call cancelled"
         evt_type = AgentRunEventType.CANCELLED
-        update_fields = _run_update_for_terminal_call(session)
+        update_run_fields = _run_update_for_terminal_call(session)
     elif session.status == CallStatus.FAILED:
         label = "Call failed"
         evt_type = AgentRunEventType.ERROR
-        update_fields = _run_update_for_terminal_call(session)
+        update_run_fields = _run_update_for_terminal_call(session)
 
     if label:
         _emit_agent_run_event(
             session,
             label=label,
-            payload={"status": session.status, "twilio_status": call_status},
+            payload={"status": session.status, "telnyx_status": call_status},
             event_type=evt_type,
-            update_run_fields=update_fields,
+            update_run_fields=update_run_fields,
         )
     return HttpResponse(status=204)
 
 
 @csrf_exempt
 @require_http_methods(["POST"])
-def twilio_recording_callback(request: HttpRequest, session_id: uuid.UUID) -> HttpResponse:
+def telnyx_recording_callback(request: HttpRequest, session_id: uuid.UUID) -> HttpResponse:
     session = CallSession.objects.filter(id=session_id).first()
     if not session:
         return HttpResponse(status=204)
     if not _require_valid_signature(request, business_id=session.business_profile_id):
         return HttpResponse(status=403)
 
-    recording_sid = str(request.POST.get("RecordingSid") or "").strip()
-    recording_url = str(request.POST.get("RecordingUrl") or "").strip()
+    recording_sid = str(
+        request.POST.get("RecordingSid")
+        or request.POST.get("recording_sid")
+        or request.POST.get("RecordingId")
+        or request.POST.get("recording_id")
+        or ""
+    ).strip()
+    recording_url = str(
+        request.POST.get("RecordingUrl")
+        or request.POST.get("recording_url")
+        or request.POST.get("RecordingUrlMp3")
+        or request.POST.get("recording_url_mp3")
+        or ""
+    ).strip()
 
     changed_fields: list[str] = ["updated_at"]
     if recording_sid and recording_sid != session.recording_sid:

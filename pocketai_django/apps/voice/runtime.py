@@ -23,9 +23,12 @@ from apps.voice.deepgram_tts import DeepgramTTSConfig, DeepgramTTSWSSession
 from apps.voice.deepgram_tts import stream_tts_audio as deepgram_stream_tts_audio
 from apps.voice.elevenlabs_tts import ElevenLabsConfig, ElevenLabsWSSession, stream_tts_audio
 from apps.voice.provider_credentials import (
+    VOICE_PROVIDER_TELNYX,
+    VOICE_PROVIDER_TWILIO,
     resolve_deepgram_config,
     resolve_deepgram_tts_config,
     resolve_elevenlabs_config,
+    resolve_telnyx_config,
     resolve_twilio_config,
 )
 
@@ -41,7 +44,7 @@ class VoiceCallRuntimeConfig:
 
 class VoiceCallRuntime:
     """
-    Production-shaped Twilio Media Streams runtime.
+    Production-shaped media-stream runtime (Twilio/Telnyx compatible).
 
     Phase 1 keeps this close to the Phase 0 spike while standardizing event
     types and emitting final assistant responses for post-call processing.
@@ -163,8 +166,13 @@ class VoiceCallRuntime:
                 event = message.get("event")
                 if event == "start":
                     start = message.get("start") or {}
-                    self._stream_sid = str(start.get("streamSid") or "")
-                    call_sid = str(start.get("callSid") or "")
+                    self._stream_sid = str(start.get("streamSid") or start.get("stream_id") or "")
+                    call_sid = str(
+                        start.get("callSid")
+                        or start.get("call_session_id")
+                        or start.get("call_control_id")
+                        or ""
+                    )
                     await self._update_stream_ids(stream_sid=self._stream_sid or "", call_sid=call_sid)
                     await self._log_event("twilio.stream.start", {"call_sid": call_sid, "stream_sid": self._stream_sid})
                     await self._maybe_greet(twilio_ws)
@@ -335,7 +343,9 @@ class VoiceCallRuntime:
             self._current_speak_task.cancel()
             self._last_agent_speech_end_at = time.monotonic()
         if self._stream_sid:
-            await _twilio_send(twilio_ws, {"event": "clear", "streamSid": self._stream_sid})
+            payload = {"event": "clear"}
+            payload.update(_stream_target_fields(self._stream_sid))
+            await _twilio_send(twilio_ws, payload)
 
     async def _schedule_auto_resume_after_barge_in(self, twilio_ws, *, barge_in_at: float, response_id: int) -> None:
         if response_id <= 0:
@@ -756,28 +766,55 @@ class VoiceCallRuntime:
         self._terminated = True
         await self._log_event("call.hangup.requested", {"reason": reason})
         session = await self._get_session()
-        call_sid = str(session.twilio_call_sid or "").strip()
+        provider = str(session.transport_provider or "").strip().lower()
+        if not provider:
+            provider = VOICE_PROVIDER_TWILIO if session.twilio_call_sid else ""
+        call_sid = str(session.provider_call_sid or session.twilio_call_sid or "").strip()
         if not call_sid:
             await self._log_event("call.hangup.missing_call_sid", {"reason": reason})
             return
-        try:
-            cfg = await sync_to_async(resolve_twilio_config)(
-                business_id=session.business_profile_id,
-                require_from_number=False,
-            )
-        except Exception as exc:
-            await self._log_event("call.hangup.missing_twilio_config", {"reason": reason, "error": str(exc)})
+
+        if provider == VOICE_PROVIDER_TWILIO:
+            try:
+                cfg = await sync_to_async(resolve_twilio_config)(
+                    business_id=session.business_profile_id,
+                    require_from_number=False,
+                )
+            except Exception as exc:
+                await self._log_event("call.hangup.missing_twilio_config", {"reason": reason, "error": str(exc)})
+                return
+
+            url = f"https://api.twilio.com/2010-04-01/Accounts/{cfg.account_sid}/Calls/{call_sid}.json"
+
+            def _post() -> requests.Response:
+                return requests.post(
+                    url,
+                    auth=(cfg.account_sid, cfg.auth_token),
+                    data={"Status": "completed"},
+                    timeout=20,
+                )
+        elif provider == VOICE_PROVIDER_TELNYX:
+            try:
+                cfg = await sync_to_async(resolve_telnyx_config)(
+                    business_id=session.business_profile_id,
+                    require_from_number=False,
+                )
+            except Exception as exc:
+                await self._log_event("call.hangup.missing_telnyx_config", {"reason": reason, "error": str(exc)})
+                return
+
+            url = f"https://api.telnyx.com/v2/texml/Accounts/{cfg.account_sid}/Calls/{call_sid}"
+
+            def _post() -> requests.Response:
+                return requests.post(
+                    url,
+                    headers={"Authorization": f"Bearer {cfg.api_key}", "Accept": "application/json"},
+                    data={"Status": "completed"},
+                    timeout=20,
+                )
+        else:
+            await self._log_event("call.hangup.unsupported_provider", {"reason": reason, "provider": provider})
             return
-
-        url = f"https://api.twilio.com/2010-04-01/Accounts/{cfg.account_sid}/Calls/{call_sid}.json"
-
-        def _post() -> requests.Response:
-            return requests.post(
-                url,
-                auth=(cfg.account_sid, cfg.auth_token),
-                data={"Status": "completed"},
-                timeout=20,
-            )
 
         try:
             resp = await asyncio.to_thread(_post)
@@ -1277,7 +1314,9 @@ class VoiceCallRuntime:
             frame_ms=frame_ms,
         ):
             payload = base64.b64encode(frame).decode("ascii")
-            await _twilio_send(twilio_ws, {"event": "media", "streamSid": self._stream_sid, "media": {"payload": payload}})
+            message = {"event": "media", "media": {"payload": payload}}
+            message.update(_stream_target_fields(self._stream_sid))
+            await _twilio_send(twilio_ws, message)
             if pace:
                 await asyncio.sleep(frame_ms / 1000.0)
 
@@ -1301,7 +1340,9 @@ class VoiceCallRuntime:
             frame_ms=frame_ms,
         ):
             payload = base64.b64encode(frame).decode("ascii")
-            await _twilio_send(twilio_ws, {"event": "media", "streamSid": self._stream_sid, "media": {"payload": payload}})
+            message = {"event": "media", "media": {"payload": payload}}
+            message.update(_stream_target_fields(self._stream_sid))
+            await _twilio_send(twilio_ws, message)
             if pace:
                 await asyncio.sleep(frame_ms / 1000.0)
 
@@ -1354,7 +1395,34 @@ class VoiceCallRuntime:
 
     async def _update_stream_ids(self, *, stream_sid: str, call_sid: str) -> None:
         def _update() -> None:
-            CallSession.objects.filter(id=self.session_id).update(twilio_stream_sid=stream_sid, twilio_call_sid=call_sid)
+            session = CallSession.objects.filter(id=self.session_id).first()
+            if not session:
+                return
+
+            updates: list[str] = []
+            if stream_sid and stream_sid != str(session.provider_stream_sid or ""):
+                session.provider_stream_sid = stream_sid
+                updates.append("provider_stream_sid")
+            if call_sid and call_sid != str(session.provider_call_sid or ""):
+                session.provider_call_sid = call_sid
+                updates.append("provider_call_sid")
+
+            provider = str(session.transport_provider or "").strip().lower()
+            if provider in {"", VOICE_PROVIDER_TWILIO}:
+                if stream_sid and stream_sid != str(session.twilio_stream_sid or ""):
+                    session.twilio_stream_sid = stream_sid
+                    updates.append("twilio_stream_sid")
+                if call_sid and call_sid != str(session.twilio_call_sid or ""):
+                    session.twilio_call_sid = call_sid
+                    updates.append("twilio_call_sid")
+
+            if not provider and call_sid.startswith("CA"):
+                session.transport_provider = VOICE_PROVIDER_TWILIO
+                updates.append("transport_provider")
+
+            if updates:
+                updates.append("updated_at")
+                session.save(update_fields=updates)
 
         await sync_to_async(_update)()
 
@@ -1616,6 +1684,14 @@ class VoiceCallRuntime:
 
 async def _twilio_send(ws, payload: dict) -> None:
     await ws.send(json.dumps(payload))
+
+
+def _stream_target_fields(stream_id: str | None) -> dict[str, str]:
+    sid = str(stream_id or "").strip()
+    if not sid:
+        return {}
+    # Twilio expects `streamSid`; Telnyx TeXML media streams expect `stream_id`.
+    return {"streamSid": sid, "stream_id": sid}
 
 
 def _extract_channel(payload: Mapping[str, object]) -> Mapping[str, object]:

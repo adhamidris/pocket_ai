@@ -1177,6 +1177,7 @@ class McpOrchestratorService:
             pending_assistant = None
 
             seen_tool_signatures: set[str] = set()
+            seen_phone_call_signatures: set[str] = set()
             duplicate_loop_streak = 0
             duplicate_loop_threshold = 2
             table_only_workflow = False
@@ -1780,25 +1781,32 @@ class McpOrchestratorService:
                                                                 draft_id=resolved_draft_id,
                                                             )
                                             elif tool_result is None and tool_name == "initiate_phone_call":
-                                                approved, _, approval_result = self._maybe_request_phone_tool_approval(
-                                                    conversation=conversation,
-                                                    tool_name=tool_name,
-                                                    tool_call_id=tool_call_id,
-                                                    tool_event_id=tool_event_id,
-                                                    arguments=effective_arguments,
-                                                    on_tool_event=on_tool_event,
-                                                    wait_for_approval=wait_for_tool_approval,
-                                                )
-                                                if not approved:
-                                                    tool_result = approval_result
+                                                dedupe_payload = self._phone_tool_input_payload(effective_arguments)
+                                                dedupe_signature = self._tool_signature(tool_name, dedupe_payload)
+                                                if dedupe_signature in seen_phone_call_signatures:
+                                                    tool_result = self._duplicate_phone_call_payload(tool_name)
                                                     call_origin = "policy"
-                                                if tool_result is None:
-                                                    tool_result = mcp_tools.execute_tool(
-                                                        tool_name,
-                                                        effective_arguments,
+                                                else:
+                                                    seen_phone_call_signatures.add(dedupe_signature)
+                                                    approved, _, approval_result = self._maybe_request_phone_tool_approval(
                                                         conversation=conversation,
-                                                        context=tool_context,
+                                                        tool_name=tool_name,
+                                                        tool_call_id=tool_call_id,
+                                                        tool_event_id=tool_event_id,
+                                                        arguments=effective_arguments,
+                                                        on_tool_event=on_tool_event,
+                                                        wait_for_approval=wait_for_tool_approval,
                                                     )
+                                                    if not approved:
+                                                        tool_result = approval_result
+                                                        call_origin = "policy"
+                                                    if tool_result is None:
+                                                        tool_result = mcp_tools.execute_tool(
+                                                            tool_name,
+                                                            effective_arguments,
+                                                            conversation=conversation,
+                                                            context=tool_context,
+                                                        )
                                             elif tool_result is None:
                                                 tool_result = mcp_tools.execute_tool(
                                                     tool_name,
@@ -4649,21 +4657,22 @@ class McpOrchestratorService:
         redacted_input_dict = dict(redacted_input) if isinstance(redacted_input, Mapping) else {}
 
         existing_approved: ConversationToolApproval | None = None
-        with tenant_context(business_id):
-            approved_candidates = list(
-                ConversationToolApproval.objects.filter(
-                    conversation=conversation,
-                    tool_name=tool_name,
-                    remote_tool_name="",
-                    status=ConversationToolApprovalStatus.APPROVED,
+        if self._phone_tool_approval_reuse_enabled():
+            with tenant_context(business_id):
+                approved_candidates = list(
+                    ConversationToolApproval.objects.filter(
+                        conversation=conversation,
+                        tool_name=tool_name,
+                        remote_tool_name="",
+                        status=ConversationToolApprovalStatus.APPROVED,
+                    )
+                    .order_by("-resolved_at")[:10]
                 )
-                .order_by("-resolved_at")[:10]
-            )
-        for candidate in approved_candidates:
-            candidate_input = getattr(candidate, "input_payload", None)
-            if isinstance(candidate_input, Mapping) and dict(candidate_input) == redacted_input_dict:
-                existing_approved = candidate
-                break
+            for candidate in approved_candidates:
+                candidate_input = getattr(candidate, "input_payload", None)
+                if isinstance(candidate_input, Mapping) and dict(candidate_input) == redacted_input_dict:
+                    existing_approved = candidate
+                    break
 
         if existing_approved:
             approval_payload = {

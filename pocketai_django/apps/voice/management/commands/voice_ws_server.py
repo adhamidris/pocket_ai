@@ -20,7 +20,7 @@ PATH_RE = re.compile(r"^/voice/stream/(?P<session_id>[0-9a-fA-F-]{36})(?:/(?P<to
 
 
 class Command(BaseCommand):
-    help = "Run the Twilio Media Streams WebSocket server (Phase 1)."
+    help = "Run the voice media-stream WebSocket server (Twilio/Telnyx compatible)."
 
     def add_arguments(self, parser) -> None:
         parser.add_argument("--host", default="0.0.0.0")

@@ -22,6 +22,7 @@ from apps.voice.provider_credentials import (
     VOICE_PROVIDER_DEEPGRAM,
     VOICE_PROVIDER_ELEVENLABS,
     VOICE_PROVIDER_ORDER,
+    VOICE_PROVIDER_TELNYX,
     VOICE_PROVIDER_TENANT_MANAGED,
     VOICE_PROVIDER_TWILIO,
     extract_safe_provider_settings,
@@ -32,22 +33,26 @@ from apps.voice.provider_credentials import (
 
 VOICE_PROVIDER_LABELS = {
     VOICE_PROVIDER_TWILIO: "Twilio",
+    VOICE_PROVIDER_TELNYX: "Telnyx",
     VOICE_PROVIDER_DEEPGRAM: "Deepgram",
     VOICE_PROVIDER_ELEVENLABS: "ElevenLabs",
 }
 
 VOICE_PROVIDER_DESCRIPTIONS = {
     VOICE_PROVIDER_TWILIO: "Call transport, webhooks, and recording callbacks.",
+    VOICE_PROVIDER_TELNYX: "Call transport, webhooks, and recording callbacks.",
     VOICE_PROVIDER_DEEPGRAM: "Live speech-to-text for caller audio.",
     VOICE_PROVIDER_ELEVENLABS: "Low-latency text-to-speech voice responses.",
 }
 
 VOICE_PROVIDER_REQUIRED_FIELDS = {
     VOICE_PROVIDER_TWILIO: ("account_sid", "auth_token", "webhook_base_url", "from_number"),
+    VOICE_PROVIDER_TELNYX: ("api_key", "account_sid", "application_sid", "webhook_base_url", "from_number"),
 }
 
 VOICE_PROVIDER_ALLOWED_FIELDS = {
     VOICE_PROVIDER_TWILIO: {"account_sid", "auth_token", "webhook_base_url", "from_number"},
+    VOICE_PROVIDER_TELNYX: {"api_key", "account_sid", "application_sid", "app_sid", "webhook_base_url", "from_number"},
 }
 
 PLATFORM_MANAGED_MESSAGE = (
@@ -165,6 +170,17 @@ def _normalize_credentials(provider: str, credentials: Mapping[str, Any]) -> tup
             if parsed.scheme not in {"http", "https"} or not parsed.netloc:
                 return {}, "Twilio webhook_base_url must be a valid http(s) URL."
             normalized["webhook_base_url"] = webhook
+    elif provider == VOICE_PROVIDER_TELNYX:
+        app_sid = str(normalized.get("application_sid") or normalized.get("app_sid") or "").strip()
+        if app_sid:
+            normalized["application_sid"] = app_sid
+            normalized.pop("app_sid", None)
+        webhook = str(normalized.get("webhook_base_url") or "").strip().rstrip("/")
+        if webhook:
+            parsed = urlsplit(webhook)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                return {}, "Telnyx webhook_base_url must be a valid http(s) URL."
+            normalized["webhook_base_url"] = webhook
 
     return normalized, None
 
@@ -172,6 +188,67 @@ def _normalize_credentials(provider: str, credentials: Mapping[str, Any]) -> tup
 def _missing_required(provider: str, credentials: Mapping[str, Any]) -> list[str]:
     required = list(VOICE_PROVIDER_REQUIRED_FIELDS.get(provider, ()))
     return [field for field in required if not str(credentials.get(field) or "").strip()]
+
+
+def _configured_transport_providers(*, business: BusinessProfile) -> set[str]:
+    configured: set[str] = set()
+    for connection in VoiceProviderConnection.objects.filter(
+        business_profile=business,
+        provider__in=VOICE_PROVIDER_TENANT_MANAGED,
+        enabled=True,
+    ).order_by("provider"):
+        try:
+            if connection.has_credentials():
+                configured.add(str(connection.provider or "").strip().lower())
+        except Exception:
+            continue
+    return configured
+
+
+def _get_or_create_voice_config(*, business: BusinessProfile):
+    from apps.voice.models import VoiceConfiguration
+
+    config = VoiceConfiguration.objects.filter(business_profile=business).first()
+    if config:
+        return config
+    return VoiceConfiguration.objects.create(business_profile=business)
+
+
+def _sync_active_transport_provider(
+    *,
+    business: BusinessProfile,
+    preferred_provider: str | None = None,
+    cleared_provider: str | None = None,
+) -> str:
+    """
+    Keep the active transport provider consistent with configured provider connections.
+
+    Rules:
+    - Keep explicit selection when valid.
+    - If explicit preferred provider requested and configured, apply it.
+    - If active provider gets disabled/cleared, unset it.
+    - If unset and exactly one provider is configured, auto-select it.
+    """
+
+    config = _get_or_create_voice_config(business=business)
+    configured = _configured_transport_providers(business=business)
+    active = str(config.active_transport_provider or "").strip().lower()
+    preferred = str(preferred_provider or "").strip().lower()
+    cleared = str(cleared_provider or "").strip().lower()
+
+    if preferred and preferred in configured:
+        active = preferred
+    if cleared and active == cleared:
+        active = ""
+    if active and active not in configured:
+        active = ""
+    if not active and len(configured) == 1:
+        active = next(iter(configured))
+
+    if active != str(config.active_transport_provider or "").strip().lower():
+        config.active_transport_provider = active
+        config.save(update_fields=["active_transport_provider", "updated_at"])
+    return active
 
 
 def _platform_provider_snapshot(provider: str) -> dict[str, Any]:
@@ -233,6 +310,7 @@ def _serialize_provider(
     *,
     provider: str,
     connection: VoiceProviderConnection | None,
+    active_transport_provider: str = "",
 ) -> dict[str, Any]:
     if not is_tenant_managed_provider(provider):
         snapshot = _platform_provider_snapshot(provider)
@@ -242,6 +320,7 @@ def _serialize_provider(
             "description": VOICE_PROVIDER_DESCRIPTIONS.get(provider, ""),
             "managementMode": "platform",
             "editable": False,
+            "isActiveTransport": False,
             "status": snapshot.get("status") or "not_configured",
             "enabled": bool(snapshot.get("configured")),
             "hasCredentials": bool(snapshot.get("configured")),
@@ -271,6 +350,7 @@ def _serialize_provider(
         "description": VOICE_PROVIDER_DESCRIPTIONS.get(provider, ""),
         "managementMode": "tenant",
         "editable": True,
+        "isActiveTransport": str(provider) == str(active_transport_provider or ""),
         "status": status,
         "enabled": enabled,
         "hasCredentials": has_credentials,
@@ -295,6 +375,21 @@ def _run_provider_test(provider: str, credentials: Mapping[str, Any]) -> tuple[b
         if response.status_code >= 400:
             return False, f"Twilio test failed ({response.status_code})."
         return True, "Twilio connection validated."
+    if provider == VOICE_PROVIDER_TELNYX:
+        account_sid = str(credentials.get("account_sid") or "").strip()
+        api_key = str(credentials.get("api_key") or "").strip()
+        if not account_sid or not api_key:
+            return False, "Telnyx account_sid and api_key are required."
+        url = f"https://api.telnyx.com/v2/texml/Accounts/{account_sid}/Calls"
+        response = requests.get(
+            url,
+            headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
+            params={"PageSize": 1},
+            timeout=timeout,
+        )
+        if response.status_code >= 400:
+            return False, f"Telnyx test failed ({response.status_code})."
+        return True, "Telnyx connection validated."
 
     return False, "Unsupported provider."
 
@@ -316,8 +411,13 @@ def voice_providers_collection(request: HttpRequest) -> JsonResponse:
                 provider__in=VOICE_PROVIDER_TENANT_MANAGED,
             ).order_by("provider")
         }
+        active_provider = _sync_active_transport_provider(business=business)
         providers = [
-            _serialize_provider(provider=provider, connection=connections.get(provider))
+            _serialize_provider(
+                provider=provider,
+                connection=connections.get(provider),
+                active_transport_provider=active_provider,
+            )
             for provider in VOICE_PROVIDER_ORDER
         ]
 
@@ -325,6 +425,7 @@ def voice_providers_collection(request: HttpRequest) -> JsonResponse:
         {
             "businessId": str(business.id),
             "dashboardUrl": "/dashboard/voice/",
+            "activeTransportProvider": active_provider or None,
             "providers": providers,
         },
         status=HTTPStatus.OK,
@@ -369,10 +470,18 @@ def voice_provider_detail(request: HttpRequest, provider: str) -> JsonResponse:
             business_profile=business,
             provider=provider_key,
         ).first()
+        active_provider = _sync_active_transport_provider(business=business)
 
         if request.method == "GET":
             return JsonResponse(
-                {"provider": _serialize_provider(provider=provider_key, connection=connection)},
+                {
+                    "activeTransportProvider": active_provider or None,
+                    "provider": _serialize_provider(
+                        provider=provider_key,
+                        connection=connection,
+                        active_transport_provider=active_provider,
+                    ),
+                },
                 status=HTTPStatus.OK,
             )
 
@@ -392,7 +501,14 @@ def voice_provider_detail(request: HttpRequest, provider: str) -> JsonResponse:
                         "updated_at",
                     ]
                 )
-            return JsonResponse({}, status=HTTPStatus.NO_CONTENT)
+            active_provider = _sync_active_transport_provider(
+                business=business,
+                cleared_provider=provider_key,
+            )
+            return JsonResponse(
+                {"activeTransportProvider": active_provider or None},
+                status=HTTPStatus.OK,
+            )
 
         assert payload is not None
         if connection is None:
@@ -452,8 +568,22 @@ def voice_provider_detail(request: HttpRequest, provider: str) -> JsonResponse:
         connection.last_error = ""
         connection.save()
 
+        set_as_active = bool(payload.get("setAsActive"))
+        active_provider = _sync_active_transport_provider(
+            business=business,
+            preferred_provider=provider_key if (set_as_active and next_enabled) else None,
+            cleared_provider=provider_key if not next_enabled else None,
+        )
+
         return JsonResponse(
-            {"provider": _serialize_provider(provider=provider_key, connection=connection)},
+            {
+                "activeTransportProvider": active_provider or None,
+                "provider": _serialize_provider(
+                    provider=provider_key,
+                    connection=connection,
+                    active_transport_provider=active_provider,
+                ),
+            },
             status=HTTPStatus.OK,
         )
 
@@ -515,7 +645,11 @@ def voice_provider_test(request: HttpRequest, provider: str) -> JsonResponse:
         response_payload = {
             "ok": ok,
             "message": message,
-            "provider": _serialize_provider(provider=provider_key, connection=connection),
+            "provider": _serialize_provider(
+                provider=provider_key,
+                connection=connection,
+                active_transport_provider=_sync_active_transport_provider(business=business),
+            ),
         }
         status_code = HTTPStatus.OK if ok else HTTPStatus.BAD_GATEWAY
         return JsonResponse(response_payload, status=status_code)
