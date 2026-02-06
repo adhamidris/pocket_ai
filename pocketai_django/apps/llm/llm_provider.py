@@ -496,6 +496,17 @@ class OpenAIChatProvider:
             },
         }
 
+    @staticmethod
+    def _extract_content(payload: Mapping[str, Any]) -> str:
+        choices = payload.get("choices") or []
+        if not choices:
+            raise PromptGenerationError("OpenAI response did not include choices.")
+        message = choices[0].get("message") or {}
+        content = message.get("content")
+        if isinstance(content, list):
+            return "".join(part.get("text", "") for part in content if isinstance(part, dict)).strip()
+        return str(content or "").strip()
+
 
 class DeepSeekChatProvider(OpenAIChatProvider):
     """
@@ -940,65 +951,6 @@ class _ResponseTextExtractor:
             "t": "\t",
         }
         return mapping.get(ch, ch)
-
-    def _system_prompt(self, bundle: PromptBundle) -> str:
-        schema_hint = (
-            "You must reply with JSON matching the schema provided. "
-            "Never include Markdown or prose outside of the JSON object."
-        )
-        return f"{bundle.system_prompt}\n\n{schema_hint}"
-
-    def _user_payload(self, bundle: PromptBundle) -> str:
-        return bundle.user_prompt.strip()
-
-    @staticmethod
-    def _response_schema() -> Mapping[str, Any]:
-        return {
-            "type": "json_schema",
-            "json_schema": {
-                "name": "ai_orchestration_response",
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "response_text": {"type": "string"},
-                        "actions": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "action": {"type": "string"},
-                                    "payload": {"type": "object"},
-                                },
-                                "required": ["action", "payload"],
-                            },
-                        },
-                        "extractions": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "type": {"type": "string"},
-                                    "payload": {"type": "object"},
-                                },
-                                "required": ["type", "payload"],
-                            },
-                        },
-                    },
-                    "required": ["response_text", "actions", "extractions"],
-                },
-            },
-        }
-
-    @staticmethod
-    def _extract_content(payload: Mapping[str, Any]) -> str:
-        choices = payload.get("choices") or []
-        if not choices:
-            raise PromptGenerationError("OpenAI response did not include choices.")
-        message = choices[0].get("message") or {}
-        content = message.get("content")
-        if isinstance(content, list):
-            return "".join(part.get("text", "") for part in content if isinstance(part, dict)).strip()
-        return str(content or "").strip()
 
 
 def _emit_stream_chunks(callback: Callable[[str], None], text: str, *, chunk_size: int = 1) -> None:
