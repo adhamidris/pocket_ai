@@ -98,7 +98,7 @@
     const available = [];
 
     try {
-      const resp = await fetch(API_BASE + "/mcp/connections/?business_id=" + BUSINESS_ID, {
+      const resp = await fetch(API_BASE + "/mcp/connections/?business_id=" + BUSINESS_ID + "&surface=integrations", {
         headers: { "X-CSRFToken": getCookie("csrftoken") },
         credentials: "same-origin",
       });

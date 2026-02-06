@@ -51,6 +51,8 @@ logger = logging.getLogger(__name__)
 _MCP_SETUP_FIELDS_MAX_KEYS = 25
 _MCP_SETUP_FIELD_MAX_CHARS = 4096
 _MCP_SETUP_FIELDS_TOTAL_MAX_CHARS = 16384
+_MCP_NATIVE_OAUTH_CONNECTION_TYPES = frozenset({"email_oauth", "integration_oauth"})
+_MCP_SURFACE_INTEGRATIONS = "integrations"
 
 
 def _parse_json_body(request: HttpRequest) -> tuple[dict[str, Any] | None, JsonResponse | None]:
@@ -181,6 +183,11 @@ def _marketplace_entry(marketplace_key: str) -> dict[str, Any] | None:
         if str(item.get("key") or "").strip() == key:
             return item
     return None
+
+
+def _is_native_oauth_marketplace_item(item: Mapping[str, Any]) -> bool:
+    connection_type = str(item.get("connectionType") or "").strip().lower()
+    return connection_type in _MCP_NATIVE_OAUTH_CONNECTION_TYPES
 
 
 def _extract_setup_fields(payload: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -1268,6 +1275,9 @@ def mcp_connections_collection(request: HttpRequest) -> JsonResponse:
     assert business is not None
 
     if request.method == "GET":
+        surface = str(request.GET.get("surface") or "").strip().lower()
+        include_native_oauth = surface == _MCP_SURFACE_INTEGRATIONS
+
         with tenant_context(business.id):
             active_jobs = (
                 McpConnectionTestJob.objects.filter(
@@ -1295,6 +1305,8 @@ def mcp_connections_collection(request: HttpRequest) -> JsonResponse:
 
         # Get full marketplace catalog
         full_catalog = _mcp_marketplace_catalog()
+        if not include_native_oauth:
+            full_catalog = [item for item in full_catalog if not _is_native_oauth_marketplace_item(item)]
 
         # Get industry-specific recommendations
         industry_key = getattr(business, "industry_key", "") or ""
@@ -1307,10 +1319,10 @@ def mcp_connections_collection(request: HttpRequest) -> JsonResponse:
         common_tools = _get_common_tools(full_catalog)
 
         # Get connected email accounts (native Gmail/Outlook)
-        email_accounts_payload = _get_email_accounts_payload(business)
+        email_accounts_payload = _get_email_accounts_payload(business) if include_native_oauth else []
 
         # Get connected integration accounts (Calendar, Drive, OneDrive, Slack, HubSpot)
-        integration_accounts_payload = _get_integration_accounts_payload(business)
+        integration_accounts_payload = _get_integration_accounts_payload(business) if include_native_oauth else []
 
         return JsonResponse(
             {

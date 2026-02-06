@@ -13,12 +13,17 @@ from django.utils import timezone as django_timezone
 from apps.accounts.models import (
     AgentProfile,
     BusinessProfile,
+    EmailAccount,
     McpConnection,
     McpConnectionApprovalMode,
     McpConnectionAuthType,
     McpConnectionStatus,
     McpConnectionToolSetting,
     McpToolOperationType,
+    IntegrationAccount,
+    IntegrationAccountStatus,
+    IntegrationProvider,
+    IntegrationType,
     RegistrationSession,
 )
 from apps.mcp.connectors import _is_cache_expired, build_remote_tool_definitions
@@ -136,6 +141,73 @@ class McpConnectionsApiTests(TestCase):
         self.assertIsNotNone(github)
         self.assertEqual(github.get("recommendedAuth"), "bearer")
         self.assertEqual(github.get("serverUrl"), "https://api.githubcopilot.com/mcp/")
+
+    def test_default_surface_excludes_native_oauth_marketplace_and_accounts(self) -> None:
+        EmailAccount.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            provider="google",
+            email_address="owner@example.com",
+            status=EmailAccountStatus.CONNECTED,
+        )
+        IntegrationAccount.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            integration_type=IntegrationType.GOOGLE_DRIVE,
+            provider=IntegrationProvider.GOOGLE,
+            account_identifier="owner@example.com",
+            status=IntegrationAccountStatus.CONNECTED,
+        )
+
+        url = reverse("api:mcp-connections")
+        resp = self.client.get(url, {"business_id": str(self.business.id)})
+        self.assertEqual(resp.status_code, 200)
+
+        payload = resp.json()
+        marketplace = payload.get("marketplace") or []
+        connection_types = {str(item.get("connectionType") or "").strip().lower() for item in marketplace}
+        self.assertNotIn("email_oauth", connection_types)
+        self.assertNotIn("integration_oauth", connection_types)
+        self.assertEqual(payload.get("emailAccounts"), [])
+        self.assertEqual(payload.get("integrationAccounts"), [])
+
+    def test_integrations_surface_includes_native_oauth_marketplace_and_accounts(self) -> None:
+        email_account = EmailAccount.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            provider="google",
+            email_address="owner@example.com",
+            status=EmailAccountStatus.CONNECTED,
+        )
+        integration_account = IntegrationAccount.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            integration_type=IntegrationType.GOOGLE_DRIVE,
+            provider=IntegrationProvider.GOOGLE,
+            account_identifier="owner@example.com",
+            status=IntegrationAccountStatus.CONNECTED,
+        )
+
+        url = reverse("api:mcp-connections")
+        resp = self.client.get(
+            url,
+            {
+                "business_id": str(self.business.id),
+                "surface": "integrations",
+            },
+        )
+        self.assertEqual(resp.status_code, 200)
+
+        payload = resp.json()
+        marketplace = payload.get("marketplace") or []
+        marketplace_keys = {str(item.get("key") or "").strip() for item in marketplace}
+        self.assertIn("gmail", marketplace_keys)
+        self.assertIn("google_drive", marketplace_keys)
+
+        email_rows = payload.get("emailAccounts") or []
+        integration_rows = payload.get("integrationAccounts") or []
+        self.assertTrue(any(row.get("id") == str(email_account.id) for row in email_rows))
+        self.assertTrue(any(row.get("id") == str(integration_account.id) for row in integration_rows))
 
     def test_agent_opt_out_toggle(self) -> None:
         connection = McpConnection.objects.create(
