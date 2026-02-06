@@ -3,7 +3,7 @@ from __future__ import annotations
 from django.test import TestCase
 
 from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
-from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession, User
+from apps.accounts.models import AgentProfile, BusinessProfile, McpConnection, RegistrationSession, User
 from apps.conversations.models import Conversation
 from apps.mcp.orchestrator import McpOrchestratorService
 
@@ -72,12 +72,31 @@ class McpToolContractFeatureFlagTests(TestCase):
         # Agentic mode should expose the refs-first retrieval contract.
         self.assertIn("search_knowledge", advertised)
         self.assertIn("read_knowledge", advertised)
-        self.assertIn("mcp_search_tools", advertised)
-        self.assertIn("mcp_call_tool", advertised)
+        self.assertNotIn("mcp_search_tools", advertised)
+        self.assertNotIn("mcp_call_tool", advertised)
         self.assertNotIn("read_document", advertised)
         # Keep high-risk/legacy tools out of the agentic surface.
         self.assertNotIn("create_case", advertised)
         self.assertNotIn("query_dataset", advertised)
+
+    def test_agentic_mode_with_mcp_connection_advertises_gateway_tools(self) -> None:
+        conversation = self._build_conversation(rag_agentic_mode=True)
+        McpConnection.objects.create(
+            business_profile=conversation.business_profile,
+            created_by=self.user,
+            name="Connected MCP",
+            server_url="https://example.com/mcp",
+            metadata={"tool_cache": {"tools": [{"name": "list_items", "inputSchema": {"type": "object"}}]}},
+        )
+        provider = _ToolRecordingProvider()
+        orchestrator = McpOrchestratorService(agent=conversation.agent_profile, provider=provider)
+
+        orchestrator.stream_turn(conversation=conversation, user_message="What credit cards do you offer?")
+
+        self.assertTrue(provider.tool_name_sets, "Provider never received tool definitions.")
+        advertised = provider.tool_name_sets[0]
+        self.assertIn("mcp_search_tools", advertised)
+        self.assertIn("mcp_call_tool", advertised)
 
     def test_non_agentic_mode_advertises_full_tool_catalog(self) -> None:
         conversation = self._build_conversation(rag_agentic_mode=False)

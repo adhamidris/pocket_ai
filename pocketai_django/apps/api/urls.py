@@ -189,8 +189,11 @@ urlpatterns = [
     path("oauth/refresh/<uuid:connection_id>/", oauth.oauth_refresh, name="oauth_refresh"),
     path("email/oauth/start/<str:provider_key>/", email_oauth.email_oauth_start, name="email_oauth_start"),
     path("email/oauth/callback/<str:provider_key>/", email_oauth.email_oauth_callback, name="email_oauth_callback"),
+    path("email/oauth/disconnect/<str:provider_key>/", email_oauth.email_oauth_disconnect, name="email_oauth_disconnect"),
     path("integrations/oauth/start/<str:integration_type>/", integration_oauth.integration_oauth_start, name="integration_oauth_start"),
     path("integrations/oauth/callback/<str:integration_type>/", integration_oauth.integration_oauth_callback, name="integration_oauth_callback"),
+    path("integrations/oauth/disconnect/<str:integration_type>/", integration_oauth.integration_oauth_disconnect, name="integration_oauth_disconnect"),
+    path("integrations/oauth/tools/<str:integration_type>/", integration_oauth.integration_oauth_tools, name="integration_oauth_tools"),
 
     # Voice calls (Phase 1)
     path("voice/providers/", voice_providers.voice_providers_collection, name="voice-providers"),

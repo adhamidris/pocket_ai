@@ -12,11 +12,12 @@ from urllib.parse import urlencode
 
 import requests
 from django.conf import settings
-from django.http import HttpRequest, HttpResponse
+from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import redirect
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
+from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.http import require_http_methods
 
 from core.tenancy import tenant_context
@@ -117,6 +118,69 @@ def _safe_redirect_after(request: HttpRequest, value: str | None) -> str:
     ):
         return candidate
     return fallback
+
+
+def _parse_json_payload(request: HttpRequest) -> tuple[dict[str, object], JsonResponse | None]:
+    if not request.body:
+        return {}, None
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return {}, JsonResponse(
+            {"error": "INVALID_JSON", "message": "Request body must be valid JSON."},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+    if not isinstance(payload, dict):
+        return {}, JsonResponse(
+            {"error": "INVALID_JSON", "message": "Request body must be a JSON object."},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+    return payload, None
+
+
+def _resolve_business_api(
+    request: HttpRequest,
+    business_id: str | None,
+) -> tuple[BusinessProfile | None, JsonResponse | None]:
+    if not request.user.is_authenticated:
+        return None, JsonResponse(
+            {"error": "UNAUTHORIZED", "message": "Login required."},
+            status=HTTPStatus.UNAUTHORIZED,
+        )
+
+    candidate = str(business_id or "").strip()
+    if candidate:
+        try:
+            business_uuid = uuid.UUID(candidate)
+        except (TypeError, ValueError):
+            return None, JsonResponse(
+                {"error": "VALIDATION_ERROR", "message": "business_id is invalid."},
+                status=HTTPStatus.BAD_REQUEST,
+            )
+        business = BusinessProfile.objects.filter(id=business_uuid).first()
+        if not business:
+            return None, JsonResponse(
+                {"error": "BUSINESS_NOT_FOUND", "message": "Business not found."},
+                status=HTTPStatus.NOT_FOUND,
+            )
+    else:
+        business = request.user.business_profiles.order_by("-created_at").first()
+        if not business:
+            return None, JsonResponse(
+                {"error": "BUSINESS_REQUIRED", "message": "No business profile available."},
+                status=HTTPStatus.BAD_REQUEST,
+            )
+
+    if request.user.is_staff:
+        return business, None
+
+    if not request.user.business_profiles.filter(id=business.id).exists():
+        return None, JsonResponse(
+            {"error": "FORBIDDEN", "message": "You do not have access to this business."},
+            status=HTTPStatus.FORBIDDEN,
+        )
+
+    return business, None
 
 
 def _resolve_business(request: HttpRequest, business_id: str | None) -> tuple[BusinessProfile | None, HttpResponse | None]:
@@ -549,3 +613,92 @@ def email_oauth_callback(request: HttpRequest, provider_key: str) -> HttpRespons
         fallback_redirect=redirect_after,
     )
 
+
+@csrf_protect
+@require_http_methods(["POST"])
+def email_oauth_disconnect(request: HttpRequest, provider_key: str) -> JsonResponse:
+    """Disconnect a first-party email OAuth account for the current business + actor."""
+
+    mapping = _provider_mapping(provider_key)
+    if not mapping:
+        return JsonResponse(
+            {"error": "UNKNOWN_PROVIDER", "message": "Unknown email provider."},
+            status=HTTPStatus.NOT_FOUND,
+        )
+    email_provider, _oauth_provider_key = mapping
+
+    payload, payload_error = _parse_json_payload(request)
+    if payload_error:
+        return payload_error
+
+    business_param = (
+        payload.get("businessId")
+        or payload.get("business_id")
+        or request.GET.get("business_id")
+        or request.GET.get("businessId")
+    )
+    business, business_error = _resolve_business_api(request, str(business_param or ""))
+    if business_error:
+        return business_error
+    assert business is not None
+
+    with tenant_context(business.id):
+        account_qs = EmailAccount.objects.filter(
+            business_profile=business,
+            provider=email_provider,
+            user=request.user,
+        )
+        account = account_qs.order_by("-updated_at").first()
+        if not account:
+            return JsonResponse(
+                {"error": "EMAIL_ACCOUNT_NOT_FOUND", "message": "No email account found for this provider."},
+                status=HTTPStatus.NOT_FOUND,
+            )
+
+        email_address = str(account.email_address or "")
+        account.status = EmailAccountStatus.DISCONNECTED
+        account.last_error = ""
+        account.credentials = {}
+
+        metadata = dict(account.metadata or {}) if isinstance(account.metadata, dict) else {}
+        profile_meta = metadata.get("email_profile")
+        if isinstance(profile_meta, dict):
+            profile_meta["disconnected_at"] = timezone.now().isoformat()
+            metadata["email_profile"] = profile_meta
+        else:
+            metadata["disconnected_at"] = timezone.now().isoformat()
+        account.metadata = metadata
+
+        account.save(
+            update_fields=[
+                "status",
+                "last_error",
+                "metadata",
+                "credentials_encrypted",
+                "credentials_key_version",
+                "credentials_last_rotated_at",
+                "credential_error_count",
+                "updated_at",
+            ]
+        )
+
+        EmailAccountAuditEvent.objects.create(
+            business_profile=business,
+            email_account=account,
+            email_account_id_snapshot=account.id,
+            actor_user=request.user if request.user.is_authenticated else None,
+            action=EmailAccountAuditAction.DISCONNECTED,
+            description="Email account disconnected.",
+            metadata={
+                "provider": email_provider,
+                "email_sha256": _sha256_hex(email_address),
+            },
+        )
+
+    return JsonResponse(
+        {
+            "status": EmailAccountStatus.DISCONNECTED,
+            "provider": email_provider,
+        },
+        status=HTTPStatus.OK,
+    )

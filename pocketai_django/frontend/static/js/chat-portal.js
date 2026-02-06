@@ -170,13 +170,13 @@ class ChatPortalClient {
     this.streamingTextPacerMode = "normal";
     this.streamingTextDeferredActions = [];
     this.streamingTextPacerConfig = {
-      baseCharsPerSecond: 48,
-      maxCharsPerSecond: 105,
-      backlogForMaxRate: 300,
-      maxRevealPerTick: 7,
-      maxBudgetChars: 16,
-      boundaryModeMultiplier: 1.1,
-      finalizeModeMultiplier: 1.2,
+      baseCharsPerSecond: 62,
+      maxCharsPerSecond: 132,
+      backlogForMaxRate: 260,
+      maxRevealPerTick: 9,
+      maxBudgetChars: 20,
+      boundaryModeMultiplier: 1.15,
+      finalizeModeMultiplier: 1.28,
       dtCapMs: 50,
     };
 
@@ -1526,25 +1526,25 @@ class ChatPortalClient {
 	      const mode = (this.streamingTextPacerMode || "normal").toString();
 	      const baseCharsPerSecond = Number.isFinite(Number(pacerCfg.baseCharsPerSecond))
 	        ? Number(pacerCfg.baseCharsPerSecond)
-	        : 42;
+	        : 62;
 	      const maxCharsPerSecond = Number.isFinite(Number(pacerCfg.maxCharsPerSecond))
 	        ? Number(pacerCfg.maxCharsPerSecond)
-	        : 92;
+	        : 132;
 	      const backlogForMaxRate = Number.isFinite(Number(pacerCfg.backlogForMaxRate))
 	        ? Number(pacerCfg.backlogForMaxRate)
-	        : 300;
+	        : 260;
 	      const maxRevealPerTick = Number.isFinite(Number(pacerCfg.maxRevealPerTick))
 	        ? Number(pacerCfg.maxRevealPerTick)
-	        : 6;
+	        : 9;
 	      const maxBudgetChars = Number.isFinite(Number(pacerCfg.maxBudgetChars))
 	        ? Number(pacerCfg.maxBudgetChars)
-	        : 16;
+	        : 20;
 	      const boundaryModeMultiplier = Number.isFinite(Number(pacerCfg.boundaryModeMultiplier))
 	        ? Number(pacerCfg.boundaryModeMultiplier)
-	        : 1.1;
+	        : 1.15;
 	      const finalizeModeMultiplier = Number.isFinite(Number(pacerCfg.finalizeModeMultiplier))
 	        ? Number(pacerCfg.finalizeModeMultiplier)
-	        : 1.2;
+	        : 1.28;
 
 	      const backlogFactor = Math.min(1, backlogLen / Math.max(1, backlogForMaxRate));
 	      const effectiveBase = Math.max(1, Math.min(baseCharsPerSecond, maxCharsPerSecond));
@@ -1560,7 +1560,7 @@ class ChatPortalClient {
 	        (this.streamingTextPacerBudget || 0) + charsPerSecond * (Math.max(0, dtMs || 16) / 1000);
 	      this.streamingTextPacerBudget = Math.min(maxBudgetChars, Math.max(0, this.streamingTextPacerBudget || 0));
 	      let reveal = Math.floor(this.streamingTextPacerBudget);
-	      if (reveal <= 0 && this.streamingTextPacerBudget >= 0.95) reveal = 1;
+	      if (reveal <= 0 && this.streamingTextPacerBudget >= 0.75) reveal = 1;
 	      reveal = Math.min(reveal, maxRevealPerTick, backlogLen);
 	      this.streamingTextVisibleLen = prevVisibleLen + reveal;
 	      this.streamingTextPacerBudget = Math.max(0, (this.streamingTextPacerBudget || 0) - reveal);

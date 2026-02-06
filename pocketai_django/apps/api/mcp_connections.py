@@ -1214,7 +1214,13 @@ def _get_integration_accounts_payload(business: BusinessProfile) -> list[dict[st
     """
     accounts = IntegrationAccount.objects.filter(business_profile=business).order_by("integration_type")
     result = []
+    from apps.mcp import tools as mcp_tools
     for account in accounts:
+        catalog = mcp_tools.get_native_integration_tools_for_type(str(account.integration_type or ""))
+        tool_names = [str(row.get("toolName") or "").strip() for row in catalog if str(row.get("toolName") or "").strip()]
+        enabled_map = mcp_tools.get_native_tool_enabled_map_for_account(account, tool_names=tool_names) if tool_names else {}
+        total_tool_count = len(tool_names)
+        enabled_tool_count = sum(1 for name in tool_names if bool(enabled_map.get(name, True)))
         result.append({
             "id": str(account.id),
             "type": "integration_account",
@@ -1222,6 +1228,8 @@ def _get_integration_accounts_payload(business: BusinessProfile) -> list[dict[st
             "provider": account.provider,
             "account_identifier": account.account_identifier,
             "status": account.status,
+            "totalToolCount": total_tool_count,
+            "enabledToolCount": enabled_tool_count,
             "lastError": account.last_error or "",
             "lastHealthCheckedAt": account.last_health_checked_at.isoformat() if account.last_health_checked_at else None,
             "createdAt": account.created_at.isoformat() if account.created_at else None,

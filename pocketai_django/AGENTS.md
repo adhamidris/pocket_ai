@@ -3,9 +3,10 @@
 This repo is a multi-tenant B2B SaaS. Your job is to ship production-ready changes that keep the platform safe, maintainable, and scalable.
 
 ## Read first
-- `docs/product/saas_brief.md`
-- `docs/product/technical.md`
 - `README.md`
+
+## Django and .venv location
+- `/pocketai_django/` && `source .venv/bin/activate`
 
 ## Planning preferences (owner guidance)
 - Prefer **long-term, correct refactors** over quick workarounds.

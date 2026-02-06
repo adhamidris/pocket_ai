@@ -14,6 +14,7 @@ from apps.accounts.models import (
     AgentProfile,
     BusinessProfile,
     EmailAccount,
+    EmailAccountStatus,
     McpConnection,
     McpConnectionApprovalMode,
     McpConnectionAuthType,

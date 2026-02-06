@@ -38,6 +38,8 @@ from apps.accounts.models import (
     EmailAccountStatus,
     EmailSendMode,
     KnowledgeUpload,
+    McpConnectionApprovalMode,
+    McpToolOperationType,
 )
 from apps.accounts.feature_flags import FeatureFlagService
 from apps.conversations.models import (
@@ -395,10 +397,18 @@ class McpOrchestratorService:
         if allowed_tools is not None:
             normalized_tool_allowlist = {str(value).strip() for value in allowed_tools if str(value or "").strip()}
 
+        native_registry = mcp_tools.get_native_integration_tool_registry()
+        native_tool_names_all = set(native_registry.keys())
+        available_native_tool_names = self._available_native_integration_tool_names(
+            conversation=conversation,
+            registry=native_registry,
+        )
+
         internal_tool_defs: list[Mapping[str, object]] = list(mcp_tools.TOOL_DEFINITIONS)
-        # Gateway mode is permanently enabled.
-        gateway_enabled = True
-        internal_tool_defs.extend(mcp_tools.GATEWAY_TOOL_DEFINITIONS)
+        # Gateway tools are exposed only when at least one MCP connection is enabled.
+        gateway_enabled = bool(all_remote_connections)
+        if gateway_enabled:
+            internal_tool_defs.extend(mcp_tools.GATEWAY_TOOL_DEFINITIONS)
         if not portal_emit_blocks_enabled:
             internal_tool_defs = [
                 tool_def
@@ -428,8 +438,6 @@ class McpOrchestratorService:
                 "pdf_merge",
                 "pdf_extract_pages",
                 "pdf_extract_text",
-                "mcp_search_tools",
-                "mcp_call_tool",
                 "request_user_input",
                 "create_agent_request",
                 "create_agent_run",
@@ -444,9 +452,22 @@ class McpOrchestratorService:
                 "email_send_draft",
                 "initiate_phone_call",
             }
+            if gateway_enabled:
+                allowed.update({"mcp_search_tools", "mcp_call_tool"})
+            allowed.update(available_native_tool_names)
             internal_tool_defs = [
                 tool_def for tool_def in internal_tool_defs if self._tool_schema_name(tool_def) in allowed
             ]
+
+        # Native integration tools are exposed only when connected for the current actor + tenant.
+        internal_tool_defs = [
+            tool_def
+            for tool_def in internal_tool_defs
+            if (
+                self._tool_schema_name(tool_def) not in native_tool_names_all
+                or self._tool_schema_name(tool_def) in available_native_tool_names
+            )
+        ]
 
         if normalized_tool_allowlist is not None:
             internal_tool_defs = [
@@ -1624,7 +1645,66 @@ class McpOrchestratorService:
                                                 except Exception:  # pragma: no cover - UI callback must not break tools
                                                     logger.exception("mcp portal tool event start callback failed")
                                             tool_result = None
-                                            if tool_name == "email_send_draft":
+                                            if tool_name in native_tool_names_all:
+                                                native_tool_policy = self._resolve_native_integration_policy(
+                                                    conversation=conversation,
+                                                    tool_name=tool_name,
+                                                    arguments=effective_arguments,
+                                                )
+                                                decision = str(native_tool_policy.get("decision") or "").strip()
+                                                if decision == "deny":
+                                                    tool_result = (
+                                                        dict(native_tool_policy.get("error_payload") or {})
+                                                        if isinstance(native_tool_policy.get("error_payload"), Mapping)
+                                                        else {
+                                                            "tool": tool_name,
+                                                            "status": "error",
+                                                            "error": str(native_tool_policy.get("reason_code") or "not_connected"),
+                                                            "error_code": str(native_tool_policy.get("reason_code") or "not_connected"),
+                                                            "hint": "Integration tool call is blocked by policy.",
+                                                        }
+                                                    )
+                                                    call_origin = "policy"
+                                                elif decision == "allow_with_confirmation":
+                                                    approval_requirement = {
+                                                        "requires_approval": True,
+                                                        "approval_mode": native_tool_policy.get("approval_mode")
+                                                        or self._effective_tool_approval_mode(conversation=conversation),
+                                                        "operation_type": native_tool_policy.get("operation_type")
+                                                        or McpToolOperationType.UNKNOWN,
+                                                        "reason": native_tool_policy.get("reason") or "native_integration_write",
+                                                    }
+                                                    approved, _, approval_result = self._maybe_request_tool_approval(
+                                                        conversation=conversation,
+                                                        connection=None,
+                                                        tool_name=tool_name,
+                                                        remote_tool_name="",
+                                                        tool_call_id=tool_call_id,
+                                                        tool_event_id=tool_event_id,
+                                                        arguments=effective_arguments,
+                                                        approval_requirement=approval_requirement,
+                                                        on_tool_event=on_tool_event,
+                                                        wait_for_approval=wait_for_tool_approval,
+                                                    )
+                                                    if not approved:
+                                                        tool_result = dict(approval_result) if isinstance(approval_result, Mapping) else {}
+                                                        tool_result["tool"] = tool_name
+                                                        tool_result["error"] = "approval_required"
+                                                        tool_result["error_code"] = "approval_required"
+                                                        if not str(tool_result.get("hint") or "").strip():
+                                                            tool_result["hint"] = (
+                                                                "User approval is required before this integration action can run."
+                                                            )
+                                                        call_origin = "policy"
+
+                                                resolved_account_id = str(
+                                                    native_tool_policy.get("resolved_integration_account_id") or ""
+                                                ).strip()
+                                                if tool_result is None and resolved_account_id:
+                                                    effective_arguments = dict(effective_arguments)
+                                                    effective_arguments["integration_account_id"] = resolved_account_id
+
+                                            if tool_result is None and tool_name == "email_send_draft":
                                                 draft_id = str(
                                                     effective_arguments.get("draft_id") or effective_arguments.get("draftId") or ""
                                                 ).strip()
@@ -1689,7 +1769,7 @@ class McpOrchestratorService:
                                                                 email_account_id=getattr(email_account, "id", None),
                                                                 draft_id=resolved_draft_id,
                                                             )
-                                            elif tool_name == "initiate_phone_call":
+                                            elif tool_result is None and tool_name == "initiate_phone_call":
                                                 approved, _, approval_result = self._maybe_request_phone_tool_approval(
                                                     conversation=conversation,
                                                     tool_name=tool_name,
@@ -1709,7 +1789,7 @@ class McpOrchestratorService:
                                                         conversation=conversation,
                                                         context=tool_context,
                                                     )
-                                            else:
+                                            elif tool_result is None:
                                                 tool_result = mcp_tools.execute_tool(
                                                     tool_name,
                                                     effective_arguments,
@@ -3580,6 +3660,114 @@ class McpOrchestratorService:
     @staticmethod
     def _is_email_tool(tool_name: str) -> bool:
         return str(tool_name or "").strip().lower().startswith("email_")
+
+    @staticmethod
+    def _conversation_actor_user_uuid(conversation: Conversation) -> uuid.UUID | None:
+        meta = conversation.metadata if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
+        actor_user_id = None
+        if isinstance(meta, Mapping):
+            actor_user_id = meta.get("actor_user_id") or meta.get("actorUserId") or meta.get("user_id") or meta.get("userId")
+        if not actor_user_id:
+            return None
+        try:
+            return uuid.UUID(str(actor_user_id))
+        except (TypeError, ValueError):
+            return None
+
+    def _connected_native_integration_types(self, *, conversation: Conversation) -> set[str]:
+        try:
+            return mcp_tools.list_connected_native_integration_types(conversation=conversation)
+        except Exception:  # pragma: no cover - defensive
+            logger.exception(
+                "native_integration_connected_types_failed conversation=%s business=%s",
+                getattr(conversation, "id", None),
+                getattr(conversation, "business_profile_id", None),
+            )
+            return set()
+
+    def _available_native_integration_tool_names(
+        self,
+        *,
+        conversation: Conversation,
+        registry: Mapping[str, Mapping[str, object]],
+    ) -> set[str]:
+        try:
+            return mcp_tools.list_enabled_native_integration_tool_names(
+                conversation=conversation,
+                registry=registry,
+            )
+        except Exception:  # pragma: no cover - defensive
+            logger.exception(
+                "native_integration_enabled_tools_failed conversation=%s business=%s",
+                getattr(conversation, "id", None),
+                getattr(conversation, "business_profile_id", None),
+            )
+            return set()
+
+    def _effective_tool_approval_mode(self, *, conversation: Conversation) -> str:
+        agent = getattr(conversation, "agent_profile", None)
+        mode = str(getattr(agent, "mcp_default_approval_mode", "") or "").strip()
+        if mode in {
+            McpConnectionApprovalMode.AUTO,
+            McpConnectionApprovalMode.APPROVE_WRITES,
+            McpConnectionApprovalMode.APPROVE_ALL,
+        }:
+            return mode
+        return McpConnectionApprovalMode.AUTO
+
+    def _resolve_native_integration_policy(
+        self,
+        *,
+        conversation: Conversation,
+        tool_name: str,
+        arguments: Mapping[str, object],
+    ) -> dict[str, object]:
+        metadata = mcp_tools.get_native_integration_tool_metadata(tool_name)
+        if not isinstance(metadata, Mapping):
+            return {"decision": "allow", "reason": "non_native_tool"}
+
+        account, account_error = mcp_tools.resolve_native_integration_account_for_tool(
+            tool_name=tool_name,
+            arguments=arguments,
+            conversation=conversation,
+        )
+        if account_error:
+            error_payload = dict(account_error) if isinstance(account_error, Mapping) else {}
+            reason_code = str(error_payload.get("error_code") or error_payload.get("error") or "not_connected").strip()
+            if reason_code not in {"not_connected", "account_mismatch", "token_expired", "approval_required"}:
+                reason_code = "not_connected"
+            error_payload["error"] = reason_code
+            error_payload["error_code"] = reason_code
+            return {
+                "decision": "deny",
+                "reason": "native_integration_precondition_failed",
+                "reason_code": reason_code,
+                "error_payload": error_payload,
+                "operation_type": str(metadata.get("operation_type") or McpToolOperationType.UNKNOWN),
+                "integration_type": str(metadata.get("integration_type") or ""),
+            }
+
+        operation_type = str(metadata.get("operation_type") or McpToolOperationType.UNKNOWN)
+        approval_mode = self._effective_tool_approval_mode(conversation=conversation)
+        if approval_mode == McpConnectionApprovalMode.APPROVE_ALL:
+            decision = "allow_with_confirmation"
+            reason = "approval_mode_approve_all"
+        elif approval_mode == McpConnectionApprovalMode.APPROVE_WRITES and operation_type != McpToolOperationType.READ:
+            decision = "allow_with_confirmation"
+            reason = "approval_mode_approve_writes"
+        else:
+            decision = "allow"
+            reason = "policy_auto_allowed"
+
+        return {
+            "decision": decision,
+            "reason": reason,
+            "reason_code": "approval_required" if decision == "allow_with_confirmation" else "allowed",
+            "operation_type": operation_type,
+            "integration_type": str(metadata.get("integration_type") or ""),
+            "approval_mode": approval_mode,
+            "resolved_integration_account_id": str(getattr(account, "id", "") or "") if account else "",
+        }
 
     _EMAIL_PENDING_DRAFT_META_KEY = "email_pending_draft"
 

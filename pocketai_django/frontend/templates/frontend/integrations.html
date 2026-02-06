@@ -59,6 +59,142 @@
   </main>
 </div>
 
+<style>
+  .integr-tools-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    background: rgba(2, 6, 23, 0.55);
+  }
+  .integr-tools-modal.is-open {
+    display: flex;
+  }
+  .integr-tools-panel {
+    width: min(760px, 96vw);
+    max-height: 86vh;
+    overflow: hidden;
+    border-radius: 14px;
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    background: rgba(15, 23, 42, 0.96);
+    color: #e2e8f0;
+    box-shadow: 0 20px 45px rgba(2, 6, 23, 0.45);
+    display: flex;
+    flex-direction: column;
+  }
+  .integr-tools-panel-header {
+    padding: 14px 16px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    align-items: flex-start;
+  }
+  .integr-tools-summary {
+    font-size: 12px;
+    color: #94a3b8;
+  }
+  .integr-tools-panel-body {
+    padding: 12px 16px;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .integr-tools-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 10px 8px;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    border-radius: 10px;
+    background: rgba(15, 23, 42, 0.56);
+  }
+  .integr-tools-row h4 {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: #f8fafc;
+  }
+  .integr-tools-row p {
+    margin: 2px 0 0;
+    font-size: 12px;
+    color: #94a3b8;
+  }
+  .integr-tools-badge {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    border-radius: 999px;
+    padding: 1px 8px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-top: 5px;
+    color: #cbd5e1;
+  }
+  .integr-tools-badge.read {
+    border-color: rgba(16, 185, 129, 0.45);
+    color: #6ee7b7;
+  }
+  .integr-tools-badge.write {
+    border-color: rgba(245, 158, 11, 0.45);
+    color: #fcd34d;
+  }
+  .integr-tools-panel-footer {
+    border-top: 1px solid rgba(148, 163, 184, 0.2);
+    padding: 12px 16px;
+    display: flex;
+    gap: 8px;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .integr-tools-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+</style>
+
+<div class="integr-tools-modal" data-integration-tools-modal aria-hidden="true">
+  <div class="integr-tools-panel" role="dialog" aria-modal="true" aria-label="Manage integration tools">
+    <div class="integr-tools-panel-header">
+      <div>
+        <div class="text-sm font-semibold" data-integration-tools-title>Manage Tools</div>
+        <div class="integr-tools-summary" data-integration-tools-subtitle>Loading tools...</div>
+      </div>
+      <button type="button" class="inline-flex items-center rounded-md border border-slate-500/40 bg-transparent px-2.5 py-1 text-xs text-slate-300 hover:bg-slate-700/20" data-integration-tools-close>
+        Close
+      </button>
+    </div>
+    <div class="integr-tools-panel-body" data-integration-tools-body>
+      <div class="text-xs text-slate-400">Loading tools...</div>
+    </div>
+    <div class="integr-tools-panel-footer">
+      <div class="integr-tools-actions">
+        <button type="button" class="inline-flex items-center rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-integration-tools-enable-all>
+          Enable All
+        </button>
+        <button type="button" class="inline-flex items-center rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-integration-tools-read-only>
+          Read Only
+        </button>
+      </div>
+      <div class="integr-tools-actions">
+        <button type="button" class="inline-flex items-center rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-integration-tools-cancel>
+          Cancel
+        </button>
+        <button type="button" class="inline-flex items-center rounded-md border border-emerald-500/40 bg-emerald-500/15 px-3 py-2 text-xs font-medium text-emerald-300 hover:bg-emerald-500/25" data-integration-tools-save>
+          Save Changes
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 (function () {
   const BUSINESS_ID = "{{ business_id|escapejs }}";
@@ -68,6 +204,16 @@
   const availableGrid = document.querySelector("[data-integrations-available-grid]");
   const flashEl = document.querySelector("[data-integrations-flash]");
   const refreshBtn = document.querySelector("[data-integrations-refresh]");
+  const toolsModalEl = document.querySelector("[data-integration-tools-modal]");
+  const toolsTitleEl = document.querySelector("[data-integration-tools-title]");
+  const toolsSubtitleEl = document.querySelector("[data-integration-tools-subtitle]");
+  const toolsBodyEl = document.querySelector("[data-integration-tools-body]");
+  const toolsCloseBtn = document.querySelector("[data-integration-tools-close]");
+  const toolsCancelBtn = document.querySelector("[data-integration-tools-cancel]");
+  const toolsEnableAllBtn = document.querySelector("[data-integration-tools-enable-all]");
+  const toolsReadOnlyBtn = document.querySelector("[data-integration-tools-read-only]");
+  const toolsSaveBtn = document.querySelector("[data-integration-tools-save]");
+  let activeToolsIntegrationType = "";
 
   // Native integration types we support
   const NATIVE_TYPES = {
@@ -86,6 +232,15 @@
       (type === "error" ? "border-destructive/40 bg-destructive/10 text-destructive" : "border-primary/40 bg-primary/10 text-primary");
     flashEl.classList.remove("hidden");
     setTimeout(() => flashEl.classList.add("hidden"), 6000);
+  }
+
+  function escapeHtml(value) {
+    return String(value || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
   }
 
   function getCookie(name) {
@@ -116,22 +271,32 @@
         const isEmailType = info.type === "email_oauth";
         let isConnected = false;
         let identifier = "";
+        let accountData = null;
 
         if (isEmailType) {
           const match = emailAccounts.find(a => a.marketplaceKey === key);
           if (match && match.status === "connected") {
             isConnected = true;
             identifier = match.emailAddress || "";
+            accountData = match;
           }
         } else {
           const match = integrationAccounts.find(a => a.integration_type === info.integration_type);
           if (match && match.status === "connected") {
             isConnected = true;
             identifier = match.account_identifier || "";
+            accountData = match;
           }
         }
 
-        const entry = { key, ...info, isConnected, identifier, catEntry };
+        const entry = {
+          key,
+          ...info,
+          isConnected,
+          identifier,
+          catEntry,
+          accountData: accountData || null,
+        };
         if (isConnected) {
           connected.push(entry);
         } else {
@@ -165,8 +330,230 @@
           </div>
           <span class="inline-flex items-center rounded-full bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-400">Connected</span>
         </div>
+        <div class="text-xs text-muted-foreground">
+          ${item.type === "integration_oauth" && item.accountData ? `${item.accountData.enabledToolCount || 0}/${item.accountData.totalToolCount || 0} tools enabled` : "Connected and available for this account"}
+        </div>
+        <div class="flex items-center gap-2">
+          ${
+            item.type === "integration_oauth"
+              ? `<button
+                  type="button"
+                  class="flex-1 inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium border border-sky-500/40 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20 hover:border-sky-500 h-9 px-4 transition-all duration-300"
+                  data-manage-tools-key="${item.key}"
+                  data-manage-tools-type="${item.type}"
+                  data-manage-tools-integration-type="${item.integration_type || ''}"
+                  data-manage-tools-label="${escapeHtml(item.label)}"
+                >
+                  Manage Tools
+                </button>`
+              : ""
+          }
+          <button
+            type="button"
+            class="flex-1 inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium border border-rose-500/40 bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 hover:border-rose-500 h-9 px-4 transition-all duration-300"
+            data-disconnect-key="${item.key}"
+            data-disconnect-type="${item.type}"
+            data-disconnect-integration-type="${item.integration_type || ''}"
+          >
+            Disconnect
+          </button>
+        </div>
       </div>
     `).join("");
+
+    connectedGrid.querySelectorAll("[data-manage-tools-key]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const integrationType = btn.dataset.manageToolsIntegrationType || "";
+        const label = btn.dataset.manageToolsLabel || "Integration";
+        if (!integrationType) {
+          flash("Tool management is not available for this integration.", "error");
+          return;
+        }
+        openToolsModal({ integrationType, label });
+      });
+    });
+
+    connectedGrid.querySelectorAll("[data-disconnect-key]").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const connType = btn.dataset.disconnectType;
+        const key = btn.dataset.disconnectKey;
+
+        if (!window.confirm("Disconnect this integration?")) {
+          return;
+        }
+
+        let url = "";
+        if (connType === "email_oauth") {
+          const providerKey = key === "gmail" ? "google" : key === "outlook" ? "microsoft" : "";
+          if (!providerKey) {
+            flash("Unsupported email integration type.", "error");
+            return;
+          }
+          url = API_BASE + "/email/oauth/disconnect/" + providerKey + "/";
+        } else if (connType === "integration_oauth") {
+          const intType = btn.dataset.disconnectIntegrationType;
+          if (!intType) {
+            flash("Missing integration type.", "error");
+            return;
+          }
+          url = API_BASE + "/integrations/oauth/disconnect/" + intType + "/";
+        } else {
+          flash("Unsupported integration type.", "error");
+          return;
+        }
+
+        btn.disabled = true;
+        try {
+          const resp = await fetch(url, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-CSRFToken": getCookie("csrftoken"),
+            },
+            credentials: "same-origin",
+            body: JSON.stringify({ businessId: BUSINESS_ID }),
+          });
+          const data = await resp.json().catch(() => ({}));
+          if (!resp.ok) {
+            throw new Error(data.message || data.error || "Failed to disconnect integration.");
+          }
+          flash("Integration disconnected successfully.", "success");
+          fetchConnections();
+        } catch (e) {
+          flash("Disconnect failed: " + (e.message || "Unknown error"), "error");
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+  }
+
+  function closeToolsModal() {
+    activeToolsIntegrationType = "";
+    toolsModalEl.classList.remove("is-open");
+    toolsModalEl.setAttribute("aria-hidden", "true");
+    toolsBodyEl.innerHTML = '<div class="text-xs text-slate-400">Loading tools...</div>';
+  }
+
+  function renderToolsSummary() {
+    const checks = Array.from(toolsBodyEl.querySelectorAll("[data-tool-enabled]"));
+    const total = checks.length;
+    const enabled = checks.filter((el) => el.checked).length;
+    toolsSubtitleEl.textContent = `${enabled}/${total} tools enabled. Disabled tools are hidden from the AI for this integration.`;
+  }
+
+  function renderToolsRows(tools) {
+    if (!tools.length) {
+      toolsBodyEl.innerHTML = '<div class="text-xs text-slate-400">No tools available for this integration.</div>';
+      toolsSubtitleEl.textContent = "No tools available.";
+      return;
+    }
+    toolsBodyEl.innerHTML = tools.map((tool) => `
+      <label class="integr-tools-row">
+        <input type="checkbox" data-tool-enabled data-tool-name="${escapeHtml(tool.toolName)}" data-operation-type="${escapeHtml(tool.operationType || 'unknown')}" ${tool.enabled ? "checked" : ""} />
+        <div class="min-w-0">
+          <h4>${escapeHtml(tool.label || tool.toolName)}</h4>
+          <p>${escapeHtml(tool.description || "Native integration tool.")}</p>
+          <span class="integr-tools-badge ${tool.operationType === "write" ? "write" : "read"}">${escapeHtml(tool.operationType || "unknown")}</span>
+        </div>
+      </label>
+    `).join("");
+    toolsBodyEl.querySelectorAll("[data-tool-enabled]").forEach((input) => {
+      input.addEventListener("change", renderToolsSummary);
+    });
+    renderToolsSummary();
+  }
+
+  async function openToolsModal({ integrationType, label }) {
+    activeToolsIntegrationType = integrationType;
+    toolsTitleEl.textContent = `${label} · Manage Tools`;
+    toolsSubtitleEl.textContent = "Loading tools...";
+    toolsBodyEl.innerHTML = '<div class="text-xs text-slate-400">Loading tools...</div>';
+    toolsModalEl.classList.add("is-open");
+    toolsModalEl.setAttribute("aria-hidden", "false");
+
+    try {
+      const resp = await fetch(
+        API_BASE + "/integrations/oauth/tools/" + encodeURIComponent(integrationType) + "/?business_id=" + encodeURIComponent(BUSINESS_ID),
+        {
+          method: "GET",
+          headers: { "X-CSRFToken": getCookie("csrftoken") },
+          credentials: "same-origin",
+        }
+      );
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        throw new Error(data.message || data.error || "Failed to load tools.");
+      }
+      renderToolsRows(Array.isArray(data.tools) ? data.tools : []);
+    } catch (e) {
+      toolsBodyEl.innerHTML = `<div class="text-xs text-rose-300">${escapeHtml(e.message || "Failed to load tools.")}</div>`;
+      toolsSubtitleEl.textContent = "Unable to load tool settings.";
+    }
+  }
+
+  if (toolsCloseBtn) toolsCloseBtn.addEventListener("click", closeToolsModal);
+  if (toolsCancelBtn) toolsCancelBtn.addEventListener("click", closeToolsModal);
+  if (toolsModalEl) {
+    toolsModalEl.addEventListener("click", (event) => {
+      if (event.target === toolsModalEl) {
+        closeToolsModal();
+      }
+    });
+  }
+  if (toolsEnableAllBtn) {
+    toolsEnableAllBtn.addEventListener("click", () => {
+      toolsBodyEl.querySelectorAll("[data-tool-enabled]").forEach((input) => {
+        input.checked = true;
+      });
+      renderToolsSummary();
+    });
+  }
+  if (toolsReadOnlyBtn) {
+    toolsReadOnlyBtn.addEventListener("click", () => {
+      toolsBodyEl.querySelectorAll("[data-tool-enabled]").forEach((input) => {
+        const op = input.getAttribute("data-operation-type");
+        input.checked = (op || "").toLowerCase() === "read";
+      });
+      renderToolsSummary();
+    });
+  }
+  if (toolsSaveBtn) {
+    toolsSaveBtn.addEventListener("click", async () => {
+      if (!activeToolsIntegrationType) {
+        return;
+      }
+      const updates = Array.from(toolsBodyEl.querySelectorAll("[data-tool-enabled]")).map((input) => ({
+        toolName: input.getAttribute("data-tool-name") || "",
+        enabled: Boolean(input.checked),
+      })).filter((item) => item.toolName);
+      toolsSaveBtn.disabled = true;
+      try {
+        const resp = await fetch(
+          API_BASE + "/integrations/oauth/tools/" + encodeURIComponent(activeToolsIntegrationType) + "/",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-CSRFToken": getCookie("csrftoken"),
+            },
+            credentials: "same-origin",
+            body: JSON.stringify({ businessId: BUSINESS_ID, updates }),
+          }
+        );
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          throw new Error(data.message || data.error || "Failed to update tools.");
+        }
+        renderToolsRows(Array.isArray(data.tools) ? data.tools : []);
+        flash("Tool settings updated.", "success");
+        fetchConnections();
+      } catch (e) {
+        flash("Tool settings update failed: " + (e.message || "Unknown error"), "error");
+      } finally {
+        toolsSaveBtn.disabled = false;
+      }
+    });
   }
 
   function renderAvailable(items) {
