@@ -107,6 +107,12 @@
   [data-message-body] ol { list-style-type: decimal; }
   [data-message-body] li { margin-bottom: 0.25em; }
 
+  /* Nested lists inside list items */
+  [data-message-body] li > ul { list-style-type: circle; padding-left: 1.25em; margin-bottom: 0.25em; margin-top: 0.15em; }
+  [data-message-body] li > ol { list-style-type: lower-alpha; padding-left: 1.25em; margin-bottom: 0.25em; margin-top: 0.15em; }
+  [data-message-body] li > ul > li > ul { list-style-type: square; }
+  [data-message-body] li > ol > li > ol { list-style-type: lower-roman; }
+
   [data-message-body] code {
     background: hsl(var(--muted));
     padding: 0.15em 0.3em;

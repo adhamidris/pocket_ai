@@ -475,12 +475,25 @@ class RichBlockStreamBuilder:
         self.line_inline_buffer = ""
         self.active_paragraph_id: str | None = None
         self.active_paragraph_parent: str | None = None
-        self.active_list_id: str | None = None
-        self.active_list_parent: str | None = None
-        self.active_list_ordered: bool | None = None
+        # Stack of nested list contexts.
+        # Each entry: {"list_id": str, "parent": str|None, "ordered": bool, "indent": int, "item_id": str|None}
+        self.list_stack: list[dict] = []
         self.active_quote_id: str | None = None
         self.in_code_block = False
         self.active_code_block_id: str | None = None
+
+    # Backwards-compatible computed accessors for legacy code paths.
+    @property
+    def active_list_id(self) -> str | None:
+        return self.list_stack[-1]["list_id"] if self.list_stack else None
+
+    @property
+    def active_list_ordered(self) -> bool | None:
+        return self.list_stack[-1]["ordered"] if self.list_stack else None
+
+    @property
+    def active_list_parent(self) -> str | None:
+        return self.list_stack[-1]["parent"] if self.list_stack else None
 
     def snapshot(self) -> list[dict[str, object]]:
         return [dict(block) for block in self.blocks]
@@ -642,24 +655,85 @@ class RichBlockStreamBuilder:
         if list_match or ordered_match:
             events.extend(self._close_paragraph())
             ordered = bool(ordered_match)
+            match = ordered_match or list_match
+            indent = len(match.group(1))
             item_text = ordered_match.group(3) if ordered_match else list_match.group(3)
             if not line_ended and not item_text.strip():
                 return events
-            list_parent = parent_id
-            if not self.active_list_id or self.active_list_ordered != ordered or self.active_list_parent != list_parent:
+
+            current_indent = self.list_stack[-1]["indent"] if self.list_stack else -1
+            current_ordered = self.list_stack[-1]["ordered"] if self.list_stack else None
+            current_item_id = self.list_stack[-1].get("item_id") if self.list_stack else None
+
+            if not self.list_stack or indent > current_indent:
+                # Nesting deeper — new sub-list parented to current list_item (or parent_id if no stack).
+                list_parent_id = current_item_id if self.list_stack else parent_id
                 list_payload: dict[str, object] = {"ordered": ordered}
                 if ordered_match:
                     try:
                         list_payload["start"] = int(ordered_match.group(2))
                     except (TypeError, ValueError):
                         pass
-                list_block = self._start_block("list", list_payload, parent=list_parent)
-                self.active_list_id = str(list_block.get("block_id") or "")
-                self.active_list_ordered = ordered
-                self.active_list_parent = list_parent
+                list_block = self._start_block("list", list_payload, parent=list_parent_id)
+                new_list_id = str(list_block.get("block_id") or "")
+                self.list_stack.append({
+                    "list_id": new_list_id,
+                    "parent": list_parent_id,
+                    "ordered": ordered,
+                    "indent": indent,
+                    "item_id": None,
+                })
                 events.append({"type": "block_start", "payload": {"block": copy.deepcopy(list_block)}})
-            item_block = self._start_block("list_item", {"content": []}, parent=self.active_list_id)
+            elif indent < current_indent:
+                # De-indenting — pop stack to matching level.
+                self._pop_list_to_depth(indent)
+                if not self.list_stack or self.list_stack[-1]["ordered"] != ordered:
+                    list_parent_id = parent_id
+                    list_payload = {"ordered": ordered}
+                    if ordered_match:
+                        try:
+                            list_payload["start"] = int(ordered_match.group(2))
+                        except (TypeError, ValueError):
+                            pass
+                    list_block = self._start_block("list", list_payload, parent=list_parent_id)
+                    new_list_id = str(list_block.get("block_id") or "")
+                    self.list_stack.append({
+                        "list_id": new_list_id,
+                        "parent": list_parent_id,
+                        "ordered": ordered,
+                        "indent": indent,
+                        "item_id": None,
+                    })
+                    events.append({"type": "block_start", "payload": {"block": copy.deepcopy(list_block)}})
+            else:
+                # Same indent — continue current list or start new if type changed.
+                if self.list_stack and self.list_stack[-1]["ordered"] != ordered:
+                    # Pop the current same-indent entry since the ordered type changed.
+                    while self.list_stack and self.list_stack[-1]["indent"] >= indent:
+                        self.list_stack.pop()
+                    list_parent_id = parent_id
+                    list_payload = {"ordered": ordered}
+                    if ordered_match:
+                        try:
+                            list_payload["start"] = int(ordered_match.group(2))
+                        except (TypeError, ValueError):
+                            pass
+                    list_block = self._start_block("list", list_payload, parent=list_parent_id)
+                    new_list_id = str(list_block.get("block_id") or "")
+                    self.list_stack.append({
+                        "list_id": new_list_id,
+                        "parent": list_parent_id,
+                        "ordered": ordered,
+                        "indent": indent,
+                        "item_id": None,
+                    })
+                    events.append({"type": "block_start", "payload": {"block": copy.deepcopy(list_block)}})
+
+            # Create list_item parented to current list.
+            active = self.list_stack[-1]
+            item_block = self._start_block("list_item", {"content": []}, parent=active["list_id"])
             item_id = str(item_block.get("block_id") or "")
+            active["item_id"] = item_id
             events.append({"type": "block_start", "payload": {"block": copy.deepcopy(item_block)}})
             self.line_kind = "list_item"
             self.line_block_id = item_id
@@ -920,31 +994,84 @@ class RichBlockStreamBuilder:
         if list_match or ordered_match:
             events.extend(self._close_paragraph())
             ordered = bool(ordered_match)
+            match = ordered_match or list_match
+            indent = len(match.group(1))
             item_text = ordered_match.group(3) if ordered_match else list_match.group(3)
-            list_parent = parent_id
-            if (
-                not self.active_list_id
-                or self.active_list_ordered != ordered
-                or self.active_list_parent != list_parent
-            ):
+
+            current_indent = self.list_stack[-1]["indent"] if self.list_stack else -1
+            current_ordered = self.list_stack[-1]["ordered"] if self.list_stack else None
+            current_item_id = self.list_stack[-1].get("item_id") if self.list_stack else None
+
+            if not self.list_stack or indent > current_indent:
+                list_parent_id = current_item_id if self.list_stack else parent_id
                 list_payload: dict[str, object] = {"ordered": ordered}
                 if ordered_match:
                     try:
                         list_payload["start"] = int(ordered_match.group(2))
                     except (TypeError, ValueError):
                         pass
-                list_block = self._start_block("list", list_payload, parent=list_parent)
-                self.active_list_id = str(list_block.get("block_id") or "")
-                self.active_list_ordered = ordered
-                self.active_list_parent = list_parent
+                list_block = self._start_block("list", list_payload, parent=list_parent_id)
+                new_list_id = str(list_block.get("block_id") or "")
+                self.list_stack.append({
+                    "list_id": new_list_id,
+                    "parent": list_parent_id,
+                    "ordered": ordered,
+                    "indent": indent,
+                    "item_id": None,
+                })
                 events.append({"type": "block_start", "payload": {"block": copy.deepcopy(list_block)}})
-            item_block = self._start_block("list_item", {"content": []}, parent=self.active_list_id)
+            elif indent < current_indent:
+                self._pop_list_to_depth(indent)
+                if not self.list_stack or self.list_stack[-1]["ordered"] != ordered:
+                    list_parent_id = parent_id
+                    list_payload = {"ordered": ordered}
+                    if ordered_match:
+                        try:
+                            list_payload["start"] = int(ordered_match.group(2))
+                        except (TypeError, ValueError):
+                            pass
+                    list_block = self._start_block("list", list_payload, parent=list_parent_id)
+                    new_list_id = str(list_block.get("block_id") or "")
+                    self.list_stack.append({
+                        "list_id": new_list_id,
+                        "parent": list_parent_id,
+                        "ordered": ordered,
+                        "indent": indent,
+                        "item_id": None,
+                    })
+                    events.append({"type": "block_start", "payload": {"block": copy.deepcopy(list_block)}})
+            else:
+                if self.list_stack and self.list_stack[-1]["ordered"] != ordered:
+                    while self.list_stack and self.list_stack[-1]["indent"] >= indent:
+                        self.list_stack.pop()
+                    list_parent_id = parent_id
+                    list_payload = {"ordered": ordered}
+                    if ordered_match:
+                        try:
+                            list_payload["start"] = int(ordered_match.group(2))
+                        except (TypeError, ValueError):
+                            pass
+                    list_block = self._start_block("list", list_payload, parent=list_parent_id)
+                    new_list_id = str(list_block.get("block_id") or "")
+                    self.list_stack.append({
+                        "list_id": new_list_id,
+                        "parent": list_parent_id,
+                        "ordered": ordered,
+                        "indent": indent,
+                        "item_id": None,
+                    })
+                    events.append({"type": "block_start", "payload": {"block": copy.deepcopy(list_block)}})
+
+            active = self.list_stack[-1]
+            item_block = self._start_block("list_item", {"content": []}, parent=active["list_id"])
+            item_id = str(item_block.get("block_id") or "")
+            active["item_id"] = item_id
             events.append({"type": "block_start", "payload": {"block": copy.deepcopy(item_block)}})
             nodes = parse_inline_nodes(item_text)
-            ops = self._append_inline(str(item_block.get("block_id") or ""), nodes)
+            ops = self._append_inline(item_id, nodes)
             if ops:
-                events.append({"type": "block_delta", "payload": {"block_id": item_block.get("block_id"), "ops": ops}})
-            events.append({"type": "block_end", "payload": {"block_id": item_block.get("block_id")}})
+                events.append({"type": "block_delta", "payload": {"block_id": item_id, "ops": ops}})
+            events.append({"type": "block_end", "payload": {"block_id": item_id}})
             return events
 
         self._close_list()
@@ -992,9 +1119,95 @@ class RichBlockStreamBuilder:
         return [{"type": "block_end", "payload": {"block_id": paragraph_id}}]
 
     def _close_list(self) -> None:
-        self.active_list_id = None
-        self.active_list_parent = None
-        self.active_list_ordered = None
+        """Close all nested lists (clears the entire stack)."""
+        self.list_stack.clear()
+
+    def _close_all_lists(self) -> None:
+        """Alias for _close_list — clears the entire stack."""
+        self.list_stack.clear()
+
+    def _pop_list_to_depth(self, indent: int) -> list[dict[str, object]]:
+        """Pop stack entries whose indent is strictly greater than the given indent level."""
+        events: list[dict[str, object]] = []
+        while self.list_stack and self.list_stack[-1]["indent"] > indent:
+            self.list_stack.pop()
+        return events
+
+
+def _fix_embedded_list_in_item(line: str) -> list[str]:
+    """Split a list-prefixed line that contains embedded inline numbered items.
+
+    For example:
+        ``- Description includes Facebook event 5. Gas reading 6. Another``
+    becomes:
+        ``- Description includes Facebook event``
+        ``5. Gas reading``
+        ``6. Another``
+
+    Returns ``[line]`` unchanged when no embedded items are found.
+    """
+    stripped = line.lstrip()
+    leading_ws = line[: len(line) - len(stripped)]
+
+    # Determine the existing list prefix and the remaining text.
+    bullet_m = re.match(r"^([-*+])\s+", stripped)
+    ordered_m = re.match(r"^(\d+)\.\s+", stripped)
+    if bullet_m:
+        prefix = stripped[: bullet_m.end()]
+        text_body = stripped[bullet_m.end():]
+    elif ordered_m:
+        prefix = stripped[: ordered_m.end()]
+        text_body = stripped[ordered_m.end():]
+    else:
+        return [line]
+
+    if not text_body:
+        return [line]
+
+    # Look for embedded numbered items inside the remaining text.
+    # Require at least some non-trivial text before the first embedded number
+    # to avoid false positives like "- See item 3. It works great".
+    embedded = list(re.finditer(r"(\d+)\.\s+", text_body))
+    if not embedded:
+        return [line]
+
+    # We need either 2+ embedded numbered items, or 1 embedded number that is
+    # preceded by substantial text (heuristic: >=10 chars before it).
+    first_emb = None
+    if len(embedded) >= 2:
+        # Pick the first embedded number that has non-trivial preceding text.
+        for m in embedded:
+            before = text_body[: m.start()].rstrip()
+            if len(before) >= 6:
+                first_emb = m
+                break
+        if first_emb is None:
+            return [line]
+    elif len(embedded) == 1:
+        m = embedded[0]
+        before = text_body[: m.start()].rstrip()
+        if len(before) < 10:
+            return [line]
+        first_emb = m
+    else:
+        return [line]
+
+    # Split: keep original bullet with text up to the embedded number,
+    # then each embedded numbered item on its own line.
+    trimmed_text = text_body[: first_emb.start()].rstrip()
+    result = [f"{leading_ws}{prefix}{trimmed_text}"]
+
+    rest = text_body[first_emb.start():]
+    parts = re.split(r"(\d+)\.\s+", rest)
+    i = 1
+    while i < len(parts):
+        num = parts[i]
+        content = parts[i + 1].strip() if i + 1 < len(parts) else ""
+        if content:
+            result.append(f"{num}. {content}")
+        i += 2
+
+    return result if len(result) > 1 else [line]
 
 
 def _fix_malformed_markdown(text: str) -> str:
@@ -1013,10 +1226,12 @@ def _fix_malformed_markdown(text: str) -> str:
     fixed_lines: list[str] = []
 
     for line in lines:
-        # Skip lines that are already properly formatted list items
+        # Lines that are already list items: still check for embedded inline lists.
         stripped = line.lstrip()
-        if re.match(r"^(\d+)\.\s+", stripped) or re.match(r"^[-*+]\s+", stripped):
-            fixed_lines.append(line)
+        is_existing_list_item = re.match(r"^(\d+)\.\s+", stripped) or re.match(r"^[-*+]\s+", stripped)
+        if is_existing_list_item:
+            fixed = _fix_embedded_list_in_item(line)
+            fixed_lines.extend(fixed)
             continue
 
         # Skip code blocks (don't modify content inside code fences)

@@ -259,7 +259,7 @@ class ChatPortalClient {
   configureMarked() {
     if (typeof marked !== 'undefined') {
       marked.setOptions({
-        breaks: true,
+        breaks: false,
         gfm: true,
       });
     }
@@ -7036,8 +7036,13 @@ class ChatPortalClient {
         continue;
       }
 
-      if (/^\s*\d{1,3}[.)]\s+\S/.test(line)) {
-        out.push(line);
+      // Check if the line is already a list item (numbered or bullet).
+      const isNumberedItem = /^\s*\d{1,3}[.)]\s+\S/.test(line);
+      const isBulletItem = /^\s*[-*+]\s+\S/.test(line);
+      if (isNumberedItem || isBulletItem) {
+        // Still scan for embedded inline numbered items within this list item.
+        const splitResult = this._splitEmbeddedListInItem(line);
+        out.push(...splitResult);
         continue;
       }
 
@@ -7085,6 +7090,61 @@ class ChatPortalClient {
     }
 
     return out.join("\n");
+  }
+
+  /**
+   * Split a list-prefixed line that contains embedded inline numbered items.
+   * Mirrors the Python `_fix_embedded_list_in_item` helper.
+   */
+  _splitEmbeddedListInItem(line) {
+    const stripped = (line || "").trimStart();
+    const leadingWs = line.slice(0, line.length - stripped.length);
+
+    let prefix = "";
+    let textBody = "";
+    const bulletM = stripped.match(/^([-*+])\s+/);
+    const orderedM = stripped.match(/^(\d+)\.\s+/);
+    if (bulletM) {
+      prefix = stripped.slice(0, bulletM[0].length);
+      textBody = stripped.slice(bulletM[0].length);
+    } else if (orderedM) {
+      prefix = stripped.slice(0, orderedM[0].length);
+      textBody = stripped.slice(orderedM[0].length);
+    } else {
+      return [line];
+    }
+
+    if (!textBody) return [line];
+
+    const embedded = Array.from(textBody.matchAll(/(\d+)\.\s+/g));
+    if (!embedded.length) return [line];
+
+    let firstEmb = null;
+    if (embedded.length >= 2) {
+      for (const m of embedded) {
+        const before = textBody.slice(0, m.index).trimEnd();
+        if (before.length >= 6) { firstEmb = m; break; }
+      }
+      if (!firstEmb) return [line];
+    } else {
+      const m = embedded[0];
+      const before = textBody.slice(0, m.index).trimEnd();
+      if (before.length < 10) return [line];
+      firstEmb = m;
+    }
+
+    const trimmedText = textBody.slice(0, firstEmb.index).trimEnd();
+    const result = [`${leadingWs}${prefix}${trimmedText}`];
+
+    const rest = textBody.slice(firstEmb.index);
+    const parts = rest.split(/(\d+)\.\s+/);
+    for (let i = 1; i < parts.length; i += 2) {
+      const num = parts[i];
+      const content = (parts[i + 1] || "").trim();
+      if (content) result.push(`${num}. ${content}`);
+    }
+
+    return result.length > 1 ? result : [line];
   }
 
   stripStandaloneMarkdownPipeArtifacts(text) {
@@ -7762,6 +7822,7 @@ class ChatPortalClient {
 	      } else if (type === "list_item") {
 	        wrapper = document.createElement("li");
 	        wrapper.className = "leading-relaxed";
+	        wrapper.dataset.blockContainer = "true";
 	      } else {
 	        wrapper = document.createElement("p");
 	        wrapper.className = "leading-relaxed";
