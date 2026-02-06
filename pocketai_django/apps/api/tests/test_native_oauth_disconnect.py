@@ -167,3 +167,53 @@ class NativeOauthDisconnectApiTests(TestCase):
         response = self.client.get(url, {"business_id": str(self.business.id)})
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json().get("error"), "INTEGRATION_ACCOUNT_NOT_FOUND")
+
+    def test_email_tools_endpoint_lists_and_updates_enabled_flags(self) -> None:
+        account = EmailAccount.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            provider=EmailAccountProvider.GOOGLE,
+            email_address="owner@example.com",
+            status=EmailAccountStatus.CONNECTED,
+            metadata={},
+        )
+
+        url = reverse("api:email_oauth_tools", kwargs={"provider_key": "google"})
+        get_response = self.client.get(url, {"business_id": str(self.business.id)})
+        self.assertEqual(get_response.status_code, 200)
+        get_payload = get_response.json()
+        tools = get_payload.get("tools") or []
+        self.assertTrue(any(tool.get("toolName") == "email_send_draft" for tool in tools))
+        self.assertTrue(all(bool(tool.get("enabled")) for tool in tools))
+
+        post_response = self.client.post(
+            url,
+            data=json.dumps(
+                {
+                    "businessId": str(self.business.id),
+                    "updates": [
+                        {"toolName": "email_send_draft", "enabled": False},
+                        {"toolName": "email_search", "enabled": True},
+                    ],
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(post_response.status_code, 200)
+        post_payload = post_response.json()
+        post_tools = {tool.get("toolName"): tool for tool in (post_payload.get("tools") or [])}
+        self.assertIn("email_send_draft", post_tools)
+        self.assertFalse(bool(post_tools["email_send_draft"].get("enabled")))
+        self.assertIn("email_search", post_tools)
+        self.assertTrue(bool(post_tools["email_search"].get("enabled")))
+
+        account.refresh_from_db()
+        tool_settings = (account.metadata or {}).get("tool_settings") or {}
+        self.assertIn("email_send_draft", tool_settings)
+        self.assertFalse(bool((tool_settings.get("email_send_draft") or {}).get("enabled", True)))
+
+    def test_email_tools_endpoint_requires_connected_account(self) -> None:
+        url = reverse("api:email_oauth_tools", kwargs={"provider_key": "google"})
+        response = self.client.get(url, {"business_id": str(self.business.id)})
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json().get("error"), "EMAIL_ACCOUNT_NOT_FOUND")

@@ -209,6 +209,12 @@ class McpConnectionsApiTests(TestCase):
         integration_rows = payload.get("integrationAccounts") or []
         self.assertTrue(any(row.get("id") == str(email_account.id) for row in email_rows))
         self.assertTrue(any(row.get("id") == str(integration_account.id) for row in integration_rows))
+        email_row = next((row for row in email_rows if row.get("id") == str(email_account.id)), {})
+        self.assertGreater(int(email_row.get("totalToolCount") or 0), 0)
+        self.assertEqual(
+            int(email_row.get("enabledToolCount") or 0),
+            int(email_row.get("totalToolCount") or 0),
+        )
 
     def test_agent_opt_out_toggle(self) -> None:
         connection = McpConnection.objects.create(

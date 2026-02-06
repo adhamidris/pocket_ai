@@ -19,9 +19,12 @@ from apps.llm.llm_provider import DeepSeekChatProvider, OpenAIChatProvider, _Res
 from apps.voice.audio_frames import iter_audio_frames
 from apps.voice.models import CallSession
 from apps.voice.deepgram_stt import DeepgramConfig, deepgram_transcripts
-from apps.voice.elevenlabs_tts import ElevenLabsConfig, stream_tts_audio
+from apps.voice.deepgram_tts import DeepgramTTSConfig, DeepgramTTSWSSession
+from apps.voice.deepgram_tts import stream_tts_audio as deepgram_stream_tts_audio
+from apps.voice.elevenlabs_tts import ElevenLabsConfig, ElevenLabsWSSession, stream_tts_audio
 from apps.voice.provider_credentials import (
     resolve_deepgram_config,
+    resolve_deepgram_tts_config,
     resolve_elevenlabs_config,
     resolve_twilio_config,
 )
@@ -92,6 +95,7 @@ class VoiceCallRuntime:
         self._terminated: bool = False
         self._stt_config_cache: dict[str, DeepgramConfig] = {}
         self._tts_config_cache: dict[str, ElevenLabsConfig] = {}
+        self._deepgram_tts_config_cache: dict[str, DeepgramTTSConfig] = {}
 
     async def run_twilio_stream(self, twilio_ws) -> None:
         session = await self._get_session()
@@ -409,6 +413,7 @@ class VoiceCallRuntime:
         self._speaking_response_id = response_id
         chunks = _chunk_text_for_tts(text)
         completed = 0
+        provider = _tts_provider()
         try:
             for idx, chunk in enumerate(chunks):
                 await self._log_event(
@@ -416,8 +421,12 @@ class VoiceCallRuntime:
                     {"response_id": response_id, "chunk_index": idx, "text": _clip_text(chunk, 160)},
                 )
                 tts_lang = _detect_text_language(chunk, fallback=language_hint)
-                tts_cfg = await self._get_tts_config(language=tts_lang)
-                await self._stream_tts_to_twilio(twilio_ws, chunk, config=tts_cfg)
+                if provider == "deepgram" and tts_lang != "ar":
+                    dg_cfg = await self._get_deepgram_tts_config(language=tts_lang)
+                    await self._stream_tts_to_twilio(twilio_ws, chunk, deepgram_config=dg_cfg)
+                else:
+                    tts_cfg = await self._get_tts_config(language=tts_lang)
+                    await self._stream_tts_to_twilio(twilio_ws, chunk, config=tts_cfg)
                 completed = idx + 1
             if chunks:
                 spoken_text = " ".join(chunks[:completed]).strip()
@@ -721,8 +730,13 @@ class VoiceCallRuntime:
         try:
             await self._log_event(event_type, {"text": text})
             tts_lang = _detect_text_language(text, fallback=language_hint)
-            tts_cfg = await self._get_tts_config(language=tts_lang)
-            await self._stream_tts_to_twilio(twilio_ws, text, config=tts_cfg)
+            provider = _tts_provider()
+            if provider == "deepgram" and tts_lang != "ar":
+                dg_cfg = await self._get_deepgram_tts_config(language=tts_lang)
+                await self._stream_tts_to_twilio(twilio_ws, text, deepgram_config=dg_cfg)
+            else:
+                tts_cfg = await self._get_tts_config(language=tts_lang)
+                await self._stream_tts_to_twilio(twilio_ws, text, config=tts_cfg)
             self._last_agent_speech_end_at = time.monotonic()
         except asyncio.CancelledError:
             raise
@@ -972,6 +986,8 @@ class VoiceCallRuntime:
 
         llm_task = asyncio.create_task(_llm_thread())
 
+        # --- Resolve TTS configs ---
+        tts_prov = _tts_provider()
         try:
             tts_config_en = await self._get_tts_config(language="en")
             tts_config_ar = await self._get_tts_config(language="ar")
@@ -982,70 +998,213 @@ class VoiceCallRuntime:
                 self._speaking_response_id = 0
             return
 
-        buffer = ""
+        # --- Try WebSocket TTS (parallel streaming) ---
+        ws_session: ElevenLabsWSSession | DeepgramTTSWSSession | None = None
+        ws_output_format: str = tts_config_en.output_format
+        use_ws_tts = True  # will flip to False on failure
+        try:
+            if tts_prov == "deepgram" and (customer_language_hint or "en") != "ar":
+                dg_cfg = await self._get_deepgram_tts_config(language="en")
+                ws_session = DeepgramTTSWSSession(dg_cfg)
+                ws_output_format = f"mulaw_{dg_cfg.sample_rate}"
+            else:
+                ws_session = ElevenLabsWSSession(tts_config_en)
+                ws_output_format = tts_config_en.output_format
+            await ws_session.connect()
+        except Exception as exc:
+            await self._log_event("tts.ws.connect_failed", {"error": str(exc), "provider": tts_prov})
+            ws_session = None
+            use_ws_tts = False
+
         spoken_chunks: list[str] = []
         spoke_any = False
-        try:
-            while True:
-                delta = await delta_queue.get()
-                if delta == "":
-                    break
-                buffer += delta
-                chunk, buffer = _maybe_extract_speakable_chunk(buffer)
-                if chunk:
-                    await self._log_event("tts.chunk", {"response_id": response_id, "text": chunk})
-                    tts_lang = _detect_text_language(chunk, fallback=customer_language_hint)
-                    tts_cfg = tts_config_ar if tts_lang == "ar" else tts_config_en
-                    await self._stream_tts_to_twilio(twilio_ws, chunk, config=tts_cfg)
-                    spoken_chunks.append(chunk)
-                    await self._log_event("tts.chunk.done", {"response_id": response_id, "text": _clip_text(chunk, 160)})
+
+        if use_ws_tts and ws_session is not None:
+            # --- WebSocket TTS path: concurrent text sender + audio receiver ---
+            audio_receiver_task: asyncio.Task | None = None
+            try:
+                audio_receiver_task = asyncio.create_task(
+                    self._stream_ws_audio_to_twilio(twilio_ws, ws_session, output_format=ws_output_format)
+                )
+
+                # Text sender: reads LLM deltas, chunks, sends to WS
+                buffer = ""
+                first_chunk_sent = False
+                first_chunk_min = 8  # lower threshold for first chunk (fast path)
+                while True:
+                    delta = await delta_queue.get()
+                    if delta == "":
+                        break
+                    buffer += delta
+                    # First-chunk fast path: use lower min_chars for first chunk
+                    if not first_chunk_sent:
+                        chunk, buffer = _maybe_extract_speakable_chunk_first(buffer, min_chars=first_chunk_min)
+                    else:
+                        chunk, buffer = _maybe_extract_speakable_chunk(buffer)
+                    if chunk:
+                        await self._log_event("tts.chunk", {"response_id": response_id, "text": chunk})
+                        # For WS TTS, detect language: if Arabic and using Deepgram, we can't
+                        # use the WS session — fall back to HTTP for this chunk.
+                        chunk_lang = _detect_text_language(chunk, fallback=customer_language_hint)
+                        if chunk_lang == "ar" and tts_prov == "deepgram":
+                            # Arabic chunk on Deepgram: fall back to HTTP ElevenLabs for this chunk
+                            tts_cfg = tts_config_ar
+                            await self._stream_tts_to_twilio(twilio_ws, chunk, config=tts_cfg)
+                        else:
+                            await ws_session.send_text(chunk, flush=True) if isinstance(ws_session, ElevenLabsWSSession) else await _deepgram_ws_send_and_flush(ws_session, chunk)
+                        spoken_chunks.append(chunk)
+                        await self._log_event("tts.chunk.done", {"response_id": response_id, "text": _clip_text(chunk, 160)})
+                        spoke_any = True
+                        first_chunk_sent = True
+
+                # Flush remaining buffer
+                final = buffer.strip()
+                if final:
+                    await self._log_event("tts.chunk.final", {"response_id": response_id, "text": final})
+                    chunk_lang = _detect_text_language(final, fallback=customer_language_hint)
+                    if chunk_lang == "ar" and tts_prov == "deepgram":
+                        await self._stream_tts_to_twilio(twilio_ws, final, config=tts_config_ar)
+                    else:
+                        if isinstance(ws_session, ElevenLabsWSSession):
+                            await ws_session.send_text(final, flush=True)
+                        else:
+                            await _deepgram_ws_send_and_flush(ws_session, final)
+                    spoken_chunks.append(final)
                     spoke_any = True
 
-            final = buffer.strip()
-            if final:
-                await self._log_event("tts.chunk.final", {"response_id": response_id, "text": final})
-                tts_lang = _detect_text_language(final, fallback=customer_language_hint)
-                tts_cfg = tts_config_ar if tts_lang == "ar" else tts_config_en
-                await self._stream_tts_to_twilio(twilio_ws, final, config=tts_cfg)
-                spoken_chunks.append(final)
-                spoke_any = True
-            if spoke_any:
+                # Signal end-of-stream and wait for audio to finish
+                await ws_session.close()
+                if audio_receiver_task:
+                    await audio_receiver_task
+
+                if spoke_any:
+                    self._last_agent_speech_end_at = time.monotonic()
+                if deliver_goal and spoke_any and not self._goal_delivered:
+                    self._goal_delivered = True
+                    await self._log_event("goal.delivered", {"objective": session.objective})
+            except asyncio.CancelledError:
+                streaming_to_tts = False
                 self._last_agent_speech_end_at = time.monotonic()
-            if deliver_goal and spoke_any and not self._goal_delivered:
-                self._goal_delivered = True
-                await self._log_event("goal.delivered", {"objective": session.objective})
-        except asyncio.CancelledError:
-            streaming_to_tts = False
-            self._last_agent_speech_end_at = time.monotonic()
-            spoken_text = " ".join(spoken_chunks).strip()
-            if spoken_text:
-                self._history.append(("agent", spoken_text))
-                self._history = self._history[-(self.runtime_config.max_history_turns * 2) :]
-            await self._log_event(
-                "call.agent_speech.cancelled",
-                {
-                    "response_id": response_id,
-                    "spoken_chunks": len(spoken_chunks),
-                    "barge_in_text": self._last_barge_in_text,
-                },
-            )
-            asyncio.create_task(
-                self._finalize_interrupted_llm_response(
-                    response_id=response_id,
-                    llm_task=llm_task,
-                    response_text_parts=response_text_parts,
-                    spoken_chunk_count=len(spoken_chunks),
-                    deliver_goal=deliver_goal,
+                # Close WS immediately on barge-in
+                try:
+                    await ws_session.close()
+                except Exception:
+                    pass
+                if audio_receiver_task and not audio_receiver_task.done():
+                    audio_receiver_task.cancel()
+                spoken_text = " ".join(spoken_chunks).strip()
+                if spoken_text:
+                    self._history.append(("agent", spoken_text))
+                    self._history = self._history[-(self.runtime_config.max_history_turns * 2) :]
+                await self._log_event(
+                    "call.agent_speech.cancelled",
+                    {
+                        "response_id": response_id,
+                        "spoken_chunks": len(spoken_chunks),
+                        "barge_in_text": self._last_barge_in_text,
+                    },
                 )
-            )
-            if self._speaking_response_id == response_id:
-                self._speaking_response_id = 0
-            return
-        except Exception as exc:
-            await self._log_event("tts.error", {"error": str(exc)})
-        finally:
-            if self._speaking_response_id == response_id:
-                self._speaking_response_id = 0
+                asyncio.create_task(
+                    self._finalize_interrupted_llm_response(
+                        response_id=response_id,
+                        llm_task=llm_task,
+                        response_text_parts=response_text_parts,
+                        spoken_chunk_count=len(spoken_chunks),
+                        deliver_goal=deliver_goal,
+                    )
+                )
+                if self._speaking_response_id == response_id:
+                    self._speaking_response_id = 0
+                return
+            except Exception as exc:
+                await self._log_event("tts.ws.error", {"error": str(exc), "provider": tts_prov})
+                # Close WS session on error
+                try:
+                    await ws_session.close()
+                except Exception:
+                    pass
+                if audio_receiver_task and not audio_receiver_task.done():
+                    audio_receiver_task.cancel()
+                # Fall through to HTTP fallback below
+                use_ws_tts = False
+            finally:
+                if self._speaking_response_id == response_id and use_ws_tts:
+                    self._speaking_response_id = 0
+
+        if not use_ws_tts:
+            # --- HTTP TTS fallback path (original sequential approach) ---
+            buffer = ""
+            spoken_chunks = []
+            spoke_any = False
+            try:
+                while True:
+                    delta = await delta_queue.get()
+                    if delta == "":
+                        break
+                    buffer += delta
+                    chunk, buffer = _maybe_extract_speakable_chunk(buffer)
+                    if chunk:
+                        await self._log_event("tts.chunk", {"response_id": response_id, "text": chunk})
+                        tts_lang = _detect_text_language(chunk, fallback=customer_language_hint)
+                        if tts_prov == "deepgram" and tts_lang != "ar":
+                            dg_cfg = await self._get_deepgram_tts_config(language=tts_lang)
+                            await self._stream_tts_to_twilio(twilio_ws, chunk, deepgram_config=dg_cfg)
+                        else:
+                            tts_cfg = tts_config_ar if tts_lang == "ar" else tts_config_en
+                            await self._stream_tts_to_twilio(twilio_ws, chunk, config=tts_cfg)
+                        spoken_chunks.append(chunk)
+                        await self._log_event("tts.chunk.done", {"response_id": response_id, "text": _clip_text(chunk, 160)})
+                        spoke_any = True
+
+                final = buffer.strip()
+                if final:
+                    await self._log_event("tts.chunk.final", {"response_id": response_id, "text": final})
+                    tts_lang = _detect_text_language(final, fallback=customer_language_hint)
+                    if tts_prov == "deepgram" and tts_lang != "ar":
+                        dg_cfg = await self._get_deepgram_tts_config(language=tts_lang)
+                        await self._stream_tts_to_twilio(twilio_ws, final, deepgram_config=dg_cfg)
+                    else:
+                        tts_cfg = tts_config_ar if tts_lang == "ar" else tts_config_en
+                        await self._stream_tts_to_twilio(twilio_ws, final, config=tts_cfg)
+                    spoken_chunks.append(final)
+                    spoke_any = True
+                if spoke_any:
+                    self._last_agent_speech_end_at = time.monotonic()
+                if deliver_goal and spoke_any and not self._goal_delivered:
+                    self._goal_delivered = True
+                    await self._log_event("goal.delivered", {"objective": session.objective})
+            except asyncio.CancelledError:
+                streaming_to_tts = False
+                self._last_agent_speech_end_at = time.monotonic()
+                spoken_text = " ".join(spoken_chunks).strip()
+                if spoken_text:
+                    self._history.append(("agent", spoken_text))
+                    self._history = self._history[-(self.runtime_config.max_history_turns * 2) :]
+                await self._log_event(
+                    "call.agent_speech.cancelled",
+                    {
+                        "response_id": response_id,
+                        "spoken_chunks": len(spoken_chunks),
+                        "barge_in_text": self._last_barge_in_text,
+                    },
+                )
+                asyncio.create_task(
+                    self._finalize_interrupted_llm_response(
+                        response_id=response_id,
+                        llm_task=llm_task,
+                        response_text_parts=response_text_parts,
+                        spoken_chunk_count=len(spoken_chunks),
+                        deliver_goal=deliver_goal,
+                    )
+                )
+                if self._speaking_response_id == response_id:
+                    self._speaking_response_id = 0
+                return
+            except Exception as exc:
+                await self._log_event("tts.error", {"error": str(exc)})
+            finally:
+                if self._speaking_response_id == response_id:
+                    self._speaking_response_id = 0
 
         await llm_task
         full_text = ""
@@ -1068,15 +1227,56 @@ class VoiceCallRuntime:
                 await self._log_event("call.hangup.action", {"actions": actions})
                 await self._hangup_call(reason="llm_action")
 
-    async def _stream_tts_to_twilio(self, twilio_ws, text: str, *, config: ElevenLabsConfig) -> None:
+    async def _stream_tts_to_twilio(
+        self,
+        twilio_ws,
+        text: str,
+        *,
+        config: ElevenLabsConfig | None = None,
+        deepgram_config: DeepgramTTSConfig | None = None,
+    ) -> None:
         if not self._stream_sid:
             return
         frame_ms = int((os.getenv("VOICE_TTS_FRAME_MS") or "20").strip() or 20)
         pace_raw = (os.getenv("VOICE_TTS_PACE") or "").strip().lower()
         pace = False if pace_raw in {"0", "false", "no"} else True
+
+        if deepgram_config is not None:
+            audio_iter = deepgram_stream_tts_audio(text, config=deepgram_config)
+            output_format = f"mulaw_{deepgram_config.sample_rate}"
+        elif config is not None:
+            audio_iter = stream_tts_audio(text, config=config)
+            output_format = config.output_format
+        else:
+            return
+
         async for frame in iter_audio_frames(
-            stream_tts_audio(text, config=config),
-            output_format=config.output_format,
+            audio_iter,
+            output_format=output_format,
+            frame_ms=frame_ms,
+        ):
+            payload = base64.b64encode(frame).decode("ascii")
+            await _twilio_send(twilio_ws, {"event": "media", "streamSid": self._stream_sid, "media": {"payload": payload}})
+            if pace:
+                await asyncio.sleep(frame_ms / 1000.0)
+
+    async def _stream_ws_audio_to_twilio(
+        self,
+        twilio_ws,
+        ws_session: ElevenLabsWSSession | DeepgramTTSWSSession,
+        *,
+        output_format: str,
+    ) -> None:
+        """Stream audio from a WS TTS session to Twilio continuously."""
+        if not self._stream_sid:
+            return
+        frame_ms = int((os.getenv("VOICE_TTS_FRAME_MS") or "20").strip() or 20)
+        pace_raw = (os.getenv("VOICE_TTS_PACE") or "").strip().lower()
+        pace = False if pace_raw in {"0", "false", "no"} else True
+
+        async for frame in iter_audio_frames(
+            ws_session.audio_stream(),
+            output_format=output_format,
             frame_ms=frame_ms,
         ):
             payload = base64.b64encode(frame).decode("ascii")
@@ -1116,6 +1316,19 @@ class VoiceCallRuntime:
             language=lang,
         )
         self._tts_config_cache[lang] = config
+        return config
+
+    async def _get_deepgram_tts_config(self, *, language: str | None) -> DeepgramTTSConfig:
+        lang = (language or "en").strip().lower() or "en"
+        cached = self._deepgram_tts_config_cache.get(lang)
+        if cached is not None:
+            return cached
+        session = await self._get_session()
+        config = await sync_to_async(resolve_deepgram_tts_config)(
+            business_id=session.business_profile_id,
+            language=lang,
+        )
+        self._deepgram_tts_config_cache[lang] = config
         return config
 
     async def _update_stream_ids(self, *, stream_sid: str, call_sid: str) -> None:
@@ -1451,6 +1664,34 @@ def _extract_transcript_with_confidence(payload: dict) -> tuple[str, float, bool
     return transcript, confidence, is_final
 
 
+async def _deepgram_ws_send_and_flush(ws_session: DeepgramTTSWSSession, text: str) -> None:
+    """Send text + flush on a Deepgram WS TTS session."""
+    await ws_session.send_text(text)
+    await ws_session.flush()
+
+
+def _maybe_extract_speakable_chunk_first(buffer: str, *, min_chars: int = 8) -> tuple[str, str]:
+    """First-chunk fast path: use a lower min_chars threshold so audio starts sooner."""
+    text = buffer
+    max_chars = _tts_chunk_max_chars()
+    min_space = _tts_chunk_min_space()
+    for punct in (". ", "? ", "! ", "؟ ", "؟", "\n"):
+        idx = text.find(punct)
+        if idx != -1 and idx >= min_chars:
+            cut = idx + len(punct)
+            chunk = text[:cut].strip()
+            rest = text[cut:].lstrip()
+            return chunk, rest
+
+    if len(text) >= max_chars:
+        last_space = text.rfind(" ", 0, max_chars + 40)
+        if last_space > min_space:
+            chunk = text[: last_space + 1].strip()
+            rest = text[last_space + 1 :].lstrip()
+            return chunk, rest
+    return "", buffer
+
+
 def _maybe_extract_speakable_chunk(buffer: str) -> tuple[str, str]:
     text = buffer
     min_punct = _tts_chunk_min_chars()
@@ -1669,13 +1910,17 @@ def _is_wrong_person_strong(text: str, *, language_hint: str | None = None, reci
     return False
 
 
+def _tts_provider() -> str:
+    return (os.getenv("VOICE_TTS_PROVIDER") or "elevenlabs").strip().lower()
+
+
 def _final_stable_ms() -> int:
     raw = (os.getenv("VOICE_STT_FINAL_STABLE_MS") or "700").strip()
     try:
         value = int(raw)
     except Exception:
         value = 700
-    return max(200, min(2000, value))
+    return max(50, min(2000, value))
 
 
 def _barge_in_min_chars() -> int:

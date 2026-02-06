@@ -5,6 +5,7 @@ from typing import Any, Mapping
 from core.tenancy import tenant_context
 
 from apps.voice.deepgram_stt import DeepgramConfig
+from apps.voice.deepgram_tts import DeepgramTTSConfig
 from apps.voice.elevenlabs_tts import ElevenLabsConfig
 from apps.voice.models import VoiceProviderConnection
 from apps.voice.twilio import TwilioConfig, load_twilio_config
@@ -70,6 +71,11 @@ def resolve_deepgram_config(*, business_id: Any | None, language: str) -> Deepgr
 def resolve_elevenlabs_config(*, business_id: Any | None, language: str | None = None) -> ElevenLabsConfig:
     # Platform-managed provider: always use owner-managed credentials.
     return ElevenLabsConfig.from_env(language=language)
+
+
+def resolve_deepgram_tts_config(*, business_id: Any | None, language: str | None = None) -> DeepgramTTSConfig:
+    # Platform-managed provider: always use owner-managed credentials.
+    return DeepgramTTSConfig.from_env()
 
 
 def extract_safe_provider_settings(provider: str, credentials: Mapping[str, Any]) -> dict[str, Any]:

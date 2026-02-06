@@ -403,6 +403,12 @@ class McpOrchestratorService:
             conversation=conversation,
             registry=native_registry,
         )
+        email_registry = mcp_tools.EMAIL_INTEGRATION_TOOL_REGISTRY
+        email_tool_names_all = mcp_tools.get_email_integration_tool_names()
+        available_email_tool_names = self._available_email_integration_tool_names(
+            conversation=conversation,
+            registry=email_registry,
+        )
 
         internal_tool_defs: list[Mapping[str, object]] = list(mcp_tools.TOOL_DEFINITIONS)
         # Gateway tools are exposed only when at least one MCP connection is enabled.
@@ -445,16 +451,12 @@ class McpOrchestratorService:
                 "get_agent_run",
                 "continue_agent_run",
                 PORTAL_BLOCK_TOOL_NAME,
-                "email_search",
-                "email_get_message",
-                "email_get_thread",
-                "email_create_draft",
-                "email_send_draft",
                 "initiate_phone_call",
             }
             if gateway_enabled:
                 allowed.update({"mcp_search_tools", "mcp_call_tool"})
             allowed.update(available_native_tool_names)
+            allowed.update(available_email_tool_names)
             internal_tool_defs = [
                 tool_def for tool_def in internal_tool_defs if self._tool_schema_name(tool_def) in allowed
             ]
@@ -466,6 +468,14 @@ class McpOrchestratorService:
             if (
                 self._tool_schema_name(tool_def) not in native_tool_names_all
                 or self._tool_schema_name(tool_def) in available_native_tool_names
+            )
+        ]
+        internal_tool_defs = [
+            tool_def
+            for tool_def in internal_tool_defs
+            if (
+                self._tool_schema_name(tool_def) not in email_tool_names_all
+                or self._tool_schema_name(tool_def) in available_email_tool_names
             )
         ]
 
@@ -3699,6 +3709,25 @@ class McpOrchestratorService:
         except Exception:  # pragma: no cover - defensive
             logger.exception(
                 "native_integration_enabled_tools_failed conversation=%s business=%s",
+                getattr(conversation, "id", None),
+                getattr(conversation, "business_profile_id", None),
+            )
+            return set()
+
+    def _available_email_integration_tool_names(
+        self,
+        *,
+        conversation: Conversation,
+        registry: Mapping[str, Mapping[str, object]],
+    ) -> set[str]:
+        try:
+            return mcp_tools.list_enabled_email_tool_names(
+                conversation=conversation,
+                registry=registry,
+            )
+        except Exception:  # pragma: no cover - defensive
+            logger.exception(
+                "email_integration_enabled_tools_failed conversation=%s business=%s",
                 getattr(conversation, "id", None),
                 getattr(conversation, "business_profile_id", None),
             )

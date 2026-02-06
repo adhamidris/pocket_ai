@@ -8,6 +8,7 @@ import secrets
 import uuid
 from datetime import timedelta
 from http import HTTPStatus
+from typing import Mapping
 from urllib.parse import urlencode
 
 import requests
@@ -181,6 +182,95 @@ def _resolve_business_api(
         )
 
     return business, None
+
+
+def _provider_display_name(email_provider: str) -> str:
+    normalized = str(email_provider or "").strip().lower()
+    if normalized == EmailAccountProvider.GOOGLE:
+        return "Gmail"
+    if normalized == EmailAccountProvider.MICROSOFT:
+        return "Outlook / Microsoft 365"
+    return normalized.title() if normalized else "Email"
+
+
+def _normalize_email_tool_updates(
+    *,
+    email_provider: str,
+    payload: Mapping[str, object],
+) -> list[dict[str, object]]:
+    updates = payload.get("updates")
+    if isinstance(updates, list):
+        items = [item for item in updates if isinstance(item, Mapping)]
+    else:
+        items = [payload]
+
+    from apps.mcp import tools as mcp_tools
+
+    known_tool_names = {
+        str(row.get("toolName") or "").strip()
+        for row in mcp_tools.get_email_integration_tools_for_provider(email_provider)
+        if str(row.get("toolName") or "").strip()
+    }
+
+    normalized: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for item in items:
+        tool_name = str(item.get("toolName") or item.get("tool_name") or "").strip()
+        if not tool_name or tool_name not in known_tool_names or tool_name in seen:
+            continue
+        if "enabled" not in item:
+            continue
+        enabled_raw = item.get("enabled")
+        enabled = bool(enabled_raw) if isinstance(enabled_raw, bool) else str(enabled_raw).strip().lower() not in {"0", "false", "no", "off"}
+        normalized.append({"toolName": tool_name, "enabled": enabled})
+        seen.add(tool_name)
+    return normalized
+
+
+def _serialize_email_tools_for_account(
+    *,
+    account: EmailAccount,
+) -> tuple[list[dict[str, object]], dict[str, int]]:
+    from apps.mcp import tools as mcp_tools
+
+    provider = str(account.provider or "").strip().lower()
+    catalog = mcp_tools.get_email_integration_tools_for_provider(provider)
+    tool_names = [str(row.get("toolName") or "").strip() for row in catalog if str(row.get("toolName") or "").strip()]
+    enabled_map = mcp_tools.get_email_tool_enabled_map_for_account(account, tool_names=tool_names)
+
+    tools_payload: list[dict[str, object]] = []
+    read_count = 0
+    write_count = 0
+    enabled_count = 0
+    for row in catalog:
+        tool_name = str(row.get("toolName") or "").strip()
+        if not tool_name:
+            continue
+        operation_type = str(row.get("operationType") or "").strip()
+        if operation_type == "read":
+            read_count += 1
+        elif operation_type == "write":
+            write_count += 1
+        enabled = bool(enabled_map.get(tool_name, True))
+        if enabled:
+            enabled_count += 1
+        tools_payload.append(
+            {
+                "toolName": tool_name,
+                "label": str(row.get("label") or tool_name),
+                "description": str(row.get("description") or ""),
+                "operationType": operation_type or "unknown",
+                "enabled": enabled,
+            }
+        )
+
+    summary = {
+        "total": len(tools_payload),
+        "enabled": enabled_count,
+        "read": read_count,
+        "write": write_count,
+    }
+    return tools_payload, summary
 
 
 def _resolve_business(request: HttpRequest, business_id: str | None) -> tuple[BusinessProfile | None, HttpResponse | None]:
@@ -699,6 +789,114 @@ def email_oauth_disconnect(request: HttpRequest, provider_key: str) -> JsonRespo
         {
             "status": EmailAccountStatus.DISCONNECTED,
             "provider": email_provider,
+        },
+        status=HTTPStatus.OK,
+    )
+
+
+@csrf_protect
+@require_http_methods(["GET", "POST"])
+def email_oauth_tools(request: HttpRequest, provider_key: str) -> JsonResponse:
+    """List/update per-tool enabled settings for a connected native email account."""
+
+    mapping = _provider_mapping(provider_key)
+    if not mapping:
+        return JsonResponse(
+            {"error": "UNKNOWN_PROVIDER", "message": "Unknown email provider."},
+            status=HTTPStatus.NOT_FOUND,
+        )
+    email_provider, _oauth_provider_key = mapping
+
+    payload: dict[str, object] = {}
+    if request.method != "GET":
+        payload, payload_error = _parse_json_payload(request)
+        if payload_error:
+            return payload_error
+
+    business_param = (
+        payload.get("businessId")
+        or payload.get("business_id")
+        or request.GET.get("business_id")
+        or request.GET.get("businessId")
+    )
+    business, business_error = _resolve_business_api(request, str(business_param or ""))
+    if business_error:
+        return business_error
+    assert business is not None
+
+    with tenant_context(business.id):
+        account = (
+            EmailAccount.objects.filter(
+                business_profile=business,
+                provider=email_provider,
+                user=request.user,
+                status=EmailAccountStatus.CONNECTED,
+            )
+            .order_by("-updated_at")
+            .first()
+        )
+        if not account:
+            return JsonResponse(
+                {
+                    "error": "EMAIL_ACCOUNT_NOT_FOUND",
+                    "message": "No connected email account found for this provider.",
+                },
+                status=HTTPStatus.NOT_FOUND,
+            )
+
+        if request.method == "POST":
+            updates = _normalize_email_tool_updates(email_provider=email_provider, payload=payload)
+            metadata = dict(account.metadata or {}) if isinstance(account.metadata, dict) else {}
+            raw_settings = metadata.get("tool_settings")
+            if raw_settings is None:
+                raw_settings = metadata.get("toolSettings")
+            settings_map = dict(raw_settings) if isinstance(raw_settings, Mapping) else {}
+            now_iso = timezone.now().isoformat()
+            applied: list[dict[str, object]] = []
+            for item in updates:
+                tool_name = str(item.get("toolName") or "").strip()
+                enabled = bool(item.get("enabled"))
+                if not tool_name:
+                    continue
+                if enabled:
+                    settings_map.pop(tool_name, None)
+                else:
+                    settings_map[tool_name] = {"enabled": False, "updated_at": now_iso}
+                applied.append({"toolName": tool_name, "enabled": enabled})
+            if settings_map:
+                metadata["tool_settings"] = settings_map
+            else:
+                metadata.pop("tool_settings", None)
+                metadata.pop("toolSettings", None)
+            account.metadata = metadata
+            account.save(update_fields=["metadata", "updated_at"])
+
+            if applied:
+                EmailAccountAuditEvent.objects.create(
+                    business_profile=business,
+                    email_account=account,
+                    email_account_id_snapshot=account.id,
+                    actor_user=request.user if request.user.is_authenticated else None,
+                    action=EmailAccountAuditAction.UPDATED,
+                    description=f"{_provider_display_name(email_provider)} tool settings updated.",
+                    metadata={
+                        "provider": email_provider,
+                        "changed_tools": len(applied),
+                    },
+                )
+
+        tools_payload, summary = _serialize_email_tools_for_account(account=account)
+
+    return JsonResponse(
+        {
+            "businessId": str(business.id),
+            "provider": email_provider,
+            "providerLabel": _provider_display_name(email_provider),
+            "accountId": str(account.id),
+            "accountIdentifier": str(account.email_address or ""),
+            "status": str(account.status or ""),
+            "summary": summary,
+            "tools": tools_payload,
         },
         status=HTTPStatus.OK,
     )

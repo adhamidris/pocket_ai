@@ -6,6 +6,9 @@ from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
 from apps.accounts.models import (
     AgentProfile,
     BusinessProfile,
+    EmailAccount,
+    EmailAccountProvider,
+    EmailAccountStatus,
     IntegrationAccount,
     IntegrationAccountStatus,
     IntegrationProvider,
@@ -130,6 +133,60 @@ class NativeIntegrationExposureTests(TestCase):
         advertised = provider.tool_name_sets[0]
         self.assertIn("calendar_list_events", advertised)
         self.assertNotIn("calendar_create_event", advertised)
+
+    def test_email_tools_hidden_when_not_connected(self) -> None:
+        conversation = self._build_conversation(actor_user=self.user)
+        provider = _ToolRecordingProvider()
+        orchestrator = McpOrchestratorService(agent=self.agent, provider=provider)
+
+        orchestrator.stream_turn(conversation=conversation, user_message="Search my email inbox.")
+
+        self.assertTrue(provider.tool_name_sets)
+        advertised = provider.tool_name_sets[0]
+        self.assertNotIn("email_search", advertised)
+        self.assertNotIn("email_send_draft", advertised)
+
+    def test_email_tools_exposed_when_connected_for_actor(self) -> None:
+        EmailAccount.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            provider=EmailAccountProvider.GOOGLE,
+            email_address="native-exposure@example.com",
+            status=EmailAccountStatus.CONNECTED,
+            credentials={"access_token": "token"},
+        )
+        conversation = self._build_conversation(actor_user=self.user)
+        provider = _ToolRecordingProvider()
+        orchestrator = McpOrchestratorService(agent=self.agent, provider=provider)
+
+        orchestrator.stream_turn(conversation=conversation, user_message="Search my email inbox.")
+
+        self.assertTrue(provider.tool_name_sets)
+        advertised = provider.tool_name_sets[0]
+        self.assertIn("email_search", advertised)
+        self.assertIn("email_get_message", advertised)
+        self.assertIn("email_send_draft", advertised)
+
+    def test_disabled_email_tool_is_hidden_from_exposure(self) -> None:
+        EmailAccount.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            provider=EmailAccountProvider.GOOGLE,
+            email_address="native-exposure@example.com",
+            status=EmailAccountStatus.CONNECTED,
+            credentials={"access_token": "token"},
+            metadata={"tool_settings": {"email_send_draft": {"enabled": False}}},
+        )
+        conversation = self._build_conversation(actor_user=self.user)
+        provider = _ToolRecordingProvider()
+        orchestrator = McpOrchestratorService(agent=self.agent, provider=provider)
+
+        orchestrator.stream_turn(conversation=conversation, user_message="Search my email inbox.")
+
+        self.assertTrue(provider.tool_name_sets)
+        advertised = provider.tool_name_sets[0]
+        self.assertIn("email_search", advertised)
+        self.assertNotIn("email_send_draft", advertised)
 
 
 class NativeIntegrationPolicyResolverTests(TestCase):

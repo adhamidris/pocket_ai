@@ -362,11 +362,13 @@
   const toolsReadOnlyBtn = document.querySelector("[data-integration-tools-read-only]");
   const toolsSaveBtn = document.querySelector("[data-integration-tools-save]");
   let activeToolsIntegrationType = "";
+  let activeToolsConnectionType = "";
+  let activeToolsProviderKey = "";
 
   // Native integration types we support
   const NATIVE_TYPES = {
-    gmail: { label: "Gmail", type: "email_oauth", provider: "google_email", icon: "M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2Zm0 4-8 5-8-5V6l8 5 8-5v2Z" },
-    outlook: { label: "Outlook / Microsoft 365", type: "email_oauth", provider: "microsoft_email", icon: "M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2Zm0 4-8 5-8-5V6l8 5 8-5v2Z" },
+    gmail: { label: "Gmail", type: "email_oauth", provider: "google_email", provider_key: "google", icon: "M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2Zm0 4-8 5-8-5V6l8 5 8-5v2Z" },
+    outlook: { label: "Outlook / Microsoft 365", type: "email_oauth", provider: "microsoft_email", provider_key: "microsoft", icon: "M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2Zm0 4-8 5-8-5V6l8 5 8-5v2Z" },
     google_calendar: { label: "Google Calendar", type: "integration_oauth", integration_type: "google_calendar", icon: "M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5" },
     google_drive: { label: "Google Drive", type: "integration_oauth", integration_type: "google_drive", icon: "M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" },
     onedrive: { label: "OneDrive", type: "integration_oauth", integration_type: "onedrive", icon: "M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" },
@@ -479,17 +481,20 @@
           <span class="inline-flex items-center rounded-full bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-400">Connected</span>
         </div>
         <div class="text-xs text-muted-foreground">
-          ${item.type === "integration_oauth" && item.accountData ? `${item.accountData.enabledToolCount || 0}/${item.accountData.totalToolCount || 0} tools enabled` : "Connected and available for this account"}
+          ${item.accountData && Number(item.accountData.totalToolCount || 0) > 0
+            ? `${item.accountData.enabledToolCount || 0}/${item.accountData.totalToolCount || 0} tools enabled`
+            : "Connected and available for this account"}
         </div>
         <div class="flex items-center gap-2">
           ${
-            item.type === "integration_oauth"
+            item.accountData && Number(item.accountData.totalToolCount || 0) > 0
               ? `<button
                   type="button"
                   class="flex-1 inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium border border-sky-500/40 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20 hover:border-sky-500 h-9 px-4 transition-all duration-300"
                   data-manage-tools-key="${item.key}"
                   data-manage-tools-type="${item.type}"
                   data-manage-tools-integration-type="${item.integration_type || ''}"
+                  data-manage-tools-provider-key="${item.provider_key || ''}"
                   data-manage-tools-label="${escapeHtml(item.label)}"
                 >
                   Manage Tools
@@ -511,13 +516,23 @@
 
     connectedGrid.querySelectorAll("[data-manage-tools-key]").forEach(btn => {
       btn.addEventListener("click", () => {
+        const connectionType = btn.dataset.manageToolsType || "";
         const integrationType = btn.dataset.manageToolsIntegrationType || "";
+        const providerKey = btn.dataset.manageToolsProviderKey || "";
         const label = btn.dataset.manageToolsLabel || "Integration";
-        if (!integrationType) {
+        if (connectionType === "integration_oauth" && !integrationType) {
           flash("Tool management is not available for this integration.", "error");
           return;
         }
-        openToolsModal({ integrationType, label });
+        if (connectionType === "email_oauth" && !providerKey) {
+          flash("Tool management is not available for this integration.", "error");
+          return;
+        }
+        if (connectionType !== "integration_oauth" && connectionType !== "email_oauth") {
+          flash("Tool management is not available for this integration.", "error");
+          return;
+        }
+        openToolsModal({ connectionType, integrationType, providerKey, label });
       });
     });
 
@@ -578,6 +593,8 @@
 
   function closeToolsModal() {
     activeToolsIntegrationType = "";
+    activeToolsConnectionType = "";
+    activeToolsProviderKey = "";
     toolsModalEl.classList.remove("is-open");
     toolsModalEl.setAttribute("aria-hidden", "true");
     toolsBodyEl.innerHTML = '<div class="integr-tools-placeholder">Loading tools...</div>';
@@ -612,8 +629,10 @@
     renderToolsSummary();
   }
 
-  async function openToolsModal({ integrationType, label }) {
+  async function openToolsModal({ connectionType, integrationType, providerKey, label }) {
+    activeToolsConnectionType = connectionType;
     activeToolsIntegrationType = integrationType;
+    activeToolsProviderKey = providerKey;
     toolsTitleEl.textContent = `${label} · Manage Tools`;
     toolsSubtitleEl.textContent = "Loading tools...";
     toolsBodyEl.innerHTML = '<div class="integr-tools-placeholder">Loading tools...</div>';
@@ -621,8 +640,16 @@
     toolsModalEl.setAttribute("aria-hidden", "false");
 
     try {
+      let url = "";
+      if (connectionType === "email_oauth") {
+        url = API_BASE + "/email/oauth/tools/" + encodeURIComponent(providerKey) + "/?business_id=" + encodeURIComponent(BUSINESS_ID);
+      } else if (connectionType === "integration_oauth") {
+        url = API_BASE + "/integrations/oauth/tools/" + encodeURIComponent(integrationType) + "/?business_id=" + encodeURIComponent(BUSINESS_ID);
+      } else {
+        throw new Error("Unsupported integration type.");
+      }
       const resp = await fetch(
-        API_BASE + "/integrations/oauth/tools/" + encodeURIComponent(integrationType) + "/?business_id=" + encodeURIComponent(BUSINESS_ID),
+        url,
         {
           method: "GET",
           headers: { "X-CSRFToken": getCookie("csrftoken") },
@@ -668,7 +695,7 @@
   }
   if (toolsSaveBtn) {
     toolsSaveBtn.addEventListener("click", async () => {
-      if (!activeToolsIntegrationType) {
+      if (!activeToolsConnectionType) {
         return;
       }
       const updates = Array.from(toolsBodyEl.querySelectorAll("[data-tool-enabled]")).map((input) => ({
@@ -677,8 +704,22 @@
       })).filter((item) => item.toolName);
       toolsSaveBtn.disabled = true;
       try {
+        let url = "";
+        if (activeToolsConnectionType === "email_oauth") {
+          if (!activeToolsProviderKey) {
+            throw new Error("Missing provider key.");
+          }
+          url = API_BASE + "/email/oauth/tools/" + encodeURIComponent(activeToolsProviderKey) + "/";
+        } else if (activeToolsConnectionType === "integration_oauth") {
+          if (!activeToolsIntegrationType) {
+            throw new Error("Missing integration type.");
+          }
+          url = API_BASE + "/integrations/oauth/tools/" + encodeURIComponent(activeToolsIntegrationType) + "/";
+        } else {
+          throw new Error("Unsupported integration type.");
+        }
         const resp = await fetch(
-          API_BASE + "/integrations/oauth/tools/" + encodeURIComponent(activeToolsIntegrationType) + "/",
+          url,
           {
             method: "POST",
             headers: {

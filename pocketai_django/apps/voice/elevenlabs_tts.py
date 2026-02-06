@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import asyncio
+import base64
+import json
+import logging
 import os
 from dataclasses import dataclass
 from typing import AsyncIterator, Mapping
 
 import httpx
+import websockets
+
+logger = logging.getLogger(__name__)
 
 # Module-level client for connection reuse (significant latency reduction)
 _shared_client: httpx.AsyncClient | None = None
@@ -154,3 +161,98 @@ async def stream_tts_audio(text: str, *, config: ElevenLabsConfig) -> AsyncItera
         async for chunk in resp.aiter_bytes():
             if chunk:
                 yield chunk
+
+
+class ElevenLabsWSSession:
+    """Persistent WebSocket connection to ElevenLabs stream-input endpoint."""
+
+    def __init__(self, config: ElevenLabsConfig) -> None:
+        self._config = config
+        self._ws: websockets.WebSocketClientProtocol | None = None
+        self._audio_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        self._receive_task: asyncio.Task | None = None
+        self._closed = False
+
+    async def connect(self) -> None:
+        cfg = self._config
+        url = (
+            f"wss://api.elevenlabs.io/v1/text-to-speech/{cfg.voice_id}/stream-input"
+            f"?model_id={cfg.model_id}&output_format={cfg.output_format}"
+        )
+        headers = {"xi-api-key": cfg.api_key}
+        try:
+            connector = websockets.connect(url, extra_headers=headers, ping_interval=20, ping_timeout=20)
+        except TypeError:
+            connector = websockets.connect(url, additional_headers=headers, ping_interval=20, ping_timeout=20)  # type: ignore[arg-type]
+
+        self._ws = await connector
+        # Send BOS (beginning-of-stream) message
+        bos = {
+            "text": " ",
+            "voice_settings": {"stability": 0.5, "similarity_boost": 0.8},
+            "generation_config": {"chunk_length_schedule": [50, 120, 160, 250]},
+        }
+        await self._ws.send(json.dumps(bos))
+        self._receive_task = asyncio.create_task(self._receive_loop())
+
+    async def _receive_loop(self) -> None:
+        try:
+            async for message in self._ws:  # type: ignore[union-attr]
+                if not message:
+                    continue
+                try:
+                    data = json.loads(message)
+                except Exception:
+                    continue
+                audio_b64 = data.get("audio")
+                if audio_b64:
+                    try:
+                        audio_bytes = base64.b64decode(audio_b64)
+                        if audio_bytes:
+                            await self._audio_queue.put(audio_bytes)
+                    except Exception:
+                        pass
+                if data.get("isFinal"):
+                    break
+        except websockets.exceptions.ConnectionClosed:
+            pass
+        except Exception as exc:
+            logger.debug("ElevenLabs WS receive error: %s", exc)
+        finally:
+            await self._audio_queue.put(None)
+
+    async def send_text(self, text: str, *, flush: bool = True) -> None:
+        if self._ws is None or self._closed:
+            return
+        msg = {"text": text}
+        if flush:
+            msg["flush"] = True
+        await self._ws.send(json.dumps(msg))
+
+    async def flush(self) -> None:
+        if self._ws is None or self._closed:
+            return
+        await self._ws.send(json.dumps({"text": "", "flush": True}))
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if self._ws is not None:
+            try:
+                await self._ws.send(json.dumps({"text": ""}))
+            except Exception:
+                pass
+            try:
+                await self._ws.close()
+            except Exception:
+                pass
+        if self._receive_task and not self._receive_task.done():
+            self._receive_task.cancel()
+
+    async def audio_stream(self) -> AsyncIterator[bytes]:
+        while True:
+            chunk = await self._audio_queue.get()
+            if chunk is None:
+                break
+            yield chunk

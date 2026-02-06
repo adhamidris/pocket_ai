@@ -597,6 +597,44 @@ NATIVE_INTEGRATION_TOOL_REGISTRY: dict[str, dict[str, object]] = {
     },
 }
 
+EMAIL_PROVIDER_INTEGRATION_TYPES: dict[str, str] = {
+    EmailAccountProvider.GOOGLE: "google_email",
+    EmailAccountProvider.MICROSOFT: "microsoft_email",
+}
+
+EMAIL_INTEGRATION_TOOL_REGISTRY: dict[str, dict[str, object]] = {
+    "email_search": {
+        "providers": [EmailAccountProvider.GOOGLE, EmailAccountProvider.MICROSOFT],
+        "operation_type": McpToolOperationType.READ,
+        "requires_connected_account": True,
+        "requires_actor_user_binding": True,
+    },
+    "email_get_message": {
+        "providers": [EmailAccountProvider.GOOGLE, EmailAccountProvider.MICROSOFT],
+        "operation_type": McpToolOperationType.READ,
+        "requires_connected_account": True,
+        "requires_actor_user_binding": True,
+    },
+    "email_get_thread": {
+        "providers": [EmailAccountProvider.GOOGLE, EmailAccountProvider.MICROSOFT],
+        "operation_type": McpToolOperationType.READ,
+        "requires_connected_account": True,
+        "requires_actor_user_binding": True,
+    },
+    "email_create_draft": {
+        "providers": [EmailAccountProvider.GOOGLE, EmailAccountProvider.MICROSOFT],
+        "operation_type": McpToolOperationType.WRITE,
+        "requires_connected_account": True,
+        "requires_actor_user_binding": True,
+    },
+    "email_send_draft": {
+        "providers": [EmailAccountProvider.GOOGLE, EmailAccountProvider.MICROSOFT],
+        "operation_type": McpToolOperationType.WRITE,
+        "requires_connected_account": True,
+        "requires_actor_user_binding": True,
+    },
+}
+
 _NATIVE_TOOL_PRESENTATION: dict[str, tuple[str, str]] = {
     "calendar_list_events": ("List calendar events", "Read upcoming events from the connected calendar."),
     "calendar_get_event": ("Get event details", "Read details for a specific calendar event."),
@@ -616,6 +654,11 @@ _NATIVE_TOOL_PRESENTATION: dict[str, tuple[str, str]] = {
     "hubspot_get_contact": ("Get HubSpot contact", "Read a specific HubSpot contact."),
     "hubspot_create_contact": ("Create HubSpot contact", "Create a new contact in HubSpot."),
     "hubspot_search_deals": ("Search HubSpot deals", "Search deals in HubSpot."),
+    "email_search": ("Search email", "Search messages in the connected mailbox."),
+    "email_get_message": ("Get email message", "Read a specific email message."),
+    "email_get_thread": ("Get email thread", "Read a full conversation thread."),
+    "email_create_draft": ("Create email draft", "Create a draft email in the connected mailbox."),
+    "email_send_draft": ("Send email draft", "Send an existing draft email from the connected mailbox."),
 }
 
 
@@ -656,10 +699,8 @@ def _coerce_preference_bool(value: object, *, default: bool = True) -> bool:
     return default
 
 
-def _native_tool_preferences_from_account(account: IntegrationAccount | None) -> dict[str, bool]:
-    if account is None:
-        return {}
-    metadata = account.metadata if isinstance(getattr(account, "metadata", None), Mapping) else {}
+def _tool_preferences_from_metadata(metadata_obj: object) -> dict[str, bool]:
+    metadata = metadata_obj if isinstance(metadata_obj, Mapping) else {}
     raw = metadata.get("tool_settings")
     if raw is None:
         raw = metadata.get("toolSettings")
@@ -678,6 +719,13 @@ def _native_tool_preferences_from_account(account: IntegrationAccount | None) ->
     return preferences
 
 
+def _native_tool_preferences_from_account(account: IntegrationAccount | None) -> dict[str, bool]:
+    if account is None:
+        return {}
+    metadata = account.metadata if isinstance(getattr(account, "metadata", None), Mapping) else {}
+    return _tool_preferences_from_metadata(metadata)
+
+
 def get_native_tool_enabled_map_for_account(
     account: IntegrationAccount,
     *,
@@ -693,6 +741,31 @@ def is_native_tool_enabled_for_account(*, account: IntegrationAccount, tool_name
     if not normalized_name:
         return False
     preferences = _native_tool_preferences_from_account(account)
+    return bool(preferences.get(normalized_name, True))
+
+
+def _email_tool_preferences_from_account(account: EmailAccount | None) -> dict[str, bool]:
+    if account is None:
+        return {}
+    metadata = account.metadata if isinstance(getattr(account, "metadata", None), Mapping) else {}
+    return _tool_preferences_from_metadata(metadata)
+
+
+def get_email_tool_enabled_map_for_account(
+    account: EmailAccount,
+    *,
+    tool_names: Iterable[str] | None = None,
+) -> dict[str, bool]:
+    preferences = _email_tool_preferences_from_account(account)
+    names = [str(name).strip() for name in (tool_names or preferences.keys()) if str(name or "").strip()]
+    return {name: bool(preferences.get(name, True)) for name in names}
+
+
+def is_email_tool_enabled_for_account(*, account: EmailAccount, tool_name: str) -> bool:
+    normalized_name = str(tool_name or "").strip()
+    if not normalized_name:
+        return False
+    preferences = _email_tool_preferences_from_account(account)
     return bool(preferences.get(normalized_name, True))
 
 
@@ -733,6 +806,49 @@ def get_native_integration_tool_registry() -> dict[str, dict[str, object]]:
 
 def get_native_integration_tool_names() -> set[str]:
     return set(NATIVE_INTEGRATION_TOOL_REGISTRY.keys())
+
+
+def get_email_integration_tool_names() -> set[str]:
+    return set(EMAIL_INTEGRATION_TOOL_REGISTRY.keys())
+
+
+def get_email_integration_type_for_provider(provider: str) -> str:
+    normalized_provider = str(provider or "").strip().lower()
+    return EMAIL_PROVIDER_INTEGRATION_TYPES.get(normalized_provider, "")
+
+
+def get_email_integration_tools_for_provider(provider: str) -> list[dict[str, object]]:
+    normalized_provider = str(provider or "").strip().lower()
+    integration_type = get_email_integration_type_for_provider(normalized_provider)
+    if not integration_type:
+        return []
+    tools: list[dict[str, object]] = []
+    for tool_name, meta in EMAIL_INTEGRATION_TOOL_REGISTRY.items():
+        if not isinstance(meta, Mapping):
+            continue
+        providers_raw = meta.get("providers")
+        providers = {
+            str(value or "").strip().lower()
+            for value in (providers_raw if isinstance(providers_raw, (list, tuple, set)) else [])
+            if str(value or "").strip()
+        }
+        if providers and normalized_provider not in providers:
+            continue
+        operation_type = str(meta.get("operation_type") or McpToolOperationType.UNKNOWN).strip() or McpToolOperationType.UNKNOWN
+        tools.append(
+            {
+                "toolName": str(tool_name),
+                "label": _native_tool_label(str(tool_name)),
+                "description": _native_tool_description(str(tool_name), operation_type=operation_type),
+                "integrationType": integration_type,
+                "provider": normalized_provider,
+                "operationType": operation_type,
+                "requiresConnectedAccount": bool(meta.get("requires_connected_account", True)),
+                "requiresActorUserBinding": bool(meta.get("requires_actor_user_binding", True)),
+            }
+        )
+    tools.sort(key=lambda item: str(item.get("label") or item.get("toolName") or ""))
+    return tools
 
 
 def list_connected_native_integration_types(*, conversation: Conversation) -> set[str]:
@@ -803,6 +919,75 @@ def list_enabled_native_integration_tool_names(
         if requires_connected_account and account is None:
             continue
         if account is not None and not is_native_tool_enabled_for_account(account=account, tool_name=normalized_tool):
+            continue
+        enabled_tools.add(normalized_tool)
+
+    return enabled_tools
+
+
+def list_enabled_email_tool_names(
+    *,
+    conversation: Conversation,
+    registry: Mapping[str, Mapping[str, object]] | None = None,
+) -> set[str]:
+    actor_user_uuid = _conversation_actor_user_uuid(conversation)
+    if not actor_user_uuid:
+        return set()
+    business_id = getattr(conversation, "business_profile_id", None)
+    if not business_id:
+        return set()
+
+    source_registry = registry if isinstance(registry, Mapping) else EMAIL_INTEGRATION_TOOL_REGISTRY
+    supported_providers: set[str] = set()
+    for meta in source_registry.values():
+        if not isinstance(meta, Mapping):
+            continue
+        providers_raw = meta.get("providers")
+        if not isinstance(providers_raw, (list, tuple, set)):
+            continue
+        for provider in providers_raw:
+            normalized_provider = str(provider or "").strip().lower()
+            if normalized_provider:
+                supported_providers.add(normalized_provider)
+    if not supported_providers:
+        return set()
+
+    connected_accounts = EmailAccount.objects.filter(
+        business_profile_id=business_id,
+        user_id=actor_user_uuid,
+        status=EmailAccountStatus.CONNECTED,
+        provider__in=list(supported_providers),
+    ).order_by("-updated_at")
+    accounts_by_provider: dict[str, list[EmailAccount]] = defaultdict(list)
+    for account in connected_accounts:
+        provider = str(getattr(account, "provider", "") or "").strip().lower()
+        if not provider:
+            continue
+        accounts_by_provider[provider].append(account)
+
+    enabled_tools: set[str] = set()
+    for tool_name, meta in source_registry.items():
+        if not isinstance(meta, Mapping):
+            continue
+        normalized_tool = str(tool_name or "").strip()
+        if not normalized_tool:
+            continue
+        providers_raw = meta.get("providers")
+        providers = [
+            str(provider or "").strip().lower()
+            for provider in (providers_raw if isinstance(providers_raw, (list, tuple, set)) else [])
+            if str(provider or "").strip()
+        ]
+        requires_connected_account = bool(meta.get("requires_connected_account", True))
+        candidate_accounts: list[EmailAccount] = []
+        for provider in providers:
+            candidate_accounts.extend(accounts_by_provider.get(provider, []))
+        if requires_connected_account and not candidate_accounts:
+            continue
+        if candidate_accounts and not any(
+            is_email_tool_enabled_for_account(account=account, tool_name=normalized_tool)
+            for account in candidate_accounts
+        ):
             continue
         enabled_tools.add(normalized_tool)
 
@@ -14182,6 +14367,7 @@ def _resolve_email_account_for_tool(
     - conversation.metadata.actor_user_id (or user_id)
     """
 
+    actor_user_uuid = _conversation_actor_user_uuid(conversation)
     raw_account_id = _coerce_str(arguments.get("email_account_id") or arguments.get("emailAccountId")).strip()
     if raw_account_id:
         try:
@@ -14196,6 +14382,18 @@ def _resolve_email_account_for_tool(
             return None, _email_error(tool, error_code="email_account_not_found", hint="Email account not found.")
         if account.status != EmailAccountStatus.CONNECTED:
             return None, _email_error(tool, error_code="email_not_connected", hint="Email account is not connected.")
+        if actor_user_uuid and account.user_id != actor_user_uuid:
+            return None, _email_error(
+                tool,
+                error_code="account_mismatch",
+                hint="Connected account belongs to a different user in this workspace.",
+            )
+        if not is_email_tool_enabled_for_account(account=account, tool_name=tool):
+            return None, _email_error(
+                tool,
+                error_code="tool_disabled",
+                hint="This integration tool is disabled in Integrations settings.",
+            )
         return account, None
 
     meta = conversation.metadata if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
@@ -14213,6 +14411,12 @@ def _resolve_email_account_for_tool(
                 user_id=user_uuid,
             ).first()
             if account and account.status == EmailAccountStatus.CONNECTED:
+                if not is_email_tool_enabled_for_account(account=account, tool_name=tool):
+                    return None, _email_error(
+                        tool,
+                        error_code="tool_disabled",
+                        hint="This integration tool is disabled in Integrations settings.",
+                    )
                 return account, None
 
     return None, _email_error(

@@ -1174,6 +1174,7 @@ def _get_email_accounts_payload(business: BusinessProfile) -> list[dict[str, Any
     EmailAccount records rather than McpConnection records.
     """
     accounts = EmailAccount.objects.filter(business_profile=business).order_by("email_address")
+    from apps.mcp import tools as mcp_tools
     result = []
     for account in accounts:
         # Map provider to marketplace key
@@ -1188,6 +1189,12 @@ def _get_email_accounts_payload(business: BusinessProfile) -> list[dict[str, Any
             marketplace_key = provider
             display_name = provider.title()
 
+        catalog = mcp_tools.get_email_integration_tools_for_provider(provider)
+        tool_names = [str(row.get("toolName") or "").strip() for row in catalog if str(row.get("toolName") or "").strip()]
+        enabled_map = mcp_tools.get_email_tool_enabled_map_for_account(account, tool_names=tool_names) if tool_names else {}
+        total_tool_count = len(tool_names)
+        enabled_tool_count = sum(1 for name in tool_names if bool(enabled_map.get(name, True)))
+
         result.append({
             "id": str(account.id),
             "type": "email_account",  # Distinguish from MCP connections
@@ -1197,6 +1204,8 @@ def _get_email_accounts_payload(business: BusinessProfile) -> list[dict[str, Any
             "emailAddress": account.email_address,
             "status": account.status,
             "sendMode": account.send_mode,
+            "totalToolCount": total_tool_count,
+            "enabledToolCount": enabled_tool_count,
             "lastError": account.last_error or "",
             "lastHealthCheckedAt": account.last_health_checked_at.isoformat() if account.last_health_checked_at else None,
             "createdAt": account.created_at.isoformat() if account.created_at else None,
