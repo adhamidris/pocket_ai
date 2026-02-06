@@ -16,7 +16,8 @@ from core.tenancy import tenant_context
 from apps.conversations.models import AgentRun, AgentRunEventStream, AgentRunEventType, AgentRunStatus
 from apps.voice.agent_run_bridge import append_agent_run_event, get_agent_run_id_from_call_session_metadata
 from apps.voice.models import CallSession, CallStatus, VoiceConfiguration
-from apps.voice.twilio import load_twilio_config, validate_twilio_request
+from apps.voice.provider_credentials import resolve_twilio_config
+from apps.voice.twilio import validate_twilio_request
 
 
 logger = logging.getLogger(__name__)
@@ -50,12 +51,15 @@ def _ws_base_url() -> str:
     return (os.getenv("VOICE_WS_BASE_URL") or "").strip().rstrip("/")
 
 
-def _require_valid_signature(request: HttpRequest) -> bool:
+def _require_valid_signature(request: HttpRequest, *, business_id: object | None) -> bool:
     enabled = (os.getenv("TWILIO_VALIDATE_SIGNATURES") or "true").strip().lower() in {"1", "true", "yes"}
     if not enabled:
         return True
     try:
-        cfg = load_twilio_config(require_from_number=False)
+        cfg = resolve_twilio_config(
+            business_id=business_id,
+            require_from_number=False,
+        )
     except Exception:
         return False
     return validate_twilio_request(request, auth_token=cfg.auth_token, webhook_base_url=cfg.webhook_base_url)
@@ -264,15 +268,17 @@ def _run_update_for_terminal_call(session: CallSession) -> dict[str, object] | N
 @csrf_exempt
 @require_http_methods(["POST", "GET"])
 def twilio_twiml(request: HttpRequest, session_id: uuid.UUID) -> HttpResponse:
-    if not _require_valid_signature(request):
-        return HttpResponse(status=403)
-
     session = CallSession.objects.filter(id=session_id).first()
     if not session:
         return _twiml_response(_twiml_decline())
+    if not _require_valid_signature(request, business_id=session.business_profile_id):
+        return HttpResponse(status=403)
 
     try:
-        cfg = load_twilio_config(require_from_number=False)
+        cfg = resolve_twilio_config(
+            business_id=session.business_profile_id,
+            require_from_number=False,
+        )
     except Exception:
         return _twiml_response(_twiml_decline())
 
@@ -290,17 +296,19 @@ def twilio_twiml(request: HttpRequest, session_id: uuid.UUID) -> HttpResponse:
 @csrf_exempt
 @require_http_methods(["POST"])
 def twilio_consent(request: HttpRequest, session_id: uuid.UUID) -> HttpResponse:
-    if not _require_valid_signature(request):
-        return HttpResponse(status=403)
-
     session = CallSession.objects.filter(id=session_id).first()
     if not session:
         return _twiml_response(_twiml_decline())
+    if not _require_valid_signature(request, business_id=session.business_profile_id):
+        return HttpResponse(status=403)
 
     digits = str(request.POST.get("Digits") or "").strip()
     if digits == "1":
         try:
-            cfg = load_twilio_config(require_from_number=False)
+            cfg = resolve_twilio_config(
+                business_id=session.business_profile_id,
+                require_from_number=False,
+            )
         except Exception:
             return _twiml_response(_twiml_decline())
 
@@ -326,12 +334,11 @@ def twilio_consent(request: HttpRequest, session_id: uuid.UUID) -> HttpResponse:
 @csrf_exempt
 @require_http_methods(["POST"])
 def twilio_status(request: HttpRequest, session_id: uuid.UUID) -> HttpResponse:
-    if not _require_valid_signature(request):
-        return HttpResponse(status=403)
-
     session = CallSession.objects.filter(id=session_id).first()
     if not session:
         return HttpResponse(status=204)
+    if not _require_valid_signature(request, business_id=session.business_profile_id):
+        return HttpResponse(status=403)
 
     call_status = str(request.POST.get("CallStatus") or "").strip().lower()
     call_sid = str(request.POST.get("CallSid") or "").strip()
@@ -393,12 +400,11 @@ def twilio_status(request: HttpRequest, session_id: uuid.UUID) -> HttpResponse:
 @csrf_exempt
 @require_http_methods(["POST"])
 def twilio_recording_callback(request: HttpRequest, session_id: uuid.UUID) -> HttpResponse:
-    if not _require_valid_signature(request):
-        return HttpResponse(status=403)
-
     session = CallSession.objects.filter(id=session_id).first()
     if not session:
         return HttpResponse(status=204)
+    if not _require_valid_signature(request, business_id=session.business_profile_id):
+        return HttpResponse(status=403)
 
     recording_sid = str(request.POST.get("RecordingSid") or "").strip()
     recording_url = str(request.POST.get("RecordingUrl") or "").strip()

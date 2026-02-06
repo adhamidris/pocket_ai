@@ -14,7 +14,7 @@
 - `ingestion/` — ingestion + normalization
 - `integrations/` — integrations APIs + email connectors (live)
 - `ops/` — QA + load testing
-- `voice/` — **dev-only** voice stack (phases 0–3)
+- `voice/` — **dev-only** voice stack (single Phase 1+ runtime path)
 - `prompts/` — prompt catalog
 
 ## Archived / Legacy

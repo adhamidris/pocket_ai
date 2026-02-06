@@ -867,6 +867,17 @@ class PortalTurnRunner:
             "metadata_version": 1,
             "content_blocks": blocks,
         }
+
+        # Inject debug tool trace when enabled (lazy import to avoid circular dependency).
+        if stream_context and getattr(settings, "PORTAL_DEBUG_TOOL_TRACE", False):
+            try:
+                from apps.api.chat_portal import _serialize_debug_tools_payload
+                debug_tools = _serialize_debug_tools_payload(stream_context)
+                if debug_tools:
+                    final_payload["debug_tools"] = debug_tools
+            except Exception:
+                pass  # Best-effort; never break finalization for debug data.
+
         emitted = self._has_turn_persisted_event()
         if not emitted:
             self.builder.append_event("turn_persisted", final_payload)

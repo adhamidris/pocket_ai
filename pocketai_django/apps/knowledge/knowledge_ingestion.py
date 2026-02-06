@@ -2550,6 +2550,8 @@ class KnowledgeIngestionService:
         self.table_parent_max_rows = max(1, int(getattr(settings, "RAG_TABLE_PARENT_MAX_ROWS", 200)))
         self.table_parent_max_chars = max(2000, int(getattr(settings, "RAG_TABLE_PARENT_MAX_CHARS", 16000)))
         self.table_child_max_rows = max(0, int(getattr(settings, "RAG_TABLE_CHILD_MAX_ROWS", 500)))
+        self.table_summary_enabled = bool(getattr(settings, "RAG_TABLE_SUMMARY_ENABLED", True))
+        self.table_summary_max_row_labels = max(0, int(getattr(settings, "RAG_TABLE_SUMMARY_MAX_ROW_LABELS", 50)))
         self.table_header_propagation_enabled = bool(
             getattr(settings, "RAG_TABLE_HEADER_PROPAGATION_ENABLED", True)
         )
@@ -4879,6 +4881,26 @@ class KnowledgeIngestionService:
                             max_rows=self.table_child_max_rows,
                         )
                         table_segment_payloads.extend(row_payloads)
+
+                        # Two-tier table retrieval: emit a single summary chunk
+                        # per table for primary search.  Row chunks (above) are
+                        # tagged search_tier="drill_down" and excluded from the
+                        # primary search index.
+                        if self.table_summary_enabled and row_payloads:
+                            row_labels = [
+                                p["metadata"].get("row_label", "")
+                                for p in row_payloads
+                                if p["metadata"].get("row_label")
+                            ]
+                            summary_payload = self._table_summary_chunk_payload(
+                                table=t,
+                                column_map=column_map,
+                                base_metadata=base_metadata,
+                                total_data_rows=len(row_payloads),
+                                row_labels=row_labels,
+                            )
+                            if summary_payload:
+                                table_segment_payloads.append(summary_payload)
                     else:
                         cols = [entry[0] for entry in column_map]
                         tsv_lines: list[str] = []
@@ -9599,11 +9621,64 @@ class KnowledgeIngestionService:
                     "is_table_preview": False,
                     "table_row_index": row.row_index,
                     "row_label": row_label,  # Enable row-label search matching
+                    "search_tier": "drill_down",
                 }
             )
             payloads.append({"text": text, "metadata": row_meta})
             data_rows += 1
         return payloads
+
+    def _table_summary_chunk_payload(
+        self,
+        *,
+        table: KnowledgeUploadTable,
+        column_map: Sequence[tuple[str, str, int]],
+        base_metadata: Mapping[str, Any],
+        total_data_rows: int,
+        row_labels: Sequence[str],
+    ) -> dict[str, Any] | None:
+        """Build a single summary chunk for a table.
+
+        The summary captures the table's schema, size, and a sample of
+        first-column values.  It is tagged ``search_tier = "primary"`` so
+        that it appears in normal search results while the individual row
+        chunks (``search_tier = "drill_down"``) are excluded.
+        """
+        column_names = [entry[0] for entry in column_map]
+        if not column_names:
+            return None
+
+        title = table.title or f"Table {table.order_index}"
+
+        lines: list[str] = []
+        if table.section_heading:
+            lines.append(f"[Section] {table.section_heading}")
+        lines.append(f"[Table] {title}")
+        lines.append(f"[Columns] {' | '.join(column_names)}")
+        lines.append(f"[Rows] {total_data_rows} data rows")
+
+        # Include capped row labels so the embedding captures entity names.
+        cap = self.table_summary_max_row_labels
+        if row_labels:
+            sample = row_labels[:cap]
+            label_text = ", ".join(sample)
+            if len(row_labels) > cap:
+                label_text += f", ... and {len(row_labels) - cap} more"
+            lines.append(f"[Row Labels] {label_text}")
+
+        text = "\n".join(lines)
+
+        summary_meta = dict(base_metadata)
+        summary_meta.update(
+            {
+                "content_source": "table_summary",
+                "table_chunk_role": "summary",
+                "is_table_preview": True,
+                "search_tier": "primary",
+                "table_total_rows": total_data_rows,
+            }
+        )
+        return {"text": text, "metadata": summary_meta}
 
     def _table_preview_text(
         self,

@@ -5,7 +5,7 @@ This is the Django backend + web portal for PocketAI (Chat Portal, RAG, ingestio
 Status highlights:
 - MCP orchestrator only (legacy orchestration is deprecated).
 - Agentic read v2 is enabled via `MCP_AGENTIC_READ_V2_ENABLED=true` in the root `.env`.
-- Voice stack is **dev-only** right now (phases 0–3 implemented).
+- Voice stack is **dev-only** right now (single Phase 1+ runtime path).
 - Platform is **beta**.
 
 ## Quickstart

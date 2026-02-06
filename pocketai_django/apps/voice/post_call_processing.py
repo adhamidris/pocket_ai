@@ -27,8 +27,8 @@ from apps.llm.llm_provider import load_default_provider
 from apps.voice.models import CallEvent, CallSession
 from apps.voice.agent_run_bridge import append_agent_run_event, get_agent_run_id_from_call_session_metadata
 from apps.voice.call_insights import CALL_INSIGHTS_SCHEMA_VERSION, format_call_insights_message, generate_call_insights
+from apps.voice.provider_credentials import resolve_twilio_config
 from apps.voice.r2_storage import build_r2_client, load_r2_config
-from apps.voice.twilio import load_twilio_config
 
 
 logger = logging.getLogger(__name__)
@@ -288,7 +288,10 @@ def maybe_upload_recording_to_r2(session: CallSession) -> tuple[bool, str, str, 
     if not r2_cfg:
         return False, "", "", ""
 
-    twilio_cfg = load_twilio_config(require_from_number=False)
+    twilio_cfg = resolve_twilio_config(
+        business_id=session.business_profile_id,
+        require_from_number=False,
+    )
 
     url = str(session.recording_url).strip()
     if url and not url.endswith(".mp3") and not url.endswith(".wav"):

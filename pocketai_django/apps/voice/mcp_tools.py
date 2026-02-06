@@ -43,8 +43,8 @@ from apps.voice.models import (
     VoiceTrustTier,
 )
 from apps.voice.policy_engine import audit_policy_decision, evaluate_voice_compliance_policy
+from apps.voice.provider_credentials import resolve_twilio_config
 from apps.voice.phone_utils import detect_country_iso2, is_valid_e164
-from apps.voice.twilio import load_twilio_config
 
 
 logger = logging.getLogger(__name__)
@@ -239,7 +239,10 @@ def initiate_phone_call_tool(
         }
 
     try:
-        twilio_cfg = load_twilio_config(require_from_number=False)
+        twilio_cfg = resolve_twilio_config(
+            business_id=business_id,
+            require_from_number=False,
+        )
     except Exception as exc:
         return {
             "tool": "initiate_phone_call",

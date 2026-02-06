@@ -245,6 +245,7 @@ class KnowledgeSnippet:
     entity_name: str | None = None
     entity_business: str | None = None
     is_table_chunk: bool = False
+    table_id: str | None = None
     aliases: Sequence[str] = dataclasses.field(default_factory=tuple)
     search_stage: str | None = None
     confidence_score: float | None = None
@@ -1179,7 +1180,11 @@ class KnowledgeSearchService:
                 indent=1,
                 context={"business": business_profile.id if business_profile else None},
             )
-        
+
+        # Apply strategy effective_limit when available (safety cap: never exceed 4x base)
+        if strategy_result and strategy_result.effective_limit:
+            limit = min(strategy_result.effective_limit, limit * 4)
+
         table_presence_start = time.perf_counter()
         tables_available = self._business_has_tables(
             business_profile,
@@ -1268,6 +1273,7 @@ class KnowledgeSearchService:
             diagnostics["strategy_multiplier"] = strategy_result.hints.snippet_limit_multiplier
             diagnostics["strategy_diversify_tables"] = strategy_result.hints.diversify_tables
             diagnostics["strategy_comprehensive"] = strategy_result.hints.comprehensive_intent
+            diagnostics["strategy_applied_limit"] = limit
         
         cache_key = self._result_cache_key(
             business_profile=business_profile,
@@ -1664,6 +1670,11 @@ class KnowledgeSearchService:
                 )
                 blended = blended[:limit]  # Final limit
 
+                # Apply table diversification when strategy requests it
+                if strategy_result and strategy_result.hints.diversify_tables and len(blended) > 1:
+                    blended = self._diversify_table_snippets(blended, limit=limit)
+                    diagnostics["strategy_diversified"] = True
+
                 diagnostics["snippet_rerank_ms"] = snippet_ms
                 diagnostics["total_duration_ms"] = self._duration_ms(overall_start)
                 diagnostics["snippet_count"] = len(blended)
@@ -1725,6 +1736,12 @@ class KnowledgeSearchService:
                 query_text=traits.normalized or traits.original or query,
                 tokens=traits.tokens,
             )
+
+            # Apply table diversification when strategy requests it
+            if strategy_result and strategy_result.hints.diversify_tables and len(blended) > 1:
+                blended = self._diversify_table_snippets(blended, limit=limit)
+                diagnostics["strategy_diversified"] = True
+
             diagnostics["snippet_rerank_ms"] = snippet_ms
             status = "ok" if blended else "not_found"
             diagnostics["snippet_count"] = len(blended)
@@ -2311,6 +2328,63 @@ class KnowledgeSearchService:
                 query_vector=query_vector,
                 diagnostics=diagnostics,
             )
+
+    @staticmethod
+    def _diversify_table_snippets(
+        snippets: Sequence[KnowledgeSnippet],
+        *,
+        limit: int,
+    ) -> list[KnowledgeSnippet]:
+        """Round-robin across distinct table_ids to spread coverage.
+
+        Non-table snippets are interleaved at their original positions so
+        they are not pushed to the end.
+        """
+        from collections import OrderedDict
+
+        buckets: OrderedDict[str, list[KnowledgeSnippet]] = OrderedDict()
+        non_table: list[KnowledgeSnippet] = []
+
+        for s in snippets:
+            tid = s.table_id
+            if tid:
+                buckets.setdefault(str(tid), []).append(s)
+            else:
+                non_table.append(s)
+
+        # If only one table (or none), nothing to diversify
+        if len(buckets) <= 1:
+            return list(snippets)[:limit]
+
+        result: list[KnowledgeSnippet] = []
+        table_iter = 0
+        non_table_iter = 0
+        bucket_keys = list(buckets.keys())
+
+        # Interleave: for each round, take one from each table bucket,
+        # then one non-table snippet.
+        while len(result) < limit:
+            added = False
+            for key in bucket_keys:
+                if table_iter < len(buckets[key]):
+                    result.append(buckets[key][table_iter])
+                    added = True
+                    if len(result) >= limit:
+                        break
+            if not added and non_table_iter >= len(non_table):
+                break
+            table_iter += 1
+            # Inject a non-table snippet every round
+            if non_table_iter < len(non_table) and len(result) < limit:
+                result.append(non_table[non_table_iter])
+                non_table_iter += 1
+
+        # Append remaining non-table snippets if space
+        while non_table_iter < len(non_table) and len(result) < limit:
+            result.append(non_table[non_table_iter])
+            non_table_iter += 1
+
+        return result[:limit]
 
     def _search_chunks(
         self,
@@ -2965,6 +3039,8 @@ class KnowledgeSearchService:
         qs = KnowledgeUploadChunk.objects.filter(
             business_profile=business_profile,
             upload__status=KnowledgeStatus.ACTIVE,
+        ).exclude(
+            metadata__search_tier="drill_down",  # Two-tier: row chunks are drill-down only
         )
         qs = self._apply_chunk_scope(
             qs,
@@ -5396,6 +5472,7 @@ class KnowledgeSearchService:
                     entity_name=entity_hint,
                     entity_business=business_name,
                     is_table_chunk=True,
+                    table_id=str(table.id),
                     page_number=row.page_number or (table.page.page_number if table.page else None),
                     aliases=tuple(),
                     search_stage="table_direct",
@@ -5495,6 +5572,7 @@ class KnowledgeSearchService:
                     entity_name=summary_parts[0] if summary_parts else structured_table["title"],
                     entity_business=getattr(upload.business_profile, "name", None),
                     is_table_chunk=True,
+                    table_id=str(table.id),
                     aliases=tuple(),
                     search_stage="fallback",
                     confidence_score=0.0,
@@ -5716,6 +5794,7 @@ class KnowledgeSearchService:
             entity_name=entity_name,
             entity_business=entity_business,
             is_table_chunk=is_table_chunk,
+            table_id=str(chunk_metadata.get("table_id") or "") or None,
             aliases=aliases,
             search_stage=source_stage,
             confidence_score=confidence,
@@ -6679,6 +6758,7 @@ class KnowledgeSearchService:
                     entity_name=chunk_metadata.get("entity_name"),
                     entity_business=chunk_metadata.get("entity_business"),
                     is_table_chunk=bool(chunk_metadata.get("is_table_chunk")),
+                    table_id=str(chunk_metadata.get("table_id") or "") or None,
                     aliases=tuple(chunk_metadata.get("aliases") or ()),
                     search_stage="load_chunk",
                     confidence_score=1.0,

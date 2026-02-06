@@ -18,9 +18,13 @@ from apps.llm.ai_prompt_builder import PromptBundle
 from apps.llm.llm_provider import DeepSeekChatProvider, OpenAIChatProvider, _ResponseTextExtractor, load_default_provider
 from apps.voice.audio_frames import iter_audio_frames
 from apps.voice.models import CallSession
-from apps.voice.twilio import load_twilio_config
-from apps.voice.voice_spike.deepgram_stt import DeepgramConfig, deepgram_transcripts
-from apps.voice.voice_spike.elevenlabs_tts import ElevenLabsConfig, stream_tts_audio
+from apps.voice.deepgram_stt import DeepgramConfig, deepgram_transcripts
+from apps.voice.elevenlabs_tts import ElevenLabsConfig, stream_tts_audio
+from apps.voice.provider_credentials import (
+    resolve_deepgram_config,
+    resolve_elevenlabs_config,
+    resolve_twilio_config,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -86,6 +90,8 @@ class VoiceCallRuntime:
         self._last_barge_in_at: float = 0.0  # monotonic
         self._last_barge_in_text: str = ""
         self._terminated: bool = False
+        self._stt_config_cache: dict[str, DeepgramConfig] = {}
+        self._tts_config_cache: dict[str, ElevenLabsConfig] = {}
 
     async def run_twilio_stream(self, twilio_ws) -> None:
         session = await self._get_session()
@@ -120,7 +126,7 @@ class VoiceCallRuntime:
 
             async def stt_loop(*, _lang: str = lang_tag, _source: Callable[[], AsyncIterator[bytes]] = audio_source) -> None:
                 try:
-                    dg_config = DeepgramConfig.from_env(language=_lang)
+                    dg_config = await self._get_deepgram_config(language=_lang)
                     async for payload in deepgram_transcripts(config=dg_config, audio_source=_source()):
                         if payload.get("type") == "SpeechStarted":
                             await utterance_queue.put({"event": "vad.speech_started", "stt_language": _lang})
@@ -410,7 +416,7 @@ class VoiceCallRuntime:
                     {"response_id": response_id, "chunk_index": idx, "text": _clip_text(chunk, 160)},
                 )
                 tts_lang = _detect_text_language(chunk, fallback=language_hint)
-                tts_cfg = ElevenLabsConfig.from_env(language=tts_lang)
+                tts_cfg = await self._get_tts_config(language=tts_lang)
                 await self._stream_tts_to_twilio(twilio_ws, chunk, config=tts_cfg)
                 completed = idx + 1
             if chunks:
@@ -715,7 +721,7 @@ class VoiceCallRuntime:
         try:
             await self._log_event(event_type, {"text": text})
             tts_lang = _detect_text_language(text, fallback=language_hint)
-            tts_cfg = ElevenLabsConfig.from_env(language=tts_lang)
+            tts_cfg = await self._get_tts_config(language=tts_lang)
             await self._stream_tts_to_twilio(twilio_ws, text, config=tts_cfg)
             self._last_agent_speech_end_at = time.monotonic()
         except asyncio.CancelledError:
@@ -741,7 +747,10 @@ class VoiceCallRuntime:
             await self._log_event("call.hangup.missing_call_sid", {"reason": reason})
             return
         try:
-            cfg = load_twilio_config(require_from_number=False)
+            cfg = await sync_to_async(resolve_twilio_config)(
+                business_id=session.business_profile_id,
+                require_from_number=False,
+            )
         except Exception as exc:
             await self._log_event("call.hangup.missing_twilio_config", {"reason": reason, "error": str(exc)})
             return
@@ -964,8 +973,8 @@ class VoiceCallRuntime:
         llm_task = asyncio.create_task(_llm_thread())
 
         try:
-            tts_config_en = ElevenLabsConfig.from_env(language="en")
-            tts_config_ar = ElevenLabsConfig.from_env(language="ar")
+            tts_config_en = await self._get_tts_config(language="en")
+            tts_config_ar = await self._get_tts_config(language="ar")
         except Exception as exc:
             await self._log_event("tts.disabled", {"error": str(exc)})
             await llm_task
@@ -1082,6 +1091,32 @@ class VoiceCallRuntime:
         session = await sync_to_async(CallSession.objects.get)(id=self.session_id)
         self._session_cache = session
         return session
+
+    async def _get_deepgram_config(self, *, language: str) -> DeepgramConfig:
+        lang = (language or "en").strip().lower() or "en"
+        cached = self._stt_config_cache.get(lang)
+        if cached is not None:
+            return cached
+        session = await self._get_session()
+        config = await sync_to_async(resolve_deepgram_config)(
+            business_id=session.business_profile_id,
+            language=lang,
+        )
+        self._stt_config_cache[lang] = config
+        return config
+
+    async def _get_tts_config(self, *, language: str | None) -> ElevenLabsConfig:
+        lang = (language or "en").strip().lower() or "en"
+        cached = self._tts_config_cache.get(lang)
+        if cached is not None:
+            return cached
+        session = await self._get_session()
+        config = await sync_to_async(resolve_elevenlabs_config)(
+            business_id=session.business_profile_id,
+            language=lang,
+        )
+        self._tts_config_cache[lang] = config
+        return config
 
     async def _update_stream_ids(self, *, stream_sid: str, call_sid: str) -> None:
         def _update() -> None:
@@ -1633,23 +1668,6 @@ def _is_wrong_person_strong(text: str, *, language_hint: str | None = None, reci
 
     return False
 
-
-def _interim_min_chars() -> int:
-    raw = (os.getenv("VOICE_STT_INTERIM_MIN_CHARS") or "12").strip()
-    try:
-        value = int(raw)
-    except Exception:
-        value = 12
-    return max(4, min(60, value))
-
-
-def _interim_stable_ms() -> int:
-    raw = (os.getenv("VOICE_STT_INTERIM_STABLE_MS") or "450").strip()
-    try:
-        value = int(raw)
-    except Exception:
-        value = 450
-    return max(120, min(2000, value))
 
 def _final_stable_ms() -> int:
     raw = (os.getenv("VOICE_STT_FINAL_STABLE_MS") or "700").strip()

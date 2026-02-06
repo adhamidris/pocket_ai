@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import AsyncIterator
+from typing import AsyncIterator, Mapping
 
 import httpx
 
@@ -31,36 +31,91 @@ class ElevenLabsConfig:
 
     @staticmethod
     def from_env(*, language: str | None = None) -> "ElevenLabsConfig":
-        api_key = (os.getenv("ELEVENLABS_API_KEY") or "").strip()
+        return ElevenLabsConfig.from_credentials(
+            credentials={},
+            language=language,
+            allow_env_fallback=True,
+        )
+
+    @staticmethod
+    def from_credentials(
+        *,
+        credentials: Mapping[str, object] | None,
+        language: str | None = None,
+        allow_env_fallback: bool,
+    ) -> "ElevenLabsConfig":
+        source = dict(credentials or {})
+
+        def _value(*, key: str, env_key: str, default: str = "", fallback_keys: tuple[str, ...] = ()) -> str:
+            for candidate in (key, *fallback_keys):
+                if candidate in source:
+                    text = str(source.get(candidate) or "").strip()
+                    if text or not allow_env_fallback:
+                        return text
+            if allow_env_fallback:
+                text = (os.getenv(env_key) or "").strip()
+                if text:
+                    return text
+            return default
+
+        api_key = _value(key="api_key", env_key="ELEVENLABS_API_KEY")
         if not api_key:
             raise RuntimeError("ELEVENLABS_API_KEY is not configured.")
 
-        forced_voice_id = (os.getenv("ELEVENLABS_VOICE_ID") or "").strip()
+        forced_voice_id = _value(
+            key="voice_id",
+            env_key="ELEVENLABS_VOICE_ID",
+        )
         if forced_voice_id:
             voice_id = forced_voice_id
         else:
             language_norm = (language or "").strip().lower()
             if language_norm == "ar":
-                voice_id = (
-                    (os.getenv("ELEVENLABS_DEFAULT_VOICE_AR") or "").strip()
-                    or (os.getenv("ELEVENLABS_DEFAULT_VOICE_EN") or "").strip()
+                voice_id = _value(
+                    key="default_voice_ar",
+                    env_key="ELEVENLABS_DEFAULT_VOICE_AR",
+                    fallback_keys=("voice_id_ar",),
+                ) or _value(
+                    key="default_voice_en",
+                    env_key="ELEVENLABS_DEFAULT_VOICE_EN",
+                    fallback_keys=("voice_id_en",),
                 )
             else:
-                voice_id = (os.getenv("ELEVENLABS_DEFAULT_VOICE_EN") or "").strip()
+                voice_id = _value(
+                    key="default_voice_en",
+                    env_key="ELEVENLABS_DEFAULT_VOICE_EN",
+                    fallback_keys=("voice_id_en",),
+                )
 
         if not voice_id:
             raise RuntimeError(
                 "ELEVENLABS_VOICE_ID is not configured (or ELEVENLABS_DEFAULT_VOICE_EN/ELEVENLABS_DEFAULT_VOICE_AR)."
             )
 
-        model_id = (os.getenv("ELEVENLABS_MODEL_ID") or "").strip()
+        model_id = _value(
+            key="model_id",
+            env_key="ELEVENLABS_MODEL_ID",
+        )
         if language and not model_id:
-            model_id = (os.getenv(f"ELEVENLABS_MODEL_ID_{language.strip().upper()}") or "").strip()
+            lang = language.strip().upper()
+            model_id = _value(
+                key=f"model_id_{language.strip().lower()}",
+                env_key=f"ELEVENLABS_MODEL_ID_{lang}",
+            )
         if not model_id:
             model_id = "eleven_flash_v2_5"
 
-        output_format = (os.getenv("ELEVENLABS_OUTPUT_FORMAT") or "ulaw_8000").strip()
-        return ElevenLabsConfig(api_key=api_key, voice_id=voice_id, model_id=model_id, output_format=output_format)
+        output_format = _value(
+            key="output_format",
+            env_key="ELEVENLABS_OUTPUT_FORMAT",
+            default="ulaw_8000",
+        )
+        return ElevenLabsConfig(
+            api_key=api_key,
+            voice_id=voice_id,
+            model_id=model_id,
+            output_format=output_format,
+        )
 
 
 async def stream_tts_audio(text: str, *, config: ElevenLabsConfig) -> AsyncIterator[bytes]:

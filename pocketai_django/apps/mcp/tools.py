@@ -165,6 +165,10 @@ SEARCH_KNOWLEDGE_LIMIT_SCHEMA_DEFAULT = max(
     min(int(_SEARCH_KNOWLEDGE_DEFAULT_LIMIT), SEARCH_KNOWLEDGE_LIMIT_SCHEMA_MAX),
 )
 
+# Prefetch cap: allows cursor caching to store more candidates than the per-page limit.
+# This is intentionally higher than MCP_PROMPT_MAX_SNIPPETS_CAP so pagination has results to page through.
+SEARCH_PREFETCH_ABSOLUTE_CAP = 200
+
 # search_knowledge pagination (cursor) helpers
 SEARCH_KNOWLEDGE_CURSOR_SALT = "mcp.search_knowledge.cursor.v1"
 SEARCH_KNOWLEDGE_CURSOR_CACHE_PREFIX = "mcp:search_knowledge:cursor:v1"
@@ -1042,6 +1046,42 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
                 "description": "Maximum number of uploads to return (1-10).",
             },
         },
+    ),
+    _function_schema(
+        name="read_table",
+        description=(
+            "Read rows from a specific table discovered via search_knowledge or list_tables. "
+            "Use this to drill into table details after seeing a table summary in search results. "
+            "Supports optional text filtering and pagination."
+        ),
+        properties={
+            "document_id": {
+                "type": "string",
+                "description": "The upload/document UUID that contains the table.",
+            },
+            "table_id": {
+                "type": "string",
+                "description": "The table UUID (from search result metadata or list_tables).",
+            },
+            "filter": {
+                "type": "string",
+                "description": "Optional case-insensitive text filter. Only rows containing this text in any cell are returned.",
+            },
+            "start_row": {
+                "type": "integer",
+                "minimum": 0,
+                "default": 0,
+                "description": "Row index to start reading from (for pagination).",
+            },
+            "max_rows": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 200,
+                "default": 50,
+                "description": "Maximum number of rows to return.",
+            },
+        },
+        required=("document_id", "table_id"),
     ),
     _function_schema(
         name="read_knowledge",
@@ -3925,9 +3965,10 @@ def _search_knowledge_handler(
     page_size = max(1, min(int(page_size_requested), MCP_PROMPT_MAX_SNIPPETS_CAP))
     fetch_limit = page_size
     if pagination_enabled and pagination_prefetch_min:
-        prefetch_floor = min(int(pagination_prefetch_min), MCP_PROMPT_MAX_SNIPPETS_CAP)
-        fetch_limit = max(page_size, prefetch_floor)
-    fetch_limit = max(1, min(int(fetch_limit), MCP_PROMPT_MAX_SNIPPETS_CAP))
+        # Prefetch more candidates than page_size so cursor pagination has results to serve.
+        # Use SEARCH_PREFETCH_ABSOLUTE_CAP (not MCP_PROMPT_MAX_SNIPPETS_CAP) to avoid
+        # clamping prefetch to the same value as page_size, which made pagination a no-op.
+        fetch_limit = max(page_size, min(int(pagination_prefetch_min), SEARCH_PREFETCH_ABSOLUTE_CAP))
     requested_limit = fetch_limit
 
     service = _knowledge_service()
@@ -8053,6 +8094,99 @@ def _list_tables_handler(
         "limit": limit,
         "results": results,
         "hint": None if results else "No table uploads match this query.",
+    }
+
+
+def _read_table_handler(
+    arguments: Mapping[str, object],
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    """Read rows from a specific table, with optional text filtering."""
+    document_id = _coerce_str(arguments.get("document_id")).strip()
+    table_id = _coerce_str(arguments.get("table_id")).strip()
+    if not document_id or not table_id:
+        return {"tool": "read_table", "status": "error", "error": "document_id and table_id are required"}
+
+    text_filter = _coerce_str(arguments.get("filter")).strip().lower() or None
+
+    raw_start = arguments.get("start_row")
+    try:
+        start_row = max(0, int(raw_start)) if raw_start is not None else 0
+    except (TypeError, ValueError):
+        start_row = 0
+
+    raw_max = arguments.get("max_rows")
+    try:
+        max_rows = max(1, min(200, int(raw_max))) if raw_max is not None else 50
+    except (TypeError, ValueError):
+        max_rows = 50
+
+    # Rate limiting (same pattern as list_tables)
+    window_seconds = int(getattr(settings, "MCP_TOOL_RATE_LIMIT_WINDOW_SECONDS", 60) or 60)
+    try:
+        calls_per_minute = int(getattr(settings, "MCP_READ_TABLE_CALLS_PER_MINUTE", 120) or 0)
+    except (TypeError, ValueError):
+        calls_per_minute = 120
+    calls_per_minute = 0 if calls_per_minute < 0 else calls_per_minute
+    try:
+        enforce_tool_rate_limit(
+            business_profile=conversation.business_profile,
+            tool="read_table",
+            rate_limit=ToolRateLimit(
+                calls_per_minute=None if calls_per_minute <= 0 else calls_per_minute,
+                window_seconds=window_seconds,
+                scope="business",
+            ),
+        )
+    except ToolRateLimitExceeded as exc:
+        return {
+            "tool": "read_table",
+            "status": "throttled",
+            "error": "rate_limited",
+            "hint": str(exc),
+        }
+
+    # Validate document_id
+    try:
+        upload_uuid = uuid.UUID(document_id)
+    except (TypeError, ValueError):
+        return {"tool": "read_table", "status": "error", "error": "invalid document_id"}
+
+    # Agent scope check
+    agent_scope = _agent_knowledge_scope(conversation, context)
+    if not _agent_scope_allows_upload(scope=agent_scope, conversation=conversation, upload_id=upload_uuid):
+        return {"tool": "read_table", "status": "constraint_error", "error": "forbidden_document"}
+
+    # Delegate to existing row-segment reader
+    budget_chars = 8000
+    payload, cursor_info, complete = _read_table_rows_segment(
+        item_id=document_id,
+        upload_id=document_id,
+        table_id=table_id,
+        start_row_index=start_row,
+        budget_chars=budget_chars,
+        max_rows=max_rows,
+        business_profile=conversation.business_profile,
+    )
+
+    # Apply text filter if provided
+    if text_filter and isinstance(payload.get("rows"), list):
+        filtered_rows = [
+            row for row in payload["rows"]
+            if any(text_filter in str(cell).lower() for cell in row)
+        ]
+        payload["rows"] = filtered_rows
+        payload["rows_shown"] = len(filtered_rows)
+        payload["filter_applied"] = text_filter
+
+    status = "ok" if payload.get("rows") else "not_found"
+    return {
+        "tool": "read_table",
+        "status": status,
+        "data": payload,
+        "complete": complete,
+        "hint": None if payload.get("rows") else "No rows found. Check table_id and document_id.",
     }
 
 
@@ -15139,6 +15273,7 @@ _TOOL_HANDLERS: dict[str, ToolHandler] = {
     "pdf_extract_pages": _pdf_extract_pages_handler,
     "pdf_extract_text": _pdf_extract_text_handler,
     "list_tables": _list_tables_handler,
+    "read_table": _read_table_handler,
     "get_document_structure": _get_document_structure_handler,
     "table_aggregate": _table_aggregate_handler,
     "list_tables": _list_tables_handler,

@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from django.contrib import admin
 
-from apps.voice.models import CallSession, VoiceCallAuditEvent, VoiceConfiguration, VoiceCountryPolicy
+from apps.voice.models import (
+    CallSession,
+    VoiceCallAuditEvent,
+    VoiceConfiguration,
+    VoiceCountryPolicy,
+    VoiceProviderConnection,
+)
 
 
 @admin.register(VoiceCountryPolicy)
@@ -38,6 +44,21 @@ class VoiceConfigurationAdmin(admin.ModelAdmin):
     search_fields = ("business_profile__name", "business_profile__id")
     autocomplete_fields = ("business_profile",)
     ordering = ("-updated_at",)
+
+
+@admin.register(VoiceProviderConnection)
+class VoiceProviderConnectionAdmin(admin.ModelAdmin):
+    list_display = (
+        "business_profile",
+        "provider",
+        "enabled",
+        "last_tested_at",
+        "updated_at",
+    )
+    list_filter = ("provider", "enabled")
+    search_fields = ("business_profile__name", "business_profile__id")
+    autocomplete_fields = ("business_profile", "created_by")
+    ordering = ("business_profile__name", "provider")
 
 
 @admin.register(VoiceCallAuditEvent)

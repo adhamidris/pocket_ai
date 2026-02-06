@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import uuid
 from decimal import Decimal
+from typing import Any
 
 from django.conf import settings
 from django.core.validators import MinValueValidator
 from django.db import models
 from django.utils import timezone
+
+from apps.accounts.credential_secrets import (
+    IntegrationSecretError,
+    credentials_are_stale,
+    get_secret_manager,
+)
 
 
 class CallType(models.TextChoices):
@@ -77,6 +84,132 @@ class VoiceConfiguration(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"VoiceConfiguration<{self.business_profile_id}>"
+
+
+class VoiceProviderConnection(models.Model):
+    """
+    Workspace-level provider credentials for the voice engine.
+
+    Credentials are encrypted at rest and tenant-scoped.
+    """
+
+    class Provider(models.TextChoices):
+        TWILIO = "twilio", "Twilio"
+        DEEPGRAM = "deepgram", "Deepgram"
+        ELEVENLABS = "elevenlabs", "ElevenLabs"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        "accounts.BusinessProfile",
+        related_name="voice_provider_connections",
+        on_delete=models.CASCADE,
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="voice_provider_connections",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    provider = models.CharField(max_length=24, choices=Provider.choices)
+    enabled = models.BooleanField(default=False)
+
+    credentials_encrypted = models.TextField(blank=True, default="")
+    credentials_key_version = models.PositiveSmallIntegerField(default=1)
+    credentials_last_rotated_at = models.DateTimeField(null=True, blank=True)
+    credential_error_count = models.PositiveSmallIntegerField(default=0)
+
+    last_tested_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    last_error = models.TextField(blank=True, default="")
+    metadata = models.JSONField(default=dict, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "voice_provider_connection"
+        ordering = ("provider",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=["business_profile", "provider"],
+                name="voice_provider_business_provider_uniq",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["business_profile", "provider"], name="voice_voice_busines_a317f6_idx"),
+            models.Index(fields=["business_profile", "enabled"], name="voice_voice_busines_1ec414_idx"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"VoiceProviderConnection<{self.business_profile_id}:{self.provider}>"
+
+    def _credential_tenant(self) -> str:
+        business_id = self.business_profile_id or getattr(self.business_profile, "id", None)
+        if not business_id:
+            raise ValueError("Business profile must be saved before storing credentials.")
+        return str(business_id)
+
+    def _cache_credentials(self, payload: dict[str, Any]) -> None:
+        self._cached_credentials = dict(payload)
+
+    def _get_cached_credentials(self) -> dict[str, Any] | None:
+        return getattr(self, "_cached_credentials", None)
+
+    def _clear_cached_credentials(self) -> None:
+        if hasattr(self, "_cached_credentials"):
+            delattr(self, "_cached_credentials")
+
+    @property
+    def credentials(self) -> dict[str, Any]:
+        cached = self._get_cached_credentials()
+        if cached is not None:
+            return dict(cached)
+        tenant = self.business_profile_id or getattr(self.business_profile, "id", None)
+        if not tenant or not self.credentials_encrypted:
+            self._cache_credentials({})
+            return {}
+        manager = get_secret_manager()
+        try:
+            payload = manager.decrypt(self.credentials_encrypted, tenant=str(tenant))
+        except IntegrationSecretError:
+            payload = {}
+        self._cache_credentials(payload)
+        return dict(payload)
+
+    @credentials.setter
+    def credentials(self, value: dict[str, Any] | None) -> None:
+        payload = dict(value or {})
+        if not payload:
+            self.credentials_encrypted = ""
+            self.credentials_key_version = 1
+            self.credentials_last_rotated_at = None
+            self.credential_error_count = 0
+            self._cache_credentials({})
+            return
+        manager = get_secret_manager()
+        ciphertext = manager.encrypt(payload, tenant=self._credential_tenant())
+        self.credentials_encrypted = ciphertext
+        self.credentials_key_version = manager.key_version
+        self.credentials_last_rotated_at = timezone.now()
+        self.credential_error_count = 0
+        self._cache_credentials(payload)
+
+    def has_credentials(self) -> bool:
+        return bool(self.credentials_encrypted)
+
+    def credentials_need_rotation(self) -> bool:
+        return credentials_are_stale(self.credentials_last_rotated_at)
+
+    def clear_credentials(self) -> None:
+        self.credentials_encrypted = ""
+        self.credentials_key_version = 1
+        self.credentials_last_rotated_at = None
+        self.credential_error_count = 0
+        self._cache_credentials({})
+
+    def refresh_from_db(self, *args: Any, **kwargs: Any) -> None:
+        super().refresh_from_db(*args, **kwargs)
+        self._clear_cached_credentials()
 
 
 class VoiceCountryPolicy(models.Model):

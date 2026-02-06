@@ -15,7 +15,7 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 from core.tenancy import tenant_bypass, tenant_context
 
 from apps.voice.models import CallEvent, CallSession, CallStatus
-from apps.voice.twilio import load_twilio_config
+from apps.voice.provider_credentials import resolve_twilio_config
 
 
 def _resolve_call_session(request: HttpRequest, call_id: uuid.UUID) -> tuple[CallSession | None, JsonResponse | None]:
@@ -190,7 +190,10 @@ def voice_call_hangup(request: HttpRequest, call_id: uuid.UUID) -> JsonResponse:
         return JsonResponse({"error": "MISSING_CALL_SID", "message": "Call SID not available yet."}, status=HTTPStatus.CONFLICT)
 
     try:
-        cfg = load_twilio_config(require_from_number=False)
+        cfg = resolve_twilio_config(
+            business_id=call.business_profile_id,
+            require_from_number=False,
+        )
     except Exception as exc:
         return JsonResponse({"error": "MISSING_TWILIO_CONFIG", "message": str(exc)}, status=HTTPStatus.BAD_REQUEST)
 

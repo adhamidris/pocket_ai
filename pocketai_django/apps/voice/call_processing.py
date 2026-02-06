@@ -17,7 +17,7 @@ from apps.conversations.models import AgentRunEventStream, AgentRunEventType
 from apps.voice.agent_run_bridge import append_agent_run_event, get_agent_run_id_from_call_session_metadata
 from apps.voice.models import CallEvent, CallSession, CallStatus, CallType, VoiceConfiguration, VoiceSuppressionEntry
 from apps.voice.policy_engine import audit_policy_decision, evaluate_voice_compliance_policy
-from apps.voice.twilio import load_twilio_config
+from apps.voice.provider_credentials import resolve_twilio_config
 
 
 logger = logging.getLogger(__name__)
@@ -318,7 +318,10 @@ class VoiceCallWorkerService:
                 raise _VoiceCallRequeue("monthly_budget_exceeded")
 
     def _initiate_twilio_call(self, session: CallSession) -> None:
-        twilio = load_twilio_config(require_from_number=False)
+        twilio = resolve_twilio_config(
+            business_id=session.business_profile_id,
+            require_from_number=False,
+        )
         if not session.from_phone_number:
             session.from_phone_number = twilio.default_from_number
             session.save(update_fields=["from_phone_number", "updated_at"])

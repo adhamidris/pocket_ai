@@ -170,10 +170,10 @@ class ChatPortalClient {
     this.streamingTextPacerMode = "normal";
     this.streamingTextDeferredActions = [];
     this.streamingTextPacerConfig = {
-      baseCharsPerSecond: 42,
-      maxCharsPerSecond: 92,
+      baseCharsPerSecond: 48,
+      maxCharsPerSecond: 105,
       backlogForMaxRate: 300,
-      maxRevealPerTick: 6,
+      maxRevealPerTick: 7,
       maxBudgetChars: 16,
       boundaryModeMultiplier: 1.1,
       finalizeModeMultiplier: 1.2,
@@ -6886,6 +6886,25 @@ class ChatPortalClient {
     return false;
   }
 
+  containsMarkdownList(text) {
+    if (!text) return false;
+    return /^\s{0,3}(?:[-*+]\s+\S|\d{1,3}[.)]\s+\S)/m.test((text || "").toString());
+  }
+
+  shouldRenderInlineContentAsMarkdown(text) {
+    const raw = (text || "").toString();
+    if (!raw) return false;
+    if (this.containsMarkdownTable(raw)) return true;
+    if (this.containsMarkdownList(raw)) return true;
+    if (!/\b\d{1,3}[.)]\s+\S/.test(raw) && raw.indexOf("|") === -1) {
+      return false;
+    }
+    const normalizedInlineLists = this.normalizeInlineOrderedListsForDisplay(raw);
+    if (normalizedInlineLists !== raw) return true;
+    const normalizedWithoutPipeArtifacts = this.stripStandaloneMarkdownPipeArtifacts(normalizedInlineLists);
+    return normalizedWithoutPipeArtifacts !== normalizedInlineLists;
+  }
+
   applyMarkdownTableStyles(rootEl) {
     if (!rootEl || !rootEl.querySelectorAll) return;
     const tables = rootEl.querySelectorAll("table");
@@ -6962,6 +6981,8 @@ class ChatPortalClient {
 
   normalizeMarkdownForDisplay(text) {
     if (!text) return "";
+    text = this.normalizeInlineOrderedListsForDisplay(text);
+    text = this.stripStandaloneMarkdownPipeArtifacts(text);
 
     const markerIndices = [];
     let inFence = false;
@@ -6992,6 +7013,153 @@ class ChatPortalClient {
     }
 
     return text;
+  }
+
+  normalizeInlineOrderedListsForDisplay(text) {
+    const raw = (text || "").toString();
+    if (!raw) return "";
+    if (!/\b\d{1,3}[.)]\s+\S/.test(raw)) return raw;
+
+    const lines = raw.split("\n");
+    const out = [];
+    let inFence = false;
+
+    for (const line of lines) {
+      const trimmedStart = (line || "").trimStart();
+      if (trimmedStart.startsWith("```")) {
+        inFence = !inFence;
+        out.push(line);
+        continue;
+      }
+      if (inFence) {
+        out.push(line);
+        continue;
+      }
+
+      if (/^\s*\d{1,3}[.)]\s+\S/.test(line)) {
+        out.push(line);
+        continue;
+      }
+
+      const matches = Array.from(line.matchAll(/\b(\d{1,3})[.)]\s+/g));
+      if (matches.length < 2) {
+        out.push(line);
+        continue;
+      }
+
+      const firstIndex = Number.isFinite(matches[0].index) ? matches[0].index : -1;
+      if (firstIndex < 0) {
+        out.push(line);
+        continue;
+      }
+
+      const intro = line.slice(0, firstIndex).replace(/\s*\|+\s*$/, "").trimEnd();
+      const items = [];
+      for (let idx = 0; idx < matches.length; idx += 1) {
+        const start = Number.isFinite(matches[idx].index) ? matches[idx].index : -1;
+        if (start < 0) continue;
+        const end =
+          idx + 1 < matches.length && Number.isFinite(matches[idx + 1].index)
+            ? matches[idx + 1].index
+            : line.length;
+        const marker = (matches[idx][1] || "").toString().trim();
+        const prefixLen = (matches[idx][0] || "").length;
+        let content = line.slice(start + prefixLen, end).trim();
+        content = content.replace(/^\|+\s*/, "");
+        content = content.replace(/\s*\|+\s*$/, "");
+        content = content.replace(/\s+\|\s+/g, " ");
+        if (!marker || !content) continue;
+        items.push(`${marker}. ${content}`);
+      }
+
+      if (items.length < 2) {
+        out.push(line);
+        continue;
+      }
+
+      if (intro) {
+        out.push(intro, "", ...items);
+      } else {
+        out.push(...items);
+      }
+    }
+
+    return out.join("\n");
+  }
+
+  stripStandaloneMarkdownPipeArtifacts(text) {
+    const raw = (text || "").toString();
+    if (!raw) return "";
+
+    const lines = raw.split("\n");
+    const isDividerLine = (value) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/.test(value || "");
+    const isPipeNoiseLine = (value) => {
+      const trimmed = (value || "").trim();
+      return trimmed === "|" || trimmed === "|:" || trimmed === ":|" || trimmed === "||" || trimmed === "||:";
+    };
+    const hasPipe = (value) => /\|/.test(value || "");
+
+    const out = [];
+    let inFence = false;
+    for (let idx = 0; idx < lines.length; idx += 1) {
+      let line = lines[idx];
+      const trimmedStart = (line || "").trimStart();
+      if (trimmedStart.startsWith("```")) {
+        inFence = !inFence;
+        out.push(line);
+        continue;
+      }
+      if (inFence) {
+        out.push(line);
+        continue;
+      }
+
+      const trimmed = (line || "").trim();
+      if (!trimmed) {
+        out.push(line);
+        continue;
+      }
+
+      if (isPipeNoiseLine(trimmed)) {
+        continue;
+      }
+
+      if (isDividerLine(trimmed)) {
+        let prev = idx - 1;
+        while (prev >= 0 && !(lines[prev] || "").trim()) prev -= 1;
+        let next = idx + 1;
+        while (next < lines.length && !(lines[next] || "").trim()) next += 1;
+        const prevHasPipe = prev >= 0 && hasPipe(lines[prev]);
+        const nextHasPipe = next < lines.length && hasPipe(lines[next]);
+        if (!(prevHasPipe && nextHasPipe)) {
+          continue;
+        }
+      }
+
+      const pipeCount = ((line || "").match(/\|/g) || []).length;
+      if (pipeCount === 1) {
+        const startsWithPipe = /^\s*\|/.test(line || "");
+        const endsWithPipe = /\|\s*$/.test(line || "");
+        if (startsWithPipe || endsWithPipe) {
+          let prev = idx - 1;
+          while (prev >= 0 && !(lines[prev] || "").trim()) prev -= 1;
+          let next = idx + 1;
+          while (next < lines.length && !(lines[next] || "").trim()) next += 1;
+          const prevHasPipe = prev >= 0 && hasPipe(lines[prev]);
+          const nextHasPipe = next < lines.length && hasPipe(lines[next]);
+          const tableContext = prevHasPipe && nextHasPipe;
+          if (!tableContext) {
+            line = (line || "").replace(/^\s*\|\s*/, "");
+            line = line.replace(/\s*\|\s*$/, "");
+            if (!line.trim()) continue;
+          }
+        }
+      }
+
+      out.push(line);
+    }
+
+    return out.join("\n");
   }
 
   extractPlainTextFromContentBlocks(blocks) {
@@ -7082,9 +7250,9 @@ class ChatPortalClient {
     return [
       {
         block_id: `blk_local_${Math.random().toString(16).slice(2)}`,
-        type: "paragraph",
+        type: "text",
         created_at: new Date().toISOString(),
-        payload: { content: [{ text: cleaned }] },
+        payload: { text: cleaned },
       },
     ];
   }
@@ -7256,7 +7424,12 @@ class ChatPortalClient {
     if (type === "paragraph" || type === "heading" || type === "list_item") {
       const content = Array.isArray(payload.content) ? payload.content : [];
       const rawText = this.inlineNodesToText(content);
-      if (this.containsMarkdownTable(rawText)) {
+      const shouldRenderMarkdown = type !== "list_item" && this.shouldRenderInlineContentAsMarkdown(rawText);
+      const level = Number(payload.level) || 3;
+      const expectedTag = type === "heading" ? (level <= 1 ? "H1" : level === 2 ? "H2" : "H3") : type === "list_item" ? "LI" : "P";
+      const isMarkdownWrapper =
+        Boolean(el && el.dataset && (el.dataset.markdownRichText === "true" || el.dataset.markdownTable === "true")) || el.tagName !== expectedTag;
+      if (shouldRenderMarkdown || isMarkdownWrapper) {
         const replacement = this.buildContentBlockElement(block);
         if (replacement) {
           el.replaceWith(replacement);
@@ -7272,17 +7445,18 @@ class ChatPortalClient {
     if (type === "text") {
       const text = typeof payload.text === "string" ? payload.text : "";
       const cleaned = this.stripInlineResponseBlocks(text);
-      if (this.containsMarkdownTable(cleaned)) {
-        const replacement = this.buildContentBlockElement(block);
-        if (replacement) {
-          el.replaceWith(replacement);
-          return replacement;
-        }
-        return el;
+      el.className = "leading-relaxed space-y-2";
+      if (el.dataset) {
+        el.dataset.contentBlock = "true";
+        el.dataset.blockType = "text";
+        el.dataset.contentBlockText = "true";
+        el.dataset.markdownRichText = "true";
       }
-      el.innerHTML = "";
       if (cleaned) {
-        this.appendInlineNodes(el, [{ text: cleaned }]);
+        el.innerHTML = this.renderMarkdown(cleaned);
+        this.applyMarkdownTableStyles(el);
+      } else {
+        el.innerHTML = "";
       }
       return el;
     }
@@ -7577,14 +7751,14 @@ class ChatPortalClient {
       return wrapper;
     }
 
-	    if (type === "paragraph" || type === "heading" || type === "list_item") {
-	      let wrapper = null;
+		    if (type === "paragraph" || type === "heading" || type === "list_item") {
+		      let wrapper = null;
 	      if (type === "heading") {
 	        const level = Number(payload.level) || 3;
 	        const tag = level <= 1 ? "h1" : level === 2 ? "h2" : "h3";
 	        wrapper = document.createElement(tag);
 	        wrapper.className =
-	          level <= 1 ? "text-xl font-semibold" : level === 2 ? "text-lg font-semibold" : "text-base font-semibold";
+	          level <= 1 ? "text-base font-bold" : level === 2 ? "text-base font-semibold" : "text-sm font-semibold";
 	      } else if (type === "list_item") {
 	        wrapper = document.createElement("li");
 	        wrapper.className = "leading-relaxed";
@@ -7594,20 +7768,21 @@ class ChatPortalClient {
 	      }
       wrapper.dataset.contentBlock = "true";
       wrapper.dataset.blockType = type;
-      wrapper.dataset.contentBlockText = "true";
-      if (blockId) wrapper.dataset.blockId = blockId;
-      const content = Array.isArray(payload.content) ? payload.content : [];
-      const rawText = this.inlineNodesToText(content);
-      if (this.containsMarkdownTable(rawText)) {
-        const markdownWrapper = document.createElement("div");
-        markdownWrapper.className = "leading-relaxed space-y-2";
-        markdownWrapper.dataset.contentBlock = "true";
-        markdownWrapper.dataset.blockType = type;
-        markdownWrapper.dataset.contentBlockText = "true";
-        markdownWrapper.dataset.markdownTable = "true";
-        if (blockId) markdownWrapper.dataset.blockId = blockId;
-        markdownWrapper.innerHTML = this.renderMarkdown(rawText);
-        this.applyMarkdownTableStyles(markdownWrapper);
+		      wrapper.dataset.contentBlockText = "true";
+		      if (blockId) wrapper.dataset.blockId = blockId;
+		      const content = Array.isArray(payload.content) ? payload.content : [];
+		      const rawText = this.inlineNodesToText(content);
+		      const shouldRenderMarkdown = type !== "list_item" && this.shouldRenderInlineContentAsMarkdown(rawText);
+		      if (shouldRenderMarkdown) {
+	        const markdownWrapper = document.createElement("div");
+	        markdownWrapper.className = "leading-relaxed space-y-2";
+	        markdownWrapper.dataset.contentBlock = "true";
+	        markdownWrapper.dataset.blockType = type;
+	        markdownWrapper.dataset.contentBlockText = "true";
+	        markdownWrapper.dataset.markdownRichText = "true";
+	        if (blockId) markdownWrapper.dataset.blockId = blockId;
+	        markdownWrapper.innerHTML = this.renderMarkdown(rawText);
+	        this.applyMarkdownTableStyles(markdownWrapper);
         return markdownWrapper;
       }
       this.appendInlineNodes(wrapper, content);
@@ -7705,31 +7880,21 @@ class ChatPortalClient {
       return wrapper;
     }
 
-    if (type === "text") {
-      const text = typeof payload.text === "string" ? payload.text : "";
-      const cleaned = this.stripInlineResponseBlocks(text);
-      if (this.containsMarkdownTable(cleaned)) {
-        const markdownWrapper = document.createElement("div");
-        markdownWrapper.className = "leading-relaxed space-y-2";
-        markdownWrapper.dataset.contentBlock = "true";
-        markdownWrapper.dataset.blockType = "text";
-        markdownWrapper.dataset.contentBlockText = "true";
-        markdownWrapper.dataset.markdownTable = "true";
-        if (blockId) markdownWrapper.dataset.blockId = blockId;
-        markdownWrapper.innerHTML = this.renderMarkdown(cleaned);
-        this.applyMarkdownTableStyles(markdownWrapper);
-        return markdownWrapper;
-      }
-      const wrapper = document.createElement("p");
-      wrapper.dataset.contentBlock = "true";
-      wrapper.dataset.blockType = "text";
-      wrapper.dataset.contentBlockText = "true";
-      if (blockId) wrapper.dataset.blockId = blockId;
-      if (cleaned) {
-        this.appendInlineNodes(wrapper, [{ text: cleaned }]);
-      }
-      return wrapper;
-    }
+	    if (type === "text") {
+	      const text = typeof payload.text === "string" ? payload.text : "";
+	      const cleaned = this.stripInlineResponseBlocks(text);
+	      const wrapper = document.createElement("div");
+	      wrapper.className = "leading-relaxed space-y-2";
+	      wrapper.dataset.contentBlock = "true";
+	      wrapper.dataset.blockType = "text";
+	      wrapper.dataset.contentBlockText = "true";
+	      if (blockId) wrapper.dataset.blockId = blockId;
+	      if (cleaned) {
+	        wrapper.innerHTML = this.renderMarkdown(cleaned);
+	        this.applyMarkdownTableStyles(wrapper);
+	      }
+	      return wrapper;
+	    }
 
     if (type === "tool_use") {
       const normalizedTool = (payload.tool_name || payload.toolName || "").toString().trim().toLowerCase();
@@ -10116,6 +10281,27 @@ class ChatPortalClient {
       }  
       details[data-tool-card] > summary {
         list-style: none;
+      }
+      [data-message-body] ol,
+      [data-message-body] ul {
+        margin: 0;
+        padding-left: 1.5rem;
+      }
+      [data-message-body] ol {
+        list-style: decimal outside;
+      }
+      [data-message-body] ul {
+        list-style: disc outside;
+      }
+      [data-message-body] ol ol {
+        list-style-type: lower-alpha;
+      }
+      [data-message-body] ul ul {
+        list-style-type: circle;
+      }
+      [data-message-body] li {
+        display: list-item;
+        margin: 0;
       }
       details[data-tool-card] > summary::-webkit-details-marker {
         display: none;

@@ -190,6 +190,16 @@
           <span class="beta-chip">Beta</span>
         </span>
       </a>
+      <a
+        href="{% url 'frontend:dashboard-voice' %}"
+        class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'voice' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
+        title="Voice Calling"
+      >
+        <svg class="sidebar-icon h-4 w-4 {% if active == 'voice' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 6.75a.75.75 0 0 1 .75-.75h2.379a.75.75 0 0 1 .73.577l.61 2.438a.75.75 0 0 1-.227.74l-1.11 1.11a11.254 11.254 0 0 0 5.058 5.058l1.11-1.11a.75.75 0 0 1 .74-.227l2.438.61a.75.75 0 0 1 .577.73V21a.75.75 0 0 1-.75.75h-1.5C7.097 21.75 2.25 16.903 2.25 10.875v-4.125Z" />
+        </svg>
+        <span class="sidebar-label">Voice Calling</span>
+      </a>
     </nav>
     <button
       type="button"

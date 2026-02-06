@@ -7,6 +7,7 @@ from . import email_oauth
 from . import chat_portal_files
 from . import agent_runs
 from . import voice_calls
+from . import voice_providers
 from .chat_portal import (
     bootstrap_session,
     create_portal_session,
@@ -189,6 +190,17 @@ urlpatterns = [
     path("email/oauth/callback/<str:provider_key>/", email_oauth.email_oauth_callback, name="email_oauth_callback"),
 
     # Voice calls (Phase 1)
+    path("voice/providers/", voice_providers.voice_providers_collection, name="voice-providers"),
+    path(
+        "voice/providers/<str:provider>/",
+        voice_providers.voice_provider_detail,
+        name="voice-provider-detail",
+    ),
+    path(
+        "voice/providers/<str:provider>/test/",
+        voice_providers.voice_provider_test,
+        name="voice-provider-test",
+    ),
     path("voice/calls/", voice_calls.voice_calls_collection, name="voice-calls"),
     path("voice/calls/<uuid:call_id>/", voice_calls.voice_call_detail, name="voice-call-detail"),
     path("voice/calls/<uuid:call_id>/events/", voice_calls.voice_call_events, name="voice-call-events"),

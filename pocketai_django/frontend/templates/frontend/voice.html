@@ -1,0 +1,479 @@
+{% extends "frontend/base_app.html" %}
+{% load static %}
+
+{% block title %}Voice Calling | Pocket AI{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{% static 'css/mcp-cards.css' %}">
+<style>
+  .voice-status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    border-radius: 9999px;
+    padding: 0.2rem 0.55rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }
+  .voice-status-connected {
+    border: 1px solid rgba(16, 185, 129, 0.25);
+    background: rgba(16, 185, 129, 0.12);
+    color: rgb(16, 185, 129);
+  }
+  .voice-status-error {
+    border: 1px solid rgba(244, 63, 94, 0.25);
+    background: rgba(244, 63, 94, 0.12);
+    color: rgb(244, 63, 94);
+  }
+  .voice-status-disabled,
+  .voice-status-not-configured {
+    border: 1px solid hsl(var(--border) / 0.8);
+    background: hsl(var(--muted) / 0.6);
+    color: hsl(var(--muted-foreground));
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="h-screen bg-background flex overflow-hidden">
+  {% include "frontend/components/dashboard/sidebar.html" with active="voice" user_name=user_name %}
+  <main class="flex-1 overflow-auto">
+    <div class="w-full px-4 md:px-6 lg:px-8 py-6 space-y-6">
+      <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div class="space-y-1.5">
+          <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">Voice Calling Providers</h1>
+          <p class="text-sm text-muted-foreground">
+            Configure tenant-owned provider keys for Twilio, Deepgram, and ElevenLabs in one place.
+          </p>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm font-medium hover:bg-accent hover:text-accent-foreground"
+            data-voice-refresh
+          >
+            Refresh
+          </button>
+        </div>
+      </header>
+
+      <section class="rounded-xl border border-border/60 bg-card/60 backdrop-blur p-4 space-y-3">
+        <div class="text-sm font-semibold text-foreground">How this works</div>
+        <ul class="space-y-1 text-xs text-muted-foreground list-disc list-inside">
+          <li>Each workspace stores its own encrypted provider credentials.</li>
+          <li>Voice runtime resolves tenant credentials first, then owner env fallback only if no tenant config exists.</li>
+          <li>Use “Test” after setup to validate credentials before live calls.</li>
+        </ul>
+      </section>
+
+      <section class="rounded-xl border border-border/60 bg-muted/30 p-4 text-sm hidden" data-voice-flash role="status" aria-live="polite"></section>
+
+      <section class="space-y-4">
+        <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" data-voice-grid>
+          <div class="rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">Loading providers…</div>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<div class="hidden" data-voice-modal data-state="closed" aria-hidden="true">
+  <div class="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm transition-opacity" data-voice-modal-overlay></div>
+  <div class="fixed inset-x-4 top-10 z-50 mx-auto max-w-xl rounded-xl border border-border/60 bg-card p-5 shadow-lg opacity-0 transition-opacity duration-150" role="dialog" aria-modal="true" data-voice-modal-content tabindex="-1">
+    <div class="flex items-start justify-between gap-3">
+      <div class="space-y-0.5">
+        <div class="text-sm font-semibold text-foreground" data-voice-modal-title>Configure provider</div>
+        <div class="text-xs text-muted-foreground" data-voice-modal-subtitle>Store encrypted tenant credentials.</div>
+      </div>
+      <button type="button" class="h-8 w-8 inline-flex items-center justify-center rounded-md border border-border/60 hover:bg-accent/50" data-voice-modal-close aria-label="Close">
+        <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+
+    <div class="mt-4 space-y-4">
+      <div class="space-y-3" data-voice-fields></div>
+
+      <label class="inline-flex items-center gap-2 text-sm text-muted-foreground">
+        <input type="checkbox" class="h-4 w-4 rounded border-border/60" data-voice-field-enabled />
+        Enable this provider for this workspace
+      </label>
+
+      <div class="rounded-lg border border-border/60 bg-muted/30 p-3 text-xs text-muted-foreground hidden" data-voice-modal-error></div>
+
+      <div class="flex items-center justify-between gap-3 pt-1">
+        <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-voice-modal-cancel>Cancel</button>
+        <div class="flex items-center gap-2">
+          <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-voice-modal-test>Test</button>
+          <button type="button" class="inline-flex items-center gap-2 rounded-md bg-primary text-primary-foreground px-4 py-2 text-xs font-semibold hover:bg-primary/90" data-voice-modal-save>Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function () {
+    var businessId = "{{ business_id|escapejs }}";
+    var state = { providers: [], current: null };
+
+    var PROVIDER_FIELDS = {
+      twilio: [
+        { key: "account_sid", label: "Account SID", type: "text", placeholder: "ACxxxxxxxxxxxx", secret: false },
+        { key: "auth_token", label: "Auth Token", type: "password", placeholder: "Twilio auth token", secret: true },
+        { key: "webhook_base_url", label: "Webhook Base URL", type: "url", placeholder: "https://your-domain.com", secret: false },
+        { key: "from_number", label: "From Number (E.164)", type: "text", placeholder: "+15551234567", secret: false }
+      ],
+      deepgram: [
+        { key: "api_key", label: "API Key", type: "password", placeholder: "Deepgram API key", secret: true },
+        { key: "model", label: "Model", type: "text", placeholder: "nova-2", secret: false },
+        { key: "endpointing_ms", label: "Endpointing (ms)", type: "number", placeholder: "300", secret: false }
+      ],
+      elevenlabs: [
+        { key: "api_key", label: "API Key", type: "password", placeholder: "ElevenLabs API key", secret: true },
+        { key: "voice_id", label: "Voice ID (optional)", type: "text", placeholder: "Primary voice id", secret: false },
+        { key: "default_voice_en", label: "Default Voice EN", type: "text", placeholder: "English voice id", secret: false },
+        { key: "default_voice_ar", label: "Default Voice AR", type: "text", placeholder: "Arabic voice id", secret: false },
+        { key: "model_id", label: "Model ID", type: "text", placeholder: "eleven_flash_v2_5", secret: false },
+        { key: "output_format", label: "Output Format", type: "text", placeholder: "ulaw_8000", secret: false }
+      ]
+    };
+
+    function getCookie(name) {
+      var value = "; " + document.cookie;
+      var parts = value.split("; " + name + "=");
+      if (parts.length === 2) return parts.pop().split(";").shift();
+      return "";
+    }
+
+    function escapeHtml(value) {
+      var div = document.createElement("div");
+      div.textContent = value == null ? "" : String(value);
+      return div.innerHTML;
+    }
+
+    function apiFetch(url, options) {
+      var opts = options || {};
+      var headers = opts.headers || {};
+      headers["Content-Type"] = headers["Content-Type"] || "application/json";
+      headers["X-CSRFToken"] = headers["X-CSRFToken"] || getCookie("csrftoken");
+      headers["X-Requested-With"] = headers["X-Requested-With"] || "XMLHttpRequest";
+      opts.headers = headers;
+      return fetch(url, opts).then(function (resp) {
+        return resp.text().then(function (text) {
+          var payload = {};
+          try {
+            payload = text ? JSON.parse(text) : {};
+          } catch (_err) {
+            payload = {};
+          }
+          if (!resp.ok) {
+            var message = (payload && (payload.message || payload.error)) || "Request failed.";
+            var error = new Error(message);
+            error.payload = payload;
+            error.status = resp.status;
+            throw error;
+          }
+          return payload;
+        });
+      });
+    }
+
+    function setFlash(message, tone) {
+      var flashEl = document.querySelector("[data-voice-flash]");
+      if (!flashEl) return;
+      if (!message) {
+        flashEl.classList.add("hidden");
+        flashEl.textContent = "";
+        return;
+      }
+      flashEl.classList.remove("hidden");
+      flashEl.textContent = message;
+      flashEl.className = "rounded-xl border p-4 text-sm";
+      if (tone === "error") {
+        flashEl.classList.add("border-rose-200", "bg-rose-50/80", "text-rose-800");
+      } else if (tone === "success") {
+        flashEl.classList.add("border-emerald-200", "bg-emerald-50/80", "text-emerald-800");
+      } else {
+        flashEl.classList.add("border-border/60", "bg-muted/30", "text-muted-foreground");
+      }
+    }
+
+    function statusLabel(status) {
+      if (status === "connected") return "Connected";
+      if (status === "disabled") return "Disabled";
+      if (status === "error") return "Error";
+      return "Not Configured";
+    }
+
+    function statusClass(status) {
+      if (status === "connected") return "voice-status-connected";
+      if (status === "error") return "voice-status-error";
+      if (status === "disabled") return "voice-status-disabled";
+      return "voice-status-not-configured";
+    }
+
+    function renderProviders() {
+      var gridEl = document.querySelector("[data-voice-grid]");
+      if (!gridEl) return;
+      var providers = state.providers || [];
+      if (!providers.length) {
+        gridEl.innerHTML = '<div class="rounded-xl border border-dashed border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">No providers found.</div>';
+        return;
+      }
+      gridEl.innerHTML = providers.map(function (item) {
+        var status = String(item.status || "not_configured");
+        var hasCreds = !!item.hasCredentials;
+        var lastError = String(item.lastError || "");
+        var tested = item.lastTestedAt ? ("Tested " + new Date(item.lastTestedAt).toLocaleString()) : "Not tested yet";
+        return '' +
+          '<article class="mcp-card">' +
+          '  <div class="mcp-card-header">' +
+          '    <div class="mcp-card-icon-placeholder">' + escapeHtml((item.label || "?").slice(0, 1)) + "</div>" +
+          '    <div class="mcp-card-meta">' +
+          '      <div class="mcp-card-title">' + escapeHtml(item.label || "") + "</div>" +
+          '      <div class="mcp-card-subtitle">' +
+          '        <span class="voice-status-badge ' + statusClass(status) + '">' + escapeHtml(statusLabel(status)) + "</span>" +
+          "      </div>" +
+          "    </div>" +
+          "  </div>" +
+          '  <p class="mcp-card-desc">' + escapeHtml(item.description || "") + "</p>" +
+          '  <div class="px-5 pb-2 text-[11px] text-muted-foreground">' + escapeHtml(tested) + "</div>" +
+          (lastError ? ('<div class="mx-5 mb-2 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] text-rose-700">' + escapeHtml(lastError) + "</div>") : "") +
+          '  <div class="mcp-card-actions">' +
+          '    <span class="mcp-tag">' + (hasCreds ? "Credentials set" : "Credentials missing") + "</span>" +
+          '    <div class="flex items-center gap-2">' +
+          '      <button class="mcp-btn mcp-btn-outline" type="button" data-voice-open="' + escapeHtml(item.provider) + '">Configure</button>' +
+          '      <button class="mcp-btn mcp-btn-outline" type="button" data-voice-test="' + escapeHtml(item.provider) + '"' + (hasCreds ? "" : " disabled") + ">Test</button>" +
+          '      <button class="mcp-btn mcp-btn-outline" type="button" data-voice-disconnect="' + escapeHtml(item.provider) + '"' + (hasCreds ? "" : " disabled") + ">Disconnect</button>" +
+          "    </div>" +
+          "  </div>" +
+          "</article>";
+      }).join("");
+    }
+
+    function loadProviders() {
+      if (!businessId) {
+        setFlash("Link a business profile to configure voice providers.", "error");
+        return Promise.resolve();
+      }
+      setFlash("Loading voice providers…", "info");
+      return apiFetch("/api/voice/providers/?business_id=" + encodeURIComponent(businessId), { method: "GET" })
+        .then(function (payload) {
+          state.providers = payload.providers || [];
+          renderProviders();
+          setFlash("", "");
+        })
+        .catch(function (error) {
+          console.error(error);
+          setFlash(error.message || "Failed to load voice providers.", "error");
+        });
+    }
+
+    function currentProvider(provider) {
+      var key = String(provider || "").trim().toLowerCase();
+      return (state.providers || []).find(function (item) { return String(item.provider) === key; }) || null;
+    }
+
+    function modalEls() {
+      return {
+        root: document.querySelector("[data-voice-modal]"),
+        overlay: document.querySelector("[data-voice-modal-overlay]"),
+        content: document.querySelector("[data-voice-modal-content]"),
+        title: document.querySelector("[data-voice-modal-title]"),
+        subtitle: document.querySelector("[data-voice-modal-subtitle]"),
+        fields: document.querySelector("[data-voice-fields]"),
+        enabled: document.querySelector("[data-voice-field-enabled]"),
+        error: document.querySelector("[data-voice-modal-error]")
+      };
+    }
+
+    function setModalError(message) {
+      var els = modalEls();
+      if (!els.error) return;
+      if (!message) {
+        els.error.classList.add("hidden");
+        els.error.textContent = "";
+        return;
+      }
+      els.error.classList.remove("hidden");
+      els.error.textContent = message;
+    }
+
+    function openModal(providerKey) {
+      var provider = currentProvider(providerKey);
+      if (!provider) return;
+      state.current = provider;
+      var els = modalEls();
+      if (!els.root || !els.content || !els.fields) return;
+
+      els.title.textContent = "Configure " + (provider.label || provider.provider || "provider");
+      els.subtitle.textContent = provider.description || "Store encrypted tenant credentials.";
+      els.enabled.checked = !!provider.enabled;
+      setModalError("");
+
+      var fieldDefs = PROVIDER_FIELDS[String(provider.provider || "").toLowerCase()] || [];
+      var safe = provider.publicSettings || {};
+      var secretHints = provider.maskedSecrets || {};
+
+      els.fields.innerHTML = fieldDefs.map(function (field) {
+        var value = "";
+        if (!field.secret) {
+          var safeValue = safe[field.key];
+          value = safeValue == null ? "" : String(safeValue);
+        }
+        var helper = "";
+        if (field.secret && secretHints[field.key]) {
+          helper = '<div class="text-[11px] text-muted-foreground mt-1">Stored: ' + escapeHtml(secretHints[field.key]) + "</div>";
+        } else if (field.secret) {
+          helper = '<div class="text-[11px] text-muted-foreground mt-1">Leave blank to keep existing value.</div>';
+        }
+        var inputType = field.type || "text";
+        return '' +
+          '<label class="space-y-1.5 block">' +
+          '  <span class="text-xs font-semibold text-muted-foreground uppercase tracking-wide">' + escapeHtml(field.label) + "</span>" +
+          '  <input data-voice-input="' + escapeHtml(field.key) + '" type="' + escapeHtml(inputType) + '" class="w-full h-10 rounded-md border border-border/60 bg-muted/60 px-3 text-sm focus-visible:ring-0 focus-visible:border-border" value="' + escapeHtml(value) + '" placeholder="' + escapeHtml(field.placeholder || "") + '" />' +
+          helper +
+          "</label>";
+      }).join("");
+
+      els.root.classList.remove("hidden");
+      els.root.setAttribute("data-state", "open");
+      els.root.setAttribute("aria-hidden", "false");
+      requestAnimationFrame(function () {
+        els.content.classList.remove("opacity-0");
+        els.content.focus();
+      });
+    }
+
+    function closeModal() {
+      state.current = null;
+      var els = modalEls();
+      if (!els.root || !els.content) return;
+      els.content.classList.add("opacity-0");
+      setTimeout(function () {
+        els.root.classList.add("hidden");
+        els.root.setAttribute("data-state", "closed");
+        els.root.setAttribute("aria-hidden", "true");
+      }, 120);
+    }
+
+    function collectCredentials(provider) {
+      var fields = PROVIDER_FIELDS[String(provider || "").toLowerCase()] || [];
+      var payload = {};
+      fields.forEach(function (field) {
+        var input = document.querySelector('[data-voice-input="' + field.key + '"]');
+        if (!input) return;
+        var raw = String(input.value || "").trim();
+        if (!raw) return;
+        if (field.type === "number") {
+          var parsed = parseInt(raw, 10);
+          if (!isNaN(parsed)) payload[field.key] = parsed;
+          return;
+        }
+        payload[field.key] = raw;
+      });
+      return payload;
+    }
+
+    function saveCurrentProvider() {
+      if (!state.current || !businessId) return;
+      var provider = state.current.provider;
+      var enabled = !!(document.querySelector("[data-voice-field-enabled]") || {}).checked;
+      var credentials = collectCredentials(provider);
+      setModalError("");
+      return apiFetch("/api/voice/providers/" + encodeURIComponent(provider) + "/", {
+        method: "PUT",
+        body: JSON.stringify({
+          businessId: businessId,
+          enabled: enabled,
+          credentials: credentials
+        })
+      }).then(function () {
+        setFlash((state.current.label || provider) + " saved.", "success");
+        closeModal();
+        return loadProviders();
+      }).catch(function (error) {
+        setModalError(error.message || "Failed to save provider.");
+      });
+    }
+
+    function testProvider(providerKey) {
+      if (!businessId) return;
+      return apiFetch("/api/voice/providers/" + encodeURIComponent(providerKey) + "/test/", {
+        method: "POST",
+        body: JSON.stringify({ businessId: businessId })
+      }).then(function (payload) {
+        setFlash(payload.message || "Provider test succeeded.", "success");
+        return loadProviders();
+      }).catch(function (error) {
+        setFlash(error.message || "Provider test failed.", "error");
+        return loadProviders();
+      });
+    }
+
+    function disconnectProvider(providerKey) {
+      if (!businessId) return;
+      return apiFetch("/api/voice/providers/" + encodeURIComponent(providerKey) + "/", {
+        method: "DELETE",
+        body: JSON.stringify({ businessId: businessId })
+      }).then(function () {
+        setFlash("Provider disconnected.", "success");
+        return loadProviders();
+      }).catch(function (error) {
+        setFlash(error.message || "Failed to disconnect provider.", "error");
+      });
+    }
+
+    document.addEventListener("click", function (event) {
+      var openBtn = event.target.closest("[data-voice-open]");
+      if (openBtn) {
+        openModal(openBtn.getAttribute("data-voice-open"));
+        return;
+      }
+      var testBtn = event.target.closest("[data-voice-test]");
+      if (testBtn) {
+        testProvider(testBtn.getAttribute("data-voice-test"));
+        return;
+      }
+      var disconnectBtn = event.target.closest("[data-voice-disconnect]");
+      if (disconnectBtn) {
+        disconnectProvider(disconnectBtn.getAttribute("data-voice-disconnect"));
+        return;
+      }
+
+      if (event.target.closest("[data-voice-modal-close]") || event.target.closest("[data-voice-modal-cancel]")) {
+        closeModal();
+        return;
+      }
+      if (event.target.closest("[data-voice-modal-overlay]")) {
+        closeModal();
+        return;
+      }
+      if (event.target.closest("[data-voice-modal-save]")) {
+        saveCurrentProvider();
+        return;
+      }
+      if (event.target.closest("[data-voice-modal-test]")) {
+        if (state.current) testProvider(state.current.provider);
+        return;
+      }
+      if (event.target.closest("[data-voice-refresh]")) {
+        loadProviders();
+      }
+    });
+
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape") {
+        var modal = document.querySelector("[data-voice-modal][data-state='open']");
+        if (modal) closeModal();
+      }
+    });
+
+    loadProviders();
+  })();
+</script>
+{% endblock %}

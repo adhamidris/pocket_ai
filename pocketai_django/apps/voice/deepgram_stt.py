@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from typing import AsyncIterator
+from typing import AsyncIterator, Mapping
 
 import websockets
 
@@ -17,11 +17,42 @@ class DeepgramConfig:
 
     @staticmethod
     def from_env(*, language: str) -> "DeepgramConfig":
-        api_key = (os.getenv("DEEPGRAM_API_KEY") or "").strip()
+        return DeepgramConfig.from_credentials(
+            credentials={},
+            language=language,
+            allow_env_fallback=True,
+        )
+
+    @staticmethod
+    def from_credentials(
+        *,
+        credentials: Mapping[str, object] | None,
+        language: str,
+        allow_env_fallback: bool,
+    ) -> "DeepgramConfig":
+        source = dict(credentials or {})
+
+        def _value(*, key: str, env_key: str, default: str = "") -> str:
+            if key in source:
+                text = str(source.get(key) or "").strip()
+                if text or not allow_env_fallback:
+                    return text
+            if allow_env_fallback:
+                text = (os.getenv(env_key) or "").strip()
+                if text:
+                    return text
+            return default
+
+        api_key = _value(key="api_key", env_key="DEEPGRAM_API_KEY")
         if not api_key:
             raise RuntimeError("DEEPGRAM_API_KEY is not configured.")
-        model = (os.getenv("DEEPGRAM_MODEL") or "nova-2").strip()
-        endpointing_ms_raw = (os.getenv("DEEPGRAM_ENDPOINTING_MS") or "300").strip()
+
+        model = _value(key="model", env_key="DEEPGRAM_MODEL", default="nova-2") or "nova-2"
+        endpointing_ms_raw = _value(
+            key="endpointing_ms",
+            env_key="DEEPGRAM_ENDPOINTING_MS",
+            default="300",
+        )
         try:
             endpointing_ms = int(endpointing_ms_raw)
         except Exception:

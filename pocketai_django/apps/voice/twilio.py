@@ -5,7 +5,7 @@ import hashlib
 import hmac
 import os
 from dataclasses import dataclass
-from typing import Mapping
+from typing import Any, Mapping
 
 from django.http import HttpRequest
 
@@ -18,11 +18,33 @@ class TwilioConfig:
     default_from_number: str
 
 
-def load_twilio_config(*, require_from_number: bool = True) -> TwilioConfig:
-    account_sid = (os.getenv("TWILIO_ACCOUNT_SID") or "").strip()
-    auth_token = (os.getenv("TWILIO_AUTH_TOKEN") or "").strip()
-    webhook_base_url = (os.getenv("TWILIO_WEBHOOK_BASE_URL") or "").strip().rstrip("/")
-    default_from_number = (os.getenv("TWILIO_FROM_NUMBER") or "").strip()
+def load_twilio_config(
+    *,
+    require_from_number: bool = True,
+    overrides: Mapping[str, Any] | None = None,
+    allow_env_fallback: bool = True,
+) -> TwilioConfig:
+    source = dict(overrides or {})
+
+    def _value(*, key: str, env_key: str, fallback_keys: tuple[str, ...] = ()) -> str:
+        keys = (key, *fallback_keys)
+        for candidate in keys:
+            if candidate in source:
+                text = str(source.get(candidate) or "").strip()
+                if text or not allow_env_fallback:
+                    return text
+        if allow_env_fallback:
+            return (os.getenv(env_key) or "").strip()
+        return ""
+
+    account_sid = _value(key="account_sid", env_key="TWILIO_ACCOUNT_SID")
+    auth_token = _value(key="auth_token", env_key="TWILIO_AUTH_TOKEN")
+    webhook_base_url = _value(key="webhook_base_url", env_key="TWILIO_WEBHOOK_BASE_URL").rstrip("/")
+    default_from_number = _value(
+        key="from_number",
+        env_key="TWILIO_FROM_NUMBER",
+        fallback_keys=("default_from_number",),
+    )
 
     missing: list[str] = []
     if not account_sid:
