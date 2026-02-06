@@ -48,15 +48,17 @@ def load_twilio_config(
 
     missing: list[str] = []
     if not account_sid:
-        missing.append("TWILIO_ACCOUNT_SID")
+        missing.append("TWILIO_ACCOUNT_SID" if allow_env_fallback else "account_sid")
     if not auth_token:
-        missing.append("TWILIO_AUTH_TOKEN")
+        missing.append("TWILIO_AUTH_TOKEN" if allow_env_fallback else "auth_token")
     if not webhook_base_url:
-        missing.append("TWILIO_WEBHOOK_BASE_URL")
+        missing.append("TWILIO_WEBHOOK_BASE_URL" if allow_env_fallback else "webhook_base_url")
     if require_from_number and not default_from_number:
-        missing.append("TWILIO_FROM_NUMBER")
+        missing.append("TWILIO_FROM_NUMBER" if allow_env_fallback else "from_number")
     if missing:
-        raise ValueError(f"Missing Twilio config env vars: {', '.join(missing)}")
+        if allow_env_fallback:
+            raise ValueError(f"Missing Twilio config env vars: {', '.join(missing)}")
+        raise ValueError(f"Missing Twilio config values: {', '.join(missing)}")
 
     return TwilioConfig(
         account_sid=account_sid,

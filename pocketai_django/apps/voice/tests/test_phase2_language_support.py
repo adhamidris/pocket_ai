@@ -2,24 +2,53 @@ from __future__ import annotations
 
 import os
 
+from django.contrib.auth import get_user_model
 from django.test import RequestFactory, TestCase
 
-from apps.voice.models import CallSession, CallStatus
+from apps.accounts.models import BusinessProfile, RegistrationSession
+from apps.voice.models import CallSession, CallStatus, VoiceProviderConnection
 from apps.voice.runtime import _detect_text_language, _stt_language_tags_for_session
 from apps.voice.twilio import build_twilio_signature
 from apps.voice.views_twilio import twilio_consent, twilio_twiml
+from core.tenancy import tenant_context
+
+
+User = get_user_model()
 
 
 class VoicePhase2LanguageSupportTests(TestCase):
     def setUp(self) -> None:
         super().setUp()
         self._env_before = dict(os.environ)
-        os.environ["TWILIO_ACCOUNT_SID"] = "AC123"
-        os.environ["TWILIO_AUTH_TOKEN"] = "secret"
-        os.environ["TWILIO_WEBHOOK_BASE_URL"] = "https://example.com"
-        os.environ["TWILIO_FROM_NUMBER"] = "+15551234567"
         os.environ["VOICE_WS_BASE_URL"] = "wss://ws.example.com"
         os.environ["TWILIO_VALIDATE_SIGNATURES"] = "true"
+        self.user = User.objects.create_user(
+            email="phase2-owner@example.com",
+            password="changeme123",
+            first_name="Owner",
+        )
+        self.registration = RegistrationSession.objects.create(user=self.user)
+        self.business = BusinessProfile.objects.create(
+            user=self.user,
+            registration_session=self.registration,
+            name="Acme Co",
+            industry="Retail",
+            status="active",
+        )
+        with tenant_context(self.business.id):
+            connection = VoiceProviderConnection(
+                business_profile=self.business,
+                created_by=self.user,
+                provider=VoiceProviderConnection.Provider.TWILIO,
+                enabled=True,
+            )
+            connection.credentials = {
+                "account_sid": "AC123",
+                "auth_token": "secret",
+                "webhook_base_url": "https://example.com",
+                "from_number": "+15551234567",
+            }
+            connection.save()
 
     def tearDown(self) -> None:
         os.environ.clear()
@@ -28,6 +57,7 @@ class VoicePhase2LanguageSupportTests(TestCase):
 
     def test_twilio_twiml_uses_arabic_prompt_for_ar_language(self) -> None:
         session = CallSession.objects.create(
+            business_profile=self.business,
             objective="اختبار",
             to_phone_number="+201234567890",
             from_phone_number="+15551234567",
@@ -51,6 +81,7 @@ class VoicePhase2LanguageSupportTests(TestCase):
 
     def test_twilio_consent_thanks_is_arabic_for_ar_language(self) -> None:
         session = CallSession.objects.create(
+            business_profile=self.business,
             objective="اختبار",
             to_phone_number="+201234567890",
             from_phone_number="+15551234567",
@@ -84,4 +115,3 @@ class VoicePhase2LanguageSupportTests(TestCase):
         self.assertEqual(_detect_text_language("مرحبا"), "ar")
         self.assertEqual(_detect_text_language("Hello", fallback="ar"), "en")
         self.assertEqual(_detect_text_language("123", fallback="ar"), "ar")
-

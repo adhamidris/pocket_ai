@@ -40,9 +40,21 @@ class VoiceProviderConnectionsApiTests(TestCase):
         self.assertEqual(len(providers), 3)
         keys = {item.get("provider") for item in providers}
         self.assertEqual(keys, {"twilio", "deepgram", "elevenlabs"})
-        for item in providers:
-            self.assertEqual(item.get("status"), "not_configured")
-            self.assertFalse(item.get("hasCredentials"))
+        indexed = {item.get("provider"): item for item in providers}
+
+        twilio = indexed["twilio"]
+        self.assertEqual(twilio.get("status"), "not_configured")
+        self.assertFalse(twilio.get("hasCredentials"))
+        self.assertTrue(twilio.get("editable"))
+        self.assertEqual(twilio.get("managementMode"), "tenant")
+
+        deepgram = indexed["deepgram"]
+        self.assertFalse(deepgram.get("editable"))
+        self.assertEqual(deepgram.get("managementMode"), "platform")
+
+        elevenlabs = indexed["elevenlabs"]
+        self.assertFalse(elevenlabs.get("editable"))
+        self.assertEqual(elevenlabs.get("managementMode"), "platform")
 
     def test_put_twilio_provider_persists_encrypted_credentials(self) -> None:
         url = reverse("api:voice-provider-detail", args=["twilio"])
@@ -77,7 +89,7 @@ class VoiceProviderConnectionsApiTests(TestCase):
             self.assertEqual(connection.credentials.get("account_sid"), "AC123")
             self.assertEqual(connection.credentials.get("webhook_base_url"), "https://voice.example.com")
 
-    def test_put_elevenlabs_provider_requires_voice_selection_when_enabled(self) -> None:
+    def test_put_platform_managed_provider_is_rejected(self) -> None:
         url = reverse("api:voice-provider-detail", args=["elevenlabs"])
         response = self.client.put(
             url,
@@ -95,12 +107,24 @@ class VoiceProviderConnectionsApiTests(TestCase):
         self.assertEqual(response.status_code, 400)
         payload = response.json()
         self.assertEqual(payload.get("error"), "VALIDATION_ERROR")
-        self.assertIn("voice_id", payload.get("message", ""))
+        self.assertIn("platform-managed", payload.get("message", ""))
+
+    def test_test_platform_managed_provider_is_rejected(self) -> None:
+        test_url = reverse("api:voice-provider-test", args=["deepgram"])
+        response = self.client.post(
+            test_url,
+            data=json.dumps({"businessId": str(self.business.id)}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertEqual(payload.get("error"), "VALIDATION_ERROR")
+        self.assertIn("platform-managed", payload.get("message", ""))
 
     @mock.patch("apps.api.voice_providers.requests.get")
     def test_provider_test_updates_last_tested_at(self, mock_get) -> None:
         mock_get.return_value.status_code = 200
-        create_url = reverse("api:voice-provider-detail", args=["deepgram"])
+        create_url = reverse("api:voice-provider-detail", args=["twilio"])
         create_response = self.client.put(
             create_url,
             data=json.dumps(
@@ -108,8 +132,10 @@ class VoiceProviderConnectionsApiTests(TestCase):
                     "businessId": str(self.business.id),
                     "enabled": True,
                     "credentials": {
-                        "api_key": "dg-secret",
-                        "model": "nova-2",
+                        "account_sid": "AC123",
+                        "auth_token": "secret",
+                        "webhook_base_url": "https://voice.example.com",
+                        "from_number": "+15551234567",
                     },
                 }
             ),
@@ -117,7 +143,7 @@ class VoiceProviderConnectionsApiTests(TestCase):
         )
         self.assertEqual(create_response.status_code, 200)
 
-        test_url = reverse("api:voice-provider-test", args=["deepgram"])
+        test_url = reverse("api:voice-provider-test", args=["twilio"])
         test_response = self.client.post(
             test_url,
             data=json.dumps({"businessId": str(self.business.id)}),
@@ -129,13 +155,13 @@ class VoiceProviderConnectionsApiTests(TestCase):
         with tenant_context(self.business.id):
             connection = VoiceProviderConnection.objects.get(
                 business_profile=self.business,
-                provider=VoiceProviderConnection.Provider.DEEPGRAM,
+                provider=VoiceProviderConnection.Provider.TWILIO,
             )
             self.assertIsNotNone(connection.last_tested_at)
             self.assertEqual(connection.last_error, "")
 
     def test_delete_provider_clears_credentials(self) -> None:
-        create_url = reverse("api:voice-provider-detail", args=["deepgram"])
+        create_url = reverse("api:voice-provider-detail", args=["twilio"])
         create_response = self.client.put(
             create_url,
             data=json.dumps(
@@ -143,7 +169,10 @@ class VoiceProviderConnectionsApiTests(TestCase):
                     "businessId": str(self.business.id),
                     "enabled": True,
                     "credentials": {
-                        "api_key": "dg-secret",
+                        "account_sid": "AC123",
+                        "auth_token": "secret",
+                        "webhook_base_url": "https://voice.example.com",
+                        "from_number": "+15551234567",
                     },
                 }
             ),
@@ -161,7 +190,7 @@ class VoiceProviderConnectionsApiTests(TestCase):
         with tenant_context(self.business.id):
             connection = VoiceProviderConnection.objects.get(
                 business_profile=self.business,
-                provider=VoiceProviderConnection.Provider.DEEPGRAM,
+                provider=VoiceProviderConnection.Provider.TWILIO,
             )
             self.assertFalse(connection.enabled)
             self.assertEqual(connection.credentials_encrypted, "")

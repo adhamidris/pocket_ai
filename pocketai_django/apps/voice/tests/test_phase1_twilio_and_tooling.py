@@ -10,7 +10,7 @@ from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSess
 from apps.conversations.models import Conversation, ConversationChannel
 from apps.conversations.models import AgentRun, AgentRunEvent, AgentRunStatus
 from apps.voice.mcp_tools import initiate_phone_call_tool
-from apps.voice.models import CallSession, CallStatus
+from apps.voice.models import CallSession, CallStatus, VoiceProviderConnection
 from apps.voice.twilio import build_twilio_signature
 from apps.voice.views_twilio import twilio_consent, twilio_twiml
 from core.tenancy import tenant_context
@@ -24,12 +24,38 @@ class VoicePhase1TwilioAndToolingTests(TestCase):
     def setUp(self) -> None:
         super().setUp()
         self._env_before = dict(os.environ)
-        os.environ["TWILIO_ACCOUNT_SID"] = "AC123"
-        os.environ["TWILIO_AUTH_TOKEN"] = "secret"
-        os.environ["TWILIO_WEBHOOK_BASE_URL"] = "https://example.com"
-        os.environ["TWILIO_FROM_NUMBER"] = "+15551234567"
         os.environ["VOICE_WS_BASE_URL"] = "wss://ws.example.com"
         os.environ["TWILIO_VALIDATE_SIGNATURES"] = "true"
+        self.user = User.objects.create_user(email="phase1-owner@example.com", password="changeme123", first_name="Owner")
+        self.registration = RegistrationSession.objects.create(user=self.user)
+        self.business = BusinessProfile.objects.create(
+            user=self.user,
+            registration_session=self.registration,
+            name="Acme Co",
+            industry="Retail",
+            status="active",
+            metadata={FEATURE_FLAG_METADATA_KEY: {"sub_agents_v1": True}},
+        )
+        self.agent = AgentProfile.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            name="Ops Agent",
+            status="active",
+        )
+        with tenant_context(self.business.id):
+            connection = VoiceProviderConnection(
+                business_profile=self.business,
+                created_by=self.user,
+                provider=VoiceProviderConnection.Provider.TWILIO,
+                enabled=True,
+            )
+            connection.credentials = {
+                "account_sid": "AC123",
+                "auth_token": "secret",
+                "webhook_base_url": "https://example.com",
+                "from_number": "+15551234567",
+            }
+            connection.save()
 
     def tearDown(self) -> None:
         os.environ.clear()
@@ -38,6 +64,7 @@ class VoicePhase1TwilioAndToolingTests(TestCase):
 
     def test_twilio_twiml_validates_signature(self) -> None:
         session = CallSession.objects.create(
+            business_profile=self.business,
             objective="Test",
             to_phone_number="+15551230000",
             from_phone_number="+15551234567",
@@ -59,6 +86,7 @@ class VoicePhase1TwilioAndToolingTests(TestCase):
 
     def test_twilio_consent_generates_stream_token_and_stream_url(self) -> None:
         session = CallSession.objects.create(
+            business_profile=self.business,
             objective="Test",
             to_phone_number="+15551230000",
             from_phone_number="+15551234567",
@@ -84,24 +112,13 @@ class VoicePhase1TwilioAndToolingTests(TestCase):
 
     @override_settings(VOICE_GLOBAL_ENABLED=True, VOICE_AUTO_CREATE_CONFIG=True)
     def test_initiate_phone_call_tool_creates_queued_session(self) -> None:
-        user = User.objects.create_user(email="owner@example.com", password="changeme123", first_name="Owner")
-        registration = RegistrationSession.objects.create(user=user)
-        business = BusinessProfile.objects.create(
-            user=user,
-            registration_session=registration,
-            name="Acme Co",
-            industry="Retail",
-            status="active",
-            metadata={FEATURE_FLAG_METADATA_KEY: {"sub_agents_v1": True}},
-        )
-        agent = AgentProfile.objects.create(business_profile=business, user=user, name="Ops Agent", status="active")
         conversation = Conversation.objects.create(
-            business_profile=business,
-            agent_profile=agent,
+            business_profile=self.business,
+            agent_profile=self.agent,
             channel=ConversationChannel.API,
         )
 
-        with tenant_context(business.id):
+        with tenant_context(self.business.id):
             result = initiate_phone_call_tool(
                 {"phone_number": "+201234567890", "objective": "Confirm appointment"},
                 conversation,

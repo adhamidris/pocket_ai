@@ -19,6 +19,19 @@ VOICE_PROVIDER_ORDER = (
     VOICE_PROVIDER_DEEPGRAM,
     VOICE_PROVIDER_ELEVENLABS,
 )
+VOICE_PROVIDER_TENANT_MANAGED = (VOICE_PROVIDER_TWILIO,)
+VOICE_PROVIDER_PLATFORM_MANAGED = (
+    VOICE_PROVIDER_DEEPGRAM,
+    VOICE_PROVIDER_ELEVENLABS,
+)
+
+
+def is_tenant_managed_provider(provider: str) -> bool:
+    return str(provider or "").strip().lower() in VOICE_PROVIDER_TENANT_MANAGED
+
+
+def is_platform_managed_provider(provider: str) -> bool:
+    return str(provider or "").strip().lower() in VOICE_PROVIDER_PLATFORM_MANAGED
 
 
 def get_provider_connection(*, business_id: Any | None, provider: str) -> VoiceProviderConnection | None:
@@ -32,9 +45,11 @@ def get_provider_connection(*, business_id: Any | None, provider: str) -> VoiceP
 
 
 def resolve_twilio_config(*, business_id: Any | None, require_from_number: bool = True) -> TwilioConfig:
+    if not business_id:
+        raise ValueError("Twilio provider requires a workspace context.")
     connection = get_provider_connection(business_id=business_id, provider=VOICE_PROVIDER_TWILIO)
     if connection is None:
-        return load_twilio_config(require_from_number=require_from_number)
+        raise ValueError("Twilio provider is not configured for this workspace.")
     if not connection.enabled:
         raise ValueError("Twilio provider is disabled for this workspace.")
     credentials = connection.credentials or {}
@@ -48,35 +63,13 @@ def resolve_twilio_config(*, business_id: Any | None, require_from_number: bool 
 
 
 def resolve_deepgram_config(*, business_id: Any | None, language: str) -> DeepgramConfig:
-    connection = get_provider_connection(business_id=business_id, provider=VOICE_PROVIDER_DEEPGRAM)
-    if connection is None:
-        return DeepgramConfig.from_env(language=language)
-    if not connection.enabled:
-        raise RuntimeError("Deepgram provider is disabled for this workspace.")
-    credentials = connection.credentials or {}
-    if not credentials:
-        raise RuntimeError("Deepgram provider credentials are missing for this workspace.")
-    return DeepgramConfig.from_credentials(
-        credentials=credentials,
-        language=language,
-        allow_env_fallback=False,
-    )
+    # Platform-managed provider: always use owner-managed credentials.
+    return DeepgramConfig.from_env(language=language)
 
 
 def resolve_elevenlabs_config(*, business_id: Any | None, language: str | None = None) -> ElevenLabsConfig:
-    connection = get_provider_connection(business_id=business_id, provider=VOICE_PROVIDER_ELEVENLABS)
-    if connection is None:
-        return ElevenLabsConfig.from_env(language=language)
-    if not connection.enabled:
-        raise RuntimeError("ElevenLabs provider is disabled for this workspace.")
-    credentials = connection.credentials or {}
-    if not credentials:
-        raise RuntimeError("ElevenLabs provider credentials are missing for this workspace.")
-    return ElevenLabsConfig.from_credentials(
-        credentials=credentials,
-        language=language,
-        allow_env_fallback=False,
-    )
+    # Platform-managed provider: always use owner-managed credentials.
+    return ElevenLabsConfig.from_env(language=language)
 
 
 def extract_safe_provider_settings(provider: str, credentials: Mapping[str, Any]) -> dict[str, Any]:

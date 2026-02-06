@@ -15,13 +15,17 @@ from django.views.decorators.http import require_http_methods
 from core.tenancy import tenant_context
 
 from apps.accounts.models import BusinessProfile
+from apps.voice.deepgram_stt import DeepgramConfig
+from apps.voice.elevenlabs_tts import ElevenLabsConfig
 from apps.voice.models import VoiceProviderConnection
 from apps.voice.provider_credentials import (
     VOICE_PROVIDER_DEEPGRAM,
     VOICE_PROVIDER_ELEVENLABS,
     VOICE_PROVIDER_ORDER,
+    VOICE_PROVIDER_TENANT_MANAGED,
     VOICE_PROVIDER_TWILIO,
     extract_safe_provider_settings,
+    is_tenant_managed_provider,
     mask_provider_credentials,
 )
 
@@ -40,22 +44,15 @@ VOICE_PROVIDER_DESCRIPTIONS = {
 
 VOICE_PROVIDER_REQUIRED_FIELDS = {
     VOICE_PROVIDER_TWILIO: ("account_sid", "auth_token", "webhook_base_url", "from_number"),
-    VOICE_PROVIDER_DEEPGRAM: ("api_key",),
-    VOICE_PROVIDER_ELEVENLABS: ("api_key",),
 }
 
 VOICE_PROVIDER_ALLOWED_FIELDS = {
     VOICE_PROVIDER_TWILIO: {"account_sid", "auth_token", "webhook_base_url", "from_number"},
-    VOICE_PROVIDER_DEEPGRAM: {"api_key", "model", "endpointing_ms"},
-    VOICE_PROVIDER_ELEVENLABS: {
-        "api_key",
-        "voice_id",
-        "default_voice_en",
-        "default_voice_ar",
-        "model_id",
-        "output_format",
-    },
 }
+
+PLATFORM_MANAGED_MESSAGE = (
+    "This provider is platform-managed and not configurable per workspace."
+)
 
 
 def _parse_json_body(request: HttpRequest) -> tuple[dict[str, Any] | None, JsonResponse | None]:
@@ -169,27 +166,67 @@ def _normalize_credentials(provider: str, credentials: Mapping[str, Any]) -> tup
                 return {}, "Twilio webhook_base_url must be a valid http(s) URL."
             normalized["webhook_base_url"] = webhook
 
-    if provider == VOICE_PROVIDER_DEEPGRAM and "endpointing_ms" in normalized:
-        try:
-            endpointing_ms = int(normalized.get("endpointing_ms"))
-        except Exception:
-            return {}, "Deepgram endpointing_ms must be an integer."
-        normalized["endpointing_ms"] = max(0, min(2000, endpointing_ms))
-
     return normalized, None
 
 
 def _missing_required(provider: str, credentials: Mapping[str, Any]) -> list[str]:
     required = list(VOICE_PROVIDER_REQUIRED_FIELDS.get(provider, ()))
-    missing = [field for field in required if not str(credentials.get(field) or "").strip()]
+    return [field for field in required if not str(credentials.get(field) or "").strip()]
+
+
+def _platform_provider_snapshot(provider: str) -> dict[str, Any]:
+    if provider == VOICE_PROVIDER_DEEPGRAM:
+        try:
+            cfg = DeepgramConfig.from_env(language="en")
+            return {
+                "configured": True,
+                "status": "connected",
+                "error": "",
+                "publicSettings": {
+                    "model": cfg.model,
+                    "endpointing_ms": cfg.endpointing_ms,
+                },
+                "maskedSecrets": {"api_key": "configured"},
+            }
+        except Exception as exc:
+            return {
+                "configured": False,
+                "status": "not_configured",
+                "error": str(exc),
+                "publicSettings": {},
+                "maskedSecrets": {},
+            }
+
     if provider == VOICE_PROVIDER_ELEVENLABS:
-        has_voice = any(
-            str(credentials.get(field) or "").strip()
-            for field in ("voice_id", "default_voice_en", "default_voice_ar")
-        )
-        if not has_voice:
-            missing.append("voice_id|default_voice_en|default_voice_ar")
-    return missing
+        try:
+            cfg = ElevenLabsConfig.from_env(language="en")
+            return {
+                "configured": True,
+                "status": "connected",
+                "error": "",
+                "publicSettings": {
+                    "voice_id": cfg.voice_id,
+                    "model_id": cfg.model_id,
+                    "output_format": cfg.output_format,
+                },
+                "maskedSecrets": {"api_key": "configured"},
+            }
+        except Exception as exc:
+            return {
+                "configured": False,
+                "status": "not_configured",
+                "error": str(exc),
+                "publicSettings": {},
+                "maskedSecrets": {},
+            }
+
+    return {
+        "configured": False,
+        "status": "not_configured",
+        "error": "",
+        "publicSettings": {},
+        "maskedSecrets": {},
+    }
 
 
 def _serialize_provider(
@@ -197,6 +234,24 @@ def _serialize_provider(
     provider: str,
     connection: VoiceProviderConnection | None,
 ) -> dict[str, Any]:
+    if not is_tenant_managed_provider(provider):
+        snapshot = _platform_provider_snapshot(provider)
+        return {
+            "provider": provider,
+            "label": VOICE_PROVIDER_LABELS.get(provider, provider.title()),
+            "description": VOICE_PROVIDER_DESCRIPTIONS.get(provider, ""),
+            "managementMode": "platform",
+            "editable": False,
+            "status": snapshot.get("status") or "not_configured",
+            "enabled": bool(snapshot.get("configured")),
+            "hasCredentials": bool(snapshot.get("configured")),
+            "lastTestedAt": None,
+            "lastError": str(snapshot.get("error") or ""),
+            "requiredFields": [],
+            "publicSettings": dict(snapshot.get("publicSettings") or {}),
+            "maskedSecrets": dict(snapshot.get("maskedSecrets") or {}),
+        }
+
     creds = connection.credentials if connection else {}
     has_credentials = bool(connection and connection.has_credentials())
     enabled = bool(connection and connection.enabled)
@@ -214,6 +269,8 @@ def _serialize_provider(
         "provider": provider,
         "label": VOICE_PROVIDER_LABELS.get(provider, provider.title()),
         "description": VOICE_PROVIDER_DESCRIPTIONS.get(provider, ""),
+        "managementMode": "tenant",
+        "editable": True,
         "status": status,
         "enabled": enabled,
         "hasCredentials": has_credentials,
@@ -239,32 +296,6 @@ def _run_provider_test(provider: str, credentials: Mapping[str, Any]) -> tuple[b
             return False, f"Twilio test failed ({response.status_code})."
         return True, "Twilio connection validated."
 
-    if provider == VOICE_PROVIDER_DEEPGRAM:
-        api_key = str(credentials.get("api_key") or "").strip()
-        if not api_key:
-            return False, "Deepgram api_key is required."
-        response = requests.get(
-            "https://api.deepgram.com/v1/projects",
-            headers={"Authorization": f"Token {api_key}"},
-            timeout=timeout,
-        )
-        if response.status_code >= 400:
-            return False, f"Deepgram test failed ({response.status_code})."
-        return True, "Deepgram connection validated."
-
-    if provider == VOICE_PROVIDER_ELEVENLABS:
-        api_key = str(credentials.get("api_key") or "").strip()
-        if not api_key:
-            return False, "ElevenLabs api_key is required."
-        response = requests.get(
-            "https://api.elevenlabs.io/v1/user",
-            headers={"xi-api-key": api_key},
-            timeout=timeout,
-        )
-        if response.status_code >= 400:
-            return False, f"ElevenLabs test failed ({response.status_code})."
-        return True, "ElevenLabs connection validated."
-
     return False, "Unsupported provider."
 
 
@@ -280,7 +311,10 @@ def voice_providers_collection(request: HttpRequest) -> JsonResponse:
     with tenant_context(business.id):
         connections = {
             conn.provider: conn
-            for conn in VoiceProviderConnection.objects.filter(business_profile=business).order_by("provider")
+            for conn in VoiceProviderConnection.objects.filter(
+                business_profile=business,
+                provider__in=VOICE_PROVIDER_TENANT_MANAGED,
+            ).order_by("provider")
         }
         providers = [
             _serialize_provider(provider=provider, connection=connections.get(provider))
@@ -323,6 +357,12 @@ def voice_provider_detail(request: HttpRequest, provider: str) -> JsonResponse:
     if error:
         return error
     assert business is not None
+
+    if request.method in {"PUT", "DELETE"} and not is_tenant_managed_provider(provider_key):
+        return JsonResponse(
+            {"error": "VALIDATION_ERROR", "message": PLATFORM_MANAGED_MESSAGE},
+            status=HTTPStatus.BAD_REQUEST,
+        )
 
     with tenant_context(business.id):
         connection = VoiceProviderConnection.objects.filter(
@@ -442,6 +482,12 @@ def voice_provider_test(request: HttpRequest, provider: str) -> JsonResponse:
     if error:
         return error
     assert business is not None
+
+    if not is_tenant_managed_provider(provider_key):
+        return JsonResponse(
+            {"error": "VALIDATION_ERROR", "message": PLATFORM_MANAGED_MESSAGE},
+            status=HTTPStatus.BAD_REQUEST,
+        )
 
     with tenant_context(business.id):
         connection = VoiceProviderConnection.objects.filter(

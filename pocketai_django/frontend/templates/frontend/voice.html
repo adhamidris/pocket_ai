@@ -45,7 +45,7 @@
         <div class="space-y-1.5">
           <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">Voice Calling Providers</h1>
           <p class="text-sm text-muted-foreground">
-            Configure tenant-owned provider keys for Twilio, Deepgram, and ElevenLabs in one place.
+            Configure tenant-owned Twilio credentials and monitor platform-managed voice services.
           </p>
         </div>
         <div class="flex flex-wrap items-center gap-2">
@@ -62,9 +62,9 @@
       <section class="rounded-xl border border-border/60 bg-card/60 backdrop-blur p-4 space-y-3">
         <div class="text-sm font-semibold text-foreground">How this works</div>
         <ul class="space-y-1 text-xs text-muted-foreground list-disc list-inside">
-          <li>Each workspace stores its own encrypted provider credentials.</li>
-          <li>Voice runtime resolves tenant credentials first, then owner env fallback only if no tenant config exists.</li>
-          <li>Use “Test” after setup to validate credentials before live calls.</li>
+          <li>Each workspace stores its own encrypted Twilio credentials.</li>
+          <li>Deepgram and ElevenLabs are managed centrally by the platform.</li>
+          <li>Use “Test” on Twilio after setup to validate credentials before live calls.</li>
         </ul>
       </section>
 
@@ -126,19 +126,6 @@
         { key: "auth_token", label: "Auth Token", type: "password", placeholder: "Twilio auth token", secret: true },
         { key: "webhook_base_url", label: "Webhook Base URL", type: "url", placeholder: "https://your-domain.com", secret: false },
         { key: "from_number", label: "From Number (E.164)", type: "text", placeholder: "+15551234567", secret: false }
-      ],
-      deepgram: [
-        { key: "api_key", label: "API Key", type: "password", placeholder: "Deepgram API key", secret: true },
-        { key: "model", label: "Model", type: "text", placeholder: "nova-2", secret: false },
-        { key: "endpointing_ms", label: "Endpointing (ms)", type: "number", placeholder: "300", secret: false }
-      ],
-      elevenlabs: [
-        { key: "api_key", label: "API Key", type: "password", placeholder: "ElevenLabs API key", secret: true },
-        { key: "voice_id", label: "Voice ID (optional)", type: "text", placeholder: "Primary voice id", secret: false },
-        { key: "default_voice_en", label: "Default Voice EN", type: "text", placeholder: "English voice id", secret: false },
-        { key: "default_voice_ar", label: "Default Voice AR", type: "text", placeholder: "Arabic voice id", secret: false },
-        { key: "model_id", label: "Model ID", type: "text", placeholder: "eleven_flash_v2_5", secret: false },
-        { key: "output_format", label: "Output Format", type: "text", placeholder: "ulaw_8000", secret: false }
       ]
     };
 
@@ -227,8 +214,19 @@
       gridEl.innerHTML = providers.map(function (item) {
         var status = String(item.status || "not_configured");
         var hasCreds = !!item.hasCredentials;
+        var editable = item.editable !== false;
         var lastError = String(item.lastError || "");
         var tested = item.lastTestedAt ? ("Tested " + new Date(item.lastTestedAt).toLocaleString()) : "Not tested yet";
+        var modeTag = editable ? "Tenant setup" : "Platform managed";
+        var actionsHtml = editable
+          ? (
+              '<div class="flex items-center gap-2">' +
+              '  <button class="mcp-btn mcp-btn-outline" type="button" data-voice-open="' + escapeHtml(item.provider) + '">Configure</button>' +
+              '  <button class="mcp-btn mcp-btn-outline" type="button" data-voice-test="' + escapeHtml(item.provider) + '"' + (hasCreds ? "" : " disabled") + ">Test</button>" +
+              '  <button class="mcp-btn mcp-btn-outline" type="button" data-voice-disconnect="' + escapeHtml(item.provider) + '"' + (hasCreds ? "" : " disabled") + ">Disconnect</button>" +
+              "</div>"
+            )
+          : '<div class="text-[11px] text-muted-foreground">Managed by platform and shared across all workspaces.</div>';
         return '' +
           '<article class="mcp-card">' +
           '  <div class="mcp-card-header">' +
@@ -244,12 +242,8 @@
           '  <div class="px-5 pb-2 text-[11px] text-muted-foreground">' + escapeHtml(tested) + "</div>" +
           (lastError ? ('<div class="mx-5 mb-2 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] text-rose-700">' + escapeHtml(lastError) + "</div>") : "") +
           '  <div class="mcp-card-actions">' +
-          '    <span class="mcp-tag">' + (hasCreds ? "Credentials set" : "Credentials missing") + "</span>" +
-          '    <div class="flex items-center gap-2">' +
-          '      <button class="mcp-btn mcp-btn-outline" type="button" data-voice-open="' + escapeHtml(item.provider) + '">Configure</button>' +
-          '      <button class="mcp-btn mcp-btn-outline" type="button" data-voice-test="' + escapeHtml(item.provider) + '"' + (hasCreds ? "" : " disabled") + ">Test</button>" +
-          '      <button class="mcp-btn mcp-btn-outline" type="button" data-voice-disconnect="' + escapeHtml(item.provider) + '"' + (hasCreds ? "" : " disabled") + ">Disconnect</button>" +
-          "    </div>" +
+          '    <span class="mcp-tag">' + escapeHtml(modeTag) + "</span>" +
+          actionsHtml +
           "  </div>" +
           "</article>";
       }).join("");
@@ -260,7 +254,7 @@
         setFlash("Link a business profile to configure voice providers.", "error");
         return Promise.resolve();
       }
-      setFlash("Loading voice providers…", "info");
+      setFlash("Loading voice provider status…", "info");
       return apiFetch("/api/voice/providers/?business_id=" + encodeURIComponent(businessId), { method: "GET" })
         .then(function (payload) {
           state.providers = payload.providers || [];
@@ -306,6 +300,10 @@
     function openModal(providerKey) {
       var provider = currentProvider(providerKey);
       if (!provider) return;
+      if (provider.editable === false) {
+        setFlash((provider.label || "This provider") + " is managed by the platform and cannot be edited here.", "info");
+        return;
+      }
       state.current = provider;
       var els = modalEls();
       if (!els.root || !els.content || !els.fields) return;

@@ -249,7 +249,7 @@ def initiate_phone_call_tool(
             "status": "error",
             "error": "missing_twilio_config",
             "error_code": "missing_twilio_config",
-            "hint": str(exc) or "Set TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN/TWILIO_WEBHOOK_BASE_URL.",
+            "hint": str(exc) or "Configure Twilio in Dashboard > Voice Calling for this workspace.",
         }
 
     config = _ensure_voice_config(business_id)
@@ -402,7 +402,7 @@ def initiate_phone_call_tool(
             "status": "error",
             "error": "missing_from_number",
             "error_code": "missing_from_number",
-            "hint": "No active VoicePhoneNumber and TWILIO_FROM_NUMBER is not configured.",
+            "hint": "No active VoicePhoneNumber and no Twilio from_number is configured for this workspace.",
         }
 
     if not language:
