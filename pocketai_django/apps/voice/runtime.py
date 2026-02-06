@@ -1022,6 +1022,8 @@ class VoiceCallRuntime:
         if use_ws_tts and ws_session is not None:
             # --- WebSocket TTS path: concurrent text sender + audio receiver ---
             audio_receiver_task: asyncio.Task | None = None
+            deepgram_pending_flush_chars = 0
+            deepgram_last_flush_at = time.monotonic()
             try:
                 audio_receiver_task = asyncio.create_task(
                     self._stream_ws_audio_to_twilio(twilio_ws, ws_session, output_format=ws_output_format)
@@ -1051,7 +1053,16 @@ class VoiceCallRuntime:
                             tts_cfg = tts_config_ar
                             await self._stream_tts_to_twilio(twilio_ws, chunk, config=tts_cfg)
                         else:
-                            await ws_session.send_text(chunk, flush=True) if isinstance(ws_session, ElevenLabsWSSession) else await _deepgram_ws_send_and_flush(ws_session, chunk)
+                            if isinstance(ws_session, ElevenLabsWSSession):
+                                await ws_session.send_text(chunk, flush=True)
+                            else:
+                                deepgram_pending_flush_chars, deepgram_last_flush_at = await _deepgram_ws_send(
+                                    ws_session,
+                                    chunk,
+                                    pending_chars=deepgram_pending_flush_chars,
+                                    last_flush_at=deepgram_last_flush_at,
+                                    force_flush=False,
+                                )
                         spoken_chunks.append(chunk)
                         await self._log_event("tts.chunk.done", {"response_id": response_id, "text": _clip_text(chunk, 160)})
                         spoke_any = True
@@ -1068,9 +1079,19 @@ class VoiceCallRuntime:
                         if isinstance(ws_session, ElevenLabsWSSession):
                             await ws_session.send_text(final, flush=True)
                         else:
-                            await _deepgram_ws_send_and_flush(ws_session, final)
+                            deepgram_pending_flush_chars, deepgram_last_flush_at = await _deepgram_ws_send(
+                                ws_session,
+                                final,
+                                pending_chars=deepgram_pending_flush_chars,
+                                last_flush_at=deepgram_last_flush_at,
+                                force_flush=True,
+                            )
                     spoken_chunks.append(final)
                     spoke_any = True
+
+                # Ensure any pending Deepgram text is emitted before closing the session.
+                if isinstance(ws_session, DeepgramTTSWSSession) and deepgram_pending_flush_chars > 0:
+                    await ws_session.flush()
 
                 # Signal end-of-stream and wait for audio to finish
                 await ws_session.close()
@@ -1664,10 +1685,35 @@ def _extract_transcript_with_confidence(payload: dict) -> tuple[str, float, bool
     return transcript, confidence, is_final
 
 
-async def _deepgram_ws_send_and_flush(ws_session: DeepgramTTSWSSession, text: str) -> None:
-    """Send text + flush on a Deepgram WS TTS session."""
+async def _deepgram_ws_send(
+    ws_session: DeepgramTTSWSSession,
+    text: str,
+    *,
+    pending_chars: int,
+    last_flush_at: float,
+    force_flush: bool,
+) -> tuple[int, float]:
+    """
+    Send text to Deepgram WS TTS and flush only on stronger boundaries.
+
+    Flushing each tiny chunk can introduce audible micro-pauses/prosody resets.
+    """
+    clean = str(text or "").strip()
+    if not clean:
+        return pending_chars, last_flush_at
     await ws_session.send_text(text)
-    await ws_session.flush()
+    pending_chars = max(0, int(pending_chars)) + len(clean)
+    now = time.monotonic()
+    should_flush = bool(
+        force_flush
+        or _text_ends_sentence(clean)
+        or pending_chars >= _deepgram_ws_flush_max_chars()
+        or (now - float(last_flush_at or 0.0)) >= _deepgram_ws_flush_interval_seconds()
+    )
+    if should_flush and pending_chars > 0:
+        await ws_session.flush()
+        return 0, now
+    return pending_chars, last_flush_at
 
 
 def _maybe_extract_speakable_chunk_first(buffer: str, *, min_chars: int = 8) -> tuple[str, str]:
@@ -1794,6 +1840,13 @@ def _detect_text_language(text: str, *, fallback: str | None = None) -> str:
     return "en"
 
 
+def _text_ends_sentence(text: str) -> bool:
+    stripped = str(text or "").rstrip()
+    if not stripped:
+        return False
+    return bool(re.search(r"""[.!?؟]["')\]]*$""", stripped))
+
+
 def _has_hangup_action(actions: object) -> bool:
     """
     Accept either:
@@ -1912,6 +1965,24 @@ def _is_wrong_person_strong(text: str, *, language_hint: str | None = None, reci
 
 def _tts_provider() -> str:
     return (os.getenv("VOICE_TTS_PROVIDER") or "elevenlabs").strip().lower()
+
+
+def _deepgram_ws_flush_interval_seconds() -> float:
+    raw = (os.getenv("VOICE_DEEPGRAM_WS_FLUSH_INTERVAL_SECONDS") or "0.30").strip()
+    try:
+        value = float(raw)
+    except Exception:
+        value = 0.30
+    return max(0.05, min(2.0, value))
+
+
+def _deepgram_ws_flush_max_chars() -> int:
+    raw = (os.getenv("VOICE_DEEPGRAM_WS_FLUSH_MAX_CHARS") or "180").strip()
+    try:
+        value = int(raw)
+    except Exception:
+        value = 180
+    return max(40, min(600, value))
 
 
 def _final_stable_ms() -> int:

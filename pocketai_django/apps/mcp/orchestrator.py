@@ -9693,6 +9693,29 @@ class McpOrchestratorService:
         return max(0.2, min(value, 5.0))
 
     @staticmethod
+    def _phone_tool_approval_reuse_enabled() -> bool:
+        """
+        Phone-call approvals are one-shot by default to avoid accidental replays
+        across later turns. Re-enable reuse explicitly for legacy behavior.
+        """
+        return bool(getattr(settings, "MCP_PHONE_TOOL_APPROVAL_REUSE_ENABLED", False))
+
+    @staticmethod
+    def _duplicate_phone_call_payload(tool_name: str) -> Mapping[str, object]:
+        hint = (
+            "An identical phone call was already requested in this turn. "
+            "Do not enqueue the same call twice; continue with a single call."
+        )
+        return {
+            "tool": tool_name,
+            "status": "blocked",
+            "error_code": "duplicate_phone_call",
+            "error": "Duplicate phone call in the same turn was skipped.",
+            "hint": hint,
+            "llm_hint": hint,
+        }
+
+    @staticmethod
     def _approval_blocked_payload(tool_name: str, status: str) -> Mapping[str, object]:
         normalized = str(status or "").strip().lower()
         if normalized == ConversationToolApprovalStatus.DENIED:
