@@ -3277,3 +3277,271 @@ class AgentCollectionAccess(models.Model):
 
     def __str__(self) -> str:
         return f"{self.agent_profile} -> {self.collection}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Native Integration Accounts (Calendar, Drive, OneDrive, Slack, HubSpot)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class IntegrationType(models.TextChoices):
+    GOOGLE_CALENDAR = "google_calendar", "Google Calendar"
+    GOOGLE_DRIVE = "google_drive", "Google Drive"
+    ONEDRIVE = "onedrive", "OneDrive"
+    SLACK = "slack", "Slack"
+    HUBSPOT = "hubspot", "HubSpot"
+
+
+class IntegrationProvider(models.TextChoices):
+    GOOGLE = "google", "Google"
+    MICROSOFT = "microsoft", "Microsoft"
+    SLACK = "slack", "Slack"
+    HUBSPOT = "hubspot", "HubSpot"
+
+
+class IntegrationAccountStatus(models.TextChoices):
+    DISCONNECTED = "disconnected", "Disconnected"
+    CONNECTING = "connecting", "Connecting"
+    CONNECTED = "connected", "Connected"
+    ERROR = "error", "Error"
+
+
+class IntegrationAccountAuditAction(models.TextChoices):
+    CONNECTED = "connected", "Connected"
+    UPDATED = "updated", "Updated"
+    DISCONNECTED = "disconnected", "Disconnected"
+    TOOL_CALLED = "tool_called", "Tool Called"
+    ERROR = "error", "Error"
+
+
+class IntegrationAccount(models.Model):
+    """
+    Generic model for first-party native integrations (Calendar, Drive, OneDrive, Slack, HubSpot).
+
+    Privacy note: OAuth tokens are encrypted at rest. Do not log raw credentials
+    or full API responses in audit events.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        BusinessProfile,
+        related_name="integration_accounts",
+        on_delete=models.CASCADE,
+    )
+    user = models.ForeignKey(
+        User,
+        related_name="integration_accounts",
+        on_delete=models.CASCADE,
+    )
+    integration_type = models.CharField(
+        max_length=32,
+        choices=IntegrationType.choices,
+    )
+    provider = models.CharField(
+        max_length=16,
+        choices=IntegrationProvider.choices,
+    )
+    account_identifier = models.CharField(
+        max_length=320,
+        blank=True,
+        default="",
+        help_text="Email address, workspace name, or other human-readable identifier.",
+    )
+    external_account_id = models.CharField(max_length=320, blank=True, default="")
+
+    status = models.CharField(
+        max_length=16,
+        choices=IntegrationAccountStatus.choices,
+        default=IntegrationAccountStatus.DISCONNECTED,
+    )
+
+    credentials_encrypted = models.TextField(blank=True, default="")
+    credentials_key_version = models.PositiveSmallIntegerField(default=1)
+    credentials_last_rotated_at = models.DateTimeField(null=True, blank=True)
+    credential_error_count = models.PositiveSmallIntegerField(default=0)
+
+    metadata = models.JSONField(default=dict, blank=True)
+    last_error = models.TextField(blank=True, default="")
+    last_health_checked_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "accounts_integration_account"
+        ordering = ("-created_at",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=["business_profile", "user", "integration_type"],
+                name="integration_account_unique_user_type",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["business_profile", "status"], name="integ_acct_biz_status_idx"),
+            models.Index(fields=["business_profile", "integration_type"], name="integ_acct_biz_type_idx"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        label = self.account_identifier or self.external_account_id or "unlinked"
+        return f"{label} ({self.integration_type})"
+
+    def _credential_tenant(self) -> str:
+        business_id = self.business_profile_id or getattr(self.business_profile, "id", None)
+        if not business_id:
+            raise ValueError("Business profile must be saved before storing credentials.")
+        return str(business_id)
+
+    def _cache_credentials(self, payload: dict[str, Any]) -> None:
+        self._cached_credentials = dict(payload)
+
+    def _get_cached_credentials(self) -> dict[str, Any] | None:
+        return getattr(self, "_cached_credentials", None)
+
+    def _clear_cached_credentials(self) -> None:
+        if hasattr(self, "_cached_credentials"):
+            delattr(self, "_cached_credentials")
+
+    @property
+    def credentials(self) -> dict[str, Any]:
+        cached = self._get_cached_credentials()
+        if cached is not None:
+            return dict(cached)
+        tenant = self.business_profile_id or getattr(self.business_profile, "id", None)
+        if not tenant or not self.credentials_encrypted:
+            self._cache_credentials({})
+            return {}
+        manager = get_secret_manager()
+        try:
+            payload = manager.decrypt(self.credentials_encrypted, tenant=str(tenant))
+        except IntegrationSecretError as exc:
+            logger.warning("integration_account_credentials_decrypt_failed account=%s error=%s", self.id, exc)
+            payload = {}
+        self._cache_credentials(payload)
+        return dict(payload)
+
+    @credentials.setter
+    def credentials(self, value: dict[str, Any] | None) -> None:
+        payload = dict(value or {})
+        if not payload:
+            self.credentials_encrypted = ""
+            self.credentials_key_version = 1
+            self.credentials_last_rotated_at = None
+            self.credential_error_count = 0
+            self._cache_credentials({})
+            return
+        manager = get_secret_manager()
+        ciphertext = manager.encrypt(payload, tenant=self._credential_tenant())
+        self.credentials_encrypted = ciphertext
+        self.credentials_key_version = manager.key_version
+        self.credentials_last_rotated_at = timezone.now()
+        self.credential_error_count = 0
+        self._cache_credentials(payload)
+
+    def has_credentials(self) -> bool:
+        return bool(self.credentials_encrypted)
+
+    def credentials_need_rotation(self) -> bool:
+        return credentials_are_stale(self.credentials_last_rotated_at)
+
+    def refresh_from_db(self, *args: Any, **kwargs: Any) -> None:
+        super().refresh_from_db(*args, **kwargs)
+        self._clear_cached_credentials()
+
+
+class IntegrationAccountAuditEvent(models.Model):
+    """
+    Immutable log of native integration events for compliance and debugging.
+
+    IMPORTANT: Do not store raw API responses or OAuth tokens in metadata.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        BusinessProfile,
+        related_name="integration_audit_events",
+        on_delete=models.CASCADE,
+    )
+    integration_account = models.ForeignKey(
+        IntegrationAccount,
+        related_name="audit_events",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    integration_account_id_snapshot = models.UUIDField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Snapshot of the IntegrationAccount UUID for retention when the account is deleted.",
+    )
+    actor_user = models.ForeignKey(
+        User,
+        related_name="integration_audit_events",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    actor_agent = models.ForeignKey(
+        AgentProfile,
+        related_name="integration_audit_events",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    action = models.CharField(max_length=32, choices=IntegrationAccountAuditAction.choices)
+    description = models.TextField(blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    occurred_at = models.DateTimeField(default=timezone.now, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "accounts_integration_account_audit_event"
+        ordering = ("-occurred_at",)
+        indexes = [
+            models.Index(fields=["integration_account", "action"], name="integ_audit_action_idx"),
+            models.Index(fields=["integration_account_id_snapshot", "action"], name="integ_audit_snap_action_idx"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        ref = self.integration_account_id_snapshot or getattr(self.integration_account, "id", None) or "unknown"
+        return f"{ref} - {self.get_action_display()}"
+
+
+class IntegrationOAuthState(models.Model):
+    """Ephemeral state record for native integration OAuth handshakes (CSRF + PKCE)."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        BusinessProfile,
+        related_name="integration_oauth_states",
+        on_delete=models.CASCADE,
+    )
+    user = models.ForeignKey(
+        User,
+        related_name="integration_oauth_states",
+        on_delete=models.CASCADE,
+    )
+    provider = models.ForeignKey(
+        OAuthProvider,
+        related_name="integration_oauth_states",
+        on_delete=models.CASCADE,
+        help_text="OAuth provider configuration (e.g., google_calendar, slack_native).",
+    )
+    integration_type = models.CharField(max_length=32, choices=IntegrationType.choices)
+    state_token = models.CharField(max_length=128, unique=True)
+    redirect_after = models.URLField(max_length=500, blank=True, default="")
+    redirect_uri = models.URLField(max_length=500, blank=True, default="")
+    code_verifier = models.CharField(max_length=256, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    is_used = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = "accounts_integration_oauth_state"
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["expires_at"], name="integ_oauth_exp_idx"),
+            models.Index(fields=["provider", "is_used"], name="integ_oauth_prov_used_idx"),
+            models.Index(fields=["business_profile", "integration_type"], name="integ_oauth_biz_type_idx"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"IntegrationOAuthState<{self.integration_type}:{self.provider_id}>"

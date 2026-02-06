@@ -4,6 +4,7 @@ from . import views
 from . import mcp_connections
 from . import oauth
 from . import email_oauth
+from . import integration_oauth
 from . import chat_portal_files
 from . import agent_runs
 from . import voice_calls
@@ -188,6 +189,8 @@ urlpatterns = [
     path("oauth/refresh/<uuid:connection_id>/", oauth.oauth_refresh, name="oauth_refresh"),
     path("email/oauth/start/<str:provider_key>/", email_oauth.email_oauth_start, name="email_oauth_start"),
     path("email/oauth/callback/<str:provider_key>/", email_oauth.email_oauth_callback, name="email_oauth_callback"),
+    path("integrations/oauth/start/<str:integration_type>/", integration_oauth.integration_oauth_start, name="integration_oauth_start"),
+    path("integrations/oauth/callback/<str:integration_type>/", integration_oauth.integration_oauth_callback, name="integration_oauth_callback"),
 
     # Voice calls (Phase 1)
     path("voice/providers/", voice_providers.voice_providers_collection, name="voice-providers"),

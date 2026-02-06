@@ -263,6 +263,62 @@ _default_email_microsoft_scopes = [
 EMAIL_OAUTH_MICROSOFT_SCOPES = _split_scopes(os.getenv("EMAIL_OAUTH_MICROSOFT_SCOPES")) or _default_email_microsoft_scopes
 
 # ------------------------------------------------------------------------------
+# Native Integrations OAuth (Calendar, Drive, OneDrive, Slack, HubSpot)
+# ------------------------------------------------------------------------------
+# Shared Google OAuth app (defaults to email OAuth app credentials)
+INTEGRATION_OAUTH_GOOGLE_CLIENT_ID = os.getenv("INTEGRATION_OAUTH_GOOGLE_CLIENT_ID", EMAIL_OAUTH_GOOGLE_CLIENT_ID).strip()
+INTEGRATION_OAUTH_GOOGLE_CLIENT_SECRET = os.getenv("INTEGRATION_OAUTH_GOOGLE_CLIENT_SECRET", EMAIL_OAUTH_GOOGLE_CLIENT_SECRET).strip()
+
+_default_integration_google_calendar_scopes = [
+    "https://www.googleapis.com/auth/calendar",
+    "openid",
+    "email",
+]
+INTEGRATION_OAUTH_GOOGLE_CALENDAR_SCOPES = _split_scopes(os.getenv("INTEGRATION_OAUTH_GOOGLE_CALENDAR_SCOPES")) or _default_integration_google_calendar_scopes
+
+_default_integration_google_drive_scopes = [
+    "https://www.googleapis.com/auth/drive.readonly",
+    "openid",
+    "email",
+]
+INTEGRATION_OAUTH_GOOGLE_DRIVE_SCOPES = _split_scopes(os.getenv("INTEGRATION_OAUTH_GOOGLE_DRIVE_SCOPES")) or _default_integration_google_drive_scopes
+
+# Shared Microsoft OAuth app (defaults to email OAuth app credentials)
+INTEGRATION_OAUTH_MICROSOFT_CLIENT_ID = os.getenv("INTEGRATION_OAUTH_MICROSOFT_CLIENT_ID", EMAIL_OAUTH_MICROSOFT_CLIENT_ID).strip()
+INTEGRATION_OAUTH_MICROSOFT_CLIENT_SECRET = os.getenv("INTEGRATION_OAUTH_MICROSOFT_CLIENT_SECRET", EMAIL_OAUTH_MICROSOFT_CLIENT_SECRET).strip()
+
+_default_integration_microsoft_drive_scopes = [
+    "https://graph.microsoft.com/Files.Read",
+    "openid",
+    "email",
+    "offline_access",
+]
+INTEGRATION_OAUTH_MICROSOFT_DRIVE_SCOPES = _split_scopes(os.getenv("INTEGRATION_OAUTH_MICROSOFT_DRIVE_SCOPES")) or _default_integration_microsoft_drive_scopes
+
+# Slack native integration (defaults to MCP Slack OAuth app credentials)
+INTEGRATION_OAUTH_SLACK_CLIENT_ID = os.getenv("INTEGRATION_OAUTH_SLACK_CLIENT_ID", MCP_OAUTH_SLACK_CLIENT_ID).strip()
+INTEGRATION_OAUTH_SLACK_CLIENT_SECRET = os.getenv("INTEGRATION_OAUTH_SLACK_CLIENT_SECRET", MCP_OAUTH_SLACK_CLIENT_SECRET).strip()
+
+_default_integration_slack_scopes = [
+    "chat:write",
+    "channels:read",
+    "channels:history",
+    "search:read",
+]
+INTEGRATION_OAUTH_SLACK_SCOPES = _split_scopes(os.getenv("INTEGRATION_OAUTH_SLACK_SCOPES")) or _default_integration_slack_scopes
+
+# HubSpot native integration
+INTEGRATION_OAUTH_HUBSPOT_CLIENT_ID = os.getenv("INTEGRATION_OAUTH_HUBSPOT_CLIENT_ID", "").strip()
+INTEGRATION_OAUTH_HUBSPOT_CLIENT_SECRET = os.getenv("INTEGRATION_OAUTH_HUBSPOT_CLIENT_SECRET", "").strip()
+
+_default_integration_hubspot_scopes = [
+    "crm.objects.contacts.read",
+    "crm.objects.contacts.write",
+    "crm.objects.deals.read",
+]
+INTEGRATION_OAUTH_HUBSPOT_SCOPES = _split_scopes(os.getenv("INTEGRATION_OAUTH_HUBSPOT_SCOPES")) or _default_integration_hubspot_scopes
+
+# ------------------------------------------------------------------------------
 # Email Connectors (Google/Microsoft) — policy defaults
 # ------------------------------------------------------------------------------
 # These settings define default-safe behavior for first-party email connectors.

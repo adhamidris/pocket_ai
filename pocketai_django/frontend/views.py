@@ -2084,6 +2084,18 @@ def dashboard_leads(request: HttpRequest) -> HttpResponse:
 
 
 @login_required
+def dashboard_integrations(request: HttpRequest) -> HttpResponse:
+    user_name = _current_user_name(request)
+    business = _primary_business_for_user(request.user)
+    get_token(request)
+    context = {
+        "user_name": user_name,
+        "business_id": str(business.id) if business else "",
+    }
+    return render(request, "frontend/integrations.html", context)
+
+
+@login_required
 def dashboard_mcp(request: HttpRequest) -> HttpResponse:
     user_name = _current_user_name(request)
     business = _primary_business_for_user(request.user)

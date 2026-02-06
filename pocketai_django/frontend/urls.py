@@ -13,6 +13,7 @@ urlpatterns = [
     path("dashboard/agents/", views.dashboard_agents, name="dashboard-agents"),
     path("dashboard/leads/", views.dashboard_leads, name="dashboard-leads"),
     path("dashboard/knowledge/", views.dashboard_knowledge, name="dashboard-knowledge"),
+    path("dashboard/integrations/", views.dashboard_integrations, name="dashboard-integrations"),
     path("dashboard/mcp/", views.dashboard_mcp, name="dashboard-mcp"),
     path("dashboard/voice/", views.dashboard_voice, name="dashboard-voice"),
     path("dashboard/knowledge/visualizer/", views.dashboard_knowledge_visualizer, name="dashboard-knowledge-visualizer"),

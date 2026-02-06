@@ -45,6 +45,9 @@ from apps.accounts.models import (
     EmailAccount,
     EmailAccountProvider,
     EmailAccountStatus,
+    IntegrationAccount,
+    IntegrationAccountStatus,
+    IntegrationType,
     KnowledgeAuditAction,
     KnowledgeAuditEvent,
     KnowledgeVisibility,
@@ -115,6 +118,40 @@ from apps.integrations.microsoft_graph import (
     graph_get_thread,
     graph_search_messages,
     graph_send_draft,
+)
+from apps.integrations.integration_accounts import ensure_fresh_integration_credentials
+from apps.integrations.google_calendar_api import (
+    CalendarApiError,
+    calendar_list_events,
+    calendar_get_event,
+    calendar_create_event,
+    calendar_update_event,
+)
+from apps.integrations.google_drive_native_api import (
+    DriveApiError,
+    drive_search_files,
+    drive_get_file_content,
+    drive_list_files,
+)
+from apps.integrations.microsoft_onedrive_api import (
+    OneDriveApiError,
+    onedrive_search_files,
+    onedrive_get_file_content,
+    onedrive_list_files,
+)
+from apps.integrations.slack_api import (
+    SlackApiError,
+    slack_list_channels,
+    slack_read_channel,
+    slack_send_message,
+    slack_search_messages,
+)
+from apps.integrations.hubspot_api import (
+    HubSpotApiError,
+    hubspot_search_contacts,
+    hubspot_get_contact,
+    hubspot_create_contact,
+    hubspot_search_deals,
 )
 
 try:
@@ -1404,6 +1441,229 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
             },
         },
         required=("phone_number", "objective"),
+    ),
+    # ═══════════════════════════════════════════════════════════════════════
+    # NATIVE INTEGRATIONS — Google Calendar
+    # ═══════════════════════════════════════════════════════════════════════
+    _function_schema(
+        name="calendar_list_events",
+        description="List upcoming events from the connected Google Calendar.",
+        properties={
+            "time_min": {"type": "string", "description": "Start of time range (ISO 8601 datetime). Defaults to now."},
+            "time_max": {"type": "string", "description": "End of time range (ISO 8601 datetime)."},
+            "query": {"type": "string", "description": "Free-text search query."},
+            "max_results": {"type": "integer", "description": "Maximum events to return (1-50).", "minimum": 1, "maximum": 50, "default": 10},
+            "integration_account_id": {"type": "string", "description": "Optional: specific integration account id."},
+            "__ui": {"type": "object", "description": "UI-only metadata (ignored by the tool).", "properties": {"spinner_text": {"type": "string"}}},
+        },
+        required=(),
+    ),
+    _function_schema(
+        name="calendar_get_event",
+        description="Get details of a specific Google Calendar event by ID.",
+        properties={
+            "event_id": {"type": "string", "description": "Google Calendar event ID."},
+            "integration_account_id": {"type": "string", "description": "Optional: specific integration account id."},
+            "__ui": {"type": "object", "description": "UI-only metadata (ignored by the tool).", "properties": {"spinner_text": {"type": "string"}}},
+        },
+        required=("event_id",),
+    ),
+    _function_schema(
+        name="calendar_create_event",
+        description="Create a new event on Google Calendar.",
+        properties={
+            "summary": {"type": "string", "description": "Event title."},
+            "start_time": {"type": "string", "description": "Start datetime (ISO 8601, e.g. 2025-01-15T09:00:00-05:00)."},
+            "end_time": {"type": "string", "description": "End datetime (ISO 8601)."},
+            "description": {"type": "string", "description": "Event description (optional)."},
+            "attendees": {"type": "array", "items": {"type": "string"}, "description": "Email addresses of attendees."},
+            "location": {"type": "string", "description": "Event location (optional)."},
+            "integration_account_id": {"type": "string", "description": "Optional: specific integration account id."},
+            "__ui": {"type": "object", "description": "UI-only metadata (ignored by the tool).", "properties": {"spinner_text": {"type": "string"}}},
+        },
+        required=("summary", "start_time", "end_time"),
+    ),
+    _function_schema(
+        name="calendar_update_event",
+        description="Update an existing Google Calendar event.",
+        properties={
+            "event_id": {"type": "string", "description": "Google Calendar event ID to update."},
+            "summary": {"type": "string", "description": "New event title (optional)."},
+            "start_time": {"type": "string", "description": "New start datetime (optional)."},
+            "end_time": {"type": "string", "description": "New end datetime (optional)."},
+            "description": {"type": "string", "description": "New description (optional)."},
+            "location": {"type": "string", "description": "New location (optional)."},
+            "integration_account_id": {"type": "string", "description": "Optional: specific integration account id."},
+            "__ui": {"type": "object", "description": "UI-only metadata (ignored by the tool).", "properties": {"spinner_text": {"type": "string"}}},
+        },
+        required=("event_id",),
+    ),
+    # ═══════════════════════════════════════════════════════════════════════
+    # NATIVE INTEGRATIONS — Google Drive
+    # ═══════════════════════════════════════════════════════════════════════
+    _function_schema(
+        name="drive_search_files",
+        description="Search files in the connected Google Drive.",
+        properties={
+            "query": {"type": "string", "description": "Search query (file name or content)."},
+            "max_results": {"type": "integer", "description": "Maximum files to return (1-50).", "minimum": 1, "maximum": 50, "default": 10},
+            "integration_account_id": {"type": "string", "description": "Optional: specific integration account id."},
+            "__ui": {"type": "object", "description": "UI-only metadata (ignored by the tool).", "properties": {"spinner_text": {"type": "string"}}},
+        },
+        required=("query",),
+    ),
+    _function_schema(
+        name="drive_get_file",
+        description="Get file content from Google Drive (text-based files). Returns metadata for binary files.",
+        properties={
+            "file_id": {"type": "string", "description": "Google Drive file ID."},
+            "integration_account_id": {"type": "string", "description": "Optional: specific integration account id."},
+            "__ui": {"type": "object", "description": "UI-only metadata (ignored by the tool).", "properties": {"spinner_text": {"type": "string"}}},
+        },
+        required=("file_id",),
+    ),
+    _function_schema(
+        name="drive_list_files",
+        description="List files in a Google Drive folder (or root if no folder specified).",
+        properties={
+            "folder_id": {"type": "string", "description": "Google Drive folder ID (optional, omit for root)."},
+            "max_results": {"type": "integer", "description": "Maximum files to return (1-100).", "minimum": 1, "maximum": 100, "default": 20},
+            "integration_account_id": {"type": "string", "description": "Optional: specific integration account id."},
+            "__ui": {"type": "object", "description": "UI-only metadata (ignored by the tool).", "properties": {"spinner_text": {"type": "string"}}},
+        },
+        required=(),
+    ),
+    # ═══════════════════════════════════════════════════════════════════════
+    # NATIVE INTEGRATIONS — OneDrive
+    # ═══════════════════════════════════════════════════════════════════════
+    _function_schema(
+        name="onedrive_search_files",
+        description="Search files in the connected OneDrive.",
+        properties={
+            "query": {"type": "string", "description": "Search query."},
+            "max_results": {"type": "integer", "description": "Maximum files to return (1-50).", "minimum": 1, "maximum": 50, "default": 10},
+            "integration_account_id": {"type": "string", "description": "Optional: specific integration account id."},
+            "__ui": {"type": "object", "description": "UI-only metadata (ignored by the tool).", "properties": {"spinner_text": {"type": "string"}}},
+        },
+        required=("query",),
+    ),
+    _function_schema(
+        name="onedrive_get_file",
+        description="Get file content from OneDrive (text-based files). Returns metadata for binary files.",
+        properties={
+            "file_id": {"type": "string", "description": "OneDrive item ID."},
+            "integration_account_id": {"type": "string", "description": "Optional: specific integration account id."},
+            "__ui": {"type": "object", "description": "UI-only metadata (ignored by the tool).", "properties": {"spinner_text": {"type": "string"}}},
+        },
+        required=("file_id",),
+    ),
+    _function_schema(
+        name="onedrive_list_files",
+        description="List files in a OneDrive folder (or root if no folder specified).",
+        properties={
+            "folder_id": {"type": "string", "description": "OneDrive folder ID (optional, omit for root)."},
+            "max_results": {"type": "integer", "description": "Maximum files to return (1-100).", "minimum": 1, "maximum": 100, "default": 20},
+            "integration_account_id": {"type": "string", "description": "Optional: specific integration account id."},
+            "__ui": {"type": "object", "description": "UI-only metadata (ignored by the tool).", "properties": {"spinner_text": {"type": "string"}}},
+        },
+        required=(),
+    ),
+    # ═══════════════════════════════════════════════════════════════════════
+    # NATIVE INTEGRATIONS — Slack
+    # ═══════════════════════════════════════════════════════════════════════
+    _function_schema(
+        name="slack_list_channels",
+        description="List Slack channels the user can access.",
+        properties={
+            "max_results": {"type": "integer", "description": "Maximum channels to return (1-100).", "minimum": 1, "maximum": 100, "default": 20},
+            "integration_account_id": {"type": "string", "description": "Optional: specific integration account id."},
+            "__ui": {"type": "object", "description": "UI-only metadata (ignored by the tool).", "properties": {"spinner_text": {"type": "string"}}},
+        },
+        required=(),
+    ),
+    _function_schema(
+        name="slack_read_channel",
+        description="Read recent messages from a Slack channel.",
+        properties={
+            "channel_id": {"type": "string", "description": "Slack channel ID."},
+            "limit": {"type": "integer", "description": "Maximum messages to return (1-100).", "minimum": 1, "maximum": 100, "default": 20},
+            "integration_account_id": {"type": "string", "description": "Optional: specific integration account id."},
+            "__ui": {"type": "object", "description": "UI-only metadata (ignored by the tool).", "properties": {"spinner_text": {"type": "string"}}},
+        },
+        required=("channel_id",),
+    ),
+    _function_schema(
+        name="slack_send_message",
+        description="Send a message to a Slack channel.",
+        properties={
+            "channel_id": {"type": "string", "description": "Slack channel ID."},
+            "text": {"type": "string", "description": "Message text to send."},
+            "thread_ts": {"type": "string", "description": "Thread timestamp to reply in thread (optional)."},
+            "integration_account_id": {"type": "string", "description": "Optional: specific integration account id."},
+            "__ui": {"type": "object", "description": "UI-only metadata (ignored by the tool).", "properties": {"spinner_text": {"type": "string"}}},
+        },
+        required=("channel_id", "text"),
+    ),
+    _function_schema(
+        name="slack_search_messages",
+        description="Search messages across the connected Slack workspace.",
+        properties={
+            "query": {"type": "string", "description": "Search query."},
+            "max_results": {"type": "integer", "description": "Maximum results (1-50).", "minimum": 1, "maximum": 50, "default": 10},
+            "integration_account_id": {"type": "string", "description": "Optional: specific integration account id."},
+            "__ui": {"type": "object", "description": "UI-only metadata (ignored by the tool).", "properties": {"spinner_text": {"type": "string"}}},
+        },
+        required=("query",),
+    ),
+    # ═══════════════════════════════════════════════════════════════════════
+    # NATIVE INTEGRATIONS — HubSpot
+    # ═══════════════════════════════════════════════════════════════════════
+    _function_schema(
+        name="hubspot_search_contacts",
+        description="Search contacts in the connected HubSpot CRM.",
+        properties={
+            "query": {"type": "string", "description": "Search query (name, email, company, etc.)."},
+            "max_results": {"type": "integer", "description": "Maximum results (1-100).", "minimum": 1, "maximum": 100, "default": 10},
+            "integration_account_id": {"type": "string", "description": "Optional: specific integration account id."},
+            "__ui": {"type": "object", "description": "UI-only metadata (ignored by the tool).", "properties": {"spinner_text": {"type": "string"}}},
+        },
+        required=("query",),
+    ),
+    _function_schema(
+        name="hubspot_get_contact",
+        description="Get details of a specific HubSpot contact by ID.",
+        properties={
+            "contact_id": {"type": "string", "description": "HubSpot contact ID."},
+            "integration_account_id": {"type": "string", "description": "Optional: specific integration account id."},
+            "__ui": {"type": "object", "description": "UI-only metadata (ignored by the tool).", "properties": {"spinner_text": {"type": "string"}}},
+        },
+        required=("contact_id",),
+    ),
+    _function_schema(
+        name="hubspot_create_contact",
+        description="Create a new contact in HubSpot CRM.",
+        properties={
+            "email": {"type": "string", "description": "Contact email address (required)."},
+            "first_name": {"type": "string", "description": "First name (optional)."},
+            "last_name": {"type": "string", "description": "Last name (optional)."},
+            "phone": {"type": "string", "description": "Phone number (optional)."},
+            "company": {"type": "string", "description": "Company name (optional)."},
+            "job_title": {"type": "string", "description": "Job title (optional)."},
+            "integration_account_id": {"type": "string", "description": "Optional: specific integration account id."},
+            "__ui": {"type": "object", "description": "UI-only metadata (ignored by the tool).", "properties": {"spinner_text": {"type": "string"}}},
+        },
+        required=("email",),
+    ),
+    _function_schema(
+        name="hubspot_search_deals",
+        description="Search deals in the connected HubSpot CRM.",
+        properties={
+            "query": {"type": "string", "description": "Search query (deal name, etc.)."},
+            "max_results": {"type": "integer", "description": "Maximum results (1-100).", "minimum": 1, "maximum": 100, "default": 10},
+            "integration_account_id": {"type": "string", "description": "Optional: specific integration account id."},
+            "__ui": {"type": "object", "description": "UI-only metadata (ignored by the tool).", "properties": {"spinner_text": {"type": "string"}}},
+        },
+        required=("query",),
     ),
 )
 
@@ -15246,6 +15506,735 @@ def _retrieve_earlier_context_handler(
     )
     return payload
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Native Integration tool helpers and handlers
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _integration_error(tool: str, *, error_code: str, hint: str) -> Mapping[str, object]:
+    return {
+        "tool": tool,
+        "status": "error",
+        "error": error_code,
+        "error_code": error_code,
+        "hint": hint,
+    }
+
+
+def _resolve_integration_account_for_tool(
+    *,
+    integration_type: str,
+    tool: str,
+    arguments: Mapping[str, object],
+    conversation: Conversation,
+) -> tuple[IntegrationAccount | None, Mapping[str, object] | None]:
+    """
+    Resolve the IntegrationAccount to use for a tool call.
+
+    Preferred: explicit integration_account_id argument.
+    Fallback: conversation metadata actor_user_id.
+    """
+
+    raw_account_id = _coerce_str(arguments.get("integration_account_id") or arguments.get("integrationAccountId")).strip()
+    if raw_account_id:
+        try:
+            account_uuid = uuid.UUID(raw_account_id)
+        except (TypeError, ValueError):
+            return None, _integration_error(tool, error_code="validation_error", hint="integration_account_id must be a valid UUID.")
+        account = IntegrationAccount.objects.filter(
+            id=account_uuid,
+            integration_type=integration_type,
+            business_profile_id=getattr(conversation, "business_profile_id", None),
+        ).first()
+        if not account:
+            return None, _integration_error(tool, error_code="integration_account_not_found", hint=f"{integration_type} integration account not found.")
+        if account.status != IntegrationAccountStatus.CONNECTED:
+            return None, _integration_error(tool, error_code="integration_not_connected", hint=f"{integration_type} integration is not connected.")
+        return account, None
+
+    meta = conversation.metadata if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
+    actor_user_id = None
+    if isinstance(meta, Mapping):
+        actor_user_id = meta.get("actor_user_id") or meta.get("actorUserId") or meta.get("user_id") or meta.get("userId")
+    if actor_user_id:
+        try:
+            user_uuid = uuid.UUID(str(actor_user_id))
+        except (TypeError, ValueError):
+            user_uuid = None
+        if user_uuid:
+            account = IntegrationAccount.objects.filter(
+                business_profile_id=getattr(conversation, "business_profile_id", None),
+                user_id=user_uuid,
+                integration_type=integration_type,
+            ).first()
+            if account and account.status == IntegrationAccountStatus.CONNECTED:
+                return account, None
+
+    return None, _integration_error(
+        tool,
+        error_code="integration_not_connected",
+        hint=f"No connected {integration_type} account found. Connect it via the Integrations page first.",
+    )
+
+
+def _get_integration_access_token(account: IntegrationAccount, tool: str) -> tuple[str | None, Mapping[str, object] | None]:
+    """Refresh credentials and extract access_token. Returns (token, error)."""
+    try:
+        refreshed = ensure_fresh_integration_credentials(account)
+    except Exception:
+        logger.exception("integration.oauth_refresh_failed tool=%s account=%s", tool, getattr(account, "id", None))
+        return None, _integration_error(
+            tool,
+            error_code="oauth_refresh_failed",
+            hint="Integration OAuth refresh failed. Reconnect the integration and try again.",
+        )
+    creds = refreshed.credentials or {}
+    access_token = str(creds.get("access_token") or "").strip()
+    if not access_token:
+        return None, _integration_error(
+            tool,
+            error_code="missing_access_token",
+            hint="Integration account is missing an access token. Reconnect and try again.",
+        )
+    return access_token, None
+
+
+# ── Google Calendar handlers ──
+
+def _calendar_list_events_handler(
+    arguments: Mapping[str, object],
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context
+    account, error = _resolve_integration_account_for_tool(
+        integration_type=IntegrationType.GOOGLE_CALENDAR, tool="calendar_list_events",
+        arguments=arguments, conversation=conversation,
+    )
+    if error:
+        return error
+    assert account is not None
+
+    access_token, token_error = _get_integration_access_token(account, "calendar_list_events")
+    if token_error:
+        return token_error
+    assert access_token is not None
+
+    time_min = _coerce_str(arguments.get("time_min")).strip() or None
+    time_max = _coerce_str(arguments.get("time_max")).strip() or None
+    query = _coerce_str(arguments.get("query")).strip() or None
+    try:
+        max_results = int(arguments.get("max_results") or 10)
+    except (TypeError, ValueError):
+        max_results = 10
+
+    try:
+        payload = calendar_list_events(
+            access_token, time_min=time_min, time_max=time_max,
+            query=query, max_results=max_results,
+        )
+    except CalendarApiError as exc:
+        return _integration_error("calendar_list_events", error_code="provider_error", hint=str(exc)[:200])
+
+    return {"tool": "calendar_list_events", "status": "ok", "integration_account_id": str(account.id), **payload}
+
+
+def _calendar_get_event_handler(
+    arguments: Mapping[str, object],
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context
+    event_id = _coerce_str(arguments.get("event_id")).strip()
+    if not event_id:
+        return _integration_error("calendar_get_event", error_code="missing_event_id", hint="event_id is required.")
+
+    account, error = _resolve_integration_account_for_tool(
+        integration_type=IntegrationType.GOOGLE_CALENDAR, tool="calendar_get_event",
+        arguments=arguments, conversation=conversation,
+    )
+    if error:
+        return error
+    assert account is not None
+
+    access_token, token_error = _get_integration_access_token(account, "calendar_get_event")
+    if token_error:
+        return token_error
+    assert access_token is not None
+
+    try:
+        payload = calendar_get_event(access_token, event_id)
+    except CalendarApiError as exc:
+        return _integration_error("calendar_get_event", error_code="provider_error", hint=str(exc)[:200])
+
+    return {"tool": "calendar_get_event", "status": "ok", "integration_account_id": str(account.id), **payload}
+
+
+def _calendar_create_event_handler(
+    arguments: Mapping[str, object],
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context
+    summary = _coerce_str(arguments.get("summary")).strip()
+    start_time = _coerce_str(arguments.get("start_time")).strip()
+    end_time = _coerce_str(arguments.get("end_time")).strip()
+    if not summary or not start_time or not end_time:
+        return _integration_error("calendar_create_event", error_code="validation_error", hint="summary, start_time, and end_time are required.")
+
+    account, error = _resolve_integration_account_for_tool(
+        integration_type=IntegrationType.GOOGLE_CALENDAR, tool="calendar_create_event",
+        arguments=arguments, conversation=conversation,
+    )
+    if error:
+        return error
+    assert account is not None
+
+    access_token, token_error = _get_integration_access_token(account, "calendar_create_event")
+    if token_error:
+        return token_error
+    assert access_token is not None
+
+    description = _coerce_str(arguments.get("description")).strip()
+    location = _coerce_str(arguments.get("location")).strip()
+    raw_attendees = arguments.get("attendees")
+    attendees = list(raw_attendees) if isinstance(raw_attendees, (list, tuple)) else None
+
+    try:
+        payload = calendar_create_event(
+            access_token, summary=summary, start_time=start_time, end_time=end_time,
+            description=description, attendees=attendees, location=location,
+        )
+    except CalendarApiError as exc:
+        return _integration_error("calendar_create_event", error_code="provider_error", hint=str(exc)[:200])
+
+    return {"tool": "calendar_create_event", "status": "ok", "integration_account_id": str(account.id), **payload}
+
+
+def _calendar_update_event_handler(
+    arguments: Mapping[str, object],
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context
+    event_id = _coerce_str(arguments.get("event_id")).strip()
+    if not event_id:
+        return _integration_error("calendar_update_event", error_code="missing_event_id", hint="event_id is required.")
+
+    account, error = _resolve_integration_account_for_tool(
+        integration_type=IntegrationType.GOOGLE_CALENDAR, tool="calendar_update_event",
+        arguments=arguments, conversation=conversation,
+    )
+    if error:
+        return error
+    assert account is not None
+
+    access_token, token_error = _get_integration_access_token(account, "calendar_update_event")
+    if token_error:
+        return token_error
+    assert access_token is not None
+
+    updates: dict[str, Any] = {}
+    for key in ("summary", "start_time", "end_time", "description", "location"):
+        val = _coerce_str(arguments.get(key)).strip()
+        if val:
+            updates[key] = val
+
+    try:
+        payload = calendar_update_event(access_token, event_id, updates=updates)
+    except CalendarApiError as exc:
+        return _integration_error("calendar_update_event", error_code="provider_error", hint=str(exc)[:200])
+
+    return {"tool": "calendar_update_event", "status": "ok", "integration_account_id": str(account.id), **payload}
+
+
+# ── Google Drive handlers ──
+
+def _drive_search_files_handler(
+    arguments: Mapping[str, object],
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context
+    query = _coerce_str(arguments.get("query")).strip()
+    if not query:
+        return _integration_error("drive_search_files", error_code="missing_query", hint="query is required.")
+
+    account, error = _resolve_integration_account_for_tool(
+        integration_type=IntegrationType.GOOGLE_DRIVE, tool="drive_search_files",
+        arguments=arguments, conversation=conversation,
+    )
+    if error:
+        return error
+    assert account is not None
+
+    access_token, token_error = _get_integration_access_token(account, "drive_search_files")
+    if token_error:
+        return token_error
+    assert access_token is not None
+
+    try:
+        max_results = int(arguments.get("max_results") or 10)
+    except (TypeError, ValueError):
+        max_results = 10
+
+    try:
+        payload = drive_search_files(access_token, query=query, max_results=max_results)
+    except DriveApiError as exc:
+        return _integration_error("drive_search_files", error_code="provider_error", hint=str(exc)[:200])
+
+    return {"tool": "drive_search_files", "status": "ok", "integration_account_id": str(account.id), **payload}
+
+
+def _drive_get_file_handler(
+    arguments: Mapping[str, object],
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context
+    file_id = _coerce_str(arguments.get("file_id")).strip()
+    if not file_id:
+        return _integration_error("drive_get_file", error_code="missing_file_id", hint="file_id is required.")
+
+    account, error = _resolve_integration_account_for_tool(
+        integration_type=IntegrationType.GOOGLE_DRIVE, tool="drive_get_file",
+        arguments=arguments, conversation=conversation,
+    )
+    if error:
+        return error
+    assert account is not None
+
+    access_token, token_error = _get_integration_access_token(account, "drive_get_file")
+    if token_error:
+        return token_error
+    assert access_token is not None
+
+    try:
+        payload = drive_get_file_content(access_token, file_id)
+    except DriveApiError as exc:
+        return _integration_error("drive_get_file", error_code="provider_error", hint=str(exc)[:200])
+
+    return {"tool": "drive_get_file", "status": "ok", "integration_account_id": str(account.id), **payload}
+
+
+def _drive_list_files_handler(
+    arguments: Mapping[str, object],
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context
+    account, error = _resolve_integration_account_for_tool(
+        integration_type=IntegrationType.GOOGLE_DRIVE, tool="drive_list_files",
+        arguments=arguments, conversation=conversation,
+    )
+    if error:
+        return error
+    assert account is not None
+
+    access_token, token_error = _get_integration_access_token(account, "drive_list_files")
+    if token_error:
+        return token_error
+    assert access_token is not None
+
+    folder_id = _coerce_str(arguments.get("folder_id")).strip() or None
+    try:
+        max_results = int(arguments.get("max_results") or 20)
+    except (TypeError, ValueError):
+        max_results = 20
+
+    try:
+        payload = drive_list_files(access_token, folder_id=folder_id, max_results=max_results)
+    except DriveApiError as exc:
+        return _integration_error("drive_list_files", error_code="provider_error", hint=str(exc)[:200])
+
+    return {"tool": "drive_list_files", "status": "ok", "integration_account_id": str(account.id), **payload}
+
+
+# ── OneDrive handlers ──
+
+def _onedrive_search_files_handler(
+    arguments: Mapping[str, object],
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context
+    query = _coerce_str(arguments.get("query")).strip()
+    if not query:
+        return _integration_error("onedrive_search_files", error_code="missing_query", hint="query is required.")
+
+    account, error = _resolve_integration_account_for_tool(
+        integration_type=IntegrationType.ONEDRIVE, tool="onedrive_search_files",
+        arguments=arguments, conversation=conversation,
+    )
+    if error:
+        return error
+    assert account is not None
+
+    access_token, token_error = _get_integration_access_token(account, "onedrive_search_files")
+    if token_error:
+        return token_error
+    assert access_token is not None
+
+    try:
+        max_results = int(arguments.get("max_results") or 10)
+    except (TypeError, ValueError):
+        max_results = 10
+
+    try:
+        payload = onedrive_search_files(access_token, query=query, max_results=max_results)
+    except OneDriveApiError as exc:
+        return _integration_error("onedrive_search_files", error_code="provider_error", hint=str(exc)[:200])
+
+    return {"tool": "onedrive_search_files", "status": "ok", "integration_account_id": str(account.id), **payload}
+
+
+def _onedrive_get_file_handler(
+    arguments: Mapping[str, object],
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context
+    file_id = _coerce_str(arguments.get("file_id")).strip()
+    if not file_id:
+        return _integration_error("onedrive_get_file", error_code="missing_file_id", hint="file_id is required.")
+
+    account, error = _resolve_integration_account_for_tool(
+        integration_type=IntegrationType.ONEDRIVE, tool="onedrive_get_file",
+        arguments=arguments, conversation=conversation,
+    )
+    if error:
+        return error
+    assert account is not None
+
+    access_token, token_error = _get_integration_access_token(account, "onedrive_get_file")
+    if token_error:
+        return token_error
+    assert access_token is not None
+
+    try:
+        payload = onedrive_get_file_content(access_token, file_id)
+    except OneDriveApiError as exc:
+        return _integration_error("onedrive_get_file", error_code="provider_error", hint=str(exc)[:200])
+
+    return {"tool": "onedrive_get_file", "status": "ok", "integration_account_id": str(account.id), **payload}
+
+
+def _onedrive_list_files_handler(
+    arguments: Mapping[str, object],
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context
+    account, error = _resolve_integration_account_for_tool(
+        integration_type=IntegrationType.ONEDRIVE, tool="onedrive_list_files",
+        arguments=arguments, conversation=conversation,
+    )
+    if error:
+        return error
+    assert account is not None
+
+    access_token, token_error = _get_integration_access_token(account, "onedrive_list_files")
+    if token_error:
+        return token_error
+    assert access_token is not None
+
+    folder_id = _coerce_str(arguments.get("folder_id")).strip() or None
+    try:
+        max_results = int(arguments.get("max_results") or 20)
+    except (TypeError, ValueError):
+        max_results = 20
+
+    try:
+        payload = onedrive_list_files(access_token, folder_id=folder_id, max_results=max_results)
+    except OneDriveApiError as exc:
+        return _integration_error("onedrive_list_files", error_code="provider_error", hint=str(exc)[:200])
+
+    return {"tool": "onedrive_list_files", "status": "ok", "integration_account_id": str(account.id), **payload}
+
+
+# ── Slack handlers ──
+
+def _slack_list_channels_handler(
+    arguments: Mapping[str, object],
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context
+    account, error = _resolve_integration_account_for_tool(
+        integration_type=IntegrationType.SLACK, tool="slack_list_channels",
+        arguments=arguments, conversation=conversation,
+    )
+    if error:
+        return error
+    assert account is not None
+
+    access_token, token_error = _get_integration_access_token(account, "slack_list_channels")
+    if token_error:
+        return token_error
+    assert access_token is not None
+
+    try:
+        max_results = int(arguments.get("max_results") or 20)
+    except (TypeError, ValueError):
+        max_results = 20
+
+    try:
+        payload = slack_list_channels(access_token, max_results=max_results)
+    except SlackApiError as exc:
+        return _integration_error("slack_list_channels", error_code="provider_error", hint=str(exc)[:200])
+
+    return {"tool": "slack_list_channels", "status": "ok", "integration_account_id": str(account.id), **payload}
+
+
+def _slack_read_channel_handler(
+    arguments: Mapping[str, object],
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context
+    channel_id = _coerce_str(arguments.get("channel_id")).strip()
+    if not channel_id:
+        return _integration_error("slack_read_channel", error_code="missing_channel_id", hint="channel_id is required.")
+
+    account, error = _resolve_integration_account_for_tool(
+        integration_type=IntegrationType.SLACK, tool="slack_read_channel",
+        arguments=arguments, conversation=conversation,
+    )
+    if error:
+        return error
+    assert account is not None
+
+    access_token, token_error = _get_integration_access_token(account, "slack_read_channel")
+    if token_error:
+        return token_error
+    assert access_token is not None
+
+    try:
+        limit = int(arguments.get("limit") or 20)
+    except (TypeError, ValueError):
+        limit = 20
+
+    try:
+        payload = slack_read_channel(access_token, channel_id, limit=limit)
+    except SlackApiError as exc:
+        return _integration_error("slack_read_channel", error_code="provider_error", hint=str(exc)[:200])
+
+    return {"tool": "slack_read_channel", "status": "ok", "integration_account_id": str(account.id), **payload}
+
+
+def _slack_send_message_handler(
+    arguments: Mapping[str, object],
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context
+    channel_id = _coerce_str(arguments.get("channel_id")).strip()
+    text = _coerce_str(arguments.get("text")).strip()
+    if not channel_id or not text:
+        return _integration_error("slack_send_message", error_code="validation_error", hint="channel_id and text are required.")
+
+    account, error = _resolve_integration_account_for_tool(
+        integration_type=IntegrationType.SLACK, tool="slack_send_message",
+        arguments=arguments, conversation=conversation,
+    )
+    if error:
+        return error
+    assert account is not None
+
+    access_token, token_error = _get_integration_access_token(account, "slack_send_message")
+    if token_error:
+        return token_error
+    assert access_token is not None
+
+    thread_ts = _coerce_str(arguments.get("thread_ts")).strip() or None
+
+    try:
+        payload = slack_send_message(access_token, channel_id=channel_id, text=text, thread_ts=thread_ts)
+    except SlackApiError as exc:
+        return _integration_error("slack_send_message", error_code="provider_error", hint=str(exc)[:200])
+
+    return {"tool": "slack_send_message", "status": "ok", "integration_account_id": str(account.id), **payload}
+
+
+def _slack_search_messages_handler(
+    arguments: Mapping[str, object],
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context
+    query = _coerce_str(arguments.get("query")).strip()
+    if not query:
+        return _integration_error("slack_search_messages", error_code="missing_query", hint="query is required.")
+
+    account, error = _resolve_integration_account_for_tool(
+        integration_type=IntegrationType.SLACK, tool="slack_search_messages",
+        arguments=arguments, conversation=conversation,
+    )
+    if error:
+        return error
+    assert account is not None
+
+    access_token, token_error = _get_integration_access_token(account, "slack_search_messages")
+    if token_error:
+        return token_error
+    assert access_token is not None
+
+    try:
+        max_results = int(arguments.get("max_results") or 10)
+    except (TypeError, ValueError):
+        max_results = 10
+
+    try:
+        payload = slack_search_messages(access_token, query=query, max_results=max_results)
+    except SlackApiError as exc:
+        return _integration_error("slack_search_messages", error_code="provider_error", hint=str(exc)[:200])
+
+    return {"tool": "slack_search_messages", "status": "ok", "integration_account_id": str(account.id), **payload}
+
+
+# ── HubSpot handlers ──
+
+def _hubspot_search_contacts_handler(
+    arguments: Mapping[str, object],
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context
+    query = _coerce_str(arguments.get("query")).strip()
+    if not query:
+        return _integration_error("hubspot_search_contacts", error_code="missing_query", hint="query is required.")
+
+    account, error = _resolve_integration_account_for_tool(
+        integration_type=IntegrationType.HUBSPOT, tool="hubspot_search_contacts",
+        arguments=arguments, conversation=conversation,
+    )
+    if error:
+        return error
+    assert account is not None
+
+    access_token, token_error = _get_integration_access_token(account, "hubspot_search_contacts")
+    if token_error:
+        return token_error
+    assert access_token is not None
+
+    try:
+        max_results = int(arguments.get("max_results") or 10)
+    except (TypeError, ValueError):
+        max_results = 10
+
+    try:
+        payload = hubspot_search_contacts(access_token, query=query, max_results=max_results)
+    except HubSpotApiError as exc:
+        return _integration_error("hubspot_search_contacts", error_code="provider_error", hint=str(exc)[:200])
+
+    return {"tool": "hubspot_search_contacts", "status": "ok", "integration_account_id": str(account.id), **payload}
+
+
+def _hubspot_get_contact_handler(
+    arguments: Mapping[str, object],
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context
+    contact_id = _coerce_str(arguments.get("contact_id")).strip()
+    if not contact_id:
+        return _integration_error("hubspot_get_contact", error_code="missing_contact_id", hint="contact_id is required.")
+
+    account, error = _resolve_integration_account_for_tool(
+        integration_type=IntegrationType.HUBSPOT, tool="hubspot_get_contact",
+        arguments=arguments, conversation=conversation,
+    )
+    if error:
+        return error
+    assert account is not None
+
+    access_token, token_error = _get_integration_access_token(account, "hubspot_get_contact")
+    if token_error:
+        return token_error
+    assert access_token is not None
+
+    try:
+        payload = hubspot_get_contact(access_token, contact_id)
+    except HubSpotApiError as exc:
+        return _integration_error("hubspot_get_contact", error_code="provider_error", hint=str(exc)[:200])
+
+    return {"tool": "hubspot_get_contact", "status": "ok", "integration_account_id": str(account.id), **payload}
+
+
+def _hubspot_create_contact_handler(
+    arguments: Mapping[str, object],
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context
+    email = _coerce_str(arguments.get("email")).strip()
+    if not email:
+        return _integration_error("hubspot_create_contact", error_code="validation_error", hint="email is required.")
+
+    account, error = _resolve_integration_account_for_tool(
+        integration_type=IntegrationType.HUBSPOT, tool="hubspot_create_contact",
+        arguments=arguments, conversation=conversation,
+    )
+    if error:
+        return error
+    assert account is not None
+
+    access_token, token_error = _get_integration_access_token(account, "hubspot_create_contact")
+    if token_error:
+        return token_error
+    assert access_token is not None
+
+    try:
+        payload = hubspot_create_contact(
+            access_token,
+            email=email,
+            first_name=_coerce_str(arguments.get("first_name")).strip(),
+            last_name=_coerce_str(arguments.get("last_name")).strip(),
+            phone=_coerce_str(arguments.get("phone")).strip(),
+            company=_coerce_str(arguments.get("company")).strip(),
+            job_title=_coerce_str(arguments.get("job_title")).strip(),
+        )
+    except HubSpotApiError as exc:
+        return _integration_error("hubspot_create_contact", error_code="provider_error", hint=str(exc)[:200])
+
+    return {"tool": "hubspot_create_contact", "status": "ok", "integration_account_id": str(account.id), **payload}
+
+
+def _hubspot_search_deals_handler(
+    arguments: Mapping[str, object],
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context
+    query = _coerce_str(arguments.get("query")).strip()
+    if not query:
+        return _integration_error("hubspot_search_deals", error_code="missing_query", hint="query is required.")
+
+    account, error = _resolve_integration_account_for_tool(
+        integration_type=IntegrationType.HUBSPOT, tool="hubspot_search_deals",
+        arguments=arguments, conversation=conversation,
+    )
+    if error:
+        return error
+    assert account is not None
+
+    access_token, token_error = _get_integration_access_token(account, "hubspot_search_deals")
+    if token_error:
+        return token_error
+    assert access_token is not None
+
+    try:
+        max_results = int(arguments.get("max_results") or 10)
+    except (TypeError, ValueError):
+        max_results = 10
+
+    try:
+        payload = hubspot_search_deals(access_token, query=query, max_results=max_results)
+    except HubSpotApiError as exc:
+        return _integration_error("hubspot_search_deals", error_code="provider_error", hint=str(exc)[:200])
+
+    return {"tool": "hubspot_search_deals", "status": "ok", "integration_account_id": str(account.id), **payload}
+
+
 # Voice tools live in the voice app to keep this registry focused.
 try:  # pragma: no cover - optional feature gate
     from apps.voice.mcp_tools import initiate_phone_call_tool as _initiate_phone_call_handler
@@ -15294,5 +16283,28 @@ _TOOL_HANDLERS: dict[str, ToolHandler] = {
     "email_get_thread": _email_get_thread_handler,
     "email_create_draft": _email_create_draft_handler,
     "email_send_draft": _email_send_draft_handler,
+    # Native integrations — Google Calendar
+    "calendar_list_events": _calendar_list_events_handler,
+    "calendar_get_event": _calendar_get_event_handler,
+    "calendar_create_event": _calendar_create_event_handler,
+    "calendar_update_event": _calendar_update_event_handler,
+    # Native integrations — Google Drive
+    "drive_search_files": _drive_search_files_handler,
+    "drive_get_file": _drive_get_file_handler,
+    "drive_list_files": _drive_list_files_handler,
+    # Native integrations — OneDrive
+    "onedrive_search_files": _onedrive_search_files_handler,
+    "onedrive_get_file": _onedrive_get_file_handler,
+    "onedrive_list_files": _onedrive_list_files_handler,
+    # Native integrations — Slack
+    "slack_list_channels": _slack_list_channels_handler,
+    "slack_read_channel": _slack_read_channel_handler,
+    "slack_send_message": _slack_send_message_handler,
+    "slack_search_messages": _slack_search_messages_handler,
+    # Native integrations — HubSpot
+    "hubspot_search_contacts": _hubspot_search_contacts_handler,
+    "hubspot_get_contact": _hubspot_get_contact_handler,
+    "hubspot_create_contact": _hubspot_create_contact_handler,
+    "hubspot_search_deals": _hubspot_search_deals_handler,
     **({"initiate_phone_call": _initiate_phone_call_handler} if _initiate_phone_call_handler else {}),
 }

@@ -28,6 +28,7 @@ from apps.accounts.models import (
     BusinessProfile,
     EmailAccount,
     EmailAccountStatus,
+    IntegrationAccount,
     McpConnection,
     McpConnectionAgentOptOut,
     McpConnectionApprovalMode,
@@ -513,16 +514,15 @@ def _mcp_marketplace_catalog() -> list[dict[str, Any]]:
         {
             "key": "slack",
             "name": "Slack",
-            "description": "Send messages, read channels, and automate team communication.",
+            "description": "Send messages, read channels, and search across your Slack workspace. Native integration with encrypted credentials.",
             "category": "communication",
             "industries": ["marketing", "saas_tech", "consulting", "general"],
-            "connectionType": "oauth",
-            "oauthProvider": "slack",
-            "recommendedAuth": "bearer",
-            "serverUrl": "https://mcp.composio.dev/slack",
-            "docsUrl": "https://mcp.composio.dev/",
-            "badge": "Popular",
-            "tier": 2,
+            "connectionType": "integration_oauth",
+            "oauthProvider": "slack_native",
+            "serverUrl": "__builtin__",
+            "docsUrl": "https://api.slack.com/",
+            "badge": "Native",
+            "tier": 1,
             "setupFields": [],
         },
         {
@@ -561,16 +561,15 @@ def _mcp_marketplace_catalog() -> list[dict[str, Any]]:
         {
             "key": "google_drive",
             "name": "Google Drive",
-            "description": "Access, create, and manage files in Google Drive.",
+            "description": "Search, list, and read files in Google Drive. Native integration with encrypted credentials.",
             "category": "storage",
             "industries": ["marketing", "ecommerce", "legal", "consulting", "general"],
-            "connectionType": "oauth",
-            "oauthProvider": "google",
-            "recommendedAuth": "bearer",
-            "serverUrl": "https://mcp.composio.dev/googledrive",
-            "docsUrl": "https://mcp.composio.dev/",
-            "badge": "Popular",
-            "tier": 2,
+            "connectionType": "integration_oauth",
+            "oauthProvider": "google_drive",
+            "serverUrl": "__builtin__",
+            "docsUrl": "https://developers.google.com/drive/api",
+            "badge": "Native",
+            "tier": 1,
             "setupFields": [],
         },
         {
@@ -590,16 +589,15 @@ def _mcp_marketplace_catalog() -> list[dict[str, Any]]:
         {
             "key": "onedrive",
             "name": "OneDrive",
-            "description": "Microsoft OneDrive file access and management.",
+            "description": "Search, list, and read files in OneDrive. Native integration with encrypted credentials.",
             "category": "storage",
             "industries": ["consulting", "finance", "legal", "general"],
-            "connectionType": "oauth",
-            "oauthProvider": "microsoft",
-            "recommendedAuth": "bearer",
-            "serverUrl": "https://mcp.composio.dev/onedrive",
-            "docsUrl": "https://mcp.composio.dev/",
-            "badge": "Template",
-            "tier": 2,
+            "connectionType": "integration_oauth",
+            "oauthProvider": "microsoft_drive",
+            "serverUrl": "__builtin__",
+            "docsUrl": "https://learn.microsoft.com/en-us/graph/api/resources/onedrive",
+            "badge": "Native",
+            "tier": 1,
             "setupFields": [],
         },
         # ═══════════════════════════════════════════════════════════════════════
@@ -669,16 +667,15 @@ def _mcp_marketplace_catalog() -> list[dict[str, Any]]:
         {
             "key": "google_calendar",
             "name": "Google Calendar",
-            "description": "Manage events, schedules, and calendar entries.",
+            "description": "List, create, and manage calendar events. Native integration with encrypted credentials.",
             "category": "productivity",
             "industries": ["real_estate", "consulting", "legal", "healthcare", "general"],
-            "connectionType": "oauth",
-            "oauthProvider": "google",
-            "recommendedAuth": "bearer",
-            "serverUrl": "https://mcp.composio.dev/googlecalendar",
-            "docsUrl": "https://mcp.composio.dev/",
-            "badge": "Popular",
-            "tier": 2,
+            "connectionType": "integration_oauth",
+            "oauthProvider": "google_calendar",
+            "serverUrl": "__builtin__",
+            "docsUrl": "https://developers.google.com/calendar/api",
+            "badge": "Native",
+            "tier": 1,
             "setupFields": [],
         },
         # ═══════════════════════════════════════════════════════════════════════
@@ -702,16 +699,15 @@ def _mcp_marketplace_catalog() -> list[dict[str, Any]]:
         {
             "key": "hubspot",
             "name": "HubSpot",
-            "description": "CRM, contacts, deals, and marketing automation.",
+            "description": "Search contacts, manage deals, and access CRM data. Native integration with encrypted credentials.",
             "category": "crm",
             "industries": ["marketing", "saas_tech", "consulting", "general"],
-            "connectionType": "oauth",
+            "connectionType": "integration_oauth",
             "oauthProvider": "hubspot",
-            "recommendedAuth": "bearer",
-            "serverUrl": "https://mcp.composio.dev/hubspot",
-            "docsUrl": "https://mcp.composio.dev/",
-            "badge": "Popular",
-            "tier": 3,
+            "serverUrl": "__builtin__",
+            "docsUrl": "https://developers.hubspot.com/docs/api/overview",
+            "badge": "Native",
+            "tier": 1,
             "setupFields": [],
         },
         {
@@ -1202,6 +1198,31 @@ def _get_email_accounts_payload(business: BusinessProfile) -> list[dict[str, Any
     return result
 
 
+def _get_integration_accounts_payload(business: BusinessProfile) -> list[dict[str, Any]]:
+    """
+    Return serialized native integration accounts for the business.
+
+    These are first-party integrations (Calendar, Drive, OneDrive, Slack, HubSpot)
+    that create IntegrationAccount records.
+    """
+    accounts = IntegrationAccount.objects.filter(business_profile=business).order_by("integration_type")
+    result = []
+    for account in accounts:
+        result.append({
+            "id": str(account.id),
+            "type": "integration_account",
+            "integration_type": account.integration_type,
+            "provider": account.provider,
+            "account_identifier": account.account_identifier,
+            "status": account.status,
+            "lastError": account.last_error or "",
+            "lastHealthCheckedAt": account.last_health_checked_at.isoformat() if account.last_health_checked_at else None,
+            "createdAt": account.created_at.isoformat() if account.created_at else None,
+            "updatedAt": account.updated_at.isoformat() if account.updated_at else None,
+        })
+    return result
+
+
 def _log_mcp_audit(
     *,
     business: BusinessProfile,
@@ -1288,12 +1309,16 @@ def mcp_connections_collection(request: HttpRequest) -> JsonResponse:
         # Get connected email accounts (native Gmail/Outlook)
         email_accounts_payload = _get_email_accounts_payload(business)
 
+        # Get connected integration accounts (Calendar, Drive, OneDrive, Slack, HubSpot)
+        integration_accounts_payload = _get_integration_accounts_payload(business)
+
         return JsonResponse(
             {
                 "businessId": str(business.id),
                 "dashboardUrl": "/dashboard/mcp/",
                 "connections": connections_payload,
                 "emailAccounts": email_accounts_payload,
+                "integrationAccounts": integration_accounts_payload,
                 "marketplace": full_catalog,
                 "industryTools": industry_tools,
                 "commonTools": common_tools,

@@ -1,0 +1,252 @@
+{% extends "frontend/base_app.html" %}
+
+{% block title %}Integrations | Pocket AI{% endblock %}
+
+{% block content %}
+<div class="h-screen bg-background flex overflow-hidden">
+  {% include "frontend/components/dashboard/sidebar.html" with active="integrations" user_name=user_name %}
+  <main class="flex-1 overflow-auto">
+    <div class="w-full px-4 md:px-6 lg:px-8 py-6 space-y-6">
+      <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div class="space-y-1.5">
+          <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">Integrations</h1>
+          <p class="text-sm text-muted-foreground">Connect first-party native integrations. Your credentials are encrypted and never shared.</p>
+        </div>
+        <div class="flex flex-wrap items-center justify-start md:justify-end gap-2">
+          <button
+            type="button"
+            class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground"
+            data-integrations-refresh
+          >
+            Refresh
+          </button>
+        </div>
+      </header>
+
+      <div class="rounded-xl border border-border/60 bg-muted/30 p-4 text-sm hidden" data-integrations-flash role="status" aria-live="polite"></div>
+
+      <!-- Connected integrations -->
+      <section class="space-y-4">
+        <div class="text-sm font-semibold text-foreground">Connected</div>
+        <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" data-integrations-connected-grid>
+          <div class="rounded-lg border border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground col-span-full">Loading connected integrations...</div>
+        </div>
+      </section>
+
+      <!-- Available integrations -->
+      <section class="space-y-4">
+        <div class="text-sm font-semibold text-foreground">Available</div>
+        <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" data-integrations-available-grid>
+          <div class="rounded-lg border border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground col-span-full">Loading available integrations...</div>
+        </div>
+      </section>
+
+      <!-- Link to MCP for third-party connectors -->
+      <section class="rounded-xl border border-border/40 bg-muted/20 p-4">
+        <div class="flex items-center gap-3">
+          <svg class="h-5 w-5 text-muted-foreground shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 7.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9Z" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 12a7.5 7.5 0 0 0-15 0" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m0 13.5V21" />
+          </svg>
+          <div>
+            <div class="text-sm font-medium text-foreground">Looking for third-party MCP connectors?</div>
+            <div class="text-xs text-muted-foreground">Notion, Trello, Salesforce, and more are available on the <a href="{% url 'frontend:dashboard-mcp' %}" class="text-primary hover:underline">MCP Connector page</a>.</div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<script>
+(function () {
+  const BUSINESS_ID = "{{ business_id|escapejs }}";
+  const API_BASE = "/api";
+
+  const connectedGrid = document.querySelector("[data-integrations-connected-grid]");
+  const availableGrid = document.querySelector("[data-integrations-available-grid]");
+  const flashEl = document.querySelector("[data-integrations-flash]");
+  const refreshBtn = document.querySelector("[data-integrations-refresh]");
+
+  // Native integration types we support
+  const NATIVE_TYPES = {
+    gmail: { label: "Gmail", type: "email_oauth", provider: "google_email", icon: "M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2Zm0 4-8 5-8-5V6l8 5 8-5v2Z" },
+    outlook: { label: "Outlook / Microsoft 365", type: "email_oauth", provider: "microsoft_email", icon: "M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2Zm0 4-8 5-8-5V6l8 5 8-5v2Z" },
+    google_calendar: { label: "Google Calendar", type: "integration_oauth", integration_type: "google_calendar", icon: "M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5" },
+    google_drive: { label: "Google Drive", type: "integration_oauth", integration_type: "google_drive", icon: "M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" },
+    onedrive: { label: "OneDrive", type: "integration_oauth", integration_type: "onedrive", icon: "M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" },
+    slack: { label: "Slack", type: "integration_oauth", integration_type: "slack", icon: "M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 0 1-.825-.242m9.345-8.334a2.126 2.126 0 0 0-.476-.095 48.64 48.64 0 0 0-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0 0 11.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155" },
+    hubspot: { label: "HubSpot", type: "integration_oauth", integration_type: "hubspot", icon: "M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z" },
+  };
+
+  function flash(msg, type) {
+    flashEl.textContent = msg;
+    flashEl.className = "rounded-xl border p-4 text-sm " +
+      (type === "error" ? "border-destructive/40 bg-destructive/10 text-destructive" : "border-primary/40 bg-primary/10 text-primary");
+    flashEl.classList.remove("hidden");
+    setTimeout(() => flashEl.classList.add("hidden"), 6000);
+  }
+
+  function getCookie(name) {
+    const match = document.cookie.match(new RegExp("(^| )" + name + "=([^;]+)"));
+    return match ? decodeURIComponent(match[2]) : "";
+  }
+
+  async function fetchConnections() {
+    const connected = [];
+    const available = [];
+
+    try {
+      const resp = await fetch(API_BASE + "/mcp/connections/?business_id=" + BUSINESS_ID, {
+        headers: { "X-CSRFToken": getCookie("csrftoken") },
+        credentials: "same-origin",
+      });
+      if (!resp.ok) throw new Error("Failed to load");
+      const data = await resp.json();
+      const catalog = data.marketplace || [];
+
+      // Email accounts from API
+      const emailAccounts = data.emailAccounts || [];
+      // Integration accounts from API
+      const integrationAccounts = data.integrationAccounts || [];
+
+      for (const [key, info] of Object.entries(NATIVE_TYPES)) {
+        const catEntry = catalog.find(c => c.key === key);
+        const isEmailType = info.type === "email_oauth";
+        let isConnected = false;
+        let identifier = "";
+
+        if (isEmailType) {
+          const match = emailAccounts.find(a => a.marketplaceKey === key);
+          if (match && match.status === "connected") {
+            isConnected = true;
+            identifier = match.emailAddress || "";
+          }
+        } else {
+          const match = integrationAccounts.find(a => a.integration_type === info.integration_type);
+          if (match && match.status === "connected") {
+            isConnected = true;
+            identifier = match.account_identifier || "";
+          }
+        }
+
+        const entry = { key, ...info, isConnected, identifier, catEntry };
+        if (isConnected) {
+          connected.push(entry);
+        } else {
+          available.push(entry);
+        }
+      }
+    } catch (e) {
+      flash("Failed to load integrations: " + e.message, "error");
+    }
+
+    renderConnected(connected);
+    renderAvailable(available);
+  }
+
+  function renderConnected(items) {
+    if (!items.length) {
+      connectedGrid.innerHTML = '<div class="rounded-lg border border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground col-span-full">No integrations connected yet. Connect one below to get started.</div>';
+      return;
+    }
+    connectedGrid.innerHTML = items.map(item => `
+      <div class="rounded-xl border border-border/60 bg-card/80 p-4 space-y-3">
+        <div class="flex items-center gap-3">
+          <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+            <svg class="h-5 w-5 text-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" d="${item.icon}" />
+            </svg>
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-semibold text-foreground">${item.label}</div>
+            <div class="text-xs text-muted-foreground truncate">${item.identifier || "Connected"}</div>
+          </div>
+          <span class="inline-flex items-center rounded-full bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-400">Connected</span>
+        </div>
+      </div>
+    `).join("");
+  }
+
+  function renderAvailable(items) {
+    if (!items.length) {
+      availableGrid.innerHTML = '<div class="rounded-lg border border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground col-span-full">All integrations are connected.</div>';
+      return;
+    }
+    availableGrid.innerHTML = items.map(item => `
+      <div class="rounded-xl border border-border/60 bg-card/80 p-4 space-y-3">
+        <div class="flex items-center gap-3">
+          <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-muted/60">
+            <svg class="h-5 w-5 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" d="${item.icon}" />
+            </svg>
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-semibold text-foreground">${item.label}</div>
+            <div class="text-xs text-muted-foreground">${item.catEntry ? item.catEntry.description : "Native integration"}</div>
+          </div>
+        </div>
+        <button
+          type="button"
+          class="w-full inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium border border-input bg-background hover:bg-accent hover:text-accent-foreground hover:border-primary/50 h-9 px-4 transition-all duration-300"
+          data-connect-key="${item.key}"
+          data-connect-type="${item.type}"
+          data-connect-integration-type="${item.integration_type || ''}"
+          data-connect-provider="${item.provider || ''}"
+        >
+          Connect
+        </button>
+      </div>
+    `).join("");
+
+    // Attach connect handlers
+    availableGrid.querySelectorAll("[data-connect-key]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const connType = btn.dataset.connectType;
+        const key = btn.dataset.connectKey;
+
+        let url;
+        if (connType === "email_oauth") {
+          const providerKey = key === "gmail" ? "google" : "microsoft";
+          url = API_BASE + "/email/oauth/start/" + providerKey + "/?business_id=" + BUSINESS_ID;
+        } else if (connType === "integration_oauth") {
+          const intType = btn.dataset.connectIntegrationType;
+          url = API_BASE + "/integrations/oauth/start/" + intType + "/?business_id=" + BUSINESS_ID;
+        } else {
+          return;
+        }
+
+        const w = 600, h = 700;
+        const left = (screen.width - w) / 2;
+        const top = (screen.height - h) / 2;
+        const popup = window.open(url, "integration_oauth", `width=${w},height=${h},left=${left},top=${top}`);
+
+        // Listen for success
+        function onMessage(e) {
+          if (e.origin !== window.location.origin) return;
+          const d = e.data;
+          if (!d || typeof d !== "object") return;
+          if (d.type === "email_oauth_success" || d.type === "integration_oauth_success") {
+            window.removeEventListener("message", onMessage);
+            flash((d.email || d.identifier || key) + " connected successfully.", "success");
+            fetchConnections();
+          } else if (d.type === "email_oauth_error" || d.type === "integration_oauth_error") {
+            window.removeEventListener("message", onMessage);
+            flash("Connection failed: " + (d.error || "unknown error"), "error");
+          }
+        }
+        window.addEventListener("message", onMessage);
+      });
+    });
+  }
+
+  if (refreshBtn) {
+    refreshBtn.addEventListener("click", fetchConnections);
+  }
+
+  // Initial load
+  fetchConnections();
+})();
+</script>
+{% endblock %}
