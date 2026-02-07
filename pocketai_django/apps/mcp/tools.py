@@ -8620,17 +8620,35 @@ def _agentic_read_v2_handler(
             "chars": item_chars,
         }
         if is_truncated:
-            # Build actionable hint for the LLM.
+            # Build informative hint so the LLM can decide whether to
+            # follow up.  Include row labels already fetched so it can
+            # judge if the answer is already complete.
             hint_parts: list[str] = []
             if payload_type == "table":
-                rows_shown = len(payload.get("rows") or [])
+                rows_data = payload.get("rows") or []
+                rows_shown = len(rows_data)
                 total_rows = payload.get("total_rows")
                 if total_rows:
                     hint_parts.append(f"{rows_shown} of {total_rows} rows returned.")
                 else:
                     hint_parts.append(f"{rows_shown} rows returned (total unknown).")
+                # Surface first-column labels so the LLM knows what it
+                # already has and can decide if remaining rows matter.
+                if rows_data:
+                    labels = []
+                    for row in rows_data:
+                        if isinstance(row, (list, tuple)) and row:
+                            label = str(row[0]).strip()
+                            if label:
+                                labels.append(label)
+                    if labels:
+                        preview = ", ".join(labels[:8])
+                        if len(labels) > 8:
+                            preview += f", ... (+{len(labels) - 8} more)"
+                        hint_parts.append(f"Rows included: {preview}.")
             hint_parts.append(
-                f"Use next_cursor to continue or retry with higher max_chars (up to {int(max_chars_allowed)})."
+                f"Only use next_cursor if you still need data not yet returned. "
+                f"Max chars allowed: {int(max_chars_allowed)}."
             )
             read_entry["hint"] = " ".join(hint_parts)
         elif payload_type == "table":
