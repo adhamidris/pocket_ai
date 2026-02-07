@@ -241,7 +241,7 @@ class McpOrchestratorService:
     def __init__(self, *, agent: AgentProfile, provider: BaseMcpProvider | None) -> None:
         self.agent = agent
         self.provider = provider
-        self.tool_definitions = mcp_tools.TOOL_DEFINITIONS
+        self.tool_definitions = mcp_tools.get_tool_definitions()
         self._remote_tool_registry: dict[str, tuple[object, str]] = {}
         self.max_tool_iterations = int(getattr(settings, "MCP_MAX_TOOL_ITERATIONS", 10))
         self.read_document_repeat_limit = max(1, int(getattr(settings, "MCP_READ_DOCUMENT_REPEAT_LIMIT", 2)))
@@ -410,7 +410,7 @@ class McpOrchestratorService:
             registry=email_registry,
         )
 
-        internal_tool_defs: list[Mapping[str, object]] = list(mcp_tools.TOOL_DEFINITIONS)
+        internal_tool_defs: list[Mapping[str, object]] = list(mcp_tools.get_tool_definitions())
         # Gateway tools are exposed only when at least one MCP connection is enabled.
         gateway_enabled = bool(all_remote_connections)
         if gateway_enabled:

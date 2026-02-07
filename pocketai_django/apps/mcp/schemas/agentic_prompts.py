@@ -12,8 +12,43 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from django.conf import settings
+
 if TYPE_CHECKING:
     from apps.accounts.models import AgentProfile
+
+
+DEFAULT_MAX_SEARCH_QUERY_VARIANTS = 1
+
+
+def _search_query_variant_limit() -> int:
+    try:
+        value = int(
+            getattr(
+                settings,
+                "MCP_SEARCH_MAX_QUERY_VARIANTS",
+                DEFAULT_MAX_SEARCH_QUERY_VARIANTS,
+            )
+        )
+    except (TypeError, ValueError):
+        value = DEFAULT_MAX_SEARCH_QUERY_VARIANTS
+    return max(1, value)
+
+
+def _search_query_variants_hint(*, include_subquestions: bool = False) -> str:
+    limit = _search_query_variant_limit()
+    if include_subquestions:
+        return (
+            "use up to 1 variant/sub-question."
+            if limit == 1
+            else f"use up to {limit} variants/sub-questions."
+        )
+    return "use up to 1 variant." if limit == 1 else f"use up to {limit} variants."
+
+
+def _search_query_variants_workflow_phrase() -> str:
+    limit = _search_query_variant_limit()
+    return "up to 1 query variant" if limit == 1 else f"up to {limit} query variants"
 
 
 # -----------------------------------------------------------------------------
@@ -38,7 +73,7 @@ You are {agent_name}{for_business}.
 Discover what exists in the knowledge base.
 Returns EvidenceRefs (`refs[]`) with IDs, kinds, labels, and size estimates (content is in read_knowledge). Some refs may include short previews to help you choose what to read.
 - Prefer `queries=[...]` to batch multiple variants/sub-questions in ONE call.
-- Keep queries short and specific; 1-4 variants is usually enough.
+- Keep queries short and specific; {search_query_variants_hint}
 - If the tool returns `has_more=true` and a `next_cursor`, DO NOT re-run the same search. Use `search_knowledge(cursor=next_cursor)` to fetch the next page.
 - If refs/previews already contain the exact answer, answer directly and offer an optional deeper-dive read.
 
@@ -132,7 +167,7 @@ You are {agent_name}{for_business}.
 Discover what exists in the knowledge base.
 Returns EvidenceRefs (`refs[]`) with IDs, kinds, labels, and size estimates (content is in read_knowledge). Some refs may include short previews to help you choose what to read.
 - Prefer `queries=[...]` to batch multiple variants/sub-questions in ONE call.
-- Keep queries short and specific; 1-4 variants/sub-questions is usually enough.
+- Keep queries short and specific; {search_query_variants_subquestions_hint}
 - If the tool returns `has_more=true` and a `next_cursor`, fetch more results using `search_knowledge(cursor=next_cursor)` instead of repeating the same search.
 - If refs/previews already contain the exact answer, answer directly and offer an optional deeper-dive read.
 
@@ -226,6 +261,7 @@ def build_agentic_system_prompt(
     return AGENTIC_SYSTEM_PROMPT.format(
         agent_name=agent.name,
         for_business=for_business,
+        search_query_variants_hint=_search_query_variants_hint(),
         additional_rules=additional_rules.strip(),
     ).strip()
 
@@ -246,6 +282,9 @@ def build_agentic_system_prompt_v2(
     return AGENTIC_SYSTEM_PROMPT_V2.format(
         agent_name=agent.name,
         for_business=for_business,
+        search_query_variants_subquestions_hint=_search_query_variants_hint(
+            include_subquestions=True
+        ),
         additional_rules=additional_rules.strip(),
     ).strip()
 
@@ -273,7 +312,7 @@ You are {agent_name}{for_business}.
 
 ## Workflow (follow this order)
 
-1. Search: call `search_knowledge` once with 1-4 query variants.
+1. Search: call `search_knowledge` once with {search_query_variants_workflow_phrase}.
 2. If refs/previews already answer the question, answer directly and offer an optional deeper dive.
 3. If the user asks for deeper detail/verification (or previews are insufficient), call `read_knowledge` once with all relevant ref IDs.
 4. If the read is truncated and you cannot answer, do ONE retry with a cursor or narrower refs.
@@ -313,7 +352,7 @@ You are {agent_name}{for_business}.
 Discover what exists in the knowledge base.
 Returns EvidenceRefs (`refs[]`) with IDs, kinds, labels, and size estimates (content is in read_knowledge). Some refs may include short previews to help you choose what to read.
 - Prefer `queries=[...]` to batch multiple variants/sub-questions in ONE call.
-- Keep queries short and specific; 1-4 variants/sub-questions is usually enough.
+- Keep queries short and specific; {search_query_variants_subquestions_hint}
 - If the tool returns `has_more=true` and a `next_cursor`, fetch more results using `search_knowledge(cursor=next_cursor)` instead of repeating the same search.
 - If refs/previews already contain the exact answer, answer directly and offer an optional deeper-dive read.
 
@@ -409,7 +448,7 @@ You are {agent_name}{for_business}.
 Discover what exists in the knowledge base.
 Returns EvidenceRefs (`refs[]`) with IDs, kinds, labels, and size estimates (content is in read_knowledge). Some refs may include short previews to help you choose what to read.
 - Prefer `queries=[...]` to batch multiple variants/sub-questions in ONE call.
-- Keep queries short and specific; 1-4 variants/sub-questions is usually enough.
+- Keep queries short and specific; {search_query_variants_subquestions_hint}
 - If the tool returns `has_more=true` and a `next_cursor`, fetch more results using `search_knowledge(cursor=next_cursor)` instead of repeating the same search.
 - If refs/previews already contain the exact answer, answer directly and offer an optional deeper-dive read.
 
@@ -553,6 +592,11 @@ def build_model_specific_prompt(
     fmt_kwargs = {
         "agent_name": agent.name,
         "for_business": for_business,
+        "search_query_variants_hint": _search_query_variants_hint(),
+        "search_query_variants_subquestions_hint": _search_query_variants_hint(
+            include_subquestions=True
+        ),
+        "search_query_variants_workflow_phrase": _search_query_variants_workflow_phrase(),
         "additional_rules": additional_rules.strip(),
     }
 

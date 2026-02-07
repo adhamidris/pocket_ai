@@ -172,6 +172,28 @@ MCP_LOG_FULL_SNIPPET_CONTENT_DEFAULT = False
 MCP_TEXT_PII_REDACTION_DEFAULT = True
 MCP_TEXT_PII_REDACTION_ALLOW_VERIFIED_DEFAULT = False
 
+
+def _search_query_variant_limit() -> int:
+    try:
+        value = int(
+            getattr(
+                settings,
+                "MCP_SEARCH_MAX_QUERY_VARIANTS",
+                DEFAULT_MAX_SEARCH_QUERY_VARIANTS,
+            )
+        )
+    except (TypeError, ValueError):  # pragma: no cover - defensive
+        value = DEFAULT_MAX_SEARCH_QUERY_VARIANTS
+    return max(1, value)
+
+
+def _search_queries_schema_description() -> str:
+    limit = _search_query_variant_limit()
+    if limit == 1:
+        return "List of search queries. Use up to 1 short, specific variant."
+    return f"List of search queries. Use up to {limit} short, specific variants."
+
+
 try:
     _PROMPT_TOOL_OUTPUT_MAX_CHARS = int(getattr(settings, "MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS", 12000) or 12000)
 except (TypeError, ValueError):  # pragma: no cover - defensive
@@ -1319,7 +1341,7 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
                 "type": "array",
                 "items": {"type": "string"},
                 "minItems": 1,
-                "description": "List of search queries. Use 1-4 short, specific variants.",
+                "description": _search_queries_schema_description(),
             },
             "exclude_seen": {
                 "type": "boolean",
@@ -2229,6 +2251,38 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
         required=("query",),
     ),
 )
+
+
+def get_tool_definitions() -> tuple[Mapping[str, object], ...]:
+    """
+    Return tool schemas with runtime-tuned descriptions.
+
+    Some guidance text depends on current settings (for example
+    MCP_SEARCH_MAX_QUERY_VARIANTS), so we patch those fields per request.
+    """
+
+    definitions: list[Mapping[str, object]] = copy.deepcopy(list(TOOL_DEFINITIONS))
+    queries_description = _search_queries_schema_description()
+
+    for tool_def in definitions:
+        function_block = tool_def.get("function")
+        if not isinstance(function_block, Mapping):
+            continue
+        if str(function_block.get("name") or "").strip() != "search_knowledge":
+            continue
+        parameters = function_block.get("parameters")
+        if not isinstance(parameters, Mapping):
+            break
+        properties = parameters.get("properties")
+        if not isinstance(properties, Mapping):
+            break
+        queries_schema = properties.get("queries")
+        if isinstance(queries_schema, dict):
+            queries_schema["description"] = queries_description
+        break
+
+    return tuple(definitions)
+
 
 READ_DOCUMENT_TOOL_DEFINITION_AGENTIC_V2: Mapping[str, object] = _function_schema(
     name="read_document",

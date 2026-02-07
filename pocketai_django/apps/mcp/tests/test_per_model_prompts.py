@@ -106,6 +106,57 @@ class TemplateContentTests(SimpleTestCase):
         )
         self.assertIn("Call `read_knowledge` only when the user asks for deeper detail/verification", prompt)
 
+    @override_settings(MCP_SEARCH_MAX_QUERY_VARIANTS=1)
+    def test_prompt_uses_single_variant_hint_when_limit_is_one(self) -> None:
+        agent = mock.Mock()
+        agent.name = "TestBot"
+        prompt = build_model_specific_prompt(
+            agent,
+            model_id="unknown-model",
+            business_name="Acme Corp",
+        )
+        self.assertIn("use up to 1 variant/sub-question.", prompt)
+
+    @override_settings(MCP_SEARCH_MAX_QUERY_VARIANTS=3)
+    def test_prompt_uses_configured_variant_limit_for_workflow_step(self) -> None:
+        agent = mock.Mock()
+        agent.name = "TestBot"
+        prompt = build_model_specific_prompt(
+            agent,
+            model_id="deepseek-chat",
+            business_name="Acme Corp",
+        )
+        self.assertIn("with up to 3 query variants.", prompt)
+
+    @staticmethod
+    def _search_queries_schema_description() -> str:
+        tool_def = next(
+            schema
+            for schema in tools.get_tool_definitions()
+            if schema.get("function", {}).get("name") == "search_knowledge"
+        )
+        return (
+            tool_def.get("function", {})
+            .get("parameters", {})
+            .get("properties", {})
+            .get("queries", {})
+            .get("description", "")
+        )
+
+    @override_settings(MCP_SEARCH_MAX_QUERY_VARIANTS=1)
+    def test_tool_schema_uses_single_variant_hint_when_limit_is_one(self) -> None:
+        self.assertEqual(
+            self._search_queries_schema_description(),
+            "List of search queries. Use up to 1 short, specific variant.",
+        )
+
+    @override_settings(MCP_SEARCH_MAX_QUERY_VARIANTS=5)
+    def test_tool_schema_uses_configured_variant_hint_when_limit_is_many(self) -> None:
+        self.assertEqual(
+            self._search_queries_schema_description(),
+            "List of search queries. Use up to 5 short, specific variants.",
+        )
+
 
 # ---------------------------------------------------------------------------
 # MCP connection gating in build_system_message
