@@ -6,6 +6,75 @@
 {% block extra_head %}
 <link rel="stylesheet" href="{% static 'css/mcp-cards.css' %}">
 <style>
+  .voice-providers-page .voice-how-panel {
+    border: 1px solid hsl(var(--border) / 0.8);
+    border-radius: 0.85rem;
+    background: hsl(var(--card) / 0.85);
+    padding: 1rem 1.1rem;
+  }
+  .voice-providers-page .voice-how-title {
+    margin: 0;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: hsl(var(--foreground));
+  }
+  .voice-providers-page .voice-how-list {
+    margin: 0.7rem 0 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: 0.35rem;
+  }
+  .voice-providers-page .voice-how-list li {
+    position: relative;
+    padding-left: 1rem;
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: hsl(var(--muted-foreground));
+  }
+  .voice-providers-page .voice-how-list li::before {
+    content: "•";
+    position: absolute;
+    left: 0;
+    top: 0;
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: hsl(var(--primary));
+    line-height: 1.2;
+  }
+  .voice-providers-page .mcp-card-actions.voice-provider-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.7rem;
+    flex-wrap: wrap;
+  }
+  .voice-providers-page .voice-provider-meta-tags {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+  .voice-providers-page .voice-provider-buttons {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-left: auto;
+  }
+  .voice-providers-page .voice-provider-managed-note {
+    margin-left: auto;
+    font-size: 0.6875rem;
+    line-height: 1.4;
+    color: hsl(var(--muted-foreground));
+    text-align: right;
+  }
+  .voice-providers-page .mcp-btn.voice-provider-btn {
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
   .voice-status-badge {
     display: inline-flex;
     align-items: center;
@@ -37,7 +106,7 @@
 {% endblock %}
 
 {% block content %}
-<div class="h-screen bg-background flex overflow-hidden">
+<div class="voice-providers-page h-screen bg-background flex overflow-hidden">
   {% include "frontend/components/dashboard/sidebar.html" with active="voice" user_name=user_name %}
   <main class="flex-1 overflow-auto">
     <div class="w-full px-4 md:px-6 lg:px-8 py-6 space-y-6">
@@ -59,9 +128,9 @@
         </div>
       </header>
 
-      <section class="rounded-xl border border-border/60 bg-card/60 backdrop-blur p-4 space-y-3">
-        <div class="text-sm font-semibold text-foreground">How this works</div>
-        <ul class="space-y-1 text-xs text-muted-foreground list-disc list-inside">
+      <section class="voice-how-panel">
+        <h2 class="voice-how-title">How this works</h2>
+        <ul class="voice-how-list">
           <li>Each workspace stores its own encrypted transport credentials (Twilio/Telnyx).</li>
           <li>Pick exactly one active outbound transport provider when multiple are configured.</li>
           <li>Deepgram and ElevenLabs are managed centrally by the platform.</li>
@@ -229,19 +298,21 @@
         var editable = item.editable !== false;
         var lastError = String(item.lastError || "");
         var tested = item.lastTestedAt ? ("Tested " + new Date(item.lastTestedAt).toLocaleString()) : "Not tested yet";
-        var modeTag = editable ? "Tenant setup" : "Platform managed";
+        var modeLabel = editable ? "Tenant setup" : "Platform managed";
         var activeTag = item.isActiveTransport ? '<span class="mcp-tag">Active transport</span>' : "";
-        var canSetActive = editable && hasCreds && status !== "not_configured";
+        var modeTag = '<span class="mcp-tag">' + escapeHtml(modeLabel) + "</span>";
+        var tagsHtml = '<div class="voice-provider-meta-tags">' + activeTag + modeTag + "</div>";
+        var canSetActive = editable && hasCreds && status !== "not_configured" && !item.isActiveTransport;
         var actionsHtml = editable
           ? (
-              '<div class="flex items-center gap-2">' +
-              (canSetActive ? ('  <button class="mcp-btn mcp-btn-outline" type="button" data-voice-set-active="' + escapeHtml(item.provider) + '"' + (item.isActiveTransport ? " disabled" : "") + ">Set Active</button>") : "") +
-              '  <button class="mcp-btn mcp-btn-outline" type="button" data-voice-open="' + escapeHtml(item.provider) + '">Configure</button>' +
-              '  <button class="mcp-btn mcp-btn-outline" type="button" data-voice-test="' + escapeHtml(item.provider) + '"' + (hasCreds ? "" : " disabled") + ">Test</button>" +
-              '  <button class="mcp-btn mcp-btn-outline" type="button" data-voice-disconnect="' + escapeHtml(item.provider) + '"' + (hasCreds ? "" : " disabled") + ">Disconnect</button>" +
+              '<div class="voice-provider-buttons">' +
+              (canSetActive ? ('  <button class="mcp-btn mcp-btn-outline voice-provider-btn" type="button" data-voice-set-active="' + escapeHtml(item.provider) + '">Set Active</button>') : "") +
+              '  <button class="mcp-btn mcp-btn-outline voice-provider-btn" type="button" data-voice-open="' + escapeHtml(item.provider) + '">Configure</button>' +
+              '  <button class="mcp-btn mcp-btn-outline voice-provider-btn" type="button" data-voice-test="' + escapeHtml(item.provider) + '"' + (hasCreds ? "" : " disabled") + '">Test</button>' +
+              '  <button class="mcp-btn mcp-btn-outline voice-provider-btn" type="button" data-voice-disconnect="' + escapeHtml(item.provider) + '"' + (hasCreds ? "" : " disabled") + '">Disconnect</button>' +
               "</div>"
             )
-          : '<div class="text-[11px] text-muted-foreground">Managed by platform and shared across all workspaces.</div>';
+          : '<div class="voice-provider-managed-note">Managed by platform and shared across all workspaces.</div>';
         return '' +
           '<article class="mcp-card">' +
           '  <div class="mcp-card-header">' +
@@ -256,9 +327,8 @@
           '  <p class="mcp-card-desc">' + escapeHtml(item.description || "") + "</p>" +
           '  <div class="px-5 pb-2 text-[11px] text-muted-foreground">' + escapeHtml(tested) + "</div>" +
           (lastError ? ('<div class="mx-5 mb-2 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] text-rose-700">' + escapeHtml(lastError) + "</div>") : "") +
-          '  <div class="mcp-card-actions">' +
-          activeTag +
-          '    <span class="mcp-tag">' + escapeHtml(modeTag) + "</span>" +
+          '  <div class="mcp-card-actions voice-provider-actions">' +
+          tagsHtml +
           actionsHtml +
           "  </div>" +
           "</article>";
