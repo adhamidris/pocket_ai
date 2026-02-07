@@ -417,6 +417,32 @@ class AgenticReadV2CursorAndArtifactTests(TestCase):
         MCP_NEW_CONTRACT_ENABLED=True,
         MCP_AGENTIC_READ_V2_ENABLED=True,
         MCP_TEXT_PII_REDACTION_ENABLED=False,
+        MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS=25000,
+        MCP_READ_DOCUMENT_MAX_CHARS_MARGIN=0,
+    )
+    def test_full_read_entries_without_control_hints_are_omitted_from_read_summary(self) -> None:
+        """Balance prompt payloads: hide plain full read receipts, keep evidence unchanged."""
+
+        ctx = ToolExecutionContext(char_budget_per_turn=100_000)
+        chunk_id = str(self.chunk.id)
+
+        with self._enable_agentic_mode():
+            result = tools.execute_tool(
+                "read_knowledge",
+                {"refs": [{"id": chunk_id}], "max_chars": 6000},
+                conversation=self.conversation,
+                context=ctx,
+            )
+
+        self.assertEqual(result["tool"], "read_knowledge")
+        self.assertIn(result["status"], {"ok", "truncated"})
+        self.assertEqual(len(result.get("evidence") or []), 1)
+        self.assertNotIn("read", result, json.dumps(result, indent=2, default=str))
+
+    @override_settings(
+        MCP_NEW_CONTRACT_ENABLED=True,
+        MCP_AGENTIC_READ_V2_ENABLED=True,
+        MCP_TEXT_PII_REDACTION_ENABLED=False,
         MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS=2100,
         MCP_READ_DOCUMENT_MAX_CHARS_MARGIN=0,
     )
