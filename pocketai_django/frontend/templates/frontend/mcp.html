@@ -35,21 +35,6 @@
           </button>
         </div>
       </header>
-
-
-
-      <section class="rounded-xl border border-border/60 bg-card/60 backdrop-blur p-4" data-mcp-agent-defaults>
-        <div class="flex items-start justify-between gap-3">
-          <div class="space-y-1">
-            <div class="text-sm font-semibold text-foreground">Agent default approvals</div>
-            <div class="text-xs text-muted-foreground">Used when a connection does not have per-tool overrides.</div>
-          </div>
-        </div>
-        <div class="mt-3 space-y-2" data-mcp-agent-defaults-list>
-          <div class="rounded-lg border border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground">Loading agent defaults…</div>
-        </div>
-      </section>
-
       <section class="space-y-4" data-mcp-tabs data-active-tab="industry">
         <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div class="inline-flex rounded-lg border border-border/40 bg-muted/70 p-1" data-tabs-list>
@@ -57,12 +42,18 @@
             <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase transition-colors text-muted-foreground hover:text-primary" data-tab-button="all">All MCPs</button>
             <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase transition-colors text-muted-foreground hover:text-primary" data-tab-button="connected">Connected</button>
           </div>
-          <div class="flex flex-wrap items-center gap-2 md:ml-auto">
-            <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-refresh>
-              Refresh
-            </button>
-          </div>
-        </div>
+	          <div class="flex flex-wrap items-center gap-2 md:ml-auto">
+	            <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-refresh>
+                <svg class="h-3.5 w-3.5 text-muted-foreground" data-mcp-refresh-icon xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M3 12a9 9 0 0 1 15.3-6.3" />
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M18.3 3.7V8h-4.3" />
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 0 1-15.3 6.3" />
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M5.7 20.3V16H10" />
+                </svg>
+                <span data-mcp-refresh-label>Refresh</span>
+	            </button>
+	          </div>
+	        </div>
 
         <div class="rounded-xl border border-border/60 bg-muted/30 p-4 text-sm hidden" data-mcp-flash role="status" aria-live="polite"></div>
 
@@ -131,6 +122,17 @@
     </div>
   </main>
 </div>
+
+<style>
+  @keyframes mcp-refresh-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  [data-mcp-refresh].is-loading [data-mcp-refresh-icon] {
+    animation: mcp-refresh-spin 0.9s linear infinite;
+  }
+</style>
 
 <div class="hidden" data-mcp-modal data-state="closed" aria-hidden="true">
   <div class="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm transition-opacity" data-mcp-modal-overlay></div>
@@ -329,7 +331,6 @@
 	    var flashEl = document.querySelector("[data-mcp-flash]");
 	    var marketplaceGrid = document.querySelector("[data-mcp-marketplace-grid]");
 	    var marketplaceCount = document.querySelector("[data-mcp-marketplace-count]");
-      var agentDefaultsList = document.querySelector("[data-mcp-agent-defaults-list]");
 
     // New elements for industry tools
     var industryGrid = document.querySelector("[data-mcp-industry-grid]");
@@ -391,9 +392,11 @@
     var bearerPanel = document.querySelector('[data-mcp-auth-panel="bearer"]');
     var headerPanel = document.querySelector('[data-mcp-auth-panel="header"]');
 
-    var openCreateButtons = document.querySelectorAll("[data-mcp-open-create]");
-    var openMarketplaceButtons = document.querySelectorAll("[data-mcp-open-marketplace]");
-    var refreshButton = document.querySelector("[data-mcp-refresh]");
+	    var openCreateButtons = document.querySelectorAll("[data-mcp-open-create]");
+	    var openMarketplaceButtons = document.querySelectorAll("[data-mcp-open-marketplace]");
+	    var refreshButton = document.querySelector("[data-mcp-refresh]");
+      var refreshLabelEl = document.querySelector("[data-mcp-refresh-label]");
+      var refreshResetTimer = null;
 
 	    var editingConnectionId = null;
 	    var currentSourceType = "manual";
@@ -407,9 +410,40 @@
 	    var testRateLimitLastAt = {};
 	    var cooldownInterval = null;
 	    var pendingTestClicks = {};  // Track pending clicks to prevent race conditions
-	    var autoTestStatusById = {}; // { [connectionId]: "queued"|"running" }
-	    var autoTestPollTimer = null;
-	    var autoTestPollAttempts = 0;
+		    var autoTestStatusById = {}; // { [connectionId]: "queued"|"running" }
+		    var autoTestPollTimer = null;
+		    var autoTestPollAttempts = 0;
+
+      function setRefreshState(state) {
+        if (!refreshButton || !refreshLabelEl) return;
+        if (refreshResetTimer) {
+          window.clearTimeout(refreshResetTimer);
+          refreshResetTimer = null;
+        }
+        if (state === "loading") {
+          refreshButton.disabled = true;
+          refreshButton.classList.add("is-loading");
+          refreshLabelEl.textContent = "Refreshing";
+          return;
+        }
+        refreshButton.disabled = false;
+        refreshButton.classList.remove("is-loading");
+        if (state === "success") {
+          refreshLabelEl.textContent = "Updated just now";
+          refreshResetTimer = window.setTimeout(function () {
+            refreshLabelEl.textContent = "Refresh";
+          }, 1800);
+          return;
+        }
+        if (state === "error") {
+          refreshLabelEl.textContent = "Refresh failed";
+          refreshResetTimer = window.setTimeout(function () {
+            refreshLabelEl.textContent = "Refresh";
+          }, 1800);
+          return;
+        }
+        refreshLabelEl.textContent = "Refresh";
+      }
 
     function setTab(tab) {
       var industryBtn = document.querySelector('[data-tab-button="industry"]');
@@ -1413,60 +1447,13 @@
       filterAndRenderMarketplace();
     }
 
-    function renderAgentDefaults(data) {
-      if (!agentDefaultsList) return;
-      var agents = (data && data.agents) || [];
-      var options = (data && data.approvalModeOptions) || [];
-      agentDefaultsList.innerHTML = "";
-
-      if (!Array.isArray(agents) || !agents.length) {
-        agentDefaultsList.innerHTML = '<div class="rounded-lg border border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground">No agents found.</div>';
-        return;
-      }
-
-      agents.forEach(function (agent) {
-        var el = document.createElement("div");
-        el.className = "flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-background/60 p-4";
-        var name = escapeHtml(agent.name || "Agent");
-        var modeValue = (agent.mcpDefaultApprovalMode || "").toString();
-        var statusLabel = (agent.statusLabel || agent.status || "").toString();
-
-        var selectHtml = '<select class="h-9 rounded-md border border-border/60 bg-muted/40 px-2 text-xs" data-mcp-agent-approval-mode="' + escapeHtml(agent.id) + '">';
-        selectHtml += '<option value="">Inherit connection defaults</option>';
-        options.forEach(function (opt) {
-          var selected = opt.value === modeValue ? " selected" : "";
-          selectHtml += '<option value="' + escapeHtml(opt.value) + '"' + selected + ">" + escapeHtml(opt.label) + "</option>";
-        });
-        selectHtml += "</select>";
-
-        el.innerHTML =
-          '<div class="min-w-0">' +
-            '<div class="text-sm font-semibold text-foreground truncate">' + name + "</div>" +
-            (statusLabel ? '<div class="text-xs text-muted-foreground mt-1">' + escapeHtml(statusLabel) + "</div>" : "") +
-          "</div>" +
-          '<div class="flex items-center gap-2 flex-shrink-0">' +
-            selectHtml +
-          "</div>";
-
-        agentDefaultsList.appendChild(el);
-      });
-    }
-
-    function loadAgentDefaults() {
-      if (!agentDefaultsList) return Promise.resolve();
-      agentDefaultsList.innerHTML = '<div class="rounded-lg border border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground">Loading agent defaults…</div>';
-      return apiFetch("/api/mcp/agents/approval-defaults/", { method: "GET" }).then(function (data) {
-        renderAgentDefaults(data);
-        return data;
-      }).catch(function (err) {
-        agentDefaultsList.innerHTML = '<div class="rounded-lg border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300">Failed to load agent defaults: ' + escapeHtml(err.message || "Error") + "</div>";
-      });
-    }
-
-	    function loadAll() {
-	      if (!listEl) return;
-        loadAgentDefaults();
-	      listEl.innerHTML = '<div class="rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">Loading MCP connections…</div>';
+			    function loadAll(options) {
+          var isManualRefresh = !!(options && options.source === "manual");
+          if (isManualRefresh) {
+            setRefreshState("loading");
+          }
+			      if (!listEl) return;
+			      listEl.innerHTML = '<div class="rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">Loading MCP connections…</div>';
         if (industryGrid) industryGrid.innerHTML = '<div class="col-span-full rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">Loading tools…</div>';
         if (commonGrid) commonGrid.innerHTML = '<div class="col-span-full rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">Loading tools…</div>';
         if (marketplaceGrid) marketplaceGrid.innerHTML = '<div class="col-span-full rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">Loading tools…</div>';
@@ -1499,16 +1486,22 @@
           renderCommonTools(cachedCommonTools);
           renderCategoryFilters(cachedCategories);
 	        renderMarketplace(cachedMarketplace);
-	        applyUiState();
-	        if (hasAutoTests) {
-	          queueAutoTestPoll();
-	        }
-	        return data;
-	      }).catch(function (err) {
-	        listEl.innerHTML = '<div class="rounded-xl border border-rose-500/30 bg-rose-500/10 p-6 text-sm text-rose-300">Failed to load MCP connections: ' + escapeHtml(err.message || "Error") + "</div>";
-          if (industryGrid) industryGrid.innerHTML = '<div class="col-span-full rounded-xl border border-rose-500/30 bg-rose-500/10 p-6 text-sm text-rose-300">Failed to load: ' + escapeHtml(err.message || "Error") + "</div>";
-	      });
-	    }
+		        applyUiState();
+		        if (hasAutoTests) {
+		          queueAutoTestPoll();
+		        }
+            if (isManualRefresh) {
+              setRefreshState("success");
+            }
+		        return data;
+		      }).catch(function (err) {
+		        listEl.innerHTML = '<div class="rounded-xl border border-rose-500/30 bg-rose-500/10 p-6 text-sm text-rose-300">Failed to load MCP connections: ' + escapeHtml(err.message || "Error") + "</div>";
+	          if (industryGrid) industryGrid.innerHTML = '<div class="col-span-full rounded-xl border border-rose-500/30 bg-rose-500/10 p-6 text-sm text-rose-300">Failed to load: ' + escapeHtml(err.message || "Error") + "</div>";
+            if (isManualRefresh) {
+              setRefreshState("error");
+            }
+		      });
+		    }
 
     function collectFormPayload() {
       var authType = modalFields.authType.value;
@@ -1890,11 +1883,11 @@
         return;
       }
 
-      var refresh = target.closest("[data-mcp-refresh]");
-      if (refresh) {
-        loadAll();
-        return;
-      }
+	      var refresh = target.closest("[data-mcp-refresh]");
+	      if (refresh) {
+	        loadAll({ source: "manual" });
+	        return;
+	      }
 
       var marketAdd = target.closest("[data-mcp-market-add]");
       if (marketAdd) {
@@ -2146,29 +2139,6 @@
       if (target.matches("[data-mcp-agent-toggle]")) {
         var agentId = target.getAttribute("data-mcp-agent-toggle");
         toggleAgent(agentId, Boolean(target.checked));
-      }
-
-      if (target.matches("[data-mcp-agent-approval-mode]")) {
-        var agentId = target.getAttribute("data-mcp-agent-approval-mode");
-        var mode = target.value;
-        target.disabled = true;
-        apiFetch("/api/mcp/agents/approval-defaults/", {
-          method: "POST",
-          body: JSON.stringify({
-            businessId: businessId || undefined,
-            agentId: agentId,
-            defaultApprovalMode: mode
-          })
-        }).then(function () {
-          showFlash("Agent default approvals updated.", "success");
-          return loadAgentDefaults();
-        }).catch(function (err) {
-          console.warn("Agent default approvals update failed", err);
-          showFlash(err.message || "Failed to update agent default approvals.", "error");
-          return loadAgentDefaults();
-        }).then(function () {
-          target.disabled = false;
-        });
       }
 
       if (target.matches("[data-mcp-tool-approval], [data-mcp-tool-operation]")) {

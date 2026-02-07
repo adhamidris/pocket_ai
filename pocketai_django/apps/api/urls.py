@@ -183,6 +183,7 @@ urlpatterns = [
     path("mcp/connections/<uuid:connection_id>/test/", mcp_connections.mcp_connection_test, name="mcp-connection-test"),
     path("mcp/connections/<uuid:connection_id>/agents/", mcp_connections.mcp_connection_agents, name="mcp-connection-agents"),
     path("mcp/connections/<uuid:connection_id>/tools/", mcp_connections.mcp_connection_tools, name="mcp-connection-tools"),
+    path("mcp/controls/tools/", mcp_connections.mcp_controls_tools, name="mcp-controls-tools"),
     path("mcp/agents/approval-defaults/", mcp_connections.mcp_agent_approval_defaults, name="mcp-agent-approval-defaults"),
     path("oauth/start/<str:provider_key>/<str:marketplace_key>/", oauth.oauth_start, name="oauth_start"),
     path("oauth/callback/<str:provider_key>/", oauth.oauth_callback, name="oauth_callback"),

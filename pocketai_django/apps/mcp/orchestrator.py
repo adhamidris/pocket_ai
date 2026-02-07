@@ -31,6 +31,7 @@ from core.otel import otel_trace
 from apps.accounts.models import (
     AgentEmailAccountPolicyOverride,
     AgentProfile,
+    BusinessProfile,
     EmailAccount,
     EmailAccountAuditAction,
     EmailAccountAuditEvent,
@@ -243,6 +244,7 @@ class McpOrchestratorService:
         self.provider = provider
         self.tool_definitions = mcp_tools.get_tool_definitions()
         self._remote_tool_registry: dict[str, tuple[object, str]] = {}
+        self._tool_approval_overrides_cache: dict[str, dict[str, str]] = {}
         self.max_tool_iterations = int(getattr(settings, "MCP_MAX_TOOL_ITERATIONS", 10))
         self.read_document_repeat_limit = max(1, int(getattr(settings, "MCP_READ_DOCUMENT_REPEAT_LIMIT", 2)))
         self.read_document_throttle_limit = max(1, int(getattr(settings, "MCP_READ_DOCUMENT_THROTTLE_LIMIT", 2)))
@@ -1817,12 +1819,43 @@ class McpOrchestratorService:
                                                             context=tool_context,
                                                         )
                                             elif tool_result is None:
-                                                tool_result = mcp_tools.execute_tool(
-                                                    tool_name,
-                                                    effective_arguments,
+                                                general_override_mode = self._tool_approval_override_for_tool(
                                                     conversation=conversation,
-                                                    context=tool_context,
+                                                    tool_name=tool_name,
                                                 )
+                                                if (
+                                                    general_override_mode == "confirm"
+                                                    and tool_name not in native_tool_names_all
+                                                ):
+                                                    approval_requirement = {
+                                                        "requires_approval": True,
+                                                        "approval_mode": McpConnectionApprovalMode.APPROVE_ALL,
+                                                        "operation_type": McpToolOperationType.UNKNOWN,
+                                                        "reason": "controls_override_confirm",
+                                                    }
+                                                    approved, _, approval_result = self._maybe_request_tool_approval(
+                                                        conversation=conversation,
+                                                        connection=None,
+                                                        tool_name=tool_name,
+                                                        remote_tool_name="",
+                                                        tool_call_id=tool_call_id,
+                                                        tool_event_id=tool_event_id,
+                                                        arguments=effective_arguments,
+                                                        approval_requirement=approval_requirement,
+                                                        on_tool_event=on_tool_event,
+                                                        wait_for_approval=wait_for_tool_approval,
+                                                    )
+                                                    if not approved:
+                                                        tool_result = approval_result
+                                                        call_origin = "policy"
+
+                                                if tool_result is None:
+                                                    tool_result = mcp_tools.execute_tool(
+                                                        tool_name,
+                                                        effective_arguments,
+                                                        conversation=conversation,
+                                                        context=tool_context,
+                                                    )
                                                 if tool_name == "email_create_draft" and isinstance(tool_result, Mapping):
                                                     status_value = str(tool_result.get("status") or "").strip().lower()
                                                     if status_value == "ok":
@@ -3769,6 +3802,49 @@ class McpOrchestratorService:
             return mode
         return McpConnectionApprovalMode.AUTO
 
+    def _tool_approval_overrides_for_business(self, *, conversation: Conversation) -> dict[str, str]:
+        business_id = str(getattr(conversation, "business_profile_id", "") or "").strip()
+        if not business_id:
+            return {}
+
+        cached = self._tool_approval_overrides_cache.get(business_id)
+        if cached is not None:
+            return cached
+
+        business = getattr(conversation, "business_profile", None)
+        if business is None:
+            with tenant_context(business_id):
+                business = BusinessProfile.objects.filter(id=business_id).only("id", "metadata").first()
+
+        metadata = business.metadata if isinstance(getattr(business, "metadata", None), Mapping) else {}
+        raw = metadata.get("tool_approval_overrides")
+        if raw is None:
+            raw = metadata.get("toolApprovalOverrides")
+        if not isinstance(raw, Mapping):
+            self._tool_approval_overrides_cache[business_id] = {}
+            return {}
+
+        cleaned: dict[str, str] = {}
+        for tool_name, value in raw.items():
+            normalized_tool_name = str(tool_name or "").strip()
+            normalized_value = str(value or "").strip().lower()
+            if not normalized_tool_name or normalized_value not in {"auto", "confirm"}:
+                continue
+            cleaned[normalized_tool_name] = normalized_value
+
+        self._tool_approval_overrides_cache[business_id] = cleaned
+        return cleaned
+
+    def _tool_approval_override_for_tool(self, *, conversation: Conversation, tool_name: str) -> str | None:
+        normalized_tool_name = str(tool_name or "").strip()
+        if not normalized_tool_name:
+            return None
+        overrides = self._tool_approval_overrides_for_business(conversation=conversation)
+        mode = str(overrides.get(normalized_tool_name) or "").strip().lower()
+        if mode in {"auto", "confirm"}:
+            return mode
+        return None
+
     def _resolve_native_integration_policy(
         self,
         *,
@@ -3802,6 +3878,28 @@ class McpOrchestratorService:
             }
 
         operation_type = str(metadata.get("operation_type") or McpToolOperationType.UNKNOWN)
+        override_mode = self._tool_approval_override_for_tool(conversation=conversation, tool_name=tool_name)
+        if override_mode == "confirm":
+            return {
+                "decision": "allow_with_confirmation",
+                "reason": "controls_override_confirm",
+                "reason_code": "approval_required",
+                "operation_type": operation_type,
+                "integration_type": str(metadata.get("integration_type") or ""),
+                "approval_mode": McpConnectionApprovalMode.APPROVE_ALL,
+                "resolved_integration_account_id": str(getattr(account, "id", "") or "") if account else "",
+            }
+        if override_mode == "auto":
+            return {
+                "decision": "allow",
+                "reason": "controls_override_auto",
+                "reason_code": "allowed",
+                "operation_type": operation_type,
+                "integration_type": str(metadata.get("integration_type") or ""),
+                "approval_mode": McpConnectionApprovalMode.AUTO,
+                "resolved_integration_account_id": str(getattr(account, "id", "") or "") if account else "",
+            }
+
         approval_mode = self._effective_tool_approval_mode(conversation=conversation)
         if approval_mode == McpConnectionApprovalMode.APPROVE_ALL:
             decision = "allow_with_confirmation"
@@ -4850,49 +4948,6 @@ class McpOrchestratorService:
 
         redacted_input = redact_tool_input_payload(arguments, sensitive_keys={"body_text", "bodyText"})
         redacted_input_dict = dict(redacted_input) if isinstance(redacted_input, Mapping) else {}
-
-        # Reuse a prior identical approval to avoid repeated prompts on retries/resumes.
-        existing_approved: ConversationToolApproval | None = None
-        with tenant_context(business_id):
-            approved_candidates = list(
-                ConversationToolApproval.objects.filter(
-                    conversation=conversation,
-                    tool_name=tool_name,
-                    remote_tool_name="",
-                    status=ConversationToolApprovalStatus.APPROVED,
-                )
-                .order_by("-resolved_at")[:10]
-            )
-        for candidate in approved_candidates:
-            candidate_input = getattr(candidate, "input_payload", None)
-            if isinstance(candidate_input, Mapping) and dict(candidate_input) == redacted_input_dict:
-                existing_approved = candidate
-                break
-
-        if existing_approved:
-            approval_payload = {
-                "id": str(existing_approved.id),
-                "status": ConversationToolApprovalStatus.APPROVED,
-                "operation_type": "write",
-                "reason": reason,
-                "expires_at": existing_approved.expires_at.isoformat() if existing_approved.expires_at else None,
-            }
-            resolve_event = {
-                "event_id": tool_event_id,
-                "phase": "approval_resolved",
-                "status": ConversationToolApprovalStatus.APPROVED,
-                "tool_call_id": tool_call_id,
-                "tool_name": tool_name,
-                "kind": "email",
-                "approval": approval_payload,
-                "input": redacted_input_dict,
-            }
-            if on_tool_event:
-                try:
-                    on_tool_event(resolve_event)
-                except Exception:  # pragma: no cover - UI callback must not break tools
-                    logger.exception("mcp portal email approval resolve callback failed")
-            return True, existing_approved, None
 
         with tenant_context(business_id):
             existing = None
@@ -10008,57 +10063,6 @@ class McpOrchestratorService:
         if not isinstance(redacted_input, Mapping):
             redacted_input = {}
         redacted_input_dict = dict(redacted_input)
-
-        # If an identical (redacted) call was already approved in this conversation,
-        # treat the approval as granted to avoid duplicate prompts during retries/resumes.
-        existing_approved: ConversationToolApproval | None = None
-        business_id = getattr(conversation, "business_profile_id", None)
-        with tenant_context(business_id):
-            approved_candidates = list(
-                ConversationToolApproval.objects.filter(
-                    conversation=conversation,
-                    tool_name=tool_name,
-                    remote_tool_name=remote_tool_name or "",
-                    status=ConversationToolApprovalStatus.APPROVED,
-                )
-                .order_by("-resolved_at")[:10]
-            )
-        for candidate in approved_candidates:
-            candidate_input = getattr(candidate, "input_payload", None)
-            if isinstance(candidate_input, Mapping) and dict(candidate_input) == redacted_input_dict:
-                existing_approved = candidate
-                break
-
-        if existing_approved:
-            approval_payload = {
-                "id": str(existing_approved.id),
-                "status": ConversationToolApprovalStatus.APPROVED,
-                "mode": approval_requirement.get("approval_mode"),
-                "operation_type": approval_requirement.get("operation_type"),
-                "reason": approval_requirement.get("reason"),
-                "expires_at": existing_approved.expires_at.isoformat() if existing_approved.expires_at else None,
-            }
-            resolve_event = {
-                "event_id": tool_event_id,
-                "phase": "approval_resolved",
-                "status": ConversationToolApprovalStatus.APPROVED,
-                "tool_call_id": tool_call_id,
-                "tool_name": tool_name,
-                "kind": "mcp_remote",
-                "remote": {
-                    "connection_id": str(getattr(connection, "id", "") or ""),
-                    "connection_name": str(getattr(connection, "name", "") or ""),
-                    "endpoint_url": str(getattr(connection, "server_url", "") or ""),
-                    "remote_tool": remote_tool_name,
-                },
-                "approval": approval_payload,
-            }
-            if on_tool_event:
-                try:
-                    on_tool_event(resolve_event)
-                except Exception:  # pragma: no cover - UI callback must not break tools
-                    logger.exception("mcp portal tool approval resolve callback failed")
-            return True, existing_approved, None
 
         approval = self._get_or_create_tool_approval(
             conversation=conversation,

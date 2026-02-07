@@ -3896,9 +3896,27 @@ class KnowledgeIngestionService:
             remaining_budget -= 1
             # Use a strong hint for full-page extraction (title + columns + row labels).
             table_hint = _table_hint(table)
+            attempted_modes: list[str] = [render_mode]
             payload = self._run_vlm_table_repair(
                 client, crop_bytes, render_mode=render_mode, table_hint=table_hint
             )
+            if not payload and render_mode == "crop":
+                retry_bytes = self._render_full_page(path, int(table.page_number))
+                if retry_bytes:
+                    attempted_modes.append("full_page")
+                    logger.info(
+                        "table.vlm.retry_full_page_after_crop_failure table=%s page=%s",
+                        table.order_index,
+                        table.page_number,
+                    )
+                    payload = self._run_vlm_table_repair(
+                        client,
+                        retry_bytes,
+                        render_mode="full_page",
+                        table_hint=table_hint,
+                    )
+                    if payload:
+                        render_mode = "full_page_retry"
             if not payload:
                 issues.append(
                     IssuePayload(
@@ -3907,7 +3925,11 @@ class KnowledgeIngestionService:
                         description=f"VLM repair failed for table {table.order_index}.",
                         page_number=table.page_number,
                         table_order_index=table.order_index,
-                        details={"structure_confidence": conf, "render_mode": render_mode},
+                        details={
+                            "structure_confidence": conf,
+                            "render_mode": render_mode,
+                            "attempted_modes": attempted_modes,
+                        },
                     )
                 )
                 continue

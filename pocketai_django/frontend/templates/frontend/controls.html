@@ -1,0 +1,577 @@
+{% extends "frontend/base_app.html" %}
+
+{% block title %}Controls | Pocket AI{% endblock %}
+
+{% block content %}
+<div class="h-screen bg-background flex overflow-hidden controls-page">
+  {% include "frontend/components/dashboard/sidebar.html" with active="controls" user_name=user_name %}
+  <main class="flex-1 overflow-auto">
+    <div class="w-full px-4 md:px-6 lg:px-8 py-6 space-y-6">
+      <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div class="space-y-1.5">
+          <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">Controls</h1>
+          <p class="text-sm text-muted-foreground">Review tools exposed to the LLM and set approval behavior for connected integrations.</p>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground"
+            data-controls-refresh
+          >
+            <svg class="h-3.5 w-3.5 text-muted-foreground" data-controls-refresh-icon xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 12a9 9 0 0 1 15.3-6.3" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M18.3 3.7V8h-4.3" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 0 1-15.3 6.3" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5.7 20.3V16H10" />
+            </svg>
+            <span data-controls-refresh-label>Refresh</span>
+          </button>
+          <button
+            type="button"
+            class="inline-flex items-center gap-2 rounded-md bg-primary text-primary-foreground px-4 py-2 text-xs font-semibold hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+            data-controls-save
+            disabled
+          >
+            Save changes
+          </button>
+        </div>
+      </header>
+
+      <div class="rounded-xl border border-border/60 bg-muted/30 p-4 text-sm hidden" data-controls-flash role="status" aria-live="polite"></div>
+
+      <section class="rounded-xl border border-border/60 bg-card/70 p-4 md:p-5">
+        <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div class="space-y-1">
+            <div class="text-sm font-semibold text-foreground">LLM Tool Exposure</div>
+            <p class="text-xs text-muted-foreground">`Auto approve` executes directly. `Always confirm` requires approval before every execution.</p>
+          </div>
+          <div class="text-xs text-muted-foreground">
+            <span data-controls-total>0</span> tools ·
+            <span data-controls-integration>0</span> integrations ·
+            <span data-controls-internal>0</span> internal
+          </div>
+        </div>
+      </section>
+
+      <section class="space-y-4">
+        <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div class="inline-flex rounded-lg border border-border/40 bg-muted/70 p-1" data-controls-filter-root>
+            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase transition-colors bg-primary text-primary-foreground shadow-sm" data-controls-filter="all">All</button>
+            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase transition-colors text-muted-foreground hover:text-primary" data-controls-filter="integration">Integration</button>
+            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase transition-colors text-muted-foreground hover:text-primary" data-controls-filter="internal">Internal</button>
+          </div>
+          <input
+            type="text"
+            class="w-full md:w-72 h-9 rounded-md border border-border/60 bg-muted/40 px-3 text-xs focus-visible:ring-0 focus-visible:border-border"
+            placeholder="Search tool, description, or connection"
+            data-controls-search
+          />
+        </div>
+
+        <div class="rounded-xl border border-border/70 bg-background/60 overflow-hidden">
+          <div class="hidden md:grid md:grid-cols-[2.2fr_1fr_0.8fr_1fr] gap-3 px-4 py-3 border-b border-border/60 bg-muted/40 text-[11px] uppercase tracking-wide text-muted-foreground font-semibold">
+            <div>Tool</div>
+            <div>Type</div>
+            <div>Exposed</div>
+            <div>Approval</div>
+          </div>
+          <div class="divide-y divide-border/60" data-controls-list>
+            <div class="p-6 text-sm text-muted-foreground">Loading controls…</div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<style>
+  @keyframes controls-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  .controls-page [data-controls-refresh].is-loading [data-controls-refresh-icon] {
+    animation: controls-spin 0.9s linear infinite;
+  }
+  .controls-page .ctrl-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.85rem;
+    padding: 0.95rem 1rem;
+  }
+  .controls-page .ctrl-title {
+    font-size: 0.92rem;
+    font-weight: 600;
+    color: hsl(var(--foreground));
+    overflow-wrap: anywhere;
+  }
+  .controls-page .ctrl-desc {
+    font-size: 0.76rem;
+    color: hsl(var(--muted-foreground));
+    margin-top: 0.2rem;
+    line-height: 1.35;
+  }
+  .controls-page .ctrl-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-top: 0.5rem;
+  }
+  .controls-page .ctrl-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.18rem 0.5rem;
+    border-radius: 999px;
+    border: 1px solid hsl(var(--border) / 0.75);
+    background: hsl(var(--muted) / 0.35);
+    font-size: 0.66rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: hsl(var(--muted-foreground));
+    text-transform: uppercase;
+  }
+  .controls-page .ctrl-chip.integration {
+    border-color: hsl(var(--primary) / 0.35);
+    background: hsl(var(--primary) / 0.12);
+    color: hsl(var(--primary));
+  }
+  .controls-page .ctrl-chip.write {
+    border-color: hsl(20 90% 60% / 0.35);
+    background: hsl(20 90% 55% / 0.1);
+    color: hsl(20 90% 65%);
+  }
+  .controls-page .ctrl-cell-label {
+    font-size: 0.68rem;
+    color: hsl(var(--muted-foreground));
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.25rem;
+    font-weight: 600;
+  }
+  .controls-page .ctrl-approval-toggle {
+    display: inline-flex;
+    gap: 0.25rem;
+    border: 1px solid hsl(var(--border) / 0.75);
+    border-radius: 0.55rem;
+    background: hsl(var(--muted) / 0.35);
+    padding: 0.2rem;
+  }
+  .controls-page .ctrl-approval-toggle button {
+    border: 0;
+    border-radius: 0.42rem;
+    background: transparent;
+    color: hsl(var(--muted-foreground));
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 0.36rem 0.62rem;
+    cursor: pointer;
+    transition: background-color var(--transition-fast), color var(--transition-fast);
+  }
+  .controls-page .ctrl-approval-toggle button.is-active {
+    background: linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(270 92% 58%) 100%);
+    color: hsl(var(--primary-foreground));
+  }
+  .controls-page .ctrl-approval-toggle button:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+  .controls-page .ctrl-unsaved {
+    font-size: 0.68rem;
+    color: hsl(var(--primary));
+    font-weight: 600;
+    margin-top: 0.4rem;
+  }
+  @media (min-width: 768px) {
+    .controls-page .ctrl-row {
+      grid-template-columns: minmax(0, 2.2fr) minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 1fr);
+      align-items: center;
+      gap: 0.9rem;
+    }
+    .controls-page .ctrl-cell-label {
+      display: none;
+    }
+  }
+</style>
+
+<script>
+(function () {
+  const BUSINESS_ID = "{{ business_id|escapejs }}";
+  const refreshBtn = document.querySelector("[data-controls-refresh]");
+  const refreshLabelEl = document.querySelector("[data-controls-refresh-label]");
+  const saveBtn = document.querySelector("[data-controls-save]");
+  const flashEl = document.querySelector("[data-controls-flash]");
+  const listEl = document.querySelector("[data-controls-list]");
+  const searchEl = document.querySelector("[data-controls-search]");
+  const filterRoot = document.querySelector("[data-controls-filter-root]");
+  const totalEl = document.querySelector("[data-controls-total]");
+  const integrationEl = document.querySelector("[data-controls-integration]");
+  const internalEl = document.querySelector("[data-controls-internal]");
+
+  let refreshTimer = null;
+  let saveInFlight = false;
+  let controlsState = {
+    items: [],
+    filter: "all",
+    query: "",
+  };
+  const pendingModeById = new Map();
+
+  function escapeHtml(value) {
+    return String(value || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  function getCookie(name) {
+    const match = document.cookie.match(new RegExp("(^| )" + name + "=([^;]+)"));
+    return match ? decodeURIComponent(match[2]) : "";
+  }
+
+  async function apiFetch(url, options) {
+    const resp = await fetch(url, Object.assign({
+      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": getCookie("csrftoken"),
+      },
+    }, options || {}));
+    const payload = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      const message = payload && (payload.message || payload.error) ? String(payload.message || payload.error) : ("Request failed (" + resp.status + ")");
+      throw new Error(message);
+    }
+    return payload;
+  }
+
+  function showFlash(message, tone) {
+    if (!flashEl) return;
+    const text = String(message || "").trim();
+    if (!text) {
+      flashEl.classList.add("hidden");
+      flashEl.textContent = "";
+      return;
+    }
+    flashEl.className = "rounded-xl border p-4 text-sm " + (
+      tone === "error"
+        ? "border-destructive/40 bg-destructive/10 text-destructive"
+        : "border-primary/40 bg-primary/10 text-primary"
+    );
+    flashEl.textContent = text;
+    flashEl.classList.remove("hidden");
+    setTimeout(() => {
+      flashEl.classList.add("hidden");
+    }, 5000);
+  }
+
+  function setRefreshState(state) {
+    if (!refreshBtn || !refreshLabelEl) return;
+    if (refreshTimer) {
+      clearTimeout(refreshTimer);
+      refreshTimer = null;
+    }
+    if (state === "loading") {
+      refreshBtn.disabled = true;
+      refreshBtn.classList.add("is-loading");
+      refreshLabelEl.textContent = "Refreshing";
+      return;
+    }
+    refreshBtn.disabled = false;
+    refreshBtn.classList.remove("is-loading");
+    if (state === "success") {
+      refreshLabelEl.textContent = "Updated just now";
+      refreshTimer = setTimeout(() => {
+        refreshLabelEl.textContent = "Refresh";
+      }, 1800);
+      return;
+    }
+    if (state === "error") {
+      refreshLabelEl.textContent = "Refresh failed";
+      refreshTimer = setTimeout(() => {
+        refreshLabelEl.textContent = "Refresh";
+      }, 1800);
+      return;
+    }
+    refreshLabelEl.textContent = "Refresh";
+  }
+
+  function modeLabel(mode) {
+    return mode === "auto" ? "Auto approve" : "Always confirm";
+  }
+
+  function formatSourceBadge(item) {
+    if (item && item.connectionName) {
+      return String(item.connectionName || "").trim();
+    }
+    const rawType = String((item && item.integrationType) || "").trim().toLowerCase();
+    if (!rawType || rawType === "internal") return "Core";
+    if (rawType === "integration") return "Native";
+    if (rawType === "mcp_gateway") return "MCP gateway";
+    if (rawType === "mcp_connection") return "MCP";
+    return rawType.replace(/_/g, " ").toUpperCase();
+  }
+
+  function getFilteredItems() {
+    const filter = controlsState.filter;
+    const query = (controlsState.query || "").trim().toLowerCase();
+    return controlsState.items.filter((item) => {
+      if (filter !== "all" && String(item.sourceType || "") !== filter) {
+        return false;
+      }
+      if (!query) return true;
+      const haystack = [
+        item.label,
+        item.toolName,
+        item.description,
+        item.sourceLabel,
+        item.connectionName,
+        item.integrationType,
+      ].map((v) => String(v || "").toLowerCase()).join(" ");
+      return haystack.includes(query);
+    });
+  }
+
+  function getCurrentMode(item) {
+    return pendingModeById.has(item.id) ? pendingModeById.get(item.id) : (item.controlsMode || "confirm");
+  }
+
+  function updateSaveButton() {
+    if (!saveBtn) return;
+    const count = pendingModeById.size;
+    saveBtn.textContent = count > 0 ? ("Save changes (" + count + ")") : "Save changes";
+    saveBtn.disabled = count === 0 || saveInFlight;
+  }
+
+  function updateSummary() {
+    const total = controlsState.items.length;
+    const integration = controlsState.items.filter((item) => item.sourceType === "integration").length;
+    const internal = controlsState.items.filter((item) => item.sourceType === "internal").length;
+    if (totalEl) totalEl.textContent = String(total);
+    if (integrationEl) integrationEl.textContent = String(integration);
+    if (internalEl) internalEl.textContent = String(internal);
+  }
+
+  function renderItems() {
+    if (!listEl) return;
+    const visible = getFilteredItems();
+    if (!visible.length) {
+      listEl.innerHTML = '<div class="p-6 text-sm text-muted-foreground">No tools match this filter.</div>';
+      updateSaveButton();
+      return;
+    }
+
+    listEl.innerHTML = visible.map((item) => {
+      const mode = getCurrentMode(item);
+      const unsaved = pendingModeById.has(item.id);
+      const sourceClass = item.sourceType === "integration" ? "integration" : "";
+      const opClass = item.operationType === "write" ? "write" : "";
+      const sourceText = escapeHtml(formatSourceBadge(item));
+      const editable = !!item.editable;
+
+      return `
+        <div class="ctrl-row" data-controls-row="${escapeHtml(item.id)}">
+          <div>
+            <div class="ctrl-cell-label">Tool</div>
+            <div class="ctrl-title">${escapeHtml(item.label || item.toolName || "Tool")}</div>
+            <div class="ctrl-desc">${escapeHtml(item.description || "Tool exposed to the LLM runtime.")}</div>
+            <div class="ctrl-meta">
+              <span class="ctrl-chip ${sourceClass}">${escapeHtml(sourceText)}</span>
+              <span class="ctrl-chip ${opClass}">${escapeHtml(String(item.operationType || "unknown"))}</span>
+              ${item.connectionName && item.integrationType && item.integrationType !== "internal" && String(item.integrationType).toLowerCase() !== "integration" ? `<span class="ctrl-chip">${escapeHtml(String(item.integrationType).replace(/_/g, " ").toUpperCase())}</span>` : ""}
+            </div>
+          </div>
+          <div>
+            <div class="ctrl-cell-label">Type</div>
+            <div class="text-sm text-foreground">${escapeHtml(item.sourceType === "integration" ? "Integration" : "Internal tool")}</div>
+          </div>
+          <div>
+            <div class="ctrl-cell-label">Exposed</div>
+            <span class="ctrl-chip integration">Exposed</span>
+          </div>
+          <div>
+            <div class="ctrl-cell-label">Approval</div>
+            <div class="ctrl-approval-toggle">
+              <button
+                type="button"
+                class="${mode === "auto" ? "is-active" : ""}"
+                data-controls-mode="auto"
+                data-controls-row="${escapeHtml(item.id)}"
+                ${editable ? "" : "disabled"}
+              >
+                Auto
+              </button>
+              <button
+                type="button"
+                class="${mode === "confirm" ? "is-active" : ""}"
+                data-controls-mode="confirm"
+                data-controls-row="${escapeHtml(item.id)}"
+                ${editable ? "" : "disabled"}
+              >
+                Always confirm
+              </button>
+            </div>
+            <div class="text-[11px] text-muted-foreground mt-1">${escapeHtml(editable ? modeLabel(mode) : (item.approvalHint || "System default"))}</div>
+            ${unsaved ? '<div class="ctrl-unsaved">Unsaved change</div>' : ""}
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    updateSaveButton();
+  }
+
+  function updateFilterButtons() {
+    if (!filterRoot) return;
+    const activeClasses = ["bg-primary", "text-primary-foreground", "shadow-sm"];
+    const inactiveClasses = ["text-muted-foreground", "hover:text-primary"];
+    filterRoot.querySelectorAll("[data-controls-filter]").forEach((btn) => {
+      const key = btn.getAttribute("data-controls-filter");
+      const active = key === controlsState.filter;
+      if (active) {
+        btn.classList.add(...activeClasses);
+        btn.classList.remove(...inactiveClasses);
+      } else {
+        btn.classList.remove(...activeClasses);
+        btn.classList.add(...inactiveClasses);
+      }
+    });
+  }
+
+  async function loadControls(options = {}) {
+    const isManual = options.source === "manual";
+    if (isManual) {
+      setRefreshState("loading");
+    }
+
+    let loadError = null;
+    try {
+      const data = await apiFetch("/api/mcp/controls/tools/?business_id=" + encodeURIComponent(BUSINESS_ID), {
+        method: "GET",
+        cache: "no-store",
+      });
+      controlsState.items = Array.isArray(data.items) ? data.items : [];
+      updateSummary();
+      renderItems();
+      if (isManual) {
+        setRefreshState("success");
+      }
+    } catch (err) {
+      loadError = err;
+      if (listEl) {
+        listEl.innerHTML = '<div class="p-6 text-sm text-destructive">Failed to load controls: ' + escapeHtml(err.message || "Error") + '</div>';
+      }
+      showFlash(err.message || "Failed to load controls.", "error");
+      if (isManual) {
+        setRefreshState("error");
+      }
+    }
+    return !loadError;
+  }
+
+  async function saveChanges() {
+    if (saveInFlight || pendingModeById.size === 0) {
+      return;
+    }
+
+    const updates = [];
+    pendingModeById.forEach((approvalMode, rowId) => {
+      const item = controlsState.items.find((entry) => String(entry.id) === String(rowId));
+      if (!item || !item.editable || !item.toolName) {
+        return;
+      }
+      const update = {
+        toolName: item.toolName,
+        approvalMode: approvalMode,
+      };
+      if (item.connectionId) {
+        update.connectionId = item.connectionId;
+      }
+      updates.push(update);
+    });
+
+    if (!updates.length) {
+      showFlash("No editable changes to save.", "error");
+      return;
+    }
+
+    saveInFlight = true;
+    updateSaveButton();
+    try {
+      await apiFetch("/api/mcp/controls/tools/", {
+        method: "POST",
+        body: JSON.stringify({
+          businessId: BUSINESS_ID,
+          updates: updates,
+        }),
+      });
+      pendingModeById.clear();
+      showFlash("Tool controls updated.", "success");
+      await loadControls();
+    } catch (err) {
+      showFlash(err.message || "Failed to save controls.", "error");
+    } finally {
+      saveInFlight = false;
+      updateSaveButton();
+      renderItems();
+    }
+  }
+
+  if (refreshBtn) {
+    refreshBtn.addEventListener("click", function () {
+      loadControls({ source: "manual" });
+    });
+  }
+
+  if (saveBtn) {
+    saveBtn.addEventListener("click", function () {
+      saveChanges();
+    });
+  }
+
+  if (searchEl) {
+    searchEl.addEventListener("input", function (event) {
+      controlsState.query = (event.target && event.target.value) || "";
+      renderItems();
+    });
+  }
+
+  if (filterRoot) {
+    filterRoot.addEventListener("click", function (event) {
+      const btn = event.target.closest("[data-controls-filter]");
+      if (!btn) return;
+      const filter = btn.getAttribute("data-controls-filter");
+      if (!filter || filter === controlsState.filter) return;
+      controlsState.filter = filter;
+      updateFilterButtons();
+      renderItems();
+    });
+  }
+
+  if (listEl) {
+    listEl.addEventListener("click", function (event) {
+      const btn = event.target.closest("[data-controls-mode]");
+      if (!btn) return;
+      const rowId = btn.getAttribute("data-controls-row");
+      const mode = btn.getAttribute("data-controls-mode");
+      if (!rowId || (mode !== "auto" && mode !== "confirm")) return;
+      const item = controlsState.items.find((entry) => String(entry.id) === String(rowId));
+      if (!item || !item.editable) return;
+      const baseMode = item.controlsMode || "confirm";
+      if (mode === baseMode) {
+        pendingModeById.delete(rowId);
+      } else {
+        pendingModeById.set(rowId, mode);
+      }
+      renderItems();
+    });
+  }
+
+  updateFilterButtons();
+  updateSaveButton();
+  loadControls();
+})();
+</script>
+{% endblock %}

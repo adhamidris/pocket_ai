@@ -303,8 +303,11 @@ class McpConnectionsApiTests(TestCase):
             auth_type=McpConnectionAuthType.NONE,
             metadata={
                 "tool_cache": {
-                    "tool_count": 1,
-                    "tools": [{"name": "create_issue", "description": "Create issue", "inputSchema": {"type": "object"}}],
+                    "tool_count": 2,
+                    "tools": [
+                        {"name": "create_issue", "description": "Create issue", "inputSchema": {"type": "object"}},
+                        {"name": "list_issues", "description": "List issues", "inputSchema": {"type": "object"}},
+                    ],
                 }
             },
         )
@@ -331,6 +334,148 @@ class McpConnectionsApiTests(TestCase):
         setting = McpConnectionToolSetting.objects.get(connection=connection, tool_name="create_issue")
         self.assertEqual(setting.operation_type, McpToolOperationType.WRITE)
         self.assertEqual(setting.approval_mode, McpConnectionApprovalMode.APPROVE_ALL)
+
+    def test_controls_tools_get_returns_internal_and_integration_items(self) -> None:
+        connection = McpConnection.objects.create(
+            business_profile=self.business,
+            created_by=self.user,
+            name="Controls MCP",
+            server_url="https://example.com/mcp",
+            status=McpConnectionStatus.ENABLED,
+            auth_type=McpConnectionAuthType.NONE,
+            metadata={
+                "tool_cache": {
+                    "tool_count": 1,
+                    "tools": [{"name": "create_issue", "description": "Create issue", "inputSchema": {"type": "object"}}],
+                }
+            },
+        )
+        McpConnectionToolSetting.objects.create(
+            connection=connection,
+            tool_name="create_issue",
+            operation_type=McpToolOperationType.WRITE,
+            approval_mode=McpConnectionApprovalMode.APPROVE_ALL,
+            description="Create a new issue",
+        )
+
+        url = reverse("api:mcp-controls-tools")
+        resp = self.client.get(url, {"business_id": str(self.business.id)})
+        self.assertEqual(resp.status_code, 200)
+        payload = resp.json()
+        items = payload.get("items") or []
+        self.assertTrue(any(item.get("sourceType") == "internal" for item in items))
+        self.assertTrue(any(item.get("sourceType") == "integration" for item in items))
+
+        integration_item = next(
+            (item for item in items if item.get("connectionId") == str(connection.id) and item.get("toolName") == "create_issue"),
+            None,
+        )
+        self.assertIsNotNone(integration_item)
+        assert integration_item is not None
+        self.assertTrue(integration_item.get("editable"))
+        self.assertEqual(integration_item.get("controlsMode"), "confirm")
+        self.assertEqual(integration_item.get("operationType"), McpToolOperationType.WRITE)
+        read_item = next(
+            (item for item in items if item.get("connectionId") == str(connection.id) and item.get("toolName") == "list_issues"),
+            None,
+        )
+        self.assertIsNotNone(read_item)
+        assert read_item is not None
+        self.assertEqual(read_item.get("controlsMode"), "auto")
+
+    def test_controls_tools_post_updates_tool_approval_mode(self) -> None:
+        connection = McpConnection.objects.create(
+            business_profile=self.business,
+            created_by=self.user,
+            name="Controls Update MCP",
+            server_url="https://example.com/mcp",
+            status=McpConnectionStatus.ENABLED,
+            auth_type=McpConnectionAuthType.NONE,
+        )
+        McpConnectionToolSetting.objects.create(
+            connection=connection,
+            tool_name="create_issue",
+            operation_type=McpToolOperationType.WRITE,
+            approval_mode=McpConnectionApprovalMode.APPROVE_ALL,
+            description="Create issue",
+        )
+
+        url = reverse("api:mcp-controls-tools")
+        resp = self.client.post(
+            url,
+            data=json.dumps(
+                {
+                    "businessId": str(self.business.id),
+                    "updates": [
+                        {
+                            "connectionId": str(connection.id),
+                            "toolName": "create_issue",
+                            "approvalMode": "auto",
+                        }
+                    ],
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 200)
+        applied = resp.json().get("applied") or []
+        self.assertEqual(len(applied), 1)
+        setting = McpConnectionToolSetting.objects.get(connection=connection, tool_name="create_issue")
+        self.assertEqual(setting.approval_mode, McpConnectionApprovalMode.AUTO)
+
+    def test_controls_tools_post_updates_internal_tool_override(self) -> None:
+        url = reverse("api:mcp-controls-tools")
+        resp = self.client.post(
+            url,
+            data=json.dumps(
+                {
+                    "businessId": str(self.business.id),
+                    "updates": [
+                        {
+                            "toolName": "search_knowledge",
+                            "approvalMode": "confirm",
+                        }
+                    ],
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.business.refresh_from_db()
+        metadata = self.business.metadata if isinstance(self.business.metadata, dict) else {}
+        overrides = metadata.get("tool_approval_overrides") or {}
+        self.assertEqual(overrides.get("search_knowledge"), "confirm")
+
+        get_resp = self.client.get(url, {"business_id": str(self.business.id)})
+        self.assertEqual(get_resp.status_code, 200)
+        items = get_resp.json().get("items") or []
+        row = next((item for item in items if item.get("toolName") == "search_knowledge"), None)
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row.get("controlsMode"), "confirm")
+        self.assertTrue(bool(row.get("editable")))
+
+    def test_controls_tools_hides_unintegrated_native_tools_until_connected(self) -> None:
+        url = reverse("api:mcp-controls-tools")
+
+        before_resp = self.client.get(url, {"business_id": str(self.business.id)})
+        self.assertEqual(before_resp.status_code, 200)
+        before_items = before_resp.json().get("items") or []
+        self.assertFalse(any(item.get("toolName") == "calendar_create_event" for item in before_items))
+
+        IntegrationAccount.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            integration_type=IntegrationType.GOOGLE_CALENDAR,
+            provider=IntegrationProvider.GOOGLE,
+            account_identifier="owner@example.com",
+            status=IntegrationAccountStatus.CONNECTED,
+        )
+
+        after_resp = self.client.get(url, {"business_id": str(self.business.id)})
+        self.assertEqual(after_resp.status_code, 200)
+        after_items = after_resp.json().get("items") or []
+        self.assertTrue(any(item.get("toolName") == "calendar_create_event" for item in after_items))
 
     @mock.patch("apps.api.mcp_connections.test_mcp_server")
     def test_test_endpoint_caches_tools(self, mock_test_server) -> None:

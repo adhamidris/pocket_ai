@@ -29,6 +29,7 @@ from apps.accounts.models import (
     EmailAccount,
     EmailAccountStatus,
     IntegrationAccount,
+    IntegrationAccountStatus,
     McpConnection,
     McpConnectionAgentOptOut,
     McpConnectionApprovalMode,
@@ -53,6 +54,7 @@ _MCP_SETUP_FIELD_MAX_CHARS = 4096
 _MCP_SETUP_FIELDS_TOTAL_MAX_CHARS = 16384
 _MCP_NATIVE_OAUTH_CONNECTION_TYPES = frozenset({"email_oauth", "integration_oauth"})
 _MCP_SURFACE_INTEGRATIONS = "integrations"
+_TOOL_APPROVAL_OVERRIDES_META_KEY = "tool_approval_overrides"
 
 
 def _parse_json_body(request: HttpRequest) -> tuple[dict[str, Any] | None, JsonResponse | None]:
@@ -2036,6 +2038,413 @@ def mcp_connection_tools(request: HttpRequest, connection_id: uuid.UUID) -> Json
                 continue
 
             applied.append(_serialize_tool_setting(setting))
+
+    return JsonResponse({"applied": applied}, status=HTTPStatus.OK)
+
+
+def _controls_mode_from_approval_mode(value: str | None, *, operation_type: str | None = None) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized == McpConnectionApprovalMode.AUTO:
+        return "auto"
+    if normalized == McpConnectionApprovalMode.APPROVE_WRITES:
+        op = str(operation_type or "").strip().lower()
+        return "auto" if op == McpToolOperationType.READ else "confirm"
+    return "confirm"
+
+
+def _normalize_controls_mode(value: object) -> str | None:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"auto", "confirm"}:
+        return normalized
+    return None
+
+
+def _controls_default_mode_for_operation_type(operation_type: str | None) -> str:
+    op = str(operation_type or "").strip().lower()
+    return "auto" if op == McpToolOperationType.READ else "confirm"
+
+
+def _load_business_tool_approval_overrides(business: BusinessProfile) -> dict[str, str]:
+    metadata = business.metadata if isinstance(getattr(business, "metadata", None), Mapping) else {}
+    raw = metadata.get(_TOOL_APPROVAL_OVERRIDES_META_KEY)
+    if raw is None:
+        raw = metadata.get("toolApprovalOverrides")
+    if not isinstance(raw, Mapping):
+        return {}
+    overrides: dict[str, str] = {}
+    for tool_name, mode_value in raw.items():
+        normalized_tool_name = str(tool_name or "").strip()
+        normalized_mode = _normalize_controls_mode(mode_value)
+        if not normalized_tool_name or normalized_mode is None:
+            continue
+        overrides[normalized_tool_name] = normalized_mode
+    return overrides
+
+
+def _save_business_tool_approval_overrides(*, business: BusinessProfile, overrides: Mapping[str, str]) -> None:
+    metadata = dict(business.metadata) if isinstance(getattr(business, "metadata", None), Mapping) else {}
+    cleaned = {
+        str(tool_name or "").strip(): str(mode or "").strip().lower()
+        for tool_name, mode in dict(overrides).items()
+        if str(tool_name or "").strip() and str(mode or "").strip().lower() in {"auto", "confirm"}
+    }
+    if cleaned:
+        metadata[_TOOL_APPROVAL_OVERRIDES_META_KEY] = cleaned
+    else:
+        metadata.pop(_TOOL_APPROVAL_OVERRIDES_META_KEY, None)
+    metadata.pop("toolApprovalOverrides", None)
+    business.metadata = metadata
+    business.save(update_fields=["metadata", "updated_at"])
+
+
+def _controls_tool_label(tool_name: str) -> str:
+    normalized = str(tool_name or "").strip()
+    if not normalized:
+        return "Tool"
+    return normalized.replace("_", " ").strip().title()
+
+
+def _controls_available_integration_tool_names(
+    *,
+    business: BusinessProfile,
+    enabled_connections: list[McpConnection],
+) -> set[str]:
+    from apps.mcp import tools as mcp_tools
+
+    available: set[str] = set()
+
+    integration_accounts = IntegrationAccount.objects.filter(
+        business_profile=business,
+        status=IntegrationAccountStatus.CONNECTED,
+    ).order_by("-updated_at")
+    for account in integration_accounts:
+        catalog = mcp_tools.get_native_integration_tools_for_type(str(account.integration_type or ""))
+        tool_names = [str(row.get("toolName") or "").strip() for row in catalog if str(row.get("toolName") or "").strip()]
+        if not tool_names:
+            continue
+        enabled_map = mcp_tools.get_native_tool_enabled_map_for_account(account, tool_names=tool_names)
+        for tool_name in tool_names:
+            if bool(enabled_map.get(tool_name, True)):
+                available.add(tool_name)
+
+    email_accounts = EmailAccount.objects.filter(
+        business_profile=business,
+        status=EmailAccountStatus.CONNECTED,
+    ).order_by("-updated_at")
+    for account in email_accounts:
+        provider = str(account.provider or "").strip().lower()
+        if not provider:
+            continue
+        catalog = mcp_tools.get_email_integration_tools_for_provider(provider)
+        tool_names = [str(row.get("toolName") or "").strip() for row in catalog if str(row.get("toolName") or "").strip()]
+        if not tool_names:
+            continue
+        enabled_map = mcp_tools.get_email_tool_enabled_map_for_account(account, tool_names=tool_names)
+        for tool_name in tool_names:
+            if bool(enabled_map.get(tool_name, True)):
+                available.add(tool_name)
+
+    if enabled_connections:
+        available.update({"mcp_search_tools", "mcp_call_tool"})
+
+    return available
+
+
+def _controls_internal_tool_items(
+    *,
+    overrides: Mapping[str, str] | None = None,
+    available_integration_tool_names: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    from apps.mcp import tools as mcp_tools
+
+    overrides_map = dict(overrides or {})
+    available_integration_tools = set(available_integration_tool_names or set())
+    filter_integration_tools = available_integration_tool_names is not None
+    native_registry = mcp_tools.get_native_integration_tool_registry()
+    email_registry = getattr(mcp_tools, "EMAIL_INTEGRATION_TOOL_REGISTRY", {})
+    gateway_tools = {"mcp_search_tools", "mcp_call_tool"}
+
+    definitions = list(mcp_tools.get_tool_definitions()) + list(getattr(mcp_tools, "GATEWAY_TOOL_DEFINITIONS", ()))
+    seen: set[str] = set()
+    items: list[dict[str, Any]] = []
+
+    for definition in definitions:
+        if not isinstance(definition, Mapping):
+            continue
+        function_block = definition.get("function")
+        if not isinstance(function_block, Mapping):
+            continue
+
+        tool_name = str(function_block.get("name") or "").strip()
+        if not tool_name or tool_name in seen:
+            continue
+        seen.add(tool_name)
+
+        description = str(function_block.get("description") or "").strip()
+
+        native_meta = native_registry.get(tool_name) if isinstance(native_registry, Mapping) else None
+        email_meta = email_registry.get(tool_name) if isinstance(email_registry, Mapping) else None
+        source_type = "internal"
+        integration_type = "internal"
+        source_label = "Internal tool"
+        integration_backed = False
+
+        if isinstance(native_meta, Mapping):
+            integration_backed = True
+            source_type = "integration"
+            integration_type = str(native_meta.get("integration_type") or "").strip() or "integration"
+            source_label = "Integration"
+            operation_type = str(native_meta.get("operation_type") or "").strip() or McpToolOperationType.UNKNOWN
+        elif isinstance(email_meta, Mapping):
+            integration_backed = True
+            source_type = "integration"
+            integration_type = "email"
+            source_label = "Integration"
+            operation_type = str(email_meta.get("operation_type") or "").strip() or McpToolOperationType.UNKNOWN
+        elif tool_name in gateway_tools:
+            integration_backed = True
+            source_type = "integration"
+            integration_type = "mcp_gateway"
+            source_label = "Integration"
+            operation_type = McpToolOperationType.READ
+        else:
+            operation_type = _infer_operation_type_from_tool_name(tool_name)
+
+        if integration_backed and filter_integration_tools and tool_name not in available_integration_tools:
+            continue
+
+        default_controls_mode = _controls_default_mode_for_operation_type(operation_type)
+        controls_mode = overrides_map.get(tool_name) or default_controls_mode
+        approval_hint = "Workspace override" if tool_name in overrides_map else "System default"
+        effective_approval_mode = (
+            McpConnectionApprovalMode.AUTO if controls_mode == "auto" else McpConnectionApprovalMode.APPROVE_ALL
+        )
+
+        items.append(
+            {
+                "id": f"internal:{tool_name}",
+                "toolName": tool_name,
+                "label": _controls_tool_label(tool_name),
+                "description": description or "Tool exposed to the LLM runtime.",
+                "sourceType": source_type,
+                "sourceLabel": source_label,
+                "integrationType": integration_type,
+                "connectionId": None,
+                "connectionName": None,
+                "scope": "system",
+                "editable": True,
+                "exposedToLlm": True,
+                "operationType": operation_type,
+                "effectiveApprovalMode": effective_approval_mode,
+                "controlsMode": controls_mode,
+                "approvalHint": approval_hint,
+            }
+        )
+
+    items.sort(key=lambda item: (str(item.get("sourceType") or ""), str(item.get("label") or item.get("toolName") or "")))
+    return items
+
+
+def _controls_connection_tool_items(*, business: BusinessProfile, connections: list[McpConnection]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+
+    for connection in connections:
+        serialized = _serialize_mcp_connection(connection, business=business, include_tool_settings=True)
+        for tool in serialized.get("toolSettings", []):
+            if not isinstance(tool, Mapping):
+                continue
+            tool_name = str(tool.get("toolName") or "").strip()
+            if not tool_name:
+                continue
+
+            operation_type = str(tool.get("operationType") or "").strip() or _infer_operation_type_from_tool_name(tool_name)
+            effective_mode = str(tool.get("effectiveApprovalMode") or connection.default_approval_mode).strip() or connection.default_approval_mode
+            controls_mode = _controls_mode_from_approval_mode(effective_mode, operation_type=operation_type)
+            description = str(tool.get("description") or "").strip()
+            source_type = "integration"
+            source_label = "Integration"
+            marketplace_key = str(connection.marketplace_key or "").strip()
+
+            items.append(
+                {
+                    "id": f"mcp:{connection.id}:{tool_name}",
+                    "toolName": tool_name,
+                    "label": _controls_tool_label(tool_name),
+                    "description": description or "Tool exposed from a connected MCP integration.",
+                    "sourceType": source_type,
+                    "sourceLabel": source_label,
+                    "integrationType": marketplace_key or "mcp_connection",
+                    "connectionId": str(connection.id),
+                    "connectionName": connection.name,
+                    "scope": "connection",
+                    "editable": True,
+                    "exposedToLlm": True,
+                    "operationType": operation_type,
+                    "effectiveApprovalMode": effective_mode,
+                    "controlsMode": controls_mode,
+                    "approvalHint": "Connection override",
+                }
+            )
+
+    items.sort(key=lambda item: (str(item.get("connectionName") or ""), str(item.get("label") or item.get("toolName") or "")))
+    return items
+
+
+@csrf_protect
+@require_http_methods(["GET", "POST"])
+def mcp_controls_tools(request: HttpRequest) -> JsonResponse:
+    payload: dict[str, Any] | None = None
+    business_param = request.GET.get("business_id") or request.GET.get("businessId")
+    if request.method != "GET":
+        payload, error = _parse_json_body(request)
+        if error:
+            return error
+        business_param = (
+            (payload or {}).get("businessId")
+            or (payload or {}).get("business_id")
+            or request.GET.get("business_id")
+            or business_param
+        )
+
+    business, error = _resolve_business_for_request(request, business_param)
+    if error:
+        return error
+    assert business is not None
+
+    if request.method == "GET":
+        with tenant_context(business.id):
+            connections = list(
+                McpConnection.objects.filter(
+                    business_profile=business,
+                    status=McpConnectionStatus.ENABLED,
+                ).order_by("name")
+            )
+            integration_items = _controls_connection_tool_items(business=business, connections=connections)
+            available_integration_tool_names = _controls_available_integration_tool_names(
+                business=business,
+                enabled_connections=connections,
+            )
+            internal_overrides = _load_business_tool_approval_overrides(business)
+        internal_items = _controls_internal_tool_items(
+            overrides=internal_overrides,
+            available_integration_tool_names=available_integration_tool_names,
+        )
+        items = integration_items + internal_items
+        summary = {
+            "total": len(items),
+            "integration": len([item for item in items if item.get("sourceType") == "integration"]),
+            "internal": len([item for item in items if item.get("sourceType") == "internal"]),
+            "editable": len([item for item in items if bool(item.get("editable"))]),
+        }
+        return JsonResponse(
+            {
+                "businessId": str(business.id),
+                "items": items,
+                "summary": summary,
+                "approvalOptions": [
+                    {"value": "auto", "label": "Auto approve"},
+                    {"value": "confirm", "label": "Always confirm"},
+                ],
+            },
+            status=HTTPStatus.OK,
+        )
+
+    assert payload is not None
+    updates = payload.get("updates")
+    if not isinstance(updates, list):
+        return JsonResponse({"error": "VALIDATION_ERROR", "message": "updates must be a list."}, status=HTTPStatus.BAD_REQUEST)
+
+    applied: list[dict[str, Any]] = []
+    allowed_operations = {choice for choice, _ in McpToolOperationType.choices}
+    with tenant_context(business.id):
+        enabled_connections = list(
+            McpConnection.objects.filter(
+                business_profile=business,
+                status=McpConnectionStatus.ENABLED,
+            )
+        )
+        connection_map = {
+            str(conn.id): conn
+            for conn in enabled_connections
+        }
+        available_integration_tool_names = _controls_available_integration_tool_names(
+            business=business,
+            enabled_connections=enabled_connections,
+        )
+        internal_items = _controls_internal_tool_items(
+            overrides=_load_business_tool_approval_overrides(business),
+            available_integration_tool_names=available_integration_tool_names,
+        )
+        internal_tool_names = {str(item.get("toolName") or "").strip() for item in internal_items if str(item.get("toolName") or "").strip()}
+        internal_defaults = {
+            str(item.get("toolName") or "").strip(): _controls_default_mode_for_operation_type(str(item.get("operationType") or "").strip())
+            for item in internal_items
+            if str(item.get("toolName") or "").strip()
+        }
+        internal_overrides = _load_business_tool_approval_overrides(business)
+        internal_changed = False
+
+        for item in updates:
+            if not isinstance(item, Mapping):
+                continue
+            tool_name = str(item.get("toolName") or "").strip()
+            controls_mode = str(item.get("approvalMode") or "").strip().lower()
+            if not tool_name or controls_mode not in {"auto", "confirm"}:
+                continue
+
+            connection_id = str(item.get("connectionId") or "").strip()
+            connection = connection_map.get(connection_id)
+            if connection is None:
+                if tool_name not in internal_tool_names:
+                    continue
+                default_mode = internal_defaults.get(tool_name, "confirm")
+                current_mode = internal_overrides.get(tool_name)
+                if controls_mode == default_mode:
+                    if tool_name in internal_overrides:
+                        del internal_overrides[tool_name]
+                        internal_changed = True
+                elif current_mode != controls_mode:
+                    internal_overrides[tool_name] = controls_mode
+                    internal_changed = True
+                applied.append(
+                    {
+                        "toolName": tool_name,
+                        "approvalMode": controls_mode,
+                        "scope": "system",
+                    }
+                )
+                continue
+
+            approval_mode = (
+                McpConnectionApprovalMode.AUTO
+                if controls_mode == "auto"
+                else McpConnectionApprovalMode.APPROVE_ALL
+            )
+            inferred_operation = _infer_operation_type_from_tool_name(tool_name)
+            operation_value = inferred_operation if inferred_operation in allowed_operations else McpToolOperationType.UNKNOWN
+            setting, _ = McpConnectionToolSetting.objects.get_or_create(
+                connection=connection,
+                tool_name=tool_name,
+                defaults={
+                    "operation_type": operation_value,
+                    "description": "",
+                    "approval_mode": approval_mode,
+                },
+            )
+            if setting.operation_type not in allowed_operations:
+                setting.operation_type = operation_value
+            setting.approval_mode = approval_mode
+            setting.save(update_fields=["operation_type", "approval_mode", "updated_at"])
+            applied.append(
+                {
+                    "connectionId": connection_id,
+                    "toolName": tool_name,
+                    "approvalMode": controls_mode,
+                }
+            )
+
+        if internal_changed:
+            _save_business_tool_approval_overrides(business=business, overrides=internal_overrides)
 
     return JsonResponse({"applied": applied}, status=HTTPStatus.OK)
 

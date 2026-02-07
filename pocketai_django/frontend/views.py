@@ -2108,6 +2108,18 @@ def dashboard_mcp(request: HttpRequest) -> HttpResponse:
 
 
 @login_required
+def dashboard_controls(request: HttpRequest) -> HttpResponse:
+    user_name = _current_user_name(request)
+    business = _primary_business_for_user(request.user)
+    get_token(request)
+    context = {
+        "user_name": user_name,
+        "business_id": str(business.id) if business else "",
+    }
+    return render(request, "frontend/controls.html", context)
+
+
+@login_required
 def dashboard_voice(request: HttpRequest) -> HttpResponse:
     user_name = _current_user_name(request)
     business = _primary_business_for_user(request.user)

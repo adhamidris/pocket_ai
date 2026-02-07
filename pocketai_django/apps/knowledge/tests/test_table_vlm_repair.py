@@ -130,3 +130,61 @@ class TableVlmRepairTests(SimpleTestCase):
         self.assertEqual(meta.get("repaired"), 0)
         render.assert_not_called()
         run.assert_not_called()
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_vlm_repair_retries_full_page_after_crop_failure(self, _build_embeddings) -> None:
+        service = self._service()
+        table = self._low_conf_geometry_table()
+        vlm_payload = {
+            "columns": ["Fee", "Amount"],
+            "rows": [["Annual fee", "100"]],
+        }
+
+        with (
+            mock.patch.dict(os.environ, {"OPENAI_API_KEY": "test"}, clear=False),
+            mock.patch("openai.OpenAI"),
+            mock.patch.object(KnowledgeIngestionService, "_render_table_crop", return_value=b"crop"),
+            mock.patch.object(KnowledgeIngestionService, "_render_full_page", return_value=b"full_page"),
+            mock.patch.object(
+                KnowledgeIngestionService,
+                "_run_vlm_table_repair",
+                side_effect=[None, vlm_payload],
+            ) as run,
+        ):
+            repaired, issues, meta = service._repair_tables_with_vlm(Path("dummy.pdf"), [table])
+
+        self.assertEqual(meta.get("attempted"), 1)
+        self.assertEqual(meta.get("repaired"), 1)
+        self.assertEqual(len(issues), 0)
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(run.call_args_list[0].kwargs.get("render_mode"), "crop")
+        self.assertEqual(run.call_args_list[1].kwargs.get("render_mode"), "full_page")
+        self.assertTrue(run.call_args_list[1].kwargs.get("table_hint"))
+        self.assertEqual(meta.get("repaired_tables")[0].get("render_mode"), "full_page_retry")
+        self.assertEqual(repaired[0].metadata.get("detected_via"), "geometry+vlm")
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_vlm_repair_tracks_attempted_modes_when_crop_and_full_page_fail(self, _build_embeddings) -> None:
+        service = self._service()
+        table = self._low_conf_geometry_table()
+
+        with (
+            mock.patch.dict(os.environ, {"OPENAI_API_KEY": "test"}, clear=False),
+            mock.patch("openai.OpenAI"),
+            mock.patch.object(KnowledgeIngestionService, "_render_table_crop", return_value=b"crop"),
+            mock.patch.object(KnowledgeIngestionService, "_render_full_page", return_value=b"full_page"),
+            mock.patch.object(
+                KnowledgeIngestionService,
+                "_run_vlm_table_repair",
+                side_effect=[None, None],
+            ),
+        ):
+            repaired, issues, meta = service._repair_tables_with_vlm(Path("dummy.pdf"), [table])
+
+        self.assertEqual(meta.get("attempted"), 1)
+        self.assertEqual(meta.get("repaired"), 0)
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].code, "table_vlm_failed")
+        self.assertEqual(issues[0].details.get("attempted_modes"), ["crop", "full_page"])
+        self.assertEqual(issues[0].details.get("render_mode"), "crop")
+        self.assertEqual(repaired[0].metadata.get("detected_via"), "geometry")
