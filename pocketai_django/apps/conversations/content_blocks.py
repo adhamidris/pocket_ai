@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import uuid
 from typing import Any, Literal, Mapping, TypedDict
 
@@ -130,12 +131,11 @@ def ensure_assistant_text_blocks(body: str, *, existing_blocks: object | None = 
     non_text_block_types = {"tool_use", "tool_result", "reasoning", "table", "kv"}
 
     # Check if existing blocks have a valid structure
-    has_non_text = any(
-        isinstance(block, Mapping) and str(block.get("type") or "").strip().lower() in non_text_block_types
-        for block in blocks
-    )
     has_rich_text = any(isinstance(block, Mapping) and _is_rich_text_block(block) for block in blocks)
     has_plain_text = any(isinstance(block, Mapping) and _is_text_block(block) for block in blocks)
+    has_malformed_rich_text = has_rich_text and _has_inline_embedded_lists(
+        extract_text_from_content_blocks(blocks)
+    )
 
     # Preserve existing blocks when they already include any text content.
     #
@@ -143,7 +143,7 @@ def ensure_assistant_text_blocks(body: str, *, existing_blocks: object | None = 
     # messages during approval flows, or legacy rows missing content_blocks). Regenerating
     # from `body` can be lossy because `body` is a plain-text fallback and may not preserve
     # rich inline marks (bold/italic/code/link).
-    if blocks and (has_rich_text or has_plain_text):
+    if blocks and (has_rich_text or has_plain_text) and not has_malformed_rich_text:
         return blocks
 
     # Otherwise, regenerate text blocks from body
@@ -152,6 +152,9 @@ def ensure_assistant_text_blocks(body: str, *, existing_blocks: object | None = 
         if isinstance(block, Mapping) and str(block.get("type") or "").strip().lower() in non_text_block_types
     ]
 
+    if not body_value:
+        if has_malformed_rich_text:
+            body_value = extract_text_from_content_blocks(blocks).strip()
     if not body_value:
         # No body text, just return non-text blocks
         return non_text_blocks if non_text_blocks else blocks
@@ -166,6 +169,41 @@ def ensure_assistant_text_blocks(body: str, *, existing_blocks: object | None = 
     # Combine: non-text blocks first (tools, reasoning), then text blocks
     # This maintains the visual order: tool indicators at top, response text below
     return non_text_blocks + rich_blocks
+
+
+def normalize_assistant_content_blocks(existing_blocks: object | None) -> list[dict[str, object]]:
+    """
+    Normalize malformed markdown artifacts inside rich-text runs while preserving
+    surrounding non-text blocks and their order.
+    """
+    blocks = _coerce_block_list(existing_blocks)
+    if not blocks:
+        return []
+
+    normalized: list[dict[str, object]] = []
+    current_text_run: list[dict[str, object]] = []
+    changed = False
+
+    def _flush_text_run() -> None:
+        nonlocal changed
+        if not current_text_run:
+            return
+        repaired = _repair_rich_text_run(current_text_run)
+        if repaired != current_text_run:
+            changed = True
+        normalized.extend(repaired)
+        current_text_run.clear()
+
+    for block in blocks:
+        block_type = str(block.get("type") or "").strip().lower()
+        if block_type == "text" or _is_rich_text_block(block):
+            current_text_run.append(block)
+            continue
+        _flush_text_run()
+        normalized.append(block)
+
+    _flush_text_run()
+    return normalized if changed else blocks
 
 
 def extract_text_from_content_blocks(value: object | None) -> str:
@@ -270,6 +308,33 @@ def _is_text_block(block: Mapping[str, object]) -> bool:
 def _is_rich_text_block(block: Mapping[str, object]) -> bool:
     block_type = str(block.get("type") or "").strip().lower()
     return block_type in {"paragraph", "heading", "list", "list_item", "quote", "code_block"}
+
+
+def _repair_rich_text_run(run_blocks: list[dict[str, object]]) -> list[dict[str, object]]:
+    markdown = extract_text_from_content_blocks(run_blocks).strip()
+    if not markdown or not _has_inline_embedded_lists(markdown):
+        return run_blocks
+    rebuilt = rich_blocks_from_text(markdown)
+    return rebuilt or run_blocks
+
+
+def _has_inline_embedded_lists(text: str) -> bool:
+    if not text:
+        return False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        numbered = list(re.finditer(r"(\d+)\.\s+", stripped))
+        if len(numbered) >= 2 and re.search(r"\S\s+\d+\.\s+\S", stripped):
+            return True
+        bullets = list(re.finditer(r"\s[-*+]\s+\S", stripped))
+        if len(bullets) >= 2:
+            first = bullets[0]
+            before = stripped[: first.start()].strip()
+            if before and not re.match(r"^[-*+]\s+", before):
+                return True
+    return False
 
 
 def make_tool_use_block(

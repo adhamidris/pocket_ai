@@ -190,6 +190,185 @@ class AgenticReadV2CursorAndArtifactTests(TestCase):
         MCP_NEW_CONTRACT_ENABLED=True,
         MCP_AGENTIC_READ_V2_ENABLED=True,
         MCP_TEXT_PII_REDACTION_ENABLED=False,
+    )
+    def test_grouped_row_refs_promote_to_single_table_context_read(self) -> None:
+        """Multiple row refs for the same table should be consolidated into one broader table read."""
+
+        table = KnowledgeUploadTable.objects.create(
+            upload=self.upload,
+            order_index=1,
+            title="Grouped Fees",
+            column_schema=["service", "fee"],
+        )
+        KnowledgeUploadPage.objects.create(upload=self.upload, page_number=1)
+        rows = []
+        for idx, (service, fee) in enumerate(
+            (
+                ("Account Opening", "EGP 100"),
+                ("Outgoing Transfer", "0.2% min EGP 40"),
+                ("Checkbook", "EGP 480"),
+            ),
+            start=0,
+        ):
+            row = KnowledgeUploadTableRow.objects.create(table=table, row_index=idx, metadata={"row_type": "body"})
+            rows.append(row)
+            KnowledgeUploadTableCell.objects.create(
+                table=table,
+                row=row,
+                column_index=0,
+                column_key="service",
+                raw_text=service,
+            )
+            KnowledgeUploadTableCell.objects.create(
+                table=table,
+                row=row,
+                column_index=1,
+                column_key="fee",
+                raw_text=fee,
+            )
+
+        ctx = ToolExecutionContext(char_budget_per_turn=100_000)
+        with self._enable_agentic_mode():
+            result = tools.execute_tool(
+                "read_knowledge",
+                {"refs": [{"id": str(rows[1].id)}, {"id": str(rows[2].id)}], "max_chars": 2000},
+                conversation=self.conversation,
+                context=ctx,
+            )
+
+        self.assertIn(result["status"], {"ok", "truncated"}, json.dumps(result, indent=2, default=str))
+        evidence = result.get("evidence") or []
+        self.assertEqual(len(evidence), 1, json.dumps(result, indent=2, default=str))
+        self.assertEqual(evidence[0]["id"], str(rows[1].id))
+        payload = evidence[0]["payload"]
+        self.assertEqual(payload["columns"], ["service", "fee"])
+        self.assertGreaterEqual(int(payload.get("rows_shown") or 0), 2)
+        read_entries = result.get("read") or []
+        covered_entries = [entry for entry in read_entries if entry.get("status") == "covered"]
+        self.assertEqual(len(covered_entries), 1, json.dumps(read_entries, indent=2, default=str))
+
+    @override_settings(
+        MCP_NEW_CONTRACT_ENABLED=True,
+        MCP_AGENTIC_READ_V2_ENABLED=True,
+        MCP_TEXT_PII_REDACTION_ENABLED=False,
+    )
+    def test_table_columns_are_deduped_when_schema_has_duplicates(self) -> None:
+        """Duplicate column labels should be deduped for stable structured payloads."""
+
+        table = KnowledgeUploadTable.objects.create(
+            upload=self.upload,
+            order_index=1,
+            title="Duplicate Columns",
+            column_schema=["prime", "prime", "plus"],
+        )
+        KnowledgeUploadPage.objects.create(upload=self.upload, page_number=1)
+        row = KnowledgeUploadTableRow.objects.create(table=table, row_index=0, metadata={"row_type": "body"})
+        KnowledgeUploadTableCell.objects.create(
+            table=table,
+            row=row,
+            column_index=0,
+            column_key="prime",
+            raw_text="A",
+        )
+        KnowledgeUploadTableCell.objects.create(
+            table=table,
+            row=row,
+            column_index=1,
+            column_key="prime",
+            raw_text="B",
+        )
+        KnowledgeUploadTableCell.objects.create(
+            table=table,
+            row=row,
+            column_index=2,
+            column_key="plus",
+            raw_text="C",
+        )
+
+        ctx = ToolExecutionContext(char_budget_per_turn=100_000)
+        with self._enable_agentic_mode():
+            result = tools.execute_tool(
+                "read_knowledge",
+                {"refs": [{"id": str(table.id)}], "max_chars": 2000},
+                conversation=self.conversation,
+                context=ctx,
+            )
+
+        self.assertIn(result["status"], {"ok", "truncated"}, json.dumps(result, indent=2, default=str))
+        self.assertTrue(result.get("evidence"), json.dumps(result, indent=2, default=str))
+        columns = result["evidence"][0]["payload"]["columns"]
+        self.assertEqual(columns, ["prime", "prime_2", "plus"])
+
+    @override_settings(
+        MCP_NEW_CONTRACT_ENABLED=True,
+        MCP_AGENTIC_READ_V2_ENABLED=True,
+        MCP_TEXT_PII_REDACTION_ENABLED=False,
+        MCP_AGENTIC_TEXT_CHUNK_GROUP_NEIGHBOR_CHUNKS=1,
+        MCP_AGENTIC_TEXT_CHUNK_GROUP_MAX_WINDOW_CHUNKS=10,
+    )
+    def test_document_anchor_reads_grouped_window_and_marks_chunk_ref_covered(self) -> None:
+        grouped_upload = KnowledgeUpload.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            source_type=KnowledgeSourceType.FILE,
+            status=KnowledgeStatus.ACTIVE,
+            display_name="Remittance Guide",
+            ingestion_metadata={"format": "pdf"},
+        )
+        grouped_chunks: list[KnowledgeUploadChunk] = []
+        for idx in range(8):
+            grouped_chunks.append(
+                KnowledgeUploadChunk.objects.create(
+                    upload=grouped_upload,
+                    business_profile=self.business,
+                    chunk_index=idx,
+                    content=(f"chunk-{idx} " * 25).strip(),
+                )
+            )
+
+        context = ToolExecutionContext(char_budget_per_turn=100_000)
+        context.text_chunk_group_manifests[str(grouped_upload.id)] = {
+            "upload_id": str(grouped_upload.id),
+            "chunk_count": 3,
+            "chunk_ids": [str(grouped_chunks[3].id), str(grouped_chunks[4].id), str(grouped_chunks[5].id)],
+            "chunk_indices": [3, 4, 5],
+            "chunk_range": [3, 5],
+            "pages": [2, 3],
+            "char_estimate": 2200,
+        }
+
+        with self._enable_agentic_mode():
+            result = tools.execute_tool(
+                "read_knowledge",
+                {"refs": [{"id": str(grouped_upload.id)}, {"id": str(grouped_chunks[4].id)}], "max_chars": 5000},
+                conversation=self.conversation,
+                context=context,
+            )
+
+        self.assertIn(result["status"], {"ok", "truncated"}, json.dumps(result, indent=2, default=str))
+        evidence = result.get("evidence") or []
+        self.assertEqual(len(evidence), 1, json.dumps(result, indent=2, default=str))
+        item = evidence[0]
+        self.assertEqual(item["id"], str(grouped_upload.id))
+        self.assertEqual(item["kind"], "document_context")
+        text_payload = str(item["payload"].get("text") or "")
+        self.assertIn("chunk-3", text_payload)
+        self.assertIn("chunk-5", text_payload)
+        self.assertNotIn("chunk-0", text_payload)
+
+        coverage_hint = item.get("coverage_hint") or {}
+        self.assertEqual(coverage_hint.get("chunk_range"), [3, 5])
+        self.assertEqual(coverage_hint.get("window_range"), [2, 6])
+
+        read_entries = result.get("read") or []
+        covered_entries = [entry for entry in read_entries if entry.get("status") == "covered"]
+        self.assertEqual(len(covered_entries), 1, json.dumps(read_entries, indent=2, default=str))
+        self.assertEqual(str(covered_entries[0].get("id")), str(grouped_chunks[4].id))
+
+    @override_settings(
+        MCP_NEW_CONTRACT_ENABLED=True,
+        MCP_AGENTIC_READ_V2_ENABLED=True,
+        MCP_TEXT_PII_REDACTION_ENABLED=False,
         MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS=25000,
         MCP_READ_DOCUMENT_MAX_CHARS_MARGIN=0,
     )

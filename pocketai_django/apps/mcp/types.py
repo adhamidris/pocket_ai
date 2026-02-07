@@ -124,6 +124,10 @@ class ToolExecutionContext:
     table_column_filters: dict[str, list[str]] = dataclasses.field(default_factory=dict)
     table_result_cache: dict[tuple, dict[str, object]] = dataclasses.field(default_factory=dict)
     table_result_cache_dirty: set[tuple] = dataclasses.field(default_factory=set)
+    # Search-time text-group manifests keyed by upload_id.
+    # Used by read_knowledge v2 to resolve grouped document anchors into
+    # bounded chunk windows around matched regions.
+    text_chunk_group_manifests: dict[str, dict[str, object]] = dataclasses.field(default_factory=dict)
     llm_usage: dict[str, int] = dataclasses.field(
         default_factory=lambda: {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     )

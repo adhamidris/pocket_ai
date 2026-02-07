@@ -3931,6 +3931,7 @@ def _convert_to_agentic_search_response(
     legacy_payload: Mapping[str, object],
     *,
     conversation: Conversation,
+    context: ToolExecutionContext | None = None,
 ) -> dict[str, object]:
     """
     Convert legacy search_knowledge response to agentic format.
@@ -3954,6 +3955,29 @@ def _convert_to_agentic_search_response(
     except (TypeError, ValueError):
         preview_chars_cap = 1200
     preview_chars_cap = max(0, preview_chars_cap)
+    text_chunk_grouping_enabled = bool(
+        getattr(settings, "MCP_AGENTIC_TEXT_CHUNK_GROUPING_ENABLED", True)
+    )
+    try:
+        text_chunk_group_threshold = int(getattr(settings, "MCP_AGENTIC_TEXT_CHUNK_GROUP_THRESHOLD", 2) or 2)
+    except (TypeError, ValueError):
+        text_chunk_group_threshold = 2
+    text_chunk_group_threshold = max(2, text_chunk_group_threshold)
+    try:
+        text_chunk_group_max_chars = int(
+            getattr(
+                settings,
+                "MCP_AGENTIC_TEXT_CHUNK_GROUP_MAX_CHARS",
+                int(READ_DOCUMENT_MAX_CHARS_SCHEMA_DEFAULT) * 3,
+            )
+            or int(READ_DOCUMENT_MAX_CHARS_SCHEMA_DEFAULT) * 3
+        )
+    except (TypeError, ValueError):
+        text_chunk_group_max_chars = int(READ_DOCUMENT_MAX_CHARS_SCHEMA_DEFAULT) * 3
+    text_chunk_group_max_chars = max(
+        int(READ_DOCUMENT_MAX_CHARS_SCHEMA_DEFAULT),
+        min(int(READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX) * 4, int(text_chunk_group_max_chars)),
+    )
     hybrid_preview_max_items = 10
     hybrid_preview_chars_cap = min(preview_chars_cap, 400) if preview_chars_cap else 0
     previews_attached = 0
@@ -3994,6 +4018,49 @@ def _convert_to_agentic_search_response(
             return f"upload:{upload_id}"
         return f"fallback:{sha256_hex(json.dumps(dict(snippet), sort_keys=True, default=str)[:800])}"
 
+    def _coerce_int(value: object) -> int | None:
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _snippet_char_estimate(snippet: Mapping[str, object]) -> int:
+        diagnostics_local = (
+            snippet.get("source_diagnostics")
+            if isinstance(snippet.get("source_diagnostics"), Mapping)
+            else {}
+        )
+        content = snippet.get("content") or ""
+        summary = snippet.get("summary") or ""
+        char_estimate_local = len(content) if content else len(summary) * 3
+        limit_hint = 0
+        for key in ("inline_char_limit", "page_char_limit"):
+            try:
+                limit_hint = max(limit_hint, int(diagnostics_local.get(key) or 0))
+            except (TypeError, ValueError):
+                continue
+        if limit_hint:
+            char_estimate_local = max(
+                char_estimate_local,
+                min(limit_hint, int(READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX)),
+            )
+        if bool(snippet.get("is_table_chunk")):
+            row_count = (
+                diagnostics_local.get("table_total_rows")
+                or diagnostics_local.get("table_row_count")
+                or snippet.get("row_count")
+            )
+            column_count = diagnostics_local.get("table_column_count") or snippet.get("column_count")
+            if row_count and column_count:
+                try:
+                    table_size_estimate = int(row_count) * int(column_count) * 25 + int(row_count) * 32
+                    char_estimate_local = max(char_estimate_local, table_size_estimate)
+                except (TypeError, ValueError):
+                    pass
+        return max(0, int(char_estimate_local))
+
     # Evidence planner (Phase 1): convert search snippets into lightweight refs.
     # Dedupe by canonical anchors so the model doesn't see the same fact twice, but
     # do not drop entire categories of evidence based on search stage (agentic mode
@@ -4013,6 +4080,97 @@ def _convert_to_agentic_search_response(
         seen_anchors.add(key)
         planned_snippets.append(snippet)
 
+    table_row_ref_counts: Counter[str] = Counter()
+    total_table_row_candidates = 0
+    for snippet in planned_snippets:
+        if not bool(snippet.get("is_table_chunk")):
+            continue
+        diagnostics = (
+            snippet.get("source_diagnostics")
+            if isinstance(snippet.get("source_diagnostics"), Mapping)
+            else {}
+        )
+        table_id = diagnostics.get("table_id")
+        row_index = diagnostics.get("row_index")
+        if row_index is None:
+            row_index = diagnostics.get("table_row_index")
+        if not table_id or row_index is None:
+            continue
+        total_table_row_candidates += 1
+        table_row_ref_counts[str(table_id)] += 1
+
+    promote_table_context = bool(
+        total_table_row_candidates >= 3
+        or any(count >= 2 for count in table_row_ref_counts.values())
+    )
+    promoted_table_ids: set[str] = set()
+
+    text_chunk_upload_counts: Counter[str] = Counter()
+    text_chunk_upload_snippets: dict[str, list[Mapping[str, object]]] = defaultdict(list)
+    for snippet in planned_snippets:
+        if bool(snippet.get("is_table_chunk")):
+            continue
+        upload_id = str(snippet.get("upload_id") or "").strip()
+        if not upload_id:
+            continue
+        text_chunk_upload_counts[upload_id] += 1
+        text_chunk_upload_snippets[upload_id].append(snippet)
+
+    text_chunk_groups: dict[str, dict[str, object]] = {}
+    if text_chunk_grouping_enabled:
+        for upload_id, group_snippets in text_chunk_upload_snippets.items():
+            if text_chunk_upload_counts.get(upload_id, 0) < text_chunk_group_threshold:
+                continue
+            chunk_indices: set[int] = set()
+            page_numbers: set[int] = set()
+            chunk_ids: list[str] = []
+            best_score: float | None = None
+            total_char_estimate = 0
+
+            for snippet in group_snippets:
+                chunk_id = str(snippet.get("chunk_id") or snippet.get("id") or "").strip()
+                if chunk_id:
+                    chunk_ids.append(chunk_id)
+                chunk_index = _coerce_int(snippet.get("chunk_index"))
+                if chunk_index is not None and chunk_index >= 0:
+                    chunk_indices.add(chunk_index)
+                page_number = _coerce_int(snippet.get("page_number"))
+                if page_number is not None and page_number >= 1:
+                    page_numbers.add(page_number)
+
+                total_char_estimate += _snippet_char_estimate(snippet)
+                try:
+                    raw_score = snippet.get("confidence_score")
+                    if raw_score is not None:
+                        score = float(raw_score)
+                        if best_score is None or score > best_score:
+                            best_score = score
+                except (TypeError, ValueError):
+                    continue
+
+            sorted_chunk_indices = sorted(chunk_indices)
+            sorted_page_numbers = sorted(page_numbers)
+            chunk_range: list[int] | None = None
+            if sorted_chunk_indices:
+                chunk_range = [int(sorted_chunk_indices[0]), int(sorted_chunk_indices[-1])]
+
+            text_chunk_groups[upload_id] = {
+                "upload_id": upload_id,
+                "chunk_count": int(text_chunk_upload_counts.get(upload_id, 0)),
+                "chunk_ids": chunk_ids[:100],
+                "chunk_indices": sorted_chunk_indices[:100],
+                "chunk_range": chunk_range,
+                "pages": sorted_page_numbers[:50],
+                "best_score": best_score,
+                "char_estimate": min(int(total_char_estimate), int(text_chunk_group_max_chars)),
+            }
+
+    promote_text_grouping = bool(
+        text_chunk_grouping_enabled and bool(text_chunk_groups)
+    )
+    promoted_upload_ids: set[str] = set()
+    promoted_text_group_manifests: dict[str, dict[str, object]] = {}
+
     for snippet in planned_snippets:
         
         # Determine type
@@ -4023,22 +4181,12 @@ def _convert_to_agentic_search_response(
         chunk_id = str(snippet.get("chunk_id") or snippet.get("id") or "")
         upload_id = str(snippet.get("upload_id") or "")
         
-        # Estimate read size for token planning.
-        # Prefer diagnostics when present (they reflect runtime caps), otherwise fall back to
-        # preview-derived heuristics.
-        content = snippet.get("content") or ""
-        summary = snippet.get("summary") or ""
-        char_estimate = len(content) if content else len(summary) * 3
-        diagnostics = snippet.get("source_diagnostics") if isinstance(snippet.get("source_diagnostics"), Mapping) else {}
-        limit_hint = 0
-        for key in ("inline_char_limit", "page_char_limit"):
-            try:
-                limit_hint = max(limit_hint, int(diagnostics.get(key) or 0))
-            except (TypeError, ValueError):
-                continue
-        if limit_hint:
-            # Clamp to what the tool schema allows so the hint is actionable.
-            char_estimate = max(char_estimate, min(limit_hint, int(READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX)))
+        diagnostics = (
+            snippet.get("source_diagnostics")
+            if isinstance(snippet.get("source_diagnostics"), Mapping)
+            else {}
+        )
+        char_estimate = _snippet_char_estimate(snippet)
 
         row_count = diagnostics.get("table_total_rows") or diagnostics.get("table_row_count") or snippet.get("row_count")
         column_count = diagnostics.get("table_column_count") or snippet.get("column_count")
@@ -4048,22 +4196,12 @@ def _convert_to_agentic_search_response(
         if row_index is None:
             row_index = diagnostics.get("table_row_index")
 
-        # For table refs, estimate the full table size so suggested_max_chars
-        # reflects the whole table (~2-4k) rather than just the matched row.
-        if is_table and row_count and column_count:
-            try:
-                table_size_estimate = int(row_count) * int(column_count) * 25 + int(row_count) * 32
-                char_estimate = max(char_estimate, table_size_estimate)
-            except (TypeError, ValueError):
-                pass
-
         suggested_max_chars = _suggest_max_chars_for_estimate(
             char_estimate,
             max_chars_allowed=int(READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX),
         )
 
         # EvidenceRef fields
-        diagnostics = snippet.get("source_diagnostics") if isinstance(snippet.get("source_diagnostics"), Mapping) else {}
         entity_name = snippet.get("entity_name")
         title = snippet.get("title") or snippet.get("public_label") or "Untitled"
         label_parts: list[str] = []
@@ -4084,8 +4222,42 @@ def _convert_to_agentic_search_response(
             score_val = None
 
         kind = "text_anchor"
+        promote_table_ref = bool(
+            content_type == "table"
+            and table_id
+            and row_index is not None
+            and promote_table_context
+        )
+        text_group = text_chunk_groups.get(upload_id) if upload_id else None
+        promote_text_group_ref = bool(
+            content_type == "text"
+            and promote_text_grouping
+            and isinstance(text_group, Mapping)
+        )
         if content_type == "table":
             kind = "table_row" if (diagnostics.get("table_id") and row_index is not None) else "table_chunk"
+            if promote_table_ref:
+                kind = "table_chunk"
+        elif promote_text_group_ref:
+            kind = "document_anchor"
+
+        if promote_text_group_ref and isinstance(text_group, Mapping):
+            group_best_score = text_group.get("best_score")
+            try:
+                if group_best_score is not None:
+                    score_val = float(group_best_score)
+            except (TypeError, ValueError):
+                pass
+            try:
+                group_char_estimate = int(text_group.get("char_estimate") or 0)
+            except (TypeError, ValueError):
+                group_char_estimate = 0
+            if group_char_estimate > 0:
+                char_estimate = group_char_estimate
+                suggested_max_chars = _suggest_max_chars_for_estimate(
+                    char_estimate,
+                    max_chars_allowed=int(READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX),
+                )
 
         coverage_hint: dict[str, object] = {}
         if content_type == "table":
@@ -4114,6 +4286,42 @@ def _convert_to_agentic_search_response(
                 chunk_index = snippet.get("chunk_index")
                 if isinstance(chunk_index, int):
                     coverage_hint["offset"] = chunk_index
+            if promote_text_group_ref and isinstance(text_group, Mapping):
+                chunk_count = _coerce_int(text_group.get("chunk_count"))
+                if chunk_count is not None and chunk_count > 0:
+                    coverage_hint["chunk_count"] = int(chunk_count)
+
+                chunk_indices = text_group.get("chunk_indices")
+                if isinstance(chunk_indices, list) and chunk_indices:
+                    parsed_indices: list[int] = []
+                    for raw_value in chunk_indices:
+                        parsed = _coerce_int(raw_value)
+                        if parsed is not None and parsed >= 0:
+                            parsed_indices.append(int(parsed))
+                    if parsed_indices:
+                        coverage_hint["chunk_indices"] = parsed_indices[:100]
+
+                chunk_range = text_group.get("chunk_range")
+                if isinstance(chunk_range, list) and len(chunk_range) == 2:
+                    range_start = _coerce_int(chunk_range[0])
+                    range_end = _coerce_int(chunk_range[1])
+                    if (
+                        range_start is not None
+                        and range_end is not None
+                        and range_start >= 0
+                        and range_end >= range_start
+                    ):
+                        coverage_hint["chunk_range"] = [int(range_start), int(range_end)]
+
+                pages = text_group.get("pages")
+                if isinstance(pages, list) and pages:
+                    parsed_pages: list[int] = []
+                    for raw_value in pages:
+                        parsed = _coerce_int(raw_value)
+                        if parsed is not None and parsed >= 1:
+                            parsed_pages.append(int(parsed))
+                    if parsed_pages:
+                        coverage_hint["pages"] = parsed_pages[:50]
 
         read_hint_in = snippet.get("read_hint")
         read_hint_out: dict[str, object] = {"suggested_max_chars": suggested_max_chars}
@@ -4122,7 +4330,58 @@ def _convert_to_agentic_search_response(
             read_hint_out = dict(read_hint_in)
             read_hint_out.setdefault("suggested_max_chars", suggested_max_chars)
 
-        if not chunk_id:
+        ref_id = chunk_id
+        if promote_table_ref and table_id:
+            canonical_table_id = str(table_id).strip()
+            try:
+                canonical_table_id = str(uuid.UUID(canonical_table_id))
+            except (TypeError, ValueError):
+                canonical_table_id = ""
+            if canonical_table_id:
+                if canonical_table_id in promoted_table_ids:
+                    continue
+                promoted_table_ids.add(canonical_table_id)
+                ref_id = canonical_table_id
+        if promote_text_group_ref and upload_id:
+            canonical_upload_id = str(upload_id).strip()
+            try:
+                canonical_upload_id = str(uuid.UUID(canonical_upload_id))
+            except (TypeError, ValueError):
+                canonical_upload_id = str(upload_id).strip()
+            if canonical_upload_id:
+                if canonical_upload_id in promoted_upload_ids:
+                    continue
+                promoted_upload_ids.add(canonical_upload_id)
+                ref_id = canonical_upload_id
+                if isinstance(text_group, Mapping):
+                    promoted_text_group_manifests[canonical_upload_id] = {
+                        "upload_id": canonical_upload_id,
+                        "chunk_count": int(_coerce_int(text_group.get("chunk_count")) or 0),
+                        "chunk_ids": [
+                            str(chunk_id_value)
+                            for chunk_id_value in (text_group.get("chunk_ids") or [])
+                            if str(chunk_id_value).strip()
+                        ][:100],
+                        "chunk_indices": [
+                            int(parsed)
+                            for parsed in (
+                                _coerce_int(value) for value in (text_group.get("chunk_indices") or [])
+                            )
+                            if parsed is not None and parsed >= 0
+                        ][:100],
+                        "chunk_range": text_group.get("chunk_range"),
+                        "pages": [
+                            int(parsed)
+                            for parsed in (
+                                _coerce_int(value) for value in (text_group.get("pages") or [])
+                            )
+                            if parsed is not None and parsed >= 1
+                        ][:50],
+                        "best_score": text_group.get("best_score"),
+                        "char_estimate": int(_coerce_int(text_group.get("char_estimate")) or 0),
+                    }
+
+        if not ref_id:
             continue
         why: list[str] = []
         stage = str(snippet.get("search_stage") or "").strip().lower()
@@ -4131,11 +4390,16 @@ def _convert_to_agentic_search_response(
         if _is_table_direct(snippet):
             why.append("match:table_direct")
         if kind.startswith("table"):
-            why.append("kind:table")
+            if promote_table_ref:
+                why.append("kind:table_context")
+            else:
+                why.append("kind:table")
+        elif promote_text_group_ref:
+            why.append("kind:document_context")
         else:
             why.append("kind:text")
         ref_item: dict[str, object] = {
-            "id": chunk_id,
+            "id": ref_id,
             "document_id": upload_id,
             "kind": kind,
             "type": content_type,
@@ -4161,6 +4425,11 @@ def _convert_to_agentic_search_response(
                 previews_attached += 1
         if why:
             ref_item["why"] = why[:3]
+        if promote_table_ref and isinstance(coverage_hint, dict):
+            matched_row_index = coverage_hint.get("row_index")
+            if matched_row_index is not None:
+                coverage_hint["matched_row_index"] = matched_row_index
+            coverage_hint.pop("row_index", None)
         if coverage_hint:
             ref_item["coverage_hint"] = coverage_hint
         # Keep source metadata for internal debugging / operator traces.
@@ -4170,6 +4439,15 @@ def _convert_to_agentic_search_response(
         if diagnostics.get("table_truncated"):
             ref_item["partial_index"] = True
         refs.append(ref_item)
+
+    if context is not None and promoted_text_group_manifests:
+        manifest_cache = getattr(context, "text_chunk_group_manifests", None)
+        if isinstance(manifest_cache, dict):
+            for upload_id, manifest in promoted_text_group_manifests.items():
+                manifest_cache[str(upload_id)] = dict(manifest)
+            while len(manifest_cache) > 50:
+                oldest_key = next(iter(manifest_cache))
+                manifest_cache.pop(oldest_key, None)
     
     # Build agentic response
     status = legacy_payload.get("status", "ok")
@@ -4480,7 +4758,11 @@ def _search_knowledge_handler(
 
         # Convert to agentic format when enabled.
         if rag_agentic_enabled:
-            return _convert_to_agentic_search_response(payload, conversation=conversation)
+            return _convert_to_agentic_search_response(
+                payload,
+                conversation=conversation,
+                context=context,
+            )
         return payload
 
     # Build queries list.
@@ -4766,14 +5048,6 @@ def _search_knowledge_handler(
                     if prior_response.get("has_more") not in {None, ""}:
                         duplicate_payload["has_more"] = prior_response.get("has_more")
                     return duplicate_payload
-
-    # Enforce limits only for non-duplicate searches.
-    limited = _enforce_search_rate_limit()
-    if limited is not None:
-        return limited
-
-    # Charge for valid, non-empty, non-duplicate searches only.
-    context.reserve_search()
 
     raw_limit = arguments.get("limit")
     try:
@@ -5692,6 +5966,15 @@ def _search_knowledge_handler(
         pending_specs.append((idx, query_text, intent_info, intent, limit_for_run))
         non_cached_queries += 1
 
+    if non_cached_queries > 0:
+        # Enforce limits only when this call needs a backend search.
+        # Pure cache reuses (same intent/query in the same turn) should not
+        # consume per-turn search budget.
+        limited = _enforce_search_rate_limit()
+        if limited is not None:
+            return limited
+        context.reserve_search()
+
     executor: ThreadPoolExecutor | None = None
     futures: list[tuple[int, str, Mapping[str, object], str | None, int | None, object]] = []
     fanout_start = time.perf_counter()
@@ -5982,7 +6265,11 @@ def _search_knowledge_handler(
     # Convert to agentic format when enabled, and persist search intent metadata
     # for semantic dedup within this user turn.
     if rag_agentic_enabled:
-        final_response = _convert_to_agentic_search_response(payload, conversation=conversation)
+        final_response = _convert_to_agentic_search_response(
+            payload,
+            conversation=conversation,
+            context=context,
+        )
     else:
         final_response = payload
 
@@ -6706,6 +6993,38 @@ def _agentic_read_v2_handler(
                 ),
             }
 
+    try:
+        text_group_max_chars = int(
+            getattr(
+                settings,
+                "MCP_AGENTIC_TEXT_CHUNK_GROUP_MAX_CHARS",
+                int(READ_DOCUMENT_MAX_CHARS_SCHEMA_DEFAULT) * 3,
+            )
+            or int(READ_DOCUMENT_MAX_CHARS_SCHEMA_DEFAULT) * 3
+        )
+    except (TypeError, ValueError):
+        text_group_max_chars = int(READ_DOCUMENT_MAX_CHARS_SCHEMA_DEFAULT) * 3
+    text_group_max_chars = max(
+        int(READ_DOCUMENT_MAX_CHARS_SCHEMA_DEFAULT),
+        min(int(READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX) * 4, int(text_group_max_chars)),
+    )
+
+    try:
+        text_group_neighbor_chunks = int(
+            getattr(settings, "MCP_AGENTIC_TEXT_CHUNK_GROUP_NEIGHBOR_CHUNKS", 1) or 1
+        )
+    except (TypeError, ValueError):
+        text_group_neighbor_chunks = 1
+    text_group_neighbor_chunks = max(0, min(5, int(text_group_neighbor_chunks)))
+
+    try:
+        text_group_max_window_chunks = int(
+            getattr(settings, "MCP_AGENTIC_TEXT_CHUNK_GROUP_MAX_WINDOW_CHUNKS", 16) or 16
+        )
+    except (TypeError, ValueError):
+        text_group_max_window_chunks = 16
+    text_group_max_window_chunks = max(1, min(200, int(text_group_max_window_chunks)))
+
     # The backend chooses the correct representation and paging strategy.
     # `mode` is intentionally not part of the public agentic contract.
     mode = "auto"
@@ -6820,6 +7139,80 @@ def _agentic_read_v2_handler(
         if int(payload.get("v") or 0) != 2:
             return None, {"id": item_id, "error_code": "invalid_cursor", "hint": "Unsupported cursor version."}
         return payload, None
+
+    def _load_text_group_manifest(upload_id: str) -> dict[str, object] | None:
+        cache_value = getattr(context, "text_chunk_group_manifests", None)
+        if not isinstance(cache_value, dict):
+            return None
+        raw_manifest = cache_value.get(str(upload_id))
+        if not isinstance(raw_manifest, Mapping):
+            return None
+
+        chunk_indices: list[int] = []
+        raw_indices = raw_manifest.get("chunk_indices")
+        if isinstance(raw_indices, list):
+            for value in raw_indices:
+                try:
+                    parsed = int(value)
+                except (TypeError, ValueError):
+                    continue
+                if parsed >= 0:
+                    chunk_indices.append(parsed)
+        chunk_indices = sorted(set(chunk_indices))
+
+        chunk_range: list[int] | None = None
+        raw_range = raw_manifest.get("chunk_range")
+        if isinstance(raw_range, list) and len(raw_range) == 2:
+            try:
+                range_start = int(raw_range[0])
+                range_end = int(raw_range[1])
+            except (TypeError, ValueError):
+                range_start = -1
+                range_end = -1
+            if range_start >= 0 and range_end >= range_start:
+                chunk_range = [range_start, range_end]
+        if chunk_range is None and chunk_indices:
+            chunk_range = [chunk_indices[0], chunk_indices[-1]]
+        if chunk_range is None:
+            return None
+
+        chunk_ids: list[str] = []
+        raw_chunk_ids = raw_manifest.get("chunk_ids")
+        if isinstance(raw_chunk_ids, list):
+            chunk_ids = [str(chunk_id).strip() for chunk_id in raw_chunk_ids if str(chunk_id).strip()][:100]
+
+        pages: list[int] = []
+        raw_pages = raw_manifest.get("pages")
+        if isinstance(raw_pages, list):
+            for value in raw_pages:
+                try:
+                    parsed = int(value)
+                except (TypeError, ValueError):
+                    continue
+                if parsed >= 1:
+                    pages.append(parsed)
+        pages = sorted(set(pages))
+
+        try:
+            chunk_count = int(raw_manifest.get("chunk_count") or 0)
+        except (TypeError, ValueError):
+            chunk_count = 0
+
+        try:
+            char_estimate = int(raw_manifest.get("char_estimate") or 0)
+        except (TypeError, ValueError):
+            char_estimate = 0
+
+        return {
+            "upload_id": str(upload_id),
+            "chunk_count": max(0, chunk_count),
+            "chunk_ids": chunk_ids,
+            "chunk_indices": chunk_indices,
+            "chunk_range": chunk_range,
+            "pages": pages[:50],
+            "char_estimate": max(0, char_estimate),
+            "best_score": raw_manifest.get("best_score"),
+        }
 
     def _resolve_target(item_id: str) -> tuple[
         KnowledgeUploadChunk | None,
@@ -7112,6 +7505,17 @@ def _agentic_read_v2_handler(
         if not table:
             return payload, None, True
 
+        def _dedupe_column_labels(raw_columns: Sequence[str]) -> list[str]:
+            deduped: list[str] = []
+            seen: dict[str, int] = {}
+            for index, raw_column in enumerate(raw_columns):
+                label = str(raw_column or "").strip() or f"column_{index + 1}"
+                key = label.lower()
+                count = seen.get(key, 0) + 1
+                seen[key] = count
+                deduped.append(label if count == 1 else f"{label}_{count}")
+            return deduped
+
         # Column labels: prefer column_schema if it looks like a list of strings.
         raw_schema = table.column_schema if isinstance(getattr(table, "column_schema", None), list) else []
         columns: list[str] = []
@@ -7154,6 +7558,8 @@ def _agentic_read_v2_handler(
                     inferred.append((idx, label))
                 inferred.sort(key=lambda item: item[0])
                 columns = [label for _idx, label in inferred][:200]
+
+        columns = _dedupe_column_labels(columns[:200])
 
         payload["columns"] = columns
 
@@ -7426,6 +7832,36 @@ def _agentic_read_v2_handler(
     deferred: list[dict[str, object]] = []
     errors: list[dict[str, object]] = []
 
+    row_table_ref_counts: Counter[str] = Counter()
+    if business_uuid is not None and ordered_items:
+        candidate_row_ids: list[uuid.UUID] = []
+        for entry in ordered_items:
+            item_id = str(entry.get("id") or "").strip()
+            if not item_id:
+                continue
+            cursor = entry.get("cursor")
+            if isinstance(cursor, str) and cursor.strip():
+                continue
+            try:
+                candidate_row_ids.append(uuid.UUID(item_id))
+            except (TypeError, ValueError):
+                continue
+        if candidate_row_ids:
+            row_pairs = (
+                KnowledgeUploadTableRow.objects.filter(
+                    id__in=candidate_row_ids,
+                    table__upload__business_profile_id=business_uuid,
+                    table__upload__status=KnowledgeStatus.ACTIVE,
+                )
+                .exclude(table__upload__visibility=KnowledgeVisibility.INTERNAL)
+                .values_list("id", "table_id")
+            )
+            for _row_id, table_id in row_pairs:
+                row_table_ref_counts[str(table_id)] += 1
+
+    expanded_row_tables_seen: set[str] = set()
+    expanded_upload_reads_seen: set[str] = set()
+
     remaining_chars = max(0, int(max_chars))
     total_chars = 0
 
@@ -7483,6 +7919,17 @@ def _agentic_read_v2_handler(
                 read.append({"id": item_id, "status": "error"})
             continue
 
+        if chunk_record is not None and upload_id in expanded_upload_reads_seen and not cursor_payload:
+            read.append(
+                {
+                    "id": item_id,
+                    "status": "covered",
+                    "chars": 0,
+                    "hint": "Covered by an earlier document context read for this upload.",
+                }
+            )
+            continue
+
         # Block dataset/spreadsheet reads through read_knowledge (use query_dataset/list_tables instead).
         if _is_dataset_upload(upload) and (chunk_record is None or bool((chunk_record.metadata or {}).get("is_table_chunk"))):
             errors.append(
@@ -7508,6 +7955,7 @@ def _agentic_read_v2_handler(
         cursor_used = cursor_in if isinstance(cursor_in, str) and cursor_in.strip() else None
         next_cursor: str | None = None
         complete = True
+        evidence_coverage_hint: dict[str, object] | None = None
 
         # Strategy selection (AUTO):
         if cursor_payload:
@@ -7623,18 +8071,42 @@ def _agentic_read_v2_handler(
                     table_title = f"Table {order_index}" if order_index else "Table"
                 title = redact_free_text(table_title) if redact_text else table_title
 
-                table_payload, _cursor_out, complete = _read_table_rows_segment(
+                grouped_table_ref_count = row_table_ref_counts.get(str(table_id), 0)
+                expand_to_table_context = bool(
+                    table_id
+                    and grouped_table_ref_count >= 2
+                    and not cursor_payload
+                )
+                if expand_to_table_context and table_id in expanded_row_tables_seen:
+                    read.append(
+                        {
+                            "id": item_id,
+                            "status": "covered",
+                            "chars": 0,
+                            "hint": "Covered by an earlier table context read for this table.",
+                        }
+                    )
+                    continue
+
+                effective_start_row = 0 if expand_to_table_context else row_index
+                effective_max_rows: int | None = None if expand_to_table_context else 1
+
+                table_payload, cursor_out, complete = _read_table_rows_segment(
                     item_id=item_id,
                     upload_id=upload_id,
                     table_id=table_id,
-                    start_row_index=row_index,
+                    start_row_index=effective_start_row,
                     budget_chars=per_item_budget,
-                    max_rows=1,
+                    max_rows=effective_max_rows,
                     business_profile=business,
                 )
                 payload = table_payload
-                # Row refs are intended to be a single, lossless row.
-                next_cursor = None
+                if expand_to_table_context:
+                    expanded_row_tables_seen.add(table_id)
+                    next_cursor = cursor_out.get("cursor") if cursor_out else None
+                else:
+                    # Exact row reads remain a single-row, lossless slice.
+                    next_cursor = None
             elif table_record is not None:
                 payload_type = "table"
                 evidence_kind = "table_rows"
@@ -7655,6 +8127,116 @@ def _agentic_read_v2_handler(
                 )
                 payload = table_payload
                 next_cursor = cursor_out.get("cursor") if cursor_out else None
+            elif upload_record is not None and chunk_record is None:
+                text_group_manifest = _load_text_group_manifest(upload_id)
+                if text_group_manifest is not None:
+                    if upload_id in expanded_upload_reads_seen:
+                        read.append(
+                            {
+                                "id": item_id,
+                                "status": "covered",
+                                "chars": 0,
+                                "hint": "Covered by an earlier document context read for this upload.",
+                            }
+                        )
+                        continue
+
+                    chunk_range = text_group_manifest.get("chunk_range")
+                    chunk_indices = text_group_manifest.get("chunk_indices")
+                    if (
+                        not isinstance(chunk_range, list)
+                        or len(chunk_range) != 2
+                        or not isinstance(chunk_indices, list)
+                        or not chunk_indices
+                    ):
+                        deferred.append(
+                            {
+                                "id": item_id,
+                                "reason": "manifest_missing",
+                                "hint": "Document grouping metadata expired. Re-run search_knowledge before reading this document anchor.",
+                            }
+                        )
+                        read.append({"id": item_id, "status": "deferred"})
+                        continue
+
+                    range_start = int(chunk_range[0])
+                    range_end = int(chunk_range[1])
+                    window_start = max(0, range_start - int(text_group_neighbor_chunks))
+                    window_end = max(window_start, range_end + int(text_group_neighbor_chunks))
+                    if (window_end - window_start + 1) > int(text_group_max_window_chunks):
+                        window_start = max(0, range_start - int(text_group_neighbor_chunks))
+                        window_end = int(window_start + int(text_group_max_window_chunks) - 1)
+                        if window_end < range_end:
+                            range_window = int(text_group_max_window_chunks)
+                            window_end = int(range_end)
+                            window_start = max(0, int(window_end - range_window + 1))
+
+                    grouped_budget_cap = min(
+                        int(per_item_budget),
+                        int(max_chars_allowed),
+                        int(text_group_max_chars),
+                    )
+                    grouped_budget_cap = max(200, grouped_budget_cap)
+
+                    content_text, cursor_out, complete = _read_chunk_window_segment(
+                        item_id=item_id,
+                        upload_id=upload_id,
+                        start_index=int(window_start),
+                        end_index=int(window_end),
+                        current_index=int(window_start),
+                        start_offset=0,
+                        budget_chars=grouped_budget_cap,
+                        business_profile=business,
+                    )
+                    payload["text"] = content_text
+                    evidence_kind = "document_context"
+                    next_cursor = cursor_out.get("cursor") if cursor_out else None
+                    evidence_coverage_hint = {
+                        "chunk_count": int(text_group_manifest.get("chunk_count") or len(chunk_indices)),
+                        "chunk_indices": list(chunk_indices)[:100],
+                        "chunk_range": [int(range_start), int(range_end)],
+                        "window_range": [int(window_start), int(window_end)],
+                    }
+                    pages = text_group_manifest.get("pages")
+                    if isinstance(pages, list) and pages:
+                        evidence_coverage_hint["pages"] = list(pages)[:50]
+                    if isinstance(content_text, str) and content_text:
+                        expanded_upload_reads_seen.add(upload_id)
+                else:
+                    # No manifest: degrade gracefully to the existing fallback path.
+                    page_number = 1
+                    has_page_blocks = False
+                    try:
+                        from apps.accounts.models import KnowledgeUploadPageBlock
+                        has_page_blocks = KnowledgeUploadPageBlock.objects.filter(
+                            upload_id=upload_id,
+                            page__page_number=page_number,
+                        ).exclude(text="").exists()
+                    except Exception:
+                        has_page_blocks = False
+
+                    if has_page_blocks:
+                        content_text, cursor_out, complete = _read_page_blocks_segment(
+                            item_id=item_id,
+                            upload=upload,  # type: ignore[arg-type]
+                            upload_id=upload_id,
+                            page_number=page_number,
+                            start_order=0,
+                            start_offset=0,
+                            budget_chars=per_item_budget,
+                        )
+                        payload["text"] = content_text
+                        next_cursor = cursor_out.get("cursor") if cursor_out else None
+                    else:
+                        errors.append(
+                            {
+                                "id": item_id,
+                                "error_code": "not_found",
+                                "hint": "No readable content found for that id.",
+                            }
+                        )
+                        read.append({"id": item_id, "status": "error"})
+                        continue
             elif mode != "excerpt" and is_table_chunk and table_id and (mode == "table_rows" or table_role not in {"row"}):
                 payload_type = "table"
                 evidence_kind = "table_rows"
@@ -7817,6 +8399,8 @@ def _agentic_read_v2_handler(
             # Back-compat: orchestrator coverage ledger expects "truncated" on items.
             "truncated": bool(not complete or bool(next_cursor)),
         }
+        if isinstance(evidence_coverage_hint, Mapping) and evidence_coverage_hint:
+            evidence_entry["coverage_hint"] = dict(evidence_coverage_hint)
         if payload_type == "table":
             # Surface table coverage metadata at the top level so the LLM doesn't have to
             # infer "slice vs full table" from a small payload.

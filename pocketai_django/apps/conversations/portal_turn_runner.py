@@ -12,7 +12,11 @@ from django.conf import settings
 from django.db import close_old_connections
 from django.utils import timezone
 
-from apps.conversations.content_blocks import extract_text_from_content_blocks, new_block_id
+from apps.conversations.content_blocks import (
+    extract_text_from_content_blocks,
+    new_block_id,
+    normalize_assistant_content_blocks,
+)
 from apps.conversations.portal import ChatPortalService
 from apps.conversations.portal_stream_trace import PortalStreamTrace
 from apps.conversations.rich_blocks import RichBlockStreamBuilder, apply_block_ops, coerce_block_event
@@ -799,7 +803,20 @@ class PortalTurnRunner:
             if blocks:
                 blocks_source = "db_fold"
 
-        body_text = (message_body or "").strip() or extract_text_from_content_blocks(blocks)
+        normalized_blocks = normalize_assistant_content_blocks(blocks)
+        if normalized_blocks != blocks:
+            self.builder.trace.record(
+                "turn.finalize.blocks_normalized",
+                {
+                    "before": int(len(blocks)),
+                    "after": int(len(normalized_blocks)),
+                    "source": blocks_source,
+                },
+            )
+            blocks = normalized_blocks
+
+        body_from_blocks = extract_text_from_content_blocks(blocks).strip()
+        body_text = body_from_blocks or (message_body or "").strip()
         if not body_text:
             streamed_text = "".join(getattr(stream_context, "streamed_chunks", None) or ()).strip() if stream_context else ""
             body_text = streamed_text or "(no content)"

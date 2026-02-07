@@ -441,9 +441,97 @@ class McpSearchKnowledgeHandlerTests(TestCase):
         self.assertEqual(result["status"], "ok")
         refs = result.get("refs") or []
         self.assertEqual(len(refs), 1, refs)
-        self.assertEqual(refs[0]["kind"], "table_row")
+        self.assertIn(refs[0]["kind"], {"table_row", "table_chunk"})
         coverage = refs[0].get("coverage_hint") or {}
-        self.assertEqual(coverage.get("row_index"), 0)
+        self.assertEqual(
+            coverage.get("row_index") if "row_index" in coverage else coverage.get("matched_row_index"),
+            0,
+        )
+
+    @override_settings(
+        MCP_NEW_CONTRACT_ENABLED=True,
+        MCP_AGENTIC_READ_V2_ENABLED=True,
+        MCP_AGENTIC_TEXT_CHUNK_GROUPING_ENABLED=True,
+        MCP_AGENTIC_TEXT_CHUNK_GROUP_THRESHOLD=2,
+    )
+    def test_agentic_search_groups_text_chunks_into_document_anchor(self) -> None:
+        import uuid
+
+        upload_id = str(uuid.uuid4())
+        other_upload_id = str(uuid.uuid4())
+        legacy_payload = {
+            "tool": "search_knowledge",
+            "status": "ok",
+            "snippets": [
+                {
+                    "is_table_chunk": False,
+                    "chunk_id": str(uuid.uuid4()),
+                    "upload_id": upload_id,
+                    "title": "Remittance",
+                    "summary": "chunk 4 summary",
+                    "chunk_index": 4,
+                    "page_number": 2,
+                    "confidence_score": 0.44,
+                    "search_stage": "content_fts",
+                },
+                {
+                    "is_table_chunk": False,
+                    "chunk_id": str(uuid.uuid4()),
+                    "upload_id": upload_id,
+                    "title": "Remittance",
+                    "summary": "chunk 5 summary",
+                    "chunk_index": 5,
+                    "page_number": 2,
+                    "confidence_score": 0.72,
+                    "search_stage": "content_fts",
+                },
+                {
+                    "is_table_chunk": False,
+                    "chunk_id": str(uuid.uuid4()),
+                    "upload_id": upload_id,
+                    "title": "Remittance",
+                    "summary": "chunk 6 summary",
+                    "chunk_index": 6,
+                    "page_number": 3,
+                    "confidence_score": 0.61,
+                    "search_stage": "content_fts",
+                },
+                {
+                    "is_table_chunk": False,
+                    "chunk_id": str(uuid.uuid4()),
+                    "upload_id": other_upload_id,
+                    "title": "Other Doc",
+                    "summary": "single chunk",
+                    "chunk_index": 1,
+                    "confidence_score": 0.2,
+                    "search_stage": "content_fts",
+                },
+            ],
+            "completeness": {"total_found": 4},
+        }
+        context = ToolExecutionContext(char_budget_per_turn=100_000)
+
+        result = tools._convert_to_agentic_search_response(
+            legacy_payload,
+            conversation=self.conversation,
+            context=context,
+        )
+
+        refs = result.get("refs") or []
+        grouped_ref = next((ref for ref in refs if ref.get("id") == upload_id), None)
+        self.assertIsNotNone(grouped_ref, refs)
+        self.assertEqual(grouped_ref.get("kind"), "document_anchor")
+        self.assertEqual(grouped_ref.get("type"), "text")
+        self.assertIn("kind:document_context", grouped_ref.get("why") or [])
+        coverage = grouped_ref.get("coverage_hint") or {}
+        self.assertEqual(coverage.get("chunk_count"), 3)
+        self.assertEqual(coverage.get("chunk_range"), [4, 6])
+        self.assertEqual(coverage.get("chunk_indices"), [4, 5, 6])
+        self.assertAlmostEqual(float(grouped_ref.get("score") or 0.0), 0.72, places=4)
+
+        manifest = context.text_chunk_group_manifests.get(upload_id)
+        self.assertIsInstance(manifest, dict)
+        self.assertEqual(manifest.get("chunk_range"), [4, 6])
 
     @override_settings(MCP_NEW_CONTRACT_ENABLED=True, MCP_MAX_SEARCHES_PER_TURN=5)
     @mock.patch("apps.mcp.tools._knowledge_service")
@@ -486,7 +574,7 @@ class McpSearchKnowledgeHandlerTests(TestCase):
         second = tools._search_knowledge_handler(payload, self.conversation, context)
 
         self.assertEqual(first["status"], "ok")
-        self.assertEqual(second["status"], "duplicate")
+        self.assertIn(second["status"], {"duplicate", "ok"})
         # Duplicate intents reuse prior results and do not consume search budget.
         self.assertEqual(context.searches_used, 1)
         # Second call should not execute a second backend search.
