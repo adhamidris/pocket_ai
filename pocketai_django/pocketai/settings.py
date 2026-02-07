@@ -1010,7 +1010,7 @@ RAG_TABLE_LARGE_ROW_LIMIT = int(os.getenv("RAG_TABLE_LARGE_ROW_LIMIT", "20000"))
 # RAG_TABLE_MAX_HARD_CAP: Hard cap on table rows processed/indexed.
 RAG_TABLE_MAX_HARD_CAP = int(os.getenv("RAG_TABLE_MAX_HARD_CAP", "100000"))
 # RAG_ENABLE_CROSS_ENCODER: Enable cross-encoder reranking (slower; improves precision).
-RAG_ENABLE_CROSS_ENCODER = os.getenv("RAG_ENABLE_CROSS_ENCODER", "false").lower() in {"1", "true", "yes"}
+RAG_ENABLE_CROSS_ENCODER = os.getenv("RAG_ENABLE_CROSS_ENCODER", "true").lower() in {"1", "true", "yes"}
 # RAG_CROSS_ENCODER_MODEL: Cross-encoder model name used for reranking.
 RAG_CROSS_ENCODER_MODEL = os.getenv("RAG_CROSS_ENCODER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
 # RAG_CROSS_ENCODER_DEVICE: Device override for cross-encoder ("cpu", "cuda", etc).
@@ -1057,8 +1057,9 @@ except (TypeError, ValueError):
     RAG_CROSS_ENCODER_AUTO_MARGIN_SKIP = 0.25
 RAG_CROSS_ENCODER_AUTO_MARGIN_SKIP = max(0.0, min(5.0, RAG_CROSS_ENCODER_AUTO_MARGIN_SKIP))
 # RAG_CROSS_ENCODER_AUTO_SKIP_TABLE_INTENT: Skip cross-encoder in "auto" for table-intent queries.
+# Default false: table queries with many competing documents benefit most from neural reranking.
 RAG_CROSS_ENCODER_AUTO_SKIP_TABLE_INTENT = (
-    os.getenv("RAG_CROSS_ENCODER_AUTO_SKIP_TABLE_INTENT", "true").lower() in {"1", "true", "yes"}
+    os.getenv("RAG_CROSS_ENCODER_AUTO_SKIP_TABLE_INTENT", "false").lower() in {"1", "true", "yes"}
 )
 # TABLE_MAX_ROWS_DEFAULT: Default max rows to scan/preview for table operations.
 TABLE_MAX_ROWS_DEFAULT = int(os.getenv("TABLE_MAX_ROWS_DEFAULT", "5000"))

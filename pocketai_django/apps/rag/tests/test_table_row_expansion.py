@@ -155,110 +155,217 @@ class TableRowExpansionTest(TestCase):
 
 
 class TableRowExpansionOrderingTest(SimpleTestCase):
-    """Unit tests for the query-relevance ordering and score differentiation."""
+    """Unit tests for fraction-based ordering, score differentiation, and document-name boost."""
 
-    def _make_chunk(self, content):
+    def _make_chunk(self, content, upload=None):
         """Create a mock chunk with the given content."""
         from unittest.mock import MagicMock
         chunk = MagicMock()
         chunk.content = content
+        chunk.metadata = {}
+        if upload is not None:
+            chunk.upload = upload
         return chunk
 
-    def test_multi_table_expansion_orders_relevant_rows_first(self):
+    def _make_upload(self, display_name, source_name=None):
+        from unittest.mock import MagicMock
+        upload = MagicMock()
+        upload.display_name = display_name
+        upload.source_name = source_name or display_name
+        return upload
+
+    # ------------------------------------------------------------------
+    # Fix 3: Fraction-based token overlap ordering
+    # ------------------------------------------------------------------
+
+    def test_fraction_based_ordering_separates_strong_and_weak_matches(self):
         """
-        Regression test: when multiple unrelated tables are expanded, rows
-        from tables whose content matches query tokens must appear before
-        rows from unrelated tables.  This prevents irrelevant table rows
-        (e.g. Mortgage, Teller) from flooding the top results when the
-        user asks about "credit card fees".
+        With query "credit card issuance fees" (4 tokens), a row matching
+        3/4 tokens (75%) should be classified as relevant while a row
+        matching only 1/4 (25%) should be supplemental.
         """
         from apps.rag.ai_orchestrator import ChunkResult
 
-        # --- Credit-card table rows (RELEVANT to query "credit card fees") ---
-        cc_row1 = self._make_chunk("[Table] Credit Card Fees\n[Row] 0\nCard: Platinum\nAnnual Fee: EGP 500")
-        cc_row2 = self._make_chunk("[Table] Credit Card Fees\n[Row] 1\nCard: Gold\nAnnual Fee: EGP 300")
-
-        # --- Unrelated table rows ---
-        mort_row = self._make_chunk("[Table] Mortgage Rates\n[Row] 0\nTerm: 20 years\nRate: 12.5%")
-        teller_row = self._make_chunk("[Table] Teller Services\n[Row] 0\nService: Cash Deposit\nCharge: EGP 10")
-
-        # Build ChunkResult list mimicking what _expand_table_rows returns:
-        # unrelated rows appear first (simulating the bug scenario).
-        new_rows = [
-            ChunkResult(chunk=mort_row, source_stage="table_row_expansion", lexical_score=0.0),
-            ChunkResult(chunk=teller_row, source_stage="table_row_expansion", lexical_score=0.0),
-            ChunkResult(chunk=cc_row1, source_stage="table_row_expansion", lexical_score=0.4),
-            ChunkResult(chunk=cc_row2, source_stage="table_row_expansion", lexical_score=0.3),
-        ]
-
-        # A non-parent search result (regular vector hit)
-        regular_chunk = self._make_chunk("Our credit card fee schedule is competitive.")
-        non_parent_chunks = [
-            ChunkResult(chunk=regular_chunk, source_stage="vector", lexical_score=0.5),
-        ]
-
-        # Apply the same splitting logic used in _search_inner
-        query_tokens = ("credit", "card", "fees")
-
-        def _has_query_token_overlap(hit):
-            text = (hit.chunk.content or "").lower()
-            return bool(text and query_tokens and any(t in text for t in query_tokens))
-
-        relevant_rows = [r for r in new_rows if _has_query_token_overlap(r)]
-        supplemental_rows = [r for r in new_rows if not _has_query_token_overlap(r)]
-
-        chunk_hits = (
-            tuple(relevant_rows)
-            + tuple(non_parent_chunks)
-            + tuple(supplemental_rows)
+        # 3/4 tokens match: "credit", "card", "fees" → 75%
+        cc_row = self._make_chunk(
+            "[Table] Credit Card Fees\n[Row] 0\nCard: Platinum\nIssuance Fee: EGP 500"
+        )
+        # 1/4 tokens match: only "fees" → 25%
+        cheque_row = self._make_chunk(
+            "[Table] Cheques\n[Row] 1\nService: Chequebook\nFees: EGP 480"
+        )
+        # 0/4 tokens match → 0%
+        loan_row = self._make_chunk(
+            "[Table] Loans\n[Row] 0\nTerm: 5 years\nRate: 10%"
         )
 
-        # --- Assertions ---
-        # Relevant credit-card rows must come first
-        self.assertEqual(len(relevant_rows), 2, f"Expected 2 relevant rows, got {len(relevant_rows)}")
-        self.assertTrue(all("credit" in r.chunk.content.lower() or "card" in r.chunk.content.lower()
-                            for r in relevant_rows))
+        new_rows = [
+            ChunkResult(chunk=cheque_row, source_stage="table_row_expansion"),
+            ChunkResult(chunk=loan_row, source_stage="table_row_expansion"),
+            ChunkResult(chunk=cc_row, source_stage="table_row_expansion"),
+        ]
 
-        # Supplemental (unrelated) rows must be separated
-        self.assertEqual(len(supplemental_rows), 2, f"Expected 2 supplemental rows, got {len(supplemental_rows)}")
+        _expansion_tokens = ("credit", "card", "issuance", "fees")
 
-        # In the final ordering, the first two hits must be the credit-card rows
-        self.assertIn("Credit Card", chunk_hits[0].chunk.content)
-        self.assertIn("Credit Card", chunk_hits[1].chunk.content)
+        def _token_overlap_fraction(hit):
+            text = (hit.chunk.content or "").lower()
+            if not text or not _expansion_tokens:
+                return 0.0
+            matches = sum(1 for t in _expansion_tokens if t in text)
+            return matches / len(_expansion_tokens)
 
-        # The regular search result must come before supplemental rows
-        self.assertEqual(chunk_hits[2].source_stage, "vector")
+        _RELEVANCE_THRESHOLD = 0.5
+        scored_rows = [(_token_overlap_fraction(r), r) for r in new_rows]
+        relevant_rows = sorted(
+            [r for frac, r in scored_rows if frac >= _RELEVANCE_THRESHOLD],
+            key=lambda r: _token_overlap_fraction(r),
+            reverse=True,
+        )
+        supplemental_rows = [r for frac, r in scored_rows if frac < _RELEVANCE_THRESHOLD]
 
-        # Supplemental rows come last
-        self.assertTrue("Mortgage" in chunk_hits[3].chunk.content or "Teller" in chunk_hits[3].chunk.content)
-        self.assertTrue("Mortgage" in chunk_hits[4].chunk.content or "Teller" in chunk_hits[4].chunk.content)
+        # Credit card row (75%) is the only one above 50% threshold
+        self.assertEqual(len(relevant_rows), 1)
+        self.assertIn("Credit Card", relevant_rows[0].chunk.content)
 
-    def test_differentiated_score_zero_lexical_overlap(self):
+        # Cheque (25%) and Loan (0%) are supplemental
+        self.assertEqual(len(supplemental_rows), 2)
+
+    def test_fraction_based_ordering_sorts_relevant_rows_by_overlap(self):
+        """Relevant rows should be sorted by overlap fraction (highest first)."""
+        from apps.rag.ai_orchestrator import ChunkResult
+
+        # 4/4 match
+        full_match = self._make_chunk("Credit card issuance fees: EGP 500")
+        # 3/4 match
+        partial_match = self._make_chunk("Credit card fees: EGP 300")
+        # 2/4 match
+        weak_match = self._make_chunk("Card fees only: EGP 100")
+
+        new_rows = [
+            ChunkResult(chunk=weak_match, source_stage="table_row_expansion"),
+            ChunkResult(chunk=full_match, source_stage="table_row_expansion"),
+            ChunkResult(chunk=partial_match, source_stage="table_row_expansion"),
+        ]
+
+        _expansion_tokens = ("credit", "card", "issuance", "fees")
+
+        def _token_overlap_fraction(hit):
+            text = (hit.chunk.content or "").lower()
+            if not text or not _expansion_tokens:
+                return 0.0
+            return sum(1 for t in _expansion_tokens if t in text) / len(_expansion_tokens)
+
+        _RELEVANCE_THRESHOLD = 0.5
+        scored_rows = [(_token_overlap_fraction(r), r) for r in new_rows]
+        relevant_rows = sorted(
+            [r for frac, r in scored_rows if frac >= _RELEVANCE_THRESHOLD],
+            key=lambda r: _token_overlap_fraction(r),
+            reverse=True,
+        )
+
+        self.assertEqual(len(relevant_rows), 3)
+        # Full match (4/4=1.0) first, then partial (3/4=0.75), then weak (2/4=0.5)
+        self.assertIn("issuance", relevant_rows[0].chunk.content.lower())
+        self.assertAlmostEqual(_token_overlap_fraction(relevant_rows[0]), 1.0)
+        self.assertGreater(
+            _token_overlap_fraction(relevant_rows[0]),
+            _token_overlap_fraction(relevant_rows[1]),
+        )
+
+    # ------------------------------------------------------------------
+    # Fix 3: Continuous effective_weight in _expand_table_rows
+    # ------------------------------------------------------------------
+
+    def test_continuous_effective_weight_scales_with_overlap(self):
         """
-        Rows with zero lexical overlap should get effective_weight=0.05
-        (not 0.3), so unrelated table rows don't receive inflated scores.
+        effective_weight should scale continuously with lexical overlap
+        fraction, not be binary 0.3 vs 0.05.
         """
         inherited_weight = 0.3
-        base_lexical = 0.8
+        base_rerank = 0.8
 
-        # Row WITH lexical overlap
-        lexical_score_relevant = 0.4
-        effective_weight_relevant = inherited_weight if lexical_score_relevant > 0 else 0.05
-        score_relevant = max(base_lexical * effective_weight_relevant, lexical_score_relevant)
-        self.assertEqual(effective_weight_relevant, 0.3)
-        self.assertAlmostEqual(score_relevant, max(0.8 * 0.3, 0.4))
+        # Full overlap (1.0): weight = max(0.05, 0.3 * 1.0) = 0.3
+        lexical_full = 1.0
+        ew_full = max(0.05, inherited_weight * lexical_full)
+        self.assertAlmostEqual(ew_full, 0.3)
 
-        # Row WITHOUT lexical overlap
-        lexical_score_irrelevant = 0.0
-        effective_weight_irrelevant = inherited_weight if lexical_score_irrelevant > 0 else 0.05
-        score_irrelevant = max(base_lexical * effective_weight_irrelevant, lexical_score_irrelevant)
-        self.assertEqual(effective_weight_irrelevant, 0.05)
-        self.assertAlmostEqual(score_irrelevant, 0.8 * 0.05)
+        # Half overlap (0.5): weight = max(0.05, 0.3 * 0.5) = 0.15
+        lexical_half = 0.5
+        ew_half = max(0.05, inherited_weight * lexical_half)
+        self.assertAlmostEqual(ew_half, 0.15)
 
-        # Irrelevant row score should be much lower
-        self.assertLess(score_irrelevant, score_relevant,
-                        f"Irrelevant row score ({score_irrelevant}) should be less than "
-                        f"relevant row score ({score_relevant})")
+        # Quarter overlap (0.25): weight = max(0.05, 0.3 * 0.25) = 0.075
+        lexical_quarter = 0.25
+        ew_quarter = max(0.05, inherited_weight * lexical_quarter)
+        self.assertAlmostEqual(ew_quarter, 0.075)
+
+        # Zero overlap: weight = 0.05 (floor)
+        lexical_zero = 0.0
+        ew_zero = 0.05  # matches the code: `if lexical_score > 0 else 0.05`
+        self.assertAlmostEqual(ew_zero, 0.05)
+
+        # Scores should be monotonically decreasing
+        score_full = max(base_rerank * ew_full, lexical_full)
+        score_half = max(base_rerank * ew_half, lexical_half)
+        score_quarter = max(base_rerank * ew_quarter, lexical_quarter)
+        score_zero = max(base_rerank * ew_zero, 0.0)
+
+        self.assertGreater(score_full, score_half)
+        self.assertGreater(score_half, score_quarter)
+        self.assertGreater(score_quarter, score_zero)
+
+    # ------------------------------------------------------------------
+    # Fix 2: Document-name relevance boost
+    # ------------------------------------------------------------------
+
+    def test_document_name_boost_scores_matching_names_higher(self):
+        """
+        Chunks from a document named 'Fees and Charges Credit Cards'
+        should get a higher document_name_boost than chunks from
+        'Cheques-EN' for query tokens ("credit", "card", "fees").
+        """
+        from apps.rag.ai_orchestrator import KnowledgeSearchService
+
+        scorer = KnowledgeSearchService._lexical_score_text
+        tokens = ("credit", "card", "issuance", "fees")
+
+        # Document name closely matching query
+        score_cc = scorer("Fees and Charges Credit Cards Eng_185", tokens)
+        # Document name partially matching
+        score_debit = scorer("Debit and Prepaid Fees and Charges EN", tokens)
+        # Document name barely matching
+        score_cheque = scorer("Cheques-EN", tokens)
+        # Document name not matching at all
+        score_loan = scorer("Mortgage Rates 2025", tokens)
+
+        # Credit cards doc should score highest (matches "credit", "card", "fees" = 3/4)
+        self.assertGreater(score_cc, score_debit)
+        self.assertGreater(score_cc, score_cheque)
+        self.assertGreater(score_cc, score_loan)
+
+        # Debit doc matches "fees" only = 1/4
+        self.assertGreater(score_debit, score_loan)
+
+        # Cheques and Mortgage match 0/4 tokens
+        self.assertEqual(score_cheque, 0.0)
+        self.assertEqual(score_loan, 0.0)
+
+    # ------------------------------------------------------------------
+    # Fix 1: Cross-encoder enablement
+    # ------------------------------------------------------------------
+
+    def test_cross_encoder_defaults_enabled(self):
+        """Cross-encoder should default to enabled with table-intent skip disabled."""
+        from django.conf import settings
+
+        self.assertTrue(
+            getattr(settings, "RAG_ENABLE_CROSS_ENCODER", False),
+            "RAG_ENABLE_CROSS_ENCODER should default to True",
+        )
+        self.assertFalse(
+            getattr(settings, "RAG_CROSS_ENCODER_AUTO_SKIP_TABLE_INTENT", True),
+            "RAG_CROSS_ENCODER_AUTO_SKIP_TABLE_INTENT should default to False",
+        )
 
 
 if __name__ == "__main__":

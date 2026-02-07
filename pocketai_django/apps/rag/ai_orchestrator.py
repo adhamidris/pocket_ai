@@ -679,6 +679,7 @@ class KnowledgeSearchService:
             "alias": float(getattr(settings, "RAG_WEIGHT_ALIAS", 1.2)),
             "entity": float(getattr(settings, "RAG_WEIGHT_ENTITY", 0.4)),
             "recency": float(getattr(settings, "RAG_WEIGHT_RECENCY", 0.25)),
+            "document_name": float(getattr(settings, "RAG_WEIGHT_DOCUMENT_NAME", 0.35)),
         }
         self.recency_decay_days = float(getattr(settings, "RAG_RECENCY_DECAY_DAYS", 90))
         self.recency_min_floor = float(getattr(settings, "RAG_RECENCY_MIN_FLOOR", 0.05))
@@ -1487,16 +1488,29 @@ class KnowledgeSearchService:
                     # Limit parent chunks to context-only (max 2 by default)
                     limited_parents = parent_chunks[:self.table_row_expansion_max_parent_context]
 
-                    # Split expanded rows by query-token relevance so that rows
-                    # from unrelated tables don't displace the actual search hits.
+                    # Split expanded rows by query-token overlap fraction so
+                    # rows matching most query tokens rank above those matching
+                    # only one generic term (e.g. "fees" alone).
                     _expansion_tokens = tuple(t.lower() for t in traits.tokens if t)
 
-                    def _has_query_token_overlap(hit):
+                    def _token_overlap_fraction(hit):
+                        """Return fraction of query tokens present in hit content (0.0–1.0)."""
                         text = (hit.chunk.content or "").lower()
-                        return bool(text and _expansion_tokens and any(t in text for t in _expansion_tokens))
+                        if not text or not _expansion_tokens:
+                            return 0.0
+                        matches = sum(1 for t in _expansion_tokens if t in text)
+                        return matches / len(_expansion_tokens)
 
-                    relevant_rows = [r for r in new_rows if _has_query_token_overlap(r)]
-                    supplemental_rows = [r for r in new_rows if not _has_query_token_overlap(r)]
+                    # Relevant = overlaps >= 50% of query tokens (strong signal).
+                    # Supplemental = < 50% overlap (weak/generic matches like "fees" alone).
+                    _RELEVANCE_THRESHOLD = 0.5
+                    scored_rows = [(_token_overlap_fraction(r), r) for r in new_rows]
+                    relevant_rows = sorted(
+                        [r for frac, r in scored_rows if frac >= _RELEVANCE_THRESHOLD],
+                        key=lambda r: _token_overlap_fraction(r),
+                        reverse=True,
+                    )
+                    supplemental_rows = [r for frac, r in scored_rows if frac < _RELEVANCE_THRESHOLD]
 
                     chunk_hits = (
                         tuple(relevant_rows)
@@ -3888,6 +3902,21 @@ class KnowledgeSearchService:
                 if index_type in (None, "text"):
                     text_penalty = self._text_quality_penalty(chunk_metadata)
 
+            # Document-name relevance: boost chunks from documents whose
+            # display_name closely matches the query.  This is the standard IR
+            # "title field boost" — a document literally named "Fees and Charges
+            # Credit Cards" should rank higher for "credit card issuance fees"
+            # than one named "Cheques-EN".  Works across any industry.
+            document_name_boost = 0.0
+            upload = getattr(cand.chunk, "upload", None)
+            if upload is not None:
+                doc_label = (
+                    getattr(upload, "display_name", "") or
+                    getattr(upload, "source_name", "") or ""
+                )
+                if doc_label and traits.tokens:
+                    document_name_boost = self._lexical_score_text(doc_label, traits.tokens)
+
             # Document continuity bonus (Conversation-Aware RAG)
             # Boosts chunks from the same document being discussed in conversation
             document_continuity_bonus = 0.0
@@ -3911,6 +3940,7 @@ class KnowledgeSearchService:
                 + self.rerank_weights["entity"] * entity_bonus
                 + self.rerank_weights["recency"] * recency_score
                 + table_header_bonus
+                + self.rerank_weights["document_name"] * document_name_boost
                 + document_continuity_bonus  # NEW: Document continuity bonus
                 - quality_penalty  # NEW: Subtract quality penalty
                 - table_specific_penalty
@@ -3923,6 +3953,7 @@ class KnowledgeSearchService:
                 "entity": round(entity_bonus, 4),
                 "recency": round(recency_score, 4),
                 "table_header_bonus": round(table_header_bonus, 4),
+                "document_name_boost": round(document_name_boost, 4),
                 "document_continuity_bonus": round(document_continuity_bonus, 4),  # NEW: Include in diagnostics
                 "quality_penalty": round(quality_penalty, 4),  # NEW: Include in diagnostics
                 "table_specific_penalty": round(table_specific_penalty, 4),
@@ -4112,7 +4143,7 @@ class KnowledgeSearchService:
             scores: list[tuple[float, int, KnowledgeSnippet]] = []
             ce_scores: list[float] | None = None
             cross_encoder = None
-            if getattr(self, "cross_encoder_policy", "off") == "always" and normalized_query:
+            if getattr(self, "cross_encoder_policy", "off") != "off" and normalized_query:
                 cross_encoder = self._get_cross_encoder()
             if cross_encoder:
                 if self.snippet_rerank_budget_ms:
@@ -7595,15 +7626,14 @@ class KnowledgeSearchService:
             row_diagnostics["expanded_table_id"] = row_table_id
 
             # Expanded rows should earn their own relevance score.
-            # Inherit a fraction of the parent's score as a baseline, but let
-            # the row's own lexical overlap dominate so irrelevant rows rank low.
+            # Scale inherited weight by lexical overlap fraction (0.0–1.0)
+            # so rows matching 4/4 query tokens inherit full weight (0.3),
+            # rows matching 1/4 inherit ~0.075, and rows matching 0/4 get
+            # a near-zero baseline (0.05).  This prevents unrelated table
+            # rows from receiving inflated scores from a parent that
+            # happened to be nearby in embedding space.
             inherited_weight = 0.3
-            # Rows with zero lexical overlap get a near-zero baseline so they
-            # don't receive false confidence scores from unrelated parent tables.
-            if lexical_score > 0:
-                effective_weight = inherited_weight
-            else:
-                effective_weight = 0.05
+            effective_weight = max(0.05, inherited_weight * lexical_score) if lexical_score > 0 else 0.05
             expanded.append(
                 ChunkResult(
                     chunk=chunk,
