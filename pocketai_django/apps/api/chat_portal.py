@@ -251,6 +251,31 @@ def _json_safe_debug(value: object, *, depth: int = 3, string_limit: int = 240, 
     return _clip_debug_text(value, limit=string_limit)
 
 
+def _json_debug_exact(value: object, *, depth: int = 10) -> object:
+    """
+    Preserve exact debug payload values without clipping/redaction.
+
+    Used only for explicit portal debug I/O mirrors (developer-facing),
+    where we need to inspect the exact tool-call request/response boundary
+    as seen by the model.
+    """
+
+    if value is None:
+        return None
+    if depth <= 0:
+        return value if isinstance(value, (str, int, float, bool)) else str(value)
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, Mapping):
+        out: dict[str, object] = {}
+        for key, item in value.items():
+            out[str(key)] = _json_debug_exact(item, depth=depth - 1)
+        return out
+    if isinstance(value, (list, tuple, set)):
+        return [_json_debug_exact(item, depth=depth - 1) for item in value]
+    return str(value)
+
+
 def _serialize_tool_trace_entry(entry: Mapping[str, object]) -> dict[str, object]:
     tool = str(entry.get("tool") or "").strip()
     arguments = entry.get("arguments")
@@ -329,6 +354,23 @@ def _serialize_tool_trace_entry(entry: Mapping[str, object]) -> dict[str, object
     engine = entry.get("engine")
     if engine:
         out["engine"] = _clip_debug_text(engine, limit=80)
+
+    llm_request = entry.get("llm_request")
+    if isinstance(llm_request, Mapping) and llm_request:
+        out["llm_request"] = _json_debug_exact(llm_request, depth=10)  # type: ignore[arg-type]
+
+    llm_response = entry.get("llm_response")
+    if isinstance(llm_response, Mapping) and llm_response:
+        llm_response_out = _json_debug_exact(llm_response, depth=6)
+        if isinstance(llm_response_out, dict):
+            content_value = llm_response_out.get("content")
+            if isinstance(content_value, str):
+                try:
+                    llm_response_out["content_json"] = json.loads(content_value)
+                except Exception:
+                    pass
+        out["llm_response"] = llm_response_out  # type: ignore[assignment]
+
     return {k: v for k, v in out.items() if v is not None and v != ""}
 
 

@@ -1218,6 +1218,10 @@ class McpOrchestratorService:
                         tool_name = self._tool_name(tool_call)
                         raw_arguments = self._tool_arguments(tool_call)
                         arguments = dict(raw_arguments) if isinstance(raw_arguments, Mapping) else {}
+                        llm_requested_tool_name = str(tool_name)
+                        llm_requested_arguments = (
+                            copy.deepcopy(raw_arguments) if isinstance(raw_arguments, Mapping) else {}
+                        )
                         # Strip UI-only hints from tool arguments so they never leak into tool execution.
                         # Spinner UX is driven by backend status/tool events (single source of truth).
                         arguments.pop("__ui", None)
@@ -2028,6 +2032,10 @@ class McpOrchestratorService:
                                 {
                                     "tool": tool_name,
                                     "arguments": trace_arguments,
+                                    "llm_request": {
+                                        "tool": llm_requested_tool_name,
+                                        "arguments": llm_requested_arguments,
+                                    },
                                     "result_keys": sorted(tool_result.keys()),
                                     "status": tool_result.get("status"),
                                     "error_code": tool_result.get("error_code"),
@@ -2137,6 +2145,10 @@ class McpOrchestratorService:
                                         and isinstance(truncated_tool_json, str)
                                         and raw_tool_json != truncated_tool_json
                                     ),
+                                }
+                                tool_context.tool_trace[trace_index]["llm_response"] = {
+                                    "tool_call_id": str(tool_call.get("id") or ""),
+                                    "content": truncated_tool_json,
                                 }
                             except Exception:  # pragma: no cover - must never break tool loop
                                 logger.exception("mcp tool trace prompt compaction patch failed")

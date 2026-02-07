@@ -4061,6 +4061,36 @@ def _convert_to_agentic_search_response(
                     pass
         return max(0, int(char_estimate_local))
 
+    def _suggest_table_read_chars(
+        *,
+        base_suggested: int,
+        row_count: object,
+        column_count: object,
+        char_estimate_local: int,
+        max_chars_allowed: int,
+    ) -> int:
+        rows = _coerce_int(row_count) or 0
+        cols = _coerce_int(column_count) or 0
+        if rows <= 0:
+            return int(base_suggested)
+        # Prefer explicit column counts when available; otherwise use a conservative default.
+        cols = cols if cols > 0 else 5
+        estimated_table_chars = max(
+            int(char_estimate_local),
+            int(rows * max(80, cols * 22) + 400),
+        )
+        tuned = _suggest_max_chars_for_estimate(
+            estimated_table_chars,
+            max_chars_allowed=max_chars_allowed,
+        )
+        if rows >= 25:
+            tuned = max(tuned, 1800)
+        if rows >= 40:
+            tuned = max(tuned, 2800)
+        if rows >= 80:
+            tuned = max(tuned, 4500)
+        return max(500, min(int(max_chars_allowed), int(tuned)))
+
     # Evidence planner (Phase 1): convert search snippets into lightweight refs.
     # Dedupe by canonical anchors so the model doesn't see the same fact twice, but
     # do not drop entire categories of evidence based on search stage (agentic mode
@@ -4099,10 +4129,12 @@ def _convert_to_agentic_search_response(
         total_table_row_candidates += 1
         table_row_ref_counts[str(table_id)] += 1
 
-    promote_table_context = bool(
-        total_table_row_candidates >= 3
-        or any(count >= 2 for count in table_row_ref_counts.values())
-    )
+    promoted_table_candidates: set[str] = {
+        str(table_id)
+        for table_id, count in table_row_ref_counts.items()
+        if int(count) >= 2
+    }
+    promote_table_context = bool(promoted_table_candidates)
     promoted_table_ids: set[str] = set()
 
     text_chunk_upload_counts: Counter[str] = Counter()
@@ -4200,6 +4232,14 @@ def _convert_to_agentic_search_response(
             char_estimate,
             max_chars_allowed=int(READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX),
         )
+        if content_type == "table":
+            suggested_max_chars = _suggest_table_read_chars(
+                base_suggested=suggested_max_chars,
+                row_count=row_count,
+                column_count=column_count,
+                char_estimate_local=char_estimate,
+                max_chars_allowed=int(READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX),
+            )
 
         # EvidenceRef fields
         entity_name = snippet.get("entity_name")
@@ -4227,6 +4267,7 @@ def _convert_to_agentic_search_response(
             and table_id
             and row_index is not None
             and promote_table_context
+            and str(table_id) in promoted_table_candidates
         )
         text_group = text_chunk_groups.get(upload_id) if upload_id else None
         promote_text_group_ref = bool(
@@ -4509,10 +4550,22 @@ def _convert_to_agentic_search_response(
             "total_found": total_found,
             "agentic_read_v2_enabled": agentic_read_v2_enabled,
             "table_direct_present": table_direct_present,
+            "table_context_promote_enabled": promote_table_context,
+            "table_context_promote_candidates": len(promoted_table_candidates),
+            "table_context_promoted_refs": len(promoted_table_ids),
             "planner_dropped": max(0, len(raw_snippets) - len(planned_snippets)),
             "previews_full_enabled": preview_full_enabled,
             "previews_hybrid_enabled": preview_hybrid_enabled,
             "previews_attached_count": previews_attached,
+            "text_grouping_enabled": bool(text_chunk_grouping_enabled),
+            "text_group_threshold": int(text_chunk_group_threshold),
+            "text_group_candidates": len(text_chunk_upload_snippets),
+            "text_group_groups": len(text_chunk_groups),
+            "text_group_promoted_refs": len(promoted_upload_ids),
+            "document_anchor_refs": sum(
+                1 for ref in refs if isinstance(ref, Mapping) and str(ref.get("kind") or "") == "document_anchor"
+            ),
+            "text_group_manifests_cached": len(promoted_text_group_manifests),
         },
         context={
             "conversation": conversation.id,
@@ -4938,6 +4991,17 @@ def _search_knowledge_handler(
     # Layer 3: Semantic duplicate search detection (one intent per user turn).
     # Duplicate intents reuse prior results and do not consume per-turn search budget.
     duplicate_intent_enabled = bool(getattr(settings, "MCP_SEARCH_DUPLICATE_INTENT_ENABLED", True))
+    result_fingerprint_dedup_enabled = bool(
+        getattr(settings, "MCP_SEARCH_RESULT_FINGERPRINT_DEDUP_ENABLED", True)
+    )
+    try:
+        result_fingerprint_top_k = int(
+            getattr(settings, "MCP_SEARCH_RESULT_FINGERPRINT_TOP_K", 8) or 8
+        )
+    except (TypeError, ValueError):
+        result_fingerprint_top_k = 8
+    result_fingerprint_top_k = max(1, min(20, int(result_fingerprint_top_k)))
+
     def _normalize_intent_text(values: Sequence[str]) -> str:
         parts: list[str] = []
         seen: set[str] = set()
@@ -4971,6 +5035,39 @@ def _search_knowledge_handler(
         if norm_a <= 0.0 or norm_b <= 0.0:
             return None
         return dot / (math.sqrt(norm_a) * math.sqrt(norm_b))
+
+    def _response_top_ids(response: Mapping[str, object], *, top_k: int) -> list[str]:
+        ids: list[str] = []
+        refs = response.get("refs")
+        if isinstance(refs, list):
+            for entry in refs:
+                if not isinstance(entry, Mapping):
+                    continue
+                ref_id = str(entry.get("id") or "").strip()
+                if ref_id:
+                    ids.append(ref_id)
+                if len(ids) >= top_k:
+                    break
+            return ids[:top_k]
+
+        snippets_local = response.get("snippets")
+        if isinstance(snippets_local, list):
+            for entry in snippets_local:
+                if not isinstance(entry, Mapping):
+                    continue
+                ref_id = str(entry.get("chunk_id") or entry.get("id") or "").strip()
+                if ref_id:
+                    ids.append(ref_id)
+                if len(ids) >= top_k:
+                    break
+        return ids[:top_k]
+
+    def _response_result_fingerprint(response: Mapping[str, object], *, top_k: int) -> tuple[str, list[str]]:
+        top_ids = _response_top_ids(response, top_k=top_k)
+        if not top_ids:
+            return "", []
+        digest = hashlib.sha256("|".join(top_ids).encode("utf-8")).hexdigest()[:16]
+        return digest, top_ids
 
     intent_text = _normalize_intent_text(queries)
     intent_embedding: list[float] | None = None
@@ -5966,6 +6063,7 @@ def _search_knowledge_handler(
         pending_specs.append((idx, query_text, intent_info, intent, limit_for_run))
         non_cached_queries += 1
 
+    search_budget_reserved = False
     if non_cached_queries > 0:
         # Enforce limits only when this call needs a backend search.
         # Pure cache reuses (same intent/query in the same turn) should not
@@ -5974,6 +6072,7 @@ def _search_knowledge_handler(
         if limited is not None:
             return limited
         context.reserve_search()
+        search_budget_reserved = True
 
     executor: ThreadPoolExecutor | None = None
     futures: list[tuple[int, str, Mapping[str, object], str | None, int | None, object]] = []
@@ -6273,11 +6372,92 @@ def _search_knowledge_handler(
     else:
         final_response = payload
 
+    result_fingerprint = ""
+    result_top_ids: list[str] = []
+    if isinstance(final_response, Mapping):
+        result_fingerprint, result_top_ids = _response_result_fingerprint(
+            final_response,
+            top_k=result_fingerprint_top_k,
+        )
+
+    if (
+        new_contract_enabled
+        and duplicate_intent_enabled
+        and result_fingerprint_dedup_enabled
+        and result_fingerprint
+    ):
+        history = getattr(context, "search_history", None) or []
+        if isinstance(history, list) and history:
+            fingerprint_match: Mapping[str, object] | None = None
+            for entry in reversed(history[-12:]):
+                if not isinstance(entry, Mapping):
+                    continue
+                prior_response = entry.get("response")
+                if not isinstance(prior_response, Mapping):
+                    continue
+                prior_fingerprint = str(entry.get("result_fingerprint") or "").strip()
+                prior_top_ids_raw = entry.get("result_top_ids")
+                if not prior_fingerprint:
+                    prior_fingerprint, prior_top_ids = _response_result_fingerprint(
+                        prior_response,
+                        top_k=result_fingerprint_top_k,
+                    )
+                    prior_top_ids_raw = prior_top_ids
+                if prior_fingerprint != result_fingerprint:
+                    continue
+                normalized_prior_top_ids = [
+                    str(value).strip()
+                    for value in (prior_top_ids_raw if isinstance(prior_top_ids_raw, list) else [])
+                    if str(value).strip()
+                ][:result_fingerprint_top_k]
+                if normalized_prior_top_ids and normalized_prior_top_ids != result_top_ids[:result_fingerprint_top_k]:
+                    continue
+                fingerprint_match = entry
+                break
+
+            if fingerprint_match is not None:
+                prior_response = fingerprint_match.get("response")
+                if isinstance(prior_response, Mapping):
+                    if search_budget_reserved and int(getattr(context, "searches_used", 0) or 0) > 0:
+                        context.searches_used = max(0, int(context.searches_used) - 1)
+
+                    duplicate_payload: dict[str, object] = {
+                        "tool": "search_knowledge",
+                        "status": "duplicate",
+                        "error": "duplicate_results",
+                        "error_code": "duplicate_results",
+                        "hint": "Result set is identical to a previous search this turn. Reusing earlier results.",
+                        "diagnostics": {
+                            "dedup_strategy": "result_fingerprint",
+                            "dedup_result_fingerprint": result_fingerprint,
+                            "dedup_top_ids": result_top_ids[:result_fingerprint_top_k],
+                        },
+                    }
+                    if rag_agentic_enabled:
+                        duplicate_payload["refs"] = list(
+                            prior_response.get("refs") or prior_response.get("results") or []
+                        )
+                        if prior_response.get("total_found") not in {None, ""}:
+                            duplicate_payload["total_found"] = prior_response.get("total_found")
+                    else:
+                        duplicate_payload["snippets"] = list(prior_response.get("snippets") or [])
+                    if prior_response.get("next_cursor"):
+                        duplicate_payload["next_cursor"] = prior_response.get("next_cursor")
+                    if prior_response.get("has_more") not in {None, ""}:
+                        duplicate_payload["has_more"] = prior_response.get("has_more")
+                    final_response = duplicate_payload
+                    result_fingerprint, result_top_ids = _response_result_fingerprint(
+                        prior_response,
+                        top_k=result_fingerprint_top_k,
+                    )
+
     try:
         history_entry = {
             "intent": intent_text,
             "embedding": intent_embedding,
             "response": copy.deepcopy(final_response),
+            "result_fingerprint": result_fingerprint,
+            "result_top_ids": list(result_top_ids[:result_fingerprint_top_k]),
         }
         context.search_history.append(history_entry)
         if len(context.search_history) > 25:
@@ -7861,6 +8041,12 @@ def _agentic_read_v2_handler(
 
     expanded_row_tables_seen: set[str] = set()
     expanded_upload_reads_seen: set[str] = set()
+    text_group_manifest_lookups = 0
+    text_group_manifest_hits = 0
+    text_group_manifest_misses = 0
+    text_group_window_reads = 0
+    text_group_chunk_refs_covered = 0
+    text_group_upload_refs_covered = 0
 
     remaining_chars = max(0, int(max_chars))
     total_chars = 0
@@ -7920,6 +8106,7 @@ def _agentic_read_v2_handler(
             continue
 
         if chunk_record is not None and upload_id in expanded_upload_reads_seen and not cursor_payload:
+            text_group_chunk_refs_covered += 1
             read.append(
                 {
                     "id": item_id,
@@ -8128,9 +8315,12 @@ def _agentic_read_v2_handler(
                 payload = table_payload
                 next_cursor = cursor_out.get("cursor") if cursor_out else None
             elif upload_record is not None and chunk_record is None:
+                text_group_manifest_lookups += 1
                 text_group_manifest = _load_text_group_manifest(upload_id)
                 if text_group_manifest is not None:
+                    text_group_manifest_hits += 1
                     if upload_id in expanded_upload_reads_seen:
+                        text_group_upload_refs_covered += 1
                         read.append(
                             {
                                 "id": item_id,
@@ -8177,6 +8367,7 @@ def _agentic_read_v2_handler(
                         int(text_group_max_chars),
                     )
                     grouped_budget_cap = max(200, grouped_budget_cap)
+                    text_group_window_reads += 1
 
                     content_text, cursor_out, complete = _read_chunk_window_segment(
                         item_id=item_id,
@@ -8203,6 +8394,7 @@ def _agentic_read_v2_handler(
                     if isinstance(content_text, str) and content_text:
                         expanded_upload_reads_seen.add(upload_id)
                 else:
+                    text_group_manifest_misses += 1
                     # No manifest: degrade gracefully to the existing fallback path.
                     page_number = 1
                     has_page_blocks = False
@@ -8717,6 +8909,11 @@ def _agentic_read_v2_handler(
         artifact_items = sum(1 for entry in read if isinstance(entry, Mapping) and str(entry.get("status") or "") == "artifact")
         truncated_items = sum(1 for entry in read if isinstance(entry, Mapping) and str(entry.get("status") or "") in {"truncated", "partial"})
         response_chars = _payload_len_with_budget(response)
+        text_group_manifest_hit_rate = (
+            float(text_group_manifest_hits) / float(text_group_manifest_lookups)
+            if text_group_manifest_lookups > 0
+            else None
+        )
         structured_log(
             "mcp",
             "read_knowledge.agentic_v2",
@@ -8731,6 +8928,17 @@ def _agentic_read_v2_handler(
                 "max_chars": int(max_chars),
                 "output_chars": int(response_chars),
                 "output_limit": int(output_limit or 0),
+                "text_group_manifest_lookups": int(text_group_manifest_lookups),
+                "text_group_manifest_hits": int(text_group_manifest_hits),
+                "text_group_manifest_misses": int(text_group_manifest_misses),
+                "text_group_manifest_hit_rate": (
+                    round(float(text_group_manifest_hit_rate), 4)
+                    if text_group_manifest_hit_rate is not None
+                    else None
+                ),
+                "text_group_window_reads": int(text_group_window_reads),
+                "text_group_chunk_refs_covered": int(text_group_chunk_refs_covered),
+                "text_group_upload_refs_covered": int(text_group_upload_refs_covered),
             },
             context={"conversation": conversation.id, "business": conversation.business_profile_id},
             logger_obj=logger,
@@ -8869,7 +9077,7 @@ def _agentic_table_chunk_snippets(
         is_table_chunk=True,
         aliases=tuple(chunk_meta.get("aliases") or ()),
         search_stage="table_rows",
-        confidence_score=1.0,
+        confidence_score=None,
         truncated=truncated,
         source_diagnostics=source_diag,
         partial_index=partial_index,

@@ -1432,7 +1432,30 @@ class KnowledgeSearchService:
         # EXCEPTION: For comprehensive queries ("list all cards", "every product"), keep preview chunks
         # as they contain the full table structure needed for enumeration/comparison answers.
         comprehensive_intent = bool(table_context.get("comprehensive_intent"))
-        if table_intent and not comprehensive_intent and chunk_hits:
+        table_signal_header = bool(
+            table_context.get("matched_columns_query")
+            or table_context.get("matched_columns_tokens")
+        )
+        table_signal_specific = bool(
+            table_context.get("matched_columns_specific")
+            or table_context.get("matched_row_labels")
+        )
+        table_signal_from_hits = any(
+            bool((hit.diagnostics or {}).get("specific_match"))
+            or bool((hit.diagnostics or {}).get("header_match"))
+            for hit in chunk_hits[: self.table_chunk_sample_limit]
+        )
+        table_signal_direct_stage = any(
+            str(getattr(hit, "source_stage", "") or "").strip().lower() in {"table_direct", "table_blended"}
+            for hit in chunk_hits[: self.table_chunk_sample_limit]
+        )
+        table_row_expansion_relevant = bool(
+            table_signal_specific
+            or table_signal_header
+            or table_signal_from_hits
+            or table_signal_direct_stage
+        )
+        if table_intent and not comprehensive_intent and chunk_hits and table_row_expansion_relevant:
             # Check if parent/preview chunks are present in top candidates
             parent_preview_present = any(
                 (hit.chunk.metadata or {}).get("table_chunk_role") == "parent" or
@@ -1444,6 +1467,7 @@ class KnowledgeSearchService:
                     business_profile,
                     chunk_hits,
                     max_rows_per_table=self.table_row_expansion_limit,
+                    query_tokens=traits.tokens,
                 )
                 if expanded_rows:
                     # Prioritize row chunks: put expanded rows first, then demote parents
@@ -1462,14 +1486,34 @@ class KnowledgeSearchService:
                     ]
                     # Limit parent chunks to context-only (max 2 by default)
                     limited_parents = parent_chunks[:self.table_row_expansion_max_parent_context]
-                    # New order: expanded rows + existing non-parent chunks + limited parents
-                    chunk_hits = tuple(new_rows) + tuple(non_parent_chunks) + tuple(limited_parents)
+
+                    # Split expanded rows by query-token relevance so that rows
+                    # from unrelated tables don't displace the actual search hits.
+                    _expansion_tokens = tuple(t.lower() for t in traits.tokens if t)
+
+                    def _has_query_token_overlap(hit):
+                        text = (hit.chunk.content or "").lower()
+                        return bool(text and _expansion_tokens and any(t in text for t in _expansion_tokens))
+
+                    relevant_rows = [r for r in new_rows if _has_query_token_overlap(r)]
+                    supplemental_rows = [r for r in new_rows if not _has_query_token_overlap(r)]
+
+                    chunk_hits = (
+                        tuple(relevant_rows)
+                        + tuple(non_parent_chunks)
+                        + tuple(supplemental_rows)
+                        + tuple(limited_parents)
+                    )
                     diagnostics["table_row_expansion"] = len(new_rows)
+                    diagnostics["table_row_expansion_relevant"] = len(relevant_rows)
+                    diagnostics["table_row_expansion_supplemental"] = len(supplemental_rows)
                     diagnostics["table_parent_limited"] = len(parent_chunks) - len(limited_parents)
                     _rag_log(
                         "table.row_expansion",
                         {
                             "expanded_rows": len(new_rows),
+                            "relevant_rows": len(relevant_rows),
+                            "supplemental_rows": len(supplemental_rows),
                             "parent_chunks_limited": len(parent_chunks) - len(limited_parents),
                             "total_after": len(chunk_hits),
                         },
@@ -1479,6 +1523,8 @@ class KnowledgeSearchService:
                             "request": diagnostics.get("request_id"),
                         },
                     )
+        elif table_intent and not comprehensive_intent and chunk_hits:
+            diagnostics["table_row_expansion_skipped"] = "query_signal_not_specific"
 
         # Always suppress legacy PDF "json_entity" chunks (historically created from per-row table entities).
         # These chunks tend to be low-context ("Table_1: ...") and can dominate retrieval even for normal Q&A.
@@ -1786,8 +1832,14 @@ class KnowledgeSearchService:
                 )
         snippets = tuple(snippets_list)
         if snippets:
+            snippets, snippet_ms = self._snippet_rerank(
+                snippets,
+                query_text=traits.normalized or traits.original or query,
+                tokens=traits.tokens,
+            )
             diagnostics["path"] = diagnostics.get("path") or "hybrid"
             diagnostics.setdefault("table_reason", table_reason)
+            diagnostics["snippet_rerank_ms"] = int(snippet_ms)
             diagnostics["total_duration_ms"] = self._duration_ms(overall_start)
             diagnostics["snippet_count"] = len(snippets)
             result_obj = KnowledgeSearchResult(snippets=snippets, status="ok", diagnostics=diagnostics)
@@ -5739,9 +5791,20 @@ class KnowledgeSearchService:
             table_hint = f"{table_count} structured {label_name} available via load_document"
 
         source_stage = search_stage or (result.source_stage if result else None)
-        confidence = None
+        confidence: float | None = None
         if result:
-            confidence = result.alias_confidence or result.rerank_score or result.lexical_score or 0.0
+            score_candidates: list[float] = []
+            for raw_score in (
+                result.rerank_score,
+                result.lexical_score,
+                result.alias_confidence,
+                result.recency_score,
+            ):
+                try:
+                    score_candidates.append(float(raw_score))
+                except (TypeError, ValueError):
+                    continue
+            confidence = max(score_candidates) if score_candidates else 0.0
         diagnostics = dict(result.diagnostics) if result else {}
         if result and result.vector_distance is not None:
             diagnostics.setdefault("vector_distance", result.vector_distance)
@@ -7350,6 +7413,7 @@ class KnowledgeSearchService:
         hits: Sequence[ChunkResult],
         *,
         max_rows_per_table: int | None = None,
+        query_tokens: Sequence[str] | None = None,
     ) -> tuple[ChunkResult, ...]:
         """
         Hierarchical table retrieval: expand parent/preview chunks to row chunks.
@@ -7371,6 +7435,21 @@ class KnowledgeSearchService:
         parent_count = 0
         preview_count = 0
         missing_table_id_count = 0
+        best_parent_by_table: dict[str, ChunkResult] = {}
+
+        def _result_strength(candidate: ChunkResult) -> float:
+            values: list[float] = []
+            for raw_value in (
+                candidate.rerank_score,
+                candidate.lexical_score,
+                candidate.alias_confidence,
+                candidate.recency_score,
+            ):
+                try:
+                    values.append(float(raw_value))
+                except (TypeError, ValueError):
+                    continue
+            return max(values) if values else 0.0
         
         for hit in hits:
             meta = hit.chunk.metadata if isinstance(hit.chunk.metadata, dict) else {}
@@ -7386,7 +7465,11 @@ class KnowledgeSearchService:
             if is_parent or is_preview:
                 table_id = meta.get("table_id")
                 if table_id:
-                    table_ids.add(str(table_id))
+                    table_id_str = str(table_id)
+                    table_ids.add(table_id_str)
+                    existing_best = best_parent_by_table.get(table_id_str)
+                    if existing_best is None or _result_strength(hit) > _result_strength(existing_best):
+                        best_parent_by_table[table_id_str] = hit
                 else:
                     # CRITICAL: Parent/preview chunk without table_id
                     missing_table_id_count += 1
@@ -7480,13 +7563,59 @@ class KnowledgeSearchService:
             except Exception:
                 pass
         
+        normalized_query_tokens = tuple(
+            token.lower()
+            for token in (query_tokens or ())
+            if isinstance(token, str) and token.strip()
+        )
+
         expanded: list[ChunkResult] = []
         duplicate_count = 0
         for chunk in row_chunks:
             if chunk.id in hit_ids:
                 duplicate_count += 1
                 continue  # Already in results
-            expanded.append(ChunkResult(chunk=chunk, source_stage="table_row_expansion"))
+            row_meta = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+            row_table_id = str(row_meta.get("table_id") or "").strip()
+            parent_hit = best_parent_by_table.get(row_table_id) if row_table_id else None
+
+            lexical_score = 0.0
+            if normalized_query_tokens:
+                lexical_score = self._lexical_overlap_score(chunk, normalized_query_tokens)
+
+            base_lexical = float(parent_hit.lexical_score) if parent_hit is not None else 0.0
+            base_alias = float(parent_hit.alias_confidence) if parent_hit is not None else 0.0
+            base_recency = float(parent_hit.recency_score) if parent_hit is not None else 0.0
+            base_rerank = float(parent_hit.rerank_score) if parent_hit is not None else 0.0
+            vector_distance = parent_hit.vector_distance if parent_hit is not None else None
+            row_diagnostics = dict(parent_hit.diagnostics) if parent_hit is not None else {}
+            if parent_hit is not None:
+                row_diagnostics["expanded_from_chunk_id"] = str(parent_hit.chunk_id)
+                row_diagnostics["expanded_from_stage"] = str(parent_hit.source_stage)
+            row_diagnostics["expanded_table_id"] = row_table_id
+
+            # Expanded rows should earn their own relevance score.
+            # Inherit a fraction of the parent's score as a baseline, but let
+            # the row's own lexical overlap dominate so irrelevant rows rank low.
+            inherited_weight = 0.3
+            # Rows with zero lexical overlap get a near-zero baseline so they
+            # don't receive false confidence scores from unrelated parent tables.
+            if lexical_score > 0:
+                effective_weight = inherited_weight
+            else:
+                effective_weight = 0.05
+            expanded.append(
+                ChunkResult(
+                    chunk=chunk,
+                    source_stage="table_row_expansion",
+                    vector_distance=vector_distance,
+                    lexical_score=max(base_lexical * effective_weight, lexical_score),
+                    alias_confidence=base_alias * effective_weight,
+                    recency_score=base_recency * effective_weight,
+                    rerank_score=max(base_rerank * effective_weight, lexical_score),
+                    diagnostics=row_diagnostics,
+                )
+            )
         
         # Log expansion results
         _rag_log(

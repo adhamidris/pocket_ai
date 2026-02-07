@@ -9741,6 +9741,9 @@ class ChatPortalClient {
 	    const coverage = Array.isArray(payload.coverage_ledger) ? payload.coverage_ledger : [];
 	    const tableRows = Array.isArray(payload.table_aggregate_rows) ? payload.table_aggregate_rows : [];
 	    const promptBudget = Array.isArray(payload.prompt_budget) ? payload.prompt_budget : [];
+    const exactIoTrace = toolTrace.filter(
+      (item) => item && typeof item === "object" && (item.llm_request || item.llm_response),
+    );
 	    const usage = this.getUsagePayload(payload);
 	    const contextBudget = this.getContextBudgetPayload(payload);
     const roundTokens = this.getRoundTokenCountFromUsage(usage);
@@ -9761,6 +9764,7 @@ class ChatPortalClient {
     summary.className = "cursor-pointer select-none text-xs font-medium text-muted-foreground";
 	    const summaryBits = [];
 	    summaryBits.push(`Tools (${toolTrace.length})`);
+    if (exactIoTrace.length) summaryBits.push(`I/O (${exactIoTrace.length})`);
 	    if (promptBudget.length) summaryBits.push(`Prompt (${promptBudget.length})`);
 	    if (searchHistory.length) summaryBits.push(`Searches (${searchHistory.length})`);
 	    if (results.length) summaryBits.push(`Evidence (${results.length})`);
@@ -9898,9 +9902,9 @@ class ChatPortalClient {
 	      );
 	    }
 
-	    if (toolTrace.length) {
-	      container.appendChild(
-	        buildSection("Tools", toolTrace, (item) => {
+    if (toolTrace.length) {
+      container.appendChild(
+        buildSection("Tools", toolTrace, (item) => {
 	          const toolRaw = item && item.tool ? String(item.tool) : "tool";
           const tool = toolRaw.toLowerCase();
           const status = item && item.status ? String(item.status) : "";
@@ -9923,6 +9927,29 @@ class ChatPortalClient {
           }
 
           return [toolRaw, status, extra].filter(Boolean).join(" • ");
+        }),
+      );
+    }
+
+    if (exactIoTrace.length) {
+      const ioEntries = exactIoTrace.map((item) => ({
+        tool: item.tool,
+        status: item.status,
+        duration_ms: item.duration_ms,
+        llm_request: item.llm_request || null,
+        llm_response: item.llm_response || null,
+        prompt_compaction: item.prompt_compaction || null,
+      }));
+      container.appendChild(
+        buildSection("Tool I/O (LLM Exact)", ioEntries, (item, idx) => {
+          const requestTool =
+            item && item.llm_request && item.llm_request.tool
+              ? String(item.llm_request.tool)
+              : "";
+          const executedTool = item && item.tool ? String(item.tool) : `Tool ${idx + 1}`;
+          const status = item && item.status ? String(item.status) : "";
+          const flow = requestTool && requestTool !== executedTool ? `${requestTool} → ${executedTool}` : executedTool;
+          return [flow, status].filter(Boolean).join(" • ");
         }),
       );
     }

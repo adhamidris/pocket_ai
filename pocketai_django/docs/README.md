@@ -14,6 +14,8 @@
 - `ingestion/` — ingestion + normalization
 - `integrations/` — integrations APIs + email connectors (live)
 - `ops/` — QA + load testing
+- `ops/mcp_grouped_retrieval_observability.md` — grouped retrieval telemetry dashboard/query templates
+- `ops/datadog_mcp_grouped_retrieval_dashboard.json` — importable Datadog dashboard template
 - `voice/` — **dev-only** voice stack (single Phase 1+ runtime path)
 - `prompts/` — prompt catalog
 

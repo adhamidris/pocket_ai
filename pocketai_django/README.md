@@ -76,6 +76,8 @@ ngrok start --all
 - `docs/architecture/chat_portal_content_blocks.md` — chat portal content blocks contract
 - `docs/architecture/` — RAG/LLM flow docs
 - `docs/ops/` — rollout/runbooks/load testing
+- `docs/ops/mcp_grouped_retrieval_observability.md` — grouped retrieval telemetry (logs, dashboard queries, alerts)
+- `docs/ops/datadog_mcp_grouped_retrieval_dashboard.json` — importable Datadog dashboard
 - `docs/prompts/` — prompt catalogs
 
 ## Notes

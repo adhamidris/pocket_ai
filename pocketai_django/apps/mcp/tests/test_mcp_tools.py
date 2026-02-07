@@ -533,6 +533,108 @@ class McpSearchKnowledgeHandlerTests(TestCase):
         self.assertIsInstance(manifest, dict)
         self.assertEqual(manifest.get("chunk_range"), [4, 6])
 
+    @override_settings(MCP_NEW_CONTRACT_ENABLED=True, MCP_AGENTIC_READ_V2_ENABLED=True)
+    def test_agentic_search_promotes_table_context_per_table_only(self) -> None:
+        import uuid
+
+        upload_id = str(uuid.uuid4())
+        table_a = str(uuid.uuid4())
+        table_b = str(uuid.uuid4())
+        table_c = str(uuid.uuid4())
+
+        legacy_payload = {
+            "tool": "search_knowledge",
+            "status": "ok",
+            "snippets": [
+                {
+                    "is_table_chunk": True,
+                    "chunk_id": str(uuid.uuid4()),
+                    "upload_id": upload_id,
+                    "title": "Table A row",
+                    "summary": "row 0",
+                    "search_stage": "table_row_expansion",
+                    "source_diagnostics": {"table_id": table_a, "row_index": 0, "table_total_rows": 6},
+                },
+                {
+                    "is_table_chunk": True,
+                    "chunk_id": str(uuid.uuid4()),
+                    "upload_id": upload_id,
+                    "title": "Table B row 0",
+                    "summary": "row 0",
+                    "search_stage": "table_row_expansion",
+                    "source_diagnostics": {"table_id": table_b, "row_index": 0, "table_total_rows": 20},
+                },
+                {
+                    "is_table_chunk": True,
+                    "chunk_id": str(uuid.uuid4()),
+                    "upload_id": upload_id,
+                    "title": "Table B row 1",
+                    "summary": "row 1",
+                    "search_stage": "table_row_expansion",
+                    "source_diagnostics": {"table_id": table_b, "row_index": 1, "table_total_rows": 20},
+                },
+                {
+                    "is_table_chunk": True,
+                    "chunk_id": str(uuid.uuid4()),
+                    "upload_id": upload_id,
+                    "title": "Table C row",
+                    "summary": "row 0",
+                    "search_stage": "table_row_expansion",
+                    "source_diagnostics": {"table_id": table_c, "row_index": 0, "table_total_rows": 10},
+                },
+            ],
+            "completeness": {"total_found": 4},
+        }
+
+        result = tools._convert_to_agentic_search_response(legacy_payload, conversation=self.conversation)
+        refs = result.get("refs") or []
+
+        promoted_refs = [ref for ref in refs if ref.get("id") == table_b]
+        self.assertEqual(len(promoted_refs), 1, refs)
+        self.assertEqual(promoted_refs[0].get("kind"), "table_chunk")
+
+        table_row_refs = [ref for ref in refs if ref.get("kind") == "table_row"]
+        table_row_table_ids = {
+            str((ref.get("coverage_hint") or {}).get("table_id") or "")
+            for ref in table_row_refs
+        }
+        self.assertIn(table_a, table_row_table_ids)
+        self.assertIn(table_c, table_row_table_ids)
+        self.assertNotIn(table_b, table_row_table_ids)
+
+    @override_settings(MCP_NEW_CONTRACT_ENABLED=True, MCP_AGENTIC_READ_V2_ENABLED=True)
+    def test_agentic_search_scales_table_read_hint_for_large_tables(self) -> None:
+        import uuid
+
+        table_id = str(uuid.uuid4())
+        upload_id = str(uuid.uuid4())
+        legacy_payload = {
+            "tool": "search_knowledge",
+            "status": "ok",
+            "snippets": [
+                {
+                    "is_table_chunk": True,
+                    "chunk_id": str(uuid.uuid4()),
+                    "upload_id": upload_id,
+                    "title": "Large Fees Table",
+                    "summary": "Issuance Fees row",
+                    "search_stage": "table_direct",
+                    "source_diagnostics": {
+                        "table_id": table_id,
+                        "row_index": 0,
+                        "table_total_rows": 53,
+                    },
+                }
+            ],
+            "completeness": {"total_found": 1},
+        }
+
+        result = tools._convert_to_agentic_search_response(legacy_payload, conversation=self.conversation)
+        refs = result.get("refs") or []
+        self.assertEqual(len(refs), 1, refs)
+        suggested = int(((refs[0].get("read_hint") or {}).get("suggested_max_chars") or 0))
+        self.assertGreaterEqual(suggested, 1800, refs[0])
+
     @override_settings(MCP_NEW_CONTRACT_ENABLED=True, MCP_MAX_SEARCHES_PER_TURN=5)
     @mock.patch("apps.mcp.tools._knowledge_service")
     def test_search_knowledge_semantic_dedup_reuses_results_and_does_not_consume_budget(self, service_factory_mock) -> None:
@@ -580,6 +682,71 @@ class McpSearchKnowledgeHandlerTests(TestCase):
         # Second call should not execute a second backend search.
         self.assertEqual(service_mock.search.call_count, 1)
         self.assertEqual(second.get("refs"), first.get("refs"))
+
+    @override_settings(
+        MCP_NEW_CONTRACT_ENABLED=True,
+        MCP_MAX_SEARCHES_PER_TURN=5,
+        MCP_SEARCH_DUPLICATE_INTENT_ENABLED=True,
+        MCP_SEARCH_RESULT_FINGERPRINT_DEDUP_ENABLED=True,
+    )
+    @mock.patch("apps.mcp.tools._portal_file_embedding_service", return_value=None)
+    @mock.patch("apps.mcp.tools._knowledge_service")
+    def test_search_knowledge_result_fingerprint_dedup_refunds_search_budget(
+        self,
+        service_factory_mock,
+        _embedding_service_mock,
+    ) -> None:
+        import uuid
+        from apps.rag.ai_orchestrator import KnowledgeSnippet
+
+        snippet = KnowledgeSnippet(
+            id=uuid.uuid4(),
+            title="Credit Card Fees",
+            summary="Issuance fee is EGP 450.",
+            source="file",
+            content="Issuance fee is EGP 450.",
+            upload_id=uuid.uuid4(),
+            chunk_id=uuid.uuid4(),
+            chunk_index=1,
+            page_number=1,
+            is_table_chunk=False,
+            read_state="summary",
+        )
+
+        class _DummySearchResult:
+            def __init__(self) -> None:
+                self.snippets = (snippet,)
+                self.status = "ok"
+                self.diagnostics = {}
+
+        service_mock = mock.Mock()
+        service_mock.search.return_value = _DummySearchResult()
+        service_factory_mock.return_value = service_mock
+
+        context = ToolExecutionContext(
+            max_chunk_reads_per_turn=5,
+            max_chunk_pages_per_turn=5,
+            char_budget_per_turn=5000,
+        )
+
+        first = tools._search_knowledge_handler(
+            {"query": "credit card issuance fees", "limit": 5},
+            self.conversation,
+            context,
+        )
+        second = tools._search_knowledge_handler(
+            {"query": "credit card fees", "limit": 5},
+            self.conversation,
+            context,
+        )
+
+        self.assertEqual(first["status"], "ok")
+        self.assertEqual(second.get("status"), "duplicate")
+        self.assertEqual(second.get("error_code"), "duplicate_results")
+        self.assertEqual(second.get("refs"), first.get("refs"))
+        # Search 2 executed but was refunded from per-turn budget because result set was identical.
+        self.assertEqual(context.searches_used, 1)
+        self.assertEqual(service_mock.search.call_count, 2)
 
     @override_settings(MCP_NEW_CONTRACT_ENABLED=True, MCP_SEARCH_PAGINATION_ENABLED=True)
     @mock.patch("apps.mcp.tools._knowledge_service")

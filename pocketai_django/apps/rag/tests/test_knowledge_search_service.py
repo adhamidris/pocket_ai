@@ -19,7 +19,8 @@ from apps.accounts.models import (
     RegistrationSession,
     User,
 )
-from apps.rag.ai_orchestrator import KnowledgeSearchService, QueryNormalizer
+from apps.rag.ai_orchestrator import ChunkResult, KnowledgeSearchService, QueryNormalizer
+from core.tenancy import tenant_context
 
 
 class QueryNormalizerTests(SimpleTestCase):
@@ -437,3 +438,56 @@ class KnowledgeSearchServiceRegressionTests(TestCase):
             result.diagnostics.get("table_reason"),
             {"fallback_no_chunk_candidates", "no_chunk_candidates"},
         )
+
+    def test_expand_table_rows_propagates_parent_relevance_scores(self) -> None:
+        with tenant_context(self.business.id):
+            upload = KnowledgeUpload.objects.create(
+                business_profile=self.business,
+                user=self.user,
+                source_type=KnowledgeSourceType.FILE,
+                status=KnowledgeStatus.ACTIVE,
+                display_name="Credit Fees",
+            )
+            table_id = "550e8400-e29b-41d4-a716-446655440999"
+            parent_chunk = KnowledgeUploadChunk.objects.create(
+                upload=upload,
+                business_profile=self.business,
+                chunk_index=0,
+                content="Table preview for credit card issuance fees",
+                metadata={
+                    "is_table_chunk": True,
+                    "is_table_preview": True,
+                    "table_chunk_role": "parent",
+                    "table_id": table_id,
+                },
+            )
+            KnowledgeUploadChunk.objects.create(
+                upload=upload,
+                business_profile=self.business,
+                chunk_index=1,
+                content="[Table] Credit Fees\n[Row] 0\nCard: Platinum\nIssuance Fee: EGP 700",
+                metadata={
+                    "is_table_chunk": True,
+                    "table_chunk_role": "row",
+                    "table_id": table_id,
+                    "table_row_index": 0,
+                },
+            )
+
+            parent_hit = ChunkResult(
+                chunk=parent_chunk,
+                source_stage="hybrid",
+                lexical_score=0.38,
+                alias_confidence=0.14,
+                rerank_score=0.62,
+            )
+
+            expanded = self.service._expand_table_rows(
+                self.business,
+                [parent_hit],
+                max_rows_per_table=10,
+                query_tokens=("credit", "card", "issuance", "fees"),
+            )
+        self.assertTrue(expanded)
+        self.assertGreater(expanded[0].lexical_score, 0.0)
+        self.assertGreater(expanded[0].rerank_score, 0.0)

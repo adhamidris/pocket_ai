@@ -775,6 +775,7 @@ class PortalTurnRunner:
         # Phase 5: Prefer in-memory builder state, then Redis stream replay, then Postgres event log.
         blocks: list[dict[str, object]] = []
         message_body: str | None = None
+        existing_message_metadata: dict[str, object] = {}
         blocks_source = "none"
         if self.turn.message_id:
             with tenant_context(getattr(self.conversation, "business_profile_id", None)):
@@ -782,6 +783,8 @@ class PortalTurnRunner:
             if existing is not None:
                 blocks = existing.content_blocks or []
                 message_body = existing.body
+                if isinstance(getattr(existing, "metadata", None), Mapping):
+                    existing_message_metadata = dict(existing.metadata)
                 if blocks:
                     blocks_source = "existing_message"
 
@@ -851,11 +854,26 @@ class PortalTurnRunner:
             },
         )
 
+        debug_tools_payload: dict[str, object] | None = None
+        persisted_message_metadata: dict[str, object] | None = None
+        if stream_context and getattr(settings, "PORTAL_DEBUG_TOOL_TRACE", False):
+            try:
+                from apps.api.chat_portal import _serialize_debug_tools_payload
+
+                debug_tools_candidate = _serialize_debug_tools_payload(stream_context)
+                if isinstance(debug_tools_candidate, dict) and debug_tools_candidate:
+                    debug_tools_payload = debug_tools_candidate
+                    persisted_message_metadata = dict(existing_message_metadata)
+                    persisted_message_metadata["debug_tools"] = debug_tools_payload
+            except Exception:
+                pass  # Best-effort; never break finalization for debug data.
+
         if self.turn.message_id:
             self.service.update_message(
                 session_token=self.conversation.session_token,
                 message_id=self.turn.message_id,
                 body=body_text,
+                metadata=persisted_message_metadata,
                 content_blocks=blocks,
                 conversation=self.conversation,
             )
@@ -865,6 +883,7 @@ class PortalTurnRunner:
                 session_token=self.conversation.session_token,
                 sender=ConversationSender.AI,
                 body=body_text,
+                metadata=persisted_message_metadata,
                 content_blocks=blocks,
                 conversation=self.conversation,
             )
@@ -888,15 +907,9 @@ class PortalTurnRunner:
             "content_blocks": blocks,
         }
 
-        # Inject debug tool trace when enabled (lazy import to avoid circular dependency).
-        if stream_context and getattr(settings, "PORTAL_DEBUG_TOOL_TRACE", False):
-            try:
-                from apps.api.chat_portal import _serialize_debug_tools_payload
-                debug_tools = _serialize_debug_tools_payload(stream_context)
-                if debug_tools:
-                    final_payload["debug_tools"] = debug_tools
-            except Exception:
-                pass  # Best-effort; never break finalization for debug data.
+        # Inject debug tool trace payload to event stream (and persist in message metadata above).
+        if debug_tools_payload:
+            final_payload["debug_tools"] = debug_tools_payload
 
         emitted = self._has_turn_persisted_event()
         if not emitted:

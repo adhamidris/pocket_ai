@@ -5,12 +5,13 @@ from types import SimpleNamespace
 from unittest import mock
 
 from django.contrib.auth import get_user_model
-from django.test import TransactionTestCase
+from django.test import TransactionTestCase, override_settings
 
 from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
 from apps.conversations.models import (
     Conversation,
+    ConversationMessage,
     ConversationSender,
     ConversationToolApproval,
     ConversationToolApprovalStatus,
@@ -161,6 +162,81 @@ class PortalTurnSingleModeTests(TransactionTestCase):
         self.assertIsNotNone(turn.message)
         self.assertEqual(turn.message.sender, ConversationSender.AI)
         self.assertIn("Hello from stream.", turn.message.body)
+
+    @override_settings(PORTAL_DEBUG_TOOL_TRACE=True)
+    def test_portal_turn_persists_debug_tools_in_message_metadata(self) -> None:
+        turn = PortalTurn.objects.create(
+            conversation=self.conversation,
+            agent_profile=self.agent,
+            status=PortalTurnStatus.STREAMING,
+            user_message="Show me debug trace",
+        )
+        orchestrator = _FakeOrchestrator(emit_model_blocks=False)
+        runner = PortalTurnRunner(turn=turn, conversation=self.conversation)
+
+        events: list[tuple[str, dict]] = []
+        debug_payload = {
+            "tool_trace": [
+                {
+                    "tool": "search_knowledge",
+                    "status": "ok",
+                    "llm_request": {"tool": "search_knowledge", "arguments": {"query": "fees"}},
+                    "llm_response": {"content": "{\"status\":\"ok\"}"},
+                }
+            ]
+        }
+
+        def _append_event(*, turn_id, event_type, payload=None):
+            del turn_id
+            events.append((str(event_type), dict(payload or {})))
+            return None
+
+        with (
+            mock.patch.object(PortalTurnRunner, "_select_orchestrator", return_value=orchestrator),
+            mock.patch("apps.api.chat_portal._serialize_debug_tools_payload", return_value=debug_payload),
+            mock.patch("apps.conversations.portal_turn_runner.append_turn_event", side_effect=_append_event),
+        ):
+            runner.run()
+
+        turn.refresh_from_db()
+        self.assertIsNotNone(turn.message)
+        self.assertIsInstance(turn.message.metadata, dict)
+        self.assertEqual(turn.message.metadata.get("debug_tools"), debug_payload)
+
+        persisted_payloads = [payload for event_type, payload in events if event_type == "turn_persisted"]
+        self.assertTrue(persisted_payloads)
+        self.assertEqual(persisted_payloads[-1].get("debug_tools"), debug_payload)
+
+    @override_settings(PORTAL_DEBUG_TOOL_TRACE=True)
+    def test_portal_turn_merges_debug_tools_with_existing_message_metadata(self) -> None:
+        existing_message = ConversationMessage.objects.create(
+            conversation=self.conversation,
+            sender=ConversationSender.AI,
+            body="placeholder",
+            metadata={"agent_run_id": "run_123", "source": "agent_run"},
+        )
+        turn = PortalTurn.objects.create(
+            conversation=self.conversation,
+            message=existing_message,
+            agent_profile=self.agent,
+            status=PortalTurnStatus.STREAMING,
+            user_message="Continue",
+        )
+        orchestrator = _FakeOrchestrator(emit_model_blocks=False)
+        runner = PortalTurnRunner(turn=turn, conversation=self.conversation)
+
+        debug_payload = {"tool_trace": [{"tool": "read_knowledge", "status": "ok"}]}
+
+        with (
+            mock.patch.object(PortalTurnRunner, "_select_orchestrator", return_value=orchestrator),
+            mock.patch("apps.api.chat_portal._serialize_debug_tools_payload", return_value=debug_payload),
+        ):
+            runner.run()
+
+        existing_message.refresh_from_db()
+        self.assertEqual(existing_message.metadata.get("agent_run_id"), "run_123")
+        self.assertEqual(existing_message.metadata.get("source"), "agent_run")
+        self.assertEqual(existing_message.metadata.get("debug_tools"), debug_payload)
 
     def test_tool_approval_link_does_not_overwrite_existing_turn(self) -> None:
         first_turn = PortalTurn.objects.create(

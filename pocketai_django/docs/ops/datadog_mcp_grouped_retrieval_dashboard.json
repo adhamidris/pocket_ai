@@ -1,0 +1,274 @@
+{
+  "title": "MCP Grouped Retrieval Health",
+  "description": "Tracks text-chunk grouping (document anchors, manifest hit/miss, grouped read savings).",
+  "layout_type": "ordered",
+  "reflow_type": "auto",
+  "notify_list": [],
+  "tags": [
+    "team:mcp",
+    "component:rag",
+    "component:search",
+    "component:read"
+  ],
+  "template_variables": [
+    {
+      "name": "service",
+      "prefix": "service",
+      "default": "*"
+    },
+    {
+      "name": "env",
+      "prefix": "env",
+      "default": "*"
+    }
+  ],
+  "widgets": [
+    {
+      "definition": {
+        "title": "Document Anchor Adoption (%)",
+        "title_size": "16",
+        "title_align": "left",
+        "type": "query_value",
+        "requests": [
+          {
+            "response_format": "scalar",
+            "queries": [
+              {
+                "name": "anchors",
+                "data_source": "logs",
+                "search": {
+                  "query": "service:$service env:$env event:search.agentic_conversion @document_anchor_refs:[1 TO *]"
+                },
+                "indexes": [
+                  "*"
+                ],
+                "compute": {
+                  "aggregation": "count"
+                }
+              },
+              {
+                "name": "total",
+                "data_source": "logs",
+                "search": {
+                  "query": "service:$service env:$env event:search.agentic_conversion"
+                },
+                "indexes": [
+                  "*"
+                ],
+                "compute": {
+                  "aggregation": "count"
+                }
+              }
+            ],
+            "formulas": [
+              {
+                "formula": "(anchors / max(total,1)) * 100"
+              }
+            ]
+          }
+        ],
+        "autoscale": true,
+        "precision": 2
+      }
+    },
+    {
+      "definition": {
+        "title": "Manifest Hit Rate (%)",
+        "title_size": "16",
+        "title_align": "left",
+        "type": "query_value",
+        "requests": [
+          {
+            "response_format": "scalar",
+            "queries": [
+              {
+                "name": "hitrate",
+                "data_source": "logs",
+                "search": {
+                  "query": "service:$service env:$env event:read_knowledge.agentic_v2 @text_group_manifest_lookups:[1 TO *]"
+                },
+                "indexes": [
+                  "*"
+                ],
+                "compute": {
+                  "aggregation": "avg",
+                  "metric": "@text_group_manifest_hit_rate"
+                }
+              }
+            ],
+            "formulas": [
+              {
+                "formula": "hitrate * 100"
+              }
+            ]
+          }
+        ],
+        "autoscale": true,
+        "precision": 2
+      }
+    },
+    {
+      "definition": {
+        "title": "Manifest Misses (Count)",
+        "title_size": "16",
+        "title_align": "left",
+        "type": "timeseries",
+        "requests": [
+          {
+            "response_format": "timeseries",
+            "display_type": "line",
+            "style": {
+              "palette": "warm",
+              "line_type": "solid",
+              "line_width": "normal"
+            },
+            "queries": [
+              {
+                "name": "misses",
+                "data_source": "logs",
+                "search": {
+                  "query": "service:$service env:$env event:read_knowledge.agentic_v2 @text_group_manifest_misses:[1 TO *]"
+                },
+                "indexes": [
+                  "*"
+                ],
+                "compute": {
+                  "aggregation": "sum",
+                  "metric": "@text_group_manifest_misses"
+                }
+              }
+            ],
+            "formulas": [
+              {
+                "formula": "misses"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "title": "Grouped Window Reads (Count)",
+        "title_size": "16",
+        "title_align": "left",
+        "type": "timeseries",
+        "requests": [
+          {
+            "response_format": "timeseries",
+            "display_type": "line",
+            "style": {
+              "palette": "cool",
+              "line_type": "solid",
+              "line_width": "normal"
+            },
+            "queries": [
+              {
+                "name": "groupreads",
+                "data_source": "logs",
+                "search": {
+                  "query": "service:$service env:$env event:read_knowledge.agentic_v2 @text_group_window_reads:[1 TO *]"
+                },
+                "indexes": [
+                  "*"
+                ],
+                "compute": {
+                  "aggregation": "sum",
+                  "metric": "@text_group_window_reads"
+                }
+              }
+            ],
+            "formulas": [
+              {
+                "formula": "groupreads"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "title": "Covered Chunk Refs Saved (Count)",
+        "title_size": "16",
+        "title_align": "left",
+        "type": "timeseries",
+        "requests": [
+          {
+            "response_format": "timeseries",
+            "display_type": "line",
+            "style": {
+              "palette": "green",
+              "line_type": "solid",
+              "line_width": "normal"
+            },
+            "queries": [
+              {
+                "name": "covered",
+                "data_source": "logs",
+                "search": {
+                  "query": "service:$service env:$env event:read_knowledge.agentic_v2 @text_group_chunk_refs_covered:[1 TO *]"
+                },
+                "indexes": [
+                  "*"
+                ],
+                "compute": {
+                  "aggregation": "sum",
+                  "metric": "@text_group_chunk_refs_covered"
+                }
+              }
+            ],
+            "formulas": [
+              {
+                "formula": "covered"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "title": "Grouped Read Events by Business",
+        "title_size": "16",
+        "title_align": "left",
+        "type": "toplist",
+        "requests": [
+          {
+            "queries": [
+              {
+                "name": "q",
+                "data_source": "logs",
+                "search": {
+                  "query": "service:$service env:$env event:read_knowledge.agentic_v2 @text_group_window_reads:[1 TO *]"
+                },
+                "indexes": [
+                  "*"
+                ],
+                "group_by": [
+                  {
+                    "facet": "@business",
+                    "limit": 10,
+                    "sort": {
+                      "aggregation": "count",
+                      "order": "desc"
+                    }
+                  }
+                ],
+                "compute": {
+                  "aggregation": "count"
+                }
+              }
+            ],
+            "formulas": [
+              {
+                "formula": "q"
+              }
+            ],
+            "response_format": "scalar"
+          }
+        ]
+      }
+    }
+  ]
+}
