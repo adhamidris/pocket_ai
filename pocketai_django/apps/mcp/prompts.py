@@ -899,6 +899,55 @@ def _conversation_files_note(conversation: Conversation, *, limit: int = 6) -> s
     return "\n".join(lines).strip()
 
 
+def _recent_search_refs_note(conversation: Conversation, *, limit: int = 6) -> str | None:
+    """
+    Surface persisted search_knowledge refs so follow-up read_knowledge calls can
+    reuse exact IDs across turns.
+    """
+
+    metadata = conversation.metadata if isinstance(conversation.metadata, Mapping) else {}
+    raw_recent = metadata.get("mcp_recent_search_refs")
+    refs_raw: list[Mapping[str, object]] = []
+    if isinstance(raw_recent, Mapping):
+        refs = raw_recent.get("refs")
+        if isinstance(refs, list):
+            refs_raw = [item for item in refs if isinstance(item, Mapping)]
+    elif isinstance(raw_recent, list):
+        refs_raw = [item for item in raw_recent if isinstance(item, Mapping)]
+
+    if not refs_raw:
+        return None
+
+    lines = [
+        "Recent `search_knowledge` refs from earlier turns are available.",
+        "For `read_knowledge`, reuse these exact `id` values; never invent or rename IDs.",
+        "",
+        "Recent refs:",
+    ]
+    added = 0
+    for ref in refs_raw:
+        if added >= max(1, int(limit)):
+            break
+        ref_id = str(ref.get("id") or "").strip()
+        if not ref_id:
+            continue
+        label = str(ref.get("label") or "").strip()
+        if label:
+            label = label[:160]
+        kind = str(ref.get("kind") or "").strip().lower()
+        details: list[str] = [f"id={ref_id}"]
+        if kind:
+            details.append(f"kind={kind}")
+        if label:
+            details.append(f"label={label}")
+        lines.append("- " + "; ".join(details))
+        added += 1
+
+    if added == 0:
+        return None
+    return "\n".join(lines).strip()
+
+
 def build_messages(
     *,
     conversation: Conversation,
@@ -968,6 +1017,10 @@ def build_messages(
         compacted_note = _compacted_history_note(conversation)
         if compacted_note:
             system_sections.append(compacted_note.strip())
+
+        recent_search_refs_note = _recent_search_refs_note(conversation)
+        if recent_search_refs_note:
+            system_sections.append(recent_search_refs_note.strip())
 
         files_note = _conversation_files_note(conversation)
         if files_note:

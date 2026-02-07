@@ -52,3 +52,39 @@ class ToolExecutionContextTests(SimpleTestCase):
         self.assertEqual(hydrated.primary_upload_id, "doc-b")
         self.assertTrue(hydrated.has_strong_primary_document())
         self.assertEqual(hydrated.document_context["doc-b"].get("read_count"), 1)
+
+    def test_recent_search_refs_persist_and_hydrate(self) -> None:
+        context = ToolExecutionContext()
+        context.set_recent_search_refs(
+            [
+                {
+                    "id": "03669f1f-7eab-4b7f-aff9-771dcd6bbea8",
+                    "label": "Fees and Charges Credit Cards Eng_185 - chunk 9",
+                    "kind": "table_chunk",
+                    "type": "table",
+                    "document_id": "6bfaa7d3-0969-4293-aa41-9674581daa14",
+                },
+                {"id": "03669f1f-7eab-4b7f-aff9-771dcd6bbea8", "label": "duplicate should drop"},
+                {"id": "", "label": "missing id should drop"},
+            ]
+        )
+        persisted = context.get_recent_search_refs_for_persistence()
+        self.assertEqual(len(persisted.get("refs") or []), 1)
+        self.assertTrue(context.recent_search_refs_updated)
+
+        hydrated = ToolExecutionContext()
+        hydrated.hydrate_recent_search_refs(persisted)
+        self.assertEqual(len(hydrated.recent_search_refs), 1)
+        self.assertEqual(
+            hydrated.recent_search_refs[0].get("id"),
+            "03669f1f-7eab-4b7f-aff9-771dcd6bbea8",
+        )
+        self.assertFalse(hydrated.recent_search_refs_updated)
+
+    def test_recent_search_refs_can_be_cleared(self) -> None:
+        context = ToolExecutionContext()
+        context.set_recent_search_refs([{"id": "03669f1f-7eab-4b7f-aff9-771dcd6bbea8"}])
+        self.assertEqual(len(context.recent_search_refs), 1)
+        context.set_recent_search_refs([])
+        self.assertEqual(context.recent_search_refs, [])
+        self.assertTrue(context.recent_search_refs_updated)

@@ -85,6 +85,27 @@ class TemplateContentTests(SimpleTestCase):
         self.assertIn("TestBot", prompt)
         self.assertIn("System Contract", prompt)
 
+    def test_default_template_encourages_direct_answer_from_search_previews(self) -> None:
+        agent = mock.Mock()
+        agent.name = "TestBot"
+        prompt = build_model_specific_prompt(
+            agent,
+            model_id="unknown-model",
+            business_name="Acme Corp",
+        )
+        self.assertIn("If refs/previews already contain the exact answer", prompt)
+        self.assertIn("offer an optional deeper dive", prompt)
+
+    def test_openai_chat_template_supports_deeper_dive_on_request(self) -> None:
+        agent = mock.Mock()
+        agent.name = "TestBot"
+        prompt = build_model_specific_prompt(
+            agent,
+            model_id="gpt-4o",
+            business_name="Acme Corp",
+        )
+        self.assertIn("Call `read_knowledge` only when the user asks for deeper detail/verification", prompt)
+
 
 # ---------------------------------------------------------------------------
 # MCP connection gating in build_system_message

@@ -121,6 +121,10 @@ class ToolExecutionContext:
     search_history: list[dict[str, object]] = dataclasses.field(default_factory=list)
     search_cache: dict[Tuple[str, int, str, str | None, str | None], dict[str, object]] = dataclasses.field(default_factory=dict)
     read_cache: dict[Tuple[str, int, str, int, int | None], dict[str, object]] = dataclasses.field(default_factory=dict)
+    # Most recent search_knowledge refs carried across turns so follow-up
+    # read_knowledge calls can reuse exact IDs instead of guessing.
+    recent_search_refs: list[dict[str, object]] = dataclasses.field(default_factory=list)
+    recent_search_refs_updated: bool = False
     table_column_filters: dict[str, list[str]] = dataclasses.field(default_factory=dict)
     table_result_cache: dict[tuple, dict[str, object]] = dataclasses.field(default_factory=dict)
     table_result_cache_dirty: set[tuple] = dataclasses.field(default_factory=set)
@@ -397,6 +401,90 @@ class ToolExecutionContext:
             "chunk_ids": self.seen_chunk_ids | self.newly_shown_chunk_ids,
             "row_ids": self.seen_row_ids | self.newly_shown_row_ids,
         }
+
+    # =========================================================================
+    # Recent Search Ref Tracking (Cross-Turn Read Continuity)
+    # =========================================================================
+
+    @staticmethod
+    def _clip_text(value: object, *, limit: int) -> str:
+        text = str(value or "").strip()
+        if len(text) <= limit:
+            return text
+        return text[: max(1, limit - 3)].rstrip() + "..."
+
+    @staticmethod
+    def _normalize_recent_ref_entry(ref: Mapping[str, object]) -> dict[str, object] | None:
+        ref_id = str(ref.get("id") or "").strip()
+        if not ref_id:
+            return None
+        normalized: dict[str, object] = {"id": ref_id}
+        label = str(ref.get("label") or ref.get("title") or "").strip()
+        if label:
+            normalized["label"] = ToolExecutionContext._clip_text(label, limit=180)
+        kind = str(ref.get("kind") or "").strip().lower()
+        if kind:
+            normalized["kind"] = kind
+        ref_type = str(ref.get("type") or "").strip().lower()
+        if ref_type:
+            normalized["type"] = ref_type
+        document_id = str(ref.get("document_id") or ref.get("upload_id") or "").strip()
+        if document_id:
+            normalized["document_id"] = document_id
+        preview = str(ref.get("preview") or "").strip()
+        if preview:
+            normalized["preview"] = ToolExecutionContext._clip_text(preview, limit=220)
+        return normalized
+
+    def set_recent_search_refs(self, refs: Sequence[Mapping[str, object]] | None, *, limit: int = 12) -> None:
+        normalized: list[dict[str, object]] = []
+        seen_ids: set[str] = set()
+        for item in refs or ():
+            if not isinstance(item, Mapping):
+                continue
+            normalized_item = self._normalize_recent_ref_entry(item)
+            if not normalized_item:
+                continue
+            ref_id = str(normalized_item.get("id") or "").strip()
+            if not ref_id or ref_id in seen_ids:
+                continue
+            seen_ids.add(ref_id)
+            normalized.append(normalized_item)
+            if len(normalized) >= max(1, int(limit)):
+                break
+        self.recent_search_refs = normalized
+        self.recent_search_refs_updated = True
+
+    def get_recent_search_refs_for_persistence(self) -> dict[str, object]:
+        refs = [dict(item) for item in (self.recent_search_refs or [])][:12]
+        return {"refs": refs}
+
+    def hydrate_recent_search_refs(self, persisted: Mapping[str, object] | Sequence[Mapping[str, object]] | None) -> None:
+        refs_payload: Sequence[Mapping[str, object]] | None = None
+        if isinstance(persisted, Mapping):
+            refs = persisted.get("refs")
+            if isinstance(refs, Sequence) and not isinstance(refs, (str, bytes, bytearray)):
+                refs_payload = refs  # type: ignore[assignment]
+        elif isinstance(persisted, Sequence) and not isinstance(persisted, (str, bytes, bytearray)):
+            refs_payload = persisted  # type: ignore[assignment]
+
+        normalized: list[dict[str, object]] = []
+        seen_ids: set[str] = set()
+        for item in refs_payload or ():
+            if not isinstance(item, Mapping):
+                continue
+            normalized_item = self._normalize_recent_ref_entry(item)
+            if not normalized_item:
+                continue
+            ref_id = str(normalized_item.get("id") or "").strip()
+            if not ref_id or ref_id in seen_ids:
+                continue
+            seen_ids.add(ref_id)
+            normalized.append(normalized_item)
+            if len(normalized) >= 12:
+                break
+        self.recent_search_refs = normalized
+        self.recent_search_refs_updated = False
 
     # =========================================================================
     # Document Context Tracking Methods

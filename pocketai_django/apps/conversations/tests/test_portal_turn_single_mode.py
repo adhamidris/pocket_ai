@@ -25,8 +25,16 @@ User = get_user_model()
 
 
 class _FakeOrchestrator:
-    def __init__(self, *, emit_model_blocks: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        emit_model_blocks: bool = False,
+        stream_text: str = "Hello from stream.",
+        response_text: str | None = None,
+    ) -> None:
         self.emit_model_blocks = emit_model_blocks
+        self.stream_text = stream_text
+        self.response_text = response_text or stream_text
 
     def stream_turn(
         self,
@@ -64,9 +72,12 @@ class _FakeOrchestrator:
             on_status_change({"code": "responding"})
 
         if on_response_text_delta:
-            on_response_text_delta("Hello from stream.")
+            on_response_text_delta(self.stream_text)
 
-        return SimpleNamespace(streamed_chunks=("Hello from stream.",))
+        return SimpleNamespace(
+            streamed_chunks=(self.stream_text,),
+            response_text=self.response_text,
+        )
 
 
 class PortalTurnSingleModeTests(TransactionTestCase):
@@ -162,6 +173,37 @@ class PortalTurnSingleModeTests(TransactionTestCase):
         self.assertIsNotNone(turn.message)
         self.assertEqual(turn.message.sender, ConversationSender.AI)
         self.assertIn("Hello from stream.", turn.message.body)
+
+    def test_portal_turn_prefers_orchestrator_response_text_for_persistence(self) -> None:
+        turn = PortalTurn.objects.create(
+            conversation=self.conversation,
+            agent_profile=self.agent,
+            status=PortalTurnStatus.STREAMING,
+            user_message="Read the full fee table",
+        )
+        stream_text = (
+            "Interest Rate: 3.\n"
+            "Issuance and Renewal Fees: EGP\n"
+            "Over-limit Fees: EGP"
+        )
+        final_text = (
+            "Interest Rate: 3.99%\n"
+            "Issuance and Renewal Fees: EGP 300\n"
+            "Over-limit Fees: EGP 150"
+        )
+        orchestrator = _FakeOrchestrator(
+            emit_model_blocks=False,
+            stream_text=stream_text,
+            response_text=final_text,
+        )
+        runner = PortalTurnRunner(turn=turn, conversation=self.conversation)
+
+        with mock.patch.object(PortalTurnRunner, "_select_orchestrator", return_value=orchestrator):
+            runner.run()
+
+        turn.refresh_from_db()
+        self.assertIsNotNone(turn.message)
+        self.assertEqual(turn.message.body, final_text)
 
     @override_settings(PORTAL_DEBUG_TOOL_TRACE=True)
     def test_portal_turn_persists_debug_tools_in_message_metadata(self) -> None:

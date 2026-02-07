@@ -139,7 +139,9 @@ def extract_sentences(buffer: str) -> Tuple[list[Tuple[str, str]], str]:
 
     sentences: list[Tuple[str, str]] = []
     last_end = 0
-    pattern = re.compile(r"([^.!?]*[.!?])(\s*)", re.DOTALL)
+    # Only split when sentence punctuation is followed by whitespace/end.
+    # This avoids splitting decimal values like "3.99%" at "3.".
+    pattern = re.compile(r"(.+?[.!?](?:[\"')\]]+)?)(\s+|$)", re.DOTALL)
     for match in pattern.finditer(buffer):
         segment = match.group(1)
         sep = match.group(2) or ""

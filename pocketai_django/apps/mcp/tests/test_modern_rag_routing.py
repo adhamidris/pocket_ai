@@ -138,3 +138,59 @@ class ModernRagRoutingTests(TestCase):
         args_ds = {"dataset_id": str(self.dataset_upload.id)}
         name_ds, _ = service._adaptive_routing_policy("query_dataset", args_ds, self.conversation)
         self.assertEqual(name_ds, "query_dataset")
+
+    def test_read_knowledge_ref_repair_uses_single_recent_ref(self) -> None:
+        mock_agent = mock.Mock()
+        mock_agent.business_profile = self.business
+        service = orchestrator.McpOrchestratorService(agent=mock_agent, provider=None)
+
+        context = ToolExecutionContext()
+        context.hydrate_recent_search_refs(
+            {
+                "refs": [
+                    {
+                        "id": "03669f1f-7eab-4b7f-aff9-771dcd6bbea8",
+                        "label": "Fees and Charges Credit Cards Eng_185 - chunk 9",
+                        "kind": "table_chunk",
+                        "document_id": "6bfaa7d3-0969-4293-aa41-9674581daa14",
+                    }
+                ]
+            }
+        )
+
+        repaired = service._repair_read_knowledge_refs_from_context(
+            {"refs": [{"id": "doc_credit_cards_fees_charges_2025"}]},
+            context,
+        )
+        refs = repaired.get("refs") if isinstance(repaired.get("refs"), list) else []
+        self.assertEqual(len(refs), 1)
+        self.assertEqual(refs[0].get("id"), "03669f1f-7eab-4b7f-aff9-771dcd6bbea8")
+
+    def test_read_knowledge_ref_repair_keeps_invalid_id_when_ambiguous(self) -> None:
+        mock_agent = mock.Mock()
+        mock_agent.business_profile = self.business
+        service = orchestrator.McpOrchestratorService(agent=mock_agent, provider=None)
+
+        context = ToolExecutionContext()
+        context.hydrate_recent_search_refs(
+            {
+                "refs": [
+                    {
+                        "id": "03669f1f-7eab-4b7f-aff9-771dcd6bbea8",
+                        "document_id": "6bfaa7d3-0969-4293-aa41-9674581daa14",
+                    },
+                    {
+                        "id": "59b047e5-1375-4e1f-8f9a-f0e8d0ff06f0",
+                        "document_id": "11111111-2222-3333-4444-555555555555",
+                    },
+                ]
+            }
+        )
+
+        repaired = service._repair_read_knowledge_refs_from_context(
+            {"refs": [{"id": "doc_credit_cards_fees_charges_2025"}]},
+            context,
+        )
+        refs = repaired.get("refs") if isinstance(repaired.get("refs"), list) else []
+        self.assertEqual(len(refs), 1)
+        self.assertEqual(refs[0].get("id"), "doc_credit_cards_fees_charges_2025")

@@ -818,16 +818,36 @@ class PortalTurnRunner:
             )
             blocks = normalized_blocks
 
+        orchestrator_text = str(getattr(stream_context, "response_text", "") or "").strip() if stream_context else ""
         body_from_blocks = extract_text_from_content_blocks(blocks).strip()
-        body_text = body_from_blocks or (message_body or "").strip()
-        if not body_text:
-            streamed_text = "".join(getattr(stream_context, "streamed_chunks", None) or ()).strip() if stream_context else ""
-            body_text = streamed_text or "(no content)"
+        persisted_body = (message_body or "").strip()
+        streamed_text = "".join(getattr(stream_context, "streamed_chunks", None) or ()).strip() if stream_context else ""
+
+        # Prefer orchestrator final text first. Rich-block reconstruction can be lossy for
+        # malformed markdown/stream boundaries (especially number-heavy outputs).
+        if orchestrator_text:
+            body_text = orchestrator_text
+            body_source = "orchestrator_response"
+        elif body_from_blocks:
+            body_text = body_from_blocks
+            body_source = "content_blocks"
+        elif persisted_body:
+            body_text = persisted_body
+            body_source = "message_body"
+        elif streamed_text:
+            body_text = streamed_text
+            body_source = "streamed_chunks"
+        else:
+            body_text = "(no content)"
+            body_source = "empty"
         self.builder.trace.record(
             "turn.finalize.materialized",
             {
                 "blocks_source": blocks_source,
                 "blocks": int(len(blocks)),
+                "body_source": body_source,
+                "orchestrator_body_len": int(len(orchestrator_text or "")),
+                "body_from_blocks_len": int(len(body_from_blocks or "")),
                 "body_len_pre_sanitize": int(len(body_text or "")),
             },
         )

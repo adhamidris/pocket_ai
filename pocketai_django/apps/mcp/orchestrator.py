@@ -1235,6 +1235,11 @@ class McpOrchestratorService:
                         tool_name, arguments = self._adaptive_routing_policy(tool_name, arguments, conversation, status_callback=_status_event)
                         # ------------------------------------------------
 
+                        # Cross-turn continuity: if the model invents non-UUID ref IDs on
+                        # follow-up read_knowledge turns, repair from persisted search refs.
+                        if tool_name == "read_knowledge":
+                            arguments = self._repair_read_knowledge_refs_from_context(arguments, tool_context)
+
                         policy_tool_result = None
                         missing_fields = self._missing_required_fields(tool_name, arguments)
                         if missing_fields:
@@ -5279,6 +5284,12 @@ class McpOrchestratorService:
         evidence = evidence_raw if isinstance(evidence_raw, Mapping) else {}
         table_aggregate_snippet_seen = False
         snippets = tool_result.get("snippets") if isinstance(tool_result, Mapping) else None
+        if tool_name == "search_knowledge":
+            refs_raw = tool_result.get("refs")
+            if not isinstance(refs_raw, list):
+                refs_raw = tool_result.get("results")
+            if isinstance(refs_raw, list):
+                context.set_recent_search_refs([ref for ref in refs_raw if isinstance(ref, Mapping)])
         if tool_name == "read_knowledge" and isinstance(evidence_raw, list):
             # Agentic read_knowledge: evidence is a list of canonical payloads.
             for item in evidence_raw[:20]:
@@ -5804,7 +5815,12 @@ class McpOrchestratorService:
         if isinstance(doc_context_data, Mapping):
             context.hydrate_document_context(doc_context_data)
 
-        if context.seen_chunk_ids or context.seen_row_ids or context.primary_upload_id:
+        # Hydrate recent search refs (cross-turn read continuity)
+        recent_refs_data = metadata.get("mcp_recent_search_refs")
+        if isinstance(recent_refs_data, (Mapping, list)):
+            context.hydrate_recent_search_refs(recent_refs_data)
+
+        if context.seen_chunk_ids or context.seen_row_ids or context.primary_upload_id or context.recent_search_refs:
             structured_log(
                 "mcp",
                 "cache.seen_items_hydrate",
@@ -5813,6 +5829,7 @@ class McpOrchestratorService:
                     "seen_rows": len(context.seen_row_ids),
                     "primary_upload_id": context.primary_upload_id,
                     "referenced_docs": len(context.referenced_upload_ids),
+                    "recent_search_refs": len(context.recent_search_refs),
                 },
                 indent=1,
                 context={
@@ -5839,8 +5856,9 @@ class McpOrchestratorService:
         # Check if we have anything to persist (seen items OR document context)
         has_seen_items = context.newly_shown_chunk_ids or context.newly_shown_row_ids
         has_document_context = context.primary_upload_id or context.referenced_upload_ids
+        has_recent_search_refs = bool(context.recent_search_refs_updated)
 
-        if not has_seen_items and not has_document_context:
+        if not has_seen_items and not has_document_context and not has_recent_search_refs:
             return
 
         metadata = conversation.metadata if isinstance(conversation.metadata, Mapping) else {}
@@ -5864,6 +5882,15 @@ class McpOrchestratorService:
             doc_context["updated_at"] = timezone.now().isoformat()
             new_metadata["mcp_document_context"] = doc_context
 
+        # Persist cross-turn recent refs used by read_knowledge follow-ups.
+        if has_recent_search_refs:
+            if context.recent_search_refs:
+                refs_payload = context.get_recent_search_refs_for_persistence()
+                refs_payload["updated_at"] = timezone.now().isoformat()
+                new_metadata["mcp_recent_search_refs"] = refs_payload
+            else:
+                new_metadata.pop("mcp_recent_search_refs", None)
+
         conversation.metadata = new_metadata
         conversation.save(update_fields=["metadata"])
 
@@ -5877,6 +5904,7 @@ class McpOrchestratorService:
                 "total_rows": len(list(new_row_ids)[-MAX_SEEN_ITEMS:]) if has_seen_items else 0,
                 "primary_upload_id": context.primary_upload_id,
                 "referenced_docs": len(context.referenced_upload_ids),
+                "recent_search_refs": len(context.recent_search_refs) if has_recent_search_refs else 0,
             },
             indent=1,
             context={
@@ -5885,6 +5913,87 @@ class McpOrchestratorService:
             },
             logger_obj=logger,
         )
+
+    @staticmethod
+    def _is_uuid_like(value: object) -> bool:
+        text = str(value or "").strip()
+        if not text:
+            return False
+        try:
+            uuid.UUID(text)
+            return True
+        except (TypeError, ValueError):
+            return False
+
+    def _repair_read_knowledge_refs_from_context(
+        self,
+        arguments: Mapping[str, object],
+        context: ToolExecutionContext,
+    ) -> dict[str, object]:
+        """
+        Repair read_knowledge refs when the model supplies invented non-UUID IDs.
+
+        We only repair when unambiguous (single recent ref, or all recent refs
+        point to one document), to avoid silently changing user intent.
+        """
+
+        repaired = dict(arguments or {})
+        raw_refs = repaired.get("refs")
+        if not isinstance(raw_refs, list):
+            legacy_items = repaired.get("items")
+            if isinstance(legacy_items, list):
+                raw_refs = legacy_items
+                repaired["refs"] = legacy_items
+                repaired.pop("items", None)
+        if not isinstance(raw_refs, list) or not raw_refs:
+            return repaired
+
+        invalid_positions: list[int] = []
+        for idx, ref in enumerate(raw_refs):
+            if not isinstance(ref, Mapping):
+                continue
+            ref_id = str(ref.get("id") or ref.get("ref") or "").strip()
+            if not self._is_uuid_like(ref_id):
+                invalid_positions.append(idx)
+        if not invalid_positions:
+            return repaired
+
+        recent_refs = [
+            ref
+            for ref in (getattr(context, "recent_search_refs", None) or [])
+            if isinstance(ref, Mapping) and self._is_uuid_like(ref.get("id"))
+        ]
+        if not recent_refs:
+            return repaired
+
+        replacement_id = ""
+        if len(recent_refs) == 1:
+            replacement_id = str(recent_refs[0].get("id") or "").strip()
+        else:
+            document_ids = {
+                str(ref.get("document_id") or "").strip()
+                for ref in recent_refs
+                if str(ref.get("document_id") or "").strip()
+            }
+            if len(document_ids) == 1:
+                replacement_id = str(recent_refs[0].get("id") or "").strip()
+
+        if not replacement_id:
+            return repaired
+
+        refs_out: list[object] = []
+        for idx, ref in enumerate(raw_refs):
+            if not isinstance(ref, Mapping):
+                refs_out.append(ref)
+                continue
+            item = dict(ref)
+            if idx in invalid_positions:
+                item["id"] = replacement_id
+                item.pop("ref", None)
+            refs_out.append(item)
+        repaired["refs"] = refs_out
+        repaired.pop("items", None)
+        return repaired
 
     @staticmethod
     def _search_budget_remaining(context: ToolExecutionContext | None) -> int | None:
