@@ -3,7 +3,7 @@
 {% block title %}Integrations | Pocket AI{% endblock %}
 
 {% block content %}
-<div class="h-screen bg-background flex overflow-hidden">
+<div class="integr-page h-screen bg-background flex overflow-hidden">
   {% include "frontend/components/dashboard/sidebar.html" with active="integrations" user_name=user_name %}
   <main class="flex-1 overflow-auto">
     <div class="w-full px-4 md:px-6 lg:px-8 py-6 space-y-6">
@@ -60,6 +60,161 @@
 </div>
 
 <style>
+  .integr-page .integr-card {
+    border: 1px solid hsl(var(--border) / 0.78);
+    border-radius: 0.95rem;
+    background: linear-gradient(180deg, hsl(var(--card)) 0%, hsl(var(--card) / 0.95) 100%);
+    padding: 0.95rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+    min-height: 172px;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+  }
+  .integr-page .integr-card:hover {
+    border-color: hsl(var(--border));
+    transform: translateY(-1px);
+    box-shadow: 0 10px 28px hsl(215 25% 8% / 0.16);
+  }
+  .integr-page .integr-card-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.7rem;
+    min-width: 0;
+  }
+  .integr-page .integr-brand-shell {
+    width: 2.35rem;
+    height: 2.35rem;
+    min-width: 2.35rem;
+    border-radius: 0.75rem;
+    border: 1px solid hsl(var(--border) / 0.65);
+    background: linear-gradient(155deg, hsl(var(--muted) / 0.75), hsl(var(--background) / 0.68));
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+  .integr-page .integr-brand-logo {
+    width: 1.35rem;
+    height: 1.35rem;
+    object-fit: contain;
+    display: block;
+  }
+  .integr-page .integr-brand-fallback {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: hsl(var(--muted-foreground));
+    text-transform: uppercase;
+  }
+  .integr-page .integr-card-meta {
+    min-width: 0;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.12rem;
+  }
+  .integr-page .integr-card-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    min-width: 0;
+  }
+  .integr-page .integr-card-title {
+    font-size: 0.98rem;
+    font-weight: 630;
+    letter-spacing: -0.01em;
+    color: hsl(var(--foreground));
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .integr-page .integr-card-sub {
+    font-size: 0.75rem;
+    color: hsl(var(--muted-foreground));
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .integr-page .integr-status-chip {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    border: 1px solid hsl(158 64% 42% / 0.34);
+    background: hsl(158 64% 42% / 0.14);
+    color: hsl(158 56% 42%);
+    padding: 0.14rem 0.52rem;
+    font-size: 0.63rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    line-height: 1.2;
+  }
+  .dark .integr-page .integr-status-chip,
+  :root[data-theme="dark"] .integr-page .integr-status-chip {
+    color: hsl(158 58% 72%);
+  }
+  .integr-page .integr-card-info {
+    font-size: 0.765rem;
+    color: hsl(var(--muted-foreground));
+    line-height: 1.45;
+  }
+  .integr-page .integr-card-tools-count {
+    font-size: 0.72rem;
+    color: hsl(var(--muted-foreground));
+    line-height: 1.4;
+    white-space: nowrap;
+  }
+  .integr-page .integr-card-actions {
+    margin-top: auto;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .integr-page .integr-card-actions-connected {
+    justify-content: space-between;
+  }
+  .integr-page .integr-card-actions-available {
+    justify-content: flex-end;
+  }
+  .integr-page .integr-card-actions-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-left: auto;
+  }
+  .integr-page .integr-btn {
+    white-space: nowrap;
+  }
+  .integr-page .integr-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+  .integr-page .integr-btn-disconnect {
+    border-color: hsl(var(--destructive));
+    background: hsl(var(--destructive));
+    color: hsl(var(--destructive-foreground));
+  }
+  .integr-page .integr-btn-disconnect:hover {
+    border-color: hsl(var(--destructive) / 0.9);
+    background: hsl(var(--destructive) / 0.9);
+    color: hsl(var(--destructive-foreground));
+  }
+  @media (max-width: 640px) {
+    .integr-page .integr-card {
+      min-height: auto;
+    }
+    .integr-page .integr-card-actions {
+      width: 100%;
+    }
+    .integr-page .integr-btn {
+      flex: 1 1 100%;
+    }
+  }
+
   .integr-tools-modal,
   .integr-tools-modal * {
     box-sizing: border-box;
@@ -367,13 +522,13 @@
 
   // Native integration types we support
   const NATIVE_TYPES = {
-    gmail: { label: "Gmail", type: "email_oauth", provider: "google_email", provider_key: "google", icon: "M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2Zm0 4-8 5-8-5V6l8 5 8-5v2Z" },
-    outlook: { label: "Outlook / Microsoft 365", type: "email_oauth", provider: "microsoft_email", provider_key: "microsoft", icon: "M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2Zm0 4-8 5-8-5V6l8 5 8-5v2Z" },
-    google_calendar: { label: "Google Calendar", type: "integration_oauth", integration_type: "google_calendar", icon: "M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5" },
-    google_drive: { label: "Google Drive", type: "integration_oauth", integration_type: "google_drive", icon: "M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" },
-    onedrive: { label: "OneDrive", type: "integration_oauth", integration_type: "onedrive", icon: "M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" },
-    slack: { label: "Slack", type: "integration_oauth", integration_type: "slack", icon: "M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 0 1-.825-.242m9.345-8.334a2.126 2.126 0 0 0-.476-.095 48.64 48.64 0 0 0-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0 0 11.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155" },
-    hubspot: { label: "HubSpot", type: "integration_oauth", integration_type: "hubspot", icon: "M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z" },
+    gmail: { label: "Gmail", type: "email_oauth", provider: "google_email", provider_key: "google", logo: "/static/img/mcp/gmail.svg" },
+    outlook: { label: "Outlook / Microsoft 365", type: "email_oauth", provider: "microsoft_email", provider_key: "microsoft", logo: "/static/img/mcp/microsoftoutlook.svg" },
+    google_calendar: { label: "Google Calendar", type: "integration_oauth", integration_type: "google_calendar", logo: "/static/img/mcp/googlecalendar.svg" },
+    google_drive: { label: "Google Drive", type: "integration_oauth", integration_type: "google_drive", logo: "/static/img/mcp/googledrive.svg" },
+    onedrive: { label: "OneDrive", type: "integration_oauth", integration_type: "onedrive", logo: "/static/img/mcp/microsoftonedrive.svg" },
+    slack: { label: "Slack", type: "integration_oauth", integration_type: "slack", logo: "/static/img/mcp/slack.svg" },
+    hubspot: { label: "HubSpot", type: "integration_oauth", integration_type: "hubspot", logo: "/static/img/mcp/hubspot.svg" },
   };
 
   function flash(msg, type) {
@@ -396,6 +551,14 @@
   function getCookie(name) {
     const match = document.cookie.match(new RegExp("(^| )" + name + "=([^;]+)"));
     return match ? decodeURIComponent(match[2]) : "";
+  }
+
+  function renderIntegrationLogo(item) {
+    const label = String(item && item.label ? item.label : "Integration");
+    if (item && item.logo) {
+      return '<img class="integr-brand-logo" src="' + escapeHtml(item.logo) + '" alt="' + escapeHtml(label) + ' logo" loading="lazy" decoding="async">';
+    }
+    return '<span class="integr-brand-fallback">' + escapeHtml(label.charAt(0).toUpperCase() || "?") + "</span>";
   }
 
   async function fetchConnections() {
@@ -467,49 +630,52 @@
       return;
     }
     connectedGrid.innerHTML = items.map(item => `
-      <div class="rounded-xl border border-border/60 bg-card/80 p-4 space-y-3">
-        <div class="flex items-center gap-3">
-          <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-            <svg class="h-5 w-5 text-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" d="${item.icon}" />
-            </svg>
+      <div class="integr-card">
+        <div class="integr-card-head">
+          <div class="integr-brand-shell">
+            ${renderIntegrationLogo(item)}
           </div>
-          <div class="flex-1 min-w-0">
-            <div class="text-sm font-semibold text-foreground">${item.label}</div>
-            <div class="text-xs text-muted-foreground truncate">${item.identifier || "Connected"}</div>
+          <div class="integr-card-meta">
+            <div class="integr-card-title-row">
+              <div class="integr-card-title">${escapeHtml(item.label)}</div>
+              <span class="integr-status-chip">Connected</span>
+            </div>
+            <div class="integr-card-sub">${escapeHtml(item.identifier || "Connected")}</div>
           </div>
-          <span class="inline-flex items-center rounded-full bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-400">Connected</span>
         </div>
-        <div class="text-xs text-muted-foreground">
-          ${item.accountData && Number(item.accountData.totalToolCount || 0) > 0
-            ? `${item.accountData.enabledToolCount || 0}/${item.accountData.totalToolCount || 0} tools enabled`
-            : "Connected and available for this account"}
-        </div>
-        <div class="flex items-center gap-2">
-          ${
-            item.accountData && Number(item.accountData.totalToolCount || 0) > 0
-              ? `<button
-                  type="button"
-                  class="flex-1 inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium border border-sky-500/40 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20 hover:border-sky-500 h-9 px-4 transition-all duration-300"
-                  data-manage-tools-key="${item.key}"
-                  data-manage-tools-type="${item.type}"
-                  data-manage-tools-integration-type="${item.integration_type || ''}"
-                  data-manage-tools-provider-key="${item.provider_key || ''}"
-                  data-manage-tools-label="${escapeHtml(item.label)}"
-                >
-                  Manage Tools
-                </button>`
-              : ""
-          }
-          <button
-            type="button"
-            class="flex-1 inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium border border-rose-500/40 bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 hover:border-rose-500 h-9 px-4 transition-all duration-300"
-            data-disconnect-key="${item.key}"
-            data-disconnect-type="${item.type}"
-            data-disconnect-integration-type="${item.integration_type || ''}"
-          >
-            Disconnect
-          </button>
+        <div class="integr-card-info">${escapeHtml(item.catEntry ? item.catEntry.description : "Native integration with encrypted credentials.")}</div>
+        <div class="integr-card-actions integr-card-actions-connected">
+          <span class="integr-card-tools-count">
+            ${item.accountData && Number(item.accountData.totalToolCount || 0) > 0
+              ? `${item.accountData.enabledToolCount || 0}/${item.accountData.totalToolCount || 0} tools enabled`
+              : ""}
+          </span>
+          <div class="integr-card-actions-controls">
+            ${
+              item.accountData && Number(item.accountData.totalToolCount || 0) > 0
+                ? `<button
+                    type="button"
+                    class="mcp-btn mcp-btn-primary integr-btn"
+                    data-manage-tools-key="${escapeHtml(item.key)}"
+                    data-manage-tools-type="${escapeHtml(item.type)}"
+                    data-manage-tools-integration-type="${escapeHtml(item.integration_type || '')}"
+                    data-manage-tools-provider-key="${escapeHtml(item.provider_key || '')}"
+                    data-manage-tools-label="${escapeHtml(item.label)}"
+                  >
+                    Manage Tools
+                  </button>`
+                : ""
+            }
+            <button
+              type="button"
+              class="mcp-btn mcp-btn-outline integr-btn integr-btn-disconnect"
+              data-disconnect-key="${escapeHtml(item.key)}"
+              data-disconnect-type="${escapeHtml(item.type)}"
+              data-disconnect-integration-type="${escapeHtml(item.integration_type || '')}"
+            >
+              Disconnect
+            </button>
+          </div>
         </div>
       </div>
     `).join("");
@@ -751,28 +917,29 @@
       return;
     }
     availableGrid.innerHTML = items.map(item => `
-      <div class="rounded-xl border border-border/60 bg-card/80 p-4 space-y-3">
-        <div class="flex items-center gap-3">
-          <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-muted/60">
-            <svg class="h-5 w-5 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" d="${item.icon}" />
-            </svg>
+      <div class="integr-card">
+        <div class="integr-card-head">
+          <div class="integr-brand-shell">
+            ${renderIntegrationLogo(item)}
           </div>
-          <div class="flex-1 min-w-0">
-            <div class="text-sm font-semibold text-foreground">${item.label}</div>
-            <div class="text-xs text-muted-foreground">${item.catEntry ? item.catEntry.description : "Native integration"}</div>
+          <div class="integr-card-meta">
+            <div class="integr-card-title">${escapeHtml(item.label)}</div>
+            <div class="integr-card-sub">Native integration</div>
           </div>
         </div>
-        <button
-          type="button"
-          class="w-full inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium border border-input bg-background hover:bg-accent hover:text-accent-foreground hover:border-primary/50 h-9 px-4 transition-all duration-300"
-          data-connect-key="${item.key}"
-          data-connect-type="${item.type}"
-          data-connect-integration-type="${item.integration_type || ''}"
-          data-connect-provider="${item.provider || ''}"
-        >
-          Connect
-        </button>
+        <div class="integr-card-info">${escapeHtml(item.catEntry ? item.catEntry.description : "Native integration with encrypted credentials.")}</div>
+        <div class="integr-card-actions integr-card-actions-available">
+          <button
+            type="button"
+            class="mcp-btn mcp-btn-primary integr-btn"
+            data-connect-key="${escapeHtml(item.key)}"
+            data-connect-type="${escapeHtml(item.type)}"
+            data-connect-integration-type="${escapeHtml(item.integration_type || '')}"
+            data-connect-provider="${escapeHtml(item.provider || '')}"
+          >
+            Connect
+          </button>
+        </div>
       </div>
     `).join("");
 
