@@ -41,6 +41,7 @@ from apps.accounts.models import (
     McpConnectionToolSetting,
     McpToolOperationType,
 )
+from apps.accounts.feature_flags import FeatureFlagService
 from apps.accounts.oauth_helpers import OAuthFlowError, ensure_fresh_oauth_credentials
 from apps.mcp.connectors import _infer_operation_type_from_tool_name
 from apps.mcp.models import McpConnectionTestJob, McpConnectionTestJobStatus
@@ -2154,12 +2155,15 @@ def _controls_internal_tool_items(
     *,
     overrides: Mapping[str, str] | None = None,
     available_integration_tool_names: set[str] | None = None,
+    allowed_tool_names: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     from apps.mcp import tools as mcp_tools
 
     overrides_map = dict(overrides or {})
     available_integration_tools = set(available_integration_tool_names or set())
     filter_integration_tools = available_integration_tool_names is not None
+    allowed_tools = set(allowed_tool_names or set())
+    filter_allowed_tools = allowed_tool_names is not None
     native_registry = mcp_tools.get_native_integration_tool_registry()
     email_registry = getattr(mcp_tools, "EMAIL_INTEGRATION_TOOL_REGISTRY", {})
     gateway_tools = {"mcp_search_tools", "mcp_call_tool"}
@@ -2179,6 +2183,8 @@ def _controls_internal_tool_items(
         if not tool_name or tool_name in seen:
             continue
         seen.add(tool_name)
+        if filter_allowed_tools and tool_name not in allowed_tools:
+            continue
 
         description = str(function_block.get("description") or "").strip()
 
@@ -2243,6 +2249,44 @@ def _controls_internal_tool_items(
 
     items.sort(key=lambda item: (str(item.get("sourceType") or ""), str(item.get("label") or item.get("toolName") or "")))
     return items
+
+
+def _controls_agentic_operational_tool_names(
+    *,
+    business: BusinessProfile,
+    enabled_connections: list[McpConnection],
+    available_integration_tool_names: set[str],
+) -> set[str]:
+    feature_state = FeatureFlagService.snapshot(business)
+    sub_agents_enabled = bool(getattr(feature_state, "sub_agents_v1", False))
+
+    # Keep Controls aligned with the operational agentic surface, while excluding
+    # UI/internal helpers and legacy retrieval tools.
+    allowed: set[str] = {
+        "search_knowledge",
+        "read_knowledge",
+        "search_conversation_files",
+        "read_conversation_file",
+        "pdf_generate",
+        "pdf_merge",
+        "pdf_extract_pages",
+        "pdf_extract_text",
+        "initiate_phone_call",
+    }
+    if sub_agents_enabled:
+        allowed.update(
+            {
+                "create_agent_request",
+                "create_agent_run",
+                "list_agent_runs",
+                "get_agent_run",
+                "continue_agent_run",
+            }
+        )
+    if enabled_connections:
+        allowed.update({"mcp_search_tools", "mcp_call_tool"})
+    allowed.update(available_integration_tool_names)
+    return allowed
 
 
 def _controls_connection_tool_items(*, business: BusinessProfile, connections: list[McpConnection]) -> list[dict[str, Any]]:
@@ -2324,10 +2368,16 @@ def mcp_controls_tools(request: HttpRequest) -> JsonResponse:
                 business=business,
                 enabled_connections=connections,
             )
+            allowed_tool_names = _controls_agentic_operational_tool_names(
+                business=business,
+                enabled_connections=connections,
+                available_integration_tool_names=available_integration_tool_names,
+            )
             internal_overrides = _load_business_tool_approval_overrides(business)
         internal_items = _controls_internal_tool_items(
             overrides=internal_overrides,
             available_integration_tool_names=available_integration_tool_names,
+            allowed_tool_names=allowed_tool_names,
         )
         items = integration_items + internal_items
         summary = {
@@ -2371,9 +2421,15 @@ def mcp_controls_tools(request: HttpRequest) -> JsonResponse:
             business=business,
             enabled_connections=enabled_connections,
         )
+        allowed_tool_names = _controls_agentic_operational_tool_names(
+            business=business,
+            enabled_connections=enabled_connections,
+            available_integration_tool_names=available_integration_tool_names,
+        )
         internal_items = _controls_internal_tool_items(
             overrides=_load_business_tool_approval_overrides(business),
             available_integration_tool_names=available_integration_tool_names,
+            allowed_tool_names=allowed_tool_names,
         )
         internal_tool_names = {str(item.get("toolName") or "").strip() for item in internal_items if str(item.get("toolName") or "").strip()}
         internal_defaults = {

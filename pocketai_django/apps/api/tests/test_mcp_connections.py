@@ -477,6 +477,27 @@ class McpConnectionsApiTests(TestCase):
         after_items = after_resp.json().get("items") or []
         self.assertTrue(any(item.get("toolName") == "calendar_create_event" for item in after_items))
 
+    def test_controls_tools_excludes_legacy_and_internal_only_tools(self) -> None:
+        url = reverse("api:mcp-controls-tools")
+        resp = self.client.get(url, {"business_id": str(self.business.id)})
+        self.assertEqual(resp.status_code, 200)
+        items = resp.json().get("items") or []
+        tool_names = {str(item.get("toolName") or "").strip() for item in items}
+
+        self.assertIn("search_knowledge", tool_names)
+        self.assertIn("read_knowledge", tool_names)
+
+        # Legacy/non-agentic tool surface should not appear in Controls.
+        self.assertNotIn("read_document", tool_names)
+        self.assertNotIn("query_dataset", tool_names)
+        self.assertNotIn("dataset_query", tool_names)
+        self.assertNotIn("table_aggregate", tool_names)
+        self.assertNotIn("retrieve_earlier_context", tool_names)
+
+        # Internal UI/system helper tools should never be end-user controls.
+        self.assertNotIn("portal_emit_blocks", tool_names)
+        self.assertNotIn("request_user_input", tool_names)
+
     @mock.patch("apps.api.mcp_connections.test_mcp_server")
     def test_test_endpoint_caches_tools(self, mock_test_server) -> None:
         connection = McpConnection.objects.create(

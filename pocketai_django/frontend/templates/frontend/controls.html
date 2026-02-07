@@ -150,30 +150,63 @@
     font-weight: 600;
   }
   .controls-page .ctrl-approval-toggle {
-    display: inline-flex;
-    gap: 0.25rem;
-    border: 1px solid hsl(var(--border) / 0.75);
-    border-radius: 0.55rem;
-    background: hsl(var(--muted) / 0.35);
-    padding: 0.2rem;
+    --toggle-pad: 0.24rem;
+    --toggle-gap: 0.2rem;
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: center;
+    gap: var(--toggle-gap);
+    min-width: 16rem;
+    border: 1px solid hsl(var(--primary) / 0.22);
+    border-radius: 0.78rem;
+    background: linear-gradient(180deg, hsl(var(--muted) / 0.5) 0%, hsl(var(--muted) / 0.34) 100%);
+    box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.05);
+    padding: var(--toggle-pad);
+    overflow: hidden;
+  }
+  .controls-page .ctrl-approval-toggle::before {
+    content: "";
+    position: absolute;
+    z-index: 0;
+    top: var(--toggle-pad);
+    left: var(--toggle-pad);
+    width: calc((100% - (var(--toggle-pad) * 2) - var(--toggle-gap)) / 2);
+    height: calc(100% - (var(--toggle-pad) * 2));
+    border-radius: 0.62rem;
+    background: linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(270 92% 58%) 100%);
+    box-shadow: 0 1px 8px hsl(var(--primary) / 0.28);
+    transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 180ms ease;
+  }
+  .controls-page .ctrl-approval-toggle[data-active-mode="confirm"]::before {
+    transform: translateX(calc(100% + var(--toggle-gap)));
   }
   .controls-page .ctrl-approval-toggle button {
+    position: relative;
+    z-index: 1;
     border: 0;
-    border-radius: 0.42rem;
+    border-radius: 0.58rem;
     background: transparent;
     color: hsl(var(--muted-foreground));
-    font-size: 0.7rem;
+    font-size: 0.73rem;
     font-weight: 600;
-    padding: 0.36rem 0.62rem;
+    min-width: 0;
+    white-space: nowrap;
+    padding: 0.5rem 0.95rem;
+    text-align: center;
     cursor: pointer;
-    transition: background-color var(--transition-fast), color var(--transition-fast);
+    transition: color 160ms ease;
   }
   .controls-page .ctrl-approval-toggle button.is-active {
-    background: linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(270 92% 58%) 100%);
     color: hsl(var(--primary-foreground));
   }
-  .controls-page .ctrl-approval-toggle button:disabled {
+  .controls-page .ctrl-approval-toggle.is-disabled::before {
+    box-shadow: none;
+  }
+  .controls-page .ctrl-approval-toggle.is-disabled button {
     cursor: not-allowed;
+  }
+  .controls-page .ctrl-approval-toggle button:disabled {
     opacity: 0.6;
   }
   .controls-page .ctrl-unsaved {
@@ -181,6 +214,12 @@
     color: hsl(var(--primary));
     font-weight: 600;
     margin-top: 0.4rem;
+    min-height: 1rem;
+    opacity: 0;
+    transition: opacity var(--transition-fast);
+  }
+  .controls-page .ctrl-unsaved.is-visible {
+    opacity: 1;
   }
   @media (min-width: 768px) {
     .controls-page .ctrl-row {
@@ -298,10 +337,6 @@
     refreshLabelEl.textContent = "Refresh";
   }
 
-  function modeLabel(mode) {
-    return mode === "auto" ? "Auto approve" : "Always confirm";
-  }
-
   function formatSourceBadge(item) {
     if (item && item.connectionName) {
       return String(item.connectionName || "").trim();
@@ -334,8 +369,13 @@
     });
   }
 
+  function getItemKey(item) {
+    return String((item && item.id) || "");
+  }
+
   function getCurrentMode(item) {
-    return pendingModeById.has(item.id) ? pendingModeById.get(item.id) : (item.controlsMode || "confirm");
+    const key = getItemKey(item);
+    return pendingModeById.has(key) ? pendingModeById.get(key) : (item.controlsMode || "confirm");
   }
 
   function updateSaveButton() {
@@ -365,7 +405,8 @@
 
     listEl.innerHTML = visible.map((item) => {
       const mode = getCurrentMode(item);
-      const unsaved = pendingModeById.has(item.id);
+      const key = getItemKey(item);
+      const unsaved = pendingModeById.has(key);
       const sourceClass = item.sourceType === "integration" ? "integration" : "";
       const opClass = item.operationType === "write" ? "write" : "";
       const sourceText = escapeHtml(formatSourceBadge(item));
@@ -393,7 +434,7 @@
           </div>
           <div>
             <div class="ctrl-cell-label">Approval</div>
-            <div class="ctrl-approval-toggle">
+            <div class="ctrl-approval-toggle ${editable ? "" : "is-disabled"}" data-active-mode="${mode}">
               <button
                 type="button"
                 class="${mode === "auto" ? "is-active" : ""}"
@@ -413,14 +454,31 @@
                 Always confirm
               </button>
             </div>
-            <div class="text-[11px] text-muted-foreground mt-1">${escapeHtml(editable ? modeLabel(mode) : (item.approvalHint || "System default"))}</div>
-            ${unsaved ? '<div class="ctrl-unsaved">Unsaved change</div>' : ""}
+            <div class="ctrl-unsaved ${unsaved ? "is-visible" : ""}">Unsaved change</div>
           </div>
         </div>
       `;
     }).join("");
 
     updateSaveButton();
+  }
+
+  function updateRowToggleState(rowEl, item) {
+    if (!rowEl || !item) return;
+    const key = getItemKey(item);
+    const mode = getCurrentMode(item);
+    const toggleEl = rowEl.querySelector(".ctrl-approval-toggle");
+    if (toggleEl) {
+      toggleEl.setAttribute("data-active-mode", mode);
+      toggleEl.querySelectorAll("[data-controls-mode]").forEach((button) => {
+        const buttonMode = button.getAttribute("data-controls-mode");
+        button.classList.toggle("is-active", buttonMode === mode);
+      });
+    }
+    const unsavedEl = rowEl.querySelector(".ctrl-unsaved");
+    if (unsavedEl) {
+      unsavedEl.classList.toggle("is-visible", pendingModeById.has(key));
+    }
   }
 
   function updateFilterButtons() {
@@ -554,6 +612,7 @@
     listEl.addEventListener("click", function (event) {
       const btn = event.target.closest("[data-controls-mode]");
       if (!btn) return;
+      const rowEl = btn.closest("[data-controls-row]");
       const rowId = btn.getAttribute("data-controls-row");
       const mode = btn.getAttribute("data-controls-mode");
       if (!rowId || (mode !== "auto" && mode !== "confirm")) return;
@@ -565,7 +624,8 @@
       } else {
         pendingModeById.set(rowId, mode);
       }
-      renderItems();
+      updateRowToggleState(rowEl, item);
+      updateSaveButton();
     });
   }
 
