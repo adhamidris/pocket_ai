@@ -642,3 +642,208 @@ class KnowledgeSearchServiceRegressionTests(TestCase):
         self.assertTrue(expanded)
         self.assertGreater(expanded[0].lexical_score, 0.0)
         self.assertGreater(expanded[0].rerank_score, 0.0)
+
+
+class KnowledgeSearchServiceResidualRerankTests(TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        cache.clear()
+        self.user = User.objects.create(email="residual@example.com", first_name="Residual")
+        self.registration = RegistrationSession.objects.create(user=self.user)
+        self.business = BusinessProfile.objects.create(
+            user=self.user,
+            registration_session=self.registration,
+            name="Residual Co",
+            industry="finance",
+        )
+        self.upload = KnowledgeUpload.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            source_type=KnowledgeSourceType.FILE,
+            status=KnowledgeStatus.ACTIVE,
+            display_name="Fees",
+        )
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_table_residual_text_chunks_receive_stronger_penalty_under_table_intent(
+        self,
+        _build_embeddings,
+    ) -> None:
+        service = KnowledgeSearchService()
+        traits = service.analyze_query("cash deposit same day value date")
+
+        with tenant_context(self.business.id):
+            residual_chunk = KnowledgeUploadChunk.objects.create(
+                upload=self.upload,
+                business_profile=self.business,
+                chunk_index=0,
+                content="Cash deposit with same day value date T+3 0.3% minimum EGP 100",
+                metadata={
+                    "index_type": "text",
+                    "content_source": "table_residual",
+                    "region_role": "table_residual",
+                    "table_residual": True,
+                    "search_tier": "fallback",
+                },
+            )
+            clean_text_chunk = KnowledgeUploadChunk.objects.create(
+                upload=self.upload,
+                business_profile=self.business,
+                chunk_index=1,
+                content="Fee schedule summary for branch over-the-counter services.",
+                metadata={
+                    "index_type": "text",
+                    "content_source": "page_blocks",
+                    "region_role": "text",
+                },
+            )
+
+        def _candidates() -> list[ChunkResult]:
+            return [
+                ChunkResult(chunk=residual_chunk, source_stage="hybrid", lexical_score=0.6),
+                ChunkResult(chunk=clean_text_chunk, source_stage="hybrid", lexical_score=0.6),
+            ]
+
+        neutral_ranked, _, _ = service._rerank_candidates(
+            _candidates(),
+            query_vector=None,
+            traits=traits,
+            table_context={"has_intent": False, "query_tokens": set(), "specific_tokens": set()},
+        )
+        neutral_residual = next(hit for hit in neutral_ranked if hit.chunk_id == residual_chunk.id)
+        neutral_penalty = float(
+            (neutral_residual.diagnostics.get("score_breakdown") or {}).get("table_residual_penalty") or 0.0
+        )
+
+        table_ranked, _, _ = service._rerank_candidates(
+            _candidates(),
+            query_vector=None,
+            traits=traits,
+            table_context={"has_intent": True, "query_tokens": set(traits.tokens), "specific_tokens": set()},
+        )
+        table_residual = next(hit for hit in table_ranked if hit.chunk_id == residual_chunk.id)
+        table_penalty = float(
+            (table_residual.diagnostics.get("score_breakdown") or {}).get("table_residual_penalty") or 0.0
+        )
+
+        self.assertGreater(table_penalty, neutral_penalty)
+        self.assertLess(table_residual.rerank_score, neutral_residual.rerank_score)
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_table_residual_rescue_applies_when_canonical_specific_match_is_missing(
+        self,
+        _build_embeddings,
+    ) -> None:
+        service = KnowledgeSearchService()
+        traits = service.analyze_query("cash deposit same day value date")
+
+        with tenant_context(self.business.id):
+            canonical_table_chunk = KnowledgeUploadChunk.objects.create(
+                upload=self.upload,
+                business_profile=self.business,
+                chunk_index=2,
+                content="[Table] Fees\n[Row] 1\nService: Cash withdrawal over the counter\nTariff: EGP 40",
+                metadata={
+                    "is_table_chunk": True,
+                    "index_type": "table",
+                    "content_source": "table_row",
+                    "table_chunk_role": "row",
+                },
+            )
+            residual_chunk = KnowledgeUploadChunk.objects.create(
+                upload=self.upload,
+                business_profile=self.business,
+                chunk_index=3,
+                content="Cash deposit with same day value date 0.3% minimum EGP 100 no maximum",
+                metadata={
+                    "index_type": "text",
+                    "content_source": "table_residual",
+                    "region_role": "table_residual",
+                    "table_residual": True,
+                    "search_tier": "fallback",
+                },
+            )
+
+        ranked, _, rerank_diag = service._rerank_candidates(
+            [
+                ChunkResult(chunk=canonical_table_chunk, source_stage="hybrid", lexical_score=0.55),
+                ChunkResult(chunk=residual_chunk, source_stage="hybrid", lexical_score=0.55),
+            ],
+            query_vector=None,
+            traits=traits,
+            table_context={
+                "has_intent": True,
+                "query_tokens": set(traits.tokens),
+                "specific_tokens": {"same", "day", "value", "date"},
+            },
+        )
+        residual_ranked = next(hit for hit in ranked if hit.chunk_id == residual_chunk.id)
+        residual_breakdown = residual_ranked.diagnostics.get("score_breakdown") or {}
+
+        self.assertTrue(rerank_diag.get("table_residual_rescue_applied"))
+        self.assertEqual(rerank_diag.get("table_residual_rescue_count"), 1)
+        self.assertEqual(rerank_diag.get("table_residual_rescue_reason"), "promoted")
+        self.assertGreater(float(residual_breakdown.get("table_residual_rescue_bonus") or 0.0), 0.0)
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_table_residual_rescue_skips_when_canonical_specific_match_exists(
+        self,
+        _build_embeddings,
+    ) -> None:
+        service = KnowledgeSearchService()
+        traits = service.analyze_query("cash deposit same day value date")
+
+        with tenant_context(self.business.id):
+            canonical_table_chunk = KnowledgeUploadChunk.objects.create(
+                upload=self.upload,
+                business_profile=self.business,
+                chunk_index=4,
+                content=(
+                    "[Table] Fees\n[Row] 1\n"
+                    "Service: Cash deposit with same day value date\n"
+                    "Tariff: 0.3% minimum EGP 100"
+                ),
+                metadata={
+                    "is_table_chunk": True,
+                    "index_type": "table",
+                    "content_source": "table_row",
+                    "table_chunk_role": "row",
+                },
+            )
+            residual_chunk = KnowledgeUploadChunk.objects.create(
+                upload=self.upload,
+                business_profile=self.business,
+                chunk_index=5,
+                content="Cash deposit with same day value date 0.3% minimum EGP 100 no maximum",
+                metadata={
+                    "index_type": "text",
+                    "content_source": "table_residual",
+                    "region_role": "table_residual",
+                    "table_residual": True,
+                    "search_tier": "fallback",
+                },
+            )
+
+        ranked, _, rerank_diag = service._rerank_candidates(
+            [
+                ChunkResult(chunk=canonical_table_chunk, source_stage="hybrid", lexical_score=0.55),
+                ChunkResult(chunk=residual_chunk, source_stage="hybrid", lexical_score=0.55),
+            ],
+            query_vector=None,
+            traits=traits,
+            table_context={
+                "has_intent": True,
+                "query_tokens": set(traits.tokens),
+                "specific_tokens": {"same", "day", "value", "date"},
+            },
+        )
+        residual_ranked = next(hit for hit in ranked if hit.chunk_id == residual_chunk.id)
+        residual_breakdown = residual_ranked.diagnostics.get("score_breakdown") or {}
+
+        self.assertFalse(rerank_diag.get("table_residual_rescue_applied"))
+        self.assertEqual(rerank_diag.get("table_residual_rescue_count"), 0)
+        self.assertEqual(
+            rerank_diag.get("table_residual_rescue_reason"),
+            "canonical_specific_match_present",
+        )
+        self.assertEqual(float(residual_breakdown.get("table_residual_rescue_bonus") or 0.0), 0.0)

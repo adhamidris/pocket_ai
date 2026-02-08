@@ -695,9 +695,13 @@ class KnowledgeSearchService:
         )
         if not (0.0 <= self.evidence_conflict_min_overlap <= 1.0):
             self.evidence_conflict_min_overlap = 0.25
+        # TEMP(9to6-cleanup): Guardrail toggle for table/text balanced routing.
+        # Remove once we confirm this path is no longer needed.
         self.table_balanced_routing_enabled = bool(
             getattr(settings, "RAG_TABLE_BALANCED_ROUTING_ENABLED", True)
         )
+        # TEMP(9to6-cleanup): Guardrail toggle for representation balancing.
+        # Remove once we confirm this path is no longer needed.
         self.representation_balance_enabled = bool(
             getattr(settings, "RAG_REPRESENTATION_BALANCE_ENABLED", True)
         )
@@ -731,8 +735,40 @@ class KnowledgeSearchService:
         self.text_chunk_penalty_max = float(getattr(settings, "RAG_TEXT_CHUNK_PENALTY_MAX", 0.35))
         if self.text_chunk_penalty_max <= 0.0:
             self.text_chunk_penalty_max = 0.35
+        self.table_residual_penalty = float(getattr(settings, "RAG_TABLE_RESIDUAL_PENALTY", 0.12))
+        if self.table_residual_penalty < 0.0:
+            self.table_residual_penalty = 0.0
+        self.table_residual_table_intent_penalty = float(
+            getattr(settings, "RAG_TABLE_RESIDUAL_TABLE_INTENT_PENALTY", 0.28)
+        )
+        if self.table_residual_table_intent_penalty < 0.0:
+            self.table_residual_table_intent_penalty = 0.0
+        self.table_residual_rescue_enabled = bool(
+            getattr(settings, "RAG_TABLE_RESIDUAL_RESCUE_ENABLED", True)
+        )
+        self.table_residual_rescue_bonus = float(
+            getattr(settings, "RAG_TABLE_RESIDUAL_RESCUE_BONUS", 0.18)
+        )
+        if self.table_residual_rescue_bonus < 0.0:
+            self.table_residual_rescue_bonus = 0.0
+        self.table_residual_rescue_phrase_min = float(
+            getattr(settings, "RAG_TABLE_RESIDUAL_RESCUE_PHRASE_MIN", 0.24)
+        )
+        if self.table_residual_rescue_phrase_min < 0.0:
+            self.table_residual_rescue_phrase_min = 0.0
+        self.table_residual_rescue_lexical_min = float(
+            getattr(settings, "RAG_TABLE_RESIDUAL_RESCUE_LEXICAL_MIN", 0.42)
+        )
+        if self.table_residual_rescue_lexical_min < 0.0:
+            self.table_residual_rescue_lexical_min = 0.0
+        self.table_residual_rescue_max_results = max(
+            1,
+            int(getattr(settings, "RAG_TABLE_RESIDUAL_RESCUE_MAX_RESULTS", 1)),
+        )
         self.table_vector_floor = float(getattr(settings, "RAG_TABLE_VECTOR_FLOOR", 0.45))
         self.table_chunk_sample_limit = max(3, int(getattr(settings, "RAG_TABLE_CHUNK_SAMPLE", 6)))
+        # TEMP(9to6-cleanup): Guardrail toggle for forced table-context snippet slots.
+        # Remove once we confirm this path is no longer needed.
         self.table_context_snippet_cap = max(0, int(getattr(settings, "RAG_TABLE_CONTEXT_SNIPPETS", 2)))
         self.table_header_match_bonus = float(getattr(settings, "RAG_TABLE_HEADER_MATCH_BONUS", 0.12))
         self.table_specific_miss_penalty = float(getattr(settings, "RAG_TABLE_SPECIFIC_MISS_PENALTY", 0.25))
@@ -4075,6 +4111,9 @@ class KnowledgeSearchService:
             "rerank_cross_encoder_applied": False,
             "rerank_cross_encoder_pairs": 0,
             "rerank_cross_encoder_skip_reason": None,
+            "table_residual_rescue_applied": False,
+            "table_residual_rescue_count": 0,
+            "table_residual_rescue_reason": None,
         }
         top_pool = min(len(candidates), self.rerank_pool)
         scored: list[tuple[float, int, ChunkResult]] = []
@@ -4107,6 +4146,12 @@ class KnowledgeSearchService:
             chunk_metadata = cand.chunk.metadata if isinstance(cand.chunk.metadata, dict) else {}
             table_header_bonus = 0.0
             table_specific_penalty = 0.0
+            table_residual_penalty = 0.0
+            is_table_residual = bool(
+                chunk_metadata.get("table_residual")
+                or chunk_metadata.get("content_source") == "table_residual"
+                or chunk_metadata.get("region_role") == "table_residual"
+            )
             
             if chunk_metadata.get("is_table_chunk"):
                 # Get quality score from metadata (0.0 = garbage, 1.0 = high quality)
@@ -4151,6 +4196,11 @@ class KnowledgeSearchService:
                 index_type = chunk_metadata.get("index_type")
                 if index_type in (None, "text"):
                     text_penalty = self._text_quality_penalty(chunk_metadata)
+            if is_table_residual and not chunk_metadata.get("is_table_chunk"):
+                if table_intent:
+                    table_residual_penalty = self.table_residual_table_intent_penalty
+                else:
+                    table_residual_penalty = self.table_residual_penalty
             text_phrase_boost = 0.0
             text_proximity_boost = 0.0
             if not chunk_metadata.get("is_table_chunk"):
@@ -4210,6 +4260,7 @@ class KnowledgeSearchService:
                 - quality_penalty  # NEW: Subtract quality penalty
                 - table_specific_penalty
                 - text_penalty
+                - table_residual_penalty
             )
             cand.diagnostics["score_breakdown"] = {
                 "vector": round(vector_score, 4),
@@ -4223,11 +4274,97 @@ class KnowledgeSearchService:
                 "quality_penalty": round(quality_penalty, 4),  # NEW: Include in diagnostics
                 "table_specific_penalty": round(table_specific_penalty, 4),
                 "text_penalty": round(text_penalty, 4),
+                "table_residual_penalty": round(table_residual_penalty, 4),
                 "text_phrase_boost": round(text_phrase_boost, 4),
                 "text_proximity_boost": round(text_proximity_boost, 4),
+                "table_residual_rescue_bonus": 0.0,
             }
+            cand.diagnostics["table_residual_candidate"] = bool(is_table_residual and not chunk_metadata.get("is_table_chunk"))
             cand.rerank_score = combined
             scored.append((combined, -idx, cand))
+        if table_intent and specific_tokens and self.table_residual_rescue_enabled and scored:
+            canonical_candidates = []
+            for item in scored:
+                metadata = item[2].chunk.metadata if isinstance(item[2].chunk.metadata, dict) else {}
+                if metadata.get("is_table_chunk"):
+                    canonical_candidates.append(item)
+            residual_candidates: list[tuple[int, float, int, ChunkResult, float, float]] = []
+            canonical_specific_hits = sum(
+                1
+                for _, _, hit in canonical_candidates
+                if bool(hit.diagnostics.get("specific_match_strong") or hit.diagnostics.get("specific_match"))
+            )
+            best_canonical_score = max((score for score, _, _ in canonical_candidates), default=None)
+
+            for scored_index, (base_score, order, hit) in enumerate(scored):
+                hit_meta = hit.chunk.metadata if isinstance(hit.chunk.metadata, dict) else {}
+                is_residual = bool(
+                    (not hit_meta.get("is_table_chunk"))
+                    and (
+                        hit_meta.get("table_residual")
+                        or hit_meta.get("content_source") == "table_residual"
+                        or hit_meta.get("region_role") == "table_residual"
+                    )
+                )
+                if not is_residual:
+                    continue
+                score_breakdown = hit.diagnostics.get("score_breakdown") or {}
+                phrase_boost = float(score_breakdown.get("text_phrase_boost") or 0.0)
+                lexical_component = float(score_breakdown.get("lexical") or 0.0)
+                if phrase_boost < self.table_residual_rescue_phrase_min:
+                    continue
+                if lexical_component < self.table_residual_rescue_lexical_min:
+                    continue
+                residual_candidates.append(
+                    (scored_index, base_score, order, hit, phrase_boost, lexical_component)
+                )
+
+            if canonical_specific_hits > 0:
+                rerank_diag["table_residual_rescue_reason"] = "canonical_specific_match_present"
+            elif not residual_candidates:
+                rerank_diag["table_residual_rescue_reason"] = "no_eligible_residual"
+            else:
+                residual_candidates.sort(key=lambda item: (item[4], item[5], item[1]), reverse=True)
+                promoted = 0
+                for scored_index, base_score, order, hit, phrase_boost, lexical_component in residual_candidates:
+                    if promoted >= self.table_residual_rescue_max_results:
+                        break
+                    boosted = base_score + self.table_residual_rescue_bonus
+                    hit.rerank_score = boosted
+                    score_breakdown = dict(hit.diagnostics.get("score_breakdown") or {})
+                    score_breakdown["table_residual_rescue_bonus"] = round(
+                        self.table_residual_rescue_bonus,
+                        4,
+                    )
+                    hit.diagnostics["score_breakdown"] = score_breakdown
+                    hit.diagnostics["table_residual_rescue"] = {
+                        "applied": True,
+                        "phrase_boost": round(phrase_boost, 4),
+                        "lexical": round(lexical_component, 4),
+                        "bonus": round(self.table_residual_rescue_bonus, 4),
+                        "canonical_specific_hits": canonical_specific_hits,
+                        "best_canonical_score": round(float(best_canonical_score), 4)
+                        if isinstance(best_canonical_score, (int, float))
+                        else None,
+                    }
+                    scored[scored_index] = (boosted, order, hit)
+                    promoted += 1
+                rerank_diag["table_residual_rescue_applied"] = bool(promoted)
+                rerank_diag["table_residual_rescue_count"] = promoted
+                rerank_diag["table_residual_rescue_reason"] = (
+                    "promoted"
+                    if promoted
+                    else "residual_candidates_below_cap_or_bonus_zero"
+                )
+        if rerank_diag.get("table_residual_rescue_reason") is None:
+            if not table_intent:
+                rerank_diag["table_residual_rescue_reason"] = "not_table_intent"
+            elif not specific_tokens:
+                rerank_diag["table_residual_rescue_reason"] = "no_specific_tokens"
+            elif not self.table_residual_rescue_enabled:
+                rerank_diag["table_residual_rescue_reason"] = "disabled"
+            else:
+                rerank_diag["table_residual_rescue_reason"] = "not_applicable"
         policy = getattr(self, "cross_encoder_policy", "off")
         cross_encoder = None
         head: list[ChunkResult] = []
@@ -5049,13 +5186,24 @@ class KnowledgeSearchService:
     def _table_header_tokens(self, table_id: str | uuid.UUID | None) -> set[str]:
         if not table_id:
             return set()
-        cache_key = str(table_id)
+        cache_key = str(table_id).strip()
+        if not cache_key:
+            return set()
         cached = self._table_header_token_cache.get(cache_key)
         if cached is not None:
             self._table_header_token_cache.move_to_end(cache_key)
             return cached
+        parsed_table_id: uuid.UUID | None = None
+        if isinstance(table_id, uuid.UUID):
+            parsed_table_id = table_id
+        else:
+            try:
+                parsed_table_id = uuid.UUID(cache_key)
+            except (TypeError, ValueError, AttributeError):
+                self._table_header_token_cache[cache_key] = set()
+                return set()
         payload = (
-            KnowledgeUploadTable.objects.filter(id=table_id)
+            KnowledgeUploadTable.objects.filter(id=parsed_table_id)
             .values("column_schema", "title", "section_heading")
             .first()
         )

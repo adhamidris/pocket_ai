@@ -19,8 +19,9 @@ import time
 import uuid
 import unicodedata
 from urllib.parse import urlencode
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone as datetime_timezone
 from dataclasses import dataclass, field
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 
@@ -89,6 +90,13 @@ TRACER = otel_trace.get_tracer(__name__)
 OCR_NORMALIZATION_VERSION = "v2"
 _ARABIC_CHAR_RE = re.compile(r"[\u0600-\u06FF]")
 _ARABIC_DIACRITICS_RE = re.compile(r"[\u0610-\u061A\u064B-\u065F\u06D6-\u06ED]")
+_TABLE_NUMERIC_SIGNAL_TOKEN_RE = re.compile(
+    r"(?:%|[$€£¥₹]|(?:^|[\s(])(?:USD|EUR|GBP|JPY|CHF|AUD|CAD|CNY|INR|SAR|AED|EGP|QAR|KWD|OMR|BHD|TRY|ZAR)(?:$|[\s):,.;]))",
+    flags=re.IGNORECASE,
+)
+_TABLE_NUMBER_LIKE_RE = re.compile(r"[+-]?\d[\d,]*(?:[.:]\d+)?")
+_TABLE_DATE_TIME_LIKE_RE = re.compile(r"\b\d{1,4}[/-]\d{1,2}(?:[/-]\d{1,4})?\b|\b\d{1,2}:\d{2}(?::\d{2})?\b")
+_TABLE_NUMBER_WITH_UNIT_RE = re.compile(r"\b\d+(?:[.,]\d+)?\s*(?:[a-zA-Z]{1,5}|%)\b")
 
 
 def _log_normalization_summary(upload: KnowledgeUpload | None, source: str, summary: Mapping[str, Any] | None) -> None:
@@ -1547,6 +1555,9 @@ class PdfPlumberTableExtractor:
 
 # Azure Document Intelligence table extraction (optional, REST-based)
 class AzureDocumentIntelligenceExtractor:
+    _RETRYABLE_HTTP_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
+    _THROTTLE_HTTP_STATUS = {429, 503}
+
     def __init__(
         self,
         *,
@@ -1559,6 +1570,11 @@ class AzureDocumentIntelligenceExtractor:
         timeout_seconds: float = 60.0,
         poll_interval_seconds: float = 1.5,
         max_polls: int = 40,
+        request_max_attempts: int = 3,
+        poll_request_max_attempts: int = 3,
+        retry_backoff_base_seconds: float = 1.0,
+        retry_backoff_max_seconds: float = 8.0,
+        max_retry_after_seconds: float = 30.0,
     ) -> None:
         self.endpoint = (endpoint or "").rstrip("/")
         self.key = (key or "").strip()
@@ -1567,8 +1583,20 @@ class AzureDocumentIntelligenceExtractor:
         self.base_path = (base_path or "formrecognizer").strip().strip("/")
         self.locale = (locale or "").strip()
         self.timeout_seconds = max(5.0, float(timeout_seconds))
-        self.poll_interval_seconds = max(0.5, float(poll_interval_seconds))
+        # Azure DI guidance recommends spacing status polls (avoid rapid polling loops).
+        self.poll_interval_seconds = max(2.0, float(poll_interval_seconds))
         self.max_polls = max(5, int(max_polls))
+        self.request_max_attempts = max(1, int(request_max_attempts))
+        self.poll_request_max_attempts = max(1, int(poll_request_max_attempts))
+        self.retry_backoff_base_seconds = max(0.1, float(retry_backoff_base_seconds))
+        self.retry_backoff_max_seconds = max(
+            self.retry_backoff_base_seconds,
+            float(retry_backoff_max_seconds),
+        )
+        self.max_retry_after_seconds = max(
+            self.retry_backoff_base_seconds,
+            float(max_retry_after_seconds),
+        )
 
     @staticmethod
     def _polygon_to_bbox(polygon: Sequence[Any]) -> dict[str, float]:
@@ -1643,9 +1671,123 @@ class AzureDocumentIntelligenceExtractor:
         query = urlencode(params)
         return f"{self.endpoint}/{base_path}/documentModels/{self.model}:analyze?{query}"
 
+    @staticmethod
+    def _parse_retry_after_seconds(raw_value: Any) -> float | None:
+        if raw_value is None:
+            return None
+        raw = str(raw_value).strip()
+        if not raw:
+            return None
+        try:
+            seconds = float(raw)
+            if seconds >= 0.0:
+                return seconds
+        except (TypeError, ValueError):
+            pass
+        try:
+            parsed = parsedate_to_datetime(raw)
+        except (TypeError, ValueError, OverflowError):
+            parsed = None
+        if not parsed:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=datetime_timezone.utc)
+        delta = (parsed - datetime.now(datetime_timezone.utc)).total_seconds()
+        return max(0.0, delta)
+
+    def _retry_delay_seconds(
+        self,
+        attempt: int,
+        *,
+        response: Any = None,
+    ) -> float:
+        backoff = min(
+            self.retry_backoff_max_seconds,
+            self.retry_backoff_base_seconds * (2 ** max(0, int(attempt) - 1)),
+        )
+        jitter = random.uniform(0.0, min(0.25, backoff * 0.25))
+        delay = backoff + jitter
+        if response is not None:
+            headers = getattr(response, "headers", None)
+            retry_after_value = headers.get("retry-after") if isinstance(headers, Mapping) else None
+            retry_after = self._parse_retry_after_seconds(retry_after_value)
+            if retry_after is not None:
+                delay = max(delay, min(retry_after, self.max_retry_after_seconds))
+        return round(max(0.0, delay), 3)
+
+    @classmethod
+    def _classify_failure_class(
+        cls,
+        *,
+        status_code: int | None = None,
+        exc: Exception | None = None,
+    ) -> str:
+        if isinstance(exc, requests.Timeout):
+            return "timeout"
+        if status_code in cls._THROTTLE_HTTP_STATUS:
+            return "throttle_retryable"
+        if status_code in cls._RETRYABLE_HTTP_STATUS:
+            return "throttle_retryable"
+        if isinstance(exc, requests.ConnectionError):
+            return "throttle_retryable"
+        return "hard_failure"
+
+    @staticmethod
+    def _append_retry_event(
+        meta: dict[str, Any],
+        *,
+        phase: str,
+        attempt: int,
+        delay_s: float,
+        reason: str,
+        status_code: int | None = None,
+    ) -> None:
+        events = meta.setdefault("retry_events", [])
+        if not isinstance(events, list):
+            events = []
+            meta["retry_events"] = events
+        events.append(
+            {
+                "phase": phase,
+                "attempt": int(attempt),
+                "delay_s": round(float(delay_s), 3),
+                "reason": reason,
+                "status_code": status_code,
+            }
+        )
+        if len(events) > 24:
+            del events[:-24]
+
+    @staticmethod
+    def _finalize_failure_meta(
+        meta: dict[str, Any],
+        *,
+        status: str,
+        failure_class: str,
+        failure_stage: str,
+        failure_reason: str,
+        start_time: float,
+        failure_status_code: int | None = None,
+        last_error: str | None = None,
+    ) -> None:
+        meta["status"] = status
+        meta["failure_class"] = failure_class
+        meta["failure_stage"] = failure_stage
+        meta["failure_reason"] = failure_reason
+        if failure_status_code is not None:
+            meta["failure_status_code"] = int(failure_status_code)
+        if last_error:
+            meta["last_error"] = str(last_error)[:300]
+        meta["duration_ms"] = int((time.time() - start_time) * 1000)
+
     def _analyze_document(self, path: Path) -> tuple[dict[str, Any] | None, list[IssuePayload], dict[str, Any]]:
         issues: list[IssuePayload] = []
-        meta: dict[str, Any] = {}
+        meta: dict[str, Any] = {
+            "request_attempts": 0,
+            "poll_attempts": 0,
+            "poll_http_attempts": 0,
+            "retry_events": [],
+        }
         if not self.endpoint or not self.key:
             issues.append(
                 IssuePayload(
@@ -1654,6 +1796,7 @@ class AzureDocumentIntelligenceExtractor:
                     description="Azure Document Intelligence credentials are missing; skipping.",
                 )
             )
+            meta["status"] = "skipped"
             return None, issues, meta
 
         url = self._build_analyze_url(locale=self.locale)
@@ -1662,26 +1805,82 @@ class AzureDocumentIntelligenceExtractor:
             "Content-Type": "application/pdf",
         }
         start = time.time()
-        try:
-            with path.open("rb") as handle:
-                response = requests.post(url, headers=headers, data=handle, timeout=self.timeout_seconds)
-        except requests.RequestException as exc:
-            issues.append(
-                IssuePayload(
-                    code="azure_di_request_failed",
-                    severity=KnowledgeIssueSeverity.WARNING.value,
-                    description=f"Azure DI request failed: {exc}",
+        response: Any = None
+        for attempt in range(1, self.request_max_attempts + 1):
+            meta["request_attempts"] = attempt
+            try:
+                with path.open("rb") as handle:
+                    response = requests.post(
+                        url,
+                        headers=headers,
+                        data=handle,
+                        timeout=self.timeout_seconds,
+                    )
+            except requests.RequestException as exc:
+                failure_class = self._classify_failure_class(exc=exc)
+                retryable = failure_class in {"timeout", "throttle_retryable"}
+                if retryable and attempt < self.request_max_attempts:
+                    delay = self._retry_delay_seconds(attempt)
+                    self._append_retry_event(
+                        meta,
+                        phase="submit",
+                        attempt=attempt,
+                        delay_s=delay,
+                        reason=f"submit_exception:{exc.__class__.__name__}",
+                    )
+                    time.sleep(delay)
+                    continue
+                issues.append(
+                    IssuePayload(
+                        code="azure_di_request_failed",
+                        severity=KnowledgeIssueSeverity.WARNING.value,
+                        description=f"Azure DI request failed: {exc}",
+                    )
                 )
-            )
-            return None, issues, meta
+                self._finalize_failure_meta(
+                    meta,
+                    status=("timeout" if failure_class == "timeout" else "failed"),
+                    failure_class=failure_class,
+                    failure_stage="submit",
+                    failure_reason="request_exception",
+                    start_time=start,
+                    last_error=str(exc),
+                )
+                return None, issues, meta
 
-        if response.status_code not in {200, 201, 202}:
+            if response.status_code in {200, 201, 202}:
+                break
+
+            failure_class = self._classify_failure_class(status_code=int(response.status_code))
+            retryable_status = int(response.status_code) in self._RETRYABLE_HTTP_STATUS
+            if retryable_status and attempt < self.request_max_attempts:
+                delay = self._retry_delay_seconds(attempt, response=response)
+                self._append_retry_event(
+                    meta,
+                    phase="submit",
+                    attempt=attempt,
+                    delay_s=delay,
+                    reason="submit_http_retry",
+                    status_code=int(response.status_code),
+                )
+                time.sleep(delay)
+                continue
+
             issues.append(
                 IssuePayload(
                     code="azure_di_request_error",
                     severity=KnowledgeIssueSeverity.WARNING.value,
                     description=f"Azure DI request error {response.status_code}: {response.text[:200]}",
                 )
+            )
+            self._finalize_failure_meta(
+                meta,
+                status=("timeout" if failure_class == "timeout" else "failed"),
+                failure_class=failure_class,
+                failure_stage="submit",
+                failure_reason="request_http_error",
+                start_time=start,
+                failure_status_code=int(response.status_code),
             )
             return None, issues, meta
 
@@ -1702,23 +1901,78 @@ class AzureDocumentIntelligenceExtractor:
                     description="Azure DI response missing operation-location header.",
                 )
             )
+            self._finalize_failure_meta(
+                meta,
+                status="failed",
+                failure_class="hard_failure",
+                failure_stage="submit",
+                failure_reason="missing_operation_location",
+                start_time=start,
+            )
             return None, issues, meta
 
         poll_headers = {"Ocp-Apim-Subscription-Key": self.key}
         status_payload: dict[str, Any] | None = None
-        for _ in range(self.max_polls):
-            try:
-                poll_response = requests.get(operation_url, headers=poll_headers, timeout=self.timeout_seconds)
-            except requests.RequestException as exc:
-                issues.append(
-                    IssuePayload(
-                        code="azure_di_poll_failed",
-                        severity=KnowledgeIssueSeverity.WARNING.value,
-                        description=f"Azure DI poll failed: {exc}",
+        for poll_attempt in range(1, self.max_polls + 1):
+            meta["poll_attempts"] = poll_attempt
+            poll_response: Any = None
+            for http_attempt in range(1, self.poll_request_max_attempts + 1):
+                meta["poll_http_attempts"] = int(meta.get("poll_http_attempts") or 0) + 1
+                try:
+                    poll_response = requests.get(
+                        operation_url,
+                        headers=poll_headers,
+                        timeout=self.timeout_seconds,
                     )
-                )
-                break
-            if poll_response.status_code not in {200, 201}:
+                except requests.RequestException as exc:
+                    failure_class = self._classify_failure_class(exc=exc)
+                    retryable = failure_class in {"timeout", "throttle_retryable"}
+                    if retryable and http_attempt < self.poll_request_max_attempts:
+                        delay = self._retry_delay_seconds(http_attempt)
+                        self._append_retry_event(
+                            meta,
+                            phase="poll",
+                            attempt=http_attempt,
+                            delay_s=delay,
+                            reason=f"poll_exception:{exc.__class__.__name__}",
+                        )
+                        time.sleep(delay)
+                        continue
+                    issues.append(
+                        IssuePayload(
+                            code="azure_di_poll_failed",
+                            severity=KnowledgeIssueSeverity.WARNING.value,
+                            description=f"Azure DI poll failed: {exc}",
+                        )
+                    )
+                    self._finalize_failure_meta(
+                        meta,
+                        status=("timeout" if failure_class == "timeout" else "failed"),
+                        failure_class=failure_class,
+                        failure_stage="poll",
+                        failure_reason="poll_exception",
+                        start_time=start,
+                        last_error=str(exc),
+                    )
+                    return None, issues, meta
+
+                if poll_response.status_code in {200, 201}:
+                    break
+
+                failure_class = self._classify_failure_class(status_code=int(poll_response.status_code))
+                retryable_status = int(poll_response.status_code) in self._RETRYABLE_HTTP_STATUS
+                if retryable_status and http_attempt < self.poll_request_max_attempts:
+                    delay = self._retry_delay_seconds(http_attempt, response=poll_response)
+                    self._append_retry_event(
+                        meta,
+                        phase="poll",
+                        attempt=http_attempt,
+                        delay_s=delay,
+                        reason="poll_http_retry",
+                        status_code=int(poll_response.status_code),
+                    )
+                    time.sleep(delay)
+                    continue
                 issues.append(
                     IssuePayload(
                         code="azure_di_poll_error",
@@ -1726,7 +1980,19 @@ class AzureDocumentIntelligenceExtractor:
                         description=f"Azure DI poll error {poll_response.status_code}: {poll_response.text[:200]}",
                     )
                 )
-                break
+                self._finalize_failure_meta(
+                    meta,
+                    status=("timeout" if failure_class == "timeout" else "failed"),
+                    failure_class=failure_class,
+                    failure_stage="poll",
+                    failure_reason="poll_http_error",
+                    start_time=start,
+                    failure_status_code=int(poll_response.status_code),
+                )
+                return None, issues, meta
+
+            if poll_response is None:
+                continue
             try:
                 status_payload = poll_response.json()
             except ValueError:
@@ -1747,19 +2013,32 @@ class AzureDocumentIntelligenceExtractor:
                         description=f"Azure DI failed: {status_payload.get('error', {})}",
                     )
                 )
-                meta["status"] = "failed"
-                break
+                self._finalize_failure_meta(
+                    meta,
+                    status="failed",
+                    failure_class="hard_failure",
+                    failure_stage="poll",
+                    failure_reason="poll_status_failed",
+                    start_time=start,
+                )
+                return None, issues, meta
             time.sleep(self.poll_interval_seconds)
 
-        meta["status"] = meta.get("status") or "timeout"
-        if meta["status"] == "timeout":
-            issues.append(
-                IssuePayload(
-                    code="azure_di_timeout",
-                    severity=KnowledgeIssueSeverity.WARNING.value,
-                    description="Azure DI polling timed out.",
-                )
+        issues.append(
+            IssuePayload(
+                code="azure_di_timeout",
+                severity=KnowledgeIssueSeverity.WARNING.value,
+                description="Azure DI polling timed out.",
             )
+        )
+        self._finalize_failure_meta(
+            meta,
+            status="timeout",
+            failure_class="timeout",
+            failure_stage="poll",
+            failure_reason="poll_max_attempts_exceeded",
+            start_time=start,
+        )
         return None, issues, meta
 
     def extract_tables(self, path: Path) -> tuple[list[TablePayload], list[IssuePayload], dict[str, Any]]:
@@ -2540,6 +2819,19 @@ class KnowledgeIngestionService:
         self.azure_di_timeout_seconds = float(getattr(settings, "RAG_AZURE_DI_TIMEOUT_SECONDS", 60.0))
         self.azure_di_poll_interval_seconds = float(getattr(settings, "RAG_AZURE_DI_POLL_INTERVAL_SECONDS", 1.5))
         self.azure_di_max_polls = int(getattr(settings, "RAG_AZURE_DI_MAX_POLLS", 40))
+        self.azure_di_request_max_attempts = int(getattr(settings, "RAG_AZURE_DI_REQUEST_MAX_ATTEMPTS", 3))
+        self.azure_di_poll_request_max_attempts = int(
+            getattr(settings, "RAG_AZURE_DI_POLL_REQUEST_MAX_ATTEMPTS", 3)
+        )
+        self.azure_di_retry_backoff_base_seconds = float(
+            getattr(settings, "RAG_AZURE_DI_RETRY_BACKOFF_BASE_SECONDS", 1.0)
+        )
+        self.azure_di_retry_backoff_max_seconds = float(
+            getattr(settings, "RAG_AZURE_DI_RETRY_BACKOFF_MAX_SECONDS", 8.0)
+        )
+        self.azure_di_max_retry_after_seconds = float(
+            getattr(settings, "RAG_AZURE_DI_MAX_RETRY_AFTER_SECONDS", 30.0)
+        )
         self.table_vlm_enabled = bool(getattr(settings, "RAG_TABLE_VLM_ENABLED", True))
         self.table_vlm_model = str(getattr(settings, "RAG_TABLE_VLM_MODEL", "gpt-4o") or "gpt-4o").strip()
         self.table_vlm_confidence_threshold = float(
@@ -2597,6 +2889,51 @@ class KnowledgeIngestionService:
         self.evidence_text_link_max_lines = max(
             1,
             int(getattr(settings, "RAG_EVIDENCE_TEXT_LINK_MAX_LINES", 4)),
+        )
+        self.pdf_table_text_overlap_filter_enabled = bool(
+            getattr(settings, "RAG_PDF_TABLE_TEXT_OVERLAP_FILTER_ENABLED", True)
+        )
+        self.pdf_table_text_overlap_min_ratio = float(
+            getattr(settings, "RAG_PDF_TABLE_TEXT_OVERLAP_MIN_RATIO", 0.55)
+        )
+        if not (0.0 <= self.pdf_table_text_overlap_min_ratio <= 1.0):
+            self.pdf_table_text_overlap_min_ratio = 0.55
+        self.pdf_table_region_merge_x_margin_ratio = float(
+            getattr(settings, "RAG_PDF_TABLE_REGION_MERGE_X_MARGIN_RATIO", 0.012)
+        )
+        if self.pdf_table_region_merge_x_margin_ratio < 0.0:
+            self.pdf_table_region_merge_x_margin_ratio = 0.0
+        self.pdf_table_region_merge_y_margin_ratio = float(
+            getattr(settings, "RAG_PDF_TABLE_REGION_MERGE_Y_MARGIN_RATIO", 0.008)
+        )
+        if self.pdf_table_region_merge_y_margin_ratio < 0.0:
+            self.pdf_table_region_merge_y_margin_ratio = 0.0
+        self.pdf_table_residual_overlap_min_ratio = float(
+            getattr(settings, "RAG_PDF_TABLE_RESIDUAL_OVERLAP_MIN_RATIO", 0.08)
+        )
+        if not (0.0 <= self.pdf_table_residual_overlap_min_ratio <= 1.0):
+            self.pdf_table_residual_overlap_min_ratio = 0.08
+        self.pdf_table_residual_near_region_ratio = float(
+            getattr(settings, "RAG_PDF_TABLE_RESIDUAL_NEAR_REGION_RATIO", 0.012)
+        )
+        if self.pdf_table_residual_near_region_ratio < 0.0:
+            self.pdf_table_residual_near_region_ratio = 0.0
+        self.table_residual_max_per_region = max(
+            1,
+            int(getattr(settings, "RAG_TABLE_RESIDUAL_MAX_PER_REGION", 1)),
+        )
+        self.table_residual_equivalence_min_overlap = float(
+            getattr(settings, "RAG_TABLE_RESIDUAL_EQUIV_MIN_OVERLAP", 0.65)
+        )
+        if not (0.0 <= self.table_residual_equivalence_min_overlap <= 1.0):
+            self.table_residual_equivalence_min_overlap = 0.65
+        self.table_residual_equivalence_min_shared_tokens = max(
+            1,
+            int(getattr(settings, "RAG_TABLE_RESIDUAL_EQUIV_MIN_SHARED_TOKENS", 5)),
+        )
+        self.table_residual_compact_max_chars = max(
+            200,
+            int(getattr(settings, "RAG_TABLE_RESIDUAL_COMPACT_MAX_CHARS", 700)),
         )
         self.chunk_quality_heading_max_lines = max(
             1,
@@ -3497,6 +3834,11 @@ class KnowledgeIngestionService:
                 timeout_seconds=self.azure_di_timeout_seconds,
                 poll_interval_seconds=self.azure_di_poll_interval_seconds,
                 max_polls=self.azure_di_max_polls,
+                request_max_attempts=self.azure_di_request_max_attempts,
+                poll_request_max_attempts=self.azure_di_poll_request_max_attempts,
+                retry_backoff_base_seconds=self.azure_di_retry_backoff_base_seconds,
+                retry_backoff_max_seconds=self.azure_di_retry_backoff_max_seconds,
+                max_retry_after_seconds=self.azure_di_max_retry_after_seconds,
             )
             azure_tables, azure_issues, azure_meta = azure_extractor.extract_tables(absolute)
 
@@ -3539,6 +3881,25 @@ class KnowledgeIngestionService:
         ingest_config = self._table_ingest_config(upload)
         tables, table_metrics, limit_issues, table_summary = self._apply_table_limits(tables, upload=upload, config=ingest_config)
         issues = issues + limit_issues
+        chunking_pages = list(layout_result.pages)
+        table_text_overlap_filter_meta: dict[str, Any] = {}
+        if (
+            format_hint == "pdf"
+            and self.pdf_table_text_overlap_filter_enabled
+            and tables
+            and chunking_pages
+        ):
+            chunking_pages, table_text_overlap_filter_meta = self._annotate_pdf_blocks_with_table_overlap(
+                chunking_pages,
+                tables,
+            )
+        pdf_baseline_metrics: dict[str, Any] = {}
+        if format_hint == "pdf":
+            pdf_baseline_metrics = self._build_pdf_table_baseline_metrics(
+                chunking_pages,
+                tables,
+                overlap_diagnostics=table_text_overlap_filter_meta,
+            )
 
         # PDFs are documents (not datasets). Indexing per-row "table entities" from a PDF tends to
         # flood retrieval with low-context chunks (e.g. `Table_1: ...`) and mislead downstream
@@ -3566,7 +3927,7 @@ class KnowledgeIngestionService:
             "filename": file_detail.filename,
             "content_type": file_detail.content_type or "",
             "storage_path": file_detail.storage_path,
-            "page_count": len(layout_result.pages),
+            "page_count": len(chunking_pages),
             "table_count": len(tables),
             "table_truncation": table_metrics,
             "table_stats": table_stats,
@@ -3577,6 +3938,28 @@ class KnowledgeIngestionService:
                 "candidate_counts": {key: len(val) for key, val in candidates.items()},
                 "candidate_scores": selection_meta.get("scores", {}),
             }
+            candidate_metrics = selection_meta.get("metrics")
+            if isinstance(candidate_metrics, Mapping):
+                extraction_meta["candidate_metrics"] = candidate_metrics
+            selector_debug = {
+                "heuristic_override_applied": selection_meta.get("heuristic_override_applied"),
+                "heuristic_override_reason": selection_meta.get("heuristic_override_reason"),
+                "heuristic_override_flags": selection_meta.get("heuristic_override_flags"),
+                "heuristic_override_from": selection_meta.get("heuristic_override_from"),
+                "heuristic_override_to": selection_meta.get("heuristic_override_to"),
+                "heuristic_override_candidate": selection_meta.get("heuristic_override_candidate"),
+                "heuristic_override_comparable_non_heuristic": selection_meta.get(
+                    "heuristic_override_comparable_non_heuristic"
+                ),
+                "heuristic_override_fallback_fragmentation": selection_meta.get(
+                    "heuristic_override_fallback_fragmentation"
+                ),
+            }
+            selector_debug = {key: value for key, value in selector_debug.items() if value is not None}
+            if selector_debug:
+                extraction_meta["selector_debug"] = selector_debug
+            if pdf_baseline_metrics:
+                extraction_meta["baseline_metrics"] = pdf_baseline_metrics
             if pdfplumber_meta:
                 extraction_meta["pdfplumber"] = pdfplumber_meta
             if azure_meta:
@@ -3585,16 +3968,455 @@ class KnowledgeIngestionService:
                 extraction_meta["table_repairs"] = repair_meta
             if postprocess_meta:
                 extraction_meta["table_postprocess"] = postprocess_meta
+            if table_text_overlap_filter_meta:
+                extraction_meta["table_text_overlap_filter"] = table_text_overlap_filter_meta
             metadata["table_extraction"] = extraction_meta
         return ExtractionResult(
             text=text,
             format_hint=format_hint or "binary",
             metadata=metadata,
-            pages=layout_result.pages,
+            pages=chunking_pages,
             tables=tables,
             issues=issues,
             entities=table_entities,
         )
+
+    @staticmethod
+    def _normalize_bbox(raw_bbox: Mapping[str, Any] | None) -> dict[str, float] | None:
+        if not isinstance(raw_bbox, Mapping):
+            return None
+        x0 = y0 = x1 = y1 = None
+        if all(key in raw_bbox for key in ("x0", "y0", "x1", "y1")):
+            x0, y0, x1, y1 = (
+                raw_bbox.get("x0"),
+                raw_bbox.get("y0"),
+                raw_bbox.get("x1"),
+                raw_bbox.get("y1"),
+            )
+        elif all(key in raw_bbox for key in ("left", "top", "right", "bottom")):
+            x0, y0, x1, y1 = (
+                raw_bbox.get("left"),
+                raw_bbox.get("top"),
+                raw_bbox.get("right"),
+                raw_bbox.get("bottom"),
+            )
+        elif all(key in raw_bbox for key in ("x", "y", "width", "height")):
+            x0 = raw_bbox.get("x")
+            y0 = raw_bbox.get("y")
+            width = raw_bbox.get("width")
+            height = raw_bbox.get("height")
+            try:
+                x1 = float(x0) + float(width)
+                y1 = float(y0) + float(height)
+            except (TypeError, ValueError):
+                return None
+        try:
+            parsed = {
+                "x0": float(x0),
+                "y0": float(y0),
+                "x1": float(x1),
+                "y1": float(y1),
+            }
+        except (TypeError, ValueError):
+            return None
+        if parsed["x1"] <= parsed["x0"] or parsed["y1"] <= parsed["y0"]:
+            return None
+        return parsed
+
+    @staticmethod
+    def _bbox_area(bbox: Mapping[str, float] | None) -> float:
+        if not bbox:
+            return 0.0
+        width = float(bbox.get("x1", 0.0) - bbox.get("x0", 0.0))
+        height = float(bbox.get("y1", 0.0) - bbox.get("y0", 0.0))
+        if width <= 0.0 or height <= 0.0:
+            return 0.0
+        return width * height
+
+    @staticmethod
+    def _bbox_union(first: Mapping[str, float], second: Mapping[str, float]) -> dict[str, float]:
+        return {
+            "x0": min(float(first["x0"]), float(second["x0"])),
+            "y0": min(float(first["y0"]), float(second["y0"])),
+            "x1": max(float(first["x1"]), float(second["x1"])),
+            "y1": max(float(first["y1"]), float(second["y1"])),
+        }
+
+    @staticmethod
+    def _expand_bbox(
+        bbox: Mapping[str, float],
+        *,
+        margin_x: float = 0.0,
+        margin_y: float = 0.0,
+    ) -> dict[str, float]:
+        margin_x = max(0.0, float(margin_x))
+        margin_y = max(0.0, float(margin_y))
+        return {
+            "x0": float(bbox["x0"]) - margin_x,
+            "y0": float(bbox["y0"]) - margin_y,
+            "x1": float(bbox["x1"]) + margin_x,
+            "y1": float(bbox["y1"]) + margin_y,
+        }
+
+    @staticmethod
+    def _bbox_intersects(first: Mapping[str, float], second: Mapping[str, float]) -> bool:
+        return not (
+            float(first["x1"]) <= float(second["x0"])
+            or float(second["x1"]) <= float(first["x0"])
+            or float(first["y1"]) <= float(second["y0"])
+            or float(second["y1"]) <= float(first["y0"])
+        )
+
+    @classmethod
+    def _bbox_edge_distance(cls, first: Mapping[str, float], second: Mapping[str, float]) -> float:
+        if cls._bbox_intersects(first, second):
+            return 0.0
+        dx = max(
+            float(second["x0"]) - float(first["x1"]),
+            float(first["x0"]) - float(second["x1"]),
+            0.0,
+        )
+        dy = max(
+            float(second["y0"]) - float(first["y1"]),
+            float(first["y0"]) - float(second["y1"]),
+            0.0,
+        )
+        return math.sqrt((dx * dx) + (dy * dy))
+
+    @classmethod
+    def _bbox_overlap_ratio(cls, block_bbox: Mapping[str, float], region_bbox: Mapping[str, float]) -> float:
+        block_area = cls._bbox_area(block_bbox)
+        if block_area <= 0.0:
+            return 0.0
+        x0 = max(float(block_bbox["x0"]), float(region_bbox["x0"]))
+        y0 = max(float(block_bbox["y0"]), float(region_bbox["y0"]))
+        x1 = min(float(block_bbox["x1"]), float(region_bbox["x1"]))
+        y1 = min(float(block_bbox["y1"]), float(region_bbox["y1"]))
+        if x1 <= x0 or y1 <= y0:
+            return 0.0
+        overlap_area = (x1 - x0) * (y1 - y0)
+        return max(0.0, min(1.0, overlap_area / block_area))
+
+    def _merge_table_regions(
+        self,
+        regions: Sequence[Mapping[str, float]],
+        *,
+        page_width: float | None = None,
+        page_height: float | None = None,
+    ) -> list[dict[str, float]]:
+        if not regions:
+            return []
+        if len(regions) == 1:
+            region = regions[0]
+            return [
+                {
+                    "x0": float(region["x0"]),
+                    "y0": float(region["y0"]),
+                    "x1": float(region["x1"]),
+                    "y1": float(region["y1"]),
+                }
+            ]
+        width = max(0.0, float(page_width or 0.0))
+        height = max(0.0, float(page_height or 0.0))
+        margin_x = max(2.0, width * self.pdf_table_region_merge_x_margin_ratio)
+        margin_y = max(2.0, height * self.pdf_table_region_merge_y_margin_ratio)
+        pending: list[dict[str, float]] = [
+            {
+                "x0": float(region["x0"]),
+                "y0": float(region["y0"]),
+                "x1": float(region["x1"]),
+                "y1": float(region["y1"]),
+            }
+            for region in regions
+        ]
+        while True:
+            merged_any = False
+            next_regions: list[dict[str, float]] = []
+            while pending:
+                current = pending.pop(0)
+                current_expanded = self._expand_bbox(current, margin_x=margin_x, margin_y=margin_y)
+                compare_index = 0
+                while compare_index < len(pending):
+                    candidate = pending[compare_index]
+                    candidate_expanded = self._expand_bbox(candidate, margin_x=margin_x, margin_y=margin_y)
+                    if not self._bbox_intersects(current_expanded, candidate_expanded):
+                        compare_index += 1
+                        continue
+                    current = self._bbox_union(current, candidate)
+                    current_expanded = self._expand_bbox(current, margin_x=margin_x, margin_y=margin_y)
+                    pending.pop(compare_index)
+                    merged_any = True
+                next_regions.append(current)
+            pending = next_regions
+            if not merged_any:
+                break
+        return sorted(pending, key=lambda bbox: (float(bbox["y0"]), float(bbox["x0"])))
+
+    def _table_regions_by_page(
+        self,
+        tables: Sequence[TablePayload],
+        *,
+        pages: Sequence[PageLayout] | None = None,
+    ) -> dict[int, list[dict[str, float]]]:
+        raw_regions_by_page: dict[int, list[dict[str, float]]] = {}
+        for table in tables:
+            if not table.page_number:
+                continue
+            normalized_bbox = self._normalize_bbox(table.bbox)
+            if not normalized_bbox:
+                continue
+            raw_regions_by_page.setdefault(int(table.page_number), []).append(normalized_bbox)
+        if not raw_regions_by_page:
+            return {}
+        page_dimensions: dict[int, tuple[float, float]] = {}
+        for page in pages or []:
+            page_dimensions[int(page.page_number)] = (float(page.width or 0.0), float(page.height or 0.0))
+        merged_regions_by_page: dict[int, list[dict[str, float]]] = {}
+        for page_number, page_regions in raw_regions_by_page.items():
+            width, height = page_dimensions.get(page_number, (0.0, 0.0))
+            merged_regions_by_page[page_number] = self._merge_table_regions(
+                page_regions,
+                page_width=width,
+                page_height=height,
+            )
+        return merged_regions_by_page
+
+    @staticmethod
+    def _has_numeric_table_signal(text: str) -> bool:
+        normalized = re.sub(r"\s+", " ", str(text or "")).strip()
+        if not normalized:
+            return False
+        if not re.search(r"\d", normalized):
+            return False
+
+        # Generic, domain-agnostic "structured numeric" cues:
+        # - repeated numeric values (typical for row-wise factual cells),
+        # - percentages / currency symbols or common currency codes,
+        # - date/time-like tokens,
+        # - number + short unit patterns (e.g. 12 kg, 24 hrs).
+        number_like_tokens = _TABLE_NUMBER_LIKE_RE.findall(normalized)
+        if len(number_like_tokens) >= 2:
+            return True
+        if _TABLE_NUMERIC_SIGNAL_TOKEN_RE.search(normalized):
+            return True
+        if _TABLE_DATE_TIME_LIKE_RE.search(normalized):
+            return True
+        if _TABLE_NUMBER_WITH_UNIT_RE.search(normalized):
+            return True
+        return False
+
+    def _build_pdf_table_baseline_metrics(
+        self,
+        pages: Sequence[PageLayout],
+        tables: Sequence[TablePayload],
+        *,
+        overlap_diagnostics: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        table_regions_by_page = self._table_regions_by_page(tables, pages=pages)
+        text_block_types = {KnowledgeBlockType.PARAGRAPH, KnowledgeBlockType.HEADING}
+
+        total_page_area = 0.0
+        total_table_area = 0.0
+        checked_text_blocks = 0
+        suppressed_text_blocks = 0
+        residual_text_blocks = 0
+        residual_numeric_blocks = 0
+        pages_with_regions = 0
+
+        for page in pages:
+            page_regions = table_regions_by_page.get(int(page.page_number), [])
+            if not page_regions:
+                continue
+            pages_with_regions += 1
+            page_area = max(0.0, float(page.width or 0.0) * float(page.height or 0.0))
+            if page_area > 0.0:
+                total_page_area += page_area
+                page_table_area = sum(self._bbox_area(region_bbox) for region_bbox in page_regions)
+                total_table_area += min(page_area, page_table_area)
+
+            for block in page.blocks:
+                if block.block_type not in text_block_types:
+                    continue
+                block_text = self._sanitize_text(block.text).strip()
+                if not block_text:
+                    continue
+                checked_text_blocks += 1
+                block_meta = block.metadata if isinstance(block.metadata, dict) else {}
+                if block_meta.get("table_overlap_candidate") or block_meta.get("suppress_text_chunk"):
+                    suppressed_text_blocks += 1
+                residual_text_blocks += 1
+                if self._has_numeric_table_signal(block_text):
+                    residual_numeric_blocks += 1
+
+        row_labels: set[str] = set()
+        for table in tables:
+            row_labels.update(self._table_row_label_set(table))
+
+        coverage_ratio = (total_table_area / total_page_area) if total_page_area > 0.0 else 0.0
+        residual_ratio = (residual_text_blocks / checked_text_blocks) if checked_text_blocks > 0 else 0.0
+
+        metrics: dict[str, Any] = {
+            "table_bbox_coverage_ratio": round(max(0.0, min(1.0, coverage_ratio)), 4),
+            "table_pages_with_regions": pages_with_regions,
+            "checked_text_blocks_count": checked_text_blocks,
+            "suppressed_text_blocks_count": suppressed_text_blocks,
+            "residual_text_blocks_count": residual_text_blocks,
+            "residual_text_ratio": round(max(0.0, min(1.0, residual_ratio)), 4),
+            "residual_text_with_numeric_signals_count": residual_numeric_blocks,
+            "table_row_unique_evidence_count": len(row_labels),
+        }
+        if isinstance(overlap_diagnostics, Mapping):
+            metrics["overlap_threshold"] = overlap_diagnostics.get("threshold")
+            metrics["overlap_checked_text_blocks"] = int(overlap_diagnostics.get("checked_text_blocks") or 0)
+            metrics["overlap_suppressed_text_blocks"] = int(overlap_diagnostics.get("suppressed_text_blocks") or 0)
+        return metrics
+
+    def _annotate_pdf_blocks_with_table_overlap(
+        self,
+        pages: Sequence[PageLayout],
+        tables: Sequence[TablePayload],
+    ) -> tuple[list[PageLayout], dict[str, Any]]:
+        table_regions_by_page = self._table_regions_by_page(tables, pages=pages)
+
+        diagnostics: dict[str, Any] = {
+            "enabled": True,
+            "threshold": round(self.pdf_table_text_overlap_min_ratio, 4),
+            "residual_overlap_threshold": round(self.pdf_table_residual_overlap_min_ratio, 4),
+            "residual_near_region_ratio": round(self.pdf_table_residual_near_region_ratio, 4),
+            "table_regions": sum(len(v) for v in table_regions_by_page.values()),
+            "checked_text_blocks": 0,
+            "overlapping_text_blocks": 0,
+            "suppressed_text_blocks": 0,
+            "table_residual_blocks": 0,
+            "table_residual_numeric_blocks": 0,
+        }
+        if not pages or not table_regions_by_page:
+            diagnostics["reason"] = "no_pages_or_table_regions"
+            return list(pages), diagnostics
+
+        text_block_types = {KnowledgeBlockType.PARAGRAPH, KnowledgeBlockType.HEADING}
+        annotated_pages: list[PageLayout] = []
+        for page in pages:
+            page_regions = table_regions_by_page.get(int(page.page_number), [])
+            if not page_regions:
+                annotated_pages.append(page)
+                continue
+
+            page_checked = 0
+            page_suppressed = 0
+            page_residual = 0
+            page_diagonal = math.sqrt((float(page.width or 0.0) ** 2) + (float(page.height or 0.0) ** 2))
+            near_distance_threshold = max(2.0, page_diagonal * self.pdf_table_residual_near_region_ratio)
+            updated_blocks: list[PageBlockPayload] = []
+            for block in page.blocks:
+                block_meta = block.metadata if isinstance(block.metadata, dict) else {}
+                if block.block_type not in text_block_types:
+                    updated_blocks.append(block)
+                    continue
+
+                block_text = self._sanitize_text(block.text).strip()
+                numeric_signal = self._has_numeric_table_signal(block_text) if block_text else False
+                page_checked += 1
+                diagnostics["checked_text_blocks"] = int(diagnostics["checked_text_blocks"]) + 1
+                normalized_block_bbox = self._normalize_bbox(block.bbox)
+                overlap_ratio = 0.0
+                nearest_distance: float | None = None
+                best_region_index: int | None = None
+                if normalized_block_bbox:
+                    best_overlap = -1.0
+                    best_distance = float("inf")
+                    for region_index, region_bbox in enumerate(page_regions):
+                        overlap = self._bbox_overlap_ratio(normalized_block_bbox, region_bbox)
+                        distance = self._bbox_edge_distance(normalized_block_bbox, region_bbox)
+                        if overlap > best_overlap:
+                            best_overlap = overlap
+                            best_distance = distance
+                            best_region_index = region_index
+                            continue
+                        if math.isclose(overlap, best_overlap, rel_tol=1e-6, abs_tol=1e-6) and distance < best_distance:
+                            best_distance = distance
+                            best_region_index = region_index
+                    if best_overlap > 0.0:
+                        overlap_ratio = best_overlap
+                    nearest_distance = best_distance if best_region_index is not None else None
+                if overlap_ratio > 0.0:
+                    diagnostics["overlapping_text_blocks"] = int(diagnostics["overlapping_text_blocks"]) + 1
+                near_table_region = bool(
+                    nearest_distance is not None and nearest_distance <= near_distance_threshold
+                )
+
+                updated_meta = dict(block_meta)
+                if overlap_ratio > 0.0:
+                    updated_meta["table_overlap_ratio"] = round(overlap_ratio, 4)
+                    updated_meta["overlaps_table_region"] = True
+                if nearest_distance is not None:
+                    updated_meta["table_region_distance"] = round(nearest_distance, 4)
+                if best_region_index is not None:
+                    updated_meta["table_region_index"] = int(best_region_index)
+                    updated_meta["table_region_key"] = f"p{page.page_number}-r{best_region_index}"
+                if overlap_ratio >= self.pdf_table_text_overlap_min_ratio:
+                    updated_meta["table_overlap_candidate"] = True
+                    updated_meta["table_overlap_candidate_reason"] = "table_overlap"
+                    page_suppressed += 1
+                    diagnostics["suppressed_text_blocks"] = int(diagnostics["suppressed_text_blocks"]) + 1
+                elif numeric_signal and (
+                    overlap_ratio >= self.pdf_table_residual_overlap_min_ratio or near_table_region
+                ):
+                    updated_meta["table_residual_candidate"] = True
+                    updated_meta["table_residual"] = True
+                    updated_meta["region_role"] = "table_residual"
+                    updated_meta["content_source"] = "table_residual"
+                    updated_meta["search_tier"] = "fallback"
+                    if overlap_ratio >= self.pdf_table_residual_overlap_min_ratio:
+                        updated_meta["table_residual_reason"] = "numeric_overlap"
+                    else:
+                        updated_meta["table_residual_reason"] = "numeric_near_table_region"
+                    page_residual += 1
+                    diagnostics["table_residual_blocks"] = int(diagnostics["table_residual_blocks"]) + 1
+                    diagnostics["table_residual_numeric_blocks"] = int(diagnostics["table_residual_numeric_blocks"]) + 1
+
+                updated_blocks.append(
+                    PageBlockPayload(
+                        block_type=block.block_type,
+                        order_index=block.order_index,
+                        text=block.text,
+                        bbox=block.bbox,
+                        section_heading=block.section_heading,
+                        heading_path=list(block.heading_path or []),
+                        detected_language=block.detected_language,
+                        confidence=block.confidence,
+                        metadata=updated_meta,
+                    )
+                )
+
+            updated_page_meta = dict(page.metadata or {})
+            updated_page_meta["table_overlap_checked_blocks"] = page_checked
+            if page_suppressed:
+                updated_page_meta["table_overlap_suppressed_blocks"] = page_suppressed
+                updated_page_meta["table_overlap_threshold"] = round(
+                    self.pdf_table_text_overlap_min_ratio,
+                    4,
+                )
+            if page_residual:
+                updated_page_meta["table_residual_blocks"] = page_residual
+                updated_page_meta["table_residual_overlap_threshold"] = round(
+                    self.pdf_table_residual_overlap_min_ratio,
+                    4,
+                )
+            annotated_pages.append(
+                PageLayout(
+                    page_number=page.page_number,
+                    width=page.width,
+                    height=page.height,
+                    rotation=page.rotation,
+                    text_density=page.text_density,
+                    has_ocr_content=page.has_ocr_content,
+                    content_type=page.content_type,
+                    blocks=updated_blocks,
+                    metadata=updated_page_meta,
+                )
+            )
+        return annotated_pages, diagnostics
 
     def _fallback_text_extraction(self, path: Path, format_hint: str) -> str:
         if format_hint == "pdf":
@@ -3699,6 +4521,156 @@ class KnowledgeIngestionService:
             total_score += quality * weight
         return round(total_score, 4)
 
+    def _candidate_selection_metrics(self, tables: Sequence[TablePayload]) -> dict[str, float | int]:
+        if not tables:
+            return {
+                "table_count": 0,
+                "total_data_rows": 0,
+                "avg_data_rows": 0.0,
+                "micro_table_count": 0,
+                "micro_table_ratio": 0.0,
+                "distinct_title_count": 0,
+                "distinct_title_ratio": 0.0,
+                "total_bbox_area": 0.0,
+                "valid_bbox_count": 0,
+            }
+
+        data_rows_per_table: list[int] = []
+        micro_table_count = 0
+        titles: list[str] = []
+        total_bbox_area = 0.0
+        valid_bbox_count = 0
+        for table in tables:
+            data_rows = len(
+                [row for row in (table.rows or []) if (row.metadata or {}).get("row_type") != "header"]
+            )
+            data_rows_per_table.append(data_rows)
+            if data_rows <= 2:
+                micro_table_count += 1
+            normalized_title = self._normalize_evidence_phrase(str(table.title or ""))
+            if normalized_title:
+                titles.append(normalized_title)
+            normalized_bbox = self._normalize_bbox(table.bbox)
+            bbox_area = self._bbox_area(normalized_bbox)
+            if bbox_area > 0.0:
+                total_bbox_area += bbox_area
+                valid_bbox_count += 1
+
+        table_count = len(tables)
+        total_data_rows = sum(data_rows_per_table)
+        distinct_title_count = len(set(titles))
+        distinct_title_ratio = (
+            (distinct_title_count / table_count) if table_count else 0.0
+        )
+        micro_table_ratio = (micro_table_count / table_count) if table_count else 0.0
+        avg_data_rows = (total_data_rows / table_count) if table_count else 0.0
+        return {
+            "table_count": table_count,
+            "total_data_rows": total_data_rows,
+            "avg_data_rows": round(avg_data_rows, 4),
+            "micro_table_count": micro_table_count,
+            "micro_table_ratio": round(micro_table_ratio, 4),
+            "distinct_title_count": distinct_title_count,
+            "distinct_title_ratio": round(distinct_title_ratio, 4),
+            "total_bbox_area": round(total_bbox_area, 4),
+            "valid_bbox_count": valid_bbox_count,
+        }
+
+    def _maybe_override_fragmented_heuristic_selection(
+        self,
+        selected: str,
+        *,
+        candidates: Mapping[str, list[TablePayload]],
+        scores: Mapping[str, float],
+        metrics: Mapping[str, Mapping[str, float | int]],
+    ) -> tuple[str, dict[str, Any]]:
+        diag: dict[str, Any] = {
+            "heuristic_override_applied": False,
+            "heuristic_override_reason": "",
+        }
+        if not selected.startswith("heuristic"):
+            diag["heuristic_override_reason"] = "selected_not_heuristic"
+            return selected, diag
+
+        non_heuristic_names = [name for name in candidates.keys() if not name.startswith("heuristic")]
+        if not non_heuristic_names:
+            diag["heuristic_override_reason"] = "no_non_heuristic_candidate"
+            return selected, diag
+
+        best_non_heuristic = max(
+            non_heuristic_names,
+            key=lambda name: (scores.get(name, 0.0), len(candidates.get(name) or []), name),
+        )
+        selected_metrics = metrics.get(selected) or {}
+        non_heuristic_metrics = metrics.get(best_non_heuristic) or {}
+
+        selected_table_count = int(selected_metrics.get("table_count") or 0)
+        selected_micro_ratio = float(selected_metrics.get("micro_table_ratio") or 0.0)
+        selected_title_ratio = float(selected_metrics.get("distinct_title_ratio") or 0.0)
+        selected_bbox_area = float(selected_metrics.get("total_bbox_area") or 0.0)
+        selected_total_rows = int(selected_metrics.get("total_data_rows") or 0)
+        non_heuristic_bbox_area = float(non_heuristic_metrics.get("total_bbox_area") or 0.0)
+        non_heuristic_total_rows = int(non_heuristic_metrics.get("total_data_rows") or 0)
+        non_heuristic_micro_ratio = float(non_heuristic_metrics.get("micro_table_ratio") or 0.0)
+        selected_score = float(scores.get(selected) or 0.0)
+        non_heuristic_score = float(scores.get(best_non_heuristic) or 0.0)
+
+        suspicious_flags: list[str] = []
+        if selected_table_count >= 3 and selected_micro_ratio >= 0.75:
+            suspicious_flags.append("fragmented_micro_tables")
+        if selected_table_count >= 3 and selected_title_ratio <= 0.4:
+            suspicious_flags.append("repeated_titles")
+        if (
+            selected_bbox_area > 0.0
+            and non_heuristic_bbox_area > 0.0
+            and selected_bbox_area <= (non_heuristic_bbox_area * 0.45)
+        ):
+            suspicious_flags.append("low_bbox_coverage")
+
+        comparable_non_heuristic = non_heuristic_score >= (selected_score * 0.35)
+        large_coverage_gain = (
+            selected_bbox_area > 0.0
+            and non_heuristic_bbox_area >= (selected_bbox_area * 2.5)
+        )
+        strong_row_gain = non_heuristic_total_rows >= max(8, selected_total_rows * 2)
+        viable_non_heuristic_shape = non_heuristic_micro_ratio <= 0.6
+        fallback_fragmentation_override = (
+            len(suspicious_flags) >= 2
+            and large_coverage_gain
+            and strong_row_gain
+            and viable_non_heuristic_shape
+        )
+
+        if len(suspicious_flags) >= 2 and (
+            comparable_non_heuristic or fallback_fragmentation_override
+        ):
+            override_reason = (
+                "suspicious_fragmentation"
+                if comparable_non_heuristic
+                else "suspicious_fragmentation_low_coverage_rows"
+            )
+            diag.update(
+                {
+                    "heuristic_override_applied": True,
+                    "heuristic_override_reason": override_reason,
+                    "heuristic_override_flags": suspicious_flags,
+                    "heuristic_override_from": selected,
+                    "heuristic_override_to": best_non_heuristic,
+                }
+            )
+            return best_non_heuristic, diag
+
+        diag.update(
+            {
+                "heuristic_override_reason": "not_triggered",
+                "heuristic_override_flags": suspicious_flags,
+                "heuristic_override_candidate": best_non_heuristic,
+                "heuristic_override_comparable_non_heuristic": comparable_non_heuristic,
+                "heuristic_override_fallback_fragmentation": fallback_fragmentation_override,
+            }
+        )
+        return selected, diag
+
     def _select_table_candidates(
         self,
         candidates: Mapping[str, list[TablePayload]],
@@ -3706,6 +4678,7 @@ class KnowledgeIngestionService:
         if not candidates:
             return "none", [], {"scores": {}}
         scores = {name: self._score_table_set(tables) for name, tables in candidates.items()}
+        metrics = {name: self._candidate_selection_metrics(tables) for name, tables in candidates.items()}
 
         preferred = (self.pdf_table_extractor or "auto").strip().lower()
         selected = ""
@@ -3739,8 +4712,23 @@ class KnowledgeIngestionService:
                 reverse=True,
             )
             selected = ordered[0]
+            selected, override_diag = self._maybe_override_fragmented_heuristic_selection(
+                selected,
+                candidates=candidates,
+                scores=scores,
+                metrics=metrics,
+            )
+        else:
+            override_diag = {
+                "heuristic_override_applied": False,
+                "heuristic_override_reason": "preferred_extractor",
+            }
 
-        return selected, candidates.get(selected, []), {"scores": scores}
+        return selected, candidates.get(selected, []), {
+            "scores": scores,
+            "metrics": metrics,
+            **override_diag,
+        }
 
     def _repair_tables_with_vlm(
         self,
@@ -4999,6 +5987,10 @@ class KnowledgeIngestionService:
                 table_segment_payloads = []
 
             segment_payloads.extend(table_segment_payloads)
+            if segment_payloads:
+                segment_payloads, residual_reconciliation = self._reconcile_table_residual_segments(segment_payloads)
+                if isinstance(ingestion_metadata, dict):
+                    ingestion_metadata["table_residual_reconciliation"] = residual_reconciliation
 
         dataset_card = build_dataset_card_segment_payload(upload=upload, ingestion_metadata=ingestion_metadata)
         if dataset_card:
@@ -5044,6 +6036,9 @@ class KnowledgeIngestionService:
             for payload in segment_payloads:
                 metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
                 if self._segment_is_text(metadata) and not metadata.get("is_dataset_card"):
+                    if self._payload_is_table_residual(metadata):
+                        filtered_payloads.append(payload)
+                        continue
                     if self._is_low_quality_text_chunk(metadata):
                         quality_stats["filtered"] += 1
                         continue
@@ -5384,6 +6379,425 @@ class KnowledgeIngestionService:
         if not normalized:
             return ""
         return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _payload_is_table_residual(metadata: Mapping[str, Any]) -> bool:
+        if not isinstance(metadata, Mapping):
+            return False
+        if metadata.get("table_residual"):
+            return True
+        return (
+            metadata.get("content_source") == "table_residual"
+            or metadata.get("region_role") == "table_residual"
+        )
+
+    @staticmethod
+    def _payload_is_table_row(metadata: Mapping[str, Any]) -> bool:
+        if not isinstance(metadata, Mapping):
+            return False
+        if not metadata.get("is_table_chunk"):
+            return False
+        return metadata.get("content_source") == "table_row"
+
+    @staticmethod
+    def _token_signature(text: str) -> set[str]:
+        tokens = re.findall(r"[a-z0-9]+", (text or "").lower())
+        if not tokens:
+            return set()
+        stop = {
+            "section",
+            "table",
+            "row",
+            "rows",
+            "columns",
+            "column",
+            "labels",
+            "label",
+            "identifiers",
+            "identifier",
+        }
+        signature: set[str] = set()
+        for token in tokens:
+            if len(token) < 3:
+                continue
+            if token in stop:
+                continue
+            signature.add(token)
+        return signature
+
+    @staticmethod
+    def _segment_page_number(metadata: Mapping[str, Any]) -> int | None:
+        if not isinstance(metadata, Mapping):
+            return None
+        raw_page_numbers = metadata.get("page_numbers")
+        if isinstance(raw_page_numbers, Sequence) and not isinstance(raw_page_numbers, (str, bytes)):
+            for raw_value in raw_page_numbers:
+                try:
+                    page_number = int(raw_value)
+                except (TypeError, ValueError):
+                    continue
+                if page_number > 0:
+                    return page_number
+        raw_page = metadata.get("table_page_number")
+        try:
+            page_number = int(raw_page)
+        except (TypeError, ValueError):
+            return None
+        return page_number if page_number > 0 else None
+
+    def _residual_region_key(self, metadata: Mapping[str, Any]) -> str:
+        if not isinstance(metadata, Mapping):
+            return "residual:unscoped"
+        region_key = str(metadata.get("table_residual_region_key") or "").strip()
+        if region_key:
+            return region_key
+        region_keys = metadata.get("table_residual_region_keys")
+        if isinstance(region_keys, Sequence) and not isinstance(region_keys, (str, bytes)):
+            for value in region_keys:
+                normalized = str(value or "").strip()
+                if normalized:
+                    return normalized
+        page_number = self._segment_page_number(metadata)
+        if page_number:
+            return f"p{page_number}-residual"
+        page_anchor = str(metadata.get("page_anchor") or "").strip()
+        if page_anchor:
+            return f"{page_anchor}-residual"
+        return "residual:unscoped"
+
+    def _segment_semantically_equivalent_to_table_row(
+        self,
+        *,
+        residual_text: str,
+        row_signatures_for_page: Sequence[set[str]],
+        all_row_signatures: Sequence[set[str]],
+        min_residual_coverage: float | None = None,
+        min_row_coverage: float | None = None,
+    ) -> tuple[bool, dict[str, Any] | None]:
+        residual_tokens = self._token_signature(residual_text)
+        if not residual_tokens:
+            return False, None
+        candidates = list(row_signatures_for_page) if row_signatures_for_page else list(all_row_signatures)
+        if not candidates:
+            return False, None
+        if min_residual_coverage is None:
+            min_residual_coverage = self.table_residual_equivalence_min_overlap
+        if min_row_coverage is None:
+            min_row_coverage = self.table_residual_equivalence_min_overlap
+        min_residual = max(0.0, min(1.0, float(min_residual_coverage)))
+        min_row = max(0.0, min(1.0, float(min_row_coverage)))
+        best: dict[str, Any] | None = None
+        for row_tokens in candidates:
+            if not row_tokens:
+                continue
+            shared = residual_tokens & row_tokens
+            if len(shared) < self.table_residual_equivalence_min_shared_tokens:
+                continue
+            residual_coverage = len(shared) / max(1, len(residual_tokens))
+            row_coverage = len(shared) / max(1, len(row_tokens))
+            union_count = max(1, len(residual_tokens | row_tokens))
+            jaccard = len(shared) / union_count
+            candidate = {
+                "shared_tokens": int(len(shared)),
+                "residual_tokens": int(len(residual_tokens)),
+                "row_tokens": int(len(row_tokens)),
+                "residual_coverage": round(float(residual_coverage), 4),
+                "row_coverage": round(float(row_coverage), 4),
+                "jaccard": round(float(jaccard), 4),
+            }
+            if best is None:
+                best = candidate
+            else:
+                best_key = (
+                    min(float(best["residual_coverage"]), float(best["row_coverage"])),
+                    float(best["jaccard"]),
+                    int(best["shared_tokens"]),
+                )
+                candidate_key = (
+                    min(float(candidate["residual_coverage"]), float(candidate["row_coverage"])),
+                    float(candidate["jaccard"]),
+                    int(candidate["shared_tokens"]),
+                )
+                if candidate_key > best_key:
+                    best = candidate
+            if residual_coverage >= min_residual and row_coverage >= min_row:
+                candidate["matched"] = True
+                return True, candidate
+        if best is not None:
+            best["matched"] = False
+        return False, best
+
+    def _classify_table_residual_segment_kind(self, text: str) -> str:
+        normalized = str(text or "").strip()
+        if not normalized:
+            return "unknown"
+        base_text = re.sub(r"\n?\s*Identifiers:\s.*$", "", normalized, flags=re.IGNORECASE).strip()
+        if not base_text:
+            base_text = normalized
+        tokens = self._token_signature(base_text)
+        token_count = len(tokens)
+        line_count = len([line for line in base_text.splitlines() if line.strip()])
+        key_value_pairs = len(re.findall(r"\b[^:\n]{1,40}:\s+\S+", base_text))
+        has_row_marker = "[Row]" in base_text or "\t" in base_text
+        has_sentence_punctuation = bool(re.search(r"[.!?;:]", base_text))
+        numeric_signal = self._has_numeric_table_signal(base_text)
+        if token_count <= 4 and line_count <= 2:
+            return "cell_like"
+        if has_row_marker or key_value_pairs >= 2:
+            return "row_like"
+        if token_count <= 12 and not has_sentence_punctuation:
+            return "row_like"
+        if numeric_signal and token_count <= 24 and line_count <= 4 and not has_sentence_punctuation:
+            return "row_like"
+        return "note_like"
+
+    def _compact_residual_text(self, text: str) -> tuple[str, bool]:
+        normalized = str(text or "").strip()
+        if not normalized:
+            return "", False
+        if len(normalized) <= self.table_residual_compact_max_chars:
+            return normalized, False
+        compact_segments = self._chunk_text(
+            normalized,
+            chunk_chars=self.table_residual_compact_max_chars,
+            overlap=0,
+        )
+        if compact_segments:
+            return compact_segments[0], True
+        return normalized[: self.table_residual_compact_max_chars], True
+
+    def _reconcile_table_residual_segments(
+        self,
+        segment_payloads: Sequence[Mapping[str, Any]],
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        payloads: list[dict[str, Any]] = []
+        for payload in segment_payloads:
+            text = str(payload.get("text") or "")
+            metadata = payload.get("metadata")
+            if not isinstance(metadata, dict):
+                metadata = {}
+            payloads.append({"text": text, "metadata": dict(metadata)})
+        if not payloads:
+            return [], {
+                "input_residual_segments": 0,
+                "kept_residual_segments": 0,
+                "dropped_equivalent_segments": 0,
+                "dropped_equivalent_cell_like_segments": 0,
+                "dropped_equivalent_row_like_segments": 0,
+                "dropped_equivalent_note_like_segments": 0,
+                "dropped_cap_segments": 0,
+                "regions_with_residuals": 0,
+                "equivalence_uncertain_kept_segments": 0,
+            }
+
+        row_signatures_all: list[set[str]] = []
+        row_signatures_by_page: dict[int, list[set[str]]] = {}
+        row_fingerprints_by_page: dict[int, set[str]] = {}
+        row_fingerprints_all: set[str] = set()
+        for payload in payloads:
+            metadata = payload["metadata"]
+            if not self._payload_is_table_row(metadata):
+                continue
+            text = payload["text"]
+            page_number = self._segment_page_number(metadata)
+            row_signature = self._token_signature(text)
+            if row_signature:
+                row_signatures_all.append(row_signature)
+                if page_number:
+                    row_signatures_by_page.setdefault(page_number, []).append(row_signature)
+            fingerprint = self._chunk_fingerprint(text)
+            if not fingerprint:
+                continue
+            row_fingerprints_all.add(fingerprint)
+            if page_number:
+                row_fingerprints_by_page.setdefault(page_number, set()).add(fingerprint)
+
+        residual_count = 0
+        dropped_equivalent = 0
+        dropped_equivalent_by_kind: dict[str, int] = {
+            "cell_like": 0,
+            "row_like": 0,
+            "note_like": 0,
+            "unknown": 0,
+        }
+        equivalence_uncertain_kept = 0
+        dropped_equivalence_audit: list[dict[str, Any]] = []
+
+        def _record_equivalence_drop(
+            *,
+            reason: str,
+            segment_kind: str,
+            metadata: Mapping[str, Any],
+            page_number: int | None,
+            region_key: str,
+            fingerprint: str,
+            match: Mapping[str, Any] | None = None,
+        ) -> None:
+            dropped_equivalent_by_kind.setdefault(segment_kind, 0)
+            dropped_equivalent_by_kind[segment_kind] += 1
+            if len(dropped_equivalence_audit) >= 16:
+                return
+            anchor = ""
+            anchors = metadata.get("block_anchors")
+            if isinstance(anchors, Sequence) and not isinstance(anchors, (str, bytes)):
+                for value in anchors:
+                    normalized = str(value or "").strip()
+                    if normalized:
+                        anchor = normalized
+                        break
+            event: dict[str, Any] = {
+                "reason": reason,
+                "segment_kind": segment_kind,
+                "page_number": page_number,
+                "region_key": region_key,
+                "anchor": anchor or None,
+                "fingerprint": (fingerprint[:16] if fingerprint else None),
+            }
+            if isinstance(match, Mapping):
+                event["shared_tokens"] = int(match.get("shared_tokens") or 0)
+                event["residual_coverage"] = float(match.get("residual_coverage") or 0.0)
+                event["row_coverage"] = float(match.get("row_coverage") or 0.0)
+                event["jaccard"] = float(match.get("jaccard") or 0.0)
+            dropped_equivalence_audit.append(event)
+
+        residual_groups: dict[str, list[dict[str, Any]]] = {}
+        for payload in payloads:
+            metadata = payload["metadata"]
+            if not self._payload_is_table_residual(metadata):
+                continue
+            residual_count += 1
+            page_number = self._segment_page_number(metadata)
+            residual_text = payload["text"]
+            segment_kind = self._classify_table_residual_segment_kind(residual_text)
+            metadata["table_residual_segment_kind"] = segment_kind
+            region_key = self._residual_region_key(metadata)
+            if segment_kind == "cell_like":
+                dropped_equivalent += 1
+                _record_equivalence_drop(
+                    reason="low_information_cell",
+                    segment_kind=segment_kind,
+                    metadata=metadata,
+                    page_number=page_number,
+                    region_key=region_key,
+                    fingerprint=self._chunk_fingerprint(residual_text),
+                )
+                continue
+            residual_fingerprint = self._chunk_fingerprint(residual_text)
+            if residual_fingerprint:
+                page_fingerprints = row_fingerprints_by_page.get(page_number or -1, set())
+                if residual_fingerprint in page_fingerprints or (
+                    not page_fingerprints and residual_fingerprint in row_fingerprints_all
+                ):
+                    dropped_equivalent += 1
+                    _record_equivalence_drop(
+                        reason="fingerprint_match",
+                        segment_kind=segment_kind,
+                        metadata=metadata,
+                        page_number=page_number,
+                        region_key=region_key,
+                        fingerprint=residual_fingerprint,
+                    )
+                    continue
+            page_signatures = row_signatures_by_page.get(page_number or -1, [])
+            semantic_min_residual: float | None = None
+            semantic_min_row: float | None = None
+            if segment_kind == "note_like":
+                residual_token_count = len(self._token_signature(residual_text))
+                if residual_token_count <= 16:
+                    semantic_min_residual = self.table_residual_equivalence_min_overlap
+                    semantic_min_row = self.table_residual_equivalence_min_overlap
+                else:
+                    strict = min(0.98, max(0.9, self.table_residual_equivalence_min_overlap + 0.25))
+                    semantic_min_residual = strict
+                    semantic_min_row = strict
+            equivalent, match = self._segment_semantically_equivalent_to_table_row(
+                residual_text=residual_text,
+                row_signatures_for_page=page_signatures,
+                all_row_signatures=row_signatures_all,
+                min_residual_coverage=semantic_min_residual,
+                min_row_coverage=semantic_min_row,
+            )
+            metadata["table_residual_equivalence_checked"] = True
+            if isinstance(match, Mapping):
+                metadata["table_residual_equivalence_best"] = dict(match)
+            if equivalent:
+                dropped_equivalent += 1
+                _record_equivalence_drop(
+                    reason="semantic_equivalent",
+                    segment_kind=segment_kind,
+                    metadata=metadata,
+                    page_number=page_number,
+                    region_key=region_key,
+                    fingerprint=residual_fingerprint,
+                    match=match,
+                )
+                continue
+            if isinstance(match, Mapping):
+                residual_cov = float(match.get("residual_coverage") or 0.0)
+                row_cov = float(match.get("row_coverage") or 0.0)
+                if (
+                    residual_cov >= self.table_residual_equivalence_min_overlap
+                    or row_cov >= self.table_residual_equivalence_min_overlap
+                ):
+                    metadata["table_residual_equivalence_uncertain"] = True
+                    equivalence_uncertain_kept += 1
+
+            compact_text, compacted = self._compact_residual_text(residual_text)
+            payload["text"] = compact_text
+            if compacted:
+                metadata["table_residual_compacted"] = True
+                metadata["table_residual_compact_max_chars"] = self.table_residual_compact_max_chars
+
+            metadata["table_residual_region_key"] = region_key
+            residual_groups.setdefault(region_key, []).append(payload)
+
+        kept_residual: list[dict[str, Any]] = []
+        dropped_cap = 0
+        for region_key, region_payloads in residual_groups.items():
+            def _rank(payload: Mapping[str, Any]) -> tuple[float, int, int]:
+                metadata = payload.get("metadata") if isinstance(payload.get("metadata"), Mapping) else {}
+                overlap = metadata.get("table_overlap_ratio_max") or metadata.get("table_overlap_ratio") or 0.0
+                try:
+                    overlap_score = float(overlap)
+                except (TypeError, ValueError):
+                    overlap_score = 0.0
+                text = str(payload.get("text") or "")
+                token_score = len(self._token_signature(text))
+                length_score = len(text)
+                return overlap_score, token_score, length_score
+
+            ranked = sorted(region_payloads, key=_rank, reverse=True)
+            # Coverage-first policy: once a residual segment is proven non-equivalent
+            # to indexed table rows, keep it. Overlap is a dedupe hint, not a hard
+            # suppression decision.
+            kept_residual.extend(ranked)
+
+        kept_residual_ids = {id(payload) for payload in kept_residual}
+        reconciled: list[dict[str, Any]] = []
+        for payload in payloads:
+            metadata = payload["metadata"]
+            if not self._payload_is_table_residual(metadata):
+                reconciled.append(payload)
+                continue
+            if id(payload) in kept_residual_ids:
+                reconciled.append(payload)
+        stats = {
+            "input_residual_segments": residual_count,
+            "kept_residual_segments": len(kept_residual),
+            "dropped_equivalent_segments": dropped_equivalent,
+            "dropped_equivalent_cell_like_segments": int(dropped_equivalent_by_kind.get("cell_like", 0)),
+            "dropped_equivalent_row_like_segments": int(dropped_equivalent_by_kind.get("row_like", 0)),
+            "dropped_equivalent_note_like_segments": int(dropped_equivalent_by_kind.get("note_like", 0)),
+            "dropped_cap_segments": dropped_cap,
+            "regions_with_residuals": len(residual_groups),
+            "max_per_region": self.table_residual_max_per_region,
+            "equiv_min_overlap": round(self.table_residual_equivalence_min_overlap, 4),
+            "equiv_min_shared_tokens": self.table_residual_equivalence_min_shared_tokens,
+            "equivalence_uncertain_kept_segments": equivalence_uncertain_kept,
+        }
+        if dropped_equivalence_audit:
+            stats["dropped_equivalence_audit_sample"] = dropped_equivalence_audit
+        return reconciled, stats
 
     @staticmethod
     def _representation_from_metadata(metadata: Mapping[str, Any]) -> str:
@@ -6557,12 +7971,37 @@ class KnowledgeIngestionService:
                     continue
                 anchor = block_meta.get("anchor") or f"p{page.page_number}-b{block.order_index}"
                 heading = self._sanitize_text(block.section_heading).strip() if block.section_heading else ""
+                is_table_residual = bool(
+                    block_meta.get("table_residual_candidate")
+                    or block_meta.get("table_residual")
+                    or block_meta.get("content_source") == "table_residual"
+                    or block_meta.get("region_role") == "table_residual"
+                    or block_meta.get("table_overlap_candidate")
+                    or block_meta.get("suppress_text_chunk")
+                    or block_meta.get("suppression_reason") == "table_overlap"
+                )
+                overlap_ratio = 0.0
+                try:
+                    overlap_ratio = float(block_meta.get("table_overlap_ratio") or 0.0)
+                except (TypeError, ValueError):
+                    overlap_ratio = 0.0
+                residual_reason = str(
+                    block_meta.get("table_residual_reason")
+                    or block_meta.get("table_overlap_candidate_reason")
+                    or block_meta.get("suppression_reason")
+                    or ""
+                ).strip()
+                residual_region_key = str(block_meta.get("table_region_key") or "").strip()
                 block_units.append(
                     {
                         "text": text,
                         "page_number": page.page_number,
                         "anchor": anchor,
                         "section_heading": heading,
+                        "segment_role": "table_residual" if is_table_residual else "text",
+                        "table_overlap_ratio": max(0.0, min(1.0, overlap_ratio)),
+                        "table_residual_reason": residual_reason,
+                        "table_residual_region_key": residual_region_key,
                     }
                 )
             if not block_units:
@@ -6570,14 +8009,9 @@ class KnowledgeIngestionService:
 
             current_blocks: list[dict[str, Any]] = []
             current_len = 0
+            current_role = "text"
 
-            def emit(blocks: Sequence[dict[str, Any]]) -> None:
-                if not blocks:
-                    return
-                text = "\n\n".join(entry["text"] for entry in blocks).strip()
-                if not text:
-                    return
-                text, aliases = self._inject_identifiers_into_text(text, alias_hygiene=alias_hygiene)
+            def _metadata_for_blocks(blocks: Sequence[dict[str, Any]], *, role: str) -> dict[str, Any]:
                 anchors = _dedupe([entry.get("anchor") for entry in blocks if entry.get("anchor")], anchor_limit)
                 headings = _dedupe(
                     [entry.get("section_heading") for entry in blocks if entry.get("section_heading")],
@@ -6586,49 +8020,121 @@ class KnowledgeIngestionService:
                 metadata: dict[str, Any] = {
                     "strategy": "page_blocks",
                     "index_type": "text",
-                    "content_source": "page_blocks",
-                    "region_role": "text",
                     "page_numbers": [page.page_number],
                     "page_anchor": f"p{page.page_number}",
                 }
-                if aliases:
-                    metadata.update(self._alias_metadata(aliases))
+                if role == "table_residual":
+                    overlap_values = [
+                        float(entry.get("table_overlap_ratio") or 0.0)
+                        for entry in blocks
+                        if isinstance(entry.get("table_overlap_ratio"), (int, float))
+                    ]
+                    metadata.update(
+                        {
+                            "content_source": "table_residual",
+                            "region_role": "table_residual",
+                            "table_residual": True,
+                            "search_tier": "fallback",
+                        }
+                    )
+                    if overlap_values:
+                        metadata["table_overlap_ratio_max"] = round(max(overlap_values), 4)
+                    residual_reasons = _dedupe(
+                        [entry.get("table_residual_reason") for entry in blocks if entry.get("table_residual_reason")],
+                        4,
+                    )
+                    if residual_reasons:
+                        metadata["table_residual_reasons"] = residual_reasons
+                    region_keys = _dedupe(
+                        [
+                            entry.get("table_residual_region_key")
+                            for entry in blocks
+                            if entry.get("table_residual_region_key")
+                        ],
+                        8,
+                    )
+                    if region_keys:
+                        metadata["table_residual_region_keys"] = region_keys
+                        metadata["table_residual_region_key"] = region_keys[0]
+                else:
+                    metadata.update(
+                        {
+                            "content_source": "page_blocks",
+                            "region_role": "text",
+                        }
+                    )
                 if anchors:
                     metadata["block_anchors"] = anchors
                 if headings:
                     metadata["section_headings"] = headings
+                return metadata
+
+            def emit(blocks: Sequence[dict[str, Any]], *, role: str) -> None:
+                if not blocks:
+                    return
+                text = "\n\n".join(entry["text"] for entry in blocks).strip()
+                if not text:
+                    return
+                text, aliases = self._inject_identifiers_into_text(text, alias_hygiene=alias_hygiene)
+                metadata = _metadata_for_blocks(blocks, role=role)
+                if aliases:
+                    metadata.update(self._alias_metadata(aliases))
                 segments.append({"text": text, "metadata": metadata})
 
             for unit in block_units:
+                unit_role = str(unit.get("segment_role") or "text")
+                if unit_role == "table_residual":
+                    if current_blocks:
+                        emit(current_blocks, role=current_role)
+                        current_blocks = []
+                        current_len = 0
+                    current_role = unit_role
+                    block_text = str(unit.get("text") or "")
+                    residual_pieces = self._chunk_text(block_text, chunk_chars=chunk_chars, overlap=0)
+                    if not residual_pieces:
+                        residual_pieces = [block_text]
+                    for piece in residual_pieces:
+                        normalized_piece = str(piece or "").strip()
+                        if not normalized_piece:
+                            continue
+                        piece_unit = dict(unit)
+                        piece_unit["text"] = normalized_piece
+                        rendered, aliases = self._inject_identifiers_into_text(
+                            normalized_piece,
+                            alias_hygiene=alias_hygiene,
+                        )
+                        metadata = _metadata_for_blocks([piece_unit], role=unit_role)
+                        metadata["table_residual_granularity"] = "block"
+                        if aliases:
+                            metadata.update(self._alias_metadata(aliases))
+                        segments.append({"text": rendered, "metadata": metadata})
+                    continue
+                if current_blocks and unit_role != current_role:
+                    emit(current_blocks, role=current_role)
+                    current_blocks = []
+                    current_len = 0
+                    current_role = unit_role
+
                 block_text = unit["text"]
                 if len(block_text) >= chunk_chars:
                     if current_blocks:
-                        emit(current_blocks)
+                        emit(current_blocks, role=current_role)
                         current_blocks = []
                         current_len = 0
+                    current_role = unit_role
                     for piece in self._chunk_text(block_text, chunk_chars=chunk_chars, overlap=overlap):
                         if not piece:
                             continue
                         piece, aliases = self._inject_identifiers_into_text(piece, alias_hygiene=alias_hygiene)
-                        metadata = {
-                            "strategy": "page_blocks",
-                            "index_type": "text",
-                            "content_source": "page_blocks",
-                            "region_role": "text",
-                            "page_numbers": [page.page_number],
-                            "page_anchor": f"p{page.page_number}",
-                            "block_anchors": [unit["anchor"]],
-                        }
+                        metadata = _metadata_for_blocks([unit], role=unit_role)
                         if aliases:
                             metadata.update(self._alias_metadata(aliases))
-                        if unit.get("section_heading"):
-                            metadata["section_headings"] = [unit["section_heading"]]
                         segments.append({"text": piece, "metadata": metadata})
                     continue
 
                 additional = len(block_text) + (2 if current_blocks else 0)
                 if current_blocks and current_len + additional > chunk_chars:
-                    emit(current_blocks)
+                    emit(current_blocks, role=current_role)
                     if overlap > 0:
                         carried: list[dict[str, Any]] = []
                         carried_len = 0
@@ -6644,11 +8150,13 @@ class KnowledgeIngestionService:
                         current_blocks = []
                         current_len = 0
 
+                if not current_blocks:
+                    current_role = unit_role
                 current_blocks.append(unit)
                 current_len += additional
 
             if current_blocks:
-                emit(current_blocks)
+                emit(current_blocks, role=current_role)
 
         return segments
 

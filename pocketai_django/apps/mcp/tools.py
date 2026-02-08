@@ -5397,15 +5397,10 @@ def _search_knowledge_handler(
                         combined_allowed.update(str(value) for value in in_collections if value)
         combined_upload_ids = _scope_upload_ids_to_uuids(combined_allowed)
 
-    def _tuned_limit(intent: str | None, base_limit: int | None) -> int | None:
+    def _effective_limit(base_limit: int | None) -> int | None:
+        # Agentic contract: intent classification is advisory (routing/logging),
+        # and must not override the caller's explicit result size request.
         limit_val = base_limit
-        if intent == "identifier":
-            limit_val = min(limit_val or 5, 4)
-        elif intent == "table":
-            # Table-heavy queries benefit from a slightly higher floor, but must
-            # respect the single source of truth for LLM-visible evidence.
-            floor = min(6, MCP_PROMPT_MAX_SNIPPETS_CAP)
-            limit_val = min(MCP_PROMPT_MAX_SNIPPETS_CAP, max(limit_val or 5, floor))
         if limit_val is not None:
             limit_val = max(1, min(int(limit_val), MCP_PROMPT_MAX_SNIPPETS_CAP))
         return limit_val
@@ -5498,7 +5493,7 @@ def _search_knowledge_handler(
             "المجموع",
         )
         aggregation_query = any(keyword in normalized_query for keyword in aggregation_keywords)
-        limit_for_run = limit_override if limit_override is not None else _tuned_limit(intent, requested_limit)
+        limit_for_run = limit_override if limit_override is not None else _effective_limit(requested_limit)
         is_refined_query = False  # Track if auto-refinement was applied (prevents loops)
         search_cache_key = _search_cache_key(
             query_text,
@@ -6171,7 +6166,7 @@ def _search_knowledge_handler(
     for idx, query_text in enumerate(queries):
         intent_info = _query_intent(query_text)
         intent = intent_info.get("intent")
-        limit_for_run = _tuned_limit(intent, requested_limit)
+        limit_for_run = _effective_limit(requested_limit)
         search_cache_key = _search_cache_key(
             query_text,
             limit_for_run,

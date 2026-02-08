@@ -12,6 +12,7 @@ from django.test import SimpleTestCase, TestCase, override_settings
 from apps.accounts.models import (
     BusinessProfile,
     KnowledgeAlias,
+    KnowledgeBlockType,
     KnowledgeEntity,
     KnowledgeSourceType,
     KnowledgeStatus,
@@ -25,7 +26,13 @@ from apps.accounts.models import (
     RegistrationSession,
     User,
 )
-from apps.knowledge.knowledge_ingestion import KnowledgeIngestionService
+from apps.knowledge.knowledge_ingestion import (
+    KnowledgeIngestionService,
+    PageBlockPayload,
+    PageLayout,
+    TablePayload,
+    TableRowPayload,
+)
 from core.tenancy import tenant_context
 
 try:
@@ -56,6 +63,544 @@ class KnowledgeIngestionChunkingTests(SimpleTestCase):
         first_line = segments[1].splitlines()[0]
         self.assertNotEqual(first_line, "ee")
         self.assertTrue(segments[1].startswith("Free") or segments[1].startswith("BBBBB"))
+
+    def test_numeric_signal_detection_is_domain_agnostic(self) -> None:
+        self.assertTrue(
+            KnowledgeIngestionService._has_numeric_table_signal("Latency P95 320 ms P99 870 ms")
+        )
+        self.assertTrue(
+            KnowledgeIngestionService._has_numeric_table_signal("Seat capacity 120 units")
+        )
+        self.assertTrue(
+            KnowledgeIngestionService._has_numeric_table_signal("Window 2026-02-08 14:30")
+        )
+        self.assertFalse(
+            KnowledgeIngestionService._has_numeric_table_signal("General policy overview and notes")
+        )
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_pdf_table_overlap_blocks_become_residual_segments_for_coverage(self, _build_embeddings) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        page = PageLayout(
+            page_number=1,
+            width=600.0,
+            height=800.0,
+            rotation=0,
+            text_density=0.1,
+            has_ocr_content=False,
+            content_type="application/pdf",
+            blocks=[
+                PageBlockPayload(
+                    block_type=KnowledgeBlockType.PARAGRAPH,
+                    order_index=0,
+                    text="Annual fee EGP 40",
+                    bbox={"x0": 100.0, "y0": 100.0, "x1": 300.0, "y1": 140.0},
+                    metadata={},
+                ),
+                PageBlockPayload(
+                    block_type=KnowledgeBlockType.PARAGRAPH,
+                    order_index=1,
+                    text="General terms apply outside the fee table.",
+                    bbox={"x0": 20.0, "y0": 720.0, "x1": 280.0, "y1": 760.0},
+                    metadata={},
+                ),
+            ],
+            metadata={},
+        )
+        table = TablePayload(
+            order_index=1,
+            title="Fees",
+            section_heading="",
+            page_number=1,
+            bbox={"x0": 90.0, "y0": 90.0, "x1": 560.0, "y1": 610.0},
+        )
+
+        annotated_pages, diagnostics = service._annotate_pdf_blocks_with_table_overlap([page], [table])
+
+        self.assertEqual(diagnostics.get("suppressed_text_blocks"), 1)
+        self.assertEqual(diagnostics.get("overlapping_text_blocks"), 1)
+        first_meta = annotated_pages[0].blocks[0].metadata
+        second_meta = annotated_pages[0].blocks[1].metadata
+        self.assertTrue(first_meta.get("table_overlap_candidate"))
+        self.assertEqual(first_meta.get("table_overlap_candidate_reason"), "table_overlap")
+        self.assertFalse(first_meta.get("suppress_text_chunk", False))
+        self.assertFalse(second_meta.get("suppress_text_chunk", False))
+
+        segments = service._build_text_segments_from_blocks(annotated_pages)
+        combined = "\n".join(str(segment.get("text") or "") for segment in segments)
+        self.assertIn("Annual fee EGP 40", combined)
+        self.assertIn("General terms apply", combined)
+        residual_segments = [seg for seg in segments if (seg.get("metadata") or {}).get("table_residual")]
+        self.assertTrue(residual_segments)
+        residual_text = "\n".join(str(segment.get("text") or "") for segment in residual_segments)
+        self.assertIn("Annual fee EGP 40", residual_text)
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_pdf_non_overlapping_blocks_remain_chunked(self, _build_embeddings) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        page = PageLayout(
+            page_number=1,
+            width=600.0,
+            height=800.0,
+            rotation=0,
+            text_density=0.1,
+            has_ocr_content=False,
+            content_type="application/pdf",
+            blocks=[
+                PageBlockPayload(
+                    block_type=KnowledgeBlockType.PARAGRAPH,
+                    order_index=0,
+                    text="Frequently asked questions for branch services.",
+                    bbox={"x0": 25.0, "y0": 680.0, "x1": 420.0, "y1": 740.0},
+                    metadata={},
+                ),
+            ],
+            metadata={},
+        )
+        table = TablePayload(
+            order_index=1,
+            title="Fees",
+            section_heading="",
+            page_number=1,
+            bbox={"x0": 90.0, "y0": 90.0, "x1": 560.0, "y1": 610.0},
+        )
+
+        annotated_pages, diagnostics = service._annotate_pdf_blocks_with_table_overlap([page], [table])
+        self.assertEqual(diagnostics.get("suppressed_text_blocks"), 0)
+        self.assertFalse(annotated_pages[0].blocks[0].metadata.get("suppress_text_chunk", False))
+
+        segments = service._build_text_segments_from_blocks(annotated_pages)
+        self.assertTrue(segments)
+        self.assertIn("Frequently asked questions", segments[0].get("text") or "")
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_pdf_table_regions_merge_fragmented_boxes_without_merging_far_tables(
+        self,
+        _build_embeddings,
+    ) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        page = PageLayout(
+            page_number=1,
+            width=600.0,
+            height=800.0,
+            rotation=0,
+            text_density=0.1,
+            has_ocr_content=False,
+            content_type="application/pdf",
+            blocks=[],
+            metadata={},
+        )
+        tables = [
+            TablePayload(
+                order_index=1,
+                title="Fees (fragment 1)",
+                section_heading="",
+                page_number=1,
+                bbox={"x0": 48.0, "y0": 100.0, "x1": 560.0, "y1": 220.0},
+            ),
+            TablePayload(
+                order_index=2,
+                title="Fees (fragment 2)",
+                section_heading="",
+                page_number=1,
+                bbox={"x0": 52.0, "y0": 224.0, "x1": 558.0, "y1": 360.0},
+            ),
+            TablePayload(
+                order_index=3,
+                title="Separate mini table",
+                section_heading="",
+                page_number=1,
+                bbox={"x0": 60.0, "y0": 620.0, "x1": 260.0, "y1": 700.0},
+            ),
+        ]
+
+        regions = service._table_regions_by_page(tables, pages=[page]).get(1, [])
+        self.assertEqual(len(regions), 2)
+        merged_top = regions[0]
+        self.assertLessEqual(float(merged_top["x0"]), 48.0)
+        self.assertGreaterEqual(float(merged_top["x1"]), 558.0)
+        self.assertLessEqual(float(merged_top["y0"]), 100.0)
+        self.assertGreaterEqual(float(merged_top["y1"]), 360.0)
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_table_residual_blocks_are_tagged_as_fallback_segments(self, _build_embeddings) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        page = PageLayout(
+            page_number=1,
+            width=600.0,
+            height=800.0,
+            rotation=0,
+            text_density=0.1,
+            has_ocr_content=False,
+            content_type="application/pdf",
+            blocks=[
+                PageBlockPayload(
+                    block_type=KnowledgeBlockType.PARAGRAPH,
+                    order_index=0,
+                    text="Cash deposit with same day value date (T+3 customers) 0,3% minimum EGP 100",
+                    # 2px below the table region to exercise near-region residual tagging.
+                    bbox={"x0": 90.0, "y0": 612.0, "x1": 560.0, "y1": 640.0},
+                    metadata={},
+                ),
+                PageBlockPayload(
+                    block_type=KnowledgeBlockType.PARAGRAPH,
+                    order_index=1,
+                    text="General branch notes and disclaimers for customers.",
+                    bbox={"x0": 40.0, "y0": 700.0, "x1": 460.0, "y1": 740.0},
+                    metadata={},
+                ),
+            ],
+            metadata={},
+        )
+        table = TablePayload(
+            order_index=1,
+            title="Fees",
+            section_heading="",
+            page_number=1,
+            bbox={"x0": 80.0, "y0": 80.0, "x1": 570.0, "y1": 610.0},
+        )
+
+        annotated_pages, diagnostics = service._annotate_pdf_blocks_with_table_overlap([page], [table])
+        self.assertEqual(diagnostics.get("table_residual_blocks"), 1)
+
+        residual_meta = annotated_pages[0].blocks[0].metadata
+        generic_meta = annotated_pages[0].blocks[1].metadata
+        self.assertTrue(residual_meta.get("table_residual_candidate"))
+        self.assertEqual(residual_meta.get("search_tier"), "fallback")
+        self.assertFalse(residual_meta.get("suppress_text_chunk", False))
+        self.assertFalse(generic_meta.get("table_residual_candidate", False))
+
+        segments = service._build_text_segments_from_blocks(annotated_pages)
+        residual_segments = [seg for seg in segments if (seg.get("metadata") or {}).get("table_residual")]
+        self.assertTrue(residual_segments)
+        self.assertEqual((residual_segments[0].get("metadata") or {}).get("search_tier"), "fallback")
+        self.assertEqual((residual_segments[0].get("metadata") or {}).get("content_source"), "table_residual")
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_overlap_candidates_emit_residual_segments_per_block(self, _build_embeddings) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        page = PageLayout(
+            page_number=1,
+            width=600.0,
+            height=800.0,
+            rotation=0,
+            text_density=0.1,
+            has_ocr_content=False,
+            content_type="application/pdf",
+            blocks=[
+                PageBlockPayload(
+                    block_type=KnowledgeBlockType.PARAGRAPH,
+                    order_index=0,
+                    text="Cash deposit with same day value date 0,2% minimum EGP 100.",
+                    bbox={"x0": 120.0, "y0": 120.0, "x1": 500.0, "y1": 150.0},
+                    metadata={},
+                ),
+                PageBlockPayload(
+                    block_type=KnowledgeBlockType.PARAGRAPH,
+                    order_index=1,
+                    text="In case of weekend submissions, one extra working day applies.",
+                    bbox={"x0": 120.0, "y0": 170.0, "x1": 560.0, "y1": 210.0},
+                    metadata={},
+                ),
+            ],
+            metadata={},
+        )
+        table = TablePayload(
+            order_index=1,
+            title="Fees",
+            section_heading="",
+            page_number=1,
+            bbox={"x0": 90.0, "y0": 90.0, "x1": 570.0, "y1": 610.0},
+        )
+
+        annotated_pages, _ = service._annotate_pdf_blocks_with_table_overlap([page], [table])
+        segments = service._build_text_segments_from_blocks(annotated_pages)
+        residual_segments = [seg for seg in segments if (seg.get("metadata") or {}).get("table_residual")]
+
+        self.assertEqual(len(residual_segments), 2)
+        self.assertTrue(
+            all((seg.get("metadata") or {}).get("table_residual_granularity") == "block" for seg in residual_segments)
+        )
+        rendered = "\n".join(seg.get("text") or "" for seg in residual_segments)
+        self.assertIn("same day value date", rendered)
+        self.assertIn("extra working day applies", rendered)
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_note_like_residual_is_not_dropped_by_row_subset_overlap(self, _build_embeddings) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        segment_payloads = [
+            {
+                "text": "[Table] Fees\n[Row] 18\nService: Cash deposit with same day value date\nTariff: 0,2% (With minimum EGP 100 or Equivalent and with no maximum)",
+                "metadata": {
+                    "is_table_chunk": True,
+                    "index_type": "table",
+                    "content_source": "table_row",
+                    "table_page_number": 1,
+                    "table_row_index": 18,
+                },
+            },
+            {
+                "text": "In case cash deposits are made after 2:00 pm, Saturdays or public holidays, an extra working day will be counted to the applied value date according to account currency.",
+                "metadata": {
+                    "index_type": "text",
+                    "content_source": "table_residual",
+                    "region_role": "table_residual",
+                    "table_residual": True,
+                    "table_residual_region_key": "p1-r0",
+                    "page_numbers": [1],
+                    "table_overlap_ratio_max": 0.88,
+                },
+            },
+        ]
+
+        reconciled, stats = service._reconcile_table_residual_segments(segment_payloads)
+        residual_reconciled = [
+            payload for payload in reconciled if (payload.get("metadata") or {}).get("table_residual")
+        ]
+
+        self.assertEqual(stats.get("input_residual_segments"), 1)
+        self.assertEqual(stats.get("dropped_equivalent_segments"), 0)
+        self.assertEqual(stats.get("kept_residual_segments"), 1)
+        self.assertEqual(len(residual_reconciled), 1)
+        residual_meta = residual_reconciled[0].get("metadata") or {}
+        self.assertEqual(residual_meta.get("table_residual_segment_kind"), "note_like")
+        self.assertTrue(residual_meta.get("table_residual_equivalence_checked"))
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_cell_like_residual_segments_are_dropped(self, _build_embeddings) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        segment_payloads = [
+            {
+                "text": "[Table] Fees\n[Row] 1\nService: Cash Withdrawal/Deposit over the counter\nPrime: EGP 40",
+                "metadata": {
+                    "is_table_chunk": True,
+                    "index_type": "table",
+                    "content_source": "table_row",
+                    "table_page_number": 1,
+                    "table_row_index": 1,
+                },
+            },
+            {
+                "text": "Free",
+                "metadata": {
+                    "index_type": "text",
+                    "content_source": "table_residual",
+                    "region_role": "table_residual",
+                    "table_residual": True,
+                    "table_residual_region_key": "p1-r0",
+                    "page_numbers": [1],
+                    "table_overlap_ratio_max": 0.9,
+                },
+            },
+        ]
+
+        reconciled, stats = service._reconcile_table_residual_segments(segment_payloads)
+        residual_reconciled = [
+            payload for payload in reconciled if (payload.get("metadata") or {}).get("table_residual")
+        ]
+
+        self.assertEqual(stats.get("input_residual_segments"), 1)
+        self.assertEqual(stats.get("dropped_equivalent_segments"), 1)
+        self.assertEqual(stats.get("dropped_equivalent_cell_like_segments"), 1)
+        self.assertEqual(stats.get("kept_residual_segments"), 0)
+        self.assertFalse(residual_reconciled)
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_table_residual_reconciliation_dedupes_equivalent_rows_and_preserves_unique_segments(
+        self,
+        _build_embeddings,
+    ) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        segment_payloads = [
+            {
+                "text": "[Table] Fees\n[Row] 1\nService: Cash deposit with same day value date\nTariff: 0,3% minimum EGP 100",
+                "metadata": {
+                    "is_table_chunk": True,
+                    "index_type": "table",
+                    "content_source": "table_row",
+                    "table_page_number": 1,
+                    "table_row_index": 1,
+                },
+            },
+            {
+                "text": "Cash deposit with same day value date Tariff 0,3% minimum EGP 100",
+                "metadata": {
+                    "index_type": "text",
+                    "content_source": "table_residual",
+                    "region_role": "table_residual",
+                    "table_residual": True,
+                    "table_residual_region_key": "p1-r0",
+                    "page_numbers": [1],
+                    "table_overlap_ratio_max": 0.18,
+                },
+            },
+            {
+                "text": "Cash deposit T+3 customers 0,3% minimum EGP 100 equivalent no max",
+                "metadata": {
+                    "index_type": "text",
+                    "content_source": "table_residual",
+                    "region_role": "table_residual",
+                    "table_residual": True,
+                    "table_residual_region_key": "p1-r0",
+                    "page_numbers": [1],
+                    "table_overlap_ratio_max": 0.11,
+                },
+            },
+            {
+                "text": "Cash deposit T+5 customers 0,5% minimum EGP 100 equivalent no max",
+                "metadata": {
+                    "index_type": "text",
+                    "content_source": "table_residual",
+                    "region_role": "table_residual",
+                    "table_residual": True,
+                    "table_residual_region_key": "p1-r0",
+                    "page_numbers": [1],
+                    "table_overlap_ratio_max": 0.27,
+                },
+            },
+            {
+                "text": "Cost per Bag (EGP 70,000) Fee EGP 14",
+                "metadata": {
+                    "index_type": "text",
+                    "content_source": "table_residual",
+                    "region_role": "table_residual",
+                    "table_residual": True,
+                    "table_residual_region_key": "p1-r1",
+                    "page_numbers": [1],
+                    "table_overlap_ratio_max": 0.22,
+                },
+            },
+        ]
+
+        reconciled, stats = service._reconcile_table_residual_segments(segment_payloads)
+        residual_reconciled = [
+            payload for payload in reconciled if (payload.get("metadata") or {}).get("table_residual")
+        ]
+
+        self.assertEqual(stats.get("input_residual_segments"), 4)
+        self.assertEqual(stats.get("dropped_equivalent_segments"), 1)
+        self.assertEqual(stats.get("dropped_cap_segments"), 0)
+        self.assertEqual(stats.get("kept_residual_segments"), 3)
+        self.assertEqual(len(residual_reconciled), 3)
+        region_keys = {(payload.get("metadata") or {}).get("table_residual_region_key") for payload in residual_reconciled}
+        self.assertEqual(region_keys, {"p1-r0", "p1-r1"})
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_auto_selection_overrides_fragmented_heuristic_when_non_heuristic_is_viable(
+        self,
+        _build_embeddings,
+    ) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+
+        heuristic_tables = [
+            TablePayload(
+                order_index=i + 1,
+                title="EGP",
+                section_heading="",
+                page_number=1,
+                bbox={"x0": 70.0 + (i * 5.0), "y0": 620.0 + (i * 40.0), "x1": 380.0, "y1": 650.0 + (i * 40.0)},
+                rows=[
+                    TableRowPayload(
+                        row_index=1,
+                        page_number=1,
+                        raw_text=f"row-{i + 1}",
+                        metadata={"row_type": "data"},
+                    )
+                ],
+                metadata={"detected_via": "heuristic"},
+            )
+            for i in range(4)
+        ]
+        geometry_table = TablePayload(
+            order_index=1,
+            title="Over the counter in branch Fees & Charges",
+            section_heading="",
+            page_number=1,
+            bbox={"x0": 0.0, "y0": 0.0, "x1": 1196.0, "y1": 989.0},
+            rows=[
+                TableRowPayload(
+                    row_index=i + 1,
+                    page_number=1,
+                    raw_text=f"data-row-{i + 1}",
+                    metadata={"row_type": "data"},
+                )
+                for i in range(19)
+            ],
+            metadata={"detected_via": "geometry"},
+        )
+        candidates = {
+            "heuristic": heuristic_tables,
+            "geometry": [geometry_table],
+        }
+
+        selected, tables, diag = service._select_table_candidates(candidates)
+
+        self.assertEqual(selected, "geometry")
+        self.assertEqual(len(tables), 1)
+        self.assertTrue(diag.get("heuristic_override_applied"))
+        self.assertEqual(diag.get("heuristic_override_from"), "heuristic")
+        self.assertEqual(diag.get("heuristic_override_to"), "geometry")
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_auto_selection_keeps_heuristic_for_normal_multi_table_layout(
+        self,
+        _build_embeddings,
+    ) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+
+        heuristic_tables = []
+        for i, title in enumerate(["Retail Fees", "Corporate Fees", "Loan Fees"]):
+            heuristic_tables.append(
+                TablePayload(
+                    order_index=i + 1,
+                    title=title,
+                    section_heading="",
+                    page_number=1,
+                    bbox={
+                        "x0": 40.0,
+                        "y0": 80.0 + (i * 180.0),
+                        "x1": 560.0,
+                        "y1": 220.0 + (i * 180.0),
+                    },
+                    rows=[
+                        TableRowPayload(
+                            row_index=row_index + 1,
+                            page_number=1,
+                            raw_text=f"{title} row {row_index + 1}",
+                            metadata={"row_type": "data"},
+                        )
+                        for row_index in range(3)
+                    ],
+                    metadata={"detected_via": "heuristic"},
+                )
+            )
+
+        geometry_table = TablePayload(
+            order_index=1,
+            title="Document snapshot",
+            section_heading="",
+            page_number=1,
+            bbox={"x0": 60.0, "y0": 60.0, "x1": 360.0, "y1": 180.0},
+            rows=[
+                TableRowPayload(
+                    row_index=row_index + 1,
+                    page_number=1,
+                    raw_text=f"snapshot row {row_index + 1}",
+                    metadata={"row_type": "data"},
+                )
+                for row_index in range(4)
+            ],
+            metadata={"detected_via": "geometry"},
+        )
+
+        candidates = {
+            "heuristic": heuristic_tables,
+            "geometry": [geometry_table],
+        }
+        selected, _, diag = service._select_table_candidates(candidates)
+
+        self.assertEqual(selected, "heuristic")
+        self.assertFalse(diag.get("heuristic_override_applied"))
 
 
 class KnowledgeIngestionJsonTests(TestCase):
