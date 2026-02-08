@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from unittest import mock
 
 from django.core.cache import cache
@@ -19,7 +20,13 @@ from apps.accounts.models import (
     RegistrationSession,
     User,
 )
-from apps.rag.ai_orchestrator import ChunkResult, KnowledgeSearchService, QueryNormalizer
+from apps.rag.ai_orchestrator import (
+    AliasSearchResult,
+    ChunkResult,
+    KnowledgeSearchService,
+    KnowledgeSnippet,
+    QueryNormalizer,
+)
 from core.tenancy import tenant_context
 
 
@@ -203,48 +210,49 @@ class KnowledgeSearchServiceTableTests(TestCase):
             status=KnowledgeStatus.ACTIVE,
             display_name="Pricing Sheet",
         )
-        self.table = KnowledgeUploadTable.objects.create(
-            upload=self.upload,
-            title="Card Pricing",
-            section_heading="pricing",
-            order_index=1,
-            column_schema=["plan", "annual fee"],
-            metadata={"sheet_name": "Plans"},
-        )
-        self.row = KnowledgeUploadTableRow.objects.create(
-            table=self.table,
-            row_index=1,
-            raw_text="Gold plan annual fee 199",
-            metadata={},
-        )
-        KnowledgeUploadTableCell.objects.create(
-            table=self.table,
-            row=self.row,
-            column_index=0,
-            column_key="plan",
-            raw_text="Gold",
-        )
-        KnowledgeUploadTableCell.objects.create(
-            table=self.table,
-            row=self.row,
-            column_index=1,
-            column_key="annual fee",
-            raw_text="$199",
-        )
-        self.row_chunk = KnowledgeUploadChunk.objects.create(
-            upload=self.upload,
-            business_profile=self.business,
-            chunk_index=0,
-            content="[Table] Card Pricing\n[Row] 1\nplan: Gold\nannual fee: $199",
-            metadata={
-                "is_table_chunk": True,
-                "table_id": str(self.table.id),
-                "table_chunk_role": "row",
-                "table_row_index": self.row.row_index,
-                "table_page_number": 1,
-                "index_type": "table",
-            },
-        )
+        with tenant_context(self.business.id):
+            self.table = KnowledgeUploadTable.objects.create(
+                upload=self.upload,
+                title="Card Pricing",
+                section_heading="pricing",
+                order_index=1,
+                column_schema=["plan", "annual fee"],
+                metadata={"sheet_name": "Plans"},
+            )
+            self.row = KnowledgeUploadTableRow.objects.create(
+                table=self.table,
+                row_index=1,
+                raw_text="Gold plan annual fee 199",
+                metadata={},
+            )
+            KnowledgeUploadTableCell.objects.create(
+                table=self.table,
+                row=self.row,
+                column_index=0,
+                column_key="plan",
+                raw_text="Gold",
+            )
+            KnowledgeUploadTableCell.objects.create(
+                table=self.table,
+                row=self.row,
+                column_index=1,
+                column_key="annual fee",
+                raw_text="$199",
+            )
+            self.row_chunk = KnowledgeUploadChunk.objects.create(
+                upload=self.upload,
+                business_profile=self.business,
+                chunk_index=0,
+                content="[Table] Card Pricing\n[Row] 1\nplan: Gold\nannual fee: $199",
+                metadata={
+                    "is_table_chunk": True,
+                    "table_id": str(self.table.id),
+                    "table_chunk_role": "row",
+                    "table_row_index": self.row.row_index,
+                    "table_page_number": 1,
+                    "index_type": "table",
+                },
+            )
 
     @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
     def test_table_direct_path_returns_row_snippet(self, _build_embeddings) -> None:
@@ -303,6 +311,101 @@ class KnowledgeSearchServiceTableTests(TestCase):
         self.assertTrue(result.snippets)
         self.assertEqual(result.diagnostics.get("index_route"), "table_specific_fallback_table")
 
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_parallel_rrf_blends_text_context_hits(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        with tenant_context(self.business.id):
+            text_chunk = KnowledgeUploadChunk.objects.create(
+                upload=self.upload,
+                business_profile=self.business,
+                chunk_index=9,
+                content="Gold plan annual fee details with full textual context.",
+                metadata={"index_type": "text"},
+            )
+        table_hit = ChunkResult(chunk=self.row_chunk, source_stage="hybrid")
+        text_hit = ChunkResult(chunk=text_chunk, source_stage="hybrid")
+        vector_table_snippet = KnowledgeSnippet(
+            id=uuid.uuid4(),
+            title="Vector Table",
+            summary="table vector",
+            source="hybrid",
+            upload_id=self.upload.id,
+            chunk_id=self.row_chunk.id,
+            chunk_index=self.row_chunk.chunk_index,
+            is_table_chunk=True,
+            table_id=str(self.table.id),
+        )
+        context_text_snippet = KnowledgeSnippet(
+            id=uuid.uuid4(),
+            title="Context Text",
+            summary="text context",
+            source="hybrid",
+            upload_id=self.upload.id,
+            chunk_id=text_chunk.id,
+            chunk_index=text_chunk.chunk_index,
+            is_table_chunk=False,
+        )
+        table_direct_snippet = KnowledgeSnippet(
+            id=uuid.uuid4(),
+            title="Table Direct",
+            summary="table direct",
+            source="table_direct",
+            upload_id=self.upload.id,
+            chunk_id=self.row_chunk.id,
+            chunk_index=self.row_chunk.chunk_index,
+            is_table_chunk=True,
+            table_id=str(self.table.id),
+        )
+        table_context = {
+            "has_intent": True,
+            "comprehensive_intent": False,
+            "query_classification": None,
+            "matched_columns": set(),
+            "matched_columns_query": set(),
+            "matched_columns_tokens": set(),
+            "matched_columns_specific": set(),
+            "matched_row_labels": set(),
+            "matched_keywords": set(),
+            "numeric_intent": False,
+            "available_columns": set(),
+            "semantic_columns": set(),
+            "matched_column_count": 0,
+            "query_tokens": {"gold", "annual", "fee"},
+            "specific_tokens": set(),
+            "table_dominant": True,
+            "table_upload_ratio": 1.0,
+            "table_count": 1,
+            "table_uploads": 1,
+            "allow_generic": True,
+        }
+        captured: dict[str, list[KnowledgeSnippet]] = {}
+
+        def _capture_rrf(*, vector_snippets, table_snippets, k=60):
+            captured["vector"] = list(vector_snippets)
+            captured["table"] = list(table_snippets)
+            return list(vector_snippets) + list(table_snippets)
+
+        with (
+            mock.patch.object(service, "_table_query_context", return_value=table_context),
+            mock.patch.object(service, "_business_has_tables", return_value=True),
+            mock.patch.object(service, "search_by_alias", return_value=AliasSearchResult(tuple(), {})),
+            mock.patch.object(service, "_chunk_hits", return_value=(table_hit, text_hit)),
+            mock.patch.object(service, "_table_search_snippets", return_value=(table_direct_snippet,)),
+            mock.patch.object(service, "_search_chunks", side_effect=[(vector_table_snippet,), (context_text_snippet,)]),
+            mock.patch.object(service, "_rrf_fusion_snippets", side_effect=_capture_rrf),
+            mock.patch.object(service, "_snippet_rerank", side_effect=lambda snippets, **_: (tuple(snippets), 0)),
+        ):
+            result = service.search(
+                business_profile=self.business,
+                query="What is the annual fee for Gold plan?",
+                limit=5,
+            )
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.diagnostics.get("path"), "parallel_rrf")
+        self.assertEqual(result.diagnostics.get("rrf_context_count"), 1)
+        self.assertTrue(any(not snippet.is_table_chunk for snippet in captured.get("vector", [])))
+
 
 class KnowledgeSearchServiceRegressionTests(TestCase):
     def setUp(self) -> None:
@@ -344,6 +447,54 @@ class KnowledgeSearchServiceRegressionTests(TestCase):
         self.assertEqual(result.status, "ok")
         self.assertTrue(any(snippet.chunk_id == chunk.id for snippet in result.snippets))
         self.assertEqual(result.diagnostics.get("path"), "hybrid")
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_base_queryset_keeps_chunks_with_missing_search_tier(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        upload = KnowledgeUpload.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            source_type=KnowledgeSourceType.FILE,
+            status=KnowledgeStatus.ACTIVE,
+            display_name="Tier Coverage",
+        )
+        with tenant_context(self.business.id):
+            missing_tier_chunk = KnowledgeUploadChunk.objects.create(
+                upload=upload,
+                business_profile=self.business,
+                chunk_index=0,
+                content="Plain text chunk with missing search_tier.",
+                metadata={"index_type": "text"},
+            )
+            drill_down_chunk = KnowledgeUploadChunk.objects.create(
+                upload=upload,
+                business_profile=self.business,
+                chunk_index=1,
+                content="Table drill row chunk.",
+                metadata={"index_type": "table", "search_tier": "drill_down", "is_table_chunk": True},
+            )
+            primary_table_chunk = KnowledgeUploadChunk.objects.create(
+                upload=upload,
+                business_profile=self.business,
+                chunk_index=2,
+                content="Primary table summary chunk.",
+                metadata={"index_type": "table", "search_tier": "primary", "is_table_chunk": True},
+            )
+
+        with tenant_context(self.business.id):
+            chunk_ids = set(service._base_chunk_queryset(self.business).values_list("id", flat=True))
+
+        self.assertIn(missing_tier_chunk.id, chunk_ids)
+        self.assertIn(primary_table_chunk.id, chunk_ids)
+        self.assertNotIn(drill_down_chunk.id, chunk_ids)
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_table_intent_not_triggered_by_generic_fee_word_without_table_signals(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        traits = service.analyze_query("What is the fee for this?")
+        with tenant_context(self.business.id):
+            table_context = service._table_query_context(self.business, traits)
+        self.assertFalse(table_context.get("has_intent"))
 
     @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
     def test_chatty_plan_query_hits_hybrid(self, _build_embeddings) -> None:

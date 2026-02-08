@@ -3013,10 +3013,11 @@ def _serialize_snippets(snippets: Sequence[object]) -> list[dict[str, object]]:
     seen: set[tuple[str, str | None]] = set()
     deduped: list[dict[str, object]] = []
     for entry in payloads:
+        evidence_group_id = str(entry.get("evidence_group_id") or "").strip()
         chunk_id = str(entry.get("chunk_id") or "").strip()
         entry_id = str(entry.get("id") or "").strip()
         upload_id = str(entry.get("upload_id") or "").strip() or None
-        identity = chunk_id or entry_id
+        identity = evidence_group_id or chunk_id or entry_id
         if not identity:
             deduped.append(entry)
             continue
@@ -4072,6 +4073,60 @@ def _convert_to_agentic_search_response(
             return f"upload:{upload_id}"
         return f"fallback:{sha256_hex(json.dumps(dict(snippet), sort_keys=True, default=str)[:800])}"
 
+    def _evidence_group_key(snippet: Mapping[str, object]) -> str:
+        evidence_group_id = str(snippet.get("evidence_group_id") or "").strip()
+        if evidence_group_id:
+            return f"evidence:{evidence_group_id}"
+        return _anchor_key(snippet)
+
+    def _representation(snippet: Mapping[str, object]) -> str:
+        raw = str(snippet.get("representation") or "").strip().lower()
+        if raw in {"text", "table", "json"}:
+            return raw
+        if bool(snippet.get("is_table_chunk")):
+            return "table"
+        if str(snippet.get("entity_type") or "").strip():
+            return "json"
+        return "text"
+
+    def _evidence_tokens(text: str) -> set[str]:
+        normalized = re.sub(r"[^a-z0-9%$ ]+", " ", (text or "").lower())
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        if not normalized:
+            return set()
+        return {
+            token
+            for token in normalized.split(" ")
+            if token and (len(token) >= 3 or token.isdigit())
+        }
+
+    def _evidence_conflict(snippets_for_group: Sequence[Mapping[str, object]]) -> bool:
+        if len(snippets_for_group) < 2:
+            return False
+        by_representation: dict[str, Mapping[str, object]] = {}
+        for snippet in snippets_for_group:
+            by_representation.setdefault(_representation(snippet), snippet)
+        if len(by_representation) < 2:
+            return False
+        reps = list(by_representation.keys())
+        for i, left_rep in enumerate(reps):
+            for right_rep in reps[i + 1 :]:
+                left = by_representation[left_rep]
+                right = by_representation[right_rep]
+                left_text = str(left.get("content") or left.get("summary") or "")
+                right_text = str(right.get("content") or right.get("summary") or "")
+                left_tokens = _evidence_tokens(left_text)
+                right_tokens = _evidence_tokens(right_text)
+                if min(len(left_tokens), len(right_tokens)) < 4:
+                    continue
+                union = left_tokens | right_tokens
+                if not union:
+                    continue
+                overlap = len(left_tokens & right_tokens) / len(union)
+                if overlap < 0.25:
+                    return True
+        return False
+
     def _coerce_int(value: object) -> int | None:
         if value is None:
             return None
@@ -4155,14 +4210,20 @@ def _convert_to_agentic_search_response(
     table_direct_present = any(_is_table_direct(snippet) for snippet in raw_snippets)
     candidate_snippets = raw_snippets
 
-    seen_anchors: set[str] = set()
+    seen_evidence_keys: set[str] = set()
     planned_snippets: list[Mapping[str, object]] = []
+    evidence_variants: dict[str, list[Mapping[str, object]]] = defaultdict(list)
+    conflict_keys: set[str] = set()
     for snippet in candidate_snippets:
-        key = _anchor_key(snippet)
-        if key in seen_anchors:
+        key = _evidence_group_key(snippet)
+        evidence_variants[key].append(snippet)
+        if key in seen_evidence_keys:
             continue
-        seen_anchors.add(key)
+        seen_evidence_keys.add(key)
         planned_snippets.append(snippet)
+    for key, group_snippets in evidence_variants.items():
+        if _evidence_conflict(group_snippets):
+            conflict_keys.add(key)
 
     table_row_ref_counts: Counter[str] = Counter()
     total_table_row_candidates = 0
@@ -4262,11 +4323,15 @@ def _convert_to_agentic_search_response(
         # Determine type
         is_table = bool(snippet.get("is_table_chunk"))
         content_type = "table" if is_table else "text"
-        
+        representation = _representation(snippet)
+        evidence_type = str(snippet.get("evidence_type") or "").strip().lower()
+
         # Get IDs
         chunk_id = str(snippet.get("chunk_id") or snippet.get("id") or "")
         upload_id = str(snippet.get("upload_id") or "")
-        
+        evidence_group_id = str(snippet.get("evidence_group_id") or "").strip()
+        evidence_key = _evidence_group_key(snippet)
+
         diagnostics = (
             snippet.get("source_diagnostics")
             if isinstance(snippet.get("source_diagnostics"), Mapping)
@@ -4355,6 +4420,8 @@ def _convert_to_agentic_search_response(
                 )
 
         coverage_hint: dict[str, object] = {}
+        if evidence_group_id:
+            coverage_hint["evidence_group_id"] = evidence_group_id
         if content_type == "table":
             if table_id:
                 coverage_hint["table_id"] = str(table_id)
@@ -4520,6 +4587,22 @@ def _convert_to_agentic_search_response(
                 previews_attached += 1
         if why:
             ref_item["why"] = why[:3]
+        if evidence_group_id:
+            ref_item["evidence_group_id"] = evidence_group_id
+        if evidence_type:
+            ref_item["evidence_type"] = evidence_type
+        if representation:
+            ref_item["representation"] = representation
+        conflict_flag = bool(diagnostics.get("evidence_conflict")) or (evidence_key in conflict_keys)
+        if conflict_flag:
+            ref_item["conflict"] = {
+                "type": "representation_mismatch",
+                "resolution": "read_full",
+            }
+            read_hint_out["suggested_mode"] = "full"
+            why.append("evidence_conflict")
+            ref_item["read_hint"] = read_hint_out
+            ref_item["why"] = why[:3]
         if promote_table_ref and isinstance(coverage_hint, dict):
             matched_row_index = coverage_hint.get("row_index")
             if matched_row_index is not None:
@@ -4608,6 +4691,7 @@ def _convert_to_agentic_search_response(
             "table_context_promote_candidates": len(promoted_table_candidates),
             "table_context_promoted_refs": len(promoted_table_ids),
             "planner_dropped": max(0, len(raw_snippets) - len(planned_snippets)),
+            "evidence_conflict_groups": len(conflict_keys),
             "previews_full_enabled": preview_full_enabled,
             "previews_hybrid_enabled": preview_hybrid_enabled,
             "previews_attached_count": previews_attached,
@@ -5097,7 +5181,7 @@ def _search_knowledge_handler(
             for entry in refs:
                 if not isinstance(entry, Mapping):
                     continue
-                ref_id = str(entry.get("id") or "").strip()
+                ref_id = str(entry.get("evidence_group_id") or entry.get("id") or "").strip()
                 if ref_id:
                     ids.append(ref_id)
                 if len(ids) >= top_k:
@@ -5109,7 +5193,12 @@ def _search_knowledge_handler(
             for entry in snippets_local:
                 if not isinstance(entry, Mapping):
                     continue
-                ref_id = str(entry.get("chunk_id") or entry.get("id") or "").strip()
+                ref_id = str(
+                    entry.get("evidence_group_id")
+                    or entry.get("chunk_id")
+                    or entry.get("id")
+                    or ""
+                ).strip()
                 if ref_id:
                     ids.append(ref_id)
                 if len(ids) >= top_k:
@@ -6245,29 +6334,319 @@ def _search_knowledge_handler(
             return f"id:{identifier}"
         return json.dumps(snippet, sort_keys=True, default=str)
 
+    def _snippet_representation(snippet: Mapping[str, object]) -> str:
+        metadata = snippet.get("metadata") if isinstance(snippet.get("metadata"), Mapping) else {}
+        if bool(snippet.get("is_table_chunk")) or bool(metadata.get("is_table_chunk")):
+            return "table"
+        if str(snippet.get("entity_type") or "").strip():
+            return "json"
+        return "text"
+
+    def _table_match_is_strong(snippet: Mapping[str, object]) -> bool:
+        diagnostics = (
+            snippet.get("source_diagnostics")
+            if isinstance(snippet.get("source_diagnostics"), Mapping)
+            else {}
+        )
+        if bool(diagnostics.get("specific_match_strong")):
+            return True
+        try:
+            specific_count = int(diagnostics.get("specific_match_count") or 0)
+        except (TypeError, ValueError):
+            specific_count = 0
+        try:
+            specific_ratio = float(diagnostics.get("specific_match_ratio") or 0.0)
+        except (TypeError, ValueError):
+            specific_ratio = 0.0
+        return bool(specific_count >= 2 and specific_ratio >= 0.34)
+
+    def _fusion_query_tokens(query_value: object) -> tuple[str, ...]:
+        text = str(query_value or "").strip().lower()
+        if not text:
+            return tuple()
+        normalized = re.sub(r"[^\w%$ ]+", " ", text)
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        if not normalized:
+            return tuple()
+        stopwords = {
+            "a",
+            "an",
+            "and",
+            "are",
+            "as",
+            "at",
+            "be",
+            "by",
+            "for",
+            "from",
+            "how",
+            "in",
+            "is",
+            "it",
+            "of",
+            "on",
+            "or",
+            "the",
+            "to",
+            "what",
+            "which",
+            "with",
+        }
+        tokens: list[str] = []
+        seen: set[str] = set()
+        for token in normalized.split(" "):
+            if not token:
+                continue
+            if len(token) < 3:
+                continue
+            if token in stopwords:
+                continue
+            if token in seen:
+                continue
+            seen.add(token)
+            tokens.append(token)
+        return tuple(tokens)
+
+    def _fusion_text(snippet: Mapping[str, object]) -> str:
+        for key in ("content", "summary", "preview", "label", "title"):
+            value = snippet.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip().lower()
+        return ""
+
+    def _fusion_token_coverage(snippet: Mapping[str, object], tokens: Sequence[str]) -> float:
+        if not tokens:
+            return 0.0
+        text = _fusion_text(snippet)
+        if not text:
+            return 0.0
+        matches = sum(1 for token in tokens if token and token in text)
+        if matches <= 0:
+            return 0.0
+        return matches / max(1, len(tokens))
+
+    def _apply_fused_representation_budget(
+        snippets: Sequence[Mapping[str, object]],
+        *,
+        limit: int,
+    ) -> tuple[list[dict[str, object]], dict[str, object]]:
+        ordered = [dict(snippet) for snippet in snippets if isinstance(snippet, Mapping)]
+        diagnostics: dict[str, object] = {"fused_representation_balance_applied": False}
+        if not ordered:
+            diagnostics["fused_representation_balance_reason"] = "empty"
+            return [], diagnostics
+        try:
+            balance_enabled = bool(getattr(settings, "MCP_SEARCH_REPRESENTATION_BALANCE_ENABLED", True))
+        except Exception:
+            balance_enabled = True
+        if not balance_enabled or limit <= 1:
+            diagnostics["fused_representation_balance_reason"] = "disabled_or_small_limit"
+            return ordered, diagnostics
+
+        intents = {
+            str(run.get("query_intent") or run.get("intent") or "").strip().lower()
+            for run in runs
+            if isinstance(run, Mapping)
+        }
+        if "table" not in intents:
+            diagnostics["fused_representation_balance_reason"] = "not_table_intent"
+            return ordered, diagnostics
+
+        try:
+            window_cfg = int(getattr(settings, "RAG_REPRESENTATION_BALANCE_WINDOW", 12) or 12)
+        except (TypeError, ValueError):
+            window_cfg = 12
+        window = min(len(ordered), max(limit, max(4, window_cfg)))
+        candidates = ordered[:window]
+        table_candidates = [s for s in candidates if _snippet_representation(s) == "table"]
+        text_candidates = [s for s in candidates if _snippet_representation(s) == "text"]
+        if not table_candidates or not text_candidates:
+            diagnostics["fused_representation_balance_reason"] = "single_representation"
+            diagnostics["fused_representation_balance_window"] = window
+            return ordered, diagnostics
+
+        try:
+            min_text = max(0, int(getattr(settings, "RAG_REPRESENTATION_BALANCE_MIN_TEXT", 1)))
+        except (TypeError, ValueError):
+            min_text = 1
+        try:
+            specific_text = max(1, int(getattr(settings, "RAG_REPRESENTATION_BALANCE_SPECIFIC_TEXT", 2)))
+        except (TypeError, ValueError):
+            specific_text = 2
+
+        top_window = min(limit, len(candidates))
+        top_text_count = sum(
+            1 for snippet in candidates[:top_window] if _snippet_representation(snippet) == "text"
+        )
+        strong_table_hits = sum(1 for snippet in table_candidates if _table_match_is_strong(snippet))
+
+        target_text = 0
+        if strong_table_hits == 0:
+            target_text = max(specific_text, limit // 3)
+        elif strong_table_hits <= 1:
+            target_text = max(min_text, limit // 4)
+        if top_text_count == 0:
+            target_text = max(target_text, min_text)
+        target_text = max(0, min(limit - 1, target_text, len(text_candidates)))
+
+        diagnostics.update(
+            {
+                "fused_representation_balance_window": window,
+                "fused_representation_balance_target_text": target_text,
+                "fused_representation_balance_strong_table_hits": strong_table_hits,
+                "fused_representation_balance_top_text": top_text_count,
+            }
+        )
+        if target_text <= 0:
+            diagnostics["fused_representation_balance_reason"] = "no_budget_needed"
+            return ordered, diagnostics
+
+        text_suffix: list[int] = [0] * (len(candidates) + 1)
+        for idx in range(len(candidates) - 1, -1, -1):
+            text_suffix[idx] = text_suffix[idx + 1] + (
+                1 if _snippet_representation(candidates[idx]) == "text" else 0
+            )
+
+        selected: list[dict[str, object]] = []
+        selected_ids: set[str] = set()
+        selected_text = 0
+
+        def _snippet_id_key(snippet: Mapping[str, object]) -> str:
+            identifier = snippet.get("chunk_id") or snippet.get("id") or snippet.get("upload_id")
+            if identifier:
+                return str(identifier)
+            return _snippet_dedupe_key(snippet)
+
+        for idx, snippet in enumerate(candidates):
+            if len(selected) >= limit:
+                break
+            snippet_key = _snippet_id_key(snippet)
+            if snippet_key in selected_ids:
+                continue
+            representation = _snippet_representation(snippet)
+            remaining_text_needed = max(0, target_text - selected_text)
+            if (
+                representation != "text"
+                and remaining_text_needed > 0
+                and text_suffix[idx + 1] >= remaining_text_needed
+            ):
+                continue
+            selected.append(snippet)
+            selected_ids.add(snippet_key)
+            if representation == "text":
+                selected_text += 1
+
+        if len(selected) < limit:
+            for snippet in ordered:
+                snippet_key = _snippet_id_key(snippet)
+                if snippet_key in selected_ids:
+                    continue
+                selected.append(snippet)
+                selected_ids.add(snippet_key)
+                if _snippet_representation(snippet) == "text":
+                    selected_text += 1
+                if len(selected) >= limit:
+                    break
+
+        diagnostics.update(
+            {
+                "fused_representation_balance_applied": True,
+                "fused_representation_balance_selected_text": selected_text,
+            }
+        )
+
+        tail = [snippet for snippet in ordered if _snippet_id_key(snippet) not in selected_ids]
+        return selected + tail, diagnostics
+
     if len(runs) > 1:
         rrf_scores: dict[str, float] = defaultdict(float)
+        fused_scores: dict[str, float] = {}
         best_payload: dict[str, dict[str, object]] = {}
         best_rank: dict[str, int] = {}
-        for run in runs:
+        consensus_runs: dict[str, set[int]] = defaultdict(set)
+        coverage_values: dict[str, list[float]] = defaultdict(list)
+        strong_table_votes: dict[str, int] = defaultdict(int)
+        weak_table_votes: dict[str, int] = defaultdict(int)
+        query_tokens_per_run: dict[int, tuple[str, ...]] = {
+            idx: _fusion_query_tokens(run.get("query"))
+            for idx, run in enumerate(runs)
+            if isinstance(run, Mapping)
+        }
+        for run_idx, run in enumerate(runs):
+            run_tokens = query_tokens_per_run.get(run_idx, tuple())
             for rank, snippet in enumerate(run.get("snippets", []), start=1):
                 key = _snippet_dedupe_key(snippet)
                 rrf_scores[key] += 1.0 / (rrf_k + rank)
+                coverage = _fusion_token_coverage(snippet, run_tokens)
+                if coverage > 0:
+                    consensus_runs[key].add(run_idx)
+                coverage_values[key].append(coverage)
+                if _snippet_representation(snippet) == "table":
+                    if _table_match_is_strong(snippet):
+                        strong_table_votes[key] += 1
+                    else:
+                        weak_table_votes[key] += 1
                 current_best = best_rank.get(key)
                 if current_best is None or rank < current_best:
                     best_rank[key] = rank
                     best_payload[key] = snippet
+
+        run_count = max(1, len(runs))
+        for key, score in rrf_scores.items():
+            run_consensus = len(consensus_runs.get(key, set()))
+            consensus_ratio = run_consensus / run_count
+            coverages = coverage_values.get(key, [])
+            coverage_avg = (sum(coverages) / len(coverages)) if coverages else 0.0
+            adjusted = score
+            adjusted += 0.22 * consensus_ratio
+            adjusted += 0.18 * coverage_avg
+            payload = best_payload.get(key) or {}
+            if _snippet_representation(payload) == "table" and strong_table_votes.get(key, 0) <= 0:
+                adjusted -= 0.14
+            fused_scores[key] = adjusted
+
         ordered = sorted(
-            rrf_scores.items(),
-            key=lambda item: (-item[1], best_rank.get(item[0], 10**9)),
+            fused_scores.items(),
+            key=lambda item: (
+                -item[1],
+                -len(consensus_runs.get(item[0], set())),
+                best_rank.get(item[0], 10**9),
+            ),
         )
+        skipped_weak_table_keys: list[str] = []
+        weak_table_selected = 0
+        weak_table_cap_ratio = float(getattr(settings, "MCP_SEARCH_FUSION_WEAK_TABLE_CAP_RATIO", 0.5) or 0.5)
+        weak_table_cap_ratio = max(0.0, min(1.0, weak_table_cap_ratio))
+        weak_table_cap = None
+        if clip_limit:
+            weak_table_cap = max(1, int(clip_limit * weak_table_cap_ratio))
         for key, _score in ordered:
             payload = best_payload.get(key)
             if payload:
+                is_weak_table = bool(
+                    _snippet_representation(payload) == "table"
+                    and strong_table_votes.get(key, 0) <= 0
+                )
+                if weak_table_cap is not None and is_weak_table and weak_table_selected >= weak_table_cap:
+                    skipped_weak_table_keys.append(key)
+                    continue
                 deduped_snippets.append(payload)
+                if is_weak_table:
+                    weak_table_selected += 1
             if clip_limit and len(deduped_snippets) >= clip_limit:
                 break
+        if clip_limit and len(deduped_snippets) < clip_limit and skipped_weak_table_keys:
+            for key in skipped_weak_table_keys:
+                payload = best_payload.get(key)
+                if not payload:
+                    continue
+                deduped_snippets.append(payload)
+                if len(deduped_snippets) >= clip_limit:
+                    break
         fusion = {"method": "rrf", "k": rrf_k, "runs": len(runs)}
+        if isinstance(fusion, dict):
+            fusion["consensus_weighting"] = True
+            fusion["weak_table_cap"] = weak_table_cap
     else:
         seen_snippets: set[str] = set()
         for run in runs:
@@ -6281,6 +6660,15 @@ def _search_knowledge_handler(
                     break
             if clip_limit and len(deduped_snippets) >= clip_limit:
                 break
+
+    deduped_snippets, fused_balance_diag = _apply_fused_representation_budget(
+        deduped_snippets,
+        limit=page_size,
+    )
+    primary_run_diagnostics = dict(primary_run.get("diagnostics") or {})
+    primary_run_diagnostics.update(fused_balance_diag)
+    primary_run = dict(primary_run)
+    primary_run["diagnostics"] = primary_run_diagnostics
 
     results_full = deduped_snippets
     total_found = len(results_full)

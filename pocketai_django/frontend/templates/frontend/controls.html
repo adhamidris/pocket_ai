@@ -222,10 +222,22 @@
     opacity: 1;
   }
   @media (min-width: 768px) {
+    .controls-page .ctrl-desc {
+      max-width: 68ch;
+    }
     .controls-page .ctrl-row {
-      grid-template-columns: minmax(0, 2.2fr) minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 1fr);
+      grid-template-columns: minmax(24rem, 2.25fr) minmax(8rem, 0.9fr) minmax(7rem, 0.8fr) minmax(16rem, 1.35fr);
       align-items: center;
-      gap: 0.9rem;
+      column-gap: 1.35rem;
+      row-gap: 0.9rem;
+    }
+    .controls-page .ctrl-row > :nth-child(1) {
+      min-width: 0;
+    }
+    .controls-page .ctrl-row > :nth-child(2),
+    .controls-page .ctrl-row > :nth-child(3),
+    .controls-page .ctrl-row > :nth-child(4) {
+      justify-self: start;
     }
     .controls-page .ctrl-cell-label {
       display: none;
@@ -612,8 +624,8 @@
     listEl.addEventListener("click", function (event) {
       const btn = event.target.closest("[data-controls-mode]");
       if (!btn) return;
-      const rowEl = btn.closest("[data-controls-row]");
-      const rowId = btn.getAttribute("data-controls-row");
+      const rowEl = btn.closest(".ctrl-row");
+      const rowId = btn.getAttribute("data-controls-row") || (rowEl ? rowEl.getAttribute("data-controls-row") : "");
       const mode = btn.getAttribute("data-controls-mode");
       if (!rowId || (mode !== "auto" && mode !== "confirm")) return;
       const item = controlsState.items.find((entry) => String(entry.id) === String(rowId));

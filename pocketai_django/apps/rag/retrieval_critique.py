@@ -482,17 +482,57 @@ REFINED_QUERY: [if mismatch, suggest better query; otherwise "none"]'''
 
     def _call_llm(self, prompt: str) -> str:
         """Call the LLM for critique."""
-        from apps.llm.llm_provider import get_provider
+        from apps.llm import llm_provider as llm_provider_module
 
-        provider = get_provider()
-        response = provider.complete(
-            messages=[{"role": "user", "content": prompt}],
-            model=self.model,
-            max_tokens=self.max_tokens,
-            temperature=0.0,  # Deterministic for critique
+        PromptGenerationError = getattr(llm_provider_module, "PromptGenerationError", RuntimeError)
+        provider = None
+        for loader_name in ("load_mcp_provider", "get_provider", "load_provider"):
+            loader = getattr(llm_provider_module, loader_name, None)
+            if not callable(loader):
+                continue
+            try:
+                candidate = loader()
+            except TypeError:
+                continue
+            if candidate is not None:
+                provider = candidate
+                break
+
+        if not provider:
+            raise PromptGenerationError("Critique provider is not configured.")
+        if not hasattr(provider, "chat"):
+            raise PromptGenerationError("Critique provider does not support chat().")
+
+        response = provider.chat(
+            messages=[
+                {"role": "system", "content": "Return only the requested critique fields."},
+                {"role": "user", "content": prompt},
+            ]
         )
 
-        return response.get("content") or ""
+        content = response.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, Mapping):
+                    text = item.get("text")
+                    if isinstance(text, str) and text:
+                        parts.append(text)
+            return "".join(parts)
+
+        # Compatibility fallback for providers that return OpenAI-like payloads.
+        choices = response.get("choices")
+        if isinstance(choices, list) and choices:
+            first = choices[0]
+            if isinstance(first, Mapping):
+                message = first.get("message")
+                if isinstance(message, Mapping):
+                    fallback = message.get("content")
+                    if isinstance(fallback, str):
+                        return fallback
+        return ""
 
     def _parse_response(self, response: str) -> CritiqueResult:
         """Parse the LLM response into a CritiqueResult."""
