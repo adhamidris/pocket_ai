@@ -15,7 +15,11 @@ from django.utils import timezone
 
 from core.tenancy import tenant_context
 
-from apps.accounts.models import McpConnection, McpConnectionAuditAction, McpConnectionStatus
+from apps.accounts.models import (
+    McpConnectionAuditAction,
+    McpConnectionStatus,
+)
+from apps.mcp.models import McpConnection
 from apps.mcp.connectors import mcp_connection_auth_headers
 from apps.mcp.models import McpConnectionTestJob, McpConnectionTestJobStatus
 from apps.mcp.remote_client import McpRemoteError, test_mcp_server

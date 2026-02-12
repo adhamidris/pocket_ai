@@ -10,11 +10,11 @@ from django.urls import reverse
 from apps.accounts.models import (
     BusinessProfile,
     IntegrationSyncFrequency,
-    KnowledgeIntegration,
     KnowledgeIntegrationStatus,
     KnowledgeIntegrationType,
     RegistrationSession,
 )
+from apps.integrations.models import KnowledgeIntegration
 
 
 User = get_user_model()

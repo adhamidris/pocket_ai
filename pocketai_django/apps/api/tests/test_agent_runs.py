@@ -14,11 +14,11 @@ from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
 from apps.accounts.models import (
     AgentProfile,
     BusinessProfile,
-    EmailAccount,
     EmailAccountProvider,
     EmailAccountStatus,
     RegistrationSession,
 )
+from apps.integrations.models import EmailAccount
 from apps.conversations.agent_automation_processing import AgentAutomationProcessingService
 from apps.conversations.agent_watcher_processing import AgentWatcherProcessingService
 from apps.conversations.models import AgentAutomation, AgentAutomationStatus, AgentRun, AgentRunStatus, Conversation, ConversationChannel

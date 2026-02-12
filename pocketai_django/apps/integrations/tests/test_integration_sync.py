@@ -13,13 +13,13 @@ from django.utils import timezone
 from apps.accounts.models import (
     BusinessProfile,
     IntegrationResourceConfig,
-    KnowledgeIntegration,
     KnowledgeIntegrationStatus,
     KnowledgeIntegrationType,
     KnowledgeSourceType,
     KnowledgeStatus,
     RegistrationSession,
 )
+from apps.integrations.models import KnowledgeIntegration
 from apps.integrations.integration_sync import ExportedSheet, IntegrationSyncError, IntegrationSyncService
 
 

@@ -1,9 +1,12 @@
 
 import sys
 import uuid
-from apps.accounts.models import KnowledgeUpload
+from apps.knowledge.models import KnowledgeUpload
 from apps.knowledge.knowledge_ingestion import queue_ingestion_job, KnowledgeIngestionService
-from apps.accounts.models import KnowledgeUploadChunk, KnowledgeUploadTable
+from apps.knowledge.models import (
+    KnowledgeUploadChunk,
+    KnowledgeUploadTable,
+)
 
 UPLOAD_ID = "5225e253-f5c2-468d-942e-7700264db810"
 

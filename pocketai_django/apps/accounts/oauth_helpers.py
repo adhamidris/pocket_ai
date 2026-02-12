@@ -10,7 +10,8 @@ from django.utils.dateparse import parse_datetime
 
 from core.tenancy import tenant_context
 
-from .models import McpConnection, OAuthProvider
+from apps.integrations.models import OAuthProvider
+from apps.mcp.models import McpConnection
 
 
 logger = logging.getLogger(__name__)

@@ -7,7 +7,8 @@ from typing import Any, Mapping
 from django.conf import settings
 from django.core.cache import cache
 
-from apps.accounts.models import BusinessProfile, KnowledgeUpload
+from apps.accounts.models import BusinessProfile
+from apps.knowledge.models import KnowledgeUpload
 from apps.mcp.types import ToolRateLimitExceeded
 
 

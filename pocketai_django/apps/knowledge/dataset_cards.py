@@ -6,12 +6,14 @@ from typing import Any, Mapping, Sequence
 from django.conf import settings
 
 from apps.accounts.models import (
-    IdentifierColumnMapping,
     IdentifierColumnStatus,
     IdentifierSchemaStatus,
+    KnowledgeVisibility,
+)
+from apps.knowledge.models import (
+    IdentifierColumnMapping,
     KnowledgeUpload,
     KnowledgeUploadChunk,
-    KnowledgeVisibility,
 )
 from apps.rag.embeddings import EmbeddingProviderError, build_embedding_service
 

@@ -8,14 +8,16 @@ from django.utils import timezone
 
 from apps.accounts.models import (
     BusinessProfile,
-    EmailAccount,
-    EmailAccountAuditEvent,
-    EmailAccountHealthJob,
     EmailAccountHealthJobStatus,
     EmailAccountProvider,
     EmailAccountStatus,
     RegistrationSession,
     User,
+)
+from apps.integrations.models import (
+    EmailAccount,
+    EmailAccountAuditEvent,
+    EmailAccountHealthJob,
 )
 from apps.integrations.email_health_jobs import (
     EmailAccountHealthJobRunner,

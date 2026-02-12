@@ -25,11 +25,13 @@ from core.tenancy import tenant_context
 
 from apps.accounts.models import (
     BusinessProfile,
-    EmailAccount,
     EmailAccountAuditAction,
-    EmailAccountAuditEvent,
     EmailAccountProvider,
     EmailAccountStatus,
+)
+from apps.integrations.models import (
+    EmailAccount,
+    EmailAccountAuditEvent,
     EmailOAuthState,
     OAuthProvider,
 )

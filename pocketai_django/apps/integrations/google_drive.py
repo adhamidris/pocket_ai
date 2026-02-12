@@ -14,9 +14,9 @@ from django.utils.dateparse import parse_datetime
 
 from apps.accounts.models import (
     IntegrationCredentialEventType,
-    KnowledgeIntegration,
     KnowledgeIntegrationStatus,
 )
+from apps.integrations.models import KnowledgeIntegration
 
 logger = logging.getLogger(__name__)
 

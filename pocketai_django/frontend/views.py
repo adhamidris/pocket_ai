@@ -35,18 +35,20 @@ from apps.accounts.models import (
     IdentifierColumnStatus,
     IdentifierSchemaStatus,
     IntegrationSyncFrequency,
-    KnowledgeCollection,
-    KnowledgeIntegration,
     KnowledgeIntegrationStatus,
     KnowledgeIntegrationType,
     KnowledgeSourceType,
     KnowledgeStatus,
+    RegistrationSession,
+)
+from apps.knowledge.models import (
+    KnowledgeCollection,
     KnowledgeUpload,
     KnowledgeUploadFile,
     KnowledgeUploadText,
     KnowledgeUploadUrl,
-    RegistrationSession,
 )
+from apps.integrations.models import KnowledgeIntegration
 from apps.cases.models import Case, CaseStatus
 from apps.conversations.models import Conversation, ConversationSender, IdentifierEvent
 from apps.customers.models import Customer

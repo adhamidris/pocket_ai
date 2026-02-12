@@ -5,7 +5,10 @@ import time
 from django.core.management.base import BaseCommand
 from django.db import connection
 
-from apps.accounts.models import KnowledgeAlias, KnowledgeEntity
+from apps.knowledge.models import (
+    KnowledgeAlias,
+    KnowledgeEntity,
+)
 
 
 class Command(BaseCommand):

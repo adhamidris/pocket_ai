@@ -22,6 +22,8 @@ from core.tenancy import tenant_context
 from apps.accounts.models import (
     AgentProfile,
     BusinessProfile,
+)
+from apps.knowledge.models import (
     KnowledgeCollection,
     KnowledgeUpload,
     KnowledgeUploadChunk,

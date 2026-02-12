@@ -13,19 +13,23 @@ from django.utils import timezone as django_timezone
 from apps.accounts.models import (
     AgentProfile,
     BusinessProfile,
-    EmailAccount,
     EmailAccountStatus,
-    McpConnection,
     McpConnectionApprovalMode,
     McpConnectionAuthType,
     McpConnectionStatus,
-    McpConnectionToolSetting,
     McpToolOperationType,
-    IntegrationAccount,
     IntegrationAccountStatus,
     IntegrationProvider,
     IntegrationType,
     RegistrationSession,
+)
+from apps.integrations.models import (
+    EmailAccount,
+    IntegrationAccount,
+)
+from apps.mcp.models import (
+    McpConnection,
+    McpConnectionToolSetting,
 )
 from apps.mcp.connectors import _is_cache_expired, build_remote_tool_definitions
 from apps.mcp.remote_client import (
@@ -345,8 +349,11 @@ class McpConnectionsApiTests(TestCase):
             auth_type=McpConnectionAuthType.NONE,
             metadata={
                 "tool_cache": {
-                    "tool_count": 1,
-                    "tools": [{"name": "create_issue", "description": "Create issue", "inputSchema": {"type": "object"}}],
+                    "tool_count": 2,
+                    "tools": [
+                        {"name": "create_issue", "description": "Create issue", "inputSchema": {"type": "object"}},
+                        {"name": "list_issues", "description": "List issues", "inputSchema": {"type": "object"}},
+                    ],
                 }
             },
         )

@@ -4,8 +4,8 @@ import dataclasses
 from typing import Sequence
 
 from apps.accounts.models import BusinessProfile
-from apps.accounts.models import KnowledgeUpload
-from apps.accounts.models import KnowledgeUploadTableRow
+from apps.knowledge.models import KnowledgeUpload
+from apps.knowledge.models import KnowledgeUploadTableRow
 
 
 @dataclasses.dataclass(frozen=True)

@@ -14,10 +14,12 @@ from core.tenancy import tenant_context
 
 from apps.accounts.models import (
     BusinessProfile,
+    User,
+)
+from apps.knowledge.models import (
     KnowledgeCollection,
     KnowledgeCollectionLink,
     KnowledgeUpload,
-    User,
 )
 
 logger = logging.getLogger(__name__)

@@ -17,12 +17,14 @@ from apps.accounts.models import (
     BusinessProfile,
     KnowledgeSourceType,
     KnowledgeStatus,
+    RegistrationSession,
+    User,
+)
+from apps.knowledge.models import (
     KnowledgeUpload,
     KnowledgeUploadTable,
     KnowledgeUploadTableRow,
     KnowledgeUploadTableCell,
-    RegistrationSession,
-    User,
 )
 from apps.conversations.models import Conversation
 from apps.mcp import tools

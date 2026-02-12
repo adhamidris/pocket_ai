@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from django.core.management.base import BaseCommand, CommandError
 
-from apps.accounts.models import KnowledgeEntity, KnowledgeUploadTable, KnowledgeUploadTableRow
+from apps.knowledge.models import (
+    KnowledgeEntity,
+    KnowledgeUploadTable,
+    KnowledgeUploadTableRow,
+)
 from apps.knowledge.knowledge_ingestion import KnowledgeIngestionService
 from core.tenancy import tenant_bypass
 

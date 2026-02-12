@@ -6,16 +6,18 @@ from django.test import TestCase
 
 from apps.accounts.models import (
     BusinessProfile,
-    IdentifierColumnMapping,
     IdentifierColumnStatus,
-    IdentifierSchema,
     IdentifierSchemaStatus,
     KnowledgeSourceType,
     KnowledgeStatus,
-    KnowledgeUpload,
-    KnowledgeUploadTable,
     RegistrationSession,
     User,
+)
+from apps.knowledge.models import (
+    IdentifierColumnMapping,
+    IdentifierSchema,
+    KnowledgeUpload,
+    KnowledgeUploadTable,
 )
 from apps.conversations.models import Conversation, IdentifierEvent
 from apps.mcp.identifier_registry import (

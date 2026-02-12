@@ -316,7 +316,7 @@ class ConversationToolApproval(models.Model):
         on_delete=models.SET_NULL,
     )
     connection = models.ForeignKey(
-        "accounts.McpConnection",
+        "mcp.McpConnection",
         related_name="tool_approvals",
         null=True,
         blank=True,
@@ -1317,7 +1317,7 @@ class AgentWatcher(models.Model):
         help_text="Optional destination conversation used as the default thread for watcher runs.",
     )
     email_account = models.ForeignKey(
-        "accounts.EmailAccount",
+        "integrations.EmailAccount",
         related_name="agent_watchers",
         on_delete=models.SET_NULL,
         null=True,

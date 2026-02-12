@@ -29,18 +29,20 @@ from django.utils import timezone
 from core.otel import otel_trace
 
 from apps.accounts.models import (
-    AgentEmailAccountPolicyOverride,
     AgentProfile,
     BusinessProfile,
-    EmailAccount,
     EmailAccountAuditAction,
-    EmailAccountAuditEvent,
     EmailAccountProvider,
     EmailAccountStatus,
     EmailSendMode,
-    KnowledgeUpload,
     McpConnectionApprovalMode,
     McpToolOperationType,
+)
+from apps.knowledge.models import KnowledgeUpload
+from apps.integrations.models import (
+    AgentEmailAccountPolicyOverride,
+    EmailAccount,
+    EmailAccountAuditEvent,
 )
 from apps.accounts.feature_flags import FeatureFlagService
 from apps.conversations.models import (
@@ -685,7 +687,7 @@ class McpOrchestratorService:
             ids = arguments.get("ids")
             if business_id and isinstance(ids, Sequence) and not isinstance(ids, (str, bytes, bytearray)) and ids:
                 try:
-                    from apps.accounts.models import KnowledgeUploadChunk
+                    from apps.knowledge.models import KnowledgeUploadChunk
                 except Exception:
                     KnowledgeUploadChunk = None  # type: ignore[assignment]
                 if KnowledgeUploadChunk is not None:
@@ -721,7 +723,7 @@ class McpOrchestratorService:
             if business_id and doc_id and not resolved_title:
                 # Some call paths pass a chunk id as document_id; resolve back to the upload name.
                 try:
-                    from apps.accounts.models import KnowledgeUploadChunk
+                    from apps.knowledge.models import KnowledgeUploadChunk
                 except Exception:
                     KnowledgeUploadChunk = None  # type: ignore[assignment]
                 if KnowledgeUploadChunk is not None:

@@ -19,10 +19,12 @@ from apps.accounts.models import (
     BusinessProfile,
     KnowledgeSourceType,
     KnowledgeStatus,
-    KnowledgeUpload,
-    KnowledgeUploadUrl,
     RegistrationSession,
     User,
+)
+from apps.knowledge.models import (
+    KnowledgeUpload,
+    KnowledgeUploadUrl,
 )
 
 logger = logging.getLogger(__name__)
@@ -223,7 +225,6 @@ def configure_agent_profile(
         try:
             business = (
                 BusinessProfile.objects.select_for_update()
-                .select_related("user", "registration_session")
                 .get(id=business_id)
             )
         except BusinessProfile.DoesNotExist as exc:  # pragma: no cover - defensive safety
@@ -395,7 +396,6 @@ def finalize_knowledge_uploads(
         try:
             business = (
                 BusinessProfile.objects.select_for_update()
-                .select_related("user", "registration_session", "agent_profile")
                 .get(id=business_id)
             )
         except BusinessProfile.DoesNotExist as exc:  # pragma: no cover - defensive path

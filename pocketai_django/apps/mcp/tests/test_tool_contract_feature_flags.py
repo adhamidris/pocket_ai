@@ -3,7 +3,13 @@ from __future__ import annotations
 from django.test import TestCase
 
 from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
-from apps.accounts.models import AgentProfile, BusinessProfile, McpConnection, RegistrationSession, User
+from apps.accounts.models import (
+    AgentProfile,
+    BusinessProfile,
+    RegistrationSession,
+    User,
+)
+from apps.mcp.models import McpConnection
 from apps.conversations.models import Conversation
 from apps.mcp.orchestrator import McpOrchestratorService
 

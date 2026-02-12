@@ -15,13 +15,15 @@ from django.utils import timezone
 from core.tenancy import tenant_context
 
 from apps.accounts.models import (
-    EmailAccount,
-    EmailAccountAuditEvent,
     EmailAccountAuditAction,
-    EmailAccountHealthJob,
     EmailAccountHealthJobStatus,
     EmailAccountProvider,
     EmailAccountStatus,
+)
+from apps.integrations.models import (
+    EmailAccount,
+    EmailAccountAuditEvent,
+    EmailAccountHealthJob,
 )
 from apps.integrations.email_accounts import ensure_fresh_email_credentials
 from apps.integrations.gmail import GmailApiError, gmail_get_message

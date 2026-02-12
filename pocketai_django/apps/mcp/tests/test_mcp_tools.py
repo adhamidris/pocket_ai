@@ -10,16 +10,18 @@ from apps.accounts.models import (
     BusinessProfile,
     KnowledgeSourceType,
     KnowledgeStatus,
+    RegistrationSession,
+    User,
+    IdentifierColumnStatus,
+    IdentifierSchemaSource,
+    IdentifierSchemaStatus,
+)
+from apps.knowledge.models import (
     KnowledgeUpload,
     KnowledgeUploadChunk,
     KnowledgeUploadTable,
-    RegistrationSession,
-    User,
     IdentifierColumnMapping,
-    IdentifierColumnStatus,
     IdentifierSchema,
-    IdentifierSchemaSource,
-    IdentifierSchemaStatus,
 )
 from apps.conversations.models import AgentRun, AgentRunEvent, AgentRunEventType, AgentRunStatus, Conversation
 from apps.mcp import tools

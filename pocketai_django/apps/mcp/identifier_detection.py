@@ -4,11 +4,11 @@ import re
 from dataclasses import dataclass
 from typing import Iterable, Mapping, Sequence
 
-from apps.accounts.models import (
+from apps.accounts.models import _normalize_identifier_token
+from apps.knowledge.models import (
     KnowledgeUpload,
     KnowledgeUploadTable,
     KnowledgeUploadTableRow,
-    _normalize_identifier_token,
 )
 
 

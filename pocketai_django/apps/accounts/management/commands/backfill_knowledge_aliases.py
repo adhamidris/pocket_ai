@@ -3,7 +3,8 @@ from __future__ import annotations
 import time
 from django.core.management.base import BaseCommand, CommandError
 
-from apps.accounts.models import KnowledgeStatus, KnowledgeUpload
+from apps.accounts.models import KnowledgeStatus
+from apps.knowledge.models import KnowledgeUpload
 from apps.knowledge.knowledge_ingestion import KnowledgeIngestionError, KnowledgeIngestionService
 from core.tenancy import tenant_bypass, tenant_context
 

@@ -30,10 +30,12 @@ from django.utils import timezone
 
 from apps.accounts.models import (
     AgentProfile,
-    KnowledgeAlias,
-    KnowledgeCollectionLink,
     KnowledgeStatus,
     KnowledgeVisibility,
+)
+from apps.knowledge.models import (
+    KnowledgeAlias,
+    KnowledgeCollectionLink,
     KnowledgeUpload,
     KnowledgeUploadChunk,
     KnowledgeUploadIssue,
@@ -6978,7 +6980,7 @@ class KnowledgeSearchService:
         This is the CORRECT way to get page content, not via chunk indices.
         """
         try:
-            from apps.accounts.models import KnowledgeUploadPageBlock
+            from apps.knowledge.models import KnowledgeUploadPageBlock
 
             blocks = list(
                 KnowledgeUploadPageBlock.objects.filter(
@@ -7024,7 +7026,10 @@ class KnowledgeSearchService:
         avoiding the column misalignment issues present in raw PageBlock text.
         """
         try:
-            from apps.accounts.models import KnowledgeUploadTable, KnowledgeUploadChunk
+            from apps.knowledge.models import (
+                KnowledgeUploadTable,
+                KnowledgeUploadChunk,
+            )
 
             # Check if page has tables
             table_ids = list(
@@ -7123,7 +7128,7 @@ class KnowledgeSearchService:
         # NEW: Resolve chunk_id to upload_id for PageBlocks access (Codex gap fix)
         if chunk_id is not None and upload_id is None:
             try:
-                from apps.accounts.models import KnowledgeUploadChunk
+                from apps.knowledge.models import KnowledgeUploadChunk
                 chunk = KnowledgeUploadChunk.objects.filter(
                     id=chunk_id,
                     upload__business_profile=business_profile,
@@ -7652,7 +7657,7 @@ class KnowledgeSearchService:
         table = None
         if table_id:
             try:
-                from apps.accounts.models import KnowledgeUploadTable
+                from apps.knowledge.models import KnowledgeUploadTable
 
                 table = KnowledgeUploadTable.objects.filter(id=table_id).first()
             except Exception:
@@ -9454,7 +9459,7 @@ class AiOrchestratorService:
 
         # Fetch the chunk from DB
         try:
-            from apps.accounts.models import KnowledgeUploadChunk
+            from apps.knowledge.models import KnowledgeUploadChunk
 
             chunk = KnowledgeUploadChunk.objects.filter(id=chunk_id).select_related("upload").first()
             if not chunk:

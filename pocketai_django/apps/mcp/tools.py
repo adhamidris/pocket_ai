@@ -42,22 +42,26 @@ from django.conf import settings
 
 from apps.accounts.models import (
     AgentProfile,
-    EmailAccount,
     EmailAccountProvider,
     EmailAccountStatus,
-    IntegrationAccount,
     IntegrationAccountStatus,
     IntegrationType,
     McpToolOperationType,
     KnowledgeAuditAction,
-    KnowledgeAuditEvent,
     KnowledgeVisibility,
     KnowledgeStatus,
+)
+from apps.knowledge.models import (
+    KnowledgeAuditEvent,
     KnowledgeUpload,
     KnowledgeUploadChunk,
     KnowledgeUploadTable,
     KnowledgeUploadTableRow,
     KnowledgeUploadTableCell,
+)
+from apps.integrations.models import (
+    EmailAccount,
+    IntegrationAccount,
 )
 from apps.conversations.models import (
     AgentRun,
@@ -5337,7 +5341,11 @@ def _search_knowledge_handler(
             allowed_uploads = {str(value) for value in cached_allowed if value}
     elif guard and guard.provided_identifiers:
         # Derive filter from active mappings for provided identifiers (dynamic, not email-only).
-        from apps.accounts.models import IdentifierColumnMapping, IdentifierColumnStatus, IdentifierSchemaStatus
+        from apps.accounts.models import (
+            IdentifierColumnStatus,
+            IdentifierSchemaStatus,
+        )
+        from apps.knowledge.models import IdentifierColumnMapping
 
         mappings = IdentifierColumnMapping.objects.select_related("identifier").filter(
             business_profile=conversation.business_profile,
@@ -7032,7 +7040,10 @@ def _estimate_agentic_read_chars_for_id(
 
     # Best-effort: estimate page block text length (when present), else fall back to a stitched chunk window.
     try:
-        from apps.accounts.models import KnowledgeUploadPage, KnowledgeUploadPageBlock
+        from apps.knowledge.models import (
+            KnowledgeUploadPage,
+            KnowledgeUploadPageBlock,
+        )
     except Exception:
         KnowledgeUploadPage = None  # type: ignore[assignment]
         KnowledgeUploadPageBlock = None  # type: ignore[assignment]
@@ -7851,7 +7862,10 @@ def _agentic_read_v2_handler(
         prepend_sep: bool = False,
     ) -> tuple[str, dict[str, object] | None, bool]:
         try:
-            from apps.accounts.models import KnowledgeUploadPage, KnowledgeUploadPageBlock
+            from apps.knowledge.models import (
+                KnowledgeUploadPage,
+                KnowledgeUploadPageBlock,
+            )
         except Exception:
             return "", None, True
 
@@ -8694,7 +8708,7 @@ def _agentic_read_v2_handler(
                     page_number = 1
                     has_page_blocks = False
                     try:
-                        from apps.accounts.models import KnowledgeUploadPageBlock
+                        from apps.knowledge.models import KnowledgeUploadPageBlock
                         has_page_blocks = KnowledgeUploadPageBlock.objects.filter(
                             upload_id=upload_id,
                             page__page_number=page_number,
@@ -8803,7 +8817,7 @@ def _agentic_read_v2_handler(
                 # If page blocks exist for the resolved page, use them.
                 has_page_blocks = False
                 try:
-                    from apps.accounts.models import KnowledgeUploadPageBlock
+                    from apps.knowledge.models import KnowledgeUploadPageBlock
                     has_page_blocks = KnowledgeUploadPageBlock.objects.filter(
                         upload_id=upload_id,
                         page__page_number=page_number,

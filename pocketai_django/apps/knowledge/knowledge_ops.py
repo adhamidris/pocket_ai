@@ -11,11 +11,13 @@ from core.otel import otel_trace
 
 from apps.accounts.models import (
     BusinessProfile,
+    KnowledgeIngestionJobStatus,
+)
+from apps.knowledge.models import (
     KnowledgeAlias,
     KnowledgeDriftSample,
     KnowledgeEntity,
     KnowledgeIngestionJob,
-    KnowledgeIngestionJobStatus,
     KnowledgeUpload,
 )
 

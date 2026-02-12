@@ -13,13 +13,15 @@ from core.tenancy import tenant_context
 
 from apps.accounts.models import (
     AgentProfile,
-    AgentMcpToolSetting,
-    McpConnection,
     McpConnectionApprovalMode,
     McpConnectionAuthType,
     McpConnectionStatus,
-    McpConnectionToolSetting,
     McpToolOperationType,
+)
+from apps.mcp.models import (
+    AgentMcpToolSetting,
+    McpConnection,
+    McpConnectionToolSetting,
 )
 from apps.accounts.oauth_helpers import OAuthFlowError, ensure_fresh_oauth_credentials
 

@@ -25,12 +25,14 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 from core.otel import otel_context, otel_trace
 
 from apps.accounts.models import (
-    AgentMcpToolSetting,
     BusinessProfile,
     McpConnectionApprovalMode,
     McpConnectionAuditAction,
-    McpConnectionAuditEvent,
     McpToolOperationType,
+)
+from apps.mcp.models import (
+    AgentMcpToolSetting,
+    McpConnectionAuditEvent,
 )
 from apps.conversations.models import (
     AgentRequest,

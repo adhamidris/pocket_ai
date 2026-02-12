@@ -7,7 +7,11 @@ from typing import Mapping
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
-from apps.accounts.models import BusinessProfile, KnowledgeUpload, KnowledgeUploadChunk
+from apps.accounts.models import BusinessProfile
+from apps.knowledge.models import (
+    KnowledgeUpload,
+    KnowledgeUploadChunk,
+)
 from core.tenancy import tenant_context
 
 

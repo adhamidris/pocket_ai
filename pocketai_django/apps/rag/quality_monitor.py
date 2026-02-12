@@ -6,7 +6,11 @@ from typing import Mapping, Sequence
 
 from django.conf import settings
 
-from apps.accounts.models import BusinessProfile, KnowledgeDriftSample, RAGEvaluationRun
+from apps.accounts.models import BusinessProfile
+from apps.knowledge.models import (
+    KnowledgeDriftSample,
+    RAGEvaluationRun,
+)
 from apps.rag.rag_logging import rag_log
 
 logger = logging.getLogger(__name__)

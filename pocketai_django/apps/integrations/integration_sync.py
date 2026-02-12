@@ -21,14 +21,16 @@ from django.utils.text import slugify
 from apps.accounts.models import (
     IntegrationCredentialEventType,
     IntegrationResourceConfig,
-    KnowledgeIntegration,
     KnowledgeIntegrationStatus,
     KnowledgeIntegrationType,
     KnowledgeSourceType,
     KnowledgeStatus,
+)
+from apps.knowledge.models import (
     KnowledgeUpload,
     KnowledgeUploadFile,
 )
+from apps.integrations.models import KnowledgeIntegration
 from apps.integrations.google_drive import GoogleOAuthError, maybe_refresh_google_credentials
 from apps.knowledge.knowledge_ingestion import queue_ingestion_job
 

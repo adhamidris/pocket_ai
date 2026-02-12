@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from django.core.management.base import BaseCommand, CommandError
 
-from apps.accounts.models import KnowledgeUpload
+from apps.knowledge.models import KnowledgeUpload
 from apps.knowledge.knowledge_ingestion import KnowledgeIngestionError, KnowledgeIngestionService
 
 

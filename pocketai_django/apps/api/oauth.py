@@ -21,14 +21,16 @@ from core.tenancy import tenant_context
 
 from apps.accounts.models import (
     BusinessProfile,
-    McpConnection,
     McpConnectionAuditAction,
     McpConnectionAuthType,
     McpConnectionSourceType,
     McpConnectionStatus,
+)
+from apps.integrations.models import (
     OAuthProvider,
     OAuthState,
 )
+from apps.mcp.models import McpConnection
 from apps.accounts.oauth_helpers import (
     OAuthFlowError,
     compute_expires_at,

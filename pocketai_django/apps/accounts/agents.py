@@ -8,7 +8,14 @@ from typing import Sequence
 from django.db.models import Avg, Count, ExpressionWrapper, F, Max, Prefetch, Q
 from django.db.models import DurationField as DjangoDurationField
 
-from apps.accounts.models import AgentProfile, BusinessProfile, KnowledgeCollection, KnowledgeUpload
+from apps.accounts.models import (
+    AgentProfile,
+    BusinessProfile,
+)
+from apps.knowledge.models import (
+    KnowledgeCollection,
+    KnowledgeUpload,
+)
 from apps.cases.models import CasePriority, CaseStatus
 
 

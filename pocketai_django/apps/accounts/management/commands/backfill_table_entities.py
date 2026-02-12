@@ -5,7 +5,7 @@ from typing import Any
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from apps.accounts.models import KnowledgeUpload
+from apps.knowledge.models import KnowledgeUpload
 from apps.knowledge.knowledge_ingestion import (
     KnowledgeIngestionService,
     TableCellPayload,

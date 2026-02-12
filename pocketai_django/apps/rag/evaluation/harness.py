@@ -18,13 +18,15 @@ from django.utils import timezone
 from apps.accounts.models import (
     AgentProfile,
     BusinessProfile,
-    KnowledgeFeedbackCase,
     KnowledgeSourceType,
     KnowledgeStatus,
-    KnowledgeUpload,
-    KnowledgeUploadFile,
     RegistrationSession,
     User,
+)
+from apps.knowledge.models import (
+    KnowledgeFeedbackCase,
+    KnowledgeUpload,
+    KnowledgeUploadFile,
 )
 from apps.rag.ai_orchestrator import KnowledgeSearchService, KnowledgeSnippet
 from apps.rag.evaluation.datasets import GOLDEN_SETS, GoldenQuery, GoldenSet, GoldenFixture

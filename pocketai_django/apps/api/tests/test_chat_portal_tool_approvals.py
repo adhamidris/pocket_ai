@@ -10,14 +10,16 @@ from django.utils import timezone
 
 from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
 from apps.accounts.models import (
-    AgentMcpToolSetting,
     BusinessProfile,
-    McpConnection,
     McpConnectionApprovalMode,
     McpConnectionAuthType,
     McpConnectionStatus,
     McpToolOperationType,
     RegistrationSession,
+)
+from apps.mcp.models import (
+    AgentMcpToolSetting,
+    McpConnection,
 )
 from apps.accounts.models import AgentProfile
 from apps.conversations.models import (
@@ -509,6 +511,20 @@ class ChatPortalBootstrapPendingApprovalsTests(TestCase):
         response = self.client.post(url, data=json.dumps(payload), content_type="application/json")
         self.assertEqual(response.status_code, 200)
         return response.json()
+
+    def test_bootstrap_with_stale_session_token_creates_new_session(self) -> None:
+        payload = self._bootstrap(session_token="stale-session-token")
+        session_token = payload["session"]["session_token"]
+        self.assertTrue(session_token)
+        self.assertNotEqual(session_token, "stale-session-token")
+        self.assertEqual(
+            Conversation.objects.filter(
+                business_profile=self.business,
+                agent_profile=self.agent,
+                session_token=session_token,
+            ).count(),
+            1,
+        )
 
     def test_bootstrap_does_not_inject_pending_approval_cards(self) -> None:
         payload = self._bootstrap()

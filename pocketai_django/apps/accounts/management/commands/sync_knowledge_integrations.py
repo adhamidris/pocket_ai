@@ -5,7 +5,8 @@ import uuid
 
 from django.core.management.base import BaseCommand, CommandError
 
-from apps.accounts.models import KnowledgeIntegration, KnowledgeIntegrationStatus
+from apps.accounts.models import KnowledgeIntegrationStatus
+from apps.integrations.models import KnowledgeIntegration
 from apps.integrations.integration_sync import IntegrationSyncService, IntegrationSyncError
 
 

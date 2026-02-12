@@ -8,18 +8,20 @@ from django.urls import reverse
 
 from apps.accounts.models import (
     BusinessProfile,
-    EmailAccount,
     EmailAccountAuditAction,
-    EmailAccountAuditEvent,
     EmailAccountProvider,
     EmailAccountStatus,
-    IntegrationAccount,
     IntegrationAccountAuditAction,
-    IntegrationAccountAuditEvent,
     IntegrationAccountStatus,
     IntegrationProvider,
     IntegrationType,
     RegistrationSession,
+)
+from apps.integrations.models import (
+    EmailAccount,
+    EmailAccountAuditEvent,
+    IntegrationAccount,
+    IntegrationAccountAuditEvent,
 )
 
 

@@ -11,8 +11,10 @@ from django.utils.dateparse import parse_datetime
 
 from apps.accounts.models import (
     KnowledgeAuditAction,
-    KnowledgeAuditEvent,
     KnowledgeStatus,
+)
+from apps.knowledge.models import (
+    KnowledgeAuditEvent,
     KnowledgeUpload,
 )
 from apps.knowledge.documents import delete_document

@@ -3,14 +3,16 @@ from __future__ import annotations
 from django.test import TestCase
 
 from apps.accounts.models import (
-    AgentMcpToolSetting,
     AgentProfile,
     BusinessProfile,
-    McpConnection,
     McpConnectionApprovalMode,
     McpToolOperationType,
     RegistrationSession,
     User,
+)
+from apps.mcp.models import (
+    AgentMcpToolSetting,
+    McpConnection,
 )
 from apps.mcp.connectors import get_tool_approval_requirement
 from core.tenancy import tenant_context

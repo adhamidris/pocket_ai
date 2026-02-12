@@ -26,20 +26,24 @@ from core.tenancy import tenant_context
 from apps.accounts.models import (
     AgentProfile,
     BusinessProfile,
-    EmailAccount,
     EmailAccountStatus,
-    IntegrationAccount,
     IntegrationAccountStatus,
-    McpConnection,
-    McpConnectionAgentOptOut,
     McpConnectionApprovalMode,
     McpConnectionAuditAction,
-    McpConnectionAuditEvent,
     McpConnectionAuthType,
     McpConnectionSourceType,
     McpConnectionStatus,
-    McpConnectionToolSetting,
     McpToolOperationType,
+)
+from apps.integrations.models import (
+    EmailAccount,
+    IntegrationAccount,
+)
+from apps.mcp.models import (
+    McpConnection,
+    McpConnectionAgentOptOut,
+    McpConnectionAuditEvent,
+    McpConnectionToolSetting,
 )
 from apps.accounts.feature_flags import FeatureFlagService
 from apps.accounts.oauth_helpers import OAuthFlowError, ensure_fresh_oauth_credentials

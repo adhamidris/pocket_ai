@@ -11,8 +11,8 @@ from apps.accounts.models import (
     KnowledgeIngestionJobType,
     KnowledgeSourceType,
     KnowledgeStatus,
-    KnowledgeUpload,
 )
+from apps.knowledge.models import KnowledgeUpload
 from apps.knowledge.knowledge_ingestion import (
     KnowledgeIngestionService,
     get_ingestion_queue_health,

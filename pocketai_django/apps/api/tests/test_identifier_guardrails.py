@@ -7,15 +7,17 @@ from django.urls import reverse
 
 from apps.accounts.models import (
     BusinessProfile,
-    IdentifierColumnMapping,
     IdentifierColumnStatus,
-    IdentifierSchema,
     IdentifierSchemaStatus,
     KnowledgeSourceType,
     KnowledgeStatus,
-    KnowledgeUpload,
     RegistrationSession,
     User,
+)
+from apps.knowledge.models import (
+    IdentifierColumnMapping,
+    IdentifierSchema,
+    KnowledgeUpload,
 )
 from apps.conversations.models import Conversation
 from apps.mcp.identifier_registry import IdentifierGuardrail, IdentifierRegistryService

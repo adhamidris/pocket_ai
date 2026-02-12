@@ -1,4 +1,8 @@
-from apps.accounts.models import BusinessProfile, KnowledgeUpload, KnowledgeUploadTable
+from apps.accounts.models import BusinessProfile
+from apps.knowledge.models import (
+    KnowledgeUpload,
+    KnowledgeUploadTable,
+)
 
 # Get the upload
 cib = BusinessProfile.objects.filter(name__icontains='CIB').first()

@@ -4,12 +4,14 @@ from django.test import TestCase
 
 from apps.accounts.models import (
     BusinessProfile,
-    McpConnection,
     McpConnectionApprovalMode,
-    McpConnectionToolSetting,
     McpToolOperationType,
     RegistrationSession,
     User,
+)
+from apps.mcp.models import (
+    McpConnection,
+    McpConnectionToolSetting,
 )
 from apps.mcp.connectors import get_tool_approval_requirement
 from core.tenancy import tenant_context

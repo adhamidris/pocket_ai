@@ -6,16 +6,18 @@ from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
 from apps.accounts.models import (
     AgentProfile,
     BusinessProfile,
-    EmailAccount,
     EmailAccountProvider,
     EmailAccountStatus,
-    IntegrationAccount,
     IntegrationAccountStatus,
     IntegrationProvider,
     IntegrationType,
     McpConnectionApprovalMode,
     RegistrationSession,
     User,
+)
+from apps.integrations.models import (
+    EmailAccount,
+    IntegrationAccount,
 )
 from apps.conversations.models import Conversation
 from apps.mcp.orchestrator import McpOrchestratorService

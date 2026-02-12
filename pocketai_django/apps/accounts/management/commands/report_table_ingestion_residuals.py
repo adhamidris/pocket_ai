@@ -6,7 +6,11 @@ from typing import Any, Mapping
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
-from apps.accounts.models import KnowledgeSourceType, KnowledgeStatus, KnowledgeUpload
+from apps.accounts.models import (
+    KnowledgeSourceType,
+    KnowledgeStatus,
+)
+from apps.knowledge.models import KnowledgeUpload
 from core.tenancy import tenant_bypass
 
 

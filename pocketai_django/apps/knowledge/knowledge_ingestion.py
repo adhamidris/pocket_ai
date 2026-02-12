@@ -35,13 +35,16 @@ from core.otel import otel_trace
 import requests
 
 from apps.accounts.models import (
-    KnowledgeIngestionJob,
     KnowledgeIngestionJobStatus,
     KnowledgeIngestionJobType,
     KnowledgeIssueSeverity,
     KnowledgeSourceType,
     KnowledgeStatus,
     KnowledgeVisibility,
+    KnowledgeBlockType,
+)
+from apps.knowledge.models import (
+    KnowledgeIngestionJob,
     KnowledgeUpload,
     KnowledgeUploadChunk,
     KnowledgeUploadShadowChunk,
@@ -54,7 +57,6 @@ from apps.accounts.models import (
     KnowledgeTableColumn,
     KnowledgeUploadTableCell,
     KnowledgeUploadTableRow,
-    KnowledgeBlockType,
     KnowledgeEntity,
     KnowledgeAlias,
 )
@@ -5947,7 +5949,7 @@ class KnowledgeIngestionService:
         """
         Build semantic chunks from either structured entities or sliding windows of text/tables.
         """
-        from apps.accounts.models import KnowledgeUploadTable  # local import to avoid cycles
+        from apps.knowledge.models import KnowledgeUploadTable
 
         entity_payloads = list(entities or [])
         feature_flags: Mapping[str, Any] = {}
@@ -9349,7 +9351,11 @@ class KnowledgeIngestionService:
             )
 
         try:
-            from apps.accounts.models import IdentifierColumnMapping, IdentifierColumnStatus, IdentifierSchemaStatus
+            from apps.accounts.models import (
+                IdentifierColumnStatus,
+                IdentifierSchemaStatus,
+            )
+            from apps.knowledge.models import IdentifierColumnMapping
 
             mapping_qs = IdentifierColumnMapping.objects.select_related("identifier").filter(
                 business_profile=upload.business_profile,

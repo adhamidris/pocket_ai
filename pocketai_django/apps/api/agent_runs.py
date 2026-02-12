@@ -17,7 +17,11 @@ from django.views.decorators.http import require_POST
 
 from core.tenancy import tenant_bypass, tenant_context
 
-from apps.accounts.models import AgentProfile, EmailAccount, EmailAccountStatus
+from apps.accounts.models import (
+    AgentProfile,
+    EmailAccountStatus,
+)
+from apps.integrations.models import EmailAccount
 from apps.accounts.feature_flags import FeatureFlagService
 from apps.conversations.models import (
     AgentAutomation,

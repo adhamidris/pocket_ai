@@ -12,11 +12,13 @@ from django.utils import timezone
 
 from apps.accounts.models import (
     BusinessProfile,
-    McpConnection,
-    OAuthProvider,
-    OAuthState,
     RegistrationSession,
 )
+from apps.integrations.models import (
+    OAuthProvider,
+    OAuthState,
+)
+from apps.mcp.models import McpConnection
 
 
 User = get_user_model()

@@ -10,7 +10,7 @@ import sys
 SEARCH_TERM = "Fees and Charges Credit Cards"  # Change this if needed
 UPLOAD_ID = "23e9c2c1-6be7-4cf5-a64f-b13ddcf3ccd7"  # The newer upload
 
-from apps.accounts.models import KnowledgeUpload
+from apps.knowledge.models import KnowledgeUpload
 from apps.knowledge.knowledge_ingestion import queue_ingestion_job, KnowledgeIngestionService
 
 print("\n" + "=" * 70)
@@ -61,7 +61,10 @@ print(f"\n" + "-" * 70)
 print("POST-INGESTION CHECK")
 print("-" * 70)
 
-from apps.accounts.models import KnowledgeUploadChunk, KnowledgeUploadTable
+from apps.knowledge.models import (
+    KnowledgeUploadChunk,
+    KnowledgeUploadTable,
+)
 
 # Refresh the upload from DB
 upload.refresh_from_db()

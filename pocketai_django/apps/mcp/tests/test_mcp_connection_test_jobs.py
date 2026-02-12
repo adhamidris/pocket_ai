@@ -5,7 +5,11 @@ from unittest import mock
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
-from apps.accounts.models import BusinessProfile, McpConnection, RegistrationSession
+from apps.accounts.models import (
+    BusinessProfile,
+    RegistrationSession,
+)
+from apps.mcp.models import McpConnection
 from apps.mcp.connection_test_jobs import McpConnectionTestJobRunner, enqueue_mcp_connection_test_job
 from apps.mcp.models import McpConnectionTestJobStatus
 from apps.mcp.remote_client import McpRemoteHttpStatusError, McpRemoteSession, McpRemoteTool

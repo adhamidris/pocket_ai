@@ -6,7 +6,11 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
 
-from apps.accounts.models import BusinessProfile, McpConnection, RegistrationSession
+from apps.accounts.models import (
+    BusinessProfile,
+    RegistrationSession,
+)
+from apps.mcp.models import McpConnection
 from apps.mcp.models import McpConnectionTestJob, McpConnectionTestJobStatus
 
 

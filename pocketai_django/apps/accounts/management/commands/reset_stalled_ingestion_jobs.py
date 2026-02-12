@@ -6,10 +6,12 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 
 from apps.accounts.models import (
-    KnowledgeIngestionJob,
     KnowledgeIngestionJobStatus,
     KnowledgeSourceType,
     KnowledgeStatus,
+)
+from apps.knowledge.models import (
+    KnowledgeIngestionJob,
     KnowledgeUpload,
 )
 from apps.knowledge.knowledge_ingestion import queue_ingestion_job

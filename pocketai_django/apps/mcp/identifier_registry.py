@@ -11,15 +11,17 @@ from django.utils import timezone
 
 from apps.accounts.models import (
     BusinessProfile,
-    IdentifierColumnMapping,
-    IdentifierColumnMemory,
     IdentifierColumnStatus,
-    IdentifierSchema,
     IdentifierSchemaSource,
     IdentifierSchemaStatus,
+    _normalize_identifier_token,
+)
+from apps.knowledge.models import (
+    IdentifierColumnMapping,
+    IdentifierColumnMemory,
+    IdentifierSchema,
     KnowledgeUpload,
     KnowledgeUploadTable,
-    _normalize_identifier_token,
 )
 from apps.conversations.models import Conversation, ConversationSender, IdentifierEvent, ConversationMessage
 from apps.mcp.identifier_detection import ValueAwareIdentifierDetector

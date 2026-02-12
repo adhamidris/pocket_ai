@@ -6,7 +6,8 @@ from typing import Any
 from django.db import models
 from django.utils import timezone
 
-from apps.accounts.models import AgentProfile, BusinessProfile, KnowledgeUpload
+from apps.accounts.models import AgentProfile, BusinessProfile
+from apps.knowledge.models import KnowledgeUpload
 
 
 class CasePriority(models.TextChoices):

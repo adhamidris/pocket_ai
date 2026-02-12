@@ -6,7 +6,14 @@ not parent chunks with OCR artifacts.
 """
 import pytest
 from django.test import TestCase, SimpleTestCase
-from apps.accounts.models import BusinessProfile, AgentProfile, KnowledgeUpload, KnowledgeUploadChunk
+from apps.accounts.models import (
+    BusinessProfile,
+    AgentProfile,
+)
+from apps.knowledge.models import (
+    KnowledgeUpload,
+    KnowledgeUploadChunk,
+)
 from apps.rag.ai_orchestrator import KnowledgeSearchService
 from django.core.files.uploadedfile import SimpleUploadedFile
 

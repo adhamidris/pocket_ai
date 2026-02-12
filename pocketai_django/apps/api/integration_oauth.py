@@ -25,13 +25,15 @@ from core.tenancy import tenant_context
 
 from apps.accounts.models import (
     BusinessProfile,
-    IntegrationAccount,
     IntegrationAccountAuditAction,
-    IntegrationAccountAuditEvent,
     IntegrationAccountStatus,
-    IntegrationOAuthState,
     IntegrationProvider,
     IntegrationType,
+)
+from apps.integrations.models import (
+    IntegrationAccount,
+    IntegrationAccountAuditEvent,
+    IntegrationOAuthState,
     OAuthProvider,
 )
 from apps.accounts.oauth_helpers import (

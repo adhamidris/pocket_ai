@@ -7,7 +7,11 @@ from typing import Any, Mapping, Sequence
 
 from django.conf import settings
 
-from apps.accounts.models import KnowledgeStatus, KnowledgeUpload, KnowledgeVisibility
+from apps.accounts.models import (
+    KnowledgeStatus,
+    KnowledgeVisibility,
+)
+from apps.knowledge.models import KnowledgeUpload
 from apps.knowledge.knowledge_access import apply_customer_visible_uploads
 from apps.knowledge.dataset_key_index import BloomFilter, normalize_identifier_value
 

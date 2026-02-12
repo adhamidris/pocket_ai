@@ -26,16 +26,18 @@ from apps.accounts.models import (
     IntegrationSyncFrequency,
     IntegrationCredentialEventType,
     KnowledgeAuditAction,
-    KnowledgeAuditEvent,
-    KnowledgeCollection,
-    KnowledgeIntegration,
     KnowledgeIntegrationStatus,
     KnowledgeIntegrationType,
     KnowledgeSourceType,
-    KnowledgeUpload,
     KnowledgeVisibility,
     _normalize_identifier_token,
 )
+from apps.knowledge.models import (
+    KnowledgeAuditEvent,
+    KnowledgeCollection,
+    KnowledgeUpload,
+)
+from apps.integrations.models import KnowledgeIntegration
 from apps.conversations.models import IdentifierEvent
 from apps.cases.models import Case, CaseMessage, CasePriority, CaseStatus
 from apps.customers.models import Customer, CustomerNoteAuthor

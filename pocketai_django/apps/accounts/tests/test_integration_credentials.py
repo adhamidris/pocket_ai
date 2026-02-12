@@ -5,12 +5,14 @@ from django.test import TestCase, override_settings
 
 from apps.accounts.models import (
     BusinessProfile,
-    IntegrationCredentialEvent,
     IntegrationCredentialEventType,
-    KnowledgeIntegration,
     KnowledgeIntegrationStatus,
     KnowledgeIntegrationType,
     RegistrationSession,
+)
+from apps.integrations.models import (
+    IntegrationCredentialEvent,
+    KnowledgeIntegration,
 )
 
 

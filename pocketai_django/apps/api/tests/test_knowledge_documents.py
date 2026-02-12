@@ -6,7 +6,13 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
 
-from apps.accounts.models import BusinessProfile, KnowledgeSourceType, KnowledgeStatus, KnowledgeUpload, RegistrationSession
+from apps.accounts.models import (
+    BusinessProfile,
+    KnowledgeSourceType,
+    KnowledgeStatus,
+    RegistrationSession,
+)
+from apps.knowledge.models import KnowledgeUpload
 
 
 User = get_user_model()

@@ -7,9 +7,9 @@ from django.utils import timezone
 
 from core.tenancy import tenant_context
 
-from apps.accounts.models import (
+from apps.accounts.models import IntegrationProvider
+from apps.integrations.models import (
     IntegrationAccount,
-    IntegrationProvider,
     OAuthProvider,
 )
 from apps.accounts.oauth_helpers import (

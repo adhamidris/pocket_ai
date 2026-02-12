@@ -8,17 +8,19 @@ from django.test import SimpleTestCase, TestCase
 
 from apps.accounts.models import (
     BusinessProfile,
-    KnowledgeAlias,
-    KnowledgeEntity,
     KnowledgeSourceType,
     KnowledgeStatus,
+    RegistrationSession,
+    User,
+)
+from apps.knowledge.models import (
+    KnowledgeAlias,
+    KnowledgeEntity,
     KnowledgeUpload,
     KnowledgeUploadChunk,
     KnowledgeUploadTable,
     KnowledgeUploadTableCell,
     KnowledgeUploadTableRow,
-    RegistrationSession,
-    User,
 )
 from apps.rag.ai_orchestrator import (
     AliasSearchResult,

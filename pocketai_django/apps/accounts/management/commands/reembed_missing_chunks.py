@@ -8,7 +8,11 @@ from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
-from apps.accounts.models import BusinessProfile, KnowledgeUpload, KnowledgeUploadChunk
+from apps.accounts.models import BusinessProfile
+from apps.knowledge.models import (
+    KnowledgeUpload,
+    KnowledgeUploadChunk,
+)
 from apps.rag.embeddings import EmbeddingProviderError, build_embedding_service
 from core.tenancy import tenant_bypass, tenant_context
 

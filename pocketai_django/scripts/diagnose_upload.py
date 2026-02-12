@@ -13,7 +13,7 @@ import sys
 # Search for the document
 SEARCH_TERM = "Fees and Charges Credit Cards"  # Change this if needed
 
-from apps.accounts.models import (
+from apps.knowledge.models import (
     KnowledgeUpload,
     KnowledgeUploadChunk,
     KnowledgeUploadTable,

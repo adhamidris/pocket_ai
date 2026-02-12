@@ -8,30 +8,34 @@ from django.contrib.auth.models import AnonymousUser
 from django.utils.html import format_html
 
 from .models import (
-    AgentEmailAccountPolicyOverride,
     AgentProfile,
     BusinessProfile,
-    EmailAccount,
-    EmailAccountAuditEvent,
-    EmailAccountHealthJob,
     IntegrationSyncFrequency,
-    KnowledgeAlias,
-    KnowledgeEntity,
-    KnowledgeFeedbackCase,
-    IdentifierColumnMapping,
-    IdentifierSchema,
-    IntegrationCredentialEvent,
-    KnowledgeIntegration,
-    KnowledgeIngestionJob,
-    KnowledgeUpload,
     KnowledgeVisibility,
-    KnowledgeDriftSample,
-    OAuthProvider,
-    RAGEvaluationRun,
     RegistrationSession,
     TenantMemoryConfiguration,
     TenantMemoryConfigurationAuditEvent,
     User,
+)
+from apps.integrations.models import (
+    AgentEmailAccountPolicyOverride,
+    EmailAccount,
+    EmailAccountAuditEvent,
+    EmailAccountHealthJob,
+    IntegrationCredentialEvent,
+    KnowledgeIntegration,
+    OAuthProvider,
+)
+from apps.knowledge.models import (
+    IdentifierColumnMapping,
+    IdentifierSchema,
+    KnowledgeAlias,
+    KnowledgeDriftSample,
+    KnowledgeEntity,
+    KnowledgeFeedbackCase,
+    KnowledgeIngestionJob,
+    KnowledgeUpload,
+    RAGEvaluationRun,
 )
 from apps.rag.evaluation.harness import RAGEvaluationHarness
 from apps.accounts.memory_policy_presets import (

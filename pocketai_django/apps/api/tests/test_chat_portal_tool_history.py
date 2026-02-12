@@ -9,11 +9,11 @@ from django.utils import timezone
 
 from apps.accounts.models import (
     BusinessProfile,
-    McpConnection,
     McpConnectionAuthType,
     McpConnectionStatus,
     RegistrationSession,
 )
+from apps.mcp.models import McpConnection
 from apps.conversations.models import (
     Conversation,
     ConversationMessage,

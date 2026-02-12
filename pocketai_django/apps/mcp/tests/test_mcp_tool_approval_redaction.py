@@ -5,7 +5,12 @@ from datetime import timedelta
 from django.test import TestCase
 from django.utils import timezone
 
-from apps.accounts.models import BusinessProfile, McpConnection, RegistrationSession, User
+from apps.accounts.models import (
+    BusinessProfile,
+    RegistrationSession,
+    User,
+)
+from apps.mcp.models import McpConnection
 from apps.conversations.models import Conversation, ConversationToolApproval, ConversationToolApprovalStatus
 from apps.mcp.orchestrator import McpOrchestratorService
 from apps.mcp.redaction import REDACTED_VALUE

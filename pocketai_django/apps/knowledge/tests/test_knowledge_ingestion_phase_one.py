@@ -13,11 +13,15 @@ from django.test import SimpleTestCase, TestCase, override_settings
 
 from apps.accounts.models import (
     BusinessProfile,
-    KnowledgeAlias,
     KnowledgeBlockType,
-    KnowledgeEntity,
     KnowledgeSourceType,
     KnowledgeStatus,
+    RegistrationSession,
+    User,
+)
+from apps.knowledge.models import (
+    KnowledgeAlias,
+    KnowledgeEntity,
     KnowledgeUpload,
     KnowledgeUploadChunk,
     KnowledgeUploadFile,
@@ -25,8 +29,6 @@ from apps.accounts.models import (
     KnowledgeUploadTable,
     KnowledgeUploadTableRow,
     KnowledgeUploadText,
-    RegistrationSession,
-    User,
 )
 from apps.knowledge.knowledge_ingestion import (
     KnowledgeIngestionService,

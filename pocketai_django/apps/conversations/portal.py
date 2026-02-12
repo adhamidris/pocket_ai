@@ -11,7 +11,12 @@ from django.db.models import Count, Prefetch
 from django.utils import timezone
 from django.utils.text import slugify
 
-from apps.accounts.models import AgentProfile, BusinessProfile, KnowledgeFeedbackCase, _normalize_identifier_token
+from apps.accounts.models import (
+    AgentProfile,
+    BusinessProfile,
+    _normalize_identifier_token,
+)
+from apps.knowledge.models import KnowledgeFeedbackCase
 from apps.conversations.content_blocks import ensure_assistant_text_blocks
 from apps.conversations.models import (
     Conversation,
@@ -544,8 +549,8 @@ class ChatPortalService:
                 business_profile=business,
                 session_token=existing_session_token,
             ).first()
-            if conversation is None:
-                raise PortalNotFoundError("Conversation not found")
+            # Session cookies can outlive DB resets or tenant cleanup. Treat a stale
+            # token as a cache miss and create a fresh conversation instead of 404ing.
 
         if conversation is None:
             expires_at = now + self.session_ttl if self.session_ttl else None

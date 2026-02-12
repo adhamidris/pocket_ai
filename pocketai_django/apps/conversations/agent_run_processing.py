@@ -855,7 +855,7 @@ class AgentRunProcessingService:
             # Determine if this is an MCP remote tool or built-in tool
             if connection_id and remote_tool_name:
                 # MCP remote tool - use orchestrator's remote execution
-                from apps.accounts.models import McpConnection
+                from apps.mcp.models import McpConnection
 
                 connection = McpConnection.objects.filter(id=connection_id).first()
                 if connection:

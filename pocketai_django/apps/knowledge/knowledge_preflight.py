@@ -12,8 +12,8 @@ from xml.etree import ElementTree
 from django.conf import settings
 from django.utils import timezone
 
-from apps.accounts.models import (
-    KnowledgeSourceType,
+from apps.accounts.models import KnowledgeSourceType
+from apps.knowledge.models import (
     KnowledgeUpload,
     KnowledgeUploadFile,
     KnowledgeUploadText,

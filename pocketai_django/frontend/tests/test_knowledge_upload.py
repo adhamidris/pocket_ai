@@ -10,9 +10,11 @@ from django.urls import reverse
 from apps.accounts.models import (
     BusinessProfile,
     KnowledgeSourceType,
+    RegistrationSession,
+)
+from apps.knowledge.models import (
     KnowledgeUpload,
     KnowledgeUploadFile,
-    RegistrationSession,
 )
 
 

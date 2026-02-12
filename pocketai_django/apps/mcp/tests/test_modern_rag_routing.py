@@ -7,10 +7,10 @@ from apps.accounts.models import (
     BusinessProfile,
     KnowledgeSourceType,
     KnowledgeStatus,
-    KnowledgeUpload,
     RegistrationSession,
     User,
 )
+from apps.knowledge.models import KnowledgeUpload
 from apps.conversations.models import Conversation
 from apps.mcp import tools, orchestrator
 from apps.mcp.types import ToolExecutionContext
