@@ -312,7 +312,7 @@ class KnowledgeSearchServiceTableTests(TestCase):
         self.assertEqual(result.diagnostics.get("index_route"), "table_specific_fallback_table")
 
     @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
-    def test_parallel_rrf_blends_text_context_hits(self, _build_embeddings) -> None:
+    def test_parallel_rrf_does_not_force_context_hits(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         with tenant_context(self.business.id):
             text_chunk = KnowledgeUploadChunk.objects.create(
@@ -334,16 +334,6 @@ class KnowledgeSearchServiceTableTests(TestCase):
             chunk_index=self.row_chunk.chunk_index,
             is_table_chunk=True,
             table_id=str(self.table.id),
-        )
-        context_text_snippet = KnowledgeSnippet(
-            id=uuid.uuid4(),
-            title="Context Text",
-            summary="text context",
-            source="hybrid",
-            upload_id=self.upload.id,
-            chunk_id=text_chunk.id,
-            chunk_index=text_chunk.chunk_index,
-            is_table_chunk=False,
         )
         table_direct_snippet = KnowledgeSnippet(
             id=uuid.uuid4(),
@@ -391,7 +381,7 @@ class KnowledgeSearchServiceTableTests(TestCase):
             mock.patch.object(service, "search_by_alias", return_value=AliasSearchResult(tuple(), {})),
             mock.patch.object(service, "_chunk_hits", return_value=(table_hit, text_hit)),
             mock.patch.object(service, "_table_search_snippets", return_value=(table_direct_snippet,)),
-            mock.patch.object(service, "_search_chunks", side_effect=[(vector_table_snippet,), (context_text_snippet,)]),
+            mock.patch.object(service, "_search_chunks", return_value=(vector_table_snippet,)),
             mock.patch.object(service, "_rrf_fusion_snippets", side_effect=_capture_rrf),
             mock.patch.object(service, "_snippet_rerank", side_effect=lambda snippets, **_: (tuple(snippets), 0)),
         ):
@@ -403,8 +393,9 @@ class KnowledgeSearchServiceTableTests(TestCase):
 
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.diagnostics.get("path"), "parallel_rrf")
-        self.assertEqual(result.diagnostics.get("rrf_context_count"), 1)
-        self.assertTrue(any(not snippet.is_table_chunk for snippet in captured.get("vector", [])))
+        self.assertIsNone(result.diagnostics.get("rrf_context_count"))
+        self.assertTrue(captured.get("vector"))
+        self.assertTrue(all(snippet.is_table_chunk for snippet in captured.get("vector", [])))
 
 
 class KnowledgeSearchServiceRegressionTests(TestCase):
@@ -447,6 +438,22 @@ class KnowledgeSearchServiceRegressionTests(TestCase):
         self.assertEqual(result.status, "ok")
         self.assertTrue(any(snippet.chunk_id == chunk.id for snippet in result.snippets))
         self.assertEqual(result.diagnostics.get("path"), "hybrid")
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_table_row_cap_honors_requested_limit(self, _build_embeddings) -> None:
+        cap = self.service._table_row_result_cap_for_business(self.business, requested=10)
+        self.assertGreaterEqual(cap, 10)
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_table_row_cap_uses_business_override_as_floor(self, _build_embeddings) -> None:
+        self.business.metadata = {
+            "rag_overrides": {
+                "table_results_limit": 25,
+            }
+        }
+        self.business.save(update_fields=["metadata"])
+        cap = self.service._table_row_result_cap_for_business(self.business, requested=10)
+        self.assertEqual(cap, 25)
 
     @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
     def test_base_queryset_keeps_chunks_with_missing_search_tier(self, _build_embeddings) -> None:

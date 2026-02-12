@@ -123,6 +123,12 @@ Retrieval is hybrid and table-aware:
 - **Vector (semantic)**: similarity search for paraphrases and long-form questions.
 - **Table-aware routing**: when a query looks like “fees/rates/pricing/compare”, table chunks are prioritized and can trigger targeted row expansion.
 
+### Retrieval invariants (current)
+- Rank by relevance only (hybrid + rerank + exact-match boosts), then dedupe/group evidence.
+- No representation quotas (no forced text/table slot balancing after ranking).
+- No forced full-table/document reads injected from intent heuristics.
+- `search_knowledge.limit` is honored unless prompt/token budgets require compaction.
+
 ### Snippet contract (what the LLM receives)
 Tool outputs are intentionally constrained:
 - Provide small, provenance-rich snippets (summary/preview/full).
@@ -233,6 +239,16 @@ This section describes the recommended production shape. Not all items are imple
   - Don’t run unbounded query fanout in parallel.
   - Precompute heavy table context during ingestion, not per-query.
   - Cache per-tenant search artifacts in Redis with safe invalidation on overwrite/delete.
+
+### Troubleshooting flow (ingestion/retrieval)
+1. Validate ingestion coverage first (pages/tables/chunks/issues in Knowledge Visualizer).
+2. If coverage is wrong, rebuild canonical artifacts before tuning retrieval:
+   - `python manage.py rebuild_canonical_knowledge_chunks --upload-id <uuid>`
+3. If coverage is correct but answers are wrong, run evaluation harness:
+   - `python manage.py run_rag_eval --baseline --output <path>`
+4. Compare quality + latency deltas before changing ranking:
+   - Recall/source accuracy regressions block release.
+   - Payload reductions are only accepted when recall is preserved.
 
 Suggested SLOs (product-level):
 - p95 retrieval: 5–8s for simple queries; 15–25s for complex multi-part queries.

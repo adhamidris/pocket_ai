@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import shutil
 import tempfile
+import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from django.conf import settings
@@ -486,6 +488,217 @@ class KnowledgeIngestionChunkingTests(SimpleTestCase):
         self.assertEqual(region_keys, {"p1-r0", "p1-r1"})
 
     @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_canonicalize_payloads_projects_table_residuals_to_annotations(self, _build_embeddings) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        upload = SimpleNamespace(id=uuid.uuid4())
+        segment_payloads = [
+            {
+                "text": "[Table] Fees\n[Columns] Service | Fee\n[Rows] 2 data rows",
+                "metadata": {
+                    "index_type": "table",
+                    "is_table_chunk": True,
+                    "content_source": "table_summary",
+                    "table_chunk_role": "summary",
+                    "table_id": "table-1",
+                    "table_title": "Fees",
+                    "table_order_index": 1,
+                    "table_page_number": 1,
+                    "search_tier": "primary",
+                },
+            },
+            {
+                "text": "[Table] Fees\n[Row] 1\nService: Cash deposit\nFee: EGP 14",
+                "metadata": {
+                    "index_type": "table",
+                    "is_table_chunk": True,
+                    "content_source": "table_row",
+                    "table_chunk_role": "row",
+                    "table_id": "table-1",
+                    "table_row_index": 1,
+                    "table_order_index": 1,
+                    "table_page_number": 1,
+                    "search_tier": "drill_down",
+                },
+            },
+            {
+                "text": "In case of cash deposits made after 2:00 pm, one extra working day applies.",
+                "metadata": {
+                    "index_type": "text",
+                    "content_source": "table_residual",
+                    "region_role": "table_residual",
+                    "table_residual": True,
+                    "table_residual_region_key": "p1-r0",
+                    "table_overlap_ratio_max": 0.82,
+                    "page_numbers": [1],
+                },
+            },
+        ]
+
+        canonicalized, stats = service._canonicalize_segment_payloads(
+            upload=upload,
+            segment_payloads=segment_payloads,
+        )
+        content_sources = [(payload.get("metadata") or {}).get("content_source") for payload in canonicalized]
+        self.assertNotIn("table_residual", content_sources)
+        self.assertIn("table_annotation", content_sources)
+
+        annotation_payload = next(
+            payload
+            for payload in canonicalized
+            if (payload.get("metadata") or {}).get("content_source") == "table_annotation"
+        )
+        annotation_meta = annotation_payload.get("metadata") or {}
+        self.assertEqual(annotation_meta.get("canonical_chunk_kind"), "table_annotation")
+        self.assertEqual(annotation_meta.get("table_id"), "table-1")
+        self.assertEqual(annotation_meta.get("canonical_parent_anchor_id"), "table:table-1:summary")
+        self.assertTrue(str(annotation_meta.get("canonical_anchor_id") or "").startswith("table:table-1:annotation:"))
+
+        self.assertEqual((stats.get("kind_counts") or {}).get("table_annotation"), 1)
+        projection_stats = stats.get("table_residual_projection") or {}
+        self.assertEqual(projection_stats.get("input_residual_segments"), 1)
+        self.assertEqual(projection_stats.get("table_annotation_chunks_created"), 1)
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_canonicalize_payloads_assigns_narrative_anchor(self, _build_embeddings) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        upload = SimpleNamespace(id=uuid.uuid4())
+        segment_payloads = [
+            {
+                "text": "General branch policy for customer service windows.",
+                "metadata": {
+                    "index_type": "text",
+                    "content_source": "page_blocks",
+                    "region_role": "text",
+                    "page_numbers": [2],
+                    "block_anchors": ["p2-b4"],
+                },
+            }
+        ]
+
+        canonicalized, _ = service._canonicalize_segment_payloads(
+            upload=upload,
+            segment_payloads=segment_payloads,
+        )
+        self.assertEqual(len(canonicalized), 1)
+        metadata = canonicalized[0].get("metadata") or {}
+        self.assertEqual(metadata.get("canonical_chunk_kind"), "narrative_paragraph")
+        self.assertEqual(metadata.get("coverage_reason"), "layout_paragraph")
+        self.assertTrue(str(metadata.get("canonical_anchor_id") or "").startswith("page:2:paragraph:"))
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_heading_like_table_residual_is_promoted_to_narrative(self, _build_embeddings) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        upload = SimpleNamespace(id=uuid.uuid4())
+        segment_payloads = [
+            {
+                "text": "[Table] CIB-Teller EN – Table 1\n[Columns] Service | Tariff | Prime",
+                "metadata": {
+                    "index_type": "table",
+                    "is_table_chunk": True,
+                    "content_source": "table_summary",
+                    "table_chunk_role": "summary",
+                    "table_id": "table-main",
+                    "table_title": "CIB-Teller EN – Table 1",
+                    "table_order_index": 1,
+                    "table_page_number": 1,
+                },
+            },
+            {
+                "text": "Over the counter in branch Fees & Charges",
+                "metadata": {
+                    "index_type": "text",
+                    "content_source": "table_residual",
+                    "region_role": "table_residual",
+                    "table_residual": True,
+                    "table_residual_region_key": "p1-r0",
+                    "table_overlap_ratio_max": 0.91,
+                    "page_numbers": [1],
+                },
+            },
+        ]
+
+        canonicalized, stats = service._canonicalize_segment_payloads(
+            upload=upload,
+            segment_payloads=segment_payloads,
+        )
+        narrative_payload = next(
+            payload
+            for payload in canonicalized
+            if (payload.get("metadata") or {}).get("content_source") == "page_blocks"
+        )
+        narrative_meta = narrative_payload.get("metadata") or {}
+        self.assertEqual(narrative_meta.get("canonical_chunk_kind"), "narrative_paragraph")
+        self.assertEqual(narrative_meta.get("table_residual_projected"), "narrative")
+        self.assertEqual(
+            (stats.get("table_residual_projection") or {}).get("narrative_promoted_segments"),
+            1,
+        )
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    @override_settings(
+        RAG_TABLE_ANNOTATION_MAX_CHARS=80,
+        RAG_TABLE_ANNOTATION_MAX_PER_TABLE=1,
+    )
+    def test_annotation_projection_preserves_overflow_chunks_beyond_soft_limit(self, _build_embeddings) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        upload = SimpleNamespace(id=uuid.uuid4())
+        segment_payloads = [
+            {
+                "text": "[Table] Fees\n[Columns] Service | Tariff",
+                "metadata": {
+                    "index_type": "table",
+                    "is_table_chunk": True,
+                    "content_source": "table_summary",
+                    "table_chunk_role": "summary",
+                    "table_id": "table-overflow",
+                    "table_title": "Fees",
+                    "table_order_index": 1,
+                    "table_page_number": 1,
+                },
+            },
+            {
+                "text": "*In case cash deposits are made after 2:00 pm, one extra working day applies for value date.",
+                "metadata": {
+                    "index_type": "text",
+                    "content_source": "table_residual",
+                    "region_role": "table_residual",
+                    "table_residual": True,
+                    "table_residual_region_key": "p1-r0",
+                    "table_overlap_ratio_max": 0.88,
+                    "page_numbers": [1],
+                },
+            },
+            {
+                "text": "*For public holidays, settlement timing shifts according to account currency and cut-off windows.",
+                "metadata": {
+                    "index_type": "text",
+                    "content_source": "table_residual",
+                    "region_role": "table_residual",
+                    "table_residual": True,
+                    "table_residual_region_key": "p1-r0",
+                    "table_overlap_ratio_max": 0.86,
+                    "page_numbers": [1],
+                },
+            },
+        ]
+
+        canonicalized, stats = service._canonicalize_segment_payloads(
+            upload=upload,
+            segment_payloads=segment_payloads,
+        )
+        annotation_chunks = [
+            payload
+            for payload in canonicalized
+            if (payload.get("metadata") or {}).get("content_source") == "table_annotation"
+        ]
+        self.assertGreaterEqual(len(annotation_chunks), 2)
+        self.assertTrue(
+            all((payload.get("metadata") or {}).get("table_annotation_soft_limit_exceeded") for payload in annotation_chunks)
+        )
+        projection_stats = stats.get("table_residual_projection") or {}
+        self.assertEqual(projection_stats.get("soft_limit_exceeded_tables"), 1)
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
     def test_auto_selection_overrides_fragmented_heuristic_when_non_heuristic_is_viable(
         self,
         _build_embeddings,
@@ -763,6 +976,41 @@ class KnowledgeIngestionSpreadsheetTests(TestCase):
         self.assertEqual(table_stats.get("row_tier"), "small")
         self.assertFalse(table_stats.get("partial_index"))
         self.assertFalse(KnowledgeUploadIssue.objects.filter(upload=upload).exists())
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_reingest_from_persisted_artifacts_rebuilds_canonical_chunk_metadata(self, _build_embeddings):
+        upload = KnowledgeUpload.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            source_type=KnowledgeSourceType.FILE,
+            status=KnowledgeStatus.PENDING,
+            display_name="Plans CSV",
+        )
+        storage_path = Path("uploads/plans.csv")
+        target_path = Path(self._media_root) / storage_path
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_text("plan,price\nBasic,10\nPro,25\n", encoding="utf-8")
+        KnowledgeUploadFile.objects.create(
+            upload=upload,
+            filename="plans.csv",
+            storage_path=str(storage_path),
+            content_type="text/csv",
+            size_bytes=target_path.stat().st_size,
+        )
+
+        service = KnowledgeIngestionService(media_root=Path(self._media_root))
+        with tenant_context(self.business.id):
+            extraction = service._extract_upload(upload)
+            service._persist_extraction(upload, extraction)
+            service.reingest_from_persisted_artifacts(upload)
+            upload.refresh_from_db()
+            chunks = list(KnowledgeUploadChunk.objects.filter(upload=upload).order_by("chunk_index"))
+        self.assertEqual(upload.chunk_count, len(chunks))
+        self.assertTrue(chunks)
+        self.assertTrue(all((chunk.metadata or {}).get("canonical_anchor_id") for chunk in chunks))
+        kinds = {(chunk.metadata or {}).get("canonical_chunk_kind") for chunk in chunks}
+        self.assertIn("table_row", kinds)
+        self.assertIn("table_summary", kinds)
 
     @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
     def test_table_entities_persist_when_entity_chunking_disabled(self, _build_embeddings):

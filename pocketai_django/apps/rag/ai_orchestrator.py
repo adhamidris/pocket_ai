@@ -695,28 +695,6 @@ class KnowledgeSearchService:
         )
         if not (0.0 <= self.evidence_conflict_min_overlap <= 1.0):
             self.evidence_conflict_min_overlap = 0.25
-        # TEMP(9to6-cleanup): Guardrail toggle for table/text balanced routing.
-        # Remove once we confirm this path is no longer needed.
-        self.table_balanced_routing_enabled = bool(
-            getattr(settings, "RAG_TABLE_BALANCED_ROUTING_ENABLED", True)
-        )
-        # TEMP(9to6-cleanup): Guardrail toggle for representation balancing.
-        # Remove once we confirm this path is no longer needed.
-        self.representation_balance_enabled = bool(
-            getattr(settings, "RAG_REPRESENTATION_BALANCE_ENABLED", True)
-        )
-        self.representation_balance_window = max(
-            4,
-            int(getattr(settings, "RAG_REPRESENTATION_BALANCE_WINDOW", 12)),
-        )
-        self.representation_balance_min_text = max(
-            0,
-            int(getattr(settings, "RAG_REPRESENTATION_BALANCE_MIN_TEXT", 1)),
-        )
-        self.representation_balance_specific_text = max(
-            1,
-            int(getattr(settings, "RAG_REPRESENTATION_BALANCE_SPECIFIC_TEXT", 2)),
-        )
         self.business_override_key = getattr(settings, "RAG_BUSINESS_OVERRIDE_KEY", "rag_overrides")
         self.window_cache_limit = max(32, int(getattr(settings, "RAG_NEIGHBOR_WINDOW_CACHE_SIZE", 128)))
         self._window_cache: OrderedDict[tuple[uuid.UUID, uuid.UUID, int, int], list[KnowledgeUploadChunk]] = OrderedDict()
@@ -767,9 +745,6 @@ class KnowledgeSearchService:
         )
         self.table_vector_floor = float(getattr(settings, "RAG_TABLE_VECTOR_FLOOR", 0.45))
         self.table_chunk_sample_limit = max(3, int(getattr(settings, "RAG_TABLE_CHUNK_SAMPLE", 6)))
-        # TEMP(9to6-cleanup): Guardrail toggle for forced table-context snippet slots.
-        # Remove once we confirm this path is no longer needed.
-        self.table_context_snippet_cap = max(0, int(getattr(settings, "RAG_TABLE_CONTEXT_SNIPPETS", 2)))
         self.table_header_match_bonus = float(getattr(settings, "RAG_TABLE_HEADER_MATCH_BONUS", 0.12))
         self.table_specific_miss_penalty = float(getattr(settings, "RAG_TABLE_SPECIFIC_MISS_PENALTY", 0.25))
         self.table_specific_min_length = max(
@@ -1653,67 +1628,13 @@ class KnowledgeSearchService:
                         "request": diagnostics.get("request_id"),
                     },
                 )
-        chunk_hits, context_hits, route_diag = self._route_chunk_hits(
+        chunk_hits, _context_hits, route_diag = self._route_chunk_hits(
             chunk_hits,
             table_intent=table_intent,
             table_context=table_context,
         )
-        context_hits_ordered = context_hits
-        if table_intent and context_hits:
-            # Prioritize text context from the same uploads that produced table hits.
-            # This keeps nearby narrative chunks (e.g., page text) visible when table rows dominate.
-            table_upload_ids = {
-                hit.chunk.upload_id
-                for hit in chunk_hits
-                if bool((hit.chunk.metadata or {}).get("is_table_chunk"))
-            }
-            if table_upload_ids:
-                context_same_upload = [
-                    hit for hit in context_hits if hit.chunk.upload_id in table_upload_ids
-                ]
-                context_other_upload = [
-                    hit for hit in context_hits if hit.chunk.upload_id not in table_upload_ids
-                ]
-                context_hits_ordered = tuple(context_same_upload + context_other_upload)
-            query_token_set = set(table_context.get("query_tokens") or ())
-            specific_token_set = set(table_context.get("specific_tokens") or ())
-            if query_token_set:
-                # Rank context snippets by lexical evidence against the query, not by ANN score alone.
-                # This prevents unrelated high-score text snippets from displacing the target page text.
-                ranked_uploads: list[uuid.UUID] = []
-                seen_uploads: set[uuid.UUID] = set()
-                for table_hit in chunk_hits:
-                    upload_id = table_hit.chunk.upload_id
-                    if upload_id in seen_uploads:
-                        continue
-                    seen_uploads.add(upload_id)
-                    ranked_uploads.append(upload_id)
-                upload_rank = {upload_id: rank for rank, upload_id in enumerate(ranked_uploads)}
-
-                def _context_rank_key(hit: ChunkResult) -> tuple[int, int, float, float]:
-                    text = (hit.chunk.content or "").lower()
-                    query_matches = sum(1 for token in query_token_set if token and token in text)
-                    specific_matches = sum(1 for token in specific_token_set if token and token in text)
-                    rank = upload_rank.get(hit.chunk.upload_id)
-                    upload_boost = 0.0 if rank is None else 1.0 / (rank + 1.0)
-                    rerank_score = float(hit.rerank_score or 0.0)
-                    return (specific_matches, query_matches, upload_boost, rerank_score)
-
-                context_hits_ordered = tuple(
-                    sorted(context_hits_ordered, key=_context_rank_key, reverse=True)
-                )
-                diagnostics["table_context_ranked"] = True
         diagnostics.update(route_diag)
         diagnostics["chunk_candidate_count"] = len(chunk_hits)
-        if table_intent and self.table_context_snippet_cap:
-            parent_hits = self._table_parent_hits(
-                business_profile,
-                chunk_hits,
-                limit=self.table_context_snippet_cap,
-            )
-            if parent_hits:
-                context_hits_ordered = tuple(list(context_hits_ordered) + list(parent_hits))
-                diagnostics["table_parent_hits"] = len(parent_hits)
         table_snippets: tuple[KnowledgeSnippet, ...] = tuple()
         table_reason: str | None = None
         should_run_table = False
@@ -1747,7 +1668,7 @@ class KnowledgeSearchService:
             and not table_blocked
             and chunk_hits  # We have vector results (parallel mode, not fallback)
             and table_upload_ratio >= self.parallel_table_min_ratio
-            and (has_text_chunk or bool(context_hits))
+            and (has_text_chunk or bool(_context_hits))
             # Keep parallel fusion for mixed candidates; table-only flows use table_direct/blended.
         )
 
@@ -1843,21 +1764,6 @@ class KnowledgeSearchService:
                         query=traits.normalized or traits.original or query,
                     )
                 )
-                context_snippets: list[KnowledgeSnippet] = []
-                if table_intent and context_hits_ordered and self.table_context_snippet_cap:
-                    context_limit = min(self.table_context_snippet_cap, limit)
-                    context_snippets = list(
-                        self._search_chunks(
-                            context_hits_ordered,
-                            limit=context_limit,
-                            business_profile=business_profile,
-                            pathway="hybrid",
-                            query=traits.normalized or traits.original or query,
-                        )
-                    )
-                    if context_snippets:
-                        vector_snippets.extend(context_snippets)
-                        diagnostics["rrf_context_count"] = len(context_snippets)
 
                 # RRF fusion of table + vector results
                 rrf_merged = self._rrf_fusion_snippets(
@@ -1872,35 +1778,12 @@ class KnowledgeSearchService:
                     query_text=traits.normalized or traits.original or query,
                     tokens=traits.tokens,
                 )
-                blended = list(
-                    blended[: max(limit, self.representation_balance_window)]
-                )  # keep a wider window for representation budgeting
-                if context_snippets and limit > 0 and not any(not item.is_table_chunk for item in blended):
-                    # Keep at least one text snippet visible for mixed-evidence grounding.
-                    for candidate in context_snippets:
-                        if any(existing.id == candidate.id for existing in blended):
-                            continue
-                        if len(blended) >= limit and blended:
-                            replacement_index = min(max(0, limit - 1), len(blended) - 1)
-                            blended[replacement_index] = candidate
-                        else:
-                            blended.append(candidate)
-                        diagnostics["rrf_context_forced"] = True
-                        break
+                blended = list(blended[:limit])
 
                 # Apply table diversification when strategy requests it
                 if strategy_result and strategy_result.hints.diversify_tables and len(blended) > 1:
                     blended = self._diversify_table_snippets(blended, limit=limit)
                     diagnostics["strategy_diversified"] = True
-
-                blended, representation_diag = self._apply_representation_budget(
-                    blended,
-                    table_context=table_context,
-                    limit=limit,
-                    query_text=traits.normalized or traits.original or query,
-                    tokens=traits.tokens,
-                )
-                diagnostics.update(representation_diag)
 
                 blended, collapse_diag = self._collapse_snippets_by_evidence_group(
                     blended,
@@ -1942,29 +1825,8 @@ class KnowledgeSearchService:
                 diagnostics["table_reason"] = table_reason
             diagnostics["total_duration_ms"] = self._duration_ms(overall_start)
             diagnostics["snippet_count"] = len(table_snippets)
-            reserved_context_slots = 0
-            if table_intent and context_hits_ordered and self.table_context_snippet_cap and limit > 1:
-                reserved_context_slots = min(
-                    self.table_context_snippet_cap,
-                    max(1, limit // 3),
-                    limit - 1,
-                )
-                diagnostics["table_context_reserved"] = reserved_context_slots
-            table_limit = max(1, limit - reserved_context_slots)
-            blended: list[KnowledgeSnippet] = list(table_snippets[:table_limit])
+            blended: list[KnowledgeSnippet] = list(table_snippets[:limit])
             remaining = max(0, limit - len(blended))
-            if table_intent and context_hits_ordered and remaining and self.table_context_snippet_cap:
-                context_limit = min(self.table_context_snippet_cap, remaining)
-                blended.extend(
-                    self._search_chunks(
-                        context_hits_ordered,
-                        limit=context_limit,
-                        business_profile=business_profile,
-                        pathway="hybrid",
-                        query=traits.normalized or traits.original or query,
-                    )
-                )
-                remaining = max(0, limit - len(blended))
             if chunk_hits and remaining:
                 blended.extend(
                     self._search_chunks(
@@ -1985,15 +1847,6 @@ class KnowledgeSearchService:
             if strategy_result and strategy_result.hints.diversify_tables and len(blended) > 1:
                 blended = self._diversify_table_snippets(blended, limit=limit)
                 diagnostics["strategy_diversified"] = True
-
-            blended, representation_diag = self._apply_representation_budget(
-                blended,
-                table_context=table_context,
-                limit=limit,
-                query_text=traits.normalized or traits.original or query,
-                tokens=traits.tokens,
-            )
-            diagnostics.update(representation_diag)
 
             blended, collapse_diag = self._collapse_snippets_by_evidence_group(
                 blended,
@@ -2023,82 +1876,24 @@ class KnowledgeSearchService:
             )
             return result_obj
 
-        reserved_context_slots = 0
-        primary_limit = limit
-        if table_intent and context_hits_ordered and self.table_context_snippet_cap and limit > 1:
-            # Prevent table-specific routes from starving text context completely.
-            reserved_context_slots = min(
-                self.table_context_snippet_cap,
-                max(1, limit // 3),
-                limit - 1,
-            )
-            primary_limit = max(1, limit - reserved_context_slots)
-            diagnostics["table_context_reserved"] = reserved_context_slots
-        snippets_list: list[KnowledgeSnippet] = list(
+        snippets = tuple(
             self._search_chunks(
                 chunk_hits,
-                limit=primary_limit,
+                limit=limit,
                 business_profile=business_profile,
                 pathway="hybrid",
                 query=traits.normalized or traits.original or query,  # NEW: For query-aware row sampling
             )
         )
-        context_seed_snippets: list[KnowledgeSnippet] = []
-        if table_intent and context_hits_ordered and self.table_context_snippet_cap:
-            remaining = max(0, limit - len(snippets_list))
-            if remaining:
-                context_limit = min(self.table_context_snippet_cap, remaining)
-                context_seed_snippets = list(
-                    self._search_chunks(
-                        context_hits_ordered,
-                        limit=context_limit,
-                        business_profile=business_profile,
-                        pathway="hybrid",
-                        query=traits.normalized or traits.original or query,
-                    )
-                )
-                snippets_list.extend(context_seed_snippets)
-        snippets = tuple(snippets_list)
         if snippets:
             snippets, snippet_ms = self._snippet_rerank(
                 snippets,
                 query_text=traits.normalized or traits.original or query,
                 tokens=traits.tokens,
             )
-            if table_intent and context_seed_snippets:
-                # Ensure at least one narrative/text snippet stays visible in the first page
-                # when table routes dominate ranking.
-                top_window = min(10, len(snippets))
-                if top_window > 0 and not any(not item.is_table_chunk for item in snippets[:top_window]):
-                    top_ids = {item.id for item in snippets[:top_window]}
-                    candidate = next(
-                        (item for item in context_seed_snippets if item.id not in top_ids and not item.is_table_chunk),
-                        None,
-                    )
-                    if candidate:
-                        blended = list(snippets)
-                        # Remove candidate if it already exists deeper in the list to keep result size stable.
-                        existing_index = next(
-                            (idx for idx, item in enumerate(blended) if item.id == candidate.id),
-                            None,
-                        )
-                        if existing_index is not None:
-                            blended.pop(existing_index)
-                        insertion_index = max(0, top_window - 1)
-                        blended.insert(insertion_index, candidate)
-                        snippets = tuple(blended[: len(snippets)])
-                        diagnostics["table_context_forced_window"] = top_window
             diagnostics["path"] = diagnostics.get("path") or "hybrid"
             diagnostics.setdefault("table_reason", table_reason)
             diagnostics["snippet_rerank_ms"] = int(snippet_ms)
-            snippets, representation_diag = self._apply_representation_budget(
-                snippets,
-                table_context=table_context,
-                limit=limit,
-                query_text=traits.normalized or traits.original or query,
-                tokens=traits.tokens,
-            )
-            diagnostics.update(representation_diag)
             snippets, collapse_diag = self._collapse_snippets_by_evidence_group(
                 snippets,
                 query_text=traits.normalized or traits.original or query,
@@ -4877,153 +4672,6 @@ class KnowledgeSearchService:
             diagnostics["evidence_conflict_groups"] = conflict_groups[:8]
         return tuple(collapsed), diagnostics
 
-    def _apply_representation_budget(
-        self,
-        snippets: Sequence[KnowledgeSnippet],
-        *,
-        table_context: Mapping[str, object],
-        limit: int,
-        query_text: str = "",
-        tokens: Sequence[str] = (),
-    ) -> tuple[tuple[KnowledgeSnippet, ...], dict[str, object]]:
-        ordered = list(snippets)
-        if not ordered:
-            return tuple(), {"representation_balance_applied": False}
-        limit = max(1, int(limit or len(ordered)))
-        limited = tuple(ordered[:limit])
-        diagnostics: dict[str, object] = {
-            "representation_balance_applied": False,
-            "representation_balance_window": min(len(ordered), max(limit, self.representation_balance_window)),
-        }
-        if (
-            not self.representation_balance_enabled
-            or not bool(table_context.get("has_intent"))
-            or limit <= 1
-        ):
-            diagnostics["representation_balance_reason"] = "disabled_or_not_table_intent"
-            return limited, diagnostics
-
-        window = min(len(ordered), max(limit, self.representation_balance_window))
-        candidates = ordered[:window]
-        table_candidates = [s for s in candidates if self._snippet_representation(s) == "table"]
-        text_candidates = [s for s in candidates if self._snippet_representation(s) == "text"]
-        if not table_candidates or not text_candidates:
-            diagnostics["representation_balance_reason"] = "single_representation"
-            return limited, diagnostics
-
-        specific_tokens = set(table_context.get("specific_tokens") or ())
-        table_specific_hits = sum(
-            1
-            for snippet in table_candidates
-            if bool(
-                (snippet.source_diagnostics or {}).get("specific_match_strong")
-                or (snippet.source_diagnostics or {}).get("specific_match")
-            )
-        )
-        table_header_hits = sum(
-            1
-            for snippet in table_candidates
-            if bool((snippet.source_diagnostics or {}).get("header_match"))
-        )
-        top_window = min(limit, len(candidates))
-        top_text_count = sum(
-            1
-            for snippet in candidates[:top_window]
-            if self._snippet_representation(snippet) == "text"
-        )
-        strong_text_evidence_hits = 0
-        if query_text and text_candidates:
-            for snippet in text_candidates:
-                evidence_text = "\n".join(filter(None, [snippet.summary, snippet.content]))
-                phrase_score = self._exact_phrase_boost(
-                    evidence_text,
-                    query_text,
-                    max_boost=1.0,
-                )
-                proximity_score = self._token_proximity_boost(
-                    evidence_text,
-                    tokens,
-                    max_boost=0.6,
-                )
-                if phrase_score >= 0.8 or (phrase_score >= 0.5 and proximity_score >= 0.2):
-                    strong_text_evidence_hits += 1
-
-        target_text = 0
-        if specific_tokens and table_specific_hits == 0:
-            target_text = max(self.representation_balance_specific_text, limit // 3)
-        elif specific_tokens and table_specific_hits <= 1:
-            target_text = max(self.representation_balance_min_text, limit // 4)
-        elif not specific_tokens and table_header_hits == 0:
-            target_text = self.representation_balance_min_text
-        if top_text_count == 0:
-            target_text = max(target_text, self.representation_balance_min_text)
-        if strong_text_evidence_hits > 0:
-            target_text = max(target_text, self.representation_balance_min_text or 1)
-
-        target_text = max(0, min(limit - 1, target_text))
-        target_text = min(target_text, len(text_candidates))
-        diagnostics.update(
-            {
-                "representation_balance_target_text": target_text,
-                "representation_balance_specific_hits": table_specific_hits,
-                "representation_balance_header_hits": table_header_hits,
-                "representation_balance_top_text": top_text_count,
-                "representation_balance_strong_text_hits": strong_text_evidence_hits,
-            }
-        )
-        if target_text <= 0:
-            diagnostics["representation_balance_reason"] = "no_budget_needed"
-            return limited, diagnostics
-
-        text_suffix: list[int] = [0] * (len(candidates) + 1)
-        for idx in range(len(candidates) - 1, -1, -1):
-            text_suffix[idx] = text_suffix[idx + 1] + (
-                1 if self._snippet_representation(candidates[idx]) == "text" else 0
-            )
-
-        selected: list[KnowledgeSnippet] = []
-        selected_ids: set[uuid.UUID] = set()
-        selected_text = 0
-        for idx, snippet in enumerate(candidates):
-            if len(selected) >= limit:
-                break
-            if snippet.id in selected_ids:
-                continue
-            representation = self._snippet_representation(snippet)
-            remaining_text_needed = max(0, target_text - selected_text)
-            if (
-                representation != "text"
-                and remaining_text_needed > 0
-                and text_suffix[idx + 1] >= remaining_text_needed
-            ):
-                continue
-            selected.append(snippet)
-            selected_ids.add(snippet.id)
-            if representation == "text":
-                selected_text += 1
-
-        if len(selected) < limit:
-            for snippet in ordered:
-                if snippet.id in selected_ids:
-                    continue
-                selected.append(snippet)
-                selected_ids.add(snippet.id)
-                if self._snippet_representation(snippet) == "text":
-                    selected_text += 1
-                if len(selected) >= limit:
-                    break
-
-        baseline_ids = [snippet.id for snippet in limited]
-        selected_ids_ordered = [snippet.id for snippet in selected]
-        diagnostics.update(
-            {
-                "representation_balance_applied": True,
-                "representation_balance_selected_text": selected_text,
-                "representation_balance_changed": baseline_ids != selected_ids_ordered,
-            }
-        )
-        return tuple(selected), diagnostics
-
     def _snippet_rerank(
         self,
         snippets: Sequence[KnowledgeSnippet],
@@ -5873,14 +5521,26 @@ class KnowledgeSearchService:
 
     def _table_row_result_cap_for_business(self, business_profile, requested: int | None = None) -> int:
         """
-        Resolve how many table rows we should surface for a business.
-        """
+        Resolve how many table rows we can consider before final ranking.
 
-        base = requested if requested is not None else self.table_result_cap
+        Requested `limit` remains the primary driver. Business overrides and default
+        caps act as floors for candidate collection, not hard ceilings.
+        """
+        requested_cap = 0
+        if requested is not None:
+            try:
+                requested_cap = max(1, int(requested))
+            except (TypeError, ValueError):
+                requested_cap = 0
+        base = max(1, int(self.table_result_cap))
         if not business_profile:
-            return base
+            return max(base, requested_cap)
         override = self._business_override(business_profile, "table_results_limit", base)
-        return max(3, int(override))
+        try:
+            override_cap = max(1, int(override))
+        except (TypeError, ValueError):
+            override_cap = base
+        return max(base, override_cap, requested_cap)
 
     def _table_ingestion_diagnostics(self, upload: KnowledgeUpload | None) -> dict[str, object]:
         diagnostics: dict[str, object] = {
@@ -6050,7 +5710,7 @@ class KnowledgeSearchService:
         normalized_query = (query_text or "").strip()
         if not normalized_query:
             return tuple()
-        row_cap = self._table_row_result_cap_for_business(business_profile)
+        row_cap = self._table_row_result_cap_for_business(business_profile, requested=limit)
 
         # DEBUG: Log entry into _table_search_snippets
         _rag_log(
@@ -8388,24 +8048,9 @@ class KnowledgeSearchService:
             }
             return tuple(primary), tuple(), diagnostics
         if table_intent:
-            table_context = table_context or {}
-            strong_table_signal = bool(
-                table_context.get("matched_columns_specific")
-                or table_context.get("matched_row_labels")
-            )
-            if (
-                self.table_balanced_routing_enabled
-                and table_hits
-                and text_hits
-                and not strong_table_signal
-            ):
-                primary = list(self._interleave_chunk_hits(text_hits, table_hits))
-                context = []
-                route = "table_balanced"
-            else:
-                primary = table_hits or list(hits)
-                context = text_hits if table_hits else []
-                route = "table_specific_first" if table_hits else "table_fallback_all"
+            primary = table_hits or list(hits)
+            context = text_hits if table_hits else []
+            route = "table_specific_first" if table_hits else "table_fallback_all"
         else:
             primary = text_hits or list(hits)
             context = []
@@ -9123,15 +8768,6 @@ class AiOrchestratorService:
                 if kid not in loaded_content_ids and kid not in ready_ids_in_payload
             ]
 
-            forced_full_reads = self._forced_full_table_reads(
-                query=query,
-                knowledge_payload=knowledge_payload,
-                loaded_content_ids=loaded_content_ids,
-            )
-            for forced in forced_full_reads:
-                if forced not in pending_requests and forced not in ready_ids_in_payload:
-                    pending_requests.append(forced)
-
             if not pending_requests:
                 requested_again = bool(normalized_kids)
                 if requested_again:
@@ -9753,91 +9389,6 @@ class AiOrchestratorService:
         if state == KNOWLEDGE_READ_STATE_PREVIEW:
             return "preview"
         return "summary-only"
-
-
-    def _is_table_critical_query(self, query: str) -> bool:
-        normalized = QueryNormalizer._normalize_query_text(query).lower()
-        tokens = {token for token in QueryNormalizer._TOKEN_SPLIT.split(normalized) if token}
-        fee_tokens = set(TOPIC_KEYWORD_MAP.get("fees", ()))
-        limit_tokens = set(TOPIC_KEYWORD_MAP.get("limits", ()))
-        apr_tokens = set(TOPIC_KEYWORD_MAP.get("apr", ()))
-        return any(t in tokens for t in (fee_tokens | limit_tokens | apr_tokens))
-
-    @staticmethod
-    def _should_force_read_for_tables(knowledge_payload: Sequence[Mapping[str, object]]) -> tuple[bool, list[str]]:
-        """
-        Returns (should_force, candidate_ids).
-        Force when we see structured table hints but the snippet is not ready/full.
-        """
-        ids: list[str] = []
-        should = False
-        for s in knowledge_payload:
-            tables = s.get("structuredTables") or []
-            table_count = int(s.get("structured_table_count") or 0)
-            hint_present = bool(s.get("structured_table_hint"))
-            status = str(s.get("status") or "").lower()
-            sid = str(s.get("id") or "") if s.get("id") else ""
-            has_tables = bool(tables) or table_count > 0 or hint_present
-            if has_tables and status != "ready" and sid:
-                should = True
-                ids.append(sid)
-        return should, ids[:3]  # safety: cap the count
-
-    def _forced_full_table_reads(
-        self,
-        *,
-        query: str,
-        knowledge_payload: Sequence[Mapping[str, object]],
-        loaded_content_ids: set[str],
-    ) -> list[str]:
-        normalized = QueryNormalizer._normalize_query_text(query).strip().lower()
-        if not normalized:
-            return []
-        aggregate_tokens = {"all", "overall", "entire", "whole", "total", "everything"}
-        aggregate_phrases = (
-            "how many",
-            "total number",
-            "entire sheet",
-            "whole sheet",
-            "all rows",
-            "overall count",
-        )
-        token_hit = any(token in aggregate_tokens for token in normalized.replace("/", " ").split())
-        phrase_hit = any(phrase in normalized for phrase in aggregate_phrases)
-        if not (token_hit or phrase_hit):
-            return []
-        token_set = {token for token in QueryNormalizer._TOKEN_SPLIT.split(normalized) if token}
-
-        forced: list[str] = []
-        seen: set[str] = set()
-        for entry in knowledge_payload:
-            upload_id = entry.get("upload_id")
-            chunk_id = entry.get("chunk_id")
-            if not upload_id:
-                continue
-            upload_str = str(upload_id)
-            if upload_str in loaded_content_ids:
-                continue
-            is_chunk = bool(chunk_id)
-            has_tables = bool(
-                entry.get("structuredTables")
-                or entry.get("structured_table_count")
-                or entry.get("structured_table_hint")
-            )
-            if not has_tables and not is_chunk:
-                continue
-            status = str(entry.get("status") or "").lower()
-            if status == "ready" and not is_chunk:
-                continue
-            keywords = self._extract_snippet_keywords(entry)
-            if keywords and token_set and keywords.isdisjoint(token_set):
-                continue
-            if upload_str in seen:
-                continue
-            seen.add(upload_str)
-            forced.append(upload_str)
-        return forced
-
 
     # REPLACE the entire _prepare_prompt_snippet function
     def _prepare_prompt_snippet(self, entry: Mapping[str, object]) -> dict[str, object]:

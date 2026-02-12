@@ -530,23 +530,6 @@ RAG_TABLE_DOMINANT_UPLOAD_RATIO = float(os.getenv("RAG_TABLE_DOMINANT_UPLOAD_RAT
 RAG_TABLE_ROW_LABEL_SAMPLE_LIMIT = int(os.getenv("RAG_TABLE_ROW_LABEL_SAMPLE_LIMIT", "200"))
 # RAG_TABLE_CONTEXT_CACHE_SIZE: Cache size for table context/profiles.
 RAG_TABLE_CONTEXT_CACHE_SIZE = int(os.getenv("RAG_TABLE_CONTEXT_CACHE_SIZE", "128"))
-# TEMP(9to6-cleanup): Remove this toggle once we confirm representation balancing is not needed.
-# RAG_REPRESENTATION_BALANCE_ENABLED: Enable mixed representation balancing in table-intent snippet selection.
-RAG_REPRESENTATION_BALANCE_ENABLED = os.getenv("RAG_REPRESENTATION_BALANCE_ENABLED", "false").lower() in {
-    "1",
-    "true",
-    "yes",
-}
-# TEMP(9to6-cleanup): Remove this toggle once we confirm table-balanced routing is not needed.
-# RAG_TABLE_BALANCED_ROUTING_ENABLED: Enable balanced text/table interleaving when table intent is present.
-RAG_TABLE_BALANCED_ROUTING_ENABLED = os.getenv("RAG_TABLE_BALANCED_ROUTING_ENABLED", "false").lower() in {
-    "1",
-    "true",
-    "yes",
-}
-# TEMP(9to6-cleanup): Remove this toggle once we confirm context forcing is not needed.
-# RAG_TABLE_CONTEXT_SNIPPETS: Number of context snippets reserved/forced in table-intent routes.
-RAG_TABLE_CONTEXT_SNIPPETS = int(os.getenv("RAG_TABLE_CONTEXT_SNIPPETS", "0"))
 # RAG_NON_QUERYABLE_TABLE_FORMATS: Formats excluded from table-aware retrieval (e.g., ["docx"]).
 # Default is empty to allow PDF/DOCX tables to be queryable. Set to ["pdf", "docx"] to disable.
 _raw_non_queryable_formats = os.getenv("RAG_NON_QUERYABLE_TABLE_FORMATS", "").strip()
@@ -616,6 +599,14 @@ RAG_TABLE_DEDUPE_ENABLED = os.getenv("RAG_TABLE_DEDUPE_ENABLED", "true").lower()
 RAG_TABLE_DEDUPE_MIN_OVERLAP = float(os.getenv("RAG_TABLE_DEDUPE_MIN_OVERLAP", "0.6"))
 # RAG_TABLE_POSTPROCESS_ROW_LIMIT: Max rows kept after table postprocessing/cleanup.
 RAG_TABLE_POSTPROCESS_ROW_LIMIT = int(os.getenv("RAG_TABLE_POSTPROCESS_ROW_LIMIT", "40"))
+# RAG_TABLE_ANNOTATION_ENABLED: Convert table residual text into anchored table-note chunks.
+RAG_TABLE_ANNOTATION_ENABLED = os.getenv("RAG_TABLE_ANNOTATION_ENABLED", "true").lower() in {"1", "true", "yes"}
+# RAG_TABLE_ANNOTATION_MAX_CHARS: Max chars per anchored table-note chunk.
+RAG_TABLE_ANNOTATION_MAX_CHARS = int(os.getenv("RAG_TABLE_ANNOTATION_MAX_CHARS", "1200"))
+# RAG_TABLE_ANNOTATION_MAX_PER_TABLE: Max table-note chunks produced per table.
+RAG_TABLE_ANNOTATION_MAX_PER_TABLE = int(os.getenv("RAG_TABLE_ANNOTATION_MAX_PER_TABLE", "1"))
+# RAG_CANONICAL_CHUNK_SCHEMA_VERSION: Canonical metadata contract version for chunk payloads.
+RAG_CANONICAL_CHUNK_SCHEMA_VERSION = int(os.getenv("RAG_CANONICAL_CHUNK_SCHEMA_VERSION", "1"))
 
 # RAG_OCR_NORMALIZATION_ENABLED: Normalize common OCR artefacts during ingestion.
 RAG_OCR_NORMALIZATION_ENABLED = os.getenv("RAG_OCR_NORMALIZATION_ENABLED", "true").lower() in {"1", "true", "yes"}
