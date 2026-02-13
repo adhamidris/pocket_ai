@@ -192,3 +192,27 @@ class TableScopeEnginePhaseThreeTests(SimpleTestCase):
 
         self.assertEqual(scope_contract.get("inferred_scope_columns"), ["Prime"])
         self.assertEqual(scope_contract.get("scope_reason"), SCOPE_REASON_EXPLICIT_SPAN)
+
+    def test_sparse_right_edge_scope_dimension_is_retained(self) -> None:
+        extractor = AzureDocumentIntelligenceExtractor(endpoint="https://example.test", key="secret")
+        schema = ["service", "tariff", "prime", "plus", "wealth", "exclusive_wealth", "private"]
+        rows = [
+            self._make_row(0, schema),
+            self._make_row(1, ["Service A", "EGP", "10", "10", "10", "10", "Free"]),
+            self._make_row(2, ["Service B", "EGP", "11", "11", "11", "11", "Free"]),
+            self._make_row(3, ["Service C", "USD", "", "", "12", "", ""]),
+            self._make_row(4, ["*Note text", "", "", "", "", "", ""], spans={0: 7}),
+        ]
+
+        annotated = extractor._annotate_row_applicability(
+            table_rows=rows,
+            column_schema=schema,
+            header_rows={0},
+        )
+
+        scope_dimensions = annotated[1].metadata.get("scope_dimension_columns") or []
+        self.assertIn("private", scope_dimensions)
+        self.assertIn(
+            "private",
+            annotated[3].metadata.get("scope_dimension_columns") or [],
+        )

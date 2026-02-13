@@ -1877,6 +1877,48 @@ class AzureDocumentIntelligenceExtractor:
             ):
                 scope_indices.add(int(profile.column_index))
 
+        profile_by_index = {
+            int(profile.column_index): profile
+            for profile in role_profiles
+        }
+
+        def _extend_sparse_scope_tail(base_scope: set[int]) -> set[int]:
+            if not base_scope:
+                return base_scope
+            max_scope = max(base_scope)
+            extended = set(base_scope)
+            # Preserve sparse right-edge scope dimensions (e.g., "private") that
+            # have real value participation but can be misclassified as note due to
+            # low density and broad note rows elsewhere in the table.
+            for idx in range(max_scope + 1, width):
+                profile = profile_by_index.get(idx)
+                if profile is None:
+                    break
+                if profile.role == COLUMN_ROLE_DESCRIPTOR:
+                    break
+                role_scores = profile.role_scores if isinstance(profile.role_scores, Mapping) else {}
+                signals = profile.signals if isinstance(profile.signals, Mapping) else {}
+                label = str(column_schema[idx] or f"column_{idx + 1}").strip().lower()
+                tokens = [t for t in re.split(r"[^a-z0-9]+", label) if t]
+                if not tokens or len(tokens) > 4:
+                    break
+                if any(tok in {"note", "notes", "remark", "remarks", "comment", "comments", "details"} for tok in tokens):
+                    break
+
+                non_empty_count = int(signals.get("non_empty_count") or 0)
+                non_empty_ratio = float(signals.get("non_empty_ratio") or 0.0)
+                avg_chars = float(signals.get("avg_chars") or 0.0)
+                unique_count = int(signals.get("unique_count") or 0)
+                scope_score = float(role_scores.get(COLUMN_ROLE_SCOPE_DIMENSION) or 0.0)
+
+                if non_empty_count < 2 or non_empty_ratio < 0.05:
+                    break
+                if avg_chars > 40.0 and unique_count <= 2 and scope_score < 0.25:
+                    break
+
+                extended.add(idx)
+            return extended
+
         resolved_scope_indices = sorted(scope_indices)
         if len(resolved_scope_indices) >= 3:
             min_scope = min(resolved_scope_indices)
@@ -1892,6 +1934,7 @@ class AzureDocumentIntelligenceExtractor:
                 # columns, treat it as a bridge to avoid dropping middle
                 # segments due classifier noise.
                 bridged_scope.add(idx)
+            bridged_scope = _extend_sparse_scope_tail(bridged_scope)
             return sorted(bridged_scope)
 
         contextual_indices = sorted(
@@ -1907,6 +1950,7 @@ class AzureDocumentIntelligenceExtractor:
             }
         )
         fallback = [idx for idx in range(width) if idx not in contextual_indices]
+        fallback = sorted(_extend_sparse_scope_tail(set(fallback)))
         if len(fallback) >= 3:
             return fallback
         return resolved_scope_indices or fallback
@@ -9122,6 +9166,234 @@ class KnowledgeIngestionService:
                 break
         return set(labels)
 
+    def _table_descriptor_continuation_tokens(self) -> set[str]:
+        # Generic continuation cues for wrapped descriptor labels.
+        return {
+            "and", "or", "of", "in", "for", "to", "from", "by", "with",
+            "without", "on", "at", "via", "through", "the", "a", "an",
+            "company", "group", "department", "division", "exchange", "branch",
+            "unit", "office", "region", "country", "city",
+        }
+
+    def _row_cell_lookup(self, row: TableRowPayload) -> dict[int, TableCellPayload]:
+        lookup: dict[int, TableCellPayload] = {}
+        for cell in row.cells or []:
+            try:
+                idx = int(cell.column_index)
+            except (TypeError, ValueError):
+                continue
+            lookup[idx] = cell
+        return lookup
+
+    def _rewrite_row_cell_text(
+        self,
+        *,
+        row: TableRowPayload,
+        column_index: int,
+        new_value: str,
+        metadata_patch: Mapping[str, Any] | None = None,
+    ) -> TableRowPayload:
+        new_cells: list[TableCellPayload] = []
+        changed = False
+        for cell in row.cells or []:
+            if int(getattr(cell, "column_index", -1)) != column_index:
+                new_cells.append(cell)
+                continue
+            changed = True
+            cell_meta = dict(cell.metadata or {})
+            if metadata_patch:
+                cell_meta.update(dict(metadata_patch))
+            new_cells.append(
+                TableCellPayload(
+                    row_index=cell.row_index,
+                    column_index=cell.column_index,
+                    column_key=cell.column_key,
+                    raw_text=new_value,
+                    normalized_value=cell.normalized_value,
+                    bbox=cell.bbox,
+                    confidence=cell.confidence,
+                    metadata=cell_meta,
+                )
+            )
+        if not changed:
+            return row
+        ordered_cells = sorted(
+            new_cells,
+            key=lambda c: int(getattr(c, "column_index", 0)),
+        )
+        row_text = " | ".join(
+            str(cell.raw_text or "").strip()
+            for cell in ordered_cells
+            if str(cell.raw_text or "").strip()
+        ).strip()
+        row_meta = dict(row.metadata or {})
+        return TableRowPayload(
+            row_index=row.row_index,
+            page_number=row.page_number,
+            bbox=row.bbox,
+            raw_text=row_text or row.raw_text,
+            metadata=row_meta,
+            cells=new_cells,
+        )
+
+    def _stitch_table_row_continuations(self, table: TablePayload) -> tuple[TablePayload, int]:
+        rows = list(table.rows or [])
+        if len(rows) < 3:
+            return table, 0
+
+        column_map = self._table_column_map_for_payload(table)
+        if not column_map:
+            return table, 0
+        role_payloads = self._infer_table_column_roles(
+            table_rows=rows,
+            column_map=column_map,
+            cached_roles=(table.data_dictionary or {}).get("column_roles"),
+        )
+        role_lookup = role_lookup_by_index(role_payloads)
+        descriptor_indices = sorted(
+            idx
+            for idx, payload in role_lookup.items()
+            if str(payload.get("role") or "") == COLUMN_ROLE_DESCRIPTOR
+        )
+        descriptor_idx = descriptor_indices[0] if descriptor_indices else 0
+
+        row_order = sorted(rows, key=lambda row: int(getattr(row, "row_index", 0)))
+        data_rows = [
+            row
+            for row in row_order
+            if str((row.metadata or {}).get("row_type") or "").strip().lower() != "header"
+        ]
+        if len(data_rows) < 2:
+            return table, 0
+
+        continuation_tokens = self._table_descriptor_continuation_tokens()
+        row_by_index = {int(row.row_index): row for row in rows}
+        updated_rows = dict(row_by_index)
+        stitched_pairs = 0
+
+        for pos in range(1, len(data_rows)):
+            prev_row = updated_rows.get(int(data_rows[pos - 1].row_index)) or data_rows[pos - 1]
+            curr_row = updated_rows.get(int(data_rows[pos].row_index)) or data_rows[pos]
+
+            prev_cells = self._row_cell_lookup(prev_row)
+            curr_cells = self._row_cell_lookup(curr_row)
+            prev_desc_cell = prev_cells.get(descriptor_idx)
+            curr_desc_cell = curr_cells.get(descriptor_idx)
+            if prev_desc_cell is None or curr_desc_cell is None:
+                continue
+
+            prev_desc = self._table_cell_text(prev_desc_cell.raw_text or "")
+            curr_desc = self._table_cell_text(curr_desc_cell.raw_text or "")
+            if not prev_desc or not curr_desc:
+                continue
+            if prev_desc.lower() == curr_desc.lower():
+                continue
+
+            try:
+                prev_span = int((prev_desc_cell.metadata or {}).get("row_span") or 1)
+                curr_span = int((curr_desc_cell.metadata or {}).get("row_span") or 1)
+            except (TypeError, ValueError):
+                prev_span = 1
+                curr_span = 1
+            if prev_span > 1 or curr_span > 1:
+                continue
+
+            prev_words = prev_desc.split()
+            curr_words = curr_desc.split()
+            if len(prev_words) < 3 or len(curr_words) > 8:
+                continue
+            if re.search(r"[.!?:;]\s*$", prev_desc):
+                continue
+
+            first_curr_token = re.sub(r"[^a-z0-9]+", "", curr_words[0].lower())
+            continuation_cue = bool(first_curr_token and first_curr_token in continuation_tokens)
+            if not continuation_cue and not curr_desc[:1].islower():
+                continue
+
+            prev_non_descriptor = {
+                idx for idx, cell in prev_cells.items()
+                if idx != descriptor_idx and str(cell.raw_text or "").strip()
+            }
+            curr_non_descriptor = {
+                idx for idx, cell in curr_cells.items()
+                if idx != descriptor_idx and str(cell.raw_text or "").strip()
+            }
+            if not prev_non_descriptor or not curr_non_descriptor:
+                continue
+            if not (prev_non_descriptor & curr_non_descriptor):
+                continue
+
+            combined = self._table_cell_text(f"{prev_desc} {curr_desc}")
+            if not combined or len(combined) <= max(len(prev_desc), len(curr_desc)):
+                continue
+            if len(combined) > 220:
+                continue
+
+            row_patch = {
+                "descriptor_continuation_stitched": True,
+                "descriptor_continuation_anchor_row": int(prev_row.row_index),
+            }
+            updated_prev = self._rewrite_row_cell_text(
+                row=prev_row,
+                column_index=descriptor_idx,
+                new_value=combined,
+                metadata_patch=row_patch,
+            )
+            updated_curr = self._rewrite_row_cell_text(
+                row=curr_row,
+                column_index=descriptor_idx,
+                new_value=combined,
+                metadata_patch=row_patch,
+            )
+            prev_meta = dict(updated_prev.metadata or {})
+            curr_meta = dict(updated_curr.metadata or {})
+            prev_meta.update(row_patch)
+            curr_meta.update(row_patch)
+            updated_prev = TableRowPayload(
+                row_index=updated_prev.row_index,
+                page_number=updated_prev.page_number,
+                bbox=updated_prev.bbox,
+                raw_text=updated_prev.raw_text,
+                metadata=prev_meta,
+                cells=updated_prev.cells,
+            )
+            updated_curr = TableRowPayload(
+                row_index=updated_curr.row_index,
+                page_number=updated_curr.page_number,
+                bbox=updated_curr.bbox,
+                raw_text=updated_curr.raw_text,
+                metadata=curr_meta,
+                cells=updated_curr.cells,
+            )
+
+            updated_rows[int(updated_prev.row_index)] = updated_prev
+            updated_rows[int(updated_curr.row_index)] = updated_curr
+            stitched_pairs += 1
+
+        if stitched_pairs <= 0:
+            return table, 0
+
+        rebuilt_rows = [
+            updated_rows.get(int(row.row_index), row)
+            for row in row_order
+        ]
+        table_meta = dict(table.metadata or {})
+        table_meta["row_continuation_stitched_pairs"] = stitched_pairs
+        return (
+            TablePayload(
+                order_index=table.order_index,
+                title=table.title,
+                section_heading=table.section_heading,
+                page_number=table.page_number,
+                bbox=table.bbox,
+                column_schema=table.column_schema,
+                data_dictionary=table.data_dictionary,
+                metadata=table_meta,
+                rows=rebuilt_rows,
+            ),
+            stitched_pairs,
+        )
+
     def _build_table_profile(self, tables: Sequence[TablePayload]) -> dict[str, Any] | None:
         if not tables:
             return None
@@ -9249,7 +9521,7 @@ class KnowledgeIngestionService:
         for table in tables:
             grouped.setdefault(table.page_number, []).append(table)
         issues: list[IssuePayload] = []
-        meta = {"deduped_tables": 0, "header_inferred": 0}
+        meta = {"deduped_tables": 0, "header_inferred": 0, "row_continuation_stitched_pairs": 0}
         processed: list[TablePayload] = []
 
         def _jaccard(a: set[str], b: set[str]) -> float:
@@ -9259,6 +9531,24 @@ class KnowledgeIngestionService:
 
         for page_number, page_tables in grouped.items():
             page_tables = sorted(page_tables, key=lambda t: t.order_index)
+            stitched_tables: list[TablePayload] = []
+            for table in page_tables:
+                stitched_table, stitched_pairs = self._stitch_table_row_continuations(table)
+                if stitched_pairs > 0:
+                    meta["row_continuation_stitched_pairs"] += stitched_pairs
+                    issues.append(
+                        IssuePayload(
+                            code="table_row_continuation_stitched",
+                            severity=KnowledgeIssueSeverity.INFO.value,
+                            description="Descriptor continuation text stitched across adjacent rows.",
+                            page_number=page_number,
+                            table_order_index=table.order_index,
+                            details={"stitched_pairs": stitched_pairs},
+                        )
+                    )
+                stitched_tables.append(stitched_table)
+            page_tables = stitched_tables
+
             if self.table_dedupe_enabled:
                 deduped: list[TablePayload] = []
                 dedupe_labels: list[set[str]] = []
