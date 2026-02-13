@@ -8,12 +8,9 @@ As of the phase-7 cleanup follow-up refactor, the table pipeline v2 path is now 
 - Table candidate selection always uses the phase-4 scorer/arbitration path.
 - VLM repair/guardrails run based on global service settings (for example `RAG_TABLE_VLM_ENABLED`), not per-tenant pipeline toggles.
 
-## Historical Phase-6 Gate
+## Historical Note
 
-- Previous per-business feature flag:
-  - `rag_table_pipeline_v2` (historical, no longer used for ingestion path selection)
-
-This flag remains in feature metadata for backward compatibility but does not gate ingestion pipeline selection anymore.
+A previous per-tenant pipeline gate existed during early rollout. It has been removed from active feature defaults and no longer participates in runtime ingestion decisions.
 
 ## Rollout Command
 

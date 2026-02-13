@@ -4583,7 +4583,7 @@ class KnowledgeIngestionService:
         if filtered_heuristics:
             candidates["heuristic"] = filtered_heuristics
 
-        table_rollout = self._table_rollout_state(upload)
+        table_runtime_flags = self._table_runtime_flags(upload)
         selected_extractor, tables, selection_meta = self._select_table_candidates(candidates)
         issues = layout_result.issues + table_issues + geom_issues + suppress_issues + pdfplumber_issues + azure_issues
 
@@ -4696,7 +4696,7 @@ class KnowledgeIngestionService:
                 "candidate_scores": selection_meta.get("scores", {}),
             }
             extraction_meta["selection_mode"] = "candidate_scorer_v2"
-            extraction_meta["rollout"] = table_rollout
+            extraction_meta["runtime_flags"] = table_runtime_flags
             candidate_metrics = selection_meta.get("metrics")
             if isinstance(candidate_metrics, Mapping):
                 extraction_meta["candidate_metrics"] = candidate_metrics
@@ -5430,7 +5430,7 @@ class KnowledgeIngestionService:
         )
         return selected, diag
 
-    def _table_rollout_state(self, upload: KnowledgeUpload | None) -> dict[str, Any]:
+    def _table_runtime_flags(self, upload: KnowledgeUpload | None) -> dict[str, Any]:
         business = getattr(upload, "business_profile", None) if upload else None
         feature_state = FeatureFlagService.snapshot(business)
         business_metadata: Mapping[str, Any] = {}
@@ -5438,69 +5438,9 @@ class KnowledgeIngestionService:
             business_metadata = getattr(business, "metadata") or {}
         cohort = str(business_metadata.get("cohort") or "").strip() or None
         return {
-            "pipeline_v2_enabled": True,
-            "pipeline_v2_strategy": "global_default",
             "shadow_ingestion_enabled": bool(getattr(feature_state, "rag_shadow_ingestion", False)),
             "eval_logging_enabled": bool(getattr(feature_state, "rag_eval_logging", False)),
             "cohort": cohort,
-        }
-
-    def _select_table_candidates_legacy_precedence(
-        self,
-        candidates: Mapping[str, list[TablePayload]],
-    ) -> tuple[str, list[TablePayload], dict[str, Any]]:
-        if not candidates:
-            return "none", [], {
-                "scores": {},
-                "metrics": {},
-                "selection_mode": "legacy_precedence",
-                "heuristic_override_applied": False,
-                "heuristic_override_reason": "no_candidates",
-            }
-
-        preferred = (self.pdf_table_extractor or "auto").strip().lower()
-        selected = ""
-        if preferred and preferred != "auto":
-            if preferred in candidates:
-                selected = preferred
-            elif preferred == "pdfplumber":
-                selected = next((name for name in candidates if name.startswith("pdfplumber:")), "")
-            elif preferred == "azure":
-                selected = next((name for name in candidates if name.startswith("azure")), "")
-            elif preferred.startswith("pdfplumber"):
-                suffix = preferred.replace("pdfplumber", "").lstrip(":-_")
-                key = f"pdfplumber:{suffix}" if suffix else ""
-                if key and key in candidates:
-                    selected = key
-            elif preferred.startswith("azure"):
-                suffix = preferred.replace("azure", "").lstrip(":-_")
-                key = f"azure:{suffix}" if suffix else "azure:layout"
-                if key in candidates:
-                    selected = key
-
-        if not selected:
-            precedence_groups = [
-                [name for name in candidates if name.startswith("azure")],
-                [name for name in candidates if name.startswith("pdfplumber")],
-                [name for name in candidates if name == "geometry"],
-                [name for name in candidates if name.startswith("heuristic")],
-            ]
-            for group in precedence_groups:
-                if group:
-                    selected = sorted(group)[0]
-                    break
-            if not selected:
-                selected = sorted(candidates.keys())[0]
-            reason = "legacy_precedence_default"
-        else:
-            reason = "preferred_extractor"
-
-        return selected, list(candidates.get(selected) or []), {
-            "scores": {},
-            "metrics": {},
-            "selection_mode": "legacy_precedence",
-            "heuristic_override_applied": False,
-            "heuristic_override_reason": reason,
         }
 
     def _select_table_candidates(

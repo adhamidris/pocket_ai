@@ -47,19 +47,6 @@ class TableRolloutPhaseSixTests(SimpleTestCase):
             rows=[header, data],
         )
 
-    def test_legacy_selector_uses_deterministic_precedence(self) -> None:
-        service = KnowledgeIngestionService(enable_ocr=False)
-        candidates = {
-            "heuristic": [self._table(detected_via="heuristic", order_index=1)],
-            "azure:layout": [self._table(detected_via="azure:layout", order_index=2)],
-            "geometry": [self._table(detected_via="geometry", order_index=3)],
-        }
-
-        selected, tables, meta = service._select_table_candidates_legacy_precedence(candidates)
-        self.assertEqual(selected, "azure:layout")
-        self.assertEqual(len(tables), 1)
-        self.assertEqual(meta.get("selection_mode"), "legacy_precedence")
-
     def test_candidate_scorer_selector_exposes_selection_mode(self) -> None:
         service = KnowledgeIngestionService(enable_ocr=False)
         selected, _tables, meta = service._select_table_candidates(
@@ -68,7 +55,7 @@ class TableRolloutPhaseSixTests(SimpleTestCase):
         self.assertEqual(selected, "geometry")
         self.assertEqual(meta.get("selection_mode"), "candidate_scorer_v2")
 
-    def test_table_rollout_state_forces_global_pipeline_v2_and_reads_other_flags(self) -> None:
+    def test_table_runtime_flags_report_shadow_and_eval_states(self) -> None:
         service = KnowledgeIngestionService(enable_ocr=False)
         upload = SimpleNamespace(
             business_profile=SimpleNamespace(
@@ -83,10 +70,8 @@ class TableRolloutPhaseSixTests(SimpleTestCase):
             "apps.knowledge.knowledge_ingestion.FeatureFlagService.snapshot",
             return_value=mocked_state,
         ):
-            rollout = service._table_rollout_state(upload)
+            runtime_flags = service._table_runtime_flags(upload)
 
-        self.assertEqual(rollout.get("cohort"), "canary")
-        self.assertTrue(rollout.get("pipeline_v2_enabled"))
-        self.assertEqual(rollout.get("pipeline_v2_strategy"), "global_default")
-        self.assertTrue(rollout.get("shadow_ingestion_enabled"))
-        self.assertFalse(rollout.get("eval_logging_enabled"))
+        self.assertEqual(runtime_flags.get("cohort"), "canary")
+        self.assertTrue(runtime_flags.get("shadow_ingestion_enabled"))
+        self.assertFalse(runtime_flags.get("eval_logging_enabled"))

@@ -57,10 +57,10 @@ class ManageTableIngestionRolloutCommandTests(TestCase):
         canary_state = FeatureFlagService.snapshot(BusinessProfile.objects.get(id=self.canary_business.id))
         control_state = FeatureFlagService.snapshot(BusinessProfile.objects.get(id=self.control_business.id))
 
-        self.assertTrue(canary_state.rag_table_pipeline_v2)
         self.assertTrue(canary_state.rag_shadow_ingestion)
         self.assertTrue(canary_state.rag_eval_logging)
-        self.assertFalse(control_state.rag_table_pipeline_v2)
+        self.assertFalse(control_state.rag_shadow_ingestion)
+        self.assertFalse(control_state.rag_eval_logging)
 
         call_command(
             "manage_table_ingestion_rollout",
@@ -70,7 +70,6 @@ class ManageTableIngestionRolloutCommandTests(TestCase):
             "canary",
         )
         canary_state = FeatureFlagService.snapshot(BusinessProfile.objects.get(id=self.canary_business.id))
-        self.assertFalse(canary_state.rag_table_pipeline_v2)
         self.assertFalse(canary_state.rag_shadow_ingestion)
         self.assertFalse(canary_state.rag_eval_logging)
 
@@ -170,8 +169,11 @@ class ManageTableIngestionRolloutCommandTests(TestCase):
                         "1.0",
                     )
 
-    def test_new_feature_flag_is_initialized_for_business_profiles(self) -> None:
+    def test_phase6_flag_bundle_is_initialized_for_business_profiles(self) -> None:
         metadata = BusinessProfile.objects.get(id=self.control_business.id).metadata
         features = metadata.get(FEATURE_FLAG_METADATA_KEY) if isinstance(metadata, dict) else {}
-        self.assertIn("rag_table_pipeline_v2", features)
-        self.assertFalse(bool(features.get("rag_table_pipeline_v2")))
+        self.assertNotIn("rag_table_pipeline_v2", features)
+        self.assertIn("rag_shadow_ingestion", features)
+        self.assertIn("rag_eval_logging", features)
+        self.assertFalse(bool(features.get("rag_shadow_ingestion")))
+        self.assertFalse(bool(features.get("rag_eval_logging")))

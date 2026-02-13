@@ -20,14 +20,13 @@ from apps.knowledge.ingestion_benchmark import (
 from apps.knowledge.models import KnowledgeUpload
 
 PHASE6_FLAG_BUNDLE: tuple[str, ...] = (
-    "rag_table_pipeline_v2",
     "rag_shadow_ingestion",
     "rag_eval_logging",
 )
 
 
 class Command(BaseCommand):
-    help = "Phase 6 rollout controller for table-ingestion v2 (cohort plan/apply/dashboard/rollback)."
+    help = "Phase 6 rollout controller for table-ingestion observability flags (cohort plan/apply/dashboard/rollback)."
 
     def add_arguments(self, parser) -> None:
         parser.add_argument(
@@ -180,7 +179,8 @@ class Command(BaseCommand):
         return businesses
 
     def _handle_plan(self, businesses: list[BusinessProfile]) -> None:
-        enabled = 0
+        shadow_enabled = 0
+        eval_enabled = 0
         for business in businesses:
             state = FeatureFlagService.snapshot(business)
             flags = state.as_dict()
@@ -188,18 +188,27 @@ class Command(BaseCommand):
             if isinstance(business.metadata, Mapping):
                 cohort = str(business.metadata.get("cohort") or "")
             row = {
-                "rag_table_pipeline_v2": bool(flags.get("rag_table_pipeline_v2")),
                 "rag_shadow_ingestion": bool(flags.get("rag_shadow_ingestion")),
                 "rag_eval_logging": bool(flags.get("rag_eval_logging")),
             }
-            if row["rag_table_pipeline_v2"]:
-                enabled += 1
+            if row["rag_shadow_ingestion"]:
+                shadow_enabled += 1
+            if row["rag_eval_logging"]:
+                eval_enabled += 1
             self.stdout.write(
                 f"{business.id} {business.name} cohort={cohort or '-'} flags={row}"
             )
         self.stdout.write(
             self.style.SUCCESS(
-                f"phase6.plan total={len(businesses)} pipeline_v2_enabled={enabled} pipeline_v2_disabled={len(businesses) - enabled}"
+                "phase6.plan total={total} shadow_ingestion_enabled={shadow_on} "
+                "shadow_ingestion_disabled={shadow_off} eval_logging_enabled={eval_on} "
+                "eval_logging_disabled={eval_off}".format(
+                    total=len(businesses),
+                    shadow_on=shadow_enabled,
+                    shadow_off=len(businesses) - shadow_enabled,
+                    eval_on=eval_enabled,
+                    eval_off=len(businesses) - eval_enabled,
+                )
             )
         )
 
