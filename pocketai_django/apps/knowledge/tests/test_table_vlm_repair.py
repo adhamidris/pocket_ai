@@ -23,7 +23,9 @@ class TableVlmRepairTests(SimpleTestCase):
         self.addCleanup(shutil.rmtree, self._media_root)
 
     def _service(self) -> KnowledgeIngestionService:
-        return KnowledgeIngestionService(media_root=Path(self._media_root), enable_ocr=False)
+        service = KnowledgeIngestionService(media_root=Path(self._media_root), enable_ocr=False)
+        service.table_vlm_enabled = True
+        return service
 
     def _low_conf_geometry_table(self) -> TablePayload:
         header = TableRowPayload(
@@ -85,6 +87,38 @@ class TableVlmRepairTests(SimpleTestCase):
             rows=[header, *rows],
         )
 
+    def _low_conf_geometry_table_three_rows(self) -> TablePayload:
+        table = self._low_conf_geometry_table()
+        rows = list(table.rows or [])
+        rows.append(
+            TableRowPayload(
+                row_index=3,
+                page_number=1,
+                bbox={},
+                raw_text="Processing fee",
+                metadata={"row_type": "data"},
+                cells=[
+                    TableCellPayload(
+                        row_index=3,
+                        column_index=0,
+                        column_key="column_1",
+                        raw_text="Processing fee",
+                    )
+                ],
+            )
+        )
+        return TablePayload(
+            order_index=table.order_index,
+            title=table.title,
+            section_heading=table.section_heading,
+            page_number=table.page_number,
+            bbox=table.bbox,
+            column_schema=list(table.column_schema or []),
+            data_dictionary=dict(table.data_dictionary or {}),
+            metadata=dict(table.metadata or {}),
+            rows=rows,
+        )
+
     @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
     def test_vlm_repair_applies_to_non_azure_tables_when_structure_confidence_low(self, _build_embeddings) -> None:
         service = self._service()
@@ -137,7 +171,7 @@ class TableVlmRepairTests(SimpleTestCase):
         table = self._low_conf_geometry_table()
         vlm_payload = {
             "columns": ["Fee", "Amount"],
-            "rows": [["Annual fee", "100"]],
+            "rows": [["Annual fee", "100"], ["Late fee", "50"]],
         }
 
         with (
@@ -162,6 +196,61 @@ class TableVlmRepairTests(SimpleTestCase):
         self.assertTrue(run.call_args_list[1].kwargs.get("table_hint"))
         self.assertEqual(meta.get("repaired_tables")[0].get("render_mode"), "full_page_retry")
         self.assertEqual(repaired[0].metadata.get("detected_via"), "geometry+vlm")
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_vlm_repair_rejects_candidates_with_row_coverage_regression(self, _build_embeddings) -> None:
+        service = self._service()
+        table = self._low_conf_geometry_table()
+        vlm_payload = {
+            "columns": ["Fee", "Amount"],
+            # Baseline has 2 data rows; candidate has 1 row and should be rejected.
+            "rows": [["Annual fee", "100"]],
+        }
+
+        with (
+            mock.patch.dict(os.environ, {"OPENAI_API_KEY": "test"}, clear=False),
+            mock.patch("openai.OpenAI"),
+            mock.patch.object(KnowledgeIngestionService, "_render_table_crop", return_value=b"png"),
+            mock.patch.object(KnowledgeIngestionService, "_run_vlm_table_repair", return_value=vlm_payload),
+        ):
+            repaired, issues, meta = service._repair_tables_with_vlm(Path("dummy.pdf"), [table])
+
+        self.assertEqual(meta.get("attempted"), 1)
+        self.assertEqual(meta.get("repaired"), 0)
+        self.assertEqual(meta.get("rejected"), 1)
+        self.assertEqual(repaired[0].metadata.get("detected_via"), "geometry")
+        self.assertTrue(any(issue.code == "table_vlm_rejected_regression" for issue in issues))
+        rejection = next(issue for issue in issues if issue.code == "table_vlm_rejected_regression")
+        self.assertIn("row_coverage_regression", rejection.details.get("rejection_reasons") or [])
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_vlm_repair_rejects_candidates_with_row_order_regression(self, _build_embeddings) -> None:
+        service = self._service()
+        table = self._low_conf_geometry_table_three_rows()
+        vlm_payload = {
+            "columns": ["Fee", "Amount"],
+            # Same row count, but reversed order should be rejected by order guardrail.
+            "rows": [
+                ["Processing fee", "40"],
+                ["Late fee", "50"],
+                ["Annual fee", "100"],
+            ],
+        }
+
+        with (
+            mock.patch.dict(os.environ, {"OPENAI_API_KEY": "test"}, clear=False),
+            mock.patch("openai.OpenAI"),
+            mock.patch.object(KnowledgeIngestionService, "_render_table_crop", return_value=b"png"),
+            mock.patch.object(KnowledgeIngestionService, "_run_vlm_table_repair", return_value=vlm_payload),
+        ):
+            repaired, issues, meta = service._repair_tables_with_vlm(Path("dummy.pdf"), [table])
+
+        self.assertEqual(meta.get("attempted"), 1)
+        self.assertEqual(meta.get("repaired"), 0)
+        self.assertEqual(meta.get("rejected"), 1)
+        self.assertEqual(repaired[0].metadata.get("detected_via"), "geometry")
+        rejection = next(issue for issue in issues if issue.code == "table_vlm_rejected_regression")
+        self.assertIn("row_order_regression", rejection.details.get("rejection_reasons") or [])
 
     @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
     def test_vlm_repair_tracks_attempted_modes_when_crop_and_full_page_fail(self, _build_embeddings) -> None:
