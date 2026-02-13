@@ -9,8 +9,10 @@ from apps.knowledge.ingestion_benchmark import (
     build_snapshot_stem,
     capture_upload_snapshot,
     compare_snapshots,
+    evaluate_quality_gate,
     load_snapshot_from_json,
     parse_terms,
+    quality_gate_thresholds,
     resolve_output_dir,
     write_comparison_files,
     write_snapshot_files,
@@ -69,6 +71,41 @@ class Command(BaseCommand):
             default=None,
             help="Optional inclusive upper bound for row-window comparison.",
         )
+        parser.add_argument(
+            "--enforce-quality-gates",
+            action="store_true",
+            help="Fail command when quality-gate thresholds or regression checks are violated.",
+        )
+        parser.add_argument(
+            "--min-row-recall",
+            type=float,
+            default=None,
+            help="Override minimum row recall threshold.",
+        )
+        parser.add_argument(
+            "--min-row-order-stability",
+            type=float,
+            default=None,
+            help="Override minimum row-order stability threshold.",
+        )
+        parser.add_argument(
+            "--min-scope-f1",
+            type=float,
+            default=None,
+            help="Override minimum scope F1 threshold.",
+        )
+        parser.add_argument(
+            "--min-critical-value-coverage",
+            type=float,
+            default=None,
+            help="Override minimum critical-value coverage threshold.",
+        )
+        parser.add_argument(
+            "--min-scope-metadata-coverage",
+            type=float,
+            default=None,
+            help="Override minimum scope metadata coverage threshold.",
+        )
 
     def handle(self, *args, **options):
         baseline_json = str(options.get("baseline_json") or "").strip()
@@ -80,6 +117,14 @@ class Command(BaseCommand):
         focus_row_end = options.get("focus_row_end")
         terms = parse_terms(options.get("term") or [])
         output_dir = resolve_output_dir(options.get("output_dir"))
+        thresholds = quality_gate_thresholds(
+            min_row_recall=options.get("min_row_recall"),
+            min_row_order_stability=options.get("min_row_order_stability"),
+            min_scope_f1=options.get("min_scope_f1"),
+            min_critical_value_coverage=options.get("min_critical_value_coverage"),
+            min_scope_metadata_coverage=options.get("min_scope_metadata_coverage"),
+        )
+        enforce_quality_gates = bool(options.get("enforce_quality_gates"))
 
         if not baseline_json:
             raise CommandError("--baseline-json is required.")
@@ -121,7 +166,10 @@ class Command(BaseCommand):
             candidate,
             focus_row_start=focus_row_start,
             focus_row_end=focus_row_end,
+            thresholds=thresholds,
         )
+        quality_gate = evaluate_quality_gate(report, thresholds=thresholds)
+        report["quality_gate"] = quality_gate
         comparison_stem = build_comparison_stem(label)
         report_json, report_md = write_comparison_files(report, output_dir=output_dir, stem=comparison_stem)
 
@@ -133,6 +181,19 @@ class Command(BaseCommand):
             self.stdout.write(f"Candidate MD:   {captured_candidate_md}")
         self.stdout.write(f"Comparison JSON: {report_json}")
         self.stdout.write(f"Comparison MD:   {report_md}")
+        self.stdout.write(
+            (
+                "quality_gate_passed={passed} row_recall={row_recall} row_order_stability={row_order} "
+                "scope_f1={scope_f1} critical_value_coverage={critical} scope_metadata_coverage={scope_metadata}"
+            ).format(
+                passed=quality_gate.get("passed"),
+                row_recall=(quality_gate.get("metrics") or {}).get("row_recall"),
+                row_order=(quality_gate.get("metrics") or {}).get("row_order_stability"),
+                scope_f1=(quality_gate.get("metrics") or {}).get("scope_f1"),
+                critical=(quality_gate.get("metrics") or {}).get("critical_value_coverage"),
+                scope_metadata=(quality_gate.get("metrics") or {}).get("scope_metadata_coverage"),
+            )
+        )
         self.stdout.write(
             (
                 "row_chunk_delta={row_delta} multi_scope_delta={multi_delta} ambiguous_delta={ambig_delta} "
@@ -149,3 +210,10 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING(f"Regressions: {', '.join(str(item) for item in regressions)}"))
         else:
             self.stdout.write(self.style.SUCCESS("Regressions: none"))
+        if enforce_quality_gates and not quality_gate.get("passed"):
+            failed_checks = ", ".join(str(item) for item in (quality_gate.get("failed_checks") or [])) or "none"
+            regression_checks = ", ".join(str(item) for item in (quality_gate.get("regressions") or [])) or "none"
+            raise CommandError(
+                "Quality gate failed. "
+                f"failed_checks={failed_checks}; regressions={regression_checks}; report={report_json}"
+            )

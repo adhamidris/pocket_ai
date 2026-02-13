@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from django.test import SimpleTestCase
 
-from apps.knowledge.ingestion_benchmark import compare_snapshots
+from apps.knowledge.ingestion_benchmark import compare_snapshots, evaluate_quality_gate, quality_gate_thresholds
 
 
 class IngestionBenchmarkTests(SimpleTestCase):
@@ -74,3 +74,126 @@ class IngestionBenchmarkTests(SimpleTestCase):
         self.assertEqual(report["baseline"]["table_data_row_count"], 1)
         self.assertEqual(report["candidate"]["table_data_row_count"], 2)
         self.assertEqual(report["deltas"]["table_data_row_count_delta"], 1)
+
+    def test_compare_snapshots_includes_quality_gate_metrics_and_passes_when_aligned(self) -> None:
+        baseline = {
+            "snapshot_label": "baseline",
+            "upload_id": "u1",
+            "row_chunks": [
+                {
+                    "table_row_index": 6,
+                    "applies_to_columns": ["tariff", "prime"],
+                    "applicability_mode": "explicit_cells",
+                    "table_row_applicability_confidence": 1.0,
+                    "table_row_fee_value": "EGP",
+                },
+                {
+                    "table_row_index": 7,
+                    "applies_to_columns": ["tariff", "prime"],
+                    "applicability_mode": "explicit_cells",
+                    "table_row_applicability_confidence": 1.0,
+                    "table_row_fee_value": "USD 5",
+                },
+            ],
+            "tables": [{"rows": [{"row_type": "header"}, {"row_type": "data"}, {"row_type": "data"}]}],
+        }
+        candidate = {
+            "snapshot_label": "candidate",
+            "upload_id": "u2",
+            "row_chunks": [
+                {
+                    "table_id": "table-1",
+                    "table_row_index": 6,
+                    "applies_to_columns": ["tariff", "prime"],
+                    "applicability_mode": "explicit_cells",
+                    "table_row_applicability_confidence": 0.9,
+                    "table_row_fee_value": "EGP",
+                },
+                {
+                    "table_id": "table-1",
+                    "table_row_index": 7,
+                    "applies_to_columns": ["tariff", "prime"],
+                    "applicability_mode": "explicit_cells",
+                    "table_row_applicability_confidence": 0.9,
+                    "table_row_fee_value": "USD 5",
+                },
+            ],
+            "tables": [{"rows": [{"row_type": "header"}, {"row_type": "data"}, {"row_type": "data"}]}],
+        }
+
+        report = compare_snapshots(baseline, candidate)
+        metrics = report.get("quality_gate_metrics") or {}
+        gate = report.get("quality_gate") or {}
+
+        self.assertEqual(metrics.get("row_recall"), 1.0)
+        self.assertEqual(metrics.get("row_order_stability"), 1.0)
+        self.assertEqual(metrics.get("scope_f1"), 1.0)
+        self.assertEqual(metrics.get("critical_value_coverage"), 1.0)
+        self.assertEqual(metrics.get("scope_metadata_coverage"), 1.0)
+        self.assertTrue(gate.get("passed"))
+        self.assertEqual(gate.get("failed_checks"), [])
+
+    def test_quality_gate_fails_for_scope_and_coverage_regressions(self) -> None:
+        baseline = {
+            "snapshot_label": "baseline",
+            "upload_id": "u1",
+            "row_chunks": [
+                {
+                    "table_row_index": 1,
+                    "applies_to_columns": ["tariff", "prime"],
+                    "applicability_mode": "explicit_cells",
+                    "table_row_applicability_confidence": 1.0,
+                    "table_row_fee_value": "EGP",
+                },
+                {
+                    "table_row_index": 2,
+                    "applies_to_columns": ["tariff", "plus"],
+                    "applicability_mode": "explicit_cells",
+                    "table_row_applicability_confidence": 1.0,
+                    "table_row_fee_value": "USD 2",
+                },
+            ],
+            "tables": [{"rows": [{"row_type": "header"}, {"row_type": "data"}, {"row_type": "data"}]}],
+        }
+        candidate = {
+            "snapshot_label": "candidate",
+            "upload_id": "u2",
+            "row_chunks": [
+                {
+                    "table_row_index": 2,
+                    "applies_to_columns": ["tariff"],
+                    "applicability_mode": "",
+                    "table_row_applicability_confidence": None,
+                    "table_row_fee_value": "USD 99",
+                },
+            ],
+            "tables": [{"rows": [{"row_type": "header"}, {"row_type": "data"}]}],
+            "quality_metrics": {"table_bbox_coverage_ratio": 0.1, "residual_text_ratio": 0.9},
+        }
+
+        report = compare_snapshots(baseline, candidate)
+        gate = evaluate_quality_gate(report)
+
+        self.assertFalse(gate.get("passed"))
+        self.assertIn("row_recall", gate.get("failed_checks") or [])
+        self.assertIn("scope_f1", gate.get("failed_checks") or [])
+        self.assertIn("critical_value_coverage", gate.get("failed_checks") or [])
+        self.assertIn("scope_metadata_coverage", gate.get("failed_checks") or [])
+
+    def test_quality_gate_threshold_override(self) -> None:
+        report = {
+            "quality_gate_metrics": {
+                "row_recall": 1.0,
+                "row_order_stability": 1.0,
+                "scope_f1": 1.0,
+                "critical_value_coverage": 1.0,
+                "scope_metadata_coverage": 0.5,
+            },
+            "regressions": [],
+        }
+        default_gate = evaluate_quality_gate(report)
+        self.assertFalse(default_gate.get("passed"))
+
+        relaxed = quality_gate_thresholds(min_scope_metadata_coverage=0.5)
+        relaxed_gate = evaluate_quality_gate(report, thresholds=relaxed)
+        self.assertTrue(relaxed_gate.get("passed"))

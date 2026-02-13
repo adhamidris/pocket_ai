@@ -22,6 +22,14 @@ from .models import (
     KnowledgeUploadTableRow,
 )
 
+QUALITY_GATE_THRESHOLD_DEFAULTS: dict[str, float] = {
+    "min_row_recall": 0.99,
+    "min_row_order_stability": 0.95,
+    "min_scope_f1": 0.95,
+    "min_critical_value_coverage": 0.95,
+    "min_scope_metadata_coverage": 1.0,
+}
+
 
 def _metadata_dict(value: Any) -> dict[str, Any]:
     if isinstance(value, Mapping):
@@ -131,6 +139,203 @@ def _scope_metrics(row_chunks: Sequence[dict[str, Any]]) -> dict[str, Any]:
         "explicit_scope_count": explicit,
         "explicit_scope_rate": round(explicit / max(1, total), 4),
         "scope_cardinality_histogram": {str(k): int(v) for k, v in sorted(histogram.items(), key=lambda item: item[0])},
+    }
+
+
+def _normalized_token(value: Any) -> str:
+    return " ".join(str(value or "").strip().lower().split())
+
+
+def _normalized_scope_set(row: Mapping[str, Any]) -> set[str]:
+    return {
+        token
+        for token in (_normalized_token(item) for item in _clean_list(row.get("applies_to_columns")))
+        if token
+    }
+
+
+def _row_has_scope_metadata(row: Mapping[str, Any]) -> bool:
+    mode = _normalized_token(row.get("applicability_mode"))
+    confidence = _safe_float(row.get("table_row_applicability_confidence"))
+    return bool(mode) and confidence is not None
+
+
+def _lcs_length(left: Sequence[str], right: Sequence[str]) -> int:
+    if not left or not right:
+        return 0
+    previous = [0] * (len(right) + 1)
+    current = [0] * (len(right) + 1)
+    for left_token in left:
+        for idx, right_token in enumerate(right, start=1):
+            if left_token == right_token:
+                current[idx] = previous[idx - 1] + 1
+            else:
+                current[idx] = max(previous[idx], current[idx - 1])
+        previous, current = current, [0] * (len(right) + 1)
+    return previous[-1]
+
+
+def _safe_ratio(numerator: int | float, denominator: int | float) -> float:
+    if float(denominator) <= 0:
+        return 1.0
+    return float(numerator) / float(denominator)
+
+
+def _build_quality_gate_metrics(
+    *,
+    baseline_rows: Sequence[dict[str, Any]],
+    candidate_rows: Sequence[dict[str, Any]],
+    baseline_map: Mapping[str, dict[str, Any]],
+    candidate_map: Mapping[str, dict[str, Any]],
+) -> dict[str, Any]:
+    baseline_keys = set(baseline_map.keys())
+    candidate_keys = set(candidate_map.keys())
+    shared_keys = baseline_keys & candidate_keys
+
+    row_recall = _safe_ratio(len(shared_keys), len(baseline_keys))
+    row_precision = _safe_ratio(len(shared_keys), len(candidate_keys))
+
+    baseline_order = [key for key in baseline_map.keys() if key in shared_keys]
+    candidate_order = [key for key in candidate_map.keys() if key in shared_keys]
+    lcs = _lcs_length(baseline_order, candidate_order)
+    row_order_stability = _safe_ratio(lcs, len(baseline_order))
+
+    baseline_scope_pairs = {
+        (row_key, label)
+        for row_key, row in baseline_map.items()
+        for label in _normalized_scope_set(row)
+    }
+    candidate_scope_pairs = {
+        (row_key, label)
+        for row_key, row in candidate_map.items()
+        for label in _normalized_scope_set(row)
+    }
+    scope_tp = len(baseline_scope_pairs & candidate_scope_pairs)
+    scope_fp = len(candidate_scope_pairs - baseline_scope_pairs)
+    scope_fn = len(baseline_scope_pairs - candidate_scope_pairs)
+    scope_precision = _safe_ratio(scope_tp, scope_tp + scope_fp)
+    scope_recall = _safe_ratio(scope_tp, scope_tp + scope_fn)
+    if (scope_precision + scope_recall) <= 0:
+        scope_f1 = 1.0
+    else:
+        scope_f1 = (2.0 * scope_precision * scope_recall) / (scope_precision + scope_recall)
+
+    baseline_critical_values = {
+        row_key: _normalized_token(row.get("table_row_fee_value"))
+        for row_key, row in baseline_map.items()
+        if _normalized_token(row.get("table_row_fee_value"))
+    }
+    critical_total = len(baseline_critical_values)
+    critical_present = 0
+    critical_matched = 0
+    for row_key, baseline_value in baseline_critical_values.items():
+        candidate_row = candidate_map.get(row_key)
+        if not candidate_row:
+            continue
+        candidate_value = _normalized_token(candidate_row.get("table_row_fee_value"))
+        if candidate_value:
+            critical_present += 1
+        if candidate_value == baseline_value:
+            critical_matched += 1
+    critical_value_presence_coverage = _safe_ratio(critical_present, critical_total)
+    critical_value_coverage = _safe_ratio(critical_matched, critical_total)
+
+    candidate_scope_rows = [
+        row
+        for row in candidate_rows
+        if _clean_list(row.get("applies_to_columns"))
+    ]
+    scope_rows_count = len(candidate_scope_rows)
+    scope_metadata_ready = sum(1 for row in candidate_scope_rows if _row_has_scope_metadata(row))
+    scope_metadata_coverage = _safe_ratio(scope_metadata_ready, scope_rows_count)
+
+    return {
+        "row_recall": round(row_recall, 4),
+        "row_precision": round(row_precision, 4),
+        "row_order_stability": round(row_order_stability, 4),
+        "scope_precision": round(scope_precision, 4),
+        "scope_recall": round(scope_recall, 4),
+        "scope_f1": round(scope_f1, 4),
+        "critical_value_total": int(critical_total),
+        "critical_value_present_count": int(critical_present),
+        "critical_value_matched_count": int(critical_matched),
+        "critical_value_presence_coverage": round(critical_value_presence_coverage, 4),
+        "critical_value_coverage": round(critical_value_coverage, 4),
+        "scope_rows_count": int(scope_rows_count),
+        "scope_metadata_ready_count": int(scope_metadata_ready),
+        "scope_metadata_coverage": round(scope_metadata_coverage, 4),
+    }
+
+
+def quality_gate_thresholds(
+    *,
+    min_row_recall: float | None = None,
+    min_row_order_stability: float | None = None,
+    min_scope_f1: float | None = None,
+    min_critical_value_coverage: float | None = None,
+    min_scope_metadata_coverage: float | None = None,
+) -> dict[str, float]:
+    resolved = dict(QUALITY_GATE_THRESHOLD_DEFAULTS)
+    overrides = {
+        "min_row_recall": min_row_recall,
+        "min_row_order_stability": min_row_order_stability,
+        "min_scope_f1": min_scope_f1,
+        "min_critical_value_coverage": min_critical_value_coverage,
+        "min_scope_metadata_coverage": min_scope_metadata_coverage,
+    }
+    for key, value in overrides.items():
+        if value is None:
+            continue
+        try:
+            resolved[key] = float(value)
+        except Exception:
+            continue
+    return resolved
+
+
+def evaluate_quality_gate(
+    report: Mapping[str, Any],
+    *,
+    thresholds: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    metrics = _metadata_dict(report.get("quality_gate_metrics"))
+    resolved_thresholds = quality_gate_thresholds(
+        min_row_recall=_safe_float((thresholds or {}).get("min_row_recall")),
+        min_row_order_stability=_safe_float((thresholds or {}).get("min_row_order_stability")),
+        min_scope_f1=_safe_float((thresholds or {}).get("min_scope_f1")),
+        min_critical_value_coverage=_safe_float((thresholds or {}).get("min_critical_value_coverage")),
+        min_scope_metadata_coverage=_safe_float((thresholds or {}).get("min_scope_metadata_coverage")),
+    )
+    failed_checks: list[str] = []
+
+    row_recall = _safe_float(metrics.get("row_recall")) or 0.0
+    if row_recall < float(resolved_thresholds["min_row_recall"]):
+        failed_checks.append("row_recall")
+
+    row_order = _safe_float(metrics.get("row_order_stability")) or 0.0
+    if row_order < float(resolved_thresholds["min_row_order_stability"]):
+        failed_checks.append("row_order_stability")
+
+    scope_f1 = _safe_float(metrics.get("scope_f1")) or 0.0
+    if scope_f1 < float(resolved_thresholds["min_scope_f1"]):
+        failed_checks.append("scope_f1")
+
+    critical_value_coverage = _safe_float(metrics.get("critical_value_coverage")) or 0.0
+    if critical_value_coverage < float(resolved_thresholds["min_critical_value_coverage"]):
+        failed_checks.append("critical_value_coverage")
+
+    scope_metadata_coverage = _safe_float(metrics.get("scope_metadata_coverage")) or 0.0
+    if scope_metadata_coverage < float(resolved_thresholds["min_scope_metadata_coverage"]):
+        failed_checks.append("scope_metadata_coverage")
+
+    regressions = [str(item) for item in (report.get("regressions") or []) if str(item).strip()]
+    passed = not failed_checks and not regressions
+    return {
+        "passed": bool(passed),
+        "thresholds": resolved_thresholds,
+        "metrics": metrics,
+        "failed_checks": failed_checks,
+        "regressions": regressions,
     }
 
 
@@ -429,6 +634,7 @@ def compare_snapshots(
     *,
     focus_row_start: int | None = None,
     focus_row_end: int | None = None,
+    thresholds: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     baseline_rows = _row_focus_filter(
         list(baseline.get("row_chunks") or []),
@@ -573,6 +779,13 @@ def compare_snapshots(
     if residual_delta is not None and residual_delta > 0:
         regressions.append("residual_text_ratio_increased")
 
+    quality_gate_metrics = _build_quality_gate_metrics(
+        baseline_rows=baseline_rows,
+        candidate_rows=candidate_rows,
+        baseline_map=baseline_map,
+        candidate_map=candidate_map,
+    )
+
     result = {
         "generated_at": timezone.now().isoformat(),
         "focus": {
@@ -628,9 +841,11 @@ def compare_snapshots(
         "changed_row_count": len(changed_rows),
         "changed_rows": changed_rows,
         "regressions": regressions,
+        "quality_gate_metrics": quality_gate_metrics,
         "term_hits_baseline": baseline.get("term_hits") or {},
         "term_hits_candidate": candidate.get("term_hits") or {},
     }
+    result["quality_gate"] = evaluate_quality_gate(result, thresholds=thresholds)
     return result
 
 
@@ -709,6 +924,26 @@ def render_comparison_markdown(report: Mapping[str, Any]) -> str:
     lines.append("## Delta Summary")
     lines.append("")
     for key, value in deltas.items():
+        lines.append(f"- {key}: `{value}`")
+
+    quality_gate = _metadata_dict(report.get("quality_gate"))
+    quality_metrics = _metadata_dict(report.get("quality_gate_metrics"))
+    lines.append("")
+    lines.append("## Quality Gate")
+    lines.append("")
+    lines.append(f"- passed: `{quality_gate.get('passed')}`")
+    failed_checks = _clean_list(quality_gate.get("failed_checks"))
+    if failed_checks:
+        lines.append(f"- failed_checks: `{', '.join(failed_checks)}`")
+    else:
+        lines.append("- failed_checks: `none`")
+    for key, value in sorted(_metadata_dict(quality_gate.get("thresholds")).items(), key=lambda item: item[0]):
+        lines.append(f"- threshold.{key}: `{value}`")
+
+    lines.append("")
+    lines.append("## Quality Metrics")
+    lines.append("")
+    for key, value in sorted(quality_metrics.items(), key=lambda item: item[0]):
         lines.append(f"- {key}: `{value}`")
 
     regressions = list(report.get("regressions") or [])

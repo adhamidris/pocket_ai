@@ -1,0 +1,47 @@
+{
+  "snapshot_label": "phase5_ci_candidate",
+  "upload_id": "phase5-candidate-upload",
+  "row_chunks": [
+    {
+      "table_row_index": 6,
+      "table_anchor": "p1-t1",
+      "applies_to_columns": ["tariff", "prime", "plus"],
+      "applicability_mode": "inferred_sparse_row_expansion",
+      "table_row_applicability_confidence": 0.96,
+      "table_row_fee_value": "EGP"
+    },
+    {
+      "table_row_index": 7,
+      "table_anchor": "p1-t1",
+      "applies_to_columns": ["tariff", "prime", "plus"],
+      "applicability_mode": "inferred_sparse_row_expansion",
+      "table_row_applicability_confidence": 0.96,
+      "table_row_fee_value": "USD 5"
+    },
+    {
+      "table_row_index": 8,
+      "table_anchor": "p1-t1",
+      "applies_to_columns": ["tariff", "prime", "plus"],
+      "applicability_mode": "inferred_sparse_row_expansion",
+      "table_row_applicability_confidence": 0.96,
+      "table_row_fee_value": "EGP"
+    }
+  ],
+  "tables": [
+    {
+      "rows": [
+        {"row_type": "header"},
+        {"row_type": "data"},
+        {"row_type": "data"},
+        {"row_type": "data"}
+      ]
+    }
+  ],
+  "table_count": 1,
+  "table_data_row_count": 3,
+  "quality_metrics": {
+    "table_bbox_coverage_ratio": 0.92,
+    "residual_text_ratio": 0.07,
+    "table_row_unique_evidence_count": 3
+  }
+}
