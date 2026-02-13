@@ -137,6 +137,10 @@ class TablePostprocessContinuationTests(SimpleTestCase):
         self.assertEqual(prime, wealth)
         self.assertEqual(prime, exclusive)
         self.assertGreaterEqual(int(meta.get("value_fragment_stitched_cells") or 0), 3)
+        scope = row.metadata.get("inferred_scope_columns") or []
+        self.assertIn("wealth", scope)
+        self.assertIn("exclusive_wealth", scope)
+        self.assertNotEqual(scope, ["prime", "plus"])
 
     def test_postprocess_does_not_stitch_distinct_scope_values(self) -> None:
         service = KnowledgeIngestionService(enable_ocr=False)

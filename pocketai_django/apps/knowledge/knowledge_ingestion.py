@@ -9548,6 +9548,14 @@ class KnowledgeIngestionService:
             if not replace_indices:
                 continue
 
+            sorted_replace = sorted(replace_indices)
+            anchor_idx = sorted_replace[0] if sorted_replace else None
+            contiguous = bool(
+                sorted_replace
+                and all((sorted_replace[i] - sorted_replace[i - 1]) == 1 for i in range(1, len(sorted_replace)))
+            )
+            anchor_span = len(sorted_replace) if contiguous and len(sorted_replace) > 1 else 1
+
             updated_row = effective_row
             row_rewrites = 0
             for idx in sorted(replace_indices):
@@ -9564,6 +9572,10 @@ class KnowledgeIngestionService:
                     metadata_patch={
                         "value_fragment_stitched": True,
                         "value_fragment_stitch_source_row": int(row.row_index),
+                        # Reset stale extraction spans on rewritten fragments.
+                        # If rewritten indices are contiguous, encode one explicit
+                        # span anchor so scope refresh can infer the full range.
+                        "column_span": anchor_span if idx == anchor_idx else 1,
                     },
                 )
                 row_rewrites += 1
@@ -9605,6 +9617,34 @@ class KnowledgeIngestionService:
                 rows=rebuilt_rows,
             ),
             stitched_cells,
+        )
+
+    def _refresh_table_scope_annotations(self, table: TablePayload) -> TablePayload:
+        if not table.rows or len(table.column_schema or []) < 3:
+            return table
+        header_rows: set[int] = {
+            int(row.row_index)
+            for row in (table.rows or [])
+            if str((row.metadata or {}).get("row_type") or "").strip().lower() == "header"
+        }
+        annotator = AzureDocumentIntelligenceExtractor(endpoint=None, key=None)
+        annotated_rows = annotator._annotate_row_applicability(
+            table_rows=table.rows or [],
+            column_schema=table.column_schema or [],
+            header_rows=header_rows,
+        )
+        table_meta = dict(table.metadata or {})
+        table_meta["scope_postprocess_refreshed"] = True
+        return TablePayload(
+            order_index=table.order_index,
+            title=table.title,
+            section_heading=table.section_heading,
+            page_number=table.page_number,
+            bbox=table.bbox,
+            column_schema=table.column_schema,
+            data_dictionary=table.data_dictionary,
+            metadata=table_meta,
+            rows=annotated_rows,
         )
 
     def _build_table_profile(self, tables: Sequence[TablePayload]) -> dict[str, Any] | None:
@@ -9739,6 +9779,7 @@ class KnowledgeIngestionService:
             "header_inferred": 0,
             "row_continuation_stitched_pairs": 0,
             "value_fragment_stitched_cells": 0,
+            "scope_refreshed_tables": 0,
         }
         processed: list[TablePayload] = []
 
@@ -9844,6 +9885,8 @@ class KnowledgeIngestionService:
                     prev_schema = list(table.column_schema)
                     prev_labels = labels
                     prev_order_index = table.order_index
+                table = self._refresh_table_scope_annotations(table)
+                meta["scope_refreshed_tables"] += 1
                 processed.append(table)
 
         return processed, issues, meta
