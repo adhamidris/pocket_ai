@@ -85,12 +85,23 @@ from apps.knowledge.table_normalization import (
     sheet_is_allowed,
     summarize_normalization,
 )
+from apps.knowledge.column_role_inference import (
+    COLUMN_ROLE_DESCRIPTOR,
+    COLUMN_ROLE_NOTE,
+    COLUMN_ROLE_QUALIFIER,
+    COLUMN_ROLE_SCOPE_DIMENSION,
+    column_role_groups,
+    column_role_payloads,
+    infer_column_roles,
+    role_lookup_by_index,
+)
 
 logger = logging.getLogger(__name__)
 TRACER = otel_trace.get_tracer(__name__)
 
 OCR_NORMALIZATION_VERSION = "v2"
 TABLE_SCOPE_CONTRACT_VERSION = "v2"
+COLUMN_ROLE_INFERENCE_VERSION = "v1"
 _ARABIC_CHAR_RE = re.compile(r"[\u0600-\u06FF]")
 _ARABIC_DIACRITICS_RE = re.compile(r"[\u0610-\u061A\u064B-\u065F\u06D6-\u06ED]")
 _TABLE_NUMERIC_SIGNAL_TOKEN_RE = re.compile(
@@ -1836,12 +1847,49 @@ class AzureDocumentIntelligenceExtractor:
                     values.append("")
             row_values.append(values)
 
-        contextual_indices = _infer_contextual_column_indices(
+        role_profiles = infer_column_roles(
             row_values=row_values,
+            column_schema=[str(col or "") for col in column_schema],
             header_row_indices=header_row_positions,
-            min_segment_columns=3,
+            min_scope_columns=3,
         )
-        return [idx for idx in range(width) if idx not in contextual_indices]
+        role_groups = column_role_groups(role_profiles)
+        scope_indices = set(role_groups.get(COLUMN_ROLE_SCOPE_DIMENSION, []))
+
+        # Keep near-scope qualifiers when their scope score is close enough.
+        # This prevents sparse-table edge cases from dropping a true segment
+        # column that received a qualifier label due low support.
+        for profile in role_profiles:
+            role_scores = profile.role_scores if isinstance(profile.role_scores, Mapping) else {}
+            scope_score = float(role_scores.get(COLUMN_ROLE_SCOPE_DIMENSION) or 0.0)
+            qualifier_score = float(role_scores.get(COLUMN_ROLE_QUALIFIER) or 0.0)
+            if (
+                profile.role == COLUMN_ROLE_QUALIFIER
+                and scope_score >= 0.46
+                and (qualifier_score - scope_score) <= 0.2
+            ):
+                scope_indices.add(int(profile.column_index))
+
+        resolved_scope_indices = sorted(scope_indices)
+        if len(resolved_scope_indices) >= 3:
+            return resolved_scope_indices
+
+        contextual_indices = sorted(
+            set(role_groups.get(COLUMN_ROLE_DESCRIPTOR, []))
+            | {
+                int(profile.column_index)
+                for profile in role_profiles
+                if profile.role == COLUMN_ROLE_QUALIFIER
+                and (
+                    float((profile.role_scores or {}).get(COLUMN_ROLE_QUALIFIER) or 0.0)
+                    - float((profile.role_scores or {}).get(COLUMN_ROLE_SCOPE_DIMENSION) or 0.0)
+                ) >= 0.25
+            }
+        )
+        fallback = [idx for idx in range(width) if idx not in contextual_indices]
+        if len(fallback) >= 3:
+            return fallback
+        return resolved_scope_indices or fallback
 
     def _reconcile_spans_from_geometry(
         self,
@@ -1977,6 +2025,22 @@ class AzureDocumentIntelligenceExtractor:
             column_schema=column_schema,
             header_rows=header_rows,
         )
+        span_evidence_indices: set[int] = set()
+        for row in rows:
+            if row.row_index in header_rows:
+                continue
+            for cell in row.cells:
+                try:
+                    col_idx = int(cell.column_index)
+                    span_width = int((cell.metadata or {}).get("column_span") or 1)
+                except (TypeError, ValueError):
+                    continue
+                if span_width <= 1:
+                    continue
+                for idx in range(col_idx, min(len(column_schema), col_idx + span_width)):
+                    span_evidence_indices.add(idx)
+        if span_evidence_indices:
+            segment_indices = sorted(set(segment_indices) | span_evidence_indices)
         if len(segment_indices) < 3:
             return rows
 
@@ -6069,6 +6133,7 @@ class KnowledgeIngestionService:
     # Persistence
 
     def _persist_extraction(self, upload: KnowledgeUpload, extraction: ExtractionResult) -> None:
+        extraction = self._enrich_extraction_with_column_roles(extraction)
         normalized = self._normalize_text(extraction.text)
         if not normalized:
             raise KnowledgeIngestionError("Extracted document is empty.")
@@ -12278,39 +12343,78 @@ class KnowledgeIngestionService:
             return fallback.strip().lower()
         return ""
 
-    def _infer_table_contextual_labels(
+    @staticmethod
+    def _row_cells_for_role_inference(row: Any) -> list[Any]:
+        cells_attr = getattr(row, "cells", None)
+        if cells_attr is None:
+            return []
+        if hasattr(cells_attr, "all"):
+            return list(cells_attr.all())
+        if isinstance(cells_attr, (list, tuple)):
+            return list(cells_attr)
+        return []
+
+    def _infer_table_column_roles(
         self,
         *,
         table_rows: Sequence[Any],
         column_map: Sequence[tuple[str, str, int]],
-    ) -> set[str]:
-        if not table_rows or not column_map:
-            return set()
+        cached_roles: Sequence[Mapping[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
+        if not column_map:
+            return []
+        if isinstance(cached_roles, (list, tuple)):
+            lookup = role_lookup_by_index(cached_roles)
+            normalized_cached: list[dict[str, Any]] = []
+            for _idx, (label, _canonical, raw_idx) in enumerate(column_map):
+                payload = lookup.get(raw_idx)
+                if not payload:
+                    continue
+                normalized_cached.append(
+                    {
+                        "column_index": int(raw_idx),
+                        "column_key": str(payload.get("column_key") or label),
+                        "role": str(payload.get("role") or COLUMN_ROLE_SCOPE_DIMENSION),
+                        "confidence": round(float(payload.get("confidence") or 0.0), 3),
+                        "role_scores": dict(payload.get("role_scores") or {}),
+                        "signals": dict(payload.get("signals") or {}),
+                    }
+                )
+            if len(normalized_cached) >= max(1, len(column_map) - 1):
+                return normalized_cached
 
         row_values: list[list[str]] = []
         header_row_positions: set[int] = set()
+        schema = [str(label or "").strip() or f"column_{idx + 1}" for idx, (label, _canonical, _raw_idx) in enumerate(column_map)]
         for pos, row in enumerate(table_rows):
-            row_meta = row.metadata if isinstance(row.metadata, Mapping) else {}
+            row_meta = row.metadata if isinstance(getattr(row, "metadata", None), Mapping) else {}
             if str(row_meta.get("row_type") or "").strip().lower() == "header":
                 header_row_positions.add(pos)
-            row_cells = list(row.cells.all())
-            cell_lookup = {cell.column_index: cell.raw_text for cell in row_cells}
+            row_cells = self._row_cells_for_role_inference(row)
+            cell_lookup = {}
+            for cell in row_cells:
+                try:
+                    idx = int(getattr(cell, "column_index", 0))
+                except (TypeError, ValueError):
+                    continue
+                cell_lookup[idx] = self._table_cell_text(getattr(cell, "raw_text", ""))
             row_values.append(
                 [self._table_cell_text(cell_lookup.get(raw_idx, "")) for _label, _canonical, raw_idx in column_map]
             )
 
-        contextual_indices = _infer_contextual_column_indices(
+        profiles = infer_column_roles(
             row_values=row_values,
+            column_schema=schema,
             header_row_indices=header_row_positions,
-            min_segment_columns=3,
+            min_scope_columns=3,
         )
-        labels: set[str] = set()
-        for idx in contextual_indices:
-            if 0 <= idx < len(column_map):
-                label = str(column_map[idx][0] or "").strip()
-                if label:
-                    labels.add(label)
-        return labels
+        payloads: list[dict[str, Any]] = []
+        for idx, payload in enumerate(column_role_payloads(profiles)):
+            raw_idx = column_map[idx][2] if idx < len(column_map) else idx
+            payload["column_index"] = int(raw_idx)
+            payload["column_key"] = str(column_map[idx][0] if idx < len(column_map) else payload.get("column_key") or "")
+            payloads.append(payload)
+        return payloads
 
     def _column_is_sensitive(self, column: str, rules: Mapping[str, Any]) -> bool:
         canonical = self._canonical_column_name(column)
@@ -12498,6 +12602,7 @@ class KnowledgeIngestionService:
         qualifier_columns = list(dict.fromkeys(qualifier_columns))
 
         scope_dimension_columns = self._clean_scope_labels(row_model_meta.get("scope_dimension_columns"))
+        has_explicit_scope_dimensions = bool(scope_dimension_columns)
         if not scope_dimension_columns:
             scope_dimension_columns = list(dict.fromkeys(inferred_segment_labels))
         if not scope_dimension_columns:
@@ -12519,7 +12624,7 @@ class KnowledgeIngestionService:
                 inferred_scope_columns = [label for label in observed_value_columns if label not in qualifier_columns]
             if not inferred_scope_columns:
                 inferred_scope_columns = list(observed_value_columns)
-        if scope_dimension_columns:
+        if scope_dimension_columns and has_explicit_scope_dimensions:
             scope_dimension_set = set(scope_dimension_columns)
             filtered_scope = [label for label in inferred_scope_columns if label in scope_dimension_set]
             if filtered_scope:
@@ -12600,6 +12705,133 @@ class KnowledgeIngestionService:
             column_map.append((label, canonical, idx))
         return column_map, hidden_columns
 
+    def _table_column_map_for_payload(
+        self,
+        table: TablePayload,
+    ) -> list[tuple[str, str, int]]:
+        schema = [
+            self._table_cell_text(value) or f"column_{idx + 1}"
+            for idx, value in enumerate(table.column_schema or [])
+        ]
+        width = len(schema)
+        for row in table.rows or []:
+            for cell in self._row_cells_for_role_inference(row):
+                try:
+                    col_idx = int(getattr(cell, "column_index", -1))
+                except (TypeError, ValueError):
+                    continue
+                width = max(width, col_idx + 1)
+
+        column_map: list[tuple[str, str, int]] = []
+        for idx in range(max(0, width)):
+            label = schema[idx] if idx < len(schema) else f"column_{idx + 1}"
+            canonical = self._canonical_column_name(label, f"column_{idx + 1}")
+            column_map.append((label, canonical, idx))
+        return column_map
+
+    def _enrich_table_payload_column_roles(self, table: TablePayload) -> TablePayload:
+        column_map = self._table_column_map_for_payload(table)
+        if not column_map:
+            return table
+
+        data_dictionary = dict(table.data_dictionary or {})
+        cached_roles = data_dictionary.get("column_roles")
+        inferred_roles = self._infer_table_column_roles(
+            table_rows=list(table.rows or []),
+            column_map=column_map,
+            cached_roles=cached_roles if isinstance(cached_roles, (list, tuple)) else None,
+        )
+        if not inferred_roles:
+            return table
+
+        role_lookup = role_lookup_by_index(inferred_roles)
+        columns_by_role: dict[str, list[str]] = {
+            COLUMN_ROLE_DESCRIPTOR: [],
+            COLUMN_ROLE_QUALIFIER: [],
+            COLUMN_ROLE_SCOPE_DIMENSION: [],
+            COLUMN_ROLE_NOTE: [],
+        }
+        confidence_values: list[float] = []
+        for label, _canonical, raw_idx in column_map:
+            payload = role_lookup.get(raw_idx) or {}
+            role = str(payload.get("role") or COLUMN_ROLE_SCOPE_DIMENSION).strip() or COLUMN_ROLE_SCOPE_DIMENSION
+            if role in columns_by_role:
+                columns_by_role[role].append(label)
+            confidence = self._coerce_scope_confidence(payload.get("confidence"))
+            if confidence is not None:
+                confidence_values.append(confidence)
+        columns_by_role = {
+            role: list(dict.fromkeys(labels))
+            for role, labels in columns_by_role.items()
+        }
+
+        role_summary = {
+            "descriptor_count": len(columns_by_role.get(COLUMN_ROLE_DESCRIPTOR, [])),
+            "qualifier_count": len(columns_by_role.get(COLUMN_ROLE_QUALIFIER, [])),
+            "scope_dimension_count": len(columns_by_role.get(COLUMN_ROLE_SCOPE_DIMENSION, [])),
+            "note_count": len(columns_by_role.get(COLUMN_ROLE_NOTE, [])),
+            "columns_profiled": len(inferred_roles),
+        }
+        if confidence_values:
+            role_summary["average_confidence"] = round(
+                sum(confidence_values) / float(len(confidence_values)),
+                3,
+            )
+
+        data_dictionary.update(
+            {
+                "column_role_inference_version": COLUMN_ROLE_INFERENCE_VERSION,
+                "column_roles": inferred_roles,
+                "column_roles_by_type": columns_by_role,
+                "column_role_summary": role_summary,
+            }
+        )
+        return TablePayload(
+            order_index=table.order_index,
+            title=table.title,
+            section_heading=table.section_heading,
+            page_number=table.page_number,
+            bbox=table.bbox,
+            column_schema=table.column_schema,
+            data_dictionary=data_dictionary,
+            metadata=table.metadata,
+            rows=table.rows,
+        )
+
+    def _enrich_extraction_with_column_roles(self, extraction: ExtractionResult) -> ExtractionResult:
+        if not extraction.tables:
+            return extraction
+
+        enriched_tables: list[TablePayload] = []
+        tables_with_roles = 0
+        profiled_columns = 0
+        for table in extraction.tables:
+            enriched = self._enrich_table_payload_column_roles(table)
+            enriched_tables.append(enriched)
+            data_dictionary = enriched.data_dictionary if isinstance(enriched.data_dictionary, Mapping) else {}
+            roles = data_dictionary.get("column_roles")
+            if isinstance(roles, (list, tuple)) and roles:
+                tables_with_roles += 1
+                profiled_columns += len(roles)
+
+        metadata = dict(extraction.metadata or {})
+        metadata["column_role_inference"] = {
+            "version": COLUMN_ROLE_INFERENCE_VERSION,
+            "table_count": len(enriched_tables),
+            "tables_with_roles": tables_with_roles,
+            "columns_profiled": profiled_columns,
+        }
+        return ExtractionResult(
+            text=extraction.text,
+            format_hint=extraction.format_hint,
+            metadata=metadata,
+            pages=extraction.pages,
+            tables=enriched_tables,
+            issues=extraction.issues,
+            entities=extraction.entities,
+            text_html=extraction.text_html,
+        )
+
     def _table_parent_markdown_from_model(
         self,
         *,
@@ -12664,20 +12896,47 @@ class KnowledgeIngestionService:
         title = table.title or f"Table {table.order_index}"
         data_rows = 0
         table_rows = list(table.rows.all())
-        contextual_labels = self._infer_table_contextual_labels(
+        table_data_dictionary = (
+            getattr(table, "data_dictionary", {})
+            if isinstance(getattr(table, "data_dictionary", {}), Mapping)
+            else {}
+        )
+        cached_column_roles = table_data_dictionary.get("column_roles") if isinstance(table_data_dictionary, Mapping) else None
+        inferred_column_roles = self._infer_table_column_roles(
             table_rows=table_rows,
             column_map=column_map,
+            cached_roles=cached_column_roles if isinstance(cached_column_roles, (list, tuple)) else None,
         )
-        contextual_index_set = {
-            idx
-            for idx, (label, _canonical, _raw_idx) in enumerate(column_map)
-            if label in contextual_labels
-        }
-        inferred_segment_labels = [
-            label
-            for idx, (label, _canonical, _raw_idx) in enumerate(column_map)
-            if idx not in contextual_index_set
-        ]
+        role_lookup = role_lookup_by_index(inferred_column_roles)
+        descriptor_labels: list[str] = []
+        qualifier_labels: list[str] = []
+        inferred_segment_labels: list[str] = []
+        for label, _canonical, raw_idx in column_map:
+            role = str((role_lookup.get(raw_idx) or {}).get("role") or "").strip()
+            if role == COLUMN_ROLE_SCOPE_DIMENSION:
+                inferred_segment_labels.append(label)
+                continue
+            if role == COLUMN_ROLE_QUALIFIER:
+                qualifier_labels.append(label)
+                continue
+            if role == COLUMN_ROLE_DESCRIPTOR:
+                descriptor_labels.append(label)
+                continue
+            if role == COLUMN_ROLE_NOTE:
+                continue
+
+        contextual_labels = set(dict.fromkeys(descriptor_labels + qualifier_labels))
+        if not inferred_segment_labels:
+            contextual_index_set = {
+                idx
+                for idx, (label, _canonical, _raw_idx) in enumerate(column_map)
+                if label in contextual_labels
+            }
+            inferred_segment_labels = [
+                label
+                for idx, (label, _canonical, _raw_idx) in enumerate(column_map)
+                if idx not in contextual_index_set
+            ]
         for row in table_rows:
             if (row.metadata or {}).get("row_type") == "header":
                 continue
