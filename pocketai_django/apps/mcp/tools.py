@@ -8061,7 +8061,7 @@ def _agentic_read_v2_handler(
         row_qs = (
             table.rows.filter(non_header_q, row_index__gte=start_row)
             .order_by("row_index")
-            .only("id", "row_index")
+            .only("id", "row_index", "metadata")
         )
         # Bound reads: even for "list everything", never scan unbounded rows in one call.
         try:
@@ -8091,6 +8091,7 @@ def _agentic_read_v2_handler(
             payload["total_rows"] = None
 
         rows_out: list[list[str]] = []
+        row_metadata_out: list[dict[str, object]] = []
         index_offset: int | None = None
         next_row_index: int | None = None
 
@@ -8140,10 +8141,44 @@ def _agentic_read_v2_handler(
                 break
 
             rows_out.append(values)
+            row_meta = row.metadata if isinstance(getattr(row, "metadata", None), Mapping) else {}
+            applies_to_columns: list[str] = []
+            raw_applies_to = row_meta.get("applies_to_columns")
+            if isinstance(raw_applies_to, (list, tuple)):
+                for entry in raw_applies_to:
+                    label = str(entry or "").strip()
+                    if label:
+                        applies_to_columns.append(label)
+            applicability_mode = str(row_meta.get("applicability_mode") or "").strip()
+            applicability_confidence_raw = row_meta.get("applicability_confidence")
+            applicability_confidence: float | None = None
+            if isinstance(applicability_confidence_raw, (int, float)):
+                applicability_confidence = float(applicability_confidence_raw)
+            elif isinstance(applicability_confidence_raw, str):
+                try:
+                    applicability_confidence = float(applicability_confidence_raw)
+                except (TypeError, ValueError):
+                    applicability_confidence = None
+            fee_value = str(row_meta.get("applicability_value") or "").strip()
+            if applies_to_columns or applicability_mode or applicability_confidence is not None or fee_value:
+                row_entry: dict[str, object] = {
+                    "row_index": row_index_int if row_index_int is not None else row_index,
+                }
+                if applies_to_columns:
+                    row_entry["applies_to_columns"] = applies_to_columns
+                if applicability_mode:
+                    row_entry["applicability_mode"] = applicability_mode
+                if applicability_confidence is not None:
+                    row_entry["applicability_confidence"] = applicability_confidence
+                if fee_value:
+                    row_entry["fee_value"] = fee_value
+                row_metadata_out.append(row_entry)
             remaining = max(0, remaining - row_chars)
 
         payload["rows"] = rows_out
         payload["rows_shown"] = len(rows_out)
+        if row_metadata_out:
+            payload["row_metadata"] = row_metadata_out
 
         if not complete:
             cursor_next = {
@@ -10575,6 +10610,7 @@ def _load_table_rows_for_cache(
         "id",
         "row_index",
         "raw_text",
+        "metadata",
         "table__order_index",
         "table__title",
         "table__section_heading",
@@ -10600,6 +10636,7 @@ def _serialize_table_row_for_cache(row: KnowledgeUploadTableRow) -> dict[str, ob
     table_metadata = getattr(table, "metadata", {}) if table else {}
     if not isinstance(table_metadata, Mapping):
         table_metadata = {}
+    row_metadata = row.metadata if isinstance(getattr(row, "metadata", None), Mapping) else {}
     sheet_name = table_metadata.get("sheet_name") if isinstance(table_metadata, Mapping) else None
     cells = sorted(row.cells.all(), key=lambda c: c.column_index)
     cell_payloads: list[dict[str, object]] = []
@@ -10621,6 +10658,25 @@ def _serialize_table_row_for_cache(row: KnowledgeUploadTableRow) -> dict[str, ob
                 "is_total_column": total_priority > 0,
             }
         )
+    applies_to_columns: list[str] = []
+    raw_applies_to = row_metadata.get("applies_to_columns")
+    if isinstance(raw_applies_to, (list, tuple)):
+        for entry in raw_applies_to:
+            label = str(entry or "").strip()
+            if label:
+                applies_to_columns.append(label)
+    applicability_mode = str(row_metadata.get("applicability_mode") or "").strip()
+    applicability_confidence_raw = row_metadata.get("applicability_confidence")
+    applicability_confidence: float | None = None
+    if isinstance(applicability_confidence_raw, (int, float)):
+        applicability_confidence = float(applicability_confidence_raw)
+    elif isinstance(applicability_confidence_raw, str):
+        try:
+            applicability_confidence = float(applicability_confidence_raw)
+        except (TypeError, ValueError):
+            applicability_confidence = None
+    fee_value = str(row_metadata.get("applicability_value") or "").strip()
+
     return {
         "row_index": row.row_index,
         "table_order_index": table.order_index if table else None,
@@ -10629,6 +10685,10 @@ def _serialize_table_row_for_cache(row: KnowledgeUploadTableRow) -> dict[str, ob
         "sheet_name": sheet_name,
         "row_text": row.raw_text or "",
         "cells": cell_payloads,
+        "applies_to_columns": applies_to_columns,
+        "applicability_mode": applicability_mode,
+        "applicability_confidence": applicability_confidence,
+        "fee_value": fee_value,
     }
 
 

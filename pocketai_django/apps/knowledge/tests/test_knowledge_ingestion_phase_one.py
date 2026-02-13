@@ -82,6 +82,161 @@ class KnowledgeIngestionChunkingTests(SimpleTestCase):
             KnowledgeIngestionService._has_numeric_table_signal("General policy overview and notes")
         )
 
+    def test_table_row_chunks_emit_applies_to_contract(self) -> None:
+        class _Manager:
+            def __init__(self, items):
+                self._items = list(items)
+
+            def all(self):
+                return list(self._items)
+
+        class _Cell:
+            def __init__(self, cell_id: str, column_index: int, raw_text: str, column_key: str = ""):
+                self.id = cell_id
+                self.column_index = column_index
+                self.column_key = column_key
+                self.raw_text = raw_text
+
+        class _Row:
+            def __init__(self):
+                self.row_index = 3
+                self.metadata = {
+                    "row_type": "data",
+                    "applies_to_columns": ["Prime", "Plus", "Wealth", "Exclusive Wealth", "Private"],
+                    "applicability_mode": "inferred_center_collapse",
+                    "applicability_confidence": 0.72,
+                    "applicability_value": "1% (Min USD 2)",
+                }
+                self.cells = _Manager(
+                    [
+                        _Cell("c-1", 0, "Traveler cheques (sell) in foreign currency"),
+                        _Cell("c-2", 4, "1% (Min USD 2)", "wealth"),
+                    ]
+                )
+
+        class _Table:
+            def __init__(self):
+                self.title = "CIB Teller Fees"
+                self.order_index = 1
+                self.section_heading = "Over the counter"
+                self.rows = _Manager([_Row()])
+
+        service = KnowledgeIngestionService(enable_ocr=False)
+        payloads = service._table_row_chunk_payloads(
+            table=_Table(),
+            column_map=[
+                ("Service", "service", 0),
+                ("Tariff", "tariff", 1),
+                ("Prime", "prime", 2),
+                ("Plus", "plus", 3),
+                ("Wealth", "wealth", 4),
+                ("Exclusive Wealth", "exclusive_wealth", 5),
+                ("Private", "private", 6),
+            ],
+            raw_schema=["service", "tariff", "prime", "plus", "wealth", "exclusive_wealth", "private"],
+            privacy_rules={},
+            base_metadata={"is_table_chunk": True, "table_id": "table-1"},
+            max_rows=10,
+        )
+
+        self.assertEqual(len(payloads), 1)
+        payload = payloads[0]
+        text = str(payload.get("text") or "")
+        metadata = payload.get("metadata") or {}
+
+        self.assertIn("[Applies To] Prime, Plus, Wealth, Exclusive Wealth, Private", text)
+        self.assertEqual(
+            metadata.get("table_row_applies_to_columns"),
+            ["Prime", "Plus", "Wealth", "Exclusive Wealth", "Private"],
+        )
+        self.assertEqual(metadata.get("table_row_applicability_mode"), "inferred_center_collapse")
+        self.assertEqual(metadata.get("table_row_fee_value"), "1% (Min USD 2)")
+
+    def test_table_row_chunks_derive_scope_with_structural_context_columns(self) -> None:
+        class _Manager:
+            def __init__(self, items):
+                self._items = list(items)
+
+            def all(self):
+                return list(self._items)
+
+        class _Cell:
+            def __init__(self, cell_id: str, column_index: int, raw_text: str, column_key: str = ""):
+                self.id = cell_id
+                self.column_index = column_index
+                self.raw_text = raw_text
+                self.column_key = column_key
+
+        class _Row:
+            def __init__(self, row_index: int, metadata: dict[str, object], cells: list[_Cell]):
+                self.row_index = row_index
+                self.metadata = metadata
+                self.cells = _Manager(cells)
+
+        class _Table:
+            def __init__(self, rows: list[_Row]):
+                self.title = "Generic matrix"
+                self.order_index = 1
+                self.section_heading = ""
+                self.rows = _Manager(rows)
+
+        header = _Row(
+            0,
+            {"row_type": "header"},
+            [
+                _Cell("h-1", 0, "Descriptor A"),
+                _Cell("h-2", 1, "Descriptor B"),
+                _Cell("h-3", 2, "Band 1"),
+                _Cell("h-4", 3, "Band 2"),
+                _Cell("h-5", 4, "Band 3"),
+            ],
+        )
+        row_one = _Row(
+            1,
+            {"row_type": "data"},
+            [
+                _Cell("r1-1", 0, "Route settlement fees"),
+                _Cell("r1-2", 1, "Category for local currency payouts"),
+                _Cell("r1-3", 2, "1.5%"),
+                _Cell("r1-4", 3, "1.5%"),
+                _Cell("r1-5", 4, "1.5%"),
+            ],
+        )
+        row_two = _Row(
+            2,
+            {"row_type": "data"},
+            [
+                _Cell("r2-1", 0, "Remote processing surcharge"),
+                _Cell("r2-2", 1, "Category for foreign currency payouts"),
+                _Cell("r2-4", 3, "2.0%"),
+            ],
+        )
+
+        service = KnowledgeIngestionService(enable_ocr=False)
+        payloads = service._table_row_chunk_payloads(
+            table=_Table([header, row_one, row_two]),
+            column_map=[
+                ("Descriptor A", "descriptor_a", 0),
+                ("Descriptor B", "descriptor_b", 1),
+                ("Band 1", "band_1", 2),
+                ("Band 2", "band_2", 3),
+                ("Band 3", "band_3", 4),
+            ],
+            raw_schema=["descriptor_a", "descriptor_b", "band_1", "band_2", "band_3"],
+            privacy_rules={},
+            base_metadata={"is_table_chunk": True, "table_id": "table-2"},
+            max_rows=10,
+        )
+
+        self.assertEqual(len(payloads), 2)
+        row_two_payload = next(
+            payload for payload in payloads if (payload.get("metadata") or {}).get("table_row_index") == 2
+        )
+        applies_to = (row_two_payload.get("metadata") or {}).get("table_row_applies_to_columns") or []
+        self.assertIn("Band 2", applies_to)
+        self.assertNotIn("Descriptor A", applies_to)
+        self.assertNotIn("Descriptor B", applies_to)
+
     @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
     def test_pdf_table_overlap_blocks_become_residual_segments_for_coverage(self, _build_embeddings) -> None:
         service = KnowledgeIngestionService(enable_ocr=False)

@@ -388,7 +388,7 @@ def build_system_message(
         - Keep queries tight and anchored to the product/plan/service name.
         - If the visitor asks about multiple distinct items/topics, prefer one batched call using `queries=[...]`.
         - If results mismatch intent, refine using document terms or the suggested refinement.
-        - If repeated searches keep returning the same documents/snippets, stop searching and answer from what you have; clearly state what information is not present in the knowledge base.
+        - If repeated searches keep returning the same documents/snippets, stop repeating search. Run one targeted read on the best refs if factual detail is still needed, then answer with clear gaps.
         - If reliable evidence already exists in context, answer without a new search.
 
         ### `read_document`

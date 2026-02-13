@@ -6472,6 +6472,11 @@ class KnowledgeSearchService:
                 "table_title",
                 "table_quality_score",
                 "table_is_decorative",
+                "table_row_applies_to_columns",
+                "table_row_applicability_mode",
+                "table_row_applicability_confidence",
+                "table_row_fee_value",
+                "table_row_evidence_cell_ids",
             ):
                 if key in diagnostics:
                     continue
@@ -9073,6 +9078,10 @@ class AiOrchestratorService:
             knowledge_payload=context.knowledge_payload,
             knowledge_reads=context.knowledge_reads,
         )
+        response_text = self._enforce_table_applicability_guardrails(
+            response_text,
+            citations=context.resolved_citations,
+        )
 
         ingestion_warnings = self._collect_ingestion_warnings(
             context.knowledge_payload,
@@ -9221,6 +9230,27 @@ class AiOrchestratorService:
             base = min(1.0, base + 0.05)
             reason_parts.append("full_index_bonus")
 
+        applicability_penalty = False
+        applicability_soft_penalty = False
+        for snippet in citations:
+            diag = snippet.source_diagnostics if isinstance(snippet.source_diagnostics, Mapping) else {}
+            mode = str(diag.get("table_row_applicability_mode") or "").strip().lower()
+            scope = diag.get("table_row_applies_to_columns")
+            if not mode or not isinstance(scope, (list, tuple)):
+                continue
+            if mode in {"ambiguous"}:
+                applicability_penalty = True
+                break
+            if mode.startswith("inferred_"):
+                applicability_soft_penalty = True
+
+        if applicability_penalty:
+            base *= 0.82
+            reason_parts.append("applicability_penalty")
+        elif applicability_soft_penalty:
+            base *= 0.92
+            reason_parts.append("applicability_soft_penalty")
+
         base = max(0.0, min(1.0, base))
         reason_parts.append(f"status={knowledge_status or 'unknown'}")
         return round(base, 3), ", ".join(reason_parts)
@@ -9267,6 +9297,69 @@ class AiOrchestratorService:
             return self._strip_hedging_language(text)
 
         return text
+
+    def _enforce_table_applicability_guardrails(
+        self,
+        response_text: str,
+        *,
+        citations: Sequence[KnowledgeSnippet],
+    ) -> str:
+        """
+        Prevent false single-segment assertions when cited rows indicate broader scope.
+        """
+        text = (response_text or "").strip()
+        if not text:
+            return response_text
+
+        scope_counts: dict[tuple[str, ...], int] = {}
+        for snippet in citations:
+            diagnostics = (
+                snippet.source_diagnostics
+                if isinstance(snippet.source_diagnostics, Mapping)
+                else {}
+            )
+            raw_scope = diagnostics.get("table_row_applies_to_columns")
+            if not isinstance(raw_scope, (list, tuple)):
+                continue
+            cleaned_scope: list[str] = []
+            for entry in raw_scope:
+                value = str(entry or "").strip()
+                if value:
+                    cleaned_scope.append(value)
+            if len(cleaned_scope) <= 1:
+                continue
+            key = tuple(dict.fromkeys(cleaned_scope))
+            scope_counts[key] = int(scope_counts.get(key, 0)) + 1
+
+        if not scope_counts:
+            return text
+
+        dominant_scope = max(scope_counts.items(), key=lambda item: item[1])[0]
+        lower_text = text.lower()
+        if "all segment" in lower_text:
+            return text
+
+        mention_pattern = re.compile(r"\b(?:appl(?:y|ies|icable)|for)\b")
+        if not mention_pattern.search(lower_text):
+            return text
+
+        mentioned_scope: list[str] = []
+        for label in dominant_scope:
+            token = str(label).strip().lower()
+            if not token:
+                continue
+            variants = {token, token.replace("_", " ")}
+            if any(re.search(rf"\b{re.escape(variant)}\b", lower_text) for variant in variants if variant):
+                mentioned_scope.append(label)
+
+        unique_mentions = list(dict.fromkeys(mentioned_scope))
+        if len(unique_mentions) != 1:
+            return text
+
+        correction = f"Based on the cited table row, this applies to: {', '.join(dominant_scope)}."
+        if correction.lower() in lower_text:
+            return text
+        return f"{text.rstrip()}\n\n{correction}"
 
     def _strip_hedging_language(self, text: str) -> str:
         sentences = self._split_sentences(text)

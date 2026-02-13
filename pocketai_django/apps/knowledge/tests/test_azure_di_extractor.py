@@ -9,6 +9,7 @@ import requests
 from django.test import SimpleTestCase
 
 from apps.knowledge.knowledge_ingestion import AzureDocumentIntelligenceExtractor
+from apps.knowledge.knowledge_ingestion import TableCellPayload, TableRowPayload
 
 
 def _mock_response(
@@ -151,3 +152,112 @@ class AzureDocumentIntelligenceExtractorTests(SimpleTestCase):
         self.assertEqual(meta.get("failure_reason"), "request_http_error")
         self.assertEqual(meta.get("request_attempts"), 1)
         self.assertFalse(mock_sleep.called)
+
+
+class AzureDocumentIntelligenceApplicabilityTests(SimpleTestCase):
+    def _make_row(self, row_index: int, values: list[str], *, spans: dict[int, int] | None = None) -> TableRowPayload:
+        spans = spans or {}
+        cells: list[TableCellPayload] = []
+        for col_idx, value in enumerate(values):
+            cells.append(
+                TableCellPayload(
+                    row_index=row_index,
+                    column_index=col_idx,
+                    column_key=f"column_{col_idx + 1}",
+                    raw_text=value,
+                    metadata={"column_span": spans.get(col_idx, 1)},
+                )
+            )
+        return TableRowPayload(
+            row_index=row_index,
+            page_number=1,
+            raw_text=" | ".join(values),
+            metadata={"row_type": "header" if row_index == 0 else "data"},
+            cells=cells,
+        )
+
+    def test_explicit_span_is_preserved(self) -> None:
+        extractor = AzureDocumentIntelligenceExtractor(endpoint="https://example.test", key="secret")
+        schema = [
+            "descriptor_a",
+            "descriptor_b",
+            "segment_1",
+            "segment_2",
+            "segment_3",
+            "segment_4",
+            "segment_5",
+        ]
+        rows = [
+            self._make_row(0, schema),
+            self._make_row(
+                1,
+                [
+                    "Traveler cheques",
+                    "FX settlement descriptor",
+                    "",
+                    "1% (Min USD 2)",
+                    "1% (Min USD 2)",
+                    "1% (Min USD 2)",
+                    "",
+                ],
+                spans={3: 3, 4: 3, 5: 3},
+            ),
+            self._make_row(2, ["Blank Cheques", "Retail service descriptor", "", "", "EGP 10", "", ""]),
+        ]
+
+        annotated = extractor._annotate_row_applicability(
+            table_rows=rows,
+            column_schema=schema,
+            header_rows={0},
+        )
+        meta = annotated[1].metadata
+        self.assertIn(
+            meta.get("applicability_mode"),
+            {"explicit_cells", "inferred_span_extension"},
+        )
+        self.assertEqual(
+            meta.get("applies_to_columns"),
+            ["segment_1", "segment_2", "segment_3", "segment_4", "segment_5"],
+        )
+
+    def test_center_collapse_infers_multi_column_scope(self) -> None:
+        extractor = AzureDocumentIntelligenceExtractor(endpoint="https://example.test", key="secret")
+        schema = [
+            "descriptor_a",
+            "descriptor_b",
+            "segment_1",
+            "segment_2",
+            "segment_3",
+            "segment_4",
+            "segment_5",
+        ]
+        rows = [
+            self._make_row(0, schema),
+            self._make_row(
+                1,
+                [
+                    "Traveler cheques",
+                    "FX settlement descriptor",
+                    "",
+                    "1% (Min USD 2)",
+                    "1% (Min USD 2)",
+                    "1% (Min USD 2)",
+                    "",
+                ],
+                spans={3: 3, 4: 3, 5: 3},
+            ),
+            self._make_row(2, ["Blank Cheques", "Retail service descriptor", "", "", "EGP 10", "", ""]),
+            self._make_row(3, ["MCDR", "Coupon settlement descriptor", "", "", "0.5%", "", ""]),
+        ]
+
+        annotated = extractor._annotate_row_applicability(
+            table_rows=rows,
+            column_schema=schema,
+            header_rows={0},
+        )
+        meta = annotated[2].metadata
+        self.assertEqual(meta.get("applicability_mode"), "inferred_center_collapse")
+        self.assertEqual(
+            meta.get("applies_to_columns"),
+            ["segment_1", "segment_2", "segment_3", "segment_4", "segment_5"],
+        )

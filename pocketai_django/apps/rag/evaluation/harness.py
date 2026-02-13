@@ -458,6 +458,11 @@ class RAGEvaluationHarness:
             match_rank=rank,
         )
         wrong_source = bool(has_targets and result.status == "ok" and rank is None)
+        observation_diagnostics: dict[str, Any] = dict(result.diagnostics or {})
+        if snippets:
+            top_source_diag = snippets[0].source_diagnostics
+            if isinstance(top_source_diag, Mapping) and top_source_diag:
+                observation_diagnostics["top_snippet_diagnostics"] = dict(top_source_diag)
 
         observation = QueryObservation(
             query_id=query.query_id,
@@ -491,7 +496,7 @@ class RAGEvaluationHarness:
             top_snippet_previews=self._snippet_previews(snippets),
             top_snippet_token_counts=tuple(self._snippet_token_count(snippet) for snippet in snippets),
             top_snippet_char_counts=tuple(len((snippet.content or "").strip()) for snippet in snippets),
-            diagnostics=result.diagnostics,
+            diagnostics=observation_diagnostics,
         )
         return observation
 
@@ -653,6 +658,29 @@ class RAGEvaluationHarness:
             )
             for obs in observations
         ) / max(1, len(observations))
+        table_applicability_observations = 0
+        table_multi_scope_hits = 0
+        table_inferred_scope_hits = 0
+        table_ambiguous_scope_hits = 0
+        for obs in observations:
+            diagnostics = obs.diagnostics if isinstance(obs.diagnostics, Mapping) else {}
+            top_diag = diagnostics.get("top_snippet_diagnostics")
+            if not isinstance(top_diag, Mapping):
+                continue
+            raw_scope = top_diag.get("table_row_applies_to_columns")
+            if not isinstance(raw_scope, (list, tuple)):
+                continue
+            scope = [str(item or "").strip() for item in raw_scope if str(item or "").strip()]
+            if not scope:
+                continue
+            table_applicability_observations += 1
+            if len(scope) > 1:
+                table_multi_scope_hits += 1
+            mode = str(top_diag.get("table_row_applicability_mode") or "").strip().lower()
+            if mode.startswith("inferred_"):
+                table_inferred_scope_hits += 1
+            if mode == "ambiguous":
+                table_ambiguous_scope_hits += 1
         return {
             "top1_recall": round(top1, 4),
             "top3_recall": round(top3, 4),
@@ -669,6 +697,22 @@ class RAGEvaluationHarness:
             "natural_query_count": len(natural_obs),
             "not_found_accuracy": round(fallback_accuracy, 4),
             "alias_short_circuit_rate": round(alias_short_circuit, 4),
+            "table_applicability_coverage": round(
+                table_applicability_observations / max(1, len(observations)),
+                4,
+            ),
+            "table_multi_scope_rate": round(
+                table_multi_scope_hits / max(1, table_applicability_observations),
+                4,
+            ),
+            "table_inferred_scope_rate": round(
+                table_inferred_scope_hits / max(1, table_applicability_observations),
+                4,
+            ),
+            "table_ambiguous_scope_rate": round(
+                table_ambiguous_scope_hits / max(1, table_applicability_observations),
+                4,
+            ),
             "total_queries": len(observations),
         }
 

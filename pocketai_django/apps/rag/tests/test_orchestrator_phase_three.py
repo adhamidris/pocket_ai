@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from unittest import mock
+from dataclasses import replace
 
 from django.test import TestCase
 
@@ -251,6 +252,75 @@ class OrchestratorPhaseThreeTests(TestCase):
 
         self.assertIn("full_index_bonus", reason)
         self.assertGreater(score, 0.7)
+
+    def test_table_applicability_guardrail_corrects_single_segment_assertion(self) -> None:
+        snippet = KnowledgeSnippet(
+            id=uuid.uuid4(),
+            title="Fee Table",
+            summary="",
+            source="file",
+            content="",
+            public_label="Fee Table",
+            structured_tables=tuple(),
+            issues=tuple(),
+            page_summaries=tuple(),
+            read_state="summary",
+            topic_hints=tuple(),
+            is_pinned=False,
+            upload_id=uuid.uuid4(),
+            chunk_id=None,
+            chunk_index=None,
+            entity_type=None,
+            entity_name=None,
+            entity_business=None,
+            is_table_chunk=True,
+            aliases=tuple(),
+            search_stage="table_direct",
+            confidence_score=0.85,
+            truncated=False,
+            source_diagnostics={
+                "table_row_applies_to_columns": ["Prime", "Plus", "Wealth", "Exclusive Wealth", "Private"],
+                "table_row_applicability_mode": "inferred_center_collapse",
+            },
+            partial_index=False,
+            structured_table_count=1,
+            issue_count=0,
+            structured_table_hint=None,
+        )
+        orchestrator = self._make_orchestrator(StubKnowledgeService(snippets=[snippet], diagnostics={"path": "table_direct"}))
+
+        guarded = orchestrator._enforce_table_applicability_guardrails(
+            "This fee applies to the Wealth segment.",
+            citations=(snippet,),
+        )
+
+        self.assertIn("Based on the cited table row, this applies to:", guarded)
+        self.assertIn("Prime, Plus, Wealth, Exclusive Wealth, Private", guarded)
+
+    def test_confidence_soft_penalty_for_inferred_applicability(self) -> None:
+        base_snippet = self._snippet(confidence=0.9)
+        inferred_snippet = replace(
+            base_snippet,
+            source_diagnostics={
+                "table_row_applies_to_columns": ["Prime", "Plus", "Wealth"],
+                "table_row_applicability_mode": "inferred_center_collapse",
+            },
+        )
+        orchestrator = self._make_orchestrator(StubKnowledgeService(snippets=[inferred_snippet], diagnostics={"path": "hybrid"}))
+
+        base_score, _ = orchestrator._compute_answer_confidence(
+            (base_snippet,),
+            knowledge_status="ok",
+            knowledge_diagnostics={"path": "hybrid"},
+        )
+        inferred_score, inferred_reason = orchestrator._compute_answer_confidence(
+            (inferred_snippet,),
+            knowledge_status="ok",
+            knowledge_diagnostics={"path": "hybrid"},
+        )
+
+        self.assertIn("applicability_soft_penalty", inferred_reason)
+        self.assertLess(inferred_score, base_score)
 
     def test_summarize_ingestion_truncation_prefers_table_language(self) -> None:
         snippet = self._snippet(truncated_rows=500, total_rows=2000, indexed_rows=500)

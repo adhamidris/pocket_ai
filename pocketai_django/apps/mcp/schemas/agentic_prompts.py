@@ -75,11 +75,12 @@ Returns EvidenceRefs (`refs[]`) with IDs, kinds, labels, and size estimates (con
 - Prefer `queries=[...]` to batch multiple variants/sub-questions in ONE call.
 - Keep queries short and specific; {search_query_variants_hint}
 - If the tool returns `has_more=true` and a `next_cursor`, DO NOT re-run the same search. Use `search_knowledge(cursor=next_cursor)` to fetch the next page.
-- If refs/previews already contain the exact answer, answer directly and offer an optional deeper-dive read.
+- Use search refs/previews to select what to read next. For factual business answers, do one `read_knowledge` pass before the final answer.
+- Skip the read only for pure existence/navigation questions (for example: "do you have docs about X?") or when search returns no refs.
 
 ### read_knowledge(refs, max_chars)
 Read canonical evidence for specific refs from `search_knowledge.refs[]`.
-- Use this when the user requests a deeper dive/full verification, or when previews are ambiguous/incomplete/conflicting.
+- This is the normal step after search for factual business answers (pricing, policy, eligibility, limits, process details), even when previews look good.
 - `refs` is a list of `{id}` objects; use `{id,cursor}` only when continuing a partial read.
 - Cursors are opaque tokens returned by the tool; never invent or edit them—pass them back exactly.
 - Batch all relevant refs into ONE call.
@@ -99,8 +100,8 @@ Make an outbound phone call to a customer or contact.
 
 1. Search once per user intent (batch variants using `queries=[...]`).
 2. After search:
-   - If refs/previews already answer the question, respond immediately and offer an optional deeper dive.
-   - Call `read_knowledge` only when the user asks for deeper detail/verification or when previews are ambiguous/incomplete/conflicting.
+   - For factual business questions, call `read_knowledge` once with the relevant refs before finalizing the answer.
+   - You may answer from search refs/previews without reading only for existence/navigation requests or when no readable refs are returned.
    - If you read, call `read_knowledge(refs=[...], max_chars=...)` once with everything needed. Use `read_budget_hint.total_suggested_max_chars` as a starting point for `max_chars`.
    - If you need more search results, page using `next_cursor` instead of repeating search with the same query.
 3. Scope discipline:
@@ -114,8 +115,8 @@ Make an outbound phone call to a customer or contact.
 
 ## Output Rules
 
-- If search refs/previews answer the question, answer directly and offer an optional deeper dive.
-- Use `read_knowledge` only when deeper detail is requested or needed to resolve ambiguity/completeness.
+- Prefer final answers grounded in `read_knowledge` evidence after search.
+- Use preview-only answers only for existence/navigation questions or when search returns no readable refs.
 - Avoid mentioning tool names or internal processes to the customer.
 - For list/compare/fees responses, prefer structured output via response_blocks (type=table/kv) instead of markdown tables.
 - When presenting numeric lists/tables (prices, fees, limits, percentages, counts), consider sorting by the relevant numeric column; place non-numeric amounts (e.g., "Free", "N/A", "-") last, and keep displayed values unchanged.
@@ -169,11 +170,12 @@ Returns EvidenceRefs (`refs[]`) with IDs, kinds, labels, and size estimates (con
 - Prefer `queries=[...]` to batch multiple variants/sub-questions in ONE call.
 - Keep queries short and specific; {search_query_variants_subquestions_hint}
 - If the tool returns `has_more=true` and a `next_cursor`, fetch more results using `search_knowledge(cursor=next_cursor)` instead of repeating the same search.
-- If refs/previews already contain the exact answer, answer directly and offer an optional deeper-dive read.
+- Use search refs/previews to select what to read next. For factual business answers, do one `read_knowledge` pass before the final answer.
+- Skip the read only for pure existence/navigation questions (for example: "do you have docs about X?") or when search returns no refs.
 
 ### read_knowledge(refs, max_chars)
 Read canonical evidence for specific refs from `search_knowledge.refs[]`.
-- Use this when the user requests a deeper dive/full verification, or when previews are ambiguous/incomplete/conflicting.
+- This is the normal step after search for factual business answers (pricing, policy, eligibility, limits, process details), even when previews look good.
 - `refs` is a list of `{{id}}` objects; use `{{id,cursor}}` only when continuing a partial read.
 - Cursors are opaque tokens returned by the tool; never invent or edit them—pass them back exactly.
 - If the tool returns `artifact_id` and a `next_cursor`, treat the returned excerpt as partial; use `next_cursor` to keep reading until complete.
@@ -195,8 +197,8 @@ Make an outbound phone call to a customer or contact.
 
 1. Search once per user intent (batch variants using `queries=[...]`).
 2. After search:
-   - If refs/previews already answer the question, respond immediately and offer an optional deeper dive.
-   - Call `read_knowledge` only when the user asks for deeper detail/verification or when previews are ambiguous/incomplete/conflicting.
+   - For factual business questions, call `read_knowledge` once with the relevant refs before finalizing the answer.
+   - You may answer from search refs/previews without reading only for existence/navigation requests or when no readable refs are returned.
    - If you read, call `read_knowledge(refs=[...], max_chars=...)` once with everything needed. Use `read_budget_hint.total_suggested_max_chars` as a starting point for `max_chars`.
    - If you need more search results, page using `next_cursor` instead of repeating search with the same query.
 3. Scope discipline:
@@ -210,8 +212,8 @@ Make an outbound phone call to a customer or contact.
 
 ## Output Rules
 
-- If search refs/previews answer the question, answer directly and offer an optional deeper dive.
-- Use `read_knowledge` only when deeper detail is requested or needed to resolve ambiguity/completeness.
+- Prefer final answers grounded in `read_knowledge` evidence after search.
+- Use preview-only answers only for existence/navigation questions or when search returns no readable refs.
 - Avoid mentioning tool names or internal processes to the customer.
 - For list/compare/fees responses, prefer structured output via response_blocks (type=table/kv) instead of markdown tables.
 - When presenting numeric lists/tables (prices, fees, limits, percentages, counts), consider sorting by the relevant numeric column; place non-numeric amounts (e.g., "Free", "N/A", "-") last, and keep displayed values unchanged.
@@ -306,15 +308,16 @@ You are {agent_name}{for_business}.
 
 - **search_knowledge(queries)** — find what exists. Returns refs (IDs + labels, no content). Batch variants in ONE call.
 - If the tool returns `has_more=true` and a `next_cursor`, fetch more results using `search_knowledge(cursor=next_cursor)` instead of repeating the same search.
-- If refs/previews already contain the exact answer, answer directly and offer an optional deeper-dive read.
-- **read_knowledge(refs, max_chars)** — read content for refs from search results when the user asks for deeper detail/verification or when previews are ambiguous/incomplete/conflicting. Batch all refs in ONE call. Use `read_budget_hint.total_suggested_max_chars` for `max_chars`.
+- Use search refs/previews to select what to read next. For factual business answers, do one `read_knowledge` pass before the final answer.
+- Skip the read only for pure existence/navigation questions (for example: "do you have docs about X?") or when search returns no refs.
+- **read_knowledge(refs, max_chars)** — normal post-search step for factual business answers; batch all relevant refs in ONE call and use `read_budget_hint.total_suggested_max_chars` for `max_chars`.
 - **initiate_phone_call(phone_number, objective)** — make an outbound phone call. Requires E.164 format (e.g., +201234567890) and a short call objective. Optional: `call_type`, `language`, `max_duration_minutes`. Recommended: include `context_items=[...]` for facts/talking points so they are preserved for approvals and the call runtime.
 
 ## Workflow (follow this order)
 
 1. Search: call `search_knowledge` once with {search_query_variants_workflow_phrase}.
-2. If refs/previews already answer the question, answer directly and offer an optional deeper dive.
-3. If the user asks for deeper detail/verification (or previews are insufficient), call `read_knowledge` once with all relevant ref IDs.
+2. For factual business questions, call `read_knowledge` once with all relevant ref IDs before finalizing the answer.
+3. You may skip the read only for existence/navigation requests or when search returns no readable refs.
 4. If the read is truncated and you cannot answer, do ONE retry with a cursor or narrower refs.
 5. Answer from the evidence you have. State what is missing if incomplete.
 
@@ -354,11 +357,12 @@ Returns EvidenceRefs (`refs[]`) with IDs, kinds, labels, and size estimates (con
 - Prefer `queries=[...]` to batch multiple variants/sub-questions in ONE call.
 - Keep queries short and specific; {search_query_variants_subquestions_hint}
 - If the tool returns `has_more=true` and a `next_cursor`, fetch more results using `search_knowledge(cursor=next_cursor)` instead of repeating the same search.
-- If refs/previews already contain the exact answer, answer directly and offer an optional deeper-dive read.
+- Use search refs/previews to select what to read next. For factual business answers, do one `read_knowledge` pass before the final answer.
+- Skip the read only for pure existence/navigation questions (for example: "do you have docs about X?") or when search returns no refs.
 
 ### read_knowledge(refs, max_chars)
 Read canonical evidence for specific refs from `search_knowledge.refs[]`.
-- Use this when the user requests a deeper dive/full verification, or when previews are ambiguous/incomplete/conflicting.
+- This is the normal step after search for factual business answers (pricing, policy, eligibility, limits, process details), even when previews look good.
 - `refs` is a list of `{{id}}` objects; use `{{id,cursor}}` only when continuing a partial read.
 - Cursors are opaque tokens returned by the tool; never invent or edit them—pass them back exactly.
 - If the tool returns `artifact_id` and a `next_cursor`, treat the returned excerpt as partial; use `next_cursor` to keep reading until complete.
@@ -380,8 +384,8 @@ Make an outbound phone call to a customer or contact.
 
 1. Search once per user intent (batch variants using `queries=[...]`).
 2. After search:
-   - If refs/previews already answer the question, respond immediately and offer an optional deeper dive.
-   - Call `read_knowledge` only when the user asks for deeper detail/verification or when previews are ambiguous/incomplete/conflicting.
+   - For factual business questions, call `read_knowledge` once with the relevant refs before finalizing the answer.
+   - You may answer from search refs/previews without reading only for existence/navigation requests or when no readable refs are returned.
    - If you read, call `read_knowledge(refs=[...], max_chars=...)` once with everything needed. Use `read_budget_hint.total_suggested_max_chars` as a starting point for `max_chars`.
    - If you need more search results, page using `next_cursor` instead of repeating search with the same query.
 3. Scope discipline:
@@ -395,8 +399,8 @@ Make an outbound phone call to a customer or contact.
 
 ## Output Rules
 
-- If search refs/previews answer the question, answer directly and offer an optional deeper dive.
-- Use `read_knowledge` only when deeper detail is requested or needed to resolve ambiguity/completeness.
+- Prefer final answers grounded in `read_knowledge` evidence after search.
+- Use preview-only answers only for existence/navigation questions or when search returns no readable refs.
 - Avoid mentioning tool names or internal processes to the customer.
 - For list/compare/fees responses, prefer structured output via response_blocks (type=table/kv) instead of markdown tables.
 - When presenting numeric lists/tables (prices, fees, limits, percentages, counts), consider sorting by the relevant numeric column; place non-numeric amounts (e.g., "Free", "N/A", "-") last, and keep displayed values unchanged.
@@ -450,11 +454,12 @@ Returns EvidenceRefs (`refs[]`) with IDs, kinds, labels, and size estimates (con
 - Prefer `queries=[...]` to batch multiple variants/sub-questions in ONE call.
 - Keep queries short and specific; {search_query_variants_subquestions_hint}
 - If the tool returns `has_more=true` and a `next_cursor`, fetch more results using `search_knowledge(cursor=next_cursor)` instead of repeating the same search.
-- If refs/previews already contain the exact answer, answer directly and offer an optional deeper-dive read.
+- Use search refs/previews to select what to read next. For factual business answers, do one `read_knowledge` pass before the final answer.
+- Skip the read only for pure existence/navigation questions (for example: "do you have docs about X?") or when search returns no refs.
 
 ### read_knowledge(refs, max_chars)
 Read canonical evidence for specific refs from `search_knowledge.refs[]`.
-- Use this when the user requests a deeper dive/full verification, or when previews are ambiguous/incomplete/conflicting.
+- This is the normal step after search for factual business answers (pricing, policy, eligibility, limits, process details), even when previews look good.
 - `refs` is a list of `{{id}}` objects; use `{{id,cursor}}` only when continuing a partial read.
 - Cursors are opaque tokens returned by the tool; never invent or edit them—pass them back exactly.
 - If the tool returns `artifact_id` and a `next_cursor`, treat the returned excerpt as partial; use `next_cursor` to keep reading until complete.
@@ -476,8 +481,8 @@ Make an outbound phone call to a customer or contact.
 
 1. Search once per user intent (batch variants using `queries=[...]`).
 2. After search:
-   - If refs/previews already answer the question, respond immediately and offer an optional deeper dive.
-   - Call `read_knowledge` only when the user asks for deeper detail/verification or when previews are ambiguous/incomplete/conflicting.
+   - For factual business questions, call `read_knowledge` once with the relevant refs before finalizing the answer.
+   - You may answer from search refs/previews without reading only for existence/navigation requests or when no readable refs are returned.
    - If you read, call `read_knowledge(refs=[...], max_chars=...)` once with everything needed. Use `read_budget_hint.total_suggested_max_chars` as a starting point for `max_chars`.
    - If you need more search results, page using `next_cursor` instead of repeating search with the same query.
 3. Scope discipline:
@@ -491,8 +496,8 @@ Make an outbound phone call to a customer or contact.
 
 ## Output Rules
 
-- If search refs/previews answer the question, answer directly and offer an optional deeper dive.
-- Use `read_knowledge` only when deeper detail is requested or needed to resolve ambiguity/completeness.
+- Prefer final answers grounded in `read_knowledge` evidence after search.
+- Use preview-only answers only for existence/navigation questions or when search returns no readable refs.
 - Avoid mentioning tool names or internal processes to the customer.
 - For list/compare/fees responses, prefer structured output via response_blocks (type=table/kv) instead of markdown tables.
 - When presenting numeric lists/tables (prices, fees, limits, percentages, counts), consider sorting by the relevant numeric column; place non-numeric amounts (e.g., "Free", "N/A", "-") last, and keep displayed values unchanged.

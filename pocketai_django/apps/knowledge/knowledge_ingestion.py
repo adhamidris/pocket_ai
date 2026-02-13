@@ -101,6 +101,144 @@ _TABLE_DATE_TIME_LIKE_RE = re.compile(r"\b\d{1,4}[/-]\d{1,2}(?:[/-]\d{1,4})?\b|\
 _TABLE_NUMBER_WITH_UNIT_RE = re.compile(r"\b\d+(?:[.,]\d+)?\s*(?:[a-zA-Z]{1,5}|%)\b")
 
 
+def _column_numeric_signal(text: str) -> bool:
+    sample = str(text or "").strip()
+    if not sample:
+        return False
+    return bool(
+        _TABLE_NUMERIC_SIGNAL_TOKEN_RE.search(sample)
+        or _TABLE_NUMBER_LIKE_RE.search(sample)
+        or _TABLE_NUMBER_WITH_UNIT_RE.search(sample)
+    )
+
+
+def _normalize_cell_for_stats(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip())
+
+
+def _infer_contextual_column_indices(
+    *,
+    row_values: Sequence[Sequence[str]],
+    header_row_indices: set[int] | None = None,
+    min_segment_columns: int = 3,
+) -> set[int]:
+    """
+    Infer descriptor/context columns using structural signals only.
+
+    This avoids header-name dependence so the behavior generalizes across tenants
+    and domains with different column labels.
+    """
+    rows = list(row_values or [])
+    if not rows:
+        return set()
+
+    max_cols = max((len(row) for row in rows), default=0)
+    if max_cols <= 0:
+        return set()
+
+    header_set = set(header_row_indices or set())
+    data_rows = [row for idx, row in enumerate(rows) if idx not in header_set]
+    if not data_rows:
+        data_rows = rows
+    data_count = max(1, len(data_rows))
+
+    candidates: set[int] = set()
+    profiles: list[dict[str, float]] = []
+    for col_idx in range(max_cols):
+        values: list[str] = []
+        for row in data_rows:
+            value = _normalize_cell_for_stats(row[col_idx] if col_idx < len(row) else "")
+            if value:
+                values.append(value)
+        non_empty = len(values)
+        if non_empty <= 0:
+            profiles.append(
+                {
+                    "non_empty": 0.0,
+                    "non_empty_ratio": 0.0,
+                    "numeric_ratio": 0.0,
+                    "unique_ratio": 0.0,
+                    "long_ratio": 0.0,
+                    "avg_chars": 0.0,
+                }
+            )
+            continue
+
+        normalized = [value.lower() for value in values]
+        unique_ratio = float(len(set(normalized))) / float(non_empty)
+        numeric_ratio = float(sum(1 for value in values if _column_numeric_signal(value))) / float(non_empty)
+        long_ratio = float(sum(1 for value in values if len(value) >= 18 or len(value.split()) >= 4)) / float(non_empty)
+        avg_chars = float(sum(len(value) for value in values)) / float(non_empty)
+        non_empty_ratio = float(non_empty) / float(data_count)
+
+        descriptor_score = 0.0
+        if unique_ratio >= 0.68:
+            descriptor_score += 1.0
+        if long_ratio >= 0.35 or avg_chars >= 16.0:
+            descriptor_score += 1.0
+        if numeric_ratio <= 0.35:
+            descriptor_score += 1.0
+        if non_empty_ratio >= 0.5:
+            descriptor_score += 0.5
+
+        value_score = 0.0
+        if numeric_ratio >= 0.45:
+            value_score += 1.0
+        if avg_chars <= 14.0:
+            value_score += 0.5
+        if unique_ratio <= 0.6:
+            value_score += 0.5
+
+        if non_empty >= max(2, int(round(0.2 * data_count))) and descriptor_score >= 2.0 and descriptor_score > value_score:
+            candidates.add(col_idx)
+
+        profiles.append(
+            {
+                "non_empty": float(non_empty),
+                "non_empty_ratio": non_empty_ratio,
+                "numeric_ratio": numeric_ratio,
+                "unique_ratio": unique_ratio,
+                "long_ratio": long_ratio,
+                "avg_chars": avg_chars,
+            }
+        )
+
+    contextual: set[int] = set()
+    for idx in range(max_cols):
+        if idx in candidates:
+            contextual.add(idx)
+        else:
+            break
+
+    # Fallback: at least recognize a dominant descriptor first column.
+    if not contextual and profiles:
+        first = profiles[0]
+        if (
+            first.get("non_empty", 0.0) >= 2.0
+            and first.get("avg_chars", 0.0) >= 18.0
+            and first.get("unique_ratio", 0.0) >= 0.7
+            and first.get("numeric_ratio", 0.0) <= 0.25
+        ):
+            contextual.add(0)
+            if len(profiles) > 1:
+                second = profiles[1]
+                if (
+                    second.get("non_empty", 0.0) >= 2.0
+                    and second.get("avg_chars", 0.0) >= 14.0
+                    and second.get("unique_ratio", 0.0) >= 0.6
+                    and second.get("numeric_ratio", 0.0) <= 0.35
+                ):
+                    contextual.add(1)
+
+    if len(contextual) >= max_cols:
+        contextual = set()
+
+    contextual_sorted = sorted(contextual)
+    while max_cols - len(contextual_sorted) < max(1, int(min_segment_columns)) and contextual_sorted:
+        contextual_sorted.pop()
+    return set(contextual_sorted)
+
+
 def _log_normalization_summary(upload: KnowledgeUpload | None, source: str, summary: Mapping[str, Any] | None) -> None:
     if not summary or not summary.get("enabled"):
         return
@@ -1665,6 +1803,226 @@ class AzureDocumentIntelligenceExtractor:
                 }
         return page_number, bbox
 
+    @staticmethod
+    def _normalized_cell_text(value: str | None) -> str:
+        return re.sub(r"\s+", " ", str(value or "").strip()).lower()
+
+    @staticmethod
+    def _infer_segment_indices_from_structure(
+        *,
+        table_rows: Sequence[TableRowPayload],
+        column_schema: Sequence[str],
+        header_rows: set[int],
+    ) -> list[int]:
+        width = len(column_schema)
+        if width <= 0:
+            return []
+        if not table_rows:
+            return list(range(width))
+
+        row_values: list[list[str]] = []
+        header_row_positions: set[int] = set()
+        for pos, row in enumerate(table_rows):
+            row_meta = row.metadata if isinstance(row.metadata, Mapping) else {}
+            row_type = str(row_meta.get("row_type") or "").strip().lower()
+            if row.row_index in header_rows or row_type == "header":
+                header_row_positions.add(pos)
+            values: list[str] = []
+            for idx in range(width):
+                if idx < len(row.cells):
+                    values.append(str(row.cells[idx].raw_text or ""))
+                else:
+                    values.append("")
+            row_values.append(values)
+
+        contextual_indices = _infer_contextual_column_indices(
+            row_values=row_values,
+            header_row_indices=header_row_positions,
+            min_segment_columns=3,
+        )
+        return [idx for idx in range(width) if idx not in contextual_indices]
+
+    def _annotate_row_applicability(
+        self,
+        *,
+        table_rows: Sequence[TableRowPayload],
+        column_schema: Sequence[str],
+        header_rows: set[int],
+    ) -> list[TableRowPayload]:
+        """
+        Infer row-level applicability across peer columns for centered/merged values.
+
+        Azure sometimes anchors a centered value to one interior segment column
+        even when visually it applies to a wider segment group. We keep
+        explicit spans when available and add a conservative table-profile inference
+        for repeated center-column collapse patterns.
+        """
+
+        rows = list(table_rows or [])
+        if not rows or not column_schema:
+            return rows
+
+        segment_indices = self._infer_segment_indices_from_structure(
+            table_rows=rows,
+            column_schema=column_schema,
+            header_rows=header_rows,
+        )
+        if len(segment_indices) < 3:
+            return rows
+
+        first_segment = min(segment_indices)
+        last_segment = max(segment_indices)
+
+        data_rows = [row for row in rows if row.row_index not in header_rows]
+        if not data_rows:
+            return rows
+
+        # Table-level profile: repeated single-value placement on one interior column
+        # usually indicates centered values that should apply to the whole segment set.
+        rows_with_segment_values = 0
+        single_column_counts: dict[int, int] = {}
+        merged_span_evidence = False
+        for row in data_rows:
+            non_empty: list[tuple[int, str, TableCellPayload]] = []
+            for idx in segment_indices:
+                if idx >= len(row.cells):
+                    continue
+                cell = row.cells[idx]
+                value = str(cell.raw_text or "").strip()
+                if not value:
+                    continue
+                non_empty.append((idx, value, cell))
+                try:
+                    span_width = int((cell.metadata or {}).get("column_span") or 1)
+                except (TypeError, ValueError):
+                    span_width = 1
+                if span_width > 1:
+                    merged_span_evidence = True
+            if non_empty:
+                rows_with_segment_values += 1
+            if len(non_empty) == 1:
+                idx = non_empty[0][0]
+                if first_segment < idx < last_segment:
+                    single_column_counts[idx] = int(single_column_counts.get(idx, 0)) + 1
+
+        dominant_idx: int | None = None
+        dominant_ratio = 0.0
+        if rows_with_segment_values and single_column_counts:
+            dominant_idx, dominant_count = max(single_column_counts.items(), key=lambda item: item[1])
+            dominant_ratio = float(dominant_count) / float(rows_with_segment_values)
+
+        center_collapse = bool(
+            dominant_idx is not None
+            and first_segment < int(dominant_idx) < last_segment
+            and (
+                dominant_ratio >= 0.5
+                or (dominant_ratio >= 0.35 and merged_span_evidence)
+            )
+        )
+
+        updated_rows: list[TableRowPayload] = []
+        for row in rows:
+            if row.row_index in header_rows:
+                updated_rows.append(row)
+                continue
+
+            non_empty: list[tuple[int, str, TableCellPayload]] = []
+            for idx in segment_indices:
+                if idx >= len(row.cells):
+                    continue
+                cell = row.cells[idx]
+                value = str(cell.raw_text or "").strip()
+                if value:
+                    non_empty.append((idx, value, cell))
+            if not non_empty:
+                updated_rows.append(row)
+                continue
+
+            explicit_indices = sorted(idx for idx, _value, _cell in non_empty)
+            applies_to_indices = list(explicit_indices)
+            applicability_mode = "explicit_cells"
+            applicability_confidence = 0.88 if len(explicit_indices) > 1 else 0.76
+
+            normalized_values = [
+                self._normalized_cell_text(value)
+                for _idx, value, _cell in non_empty
+                if self._normalized_cell_text(value)
+            ]
+            unique_values = set(normalized_values)
+            representative_value = ""
+            for _idx, value, _cell in non_empty:
+                candidate = re.sub(r"\s+", " ", str(value or "").strip())
+                if candidate:
+                    representative_value = candidate
+                    break
+
+            if len(non_empty) == 1:
+                only_idx, _only_value, only_cell = non_empty[0]
+                try:
+                    span_width = int((only_cell.metadata or {}).get("column_span") or 1)
+                except (TypeError, ValueError):
+                    span_width = 1
+                if span_width > 1:
+                    applies_to_indices = [
+                        idx
+                        for idx in range(only_idx, min(last_segment + 1, only_idx + span_width))
+                        if idx in segment_indices
+                    ]
+                    applicability_mode = "explicit_span"
+                    applicability_confidence = 0.92
+                elif center_collapse and dominant_idx == only_idx:
+                    applies_to_indices = list(segment_indices)
+                    applicability_mode = "inferred_center_collapse"
+                    applicability_confidence = 0.72 if merged_span_evidence else 0.66
+            elif (
+                center_collapse
+                and len(unique_values) == 1
+                and explicit_indices
+                and min(explicit_indices) > first_segment
+                and max(explicit_indices) < last_segment
+            ):
+                # Interior contiguous identical-value spans often miss edge columns.
+                applies_to_indices = list(segment_indices)
+                applicability_mode = "inferred_span_extension"
+                applicability_confidence = 0.7
+
+            applies_to_labels = [
+                str(column_schema[idx] or f"column_{idx + 1}").strip() or f"column_{idx + 1}"
+                for idx in applies_to_indices
+            ]
+            detected_labels = [
+                str(column_schema[idx] or f"column_{idx + 1}").strip() or f"column_{idx + 1}"
+                for idx in explicit_indices
+            ]
+
+            row_meta = dict(row.metadata or {})
+            row_meta.update(
+                {
+                    "applicability_source": "azure_span_reconciler_v1",
+                    "applies_to_columns": applies_to_labels,
+                    "applicability_mode": applicability_mode,
+                    "applicability_confidence": round(float(applicability_confidence), 3),
+                    "applicability_detected_columns": detected_labels,
+                    "applicability_segment_columns": [
+                        str(column_schema[idx] or f"column_{idx + 1}").strip() or f"column_{idx + 1}"
+                        for idx in segment_indices
+                    ],
+                    "applicability_value": representative_value or "",
+                }
+            )
+
+            updated_rows.append(
+                TableRowPayload(
+                    row_index=row.row_index,
+                    page_number=row.page_number,
+                    bbox=row.bbox,
+                    raw_text=row.raw_text,
+                    metadata=row_meta,
+                    cells=row.cells,
+                )
+            )
+        return updated_rows
+
     def _build_analyze_url(self, *, locale: str | None = None) -> str:
         base_path = self.base_path or "formrecognizer"
         params = {"api-version": self.api_version}
@@ -2184,6 +2542,12 @@ class AzureDocumentIntelligenceExtractor:
                         cells=row_cells,
                     )
                 )
+
+            table_rows = self._annotate_row_applicability(
+                table_rows=table_rows,
+                column_schema=column_schema,
+                header_rows=header_rows,
+            )
 
             avg_conf = round(sum(cell_confidences) / max(1, len(cell_confidences)), 4) if cell_confidences else None
             table_payloads.append(
@@ -11688,6 +12052,40 @@ class KnowledgeIngestionService:
             return fallback.strip().lower()
         return ""
 
+    def _infer_table_contextual_labels(
+        self,
+        *,
+        table_rows: Sequence[Any],
+        column_map: Sequence[tuple[str, str, int]],
+    ) -> set[str]:
+        if not table_rows or not column_map:
+            return set()
+
+        row_values: list[list[str]] = []
+        header_row_positions: set[int] = set()
+        for pos, row in enumerate(table_rows):
+            row_meta = row.metadata if isinstance(row.metadata, Mapping) else {}
+            if str(row_meta.get("row_type") or "").strip().lower() == "header":
+                header_row_positions.add(pos)
+            row_cells = list(row.cells.all())
+            cell_lookup = {cell.column_index: cell.raw_text for cell in row_cells}
+            row_values.append(
+                [self._table_cell_text(cell_lookup.get(raw_idx, "")) for _label, _canonical, raw_idx in column_map]
+            )
+
+        contextual_indices = _infer_contextual_column_indices(
+            row_values=row_values,
+            header_row_indices=header_row_positions,
+            min_segment_columns=3,
+        )
+        labels: set[str] = set()
+        for idx in contextual_indices:
+            if 0 <= idx < len(column_map):
+                label = str(column_map[idx][0] or "").strip()
+                if label:
+                    labels.add(label)
+        return labels
+
     def _column_is_sensitive(self, column: str, rules: Mapping[str, Any]) -> bool:
         canonical = self._canonical_column_name(column)
         if canonical and canonical in rules.get("sensitive_exact", set()):
@@ -11948,7 +12346,22 @@ class KnowledgeIngestionService:
         payloads: list[dict[str, Any]] = []
         title = table.title or f"Table {table.order_index}"
         data_rows = 0
-        for row in table.rows.all():
+        table_rows = list(table.rows.all())
+        contextual_labels = self._infer_table_contextual_labels(
+            table_rows=table_rows,
+            column_map=column_map,
+        )
+        contextual_index_set = {
+            idx
+            for idx, (label, _canonical, _raw_idx) in enumerate(column_map)
+            if label in contextual_labels
+        }
+        inferred_segment_labels = [
+            label
+            for idx, (label, _canonical, _raw_idx) in enumerate(column_map)
+            if idx not in contextual_index_set
+        ]
+        for row in table_rows:
             if (row.metadata or {}).get("row_type") == "header":
                 continue
             if max_rows and data_rows >= max_rows:
@@ -11956,24 +12369,73 @@ class KnowledgeIngestionService:
             row_attributes = self._row_model_attributes(row, raw_schema)
             if self._row_is_internal(row_attributes, privacy_rules):
                 continue
-            cell_lookup = {cell.column_index: cell.raw_text for cell in row.cells.all()}
+            row_cells = list(row.cells.all())
+            cell_lookup = {cell.column_index: cell.raw_text for cell in row_cells}
             pairs: list[str] = []
+            value_by_label: dict[str, str] = {}
             # Extract row_label from first column (typically the row identifier/name)
             row_label = ""
             for label, _, idx in column_map:
                 value = self._table_cell_text(cell_lookup.get(idx, ""))
                 if value:
                     pairs.append(f"{label}: {value}")
+                    value_by_label[label] = value
                     # First column value becomes the row_label for search indexing
                     if not row_label:
                         row_label = value
             if not pairs:
                 continue
+            row_model_meta = row.metadata if isinstance(row.metadata, Mapping) else {}
+            applies_to_columns: list[str] = []
+            raw_applies_to = row_model_meta.get("applies_to_columns")
+            if isinstance(raw_applies_to, (list, tuple)):
+                for entry in raw_applies_to:
+                    label = self._table_cell_text(str(entry or ""))
+                    if label:
+                        applies_to_columns.append(label)
+            if not applies_to_columns:
+                derived = [
+                    label
+                    for label in value_by_label.keys()
+                    if label not in contextual_labels
+                ]
+                applies_to_columns = derived or inferred_segment_labels or list(value_by_label.keys())
+            applies_to_columns = list(dict.fromkeys(applies_to_columns))
+
+            applicability_mode = self._table_cell_text(str(row_model_meta.get("applicability_mode") or ""))
+            raw_confidence = row_model_meta.get("applicability_confidence")
+            applicability_confidence: float | None = None
+            if isinstance(raw_confidence, (int, float)):
+                applicability_confidence = round(float(raw_confidence), 3)
+            elif isinstance(raw_confidence, str):
+                try:
+                    applicability_confidence = round(float(raw_confidence), 3)
+                except (TypeError, ValueError):
+                    applicability_confidence = None
+
+            fee_value = self._table_cell_text(str(row_model_meta.get("applicability_value") or ""))
+            if not fee_value:
+                scoped_values = [
+                    value_by_label.get(label, "")
+                    for label in applies_to_columns
+                    if value_by_label.get(label, "")
+                ]
+                unique_values = list(dict.fromkeys(scoped_values))
+                if len(unique_values) == 1:
+                    fee_value = unique_values[0]
+
+            evidence_cell_ids = [
+                str(cell.id)
+                for cell in row_cells
+                if str(cell.raw_text or "").strip()
+            ]
             preface = []
             if table.section_heading:
                 preface.append(f"[Section] {table.section_heading}")
             preface.append(f"[Table] {title}")
             preface.append(f"[Row] {row.row_index}")
+            if applies_to_columns:
+                preface.append(f"[Applies To] {', '.join(applies_to_columns)}")
             text = "\n".join(preface + pairs)
             row_meta = dict(base_metadata)
             row_meta.update(
@@ -11984,6 +12446,11 @@ class KnowledgeIngestionService:
                     "table_row_index": row.row_index,
                     "row_label": row_label,  # Enable row-label search matching
                     "search_tier": "drill_down",
+                    "table_row_applies_to_columns": applies_to_columns,
+                    "table_row_applicability_mode": applicability_mode or "explicit_cells",
+                    "table_row_applicability_confidence": applicability_confidence,
+                    "table_row_fee_value": fee_value,
+                    "table_row_evidence_cell_ids": evidence_cell_ids,
                 }
             )
             payloads.append({"text": text, "metadata": row_meta})

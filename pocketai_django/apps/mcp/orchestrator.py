@@ -6771,7 +6771,8 @@ class McpOrchestratorService:
             return None
 
         lines = [
-            "Evidence summary (system-only): Answer using ONLY this evidence; do NOT re-run search_knowledge with new queries just to double-check.",
+            "Evidence summary (system-only): Ground the answer in this evidence; do NOT re-run search_knowledge with new queries just to double-check.",
+            "If factual detail is still missing, do one targeted read_knowledge call with existing ref IDs/cursors before finalizing.",
             "If you need more results, prefer paging with next_cursor (if available) instead of repeating the same search.",
             "If you need more detail, use read_knowledge with the ref IDs (and cursors if provided). Never invent IDs/cursors.",
             "Do NOT include document names/IDs/pages in the user-facing answer.",
