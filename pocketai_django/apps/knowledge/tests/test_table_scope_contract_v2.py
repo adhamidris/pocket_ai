@@ -8,6 +8,10 @@ from apps.knowledge.knowledge_ingestion import (
     TableCellPayload,
     TableRowPayload,
 )
+from apps.knowledge.table_scope_engine import (
+    SCOPE_REASON_EXPLICIT_SPAN,
+    legacy_scope_reason,
+)
 
 
 class TableScopeContractV2Tests(SimpleTestCase):
@@ -84,7 +88,10 @@ class TableScopeContractV2Tests(SimpleTestCase):
         meta = annotated[2].metadata
 
         self.assertEqual(meta.get("table_scope_contract_version"), "v2")
-        self.assertEqual(meta.get("scope_reason"), meta.get("applicability_mode"))
+        self.assertEqual(
+            meta.get("applicability_mode"),
+            legacy_scope_reason(meta.get("scope_reason")),
+        )
         self.assertEqual(meta.get("scope_confidence"), meta.get("applicability_confidence"))
         self.assertEqual(meta.get("inferred_scope_columns"), meta.get("applies_to_columns"))
         self.assertTrue(meta.get("observed_value_columns"))
@@ -160,7 +167,7 @@ class TableScopeContractV2Tests(SimpleTestCase):
         self.assertEqual(metadata.get("table_row_qualifier_columns"), ["Service", "Tariff"])
         self.assertEqual(metadata.get("table_row_scope_dimension_columns"), ["Prime", "Plus", "Wealth"])
         self.assertEqual(metadata.get("table_row_inferred_scope_columns"), ["Prime", "Plus", "Wealth"])
-        self.assertEqual(metadata.get("table_row_scope_reason"), "explicit_span")
+        self.assertEqual(metadata.get("table_row_scope_reason"), SCOPE_REASON_EXPLICIT_SPAN)
         self.assertEqual(metadata.get("table_row_scope_confidence"), 0.91)
 
         # Legacy compatibility aliases.

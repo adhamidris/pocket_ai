@@ -95,6 +95,14 @@ from apps.knowledge.column_role_inference import (
     infer_column_roles,
     role_lookup_by_index,
 )
+from apps.knowledge.table_scope_engine import (
+    SCOPE_ENGINE_VERSION,
+    SCOPE_REASON_ABSTAIN,
+    build_scope_table_profile,
+    canonical_scope_reason,
+    infer_scope_for_row,
+    legacy_scope_reason,
+)
 
 logger = logging.getLogger(__name__)
 TRACER = otel_trace.get_tracer(__name__)
@@ -1872,7 +1880,20 @@ class AzureDocumentIntelligenceExtractor:
 
         resolved_scope_indices = sorted(scope_indices)
         if len(resolved_scope_indices) >= 3:
-            return resolved_scope_indices
+            min_scope = min(resolved_scope_indices)
+            max_scope = max(resolved_scope_indices)
+            bridged_scope = set(resolved_scope_indices)
+            for profile in role_profiles:
+                idx = int(profile.column_index)
+                if idx <= min_scope or idx >= max_scope:
+                    continue
+                if profile.role in {COLUMN_ROLE_DESCRIPTOR, COLUMN_ROLE_NOTE}:
+                    continue
+                # If a non-descriptor column is between two scope-dimension
+                # columns, treat it as a bridge to avoid dropping middle
+                # segments due classifier noise.
+                bridged_scope.add(idx)
+            return sorted(bridged_scope)
 
         contextual_indices = sorted(
             set(role_groups.get(COLUMN_ROLE_DESCRIPTOR, []))
@@ -2044,133 +2065,46 @@ class AzureDocumentIntelligenceExtractor:
         if len(segment_indices) < 3:
             return rows
 
-        segment_set = set(segment_indices)
-        first_segment = min(segment_indices)
-        last_segment = max(segment_indices)
-        num_segments = len(segment_indices)
-
+        scope_indices = sorted(set(segment_indices))
+        scope_set = set(scope_indices)
         data_rows = [row for row in rows if row.row_index not in header_rows]
         if not data_rows:
             return rows
 
-        # ── Table-level profile ──────────────────────────────────────
-        # Count rows that are "sparse" (exactly 1 non-empty segment cell)
-        # vs rows with any segment values at all.  A high sparse fraction
-        # means the table likely uses centered/merged values — regardless
-        # of WHICH column Azure placed them in.
-        rows_with_segment_values = 0
-        sparse_row_count = 0
-        merged_span_evidence = False
-        for row in data_rows:
-            non_empty: list[tuple[int, str, TableCellPayload]] = []
-            for idx in segment_indices:
-                if idx >= len(row.cells):
-                    continue
-                cell = row.cells[idx]
-                value = str(cell.raw_text or "").strip()
-                if not value:
-                    continue
-                non_empty.append((idx, value, cell))
-                try:
-                    span_width = int((cell.metadata or {}).get("column_span") or 1)
-                except (TypeError, ValueError):
-                    span_width = 1
-                if span_width > 1:
-                    merged_span_evidence = True
-            if non_empty:
-                rows_with_segment_values += 1
-            if len(non_empty) == 1:
-                sparse_row_count += 1
-
-        sparse_fraction = (
-            float(sparse_row_count) / float(rows_with_segment_values)
-            if rows_with_segment_values
-            else 0.0
+        table_scope_profile = build_scope_table_profile(
+            rows=rows,
+            scope_indices=scope_indices,
+            header_rows=header_rows,
         )
-        sparse_row_expansion = bool(
-            sparse_row_count >= 2
-            and (
-                sparse_fraction >= 0.4
-                or (sparse_fraction >= 0.25 and merged_span_evidence)
-            )
-        )
+        scope_dimension_labels = [
+            str(column_schema[idx] or f"column_{idx + 1}").strip() or f"column_{idx + 1}"
+            for idx in scope_indices
+        ]
 
-        # ── Per-row annotation ───────────────────────────────────────
+        # ── Per-row annotation via deterministic precedence engine ──
         updated_rows: list[TableRowPayload] = []
         for row in rows:
             if row.row_index in header_rows:
                 updated_rows.append(row)
                 continue
 
-            non_empty: list[tuple[int, str, TableCellPayload]] = []
-            for idx in segment_indices:
-                if idx >= len(row.cells):
-                    continue
-                cell = row.cells[idx]
-                value = str(cell.raw_text or "").strip()
-                if value:
-                    non_empty.append((idx, value, cell))
-            if not non_empty:
+            scope_decision = infer_scope_for_row(
+                row=row,
+                table_profile=table_scope_profile,
+            )
+            if scope_decision is None:
                 updated_rows.append(row)
                 continue
 
-            explicit_indices = sorted(idx for idx, _value, _cell in non_empty)
-            applies_to_indices = list(explicit_indices)
-            applicability_mode = "explicit_cells"
-            applicability_confidence = 0.88 if len(explicit_indices) > 1 else 0.76
-
-            normalized_values = [
-                self._normalized_cell_text(value)
-                for _idx, value, _cell in non_empty
-                if self._normalized_cell_text(value)
+            applies_to_indices = [
+                idx for idx in scope_decision.applies_to_indices if idx in scope_set
             ]
-            unique_values = set(normalized_values)
-            representative_value = ""
-            for _idx, value, _cell in non_empty:
-                candidate = re.sub(r"\s+", " ", str(value or "").strip())
-                if candidate:
-                    representative_value = candidate
-                    break
-
-            if len(non_empty) == 1:
-                only_idx, _only_value, only_cell = non_empty[0]
-                try:
-                    span_width = int((only_cell.metadata or {}).get("column_span") or 1)
-                except (TypeError, ValueError):
-                    span_width = 1
-                if span_width > 1:
-                    # Explicit column span from Azure DI — highest confidence.
-                    applies_to_indices = [
-                        idx
-                        for idx in range(only_idx, min(last_segment + 1, only_idx + span_width))
-                        if idx in segment_set
-                    ]
-                    applicability_mode = "explicit_span"
-                    applicability_confidence = 0.92
-                elif sparse_row_expansion:
-                    # Table has a sparse pattern: expand this single-value
-                    # row to all segment columns regardless of which column
-                    # the value landed in.
-                    applies_to_indices = list(segment_indices)
-                    applicability_mode = "inferred_sparse_expansion"
-                    applicability_confidence = 0.78 if merged_span_evidence else 0.72
-            elif (
-                len(unique_values) == 1
-                and len(non_empty) < num_segments
-                and (
-                    sparse_row_expansion
-                    or (
-                        explicit_indices
-                        and min(explicit_indices) > first_segment
-                        and max(explicit_indices) < last_segment
-                    )
-                )
-            ):
-                # Multiple cells with identical values that don't cover all
-                # segments — likely a partial span that should apply to all.
-                applies_to_indices = list(segment_indices)
-                applicability_mode = "inferred_span_extension"
-                applicability_confidence = 0.74 if sparse_row_expansion else 0.70
+            detected_indices = [
+                idx for idx in scope_decision.detected_indices if idx in scope_set
+            ]
+            scope_reason = canonical_scope_reason(scope_decision.reason)
+            legacy_mode = legacy_scope_reason(scope_reason)
+            scope_confidence = round(float(scope_decision.confidence), 3)
 
             applies_to_labels = [
                 str(column_schema[idx] or f"column_{idx + 1}").strip() or f"column_{idx + 1}"
@@ -2178,25 +2112,27 @@ class AzureDocumentIntelligenceExtractor:
             ]
             detected_labels = [
                 str(column_schema[idx] or f"column_{idx + 1}").strip() or f"column_{idx + 1}"
-                for idx in explicit_indices
-            ]
-            scope_dimension_labels = [
-                str(column_schema[idx] or f"column_{idx + 1}").strip() or f"column_{idx + 1}"
-                for idx in segment_indices
+                for idx in detected_indices
             ]
             observed_value_columns: list[str] = []
             qualifier_columns: list[str] = []
+            representative_value = ""
             for cell in row.cells:
                 value = str(cell.raw_text or "").strip()
                 if not value:
                     continue
-                idx = int(cell.column_index)
+                try:
+                    idx = int(cell.column_index)
+                except (TypeError, ValueError):
+                    continue
                 if idx < len(column_schema):
                     label = str(column_schema[idx] or f"column_{idx + 1}").strip() or f"column_{idx + 1}"
                 else:
                     label = f"column_{idx + 1}"
                 observed_value_columns.append(label)
-                if idx not in segment_set:
+                if idx in scope_set and not representative_value:
+                    representative_value = re.sub(r"\s+", " ", value).strip()
+                if idx not in scope_set:
                     qualifier_columns.append(label)
             observed_value_columns = list(dict.fromkeys(observed_value_columns))
             qualifier_columns = list(dict.fromkeys(qualifier_columns))
@@ -2205,17 +2141,18 @@ class AzureDocumentIntelligenceExtractor:
             row_meta.update(
                 {
                     "table_scope_contract_version": TABLE_SCOPE_CONTRACT_VERSION,
+                    "scope_engine_version": SCOPE_ENGINE_VERSION,
                     "observed_value_columns": observed_value_columns,
                     "qualifier_columns": qualifier_columns,
                     "scope_dimension_columns": scope_dimension_labels,
                     "inferred_scope_columns": applies_to_labels,
-                    "scope_confidence": round(float(applicability_confidence), 3),
-                    "scope_reason": applicability_mode,
-                    "applicability_source": "span_reconciler_v2",
+                    "scope_confidence": scope_confidence,
+                    "scope_reason": scope_reason,
+                    "applicability_source": "scope_engine_v3",
                     # Legacy compatibility aliases (Phase 1 dual-write).
                     "applies_to_columns": applies_to_labels,
-                    "applicability_mode": applicability_mode,
-                    "applicability_confidence": round(float(applicability_confidence), 3),
+                    "applicability_mode": legacy_mode,
+                    "applicability_confidence": scope_confidence,
                     "applicability_detected_columns": detected_labels,
                     "applicability_segment_columns": scope_dimension_labels,
                     "applicability_value": representative_value or "",
@@ -12612,34 +12549,33 @@ class KnowledgeIngestionService:
         inferred_scope_columns = self._clean_scope_labels(row_model_meta.get("inferred_scope_columns"))
         if not inferred_scope_columns:
             inferred_scope_columns = self._clean_scope_labels(row_model_meta.get("applies_to_columns"))
-        if not inferred_scope_columns:
-            if scope_dimension_columns:
-                scope_dimension_set = set(scope_dimension_columns)
+        if scope_dimension_columns:
+            scope_dimension_set = set(scope_dimension_columns)
+            if inferred_scope_columns:
+                if has_explicit_scope_dimensions:
+                    inferred_scope_columns = [
+                        label for label in inferred_scope_columns if label in scope_dimension_set
+                    ]
+            else:
                 inferred_scope_columns = [
                     label for label in observed_value_columns if label in scope_dimension_set
                 ]
-            if not inferred_scope_columns and scope_dimension_columns:
-                inferred_scope_columns = list(scope_dimension_columns)
+        else:
             if not inferred_scope_columns:
                 inferred_scope_columns = [label for label in observed_value_columns if label not in qualifier_columns]
             if not inferred_scope_columns:
                 inferred_scope_columns = list(observed_value_columns)
-        if scope_dimension_columns and has_explicit_scope_dimensions:
-            scope_dimension_set = set(scope_dimension_columns)
-            filtered_scope = [label for label in inferred_scope_columns if label in scope_dimension_set]
-            if filtered_scope:
-                inferred_scope_columns = filtered_scope
         inferred_scope_columns = list(dict.fromkeys(inferred_scope_columns))
 
         scope_confidence = self._coerce_scope_confidence(row_model_meta.get("scope_confidence"))
         if scope_confidence is None:
             scope_confidence = self._coerce_scope_confidence(row_model_meta.get("applicability_confidence"))
 
-        scope_reason = self._table_cell_text(row_model_meta.get("scope_reason"))
-        if not scope_reason:
-            scope_reason = self._table_cell_text(row_model_meta.get("applicability_mode"))
-        if not scope_reason:
-            scope_reason = "explicit_cells"
+        raw_scope_reason = self._table_cell_text(row_model_meta.get("scope_reason"))
+        if not raw_scope_reason:
+            raw_scope_reason = self._table_cell_text(row_model_meta.get("applicability_mode"))
+        scope_reason = canonical_scope_reason(raw_scope_reason)
+        legacy_mode = legacy_scope_reason(scope_reason)
 
         return {
             "contract_version": str(row_model_meta.get("table_scope_contract_version") or TABLE_SCOPE_CONTRACT_VERSION),
@@ -12651,7 +12587,7 @@ class KnowledgeIngestionService:
             "scope_reason": scope_reason,
             # Legacy compatibility aliases during migration.
             "applies_to_columns": inferred_scope_columns,
-            "applicability_mode": scope_reason,
+            "applicability_mode": legacy_mode,
             "applicability_confidence": scope_confidence,
         }
 
@@ -12972,7 +12908,8 @@ class KnowledgeIngestionService:
             observed_value_columns = list(scope_contract.get("observed_value_columns") or [])
             qualifier_columns = list(scope_contract.get("qualifier_columns") or [])
             scope_dimension_columns = list(scope_contract.get("scope_dimension_columns") or [])
-            scope_reason = self._table_cell_text(scope_contract.get("scope_reason"))
+            scope_reason = canonical_scope_reason(scope_contract.get("scope_reason"))
+            scope_legacy_mode = legacy_scope_reason(scope_contract.get("applicability_mode") or scope_reason)
             scope_confidence = self._coerce_scope_confidence(scope_contract.get("scope_confidence"))
 
             fee_value = self._table_cell_text(str(row_model_meta.get("applicability_value") or ""))
@@ -13013,11 +12950,11 @@ class KnowledgeIngestionService:
                     "table_row_qualifier_columns": qualifier_columns,
                     "table_row_scope_dimension_columns": scope_dimension_columns,
                     "table_row_inferred_scope_columns": applies_to_columns,
-                    "table_row_scope_reason": scope_reason or "explicit_cells",
+                    "table_row_scope_reason": scope_reason or SCOPE_REASON_ABSTAIN,
                     "table_row_scope_confidence": scope_confidence,
                     # Temporary v1 compatibility mapping.
                     "table_row_applies_to_columns": applies_to_columns,
-                    "table_row_applicability_mode": scope_reason or "explicit_cells",
+                    "table_row_applicability_mode": scope_legacy_mode or "explicit_cells",
                     "table_row_applicability_confidence": scope_confidence,
                     "table_row_fee_value": fee_value,
                     "table_row_evidence_cell_ids": evidence_cell_ids,
