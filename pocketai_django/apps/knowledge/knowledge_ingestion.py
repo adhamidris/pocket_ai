@@ -9175,6 +9175,71 @@ class KnowledgeIngestionService:
             "unit", "office", "region", "country", "city",
         }
 
+    @staticmethod
+    def _value_fragment_connector_tokens() -> set[str]:
+        return {
+            "and", "or", "with", "without", "minimum", "maximum", "max", "min",
+            "no", "up", "to", "from", "per", "each", "equivalent",
+        }
+
+    @staticmethod
+    def _fragment_has_numeric_signal(value: str) -> bool:
+        sample = str(value or "").strip().lower()
+        if not sample:
+            return False
+        if re.search(r"\d", sample):
+            return True
+        if "%" in sample:
+            return True
+        return bool(
+            re.search(
+                r"\b(?:usd|eur|gbp|jpy|chf|aud|cad|cny|inr|sar|aed|egp|qar|kwd|omr|bhd|try|zar)\b",
+                sample,
+            )
+        )
+
+    def _is_prefix_value_fragment(self, value: str) -> bool:
+        sample = self._table_cell_text(value)
+        if not sample:
+            return False
+        if self._fragment_has_numeric_signal(sample):
+            return False
+        tokens = [tok for tok in re.split(r"[^a-z0-9]+", sample.lower()) if tok]
+        if not tokens or len(tokens) > 5:
+            return False
+        if sample.startswith("("):
+            return True
+        first = tokens[0]
+        return first in self._value_fragment_connector_tokens()
+
+    def _is_suffix_value_fragment(self, value: str) -> bool:
+        sample = self._table_cell_text(value)
+        if not sample:
+            return False
+        tokens = [tok for tok in re.split(r"[^a-z0-9]+", sample.lower()) if tok]
+        if not tokens or len(tokens) > 8:
+            return False
+        if self._fragment_has_numeric_signal(sample) and len(tokens) > 4:
+            return False
+        return tokens[0] in self._value_fragment_connector_tokens()
+
+    def _numeric_fragments_compatible(self, values: Sequence[str]) -> bool:
+        normalized = [self._table_cell_text(v).lower() for v in values if self._table_cell_text(v)]
+        if not normalized:
+            return False
+        uniq = list(dict.fromkeys(normalized))
+        if len(uniq) <= 1:
+            return True
+        # Allow near-equivalent numeric fragments (one containing the other).
+        for left in uniq:
+            for right in uniq:
+                if left == right:
+                    continue
+                if left in right or right in left:
+                    continue
+                return False
+        return True
+
     def _row_cell_lookup(self, row: TableRowPayload) -> dict[int, TableCellPayload]:
         lookup: dict[int, TableCellPayload] = {}
         for cell in row.cells or []:
@@ -9394,6 +9459,154 @@ class KnowledgeIngestionService:
             stitched_pairs,
         )
 
+    def _stitch_scope_value_fragments(self, table: TablePayload) -> tuple[TablePayload, int]:
+        rows = list(table.rows or [])
+        if len(rows) < 2:
+            return table, 0
+
+        column_map = self._table_column_map_for_payload(table)
+        if not column_map:
+            return table, 0
+        role_payloads = self._infer_table_column_roles(
+            table_rows=rows,
+            column_map=column_map,
+            cached_roles=(table.data_dictionary or {}).get("column_roles"),
+        )
+        role_lookup = role_lookup_by_index(role_payloads)
+
+        scope_indices: set[int] = set()
+        for idx, payload in role_lookup.items():
+            role = str(payload.get("role") or "").strip()
+            if role == COLUMN_ROLE_SCOPE_DIMENSION:
+                scope_indices.add(int(idx))
+                continue
+            # In noisy OCR tables, true scope columns can be temporarily
+            # classified as qualifier; include non-contextual candidates and
+            # let row-level fragment gates decide whether stitching applies.
+            if role in {COLUMN_ROLE_QUALIFIER, ""}:
+                scope_indices.add(int(idx))
+        scope_order = sorted(scope_indices)
+        if len(scope_order) < 2:
+            return table, 0
+
+        row_order = sorted(rows, key=lambda row: int(getattr(row, "row_index", 0)))
+        updated_rows = {int(row.row_index): row for row in row_order}
+        stitched_cells = 0
+
+        for row in row_order:
+            row_meta = row.metadata if isinstance(row.metadata, Mapping) else {}
+            if str(row_meta.get("row_type") or "").strip().lower() == "header":
+                continue
+            effective_row = updated_rows.get(int(row.row_index), row)
+            lookup = self._row_cell_lookup(effective_row)
+
+            fragments: list[tuple[int, str]] = []
+            numeric_values: list[str] = []
+            prefix_indices: set[int] = set()
+            suffix_indices: set[int] = set()
+            for idx in scope_order:
+                cell = lookup.get(idx)
+                value = self._table_cell_text(cell.raw_text if cell else "")
+                if not value:
+                    continue
+                fragments.append((idx, value))
+                if self._fragment_has_numeric_signal(value):
+                    numeric_values.append(value)
+                if self._is_prefix_value_fragment(value):
+                    prefix_indices.add(idx)
+                if self._is_suffix_value_fragment(value):
+                    suffix_indices.add(idx)
+
+            if len(fragments) < 2:
+                continue
+            if not prefix_indices or not numeric_values:
+                continue
+            if not self._numeric_fragments_compatible(numeric_values):
+                continue
+
+            ordered_unique_parts: list[str] = []
+            seen_parts: set[str] = set()
+            for _idx, value in fragments:
+                key = value.lower()
+                if key in seen_parts:
+                    continue
+                ordered_unique_parts.append(value)
+                seen_parts.add(key)
+            if len(ordered_unique_parts) < 2:
+                continue
+            merged_value = self._table_cell_text(" ".join(ordered_unique_parts))
+            if not merged_value:
+                continue
+            if len(merged_value) > 260:
+                continue
+
+            replace_indices = set(prefix_indices) | set(suffix_indices)
+            # When multiple prefix fragments exist, propagate full value across
+            # all visible scope fragments in the row for consistent semantics.
+            if len(prefix_indices) >= 2:
+                replace_indices.update(idx for idx, _value in fragments)
+            if not replace_indices:
+                continue
+
+            updated_row = effective_row
+            row_rewrites = 0
+            for idx in sorted(replace_indices):
+                existing_cell = self._row_cell_lookup(updated_row).get(idx)
+                if existing_cell is None:
+                    continue
+                existing_value = self._table_cell_text(existing_cell.raw_text or "")
+                if not existing_value or existing_value.lower() == merged_value.lower():
+                    continue
+                updated_row = self._rewrite_row_cell_text(
+                    row=updated_row,
+                    column_index=idx,
+                    new_value=merged_value,
+                    metadata_patch={
+                        "value_fragment_stitched": True,
+                        "value_fragment_stitch_source_row": int(row.row_index),
+                    },
+                )
+                row_rewrites += 1
+
+            if row_rewrites > 0:
+                new_meta = dict(updated_row.metadata or {})
+                new_meta.update(
+                    {
+                        "value_fragment_stitched": True,
+                        "value_fragment_stitch_cells": row_rewrites,
+                    }
+                )
+                updated_rows[int(updated_row.row_index)] = TableRowPayload(
+                    row_index=updated_row.row_index,
+                    page_number=updated_row.page_number,
+                    bbox=updated_row.bbox,
+                    raw_text=updated_row.raw_text,
+                    metadata=new_meta,
+                    cells=updated_row.cells,
+                )
+                stitched_cells += row_rewrites
+
+        if stitched_cells <= 0:
+            return table, 0
+
+        rebuilt_rows = [updated_rows.get(int(row.row_index), row) for row in row_order]
+        table_meta = dict(table.metadata or {})
+        table_meta["value_fragment_stitched_cells"] = stitched_cells
+        return (
+            TablePayload(
+                order_index=table.order_index,
+                title=table.title,
+                section_heading=table.section_heading,
+                page_number=table.page_number,
+                bbox=table.bbox,
+                column_schema=table.column_schema,
+                data_dictionary=table.data_dictionary,
+                metadata=table_meta,
+                rows=rebuilt_rows,
+            ),
+            stitched_cells,
+        )
+
     def _build_table_profile(self, tables: Sequence[TablePayload]) -> dict[str, Any] | None:
         if not tables:
             return None
@@ -9521,7 +9734,12 @@ class KnowledgeIngestionService:
         for table in tables:
             grouped.setdefault(table.page_number, []).append(table)
         issues: list[IssuePayload] = []
-        meta = {"deduped_tables": 0, "header_inferred": 0, "row_continuation_stitched_pairs": 0}
+        meta = {
+            "deduped_tables": 0,
+            "header_inferred": 0,
+            "row_continuation_stitched_pairs": 0,
+            "value_fragment_stitched_cells": 0,
+        }
         processed: list[TablePayload] = []
 
         def _jaccard(a: set[str], b: set[str]) -> float:
@@ -9548,6 +9766,14 @@ class KnowledgeIngestionService:
                     )
                 stitched_tables.append(stitched_table)
             page_tables = stitched_tables
+
+            value_stitched_tables: list[TablePayload] = []
+            for table in page_tables:
+                value_table, stitched_cells = self._stitch_scope_value_fragments(table)
+                if stitched_cells > 0:
+                    meta["value_fragment_stitched_cells"] += stitched_cells
+                value_stitched_tables.append(value_table)
+            page_tables = value_stitched_tables
 
             if self.table_dedupe_enabled:
                 deduped: list[TablePayload] = []

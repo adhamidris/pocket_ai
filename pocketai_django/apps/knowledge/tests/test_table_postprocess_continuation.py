@@ -90,3 +90,78 @@ class TablePostprocessContinuationTests(SimpleTestCase):
         self.assertEqual(self._cell_text(row_two, 0), "Beta service")
         self.assertEqual(meta.get("row_continuation_stitched_pairs"), 0)
         self.assertFalse(any(issue.code == "table_row_continuation_stitched" for issue in issues))
+
+    def test_postprocess_stitches_split_scope_value_fragments_within_row(self) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        rows = [
+            self._make_row(0, ["Service", "Tariff", "Prime", "Plus", "Wealth", "Exclusive Wealth", "Private"], row_type="header"),
+            self._make_row(
+                1,
+                [
+                    "Cash deposit with same day value date",
+                    "",
+                    "(With minimum",
+                    "(With minimum",
+                    "EGP 100 or Equivalent 0,2%",
+                    "and with no maximum)",
+                    "",
+                ],
+            ),
+            self._make_row(
+                2,
+                [
+                    "Cash deposit with same day value date (T+3 customers)",
+                    "",
+                    "0,3%",
+                    "0,3%",
+                    "0,3%",
+                    "0,3%",
+                    "0,3%",
+                ],
+            ),
+        ]
+        table = self._table(rows)
+
+        processed, _issues, meta = service._postprocess_tables([table])
+
+        row = next(r for r in processed[0].rows if r.row_index == 1)
+        prime = self._cell_text(row, 2)
+        plus = self._cell_text(row, 3)
+        wealth = self._cell_text(row, 4)
+        exclusive = self._cell_text(row, 5)
+
+        self.assertIn("with minimum", prime.lower())
+        self.assertIn("egp 100", prime.lower())
+        self.assertIn("no maximum", prime.lower())
+        self.assertEqual(prime, plus)
+        self.assertEqual(prime, wealth)
+        self.assertEqual(prime, exclusive)
+        self.assertGreaterEqual(int(meta.get("value_fragment_stitched_cells") or 0), 3)
+
+    def test_postprocess_does_not_stitch_distinct_scope_values(self) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        rows = [
+            self._make_row(0, ["Service", "Tariff", "Prime", "Plus", "Wealth", "Exclusive Wealth", "Private"], row_type="header"),
+            self._make_row(
+                1,
+                [
+                    "Service with distinct values",
+                    "",
+                    "10%",
+                    "20%",
+                    "30%",
+                    "40%",
+                    "",
+                ],
+            ),
+        ]
+        table = self._table(rows)
+
+        processed, _issues, meta = service._postprocess_tables([table])
+
+        row = next(r for r in processed[0].rows if r.row_index == 1)
+        self.assertEqual(self._cell_text(row, 2), "10%")
+        self.assertEqual(self._cell_text(row, 3), "20%")
+        self.assertEqual(self._cell_text(row, 4), "30%")
+        self.assertEqual(self._cell_text(row, 5), "40%")
+        self.assertEqual(int(meta.get("value_fragment_stitched_cells") or 0), 0)
