@@ -1,0 +1,125 @@
+{
+  "manifest_version": "phase0.v1",
+  "created_at": "2026-02-13",
+  "owner": "ingestion-team",
+  "purpose": "Baseline freeze for table ingestion before contract and scope-engine refactors.",
+  "required_document_families": [
+    "banking_fees_and_charges",
+    "telecom_plan_matrix",
+    "insurance_benefits_schedule",
+    "healthcare_price_list",
+    "manufacturing_parts_catalog",
+    "legal_policy_matrix"
+  ],
+  "comparison_metrics": [
+    "table_count",
+    "table_data_row_count",
+    "row_chunk_count",
+    "multi_scope_rate",
+    "ambiguous_scope_rate",
+    "inferred_scope_rate",
+    "table_bbox_coverage_ratio",
+    "residual_text_ratio",
+    "table_row_unique_evidence_count"
+  ],
+  "cases": [
+    {
+      "case_id": "banking_fees_cib_teller_en",
+      "family": "banking_fees_and_charges",
+      "status": "baselined",
+      "document_label": "CIB-Teller EN",
+      "focus_rows": {
+        "start": 6,
+        "end": 17
+      },
+      "tracking_terms": [
+        "USD 5",
+        "USD 2",
+        "same day value date",
+        "Cost per Bag"
+      ],
+      "baselines": {
+        "vlm_on_snapshot_json": "docs/ingestion_snapshots/cib_teller_ebca6c00_vlm_on_2026-02-13.json",
+        "vlm_off_snapshot_json": "docs/ingestion_snapshots/cib_teller_ae4bfb72_vlm_off_2026-02-13.json",
+        "comparison_json": "docs/ingestion_snapshots/cib_teller_vlm_on_vs_off_diff_2026-02-13.json",
+        "phase0_current_off_snapshot_json": "docs/ingestion_snapshots/cib_teller_vlm_off_phase0_current_ae4bfb72_2026-02-13.json",
+        "phase0_current_off_comparison_json": "docs/ingestion_snapshots/cib_teller_phase0_baseline_on_vs_current_off_2026-02-13.json"
+      },
+      "latest_known_upload_ids": {
+        "vlm_on": "ebca6c00-97b1-4776-85a9-f4b4b1f9e4b0",
+        "vlm_off": "ae4bfb72-d3f6-48c1-81bf-69797ac074c3"
+      },
+      "notes": "Current baseline shows rows 6-17 still collapsed to tariff + wealth."
+    },
+    {
+      "case_id": "telecom_plan_grid",
+      "family": "telecom_plan_matrix",
+      "status": "pending_capture",
+      "document_label": "",
+      "focus_rows": {
+        "start": null,
+        "end": null
+      },
+      "tracking_terms": [],
+      "baselines": {},
+      "latest_known_upload_ids": {},
+      "notes": "Need one multi-tier plan table with mixed currency and optional columns."
+    },
+    {
+      "case_id": "insurance_benefits_schedule",
+      "family": "insurance_benefits_schedule",
+      "status": "pending_capture",
+      "document_label": "",
+      "focus_rows": {
+        "start": null,
+        "end": null
+      },
+      "tracking_terms": [],
+      "baselines": {},
+      "latest_known_upload_ids": {},
+      "notes": "Need benefits table with family tiers and exclusions."
+    },
+    {
+      "case_id": "healthcare_pricing_sheet",
+      "family": "healthcare_price_list",
+      "status": "pending_capture",
+      "document_label": "",
+      "focus_rows": {
+        "start": null,
+        "end": null
+      },
+      "tracking_terms": [],
+      "baselines": {},
+      "latest_known_upload_ids": {},
+      "notes": "Need procedure-price table with package vs cash columns."
+    },
+    {
+      "case_id": "manufacturing_parts_table",
+      "family": "manufacturing_parts_catalog",
+      "status": "pending_capture",
+      "document_label": "",
+      "focus_rows": {
+        "start": null,
+        "end": null
+      },
+      "tracking_terms": [],
+      "baselines": {},
+      "latest_known_upload_ids": {},
+      "notes": "Need SKU/spec matrix with optional compatibility columns."
+    },
+    {
+      "case_id": "legal_policy_matrix",
+      "family": "legal_policy_matrix",
+      "status": "pending_capture",
+      "document_label": "",
+      "focus_rows": {
+        "start": null,
+        "end": null
+      },
+      "tracking_terms": [],
+      "baselines": {},
+      "latest_known_upload_ids": {},
+      "notes": "Need policy obligations table with role-based applicability columns."
+    }
+  ]
+}

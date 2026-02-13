@@ -1,0 +1,287 @@
+{
+  "generated_at": "2026-02-13T17:30:35.591775+00:00",
+  "focus": {
+    "row_start": 6,
+    "row_end": 17
+  },
+  "baseline": {
+    "snapshot_label": "cib_teller_vlm_enabled_baseline",
+    "upload_id": "ebca6c00-97b1-4776-85a9-f4b4b1f9e4b0",
+    "table_count": 1,
+    "table_data_row_count": 20,
+    "chunk_counts": {
+      "page_blocks/None/None": 3,
+      "table_annotation/None/supporting": 1,
+      "table_row/row/drill_down": 20,
+      "table_summary/summary/primary": 1
+    },
+    "scope_metrics": {
+      "row_chunk_count": 12,
+      "multi_scope_count": 12,
+      "multi_scope_rate": 1.0,
+      "ambiguous_scope_count": 0,
+      "ambiguous_scope_rate": 0.0,
+      "inferred_scope_count": 0,
+      "inferred_scope_rate": 0.0,
+      "explicit_scope_count": 12,
+      "explicit_scope_rate": 1.0,
+      "scope_cardinality_histogram": {
+        "2": 12
+      }
+    },
+    "quality_metrics": {},
+    "settings": {
+      "AZURE_DOCUMENT_INTELLIGENCE_API_VERSION": "2024-11-30",
+      "AZURE_DOCUMENT_INTELLIGENCE_BASE_PATH": "documentintelligence",
+      "RAG_TABLE_VLM_ENABLED": true,
+      "RAG_TABLE_VLM_CONFIDENCE_THRESHOLD": 0.8,
+      "RAG_PDF_TABLE_EXTRACTOR": "auto"
+    }
+  },
+  "candidate": {
+    "snapshot_label": "cib_teller_vlm_off_phase0_candidate",
+    "upload_id": "ae4bfb72-d3f6-48c1-81bf-69797ac074c3",
+    "table_count": 1,
+    "table_data_row_count": 23,
+    "chunk_counts": {
+      "page_blocks/None/None": 4,
+      "table_annotation/None/None": 1,
+      "table_row/row/None": 23,
+      "table_summary/summary/None": 1
+    },
+    "scope_metrics": {
+      "row_chunk_count": 12,
+      "multi_scope_count": 12,
+      "multi_scope_rate": 1.0,
+      "ambiguous_scope_count": 0,
+      "ambiguous_scope_rate": 0.0,
+      "inferred_scope_count": 0,
+      "inferred_scope_rate": 0.0,
+      "explicit_scope_count": 12,
+      "explicit_scope_rate": 1.0,
+      "scope_cardinality_histogram": {
+        "2": 12
+      }
+    },
+    "quality_metrics": {
+      "table_bbox_coverage_ratio": 0.6012,
+      "residual_text_ratio": 1.0,
+      "residual_text_blocks_count": 54,
+      "suppressed_text_blocks_count": 51,
+      "table_row_unique_evidence_count": 20
+    },
+    "settings": {
+      "AZURE_DOCUMENT_INTELLIGENCE_API_VERSION": "2024-11-30",
+      "AZURE_DOCUMENT_INTELLIGENCE_BASE_PATH": "documentintelligence",
+      "RAG_TABLE_VLM_ENABLED": false,
+      "RAG_TABLE_VLM_CONFIDENCE_THRESHOLD": 0.8,
+      "RAG_PDF_TABLE_EXTRACTOR": "auto"
+    }
+  },
+  "deltas": {
+    "table_count_delta": 0,
+    "table_data_row_count_delta": 3,
+    "row_chunk_count_delta": 0,
+    "multi_scope_rate_delta": 0.0,
+    "ambiguous_scope_rate_delta": 0.0,
+    "inferred_scope_rate_delta": 0.0,
+    "table_bbox_coverage_ratio_delta": null,
+    "residual_text_ratio_delta": null,
+    "table_row_unique_evidence_count_delta": 20
+  },
+  "changed_row_count": 0,
+  "changed_rows": [],
+  "regressions": [],
+  "term_hits_baseline": {
+    "Cost per Bag": [
+      {
+        "chunk_index": 1,
+        "content_source": "page_blocks",
+        "table_chunk_role": null,
+        "table_row_index": null
+      }
+    ],
+    "T+5": [
+      {
+        "chunk_index": 22,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 20
+      },
+      {
+        "chunk_index": 23,
+        "content_source": "table_summary",
+        "table_chunk_role": "summary",
+        "table_row_index": null
+      }
+    ],
+    "T+3": [
+      {
+        "chunk_index": 21,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 19
+      },
+      {
+        "chunk_index": 23,
+        "content_source": "table_summary",
+        "table_chunk_role": "summary",
+        "table_row_index": null
+      }
+    ],
+    "same day value date": [
+      {
+        "chunk_index": 20,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 18
+      },
+      {
+        "chunk_index": 21,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 19
+      },
+      {
+        "chunk_index": 22,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 20
+      },
+      {
+        "chunk_index": 23,
+        "content_source": "table_summary",
+        "table_chunk_role": "summary",
+        "table_row_index": null
+      }
+    ],
+    "USD 5": [
+      {
+        "chunk_index": 9,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 7
+      }
+    ],
+    "USD 2": [
+      {
+        "chunk_index": 5,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 3
+      },
+      {
+        "chunk_index": 11,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 9
+      },
+      {
+        "chunk_index": 15,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 13
+      },
+      {
+        "chunk_index": 17,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 15
+      },
+      {
+        "chunk_index": 19,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 17
+      }
+    ]
+  },
+  "term_hits_candidate": {
+    "USD 5": [
+      {
+        "chunk_index": 10,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 7
+      }
+    ],
+    "USD 2": [
+      {
+        "chunk_index": 6,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 3
+      },
+      {
+        "chunk_index": 12,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 9
+      },
+      {
+        "chunk_index": 16,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 13
+      },
+      {
+        "chunk_index": 18,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 15
+      },
+      {
+        "chunk_index": 20,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 17
+      }
+    ],
+    "same day value date": [
+      {
+        "chunk_index": 21,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 18
+      },
+      {
+        "chunk_index": 22,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 19
+      },
+      {
+        "chunk_index": 23,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 20
+      },
+      {
+        "chunk_index": 24,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 21
+      },
+      {
+        "chunk_index": 25,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 22
+      },
+      {
+        "chunk_index": 27,
+        "content_source": "table_summary",
+        "table_chunk_role": "summary",
+        "table_row_index": null
+      }
+    ],
+    "Cost per Bag": [
+      {
+        "chunk_index": 2,
+        "content_source": "page_blocks",
+        "table_chunk_role": null,
+        "table_row_index": null
+      }
+    ]
+  }
+}

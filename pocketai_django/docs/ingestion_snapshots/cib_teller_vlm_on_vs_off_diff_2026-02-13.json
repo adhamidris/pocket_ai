@@ -1,0 +1,416 @@
+{
+  "on_upload_id": "ebca6c00-97b1-4776-85a9-f4b4b1f9e4b0",
+  "off_upload_id": "ae4bfb72-d3f6-48c1-81bf-69797ac074c3",
+  "on_detected_via": "azure_di+vlm",
+  "off_detected_via": "azure_di",
+  "on_row_count": 21,
+  "off_row_count": 24,
+  "on_chunk_counts": {
+    "page_blocks/None/None": 3,
+    "table_annotation/None/supporting": 1,
+    "table_row/row/drill_down": 20,
+    "table_summary/summary/primary": 1
+  },
+  "off_chunk_counts": {
+    "page_blocks/None/None": 4,
+    "table_annotation/None/supporting": 1,
+    "table_row/row/drill_down": 23,
+    "table_summary/summary/primary": 1
+  },
+  "focus_rows_6_17": [
+    {
+      "row": 6,
+      "vlm_on_applies": [
+        "tariff",
+        "wealth"
+      ],
+      "vlm_on_mode": "explicit_cells",
+      "vlm_off_applies": [
+        "tariff",
+        "wealth"
+      ],
+      "vlm_off_mode": "explicit_cells",
+      "changed": false
+    },
+    {
+      "row": 7,
+      "vlm_on_applies": [
+        "tariff",
+        "wealth"
+      ],
+      "vlm_on_mode": "explicit_cells",
+      "vlm_off_applies": [
+        "tariff",
+        "wealth"
+      ],
+      "vlm_off_mode": "explicit_cells",
+      "changed": false
+    },
+    {
+      "row": 8,
+      "vlm_on_applies": [
+        "tariff",
+        "wealth"
+      ],
+      "vlm_on_mode": "explicit_cells",
+      "vlm_off_applies": [
+        "tariff",
+        "wealth"
+      ],
+      "vlm_off_mode": "explicit_cells",
+      "changed": false
+    },
+    {
+      "row": 9,
+      "vlm_on_applies": [
+        "tariff",
+        "wealth"
+      ],
+      "vlm_on_mode": "explicit_cells",
+      "vlm_off_applies": [
+        "tariff",
+        "wealth"
+      ],
+      "vlm_off_mode": "explicit_cells",
+      "changed": false
+    },
+    {
+      "row": 10,
+      "vlm_on_applies": [
+        "tariff",
+        "wealth"
+      ],
+      "vlm_on_mode": "explicit_cells",
+      "vlm_off_applies": [
+        "tariff",
+        "wealth"
+      ],
+      "vlm_off_mode": "explicit_cells",
+      "changed": false
+    },
+    {
+      "row": 11,
+      "vlm_on_applies": [
+        "tariff",
+        "wealth"
+      ],
+      "vlm_on_mode": "explicit_cells",
+      "vlm_off_applies": [
+        "tariff",
+        "wealth"
+      ],
+      "vlm_off_mode": "explicit_cells",
+      "changed": false
+    },
+    {
+      "row": 12,
+      "vlm_on_applies": [
+        "tariff",
+        "wealth"
+      ],
+      "vlm_on_mode": "explicit_cells",
+      "vlm_off_applies": [
+        "tariff",
+        "wealth"
+      ],
+      "vlm_off_mode": "explicit_cells",
+      "changed": false
+    },
+    {
+      "row": 13,
+      "vlm_on_applies": [
+        "tariff",
+        "wealth"
+      ],
+      "vlm_on_mode": "explicit_cells",
+      "vlm_off_applies": [
+        "tariff",
+        "wealth"
+      ],
+      "vlm_off_mode": "explicit_cells",
+      "changed": false
+    },
+    {
+      "row": 14,
+      "vlm_on_applies": [
+        "tariff",
+        "wealth"
+      ],
+      "vlm_on_mode": "explicit_cells",
+      "vlm_off_applies": [
+        "tariff",
+        "wealth"
+      ],
+      "vlm_off_mode": "explicit_cells",
+      "changed": false
+    },
+    {
+      "row": 15,
+      "vlm_on_applies": [
+        "tariff",
+        "wealth"
+      ],
+      "vlm_on_mode": "explicit_cells",
+      "vlm_off_applies": [
+        "tariff",
+        "wealth"
+      ],
+      "vlm_off_mode": "explicit_cells",
+      "changed": false
+    },
+    {
+      "row": 16,
+      "vlm_on_applies": [
+        "tariff",
+        "wealth"
+      ],
+      "vlm_on_mode": "explicit_cells",
+      "vlm_off_applies": [
+        "tariff",
+        "wealth"
+      ],
+      "vlm_off_mode": "explicit_cells",
+      "changed": false
+    },
+    {
+      "row": 17,
+      "vlm_on_applies": [
+        "tariff",
+        "wealth"
+      ],
+      "vlm_on_mode": "explicit_cells",
+      "vlm_off_applies": [
+        "tariff",
+        "wealth"
+      ],
+      "vlm_off_mode": "explicit_cells",
+      "changed": false
+    }
+  ],
+  "term_hits_on": {
+    "Cost per Bag": [
+      {
+        "chunk_index": 1,
+        "content_source": "page_blocks",
+        "table_chunk_role": null,
+        "table_row_index": null
+      }
+    ],
+    "T+5": [
+      {
+        "chunk_index": 22,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 20
+      },
+      {
+        "chunk_index": 23,
+        "content_source": "table_summary",
+        "table_chunk_role": "summary",
+        "table_row_index": null
+      }
+    ],
+    "T+3": [
+      {
+        "chunk_index": 21,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 19
+      },
+      {
+        "chunk_index": 23,
+        "content_source": "table_summary",
+        "table_chunk_role": "summary",
+        "table_row_index": null
+      }
+    ],
+    "same day value date": [
+      {
+        "chunk_index": 20,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 18
+      },
+      {
+        "chunk_index": 21,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 19
+      },
+      {
+        "chunk_index": 22,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 20
+      },
+      {
+        "chunk_index": 23,
+        "content_source": "table_summary",
+        "table_chunk_role": "summary",
+        "table_row_index": null
+      }
+    ],
+    "USD 5": [
+      {
+        "chunk_index": 9,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 7
+      }
+    ],
+    "USD 2": [
+      {
+        "chunk_index": 5,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 3
+      },
+      {
+        "chunk_index": 11,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 9
+      },
+      {
+        "chunk_index": 15,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 13
+      },
+      {
+        "chunk_index": 17,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 15
+      },
+      {
+        "chunk_index": 19,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 17
+      }
+    ]
+  },
+  "term_hits_off": {
+    "Cost per Bag": [
+      {
+        "chunk_index": 2,
+        "content_source": "page_blocks",
+        "table_chunk_role": null,
+        "table_row_index": null
+      }
+    ],
+    "T+5": [
+      {
+        "chunk_index": 25,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 22
+      },
+      {
+        "chunk_index": 27,
+        "content_source": "table_summary",
+        "table_chunk_role": "summary",
+        "table_row_index": null
+      }
+    ],
+    "T+3": [
+      {
+        "chunk_index": 23,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 20
+      },
+      {
+        "chunk_index": 24,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 21
+      },
+      {
+        "chunk_index": 27,
+        "content_source": "table_summary",
+        "table_chunk_role": "summary",
+        "table_row_index": null
+      }
+    ],
+    "same day value date": [
+      {
+        "chunk_index": 21,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 18
+      },
+      {
+        "chunk_index": 22,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 19
+      },
+      {
+        "chunk_index": 23,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 20
+      },
+      {
+        "chunk_index": 24,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 21
+      },
+      {
+        "chunk_index": 25,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 22
+      },
+      {
+        "chunk_index": 27,
+        "content_source": "table_summary",
+        "table_chunk_role": "summary",
+        "table_row_index": null
+      }
+    ],
+    "USD 5": [
+      {
+        "chunk_index": 10,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 7
+      }
+    ],
+    "USD 2": [
+      {
+        "chunk_index": 6,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 3
+      },
+      {
+        "chunk_index": 12,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 9
+      },
+      {
+        "chunk_index": 16,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 13
+      },
+      {
+        "chunk_index": 18,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 15
+      },
+      {
+        "chunk_index": 20,
+        "content_source": "table_row",
+        "table_chunk_role": "row",
+        "table_row_index": 17
+      }
+    ]
+  }
+}
