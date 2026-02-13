@@ -1,22 +1,19 @@
-# Phase 6: Rollout by Feature Flags
+# Phase 6: Rollout by Feature Flags (Historical)
 
-Phase 6 adds tenant-cohort rollout controls, live dashboard checks against a frozen baseline, and a one-command rollback path.
+Phase 6 originally added tenant-cohort rollout controls, live dashboard checks against a frozen baseline, and a one-command rollback path.
+As of the phase-7 cleanup follow-up refactor, the table pipeline v2 path is now globally active for all tenants.
 
-## What Is Gated
+## Current Behavior
 
-New per-business feature flag:
+- Table candidate selection always uses the phase-4 scorer/arbitration path.
+- VLM repair/guardrails run based on global service settings (for example `RAG_TABLE_VLM_ENABLED`), not per-tenant pipeline toggles.
 
-- `rag_table_pipeline_v2` (default `false`)
+## Historical Phase-6 Gate
 
-When `rag_table_pipeline_v2` is enabled for a tenant:
+- Previous per-business feature flag:
+  - `rag_table_pipeline_v2` (historical, no longer used for ingestion path selection)
 
-- table candidate selection uses the phase-4 scorer/arbitration path
-- VLM repair/guardrail path runs (subject to existing service settings)
-
-When disabled:
-
-- selection falls back to deterministic legacy precedence (`azure` -> `pdfplumber` -> `geometry` -> `heuristic`)
-- VLM repair is skipped with explicit metadata in `table_extraction.table_repairs.skip_reason`
+This flag remains in feature metadata for backward compatibility but does not gate ingestion pipeline selection anymore.
 
 ## Rollout Command
 
@@ -39,9 +36,8 @@ Scope selectors:
 - `--business-id <uuid>` (repeatable)
 - `--all`
 
-Phase-6 bundle toggled by `enable/rollback`:
+Phase-6 bundle toggled by `enable/rollback` now effectively targets:
 
-- `rag_table_pipeline_v2`
 - `rag_shadow_ingestion`
 - `rag_eval_logging`
 
@@ -85,8 +81,8 @@ python manage.py manage_table_ingestion_rollout --action rollback --cohort canar
 
 Expected rollback behavior:
 
-- `rag_table_pipeline_v2` disabled for scoped tenants
-- ingestion returns to deterministic legacy selection mode
+- `rag_shadow_ingestion` and `rag_eval_logging` disabled for scoped tenants
+- ingestion remains on global v2 table pipeline mode
 - dashboard can be re-run immediately to confirm stabilization
 
 ## Dashboard Interpretation

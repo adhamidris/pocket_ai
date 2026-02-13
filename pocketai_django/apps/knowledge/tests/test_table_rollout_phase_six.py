@@ -68,7 +68,7 @@ class TableRolloutPhaseSixTests(SimpleTestCase):
         self.assertEqual(selected, "geometry")
         self.assertEqual(meta.get("selection_mode"), "candidate_scorer_v2")
 
-    def test_table_rollout_state_reads_feature_flag_and_cohort(self) -> None:
+    def test_table_rollout_state_forces_global_pipeline_v2_and_reads_other_flags(self) -> None:
         service = KnowledgeIngestionService(enable_ocr=False)
         upload = SimpleNamespace(
             business_profile=SimpleNamespace(
@@ -76,7 +76,6 @@ class TableRolloutPhaseSixTests(SimpleTestCase):
             )
         )
         mocked_state = SimpleNamespace(
-            rag_table_pipeline_v2=True,
             rag_shadow_ingestion=True,
             rag_eval_logging=False,
         )
@@ -88,5 +87,6 @@ class TableRolloutPhaseSixTests(SimpleTestCase):
 
         self.assertEqual(rollout.get("cohort"), "canary")
         self.assertTrue(rollout.get("pipeline_v2_enabled"))
+        self.assertEqual(rollout.get("pipeline_v2_strategy"), "global_default")
         self.assertTrue(rollout.get("shadow_ingestion_enabled"))
         self.assertFalse(rollout.get("eval_logging_enabled"))

@@ -4584,15 +4584,11 @@ class KnowledgeIngestionService:
             candidates["heuristic"] = filtered_heuristics
 
         table_rollout = self._table_rollout_state(upload)
-        pipeline_v2_enabled = bool(table_rollout.get("pipeline_v2_enabled"))
-        if pipeline_v2_enabled:
-            selected_extractor, tables, selection_meta = self._select_table_candidates(candidates)
-        else:
-            selected_extractor, tables, selection_meta = self._select_table_candidates_legacy_precedence(candidates)
+        selected_extractor, tables, selection_meta = self._select_table_candidates(candidates)
         issues = layout_result.issues + table_issues + geom_issues + suppress_issues + pdfplumber_issues + azure_issues
 
         repair_meta: dict[str, Any] = {}
-        if tables and pipeline_v2_enabled:
+        if tables:
             tables, repair_issues, repair_meta = self._repair_tables_with_vlm(
                 absolute,
                 tables,
@@ -4631,15 +4627,6 @@ class KnowledgeIngestionService:
                         metadata=table.metadata,
                         rows=annotated_rows,
                     )
-        elif tables and self.table_vlm_enabled:
-            repair_meta = {
-                "attempted": 0,
-                "repaired": 0,
-                "rejected": 0,
-                "skipped": len(tables),
-                "model": self.table_vlm_model,
-                "skip_reason": "rag_table_pipeline_v2_disabled",
-            }
 
         postprocess_meta: dict[str, Any] = {}
         if tables:
@@ -4708,7 +4695,7 @@ class KnowledgeIngestionService:
                 "candidate_counts": {key: len(val) for key, val in candidates.items()},
                 "candidate_scores": selection_meta.get("scores", {}),
             }
-            extraction_meta["selection_mode"] = selection_meta.get("selection_mode") or "candidate_scorer_v2"
+            extraction_meta["selection_mode"] = "candidate_scorer_v2"
             extraction_meta["rollout"] = table_rollout
             candidate_metrics = selection_meta.get("metrics")
             if isinstance(candidate_metrics, Mapping):
@@ -5451,7 +5438,8 @@ class KnowledgeIngestionService:
             business_metadata = getattr(business, "metadata") or {}
         cohort = str(business_metadata.get("cohort") or "").strip() or None
         return {
-            "pipeline_v2_enabled": bool(getattr(feature_state, "rag_table_pipeline_v2", False)),
+            "pipeline_v2_enabled": True,
+            "pipeline_v2_strategy": "global_default",
             "shadow_ingestion_enabled": bool(getattr(feature_state, "rag_shadow_ingestion", False)),
             "eval_logging_enabled": bool(getattr(feature_state, "rag_eval_logging", False)),
             "cohort": cohort,
