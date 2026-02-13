@@ -114,7 +114,12 @@ def content_blocks_from_response_blocks(response_blocks: object | None) -> list[
     return out
 
 
-def ensure_assistant_text_blocks(body: str, *, existing_blocks: object | None = None) -> list[dict[str, object]]:
+def ensure_assistant_text_blocks(
+    body: str,
+    *,
+    existing_blocks: object | None = None,
+    force_regenerate_text: bool = False,
+) -> list[dict[str, object]]:
     """
     Ensure the assistant message has properly formatted text blocks.
 
@@ -123,6 +128,8 @@ def ensure_assistant_text_blocks(body: str, *, existing_blocks: object | None = 
     - If existing_blocks has a valid structure with both text and non-text blocks,
       preserve it as-is to maintain correct ordering (e.g., pre-approval text → tool → post-approval text)
     - Only regenerate text blocks from body if existing_blocks are missing or invalid
+    - If `force_regenerate_text` is True, always rebuild text blocks from `body`
+      while preserving non-text blocks
     """
     blocks = _coerce_block_list(existing_blocks)
     body_value = body.strip()
@@ -143,7 +150,7 @@ def ensure_assistant_text_blocks(body: str, *, existing_blocks: object | None = 
     # messages during approval flows, or legacy rows missing content_blocks). Regenerating
     # from `body` can be lossy because `body` is a plain-text fallback and may not preserve
     # rich inline marks (bold/italic/code/link).
-    if blocks and (has_rich_text or has_plain_text) and not has_malformed_rich_text:
+    if not force_regenerate_text and blocks and (has_rich_text or has_plain_text) and not has_malformed_rich_text:
         return blocks
 
     # Otherwise, regenerate text blocks from body

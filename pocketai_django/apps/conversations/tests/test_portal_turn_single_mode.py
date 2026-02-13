@@ -18,6 +18,7 @@ from apps.conversations.models import (
     PortalTurn,
     PortalTurnStatus,
 )
+from apps.conversations.content_blocks import extract_text_from_content_blocks
 from apps.conversations.portal_turn_runner import PortalTurnRunner
 
 
@@ -204,6 +205,39 @@ class PortalTurnSingleModeTests(TransactionTestCase):
         turn.refresh_from_db()
         self.assertIsNotNone(turn.message)
         self.assertEqual(turn.message.body, final_text)
+
+    def test_portal_turn_regenerates_text_blocks_from_final_body(self) -> None:
+        turn = PortalTurn.objects.create(
+            conversation=self.conversation,
+            agent_profile=self.agent,
+            status=PortalTurnStatus.STREAMING,
+            user_message="What is the traveler cheque fee?",
+        )
+        stream_text = (
+            "I'll search for fees.\n\n"
+            "Summary:\n"
+            "- Applicable to: All customer segments (Prime, Plus, Wealth, Exclusive Wealth, "
+        )
+        final_text = (
+            "Summary:\n"
+            "- Applicable to: All customer segments (Prime, Plus, Wealth, Exclusive Wealth, Private)"
+        )
+        orchestrator = _FakeOrchestrator(
+            emit_model_blocks=False,
+            stream_text=stream_text,
+            response_text=final_text,
+        )
+        runner = PortalTurnRunner(turn=turn, conversation=self.conversation)
+
+        with mock.patch.object(PortalTurnRunner, "_select_orchestrator", return_value=orchestrator):
+            runner.run()
+
+        turn.refresh_from_db()
+        self.assertIsNotNone(turn.message)
+        self.assertEqual(turn.message.body, final_text)
+        block_text = extract_text_from_content_blocks(turn.message.content_blocks or [])
+        self.assertIn("Exclusive Wealth, Private)", block_text)
+        self.assertNotIn("I'll search for fees.", block_text)
 
     @override_settings(PORTAL_DEBUG_TOOL_TRACE=True)
     def test_portal_turn_persists_debug_tools_in_message_metadata(self) -> None:

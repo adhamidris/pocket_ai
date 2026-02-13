@@ -32,6 +32,32 @@ class _FakeProvider:
         return {"message": {"role": "assistant", "content": content}}
 
 
+class _TailMismatchProvider:
+    def chat(
+        self,
+        messages,
+        *,
+        tools=None,
+        on_stream_delta=None,
+        on_reasoning_delta=None,
+        on_tool_call_start=None,
+        on_tool_call_delta=None,
+        response_format=None,
+        should_cancel=None,
+    ):
+        del messages, tools, on_reasoning_delta, on_tool_call_start, on_tool_call_delta, response_format, should_cancel
+        final = (
+            "Summary:\n"
+            "- Applicable to: All customer segments (Prime, Plus, Wealth, Exclusive Wealth, Private)"
+        )
+        if on_stream_delta:
+            on_stream_delta(
+                "Summary:\n"
+                "- Applicable to: All customer segments (Prime, Plus, Wealth, Exclusive Wealth, "
+            )
+        return {"message": {"role": "assistant", "content": final}}
+
+
 class McpObservabilityTests(TestCase):
     def setUp(self) -> None:
         super().setUp()
@@ -99,3 +125,22 @@ class McpObservabilityTests(TestCase):
         self.assertIn("Do not narrate internal steps", system_text)
         user_payload = final_messages[1]["content"]
         self.assertIn("Latest user message:", user_payload)
+
+    def test_stream_turn_reconciles_missing_stream_suffix(self) -> None:
+        provider = _TailMismatchProvider()
+        orchestrator = McpOrchestratorService(agent=self.agent, provider=provider)
+        streamed: list[str] = []
+
+        context = orchestrator.stream_turn(
+            conversation=self.conversation,
+            user_message="Does this apply to private?",
+            on_response_text_delta=streamed.append,
+        )
+
+        self.assertEqual(
+            context.response_text,
+            "Summary:\n- Applicable to: All customer segments (Prime, Plus, Wealth, Exclusive Wealth, Private)",
+        )
+        self.assertTrue(streamed)
+        self.assertEqual("".join(streamed), context.response_text)
+        self.assertEqual("".join(context.streamed_chunks), context.response_text)

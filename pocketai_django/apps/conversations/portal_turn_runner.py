@@ -13,6 +13,7 @@ from django.db import close_old_connections
 from django.utils import timezone
 
 from apps.conversations.content_blocks import (
+    ensure_assistant_text_blocks,
     extract_text_from_content_blocks,
     new_block_id,
     normalize_assistant_content_blocks,
@@ -858,6 +859,20 @@ class PortalTurnRunner:
             conversation=self.conversation,
             stage="portal_turn_finalize",
         )
+
+        # Use final orchestrator text as the canonical text source for persisted
+        # rich blocks. Stream-built blocks can carry provisional narration or miss
+        # trailing suffixes in rare stream boundary cases.
+        if body_source == "orchestrator_response":
+            rebuilt_blocks = ensure_assistant_text_blocks(
+                body_text,
+                existing_blocks=blocks,
+                force_regenerate_text=True,
+            )
+            rebuilt_blocks = normalize_assistant_content_blocks(rebuilt_blocks)
+            blocks = rebuilt_blocks
+            blocks_source = "orchestrator_body_regenerated"
+
         block_types: dict[str, int] = {}
         for block in blocks:
             if not isinstance(block, Mapping):

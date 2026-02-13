@@ -1018,6 +1018,64 @@ class McpOrchestratorService:
             final_separator_pending = False
             _emit_stream_chunks(lambda chunk: _append_chunk(chunk, answer_streamed_chunks), text)
 
+        def _reconcile_streamed_answer_tail(final_text: str, *, stage: str) -> None:
+            """
+            Ensure live streamed text is not missing the final suffix when the
+            canonical post-processed answer is longer than streamed chunks.
+            """
+            if not streaming_allowed:
+                return
+            canonical = str(final_text or "")
+            if not canonical:
+                return
+            streamed = "".join(answer_streamed_chunks)
+            if streamed == canonical:
+                return
+
+            suffix = ""
+            if canonical.startswith(streamed):
+                suffix = canonical[len(streamed):]
+            else:
+                # Minor trailing-whitespace drift: try prefix comparison on rstrip.
+                streamed_rstrip = streamed.rstrip()
+                canonical_rstrip = canonical.rstrip()
+                if streamed_rstrip and canonical_rstrip.startswith(streamed_rstrip):
+                    suffix = canonical_rstrip[len(streamed_rstrip):]
+
+            if not suffix:
+                structured_log(
+                    "mcp",
+                    "stream.reconcile_skipped",
+                    {
+                        "stage": stage,
+                        "streamed_len": len(streamed),
+                        "canonical_len": len(canonical),
+                    },
+                    context={
+                        "conversation": conversation.id,
+                        "business": conversation.business_profile_id,
+                    },
+                    logger_obj=logger,
+                )
+                return
+
+            _emit_tokens(suffix)
+            structured_log(
+                "mcp",
+                "stream.reconciled_tail",
+                {
+                    "stage": stage,
+                    "suffix_len": len(suffix),
+                    "streamed_len_before": len(streamed),
+                    "canonical_len": len(canonical),
+                },
+                context={
+                    "conversation": conversation.id,
+                    "business": conversation.business_profile_id,
+                },
+                logger_obj=logger,
+            )
+
         def _flush_stream_buffer(stage: str, *, filter_override: str | None = None) -> None:
             nonlocal stream_buffer
             trailing = stream_buffer
@@ -2589,7 +2647,9 @@ class McpOrchestratorService:
         else:
             tool_phase_assistant_message = first_stream_message
             _flush_stream_buffer("streaming_tools", filter_override=initial_stream_filter_level)
-            single_pass_text = "".join(first_pass_streamed_chunks).strip() or first_content_raw
+            # Canonical assistant content must come from the provider payload, not
+            # streamed deltas. Streamed deltas can be truncated at boundaries.
+            single_pass_text = first_content_raw or "".join(first_pass_streamed_chunks).strip()
             _mark_answer_started()
             with TRACER.start_as_current_span("portal.mcp.single_pass") as span:
                 if span.is_recording():
@@ -2659,18 +2719,35 @@ class McpOrchestratorService:
                 },
             )
             _status_event("answer_finalized", "Answer ready")
-            if streaming_allowed:
-                _status_event("stream_complete", "")
             self._log_turn_metrics(conversation, tool_context)
             normalized_assistant = dict(tool_phase_assistant_message or {"role": "assistant"})
             normalized_assistant["content"] = clean_single
             streaming_mode = "final"
             if streaming_allowed:
                 answer_streamed_chunks[:] = list(first_pass_streamed_chunks)
+                _reconcile_streamed_answer_tail(clean_single, stage="single_pass")
+                # If streamed chunks still diverge from the canonical answer
+                # (e.g., pre-sanitization narration), keep persisted stream state
+                # aligned to the final answer text.
+                if "".join(answer_streamed_chunks) != clean_single:
+                    answer_streamed_chunks[:] = [clean_single] if clean_single else []
+                    structured_log(
+                        "mcp",
+                        "stream.state_rebased_to_canonical",
+                        {
+                            "stage": "single_pass",
+                            "canonical_len": len(clean_single),
+                        },
+                        context={
+                            "conversation": conversation.id,
+                            "business": conversation.business_profile_id,
+                        },
+                        logger_obj=logger,
+                    )
             else:
                 answer_streamed_chunks.clear()
                 _emit_final_answer(clean_single)
-                _status_event("stream_complete", "")
+            _status_event("stream_complete", "")
             final_separator_pending = False
             response_blocks = self._extract_response_blocks(normalized_assistant)
             clean_single = str(normalized_assistant.get("content") or clean_single)
@@ -2740,8 +2817,6 @@ class McpOrchestratorService:
 
         _mark_answer_started()
         _status_event("answer_finalized", "Answer ready")
-        if streaming_allowed:
-            _status_event("stream_complete", "")
 
         unmet_read_required_count = 0
         read_required_reasons: set[str] = set()
@@ -2836,7 +2911,9 @@ class McpOrchestratorService:
         if not streaming_allowed:
             answer_streamed_chunks.clear()
             _emit_final_answer(clean_answer_text)
-            _status_event("stream_complete", "")
+        else:
+            _reconcile_streamed_answer_tail(clean_answer_text, stage="tool_loop_final")
+        _status_event("stream_complete", "")
 
         self._log_turn_metrics(conversation, tool_context)
         self._persist_table_cache(conversation, tool_context)
