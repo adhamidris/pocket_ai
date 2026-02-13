@@ -14,6 +14,9 @@ FEATURE_FLAG_DEFAULTS: dict[str, bool] = {
     "rag_shadow_ingestion": False,
     "rag_shadow_retrieval": False,
     "rag_eval_logging": False,
+    # Phase 6 rollout switch for the table-ingestion v2 pipeline (scope/selector/guardrails).
+    # Default is OFF so tenants are enrolled progressively by cohort.
+    "rag_table_pipeline_v2": False,
     "rag_agentic_mode": True,  # 2-tool retrieval: search (metadata) → read (content)
     # When enabled, expose a small "gateway" tool surface for external MCP tools
     # instead of inlining every remote tool schema into the LLM prompt.

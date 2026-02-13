@@ -4589,11 +4589,16 @@ class KnowledgeIngestionService:
         if filtered_heuristics:
             candidates["heuristic"] = filtered_heuristics
 
-        selected_extractor, tables, selection_meta = self._select_table_candidates(candidates)
+        table_rollout = self._table_rollout_state(upload)
+        pipeline_v2_enabled = bool(table_rollout.get("pipeline_v2_enabled"))
+        if pipeline_v2_enabled:
+            selected_extractor, tables, selection_meta = self._select_table_candidates(candidates)
+        else:
+            selected_extractor, tables, selection_meta = self._select_table_candidates_legacy_precedence(candidates)
         issues = layout_result.issues + table_issues + geom_issues + suppress_issues + pdfplumber_issues + azure_issues
 
         repair_meta: dict[str, Any] = {}
-        if tables:
+        if tables and pipeline_v2_enabled:
             tables, repair_issues, repair_meta = self._repair_tables_with_vlm(
                 absolute,
                 tables,
@@ -4632,6 +4637,15 @@ class KnowledgeIngestionService:
                         metadata=table.metadata,
                         rows=annotated_rows,
                     )
+        elif tables and self.table_vlm_enabled:
+            repair_meta = {
+                "attempted": 0,
+                "repaired": 0,
+                "rejected": 0,
+                "skipped": len(tables),
+                "model": self.table_vlm_model,
+                "skip_reason": "rag_table_pipeline_v2_disabled",
+            }
 
         postprocess_meta: dict[str, Any] = {}
         if tables:
@@ -4700,6 +4714,8 @@ class KnowledgeIngestionService:
                 "candidate_counts": {key: len(val) for key, val in candidates.items()},
                 "candidate_scores": selection_meta.get("scores", {}),
             }
+            extraction_meta["selection_mode"] = selection_meta.get("selection_mode") or "candidate_scorer_v2"
+            extraction_meta["rollout"] = table_rollout
             candidate_metrics = selection_meta.get("metrics")
             if isinstance(candidate_metrics, Mapping):
                 extraction_meta["candidate_metrics"] = candidate_metrics
@@ -5433,6 +5449,78 @@ class KnowledgeIngestionService:
         )
         return selected, diag
 
+    def _table_rollout_state(self, upload: KnowledgeUpload | None) -> dict[str, Any]:
+        business = getattr(upload, "business_profile", None) if upload else None
+        feature_state = FeatureFlagService.snapshot(business)
+        business_metadata: Mapping[str, Any] = {}
+        if business is not None and isinstance(getattr(business, "metadata", None), Mapping):
+            business_metadata = getattr(business, "metadata") or {}
+        cohort = str(business_metadata.get("cohort") or "").strip() or None
+        return {
+            "pipeline_v2_enabled": bool(getattr(feature_state, "rag_table_pipeline_v2", False)),
+            "shadow_ingestion_enabled": bool(getattr(feature_state, "rag_shadow_ingestion", False)),
+            "eval_logging_enabled": bool(getattr(feature_state, "rag_eval_logging", False)),
+            "cohort": cohort,
+        }
+
+    def _select_table_candidates_legacy_precedence(
+        self,
+        candidates: Mapping[str, list[TablePayload]],
+    ) -> tuple[str, list[TablePayload], dict[str, Any]]:
+        if not candidates:
+            return "none", [], {
+                "scores": {},
+                "metrics": {},
+                "selection_mode": "legacy_precedence",
+                "heuristic_override_applied": False,
+                "heuristic_override_reason": "no_candidates",
+            }
+
+        preferred = (self.pdf_table_extractor or "auto").strip().lower()
+        selected = ""
+        if preferred and preferred != "auto":
+            if preferred in candidates:
+                selected = preferred
+            elif preferred == "pdfplumber":
+                selected = next((name for name in candidates if name.startswith("pdfplumber:")), "")
+            elif preferred == "azure":
+                selected = next((name for name in candidates if name.startswith("azure")), "")
+            elif preferred.startswith("pdfplumber"):
+                suffix = preferred.replace("pdfplumber", "").lstrip(":-_")
+                key = f"pdfplumber:{suffix}" if suffix else ""
+                if key and key in candidates:
+                    selected = key
+            elif preferred.startswith("azure"):
+                suffix = preferred.replace("azure", "").lstrip(":-_")
+                key = f"azure:{suffix}" if suffix else "azure:layout"
+                if key in candidates:
+                    selected = key
+
+        if not selected:
+            precedence_groups = [
+                [name for name in candidates if name.startswith("azure")],
+                [name for name in candidates if name.startswith("pdfplumber")],
+                [name for name in candidates if name == "geometry"],
+                [name for name in candidates if name.startswith("heuristic")],
+            ]
+            for group in precedence_groups:
+                if group:
+                    selected = sorted(group)[0]
+                    break
+            if not selected:
+                selected = sorted(candidates.keys())[0]
+            reason = "legacy_precedence_default"
+        else:
+            reason = "preferred_extractor"
+
+        return selected, list(candidates.get(selected) or []), {
+            "scores": {},
+            "metrics": {},
+            "selection_mode": "legacy_precedence",
+            "heuristic_override_applied": False,
+            "heuristic_override_reason": reason,
+        }
+
     def _select_table_candidates(
         self,
         candidates: Mapping[str, list[TablePayload]],
@@ -5489,6 +5577,7 @@ class KnowledgeIngestionService:
         return selected, candidates.get(selected, []), {
             "scores": scores,
             "metrics": metrics,
+            "selection_mode": "candidate_scorer_v2",
             **override_diag,
         }
 

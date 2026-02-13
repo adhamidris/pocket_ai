@@ -30,6 +30,7 @@ class FeatureState:
     rag_shadow_ingestion: bool
     rag_shadow_retrieval: bool
     rag_eval_logging: bool
+    rag_table_pipeline_v2: bool  # Phase 6 gated rollout for table-ingestion v2 path
     rag_agentic_mode: bool  # 2-tool retrieval: search (metadata) → read (content)
     mcp_gateway_mode: bool  # Small gateway tool surface for external MCP
     sub_agents_v1: bool  # Background runs/automations/watchers/inbox
@@ -46,6 +47,7 @@ class FeatureState:
             "rag_shadow_ingestion": self.rag_shadow_ingestion,
             "rag_shadow_retrieval": self.rag_shadow_retrieval,
             "rag_eval_logging": self.rag_eval_logging,
+            "rag_table_pipeline_v2": self.rag_table_pipeline_v2,
             "rag_agentic_mode": self.rag_agentic_mode,
             "mcp_gateway_mode": self.mcp_gateway_mode,
             "sub_agents_v1": self.sub_agents_v1,
@@ -109,6 +111,9 @@ class FeatureFlagService:
                 payload.get("rag_shadow_retrieval", FEATURE_FLAG_DEFAULTS["rag_shadow_retrieval"])
             ),
             rag_eval_logging=bool(payload.get("rag_eval_logging", FEATURE_FLAG_DEFAULTS["rag_eval_logging"])),
+            rag_table_pipeline_v2=bool(
+                payload.get("rag_table_pipeline_v2", FEATURE_FLAG_DEFAULTS["rag_table_pipeline_v2"])
+            ),
             rag_agentic_mode=bool(payload.get("rag_agentic_mode", FEATURE_FLAG_DEFAULTS["rag_agentic_mode"])),
             mcp_gateway_mode=bool(payload.get("mcp_gateway_mode", FEATURE_FLAG_DEFAULTS["mcp_gateway_mode"])),
             sub_agents_v1=bool(payload.get("sub_agents_v1", FEATURE_FLAG_DEFAULTS["sub_agents_v1"])),
