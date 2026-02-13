@@ -667,7 +667,9 @@ class RAGEvaluationHarness:
             top_diag = diagnostics.get("top_snippet_diagnostics")
             if not isinstance(top_diag, Mapping):
                 continue
-            raw_scope = top_diag.get("table_row_applies_to_columns")
+            raw_scope = top_diag.get("table_row_inferred_scope_columns")
+            if not isinstance(raw_scope, (list, tuple)):
+                raw_scope = top_diag.get("table_row_applies_to_columns")
             if not isinstance(raw_scope, (list, tuple)):
                 continue
             scope = [str(item or "").strip() for item in raw_scope if str(item or "").strip()]
@@ -676,7 +678,11 @@ class RAGEvaluationHarness:
             table_applicability_observations += 1
             if len(scope) > 1:
                 table_multi_scope_hits += 1
-            mode = str(top_diag.get("table_row_applicability_mode") or "").strip().lower()
+            mode = str(
+                top_diag.get("table_row_scope_reason")
+                or top_diag.get("table_row_applicability_mode")
+                or ""
+            ).strip().lower()
             if mode.startswith("inferred_"):
                 table_inferred_scope_hits += 1
             if mode == "ambiguous":

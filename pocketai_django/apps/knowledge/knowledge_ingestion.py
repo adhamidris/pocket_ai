@@ -90,6 +90,7 @@ logger = logging.getLogger(__name__)
 TRACER = otel_trace.get_tracer(__name__)
 
 OCR_NORMALIZATION_VERSION = "v2"
+TABLE_SCOPE_CONTRACT_VERSION = "v2"
 _ARABIC_CHAR_RE = re.compile(r"[\u0600-\u06FF]")
 _ARABIC_DIACRITICS_RE = re.compile(r"[\u0610-\u061A\u064B-\u065F\u06D6-\u06ED]")
 _TABLE_NUMERIC_SIGNAL_TOKEN_RE = re.compile(
@@ -1704,7 +1705,7 @@ class AzureDocumentIntelligenceExtractor:
         endpoint: str | None,
         key: str | None,
         model: str = "prebuilt-layout",
-        api_version: str = "2023-07-31",
+        api_version: str = "2024-11-30",
         base_path: str = "formrecognizer",
         locale: str | None = None,
         timeout_seconds: float = 60.0,
@@ -1719,7 +1720,7 @@ class AzureDocumentIntelligenceExtractor:
         self.endpoint = (endpoint or "").rstrip("/")
         self.key = (key or "").strip()
         self.model = (model or "prebuilt-layout").strip()
-        self.api_version = (api_version or "2023-07-31").strip()
+        self.api_version = (api_version or "2024-11-30").strip()
         self.base_path = (base_path or "formrecognizer").strip().strip("/")
         self.locale = (locale or "").strip()
         self.timeout_seconds = max(5.0, float(timeout_seconds))
@@ -1842,6 +1843,108 @@ class AzureDocumentIntelligenceExtractor:
         )
         return [idx for idx in range(width) if idx not in contextual_indices]
 
+    def _reconcile_spans_from_geometry(
+        self,
+        *,
+        grid: list[list[str]],
+        cell_lookup: dict[tuple[int, int], dict[str, Any]],
+        header_rows: set[int],
+        row_count: int,
+        col_count: int,
+        page_unit_scale: Mapping[int, float] | None = None,
+    ) -> None:
+        """
+        Compare data-cell bounding boxes against header-cell bounding boxes
+        to detect true column spans that Azure DI did not report via columnSpan.
+
+        Mutates *grid* and *cell_lookup* in place: when a data cell's
+        horizontal extent overlaps N header columns but column_span == 1,
+        the value is duplicated across those columns and column_span is
+        updated.  This runs before frozen TableCellPayload objects are built.
+        """
+        if col_count < 3 or not header_rows:
+            return
+
+        # Build column x-boundaries from header cell bounding boxes.
+        header_row_idx = min(header_rows)
+        col_boundaries: list[tuple[float, float]] = []  # (x0, x1) per column
+        for c in range(col_count):
+            meta = cell_lookup.get((header_row_idx, c))
+            if not meta:
+                col_boundaries.append((0.0, 0.0))
+                continue
+            _page, bbox = self._bbox_from_regions(
+                meta.get("regions"),
+                page_unit_scale=page_unit_scale,
+            )
+            if bbox and bbox.get("x0", 0.0) < bbox.get("x1", 0.0):
+                col_boundaries.append((float(bbox["x0"]), float(bbox["x1"])))
+            else:
+                col_boundaries.append((0.0, 0.0))
+
+        # Need at least 3 valid column boundaries to make geometric decisions.
+        valid_boundaries = [(x0, x1) for x0, x1 in col_boundaries if x1 > x0]
+        if len(valid_boundaries) < 3:
+            return
+
+        # Use a small tolerance to avoid floating-point near-misses.
+        # 15% of median column width is a safe margin.
+        widths = [x1 - x0 for x0, x1 in valid_boundaries if (x1 - x0) > 0]
+        if not widths:
+            return
+        sorted_widths = sorted(widths)
+        median_width = sorted_widths[len(sorted_widths) // 2]
+        tolerance = median_width * 0.15
+
+        for r in range(row_count):
+            if r in header_rows:
+                continue
+            for c in range(col_count):
+                value = grid[r][c]
+                if not value:
+                    continue
+                meta = cell_lookup.get((r, c))
+                if not meta:
+                    continue
+                existing_span = int(meta.get("column_span") or 1)
+                if existing_span > 1:
+                    # Azure DI already reported a span — trust it.
+                    continue
+                _page, bbox = self._bbox_from_regions(
+                    meta.get("regions"),
+                    page_unit_scale=page_unit_scale,
+                )
+                if not bbox or bbox.get("x1", 0.0) <= bbox.get("x0", 0.0):
+                    continue
+                cell_x0 = float(bbox["x0"])
+                cell_x1 = float(bbox["x1"])
+                # Find all header columns whose x-range overlaps with this cell.
+                overlapping: list[int] = []
+                for hc, (hx0, hx1) in enumerate(col_boundaries):
+                    if hx1 <= hx0:
+                        continue
+                    # Two ranges overlap if one starts before the other ends.
+                    if cell_x0 < (hx1 - tolerance) and cell_x1 > (hx0 + tolerance):
+                        overlapping.append(hc)
+                if len(overlapping) <= 1:
+                    continue
+                # The cell physically spans multiple header columns.
+                # Duplicate the value across all overlapped columns and
+                # update column_span in cell_lookup.
+                span = len(overlapping)
+                for oc in overlapping:
+                    grid[r][oc] = value
+                    existing_meta = cell_lookup.get((r, oc)) or {}
+                    cell_lookup[(r, oc)] = {
+                        **existing_meta,
+                        "column_span": span,
+                        "geometric_span_reconciled": True,
+                    }
+                    # Preserve the original cell's regions on newly filled cells
+                    # so downstream bbox extraction works correctly.
+                    if oc != c and "regions" not in existing_meta:
+                        cell_lookup[(r, oc)]["regions"] = meta.get("regions") or []
+
     def _annotate_row_applicability(
         self,
         *,
@@ -1853,9 +1956,16 @@ class AzureDocumentIntelligenceExtractor:
         Infer row-level applicability across peer columns for centered/merged values.
 
         Azure sometimes anchors a centered value to one interior segment column
-        even when visually it applies to a wider segment group. We keep
-        explicit spans when available and add a conservative table-profile inference
-        for repeated center-column collapse patterns.
+        even when visually it applies to a wider segment group.  We use multiple
+        signals — explicit column spans, table-level sparse-row patterns, and
+        per-row emptiness — to recover the intended multi-column scope.
+
+        Key improvement over v1: instead of requiring a single *dominant* column
+        to accumulate most single-value placements (which fails when Azure DI
+        scatters values across different columns row-by-row), we count the
+        *fraction of data rows that are sparse* (exactly one non-empty segment
+        cell).  A high sparse fraction indicates the table uses centered/merged
+        values regardless of which column each value landed in.
         """
 
         rows = list(table_rows or [])
@@ -1870,17 +1980,22 @@ class AzureDocumentIntelligenceExtractor:
         if len(segment_indices) < 3:
             return rows
 
+        segment_set = set(segment_indices)
         first_segment = min(segment_indices)
         last_segment = max(segment_indices)
+        num_segments = len(segment_indices)
 
         data_rows = [row for row in rows if row.row_index not in header_rows]
         if not data_rows:
             return rows
 
-        # Table-level profile: repeated single-value placement on one interior column
-        # usually indicates centered values that should apply to the whole segment set.
+        # ── Table-level profile ──────────────────────────────────────
+        # Count rows that are "sparse" (exactly 1 non-empty segment cell)
+        # vs rows with any segment values at all.  A high sparse fraction
+        # means the table likely uses centered/merged values — regardless
+        # of WHICH column Azure placed them in.
         rows_with_segment_values = 0
-        single_column_counts: dict[int, int] = {}
+        sparse_row_count = 0
         merged_span_evidence = False
         for row in data_rows:
             non_empty: list[tuple[int, str, TableCellPayload]] = []
@@ -1901,25 +2016,22 @@ class AzureDocumentIntelligenceExtractor:
             if non_empty:
                 rows_with_segment_values += 1
             if len(non_empty) == 1:
-                idx = non_empty[0][0]
-                if first_segment < idx < last_segment:
-                    single_column_counts[idx] = int(single_column_counts.get(idx, 0)) + 1
+                sparse_row_count += 1
 
-        dominant_idx: int | None = None
-        dominant_ratio = 0.0
-        if rows_with_segment_values and single_column_counts:
-            dominant_idx, dominant_count = max(single_column_counts.items(), key=lambda item: item[1])
-            dominant_ratio = float(dominant_count) / float(rows_with_segment_values)
-
-        center_collapse = bool(
-            dominant_idx is not None
-            and first_segment < int(dominant_idx) < last_segment
+        sparse_fraction = (
+            float(sparse_row_count) / float(rows_with_segment_values)
+            if rows_with_segment_values
+            else 0.0
+        )
+        sparse_row_expansion = bool(
+            sparse_row_count >= 2
             and (
-                dominant_ratio >= 0.5
-                or (dominant_ratio >= 0.35 and merged_span_evidence)
+                sparse_fraction >= 0.4
+                or (sparse_fraction >= 0.25 and merged_span_evidence)
             )
         )
 
+        # ── Per-row annotation ───────────────────────────────────────
         updated_rows: list[TableRowPayload] = []
         for row in rows:
             if row.row_index in header_rows:
@@ -1963,28 +2075,38 @@ class AzureDocumentIntelligenceExtractor:
                 except (TypeError, ValueError):
                     span_width = 1
                 if span_width > 1:
+                    # Explicit column span from Azure DI — highest confidence.
                     applies_to_indices = [
                         idx
                         for idx in range(only_idx, min(last_segment + 1, only_idx + span_width))
-                        if idx in segment_indices
+                        if idx in segment_set
                     ]
                     applicability_mode = "explicit_span"
                     applicability_confidence = 0.92
-                elif center_collapse and dominant_idx == only_idx:
+                elif sparse_row_expansion:
+                    # Table has a sparse pattern: expand this single-value
+                    # row to all segment columns regardless of which column
+                    # the value landed in.
                     applies_to_indices = list(segment_indices)
-                    applicability_mode = "inferred_center_collapse"
-                    applicability_confidence = 0.72 if merged_span_evidence else 0.66
+                    applicability_mode = "inferred_sparse_expansion"
+                    applicability_confidence = 0.78 if merged_span_evidence else 0.72
             elif (
-                center_collapse
-                and len(unique_values) == 1
-                and explicit_indices
-                and min(explicit_indices) > first_segment
-                and max(explicit_indices) < last_segment
+                len(unique_values) == 1
+                and len(non_empty) < num_segments
+                and (
+                    sparse_row_expansion
+                    or (
+                        explicit_indices
+                        and min(explicit_indices) > first_segment
+                        and max(explicit_indices) < last_segment
+                    )
+                )
             ):
-                # Interior contiguous identical-value spans often miss edge columns.
+                # Multiple cells with identical values that don't cover all
+                # segments — likely a partial span that should apply to all.
                 applies_to_indices = list(segment_indices)
                 applicability_mode = "inferred_span_extension"
-                applicability_confidence = 0.7
+                applicability_confidence = 0.74 if sparse_row_expansion else 0.70
 
             applies_to_labels = [
                 str(column_schema[idx] or f"column_{idx + 1}").strip() or f"column_{idx + 1}"
@@ -1994,19 +2116,44 @@ class AzureDocumentIntelligenceExtractor:
                 str(column_schema[idx] or f"column_{idx + 1}").strip() or f"column_{idx + 1}"
                 for idx in explicit_indices
             ]
+            scope_dimension_labels = [
+                str(column_schema[idx] or f"column_{idx + 1}").strip() or f"column_{idx + 1}"
+                for idx in segment_indices
+            ]
+            observed_value_columns: list[str] = []
+            qualifier_columns: list[str] = []
+            for cell in row.cells:
+                value = str(cell.raw_text or "").strip()
+                if not value:
+                    continue
+                idx = int(cell.column_index)
+                if idx < len(column_schema):
+                    label = str(column_schema[idx] or f"column_{idx + 1}").strip() or f"column_{idx + 1}"
+                else:
+                    label = f"column_{idx + 1}"
+                observed_value_columns.append(label)
+                if idx not in segment_set:
+                    qualifier_columns.append(label)
+            observed_value_columns = list(dict.fromkeys(observed_value_columns))
+            qualifier_columns = list(dict.fromkeys(qualifier_columns))
 
             row_meta = dict(row.metadata or {})
             row_meta.update(
                 {
-                    "applicability_source": "azure_span_reconciler_v1",
+                    "table_scope_contract_version": TABLE_SCOPE_CONTRACT_VERSION,
+                    "observed_value_columns": observed_value_columns,
+                    "qualifier_columns": qualifier_columns,
+                    "scope_dimension_columns": scope_dimension_labels,
+                    "inferred_scope_columns": applies_to_labels,
+                    "scope_confidence": round(float(applicability_confidence), 3),
+                    "scope_reason": applicability_mode,
+                    "applicability_source": "span_reconciler_v2",
+                    # Legacy compatibility aliases (Phase 1 dual-write).
                     "applies_to_columns": applies_to_labels,
                     "applicability_mode": applicability_mode,
                     "applicability_confidence": round(float(applicability_confidence), 3),
                     "applicability_detected_columns": detected_labels,
-                    "applicability_segment_columns": [
-                        str(column_schema[idx] or f"column_{idx + 1}").strip() or f"column_{idx + 1}"
-                        for idx in segment_indices
-                    ],
+                    "applicability_segment_columns": scope_dimension_labels,
                     "applicability_value": representative_value or "",
                 }
             )
@@ -2501,6 +2648,18 @@ class AzureDocumentIntelligenceExtractor:
                             header_parts.append(value)
                 header_text = " ".join(header_parts).strip()
                 column_schema.append(TableDetector._normalize_header_cell(header_text, col_idx))
+
+            # Geometric span reconciliation: compare data cell bounding
+            # boxes against header cell bounding boxes to detect true column
+            # spans that Azure DI failed to report via columnSpan.
+            self._reconcile_spans_from_geometry(
+                grid=grid,
+                cell_lookup=cell_lookup,
+                header_rows=header_rows,
+                row_count=row_count,
+                col_count=col_count,
+                page_unit_scale=page_unit_scale,
+            )
 
             table_rows: list[TableRowPayload] = []
             for row_idx in range(row_count):
@@ -4426,6 +4585,39 @@ class KnowledgeIngestionService:
                 tables,
             )
             issues.extend(repair_issues)
+            # VLM repair replaces entire TablePayload objects whose rows lack
+            # applicability metadata.  Re-run annotation so VLM-repaired tables
+            # get the same sparse-row / span enrichment as Azure DI tables.
+            if repair_meta.get("repaired"):
+                # _annotate_row_applicability lives on the extractor class;
+                # create a lightweight instance (no API calls are made).
+                _applicability_annotator = AzureDocumentIntelligenceExtractor(
+                    endpoint=None, key=None,
+                )
+                for idx, table in enumerate(tables):
+                    detected_via = str((table.metadata or {}).get("detected_via") or "")
+                    if "vlm" not in detected_via:
+                        continue
+                    header_rows: set[int] = set()
+                    for row in (table.rows or []):
+                        if (row.metadata or {}).get("row_type") == "header":
+                            header_rows.add(row.row_index)
+                    annotated_rows = _applicability_annotator._annotate_row_applicability(
+                        table_rows=table.rows or [],
+                        column_schema=table.column_schema or [],
+                        header_rows=header_rows,
+                    )
+                    tables[idx] = TablePayload(
+                        order_index=table.order_index,
+                        title=table.title,
+                        section_heading=table.section_heading,
+                        page_number=table.page_number,
+                        bbox=table.bbox,
+                        column_schema=table.column_schema,
+                        data_dictionary=table.data_dictionary,
+                        metadata=table.metadata,
+                        rows=annotated_rows,
+                    )
 
         postprocess_meta: dict[str, Any] = {}
         if tables:
@@ -5578,6 +5770,13 @@ class KnowledgeIngestionService:
     ) -> dict[str, Any] | None:
         encoded = base64.b64encode(image_bytes).decode("ascii")
         
+        _merged_cell_instruction = (
+            "IMPORTANT: If a cell value is visually centered across multiple columns "
+            "(i.e. it spans or merges several column positions), you MUST repeat that "
+            "same value in EVERY column it applies to.  Do NOT leave the other columns "
+            "empty — duplicate the value so each spanned column contains it."
+        )
+
         if render_mode == "full_page" and table_hint:
             prompt = (
                 "Extract the table from this page image.\n"
@@ -5586,14 +5785,16 @@ class KnowledgeIngestionService:
                 f"{table_hint}\n\n"
                 "Return strict JSON with keys: columns (array of column header strings) and rows "
                 "(array of arrays with cell values). Rows should contain only data rows (no header row). "
-                "Make sure to capture ALL columns and ALL values correctly."
+                "Make sure to capture ALL columns and ALL values correctly.\n\n"
+                f"{_merged_cell_instruction}"
             )
             max_tokens = 4000  # Full page may have more data
         else:
             prompt = (
                 "Extract the table from this image. "
                 "Return strict JSON with keys: columns (array of strings) and rows "
-                "(array of arrays). Rows should contain only data rows (no header row)."
+                "(array of arrays). Rows should contain only data rows (no header row).\n\n"
+                f"{_merged_cell_instruction}"
             )
             max_tokens = 1200
         
@@ -5697,10 +5898,34 @@ class KnowledgeIngestionService:
         for row_idx, row in enumerate(rows, start=1):
             if not isinstance(row, list):
                 continue
+            # Detect runs of identical non-empty adjacent values — these
+            # indicate the VLM correctly duplicated a spanning/merged value.
+            # We tag each cell in such a run with the true column_span so
+            # downstream applicability annotation can treat them as explicit
+            # spans rather than independent values.
+            str_values = [str(v) if v is not None else "" for v in row]
+            span_for_col: dict[int, int] = {}
+            col_cursor = 0
+            while col_cursor < len(str_values):
+                val = str_values[col_cursor].strip()
+                if val:
+                    run_end = col_cursor + 1
+                    while run_end < len(str_values) and str_values[run_end].strip() == val:
+                        run_end += 1
+                    run_length = run_end - col_cursor
+                    if run_length > 1:
+                        for ci in range(col_cursor, run_end):
+                            span_for_col[ci] = run_length
+                    col_cursor = run_end
+                else:
+                    col_cursor += 1
             cells: list[TableCellPayload] = []
             for col_idx, value in enumerate(row):
                 raw_text = str(value) if value is not None else ""
                 column_key = column_schema[col_idx] if col_idx < len(column_schema) else f"column_{col_idx+1}"
+                cell_meta: dict[str, Any] = {}
+                if col_idx in span_for_col:
+                    cell_meta["column_span"] = span_for_col[col_idx]
                 cells.append(
                     TableCellPayload(
                         row_index=row_idx,
@@ -5710,6 +5935,7 @@ class KnowledgeIngestionService:
                         normalized_value=TableDetector._normalize_cell_value(raw_text),
                         bbox=bbox,
                         confidence=None,
+                        metadata=cell_meta,
                     )
                 )
             table_rows.append(
@@ -12233,6 +12459,97 @@ class KnowledgeIngestionService:
         text = re.sub(r"\s+", " ", text).strip()
         return self._normalize_ocr_text(text)
 
+    def _clean_scope_labels(self, values: Any) -> list[str]:
+        if not isinstance(values, (list, tuple)):
+            return []
+        cleaned: list[str] = []
+        for entry in values:
+            label = self._table_cell_text(entry)
+            if label:
+                cleaned.append(label)
+        return list(dict.fromkeys(cleaned))
+
+    @staticmethod
+    def _coerce_scope_confidence(value: Any) -> float | None:
+        if isinstance(value, (int, float)):
+            return round(float(value), 3)
+        if isinstance(value, str):
+            try:
+                return round(float(value), 3)
+            except (TypeError, ValueError):
+                return None
+        return None
+
+    def _resolve_row_scope_contract(
+        self,
+        *,
+        row_model_meta: Mapping[str, Any],
+        value_by_label: Mapping[str, str],
+        contextual_labels: set[str],
+        inferred_segment_labels: Sequence[str],
+    ) -> dict[str, Any]:
+        observed_value_columns = self._clean_scope_labels(row_model_meta.get("observed_value_columns"))
+        if not observed_value_columns:
+            observed_value_columns = list(dict.fromkeys(value_by_label.keys()))
+
+        qualifier_columns = self._clean_scope_labels(row_model_meta.get("qualifier_columns"))
+        if not qualifier_columns:
+            qualifier_columns = [label for label in observed_value_columns if label in contextual_labels]
+        qualifier_columns = list(dict.fromkeys(qualifier_columns))
+
+        scope_dimension_columns = self._clean_scope_labels(row_model_meta.get("scope_dimension_columns"))
+        if not scope_dimension_columns:
+            scope_dimension_columns = list(dict.fromkeys(inferred_segment_labels))
+        if not scope_dimension_columns:
+            scope_dimension_columns = [label for label in observed_value_columns if label not in qualifier_columns]
+        scope_dimension_columns = list(dict.fromkeys(scope_dimension_columns))
+
+        inferred_scope_columns = self._clean_scope_labels(row_model_meta.get("inferred_scope_columns"))
+        if not inferred_scope_columns:
+            inferred_scope_columns = self._clean_scope_labels(row_model_meta.get("applies_to_columns"))
+        if not inferred_scope_columns:
+            if scope_dimension_columns:
+                scope_dimension_set = set(scope_dimension_columns)
+                inferred_scope_columns = [
+                    label for label in observed_value_columns if label in scope_dimension_set
+                ]
+            if not inferred_scope_columns and scope_dimension_columns:
+                inferred_scope_columns = list(scope_dimension_columns)
+            if not inferred_scope_columns:
+                inferred_scope_columns = [label for label in observed_value_columns if label not in qualifier_columns]
+            if not inferred_scope_columns:
+                inferred_scope_columns = list(observed_value_columns)
+        if scope_dimension_columns:
+            scope_dimension_set = set(scope_dimension_columns)
+            filtered_scope = [label for label in inferred_scope_columns if label in scope_dimension_set]
+            if filtered_scope:
+                inferred_scope_columns = filtered_scope
+        inferred_scope_columns = list(dict.fromkeys(inferred_scope_columns))
+
+        scope_confidence = self._coerce_scope_confidence(row_model_meta.get("scope_confidence"))
+        if scope_confidence is None:
+            scope_confidence = self._coerce_scope_confidence(row_model_meta.get("applicability_confidence"))
+
+        scope_reason = self._table_cell_text(row_model_meta.get("scope_reason"))
+        if not scope_reason:
+            scope_reason = self._table_cell_text(row_model_meta.get("applicability_mode"))
+        if not scope_reason:
+            scope_reason = "explicit_cells"
+
+        return {
+            "contract_version": str(row_model_meta.get("table_scope_contract_version") or TABLE_SCOPE_CONTRACT_VERSION),
+            "observed_value_columns": observed_value_columns,
+            "qualifier_columns": qualifier_columns,
+            "scope_dimension_columns": scope_dimension_columns,
+            "inferred_scope_columns": inferred_scope_columns,
+            "scope_confidence": scope_confidence,
+            "scope_reason": scope_reason,
+            # Legacy compatibility aliases during migration.
+            "applies_to_columns": inferred_scope_columns,
+            "applicability_mode": scope_reason,
+            "applicability_confidence": scope_confidence,
+        }
+
     def _table_header_labels_for_model(
         self,
         table: KnowledgeUploadTable,
@@ -12386,32 +12703,18 @@ class KnowledgeIngestionService:
             if not pairs:
                 continue
             row_model_meta = row.metadata if isinstance(row.metadata, Mapping) else {}
-            applies_to_columns: list[str] = []
-            raw_applies_to = row_model_meta.get("applies_to_columns")
-            if isinstance(raw_applies_to, (list, tuple)):
-                for entry in raw_applies_to:
-                    label = self._table_cell_text(str(entry or ""))
-                    if label:
-                        applies_to_columns.append(label)
-            if not applies_to_columns:
-                derived = [
-                    label
-                    for label in value_by_label.keys()
-                    if label not in contextual_labels
-                ]
-                applies_to_columns = derived or inferred_segment_labels or list(value_by_label.keys())
-            applies_to_columns = list(dict.fromkeys(applies_to_columns))
-
-            applicability_mode = self._table_cell_text(str(row_model_meta.get("applicability_mode") or ""))
-            raw_confidence = row_model_meta.get("applicability_confidence")
-            applicability_confidence: float | None = None
-            if isinstance(raw_confidence, (int, float)):
-                applicability_confidence = round(float(raw_confidence), 3)
-            elif isinstance(raw_confidence, str):
-                try:
-                    applicability_confidence = round(float(raw_confidence), 3)
-                except (TypeError, ValueError):
-                    applicability_confidence = None
+            scope_contract = self._resolve_row_scope_contract(
+                row_model_meta=row_model_meta,
+                value_by_label=value_by_label,
+                contextual_labels=contextual_labels,
+                inferred_segment_labels=inferred_segment_labels,
+            )
+            applies_to_columns = list(scope_contract.get("inferred_scope_columns") or [])
+            observed_value_columns = list(scope_contract.get("observed_value_columns") or [])
+            qualifier_columns = list(scope_contract.get("qualifier_columns") or [])
+            scope_dimension_columns = list(scope_contract.get("scope_dimension_columns") or [])
+            scope_reason = self._table_cell_text(scope_contract.get("scope_reason"))
+            scope_confidence = self._coerce_scope_confidence(scope_contract.get("scope_confidence"))
 
             fee_value = self._table_cell_text(str(row_model_meta.get("applicability_value") or ""))
             if not fee_value:
@@ -12446,9 +12749,17 @@ class KnowledgeIngestionService:
                     "table_row_index": row.row_index,
                     "row_label": row_label,  # Enable row-label search matching
                     "search_tier": "drill_down",
+                    "table_row_contract_version": scope_contract.get("contract_version") or TABLE_SCOPE_CONTRACT_VERSION,
+                    "table_row_observed_value_columns": observed_value_columns,
+                    "table_row_qualifier_columns": qualifier_columns,
+                    "table_row_scope_dimension_columns": scope_dimension_columns,
+                    "table_row_inferred_scope_columns": applies_to_columns,
+                    "table_row_scope_reason": scope_reason or "explicit_cells",
+                    "table_row_scope_confidence": scope_confidence,
+                    # Temporary v1 compatibility mapping.
                     "table_row_applies_to_columns": applies_to_columns,
-                    "table_row_applicability_mode": applicability_mode or "explicit_cells",
-                    "table_row_applicability_confidence": applicability_confidence,
+                    "table_row_applicability_mode": scope_reason or "explicit_cells",
+                    "table_row_applicability_confidence": scope_confidence,
                     "table_row_fee_value": fee_value,
                     "table_row_evidence_cell_ids": evidence_cell_ids,
                 }

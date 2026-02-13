@@ -8143,14 +8143,20 @@ def _agentic_read_v2_handler(
             rows_out.append(values)
             row_meta = row.metadata if isinstance(getattr(row, "metadata", None), Mapping) else {}
             applies_to_columns: list[str] = []
-            raw_applies_to = row_meta.get("applies_to_columns")
+            raw_applies_to = row_meta.get("inferred_scope_columns")
+            if not isinstance(raw_applies_to, (list, tuple)):
+                raw_applies_to = row_meta.get("applies_to_columns")
             if isinstance(raw_applies_to, (list, tuple)):
                 for entry in raw_applies_to:
                     label = str(entry or "").strip()
                     if label:
                         applies_to_columns.append(label)
-            applicability_mode = str(row_meta.get("applicability_mode") or "").strip()
-            applicability_confidence_raw = row_meta.get("applicability_confidence")
+            applicability_mode = str(row_meta.get("scope_reason") or row_meta.get("applicability_mode") or "").strip()
+            applicability_confidence_raw = (
+                row_meta.get("scope_confidence")
+                if row_meta.get("scope_confidence") is not None
+                else row_meta.get("applicability_confidence")
+            )
             applicability_confidence: float | None = None
             if isinstance(applicability_confidence_raw, (int, float)):
                 applicability_confidence = float(applicability_confidence_raw)
@@ -8164,6 +8170,24 @@ def _agentic_read_v2_handler(
                 row_entry: dict[str, object] = {
                     "row_index": row_index_int if row_index_int is not None else row_index,
                 }
+                contract_version = str(row_meta.get("table_scope_contract_version") or "").strip()
+                if contract_version:
+                    row_entry["contract_version"] = contract_version
+                observed_value_columns = row_meta.get("observed_value_columns")
+                qualifier_columns = row_meta.get("qualifier_columns")
+                scope_dimension_columns = row_meta.get("scope_dimension_columns")
+                if isinstance(observed_value_columns, (list, tuple)):
+                    row_entry["observed_value_columns"] = [
+                        str(entry).strip() for entry in observed_value_columns if str(entry or "").strip()
+                    ]
+                if isinstance(qualifier_columns, (list, tuple)):
+                    row_entry["qualifier_columns"] = [
+                        str(entry).strip() for entry in qualifier_columns if str(entry or "").strip()
+                    ]
+                if isinstance(scope_dimension_columns, (list, tuple)):
+                    row_entry["scope_dimension_columns"] = [
+                        str(entry).strip() for entry in scope_dimension_columns if str(entry or "").strip()
+                    ]
                 if applies_to_columns:
                     row_entry["applies_to_columns"] = applies_to_columns
                 if applicability_mode:
@@ -10659,14 +10683,20 @@ def _serialize_table_row_for_cache(row: KnowledgeUploadTableRow) -> dict[str, ob
             }
         )
     applies_to_columns: list[str] = []
-    raw_applies_to = row_metadata.get("applies_to_columns")
+    raw_applies_to = row_metadata.get("inferred_scope_columns")
+    if not isinstance(raw_applies_to, (list, tuple)):
+        raw_applies_to = row_metadata.get("applies_to_columns")
     if isinstance(raw_applies_to, (list, tuple)):
         for entry in raw_applies_to:
             label = str(entry or "").strip()
             if label:
                 applies_to_columns.append(label)
-    applicability_mode = str(row_metadata.get("applicability_mode") or "").strip()
-    applicability_confidence_raw = row_metadata.get("applicability_confidence")
+    applicability_mode = str(row_metadata.get("scope_reason") or row_metadata.get("applicability_mode") or "").strip()
+    applicability_confidence_raw = (
+        row_metadata.get("scope_confidence")
+        if row_metadata.get("scope_confidence") is not None
+        else row_metadata.get("applicability_confidence")
+    )
     applicability_confidence: float | None = None
     if isinstance(applicability_confidence_raw, (int, float)):
         applicability_confidence = float(applicability_confidence_raw)
@@ -10677,6 +10707,22 @@ def _serialize_table_row_for_cache(row: KnowledgeUploadTableRow) -> dict[str, ob
             applicability_confidence = None
     fee_value = str(row_metadata.get("applicability_value") or "").strip()
 
+    observed_value_columns = (
+        row_metadata.get("observed_value_columns")
+        if isinstance(row_metadata.get("observed_value_columns"), (list, tuple))
+        else []
+    )
+    qualifier_columns = (
+        row_metadata.get("qualifier_columns")
+        if isinstance(row_metadata.get("qualifier_columns"), (list, tuple))
+        else []
+    )
+    scope_dimension_columns = (
+        row_metadata.get("scope_dimension_columns")
+        if isinstance(row_metadata.get("scope_dimension_columns"), (list, tuple))
+        else []
+    )
+
     return {
         "row_index": row.row_index,
         "table_order_index": table.order_index if table else None,
@@ -10685,6 +10731,22 @@ def _serialize_table_row_for_cache(row: KnowledgeUploadTableRow) -> dict[str, ob
         "sheet_name": sheet_name,
         "row_text": row.raw_text or "",
         "cells": cell_payloads,
+        "contract_version": str(row_metadata.get("table_scope_contract_version") or "").strip() or None,
+        "observed_value_columns": [
+            str(entry).strip()
+            for entry in observed_value_columns
+            if str(entry or "").strip()
+        ],
+        "qualifier_columns": [
+            str(entry).strip()
+            for entry in qualifier_columns
+            if str(entry or "").strip()
+        ],
+        "scope_dimension_columns": [
+            str(entry).strip()
+            for entry in scope_dimension_columns
+            if str(entry or "").strip()
+        ],
         "applies_to_columns": applies_to_columns,
         "applicability_mode": applicability_mode,
         "applicability_confidence": applicability_confidence,

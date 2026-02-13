@@ -216,6 +216,19 @@ def capture_upload_snapshot(
             role = str(metadata.get("table_chunk_role") or "")
             row_index = _safe_int(metadata.get("table_row_index"))
             is_row_chunk = source == "table_row" or role == "row" or row_index is not None
+            inferred_scope = _clean_list(metadata.get("table_row_inferred_scope_columns"))
+            if not inferred_scope:
+                inferred_scope = _clean_list(metadata.get("table_row_applies_to_columns"))
+            scope_reason = str(
+                metadata.get("table_row_scope_reason")
+                or metadata.get("table_row_applicability_mode")
+                or ""
+            ).strip()
+            scope_confidence = _safe_float(
+                metadata.get("table_row_scope_confidence")
+                if metadata.get("table_row_scope_confidence") is not None
+                else metadata.get("table_row_applicability_confidence")
+            )
             record = {
                 "chunk_index": int(chunk.chunk_index),
                 "table_id": str(metadata.get("table_id") or ""),
@@ -223,10 +236,13 @@ def capture_upload_snapshot(
                 "content_source": source or None,
                 "table_chunk_role": role or None,
                 "table_row_index": row_index,
-                "applies_to_columns": _clean_list(metadata.get("table_row_applies_to_columns")),
-                "applicability_mode": str(metadata.get("table_row_applicability_mode") or "").strip() or None,
+                "applies_to_columns": inferred_scope,
+                "observed_value_columns": _clean_list(metadata.get("table_row_observed_value_columns")),
+                "qualifier_columns": _clean_list(metadata.get("table_row_qualifier_columns")),
+                "scope_dimension_columns": _clean_list(metadata.get("table_row_scope_dimension_columns")),
+                "applicability_mode": scope_reason or None,
                 "table_row_fee_value": str(metadata.get("table_row_fee_value") or "").strip() or None,
-                "table_row_applicability_confidence": _safe_float(metadata.get("table_row_applicability_confidence")),
+                "table_row_applicability_confidence": scope_confidence,
                 "text": str(chunk.content or ""),
             }
             chunk_cache.append(record)
@@ -290,9 +306,23 @@ def capture_upload_snapshot(
                     {
                         "row_index": int(row.row_index),
                         "row_type": row_type,
-                        "applies_to_columns": _clean_list(row_meta.get("applies_to_columns")) or None,
-                        "applicability_mode": str(row_meta.get("applicability_mode") or "").strip() or None,
-                        "applicability_confidence": _safe_float(row_meta.get("applicability_confidence")),
+                        "contract_version": str(row_meta.get("table_scope_contract_version") or "").strip() or None,
+                        "observed_value_columns": _clean_list(row_meta.get("observed_value_columns")) or None,
+                        "qualifier_columns": _clean_list(row_meta.get("qualifier_columns")) or None,
+                        "scope_dimension_columns": _clean_list(row_meta.get("scope_dimension_columns")) or None,
+                        "applies_to_columns": (
+                            _clean_list(row_meta.get("inferred_scope_columns"))
+                            or _clean_list(row_meta.get("applies_to_columns"))
+                            or None
+                        ),
+                        "applicability_mode": (
+                            str(row_meta.get("scope_reason") or row_meta.get("applicability_mode") or "").strip() or None
+                        ),
+                        "applicability_confidence": _safe_float(
+                            row_meta.get("scope_confidence")
+                            if row_meta.get("scope_confidence") is not None
+                            else row_meta.get("applicability_confidence")
+                        ),
                         "non_empty_cells": non_empty_cells,
                     }
                 )
