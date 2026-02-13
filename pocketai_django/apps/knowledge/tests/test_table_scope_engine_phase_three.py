@@ -140,6 +140,42 @@ class TableScopeEnginePhaseThreeTests(SimpleTestCase):
                 ["prime", "plus", "wealth", "exclusive_wealth", "private"],
             )
 
+    def test_note_row_full_width_span_does_not_expand_scope_dimensions(self) -> None:
+        extractor = AzureDocumentIntelligenceExtractor(endpoint="https://example.test", key="secret")
+        schema = ["service", "tariff", "prime", "plus", "wealth", "exclusive_wealth", "private"]
+        base_rows = [
+            self._make_row(0, schema),
+            self._make_row(1, ["Service A", "EGP", "", "", "Free", "", ""]),
+            self._make_row(2, ["Service B", "USD", "", "USD 2", "", "", ""]),
+        ]
+        baseline_annotated = extractor._annotate_row_applicability(
+            table_rows=base_rows,
+            column_schema=schema,
+            header_rows={0},
+        )
+        baseline_scope_dimensions = list(
+            baseline_annotated[1].metadata.get("scope_dimension_columns") or []
+        )
+
+        rows_with_note = [
+            *base_rows,
+            self._make_row(
+                3,
+                ["*Note applies by account type", "", "", "", "", "", ""],
+                spans={0: 7},
+            ),
+        ]
+
+        annotated = extractor._annotate_row_applicability(
+            table_rows=rows_with_note,
+            column_schema=schema,
+            header_rows={0},
+        )
+
+        row_meta = annotated[1].metadata
+        self.assertEqual(row_meta.get("scope_dimension_columns"), baseline_scope_dimensions)
+        self.assertNotIn("service", row_meta.get("scope_dimension_columns") or [])
+
     def test_scope_contract_filters_non_scope_columns_when_scope_dimensions_exist(self) -> None:
         service = KnowledgeIngestionService(enable_ocr=False)
         scope_contract = service._resolve_row_scope_contract(

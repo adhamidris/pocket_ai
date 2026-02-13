@@ -119,6 +119,38 @@ class TableVlmRepairTests(SimpleTestCase):
             rows=rows,
         )
 
+    def _low_conf_geometry_table_four_rows(self) -> TablePayload:
+        table = self._low_conf_geometry_table_three_rows()
+        rows = list(table.rows or [])
+        rows.append(
+            TableRowPayload(
+                row_index=4,
+                page_number=1,
+                bbox={},
+                raw_text="Service fee",
+                metadata={"row_type": "data"},
+                cells=[
+                    TableCellPayload(
+                        row_index=4,
+                        column_index=0,
+                        column_key="column_1",
+                        raw_text="Service fee",
+                    )
+                ],
+            )
+        )
+        return TablePayload(
+            order_index=table.order_index,
+            title=table.title,
+            section_heading=table.section_heading,
+            page_number=table.page_number,
+            bbox=table.bbox,
+            column_schema=list(table.column_schema or []),
+            data_dictionary=dict(table.data_dictionary or {}),
+            metadata=dict(table.metadata or {}),
+            rows=rows,
+        )
+
     @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
     def test_vlm_repair_applies_to_non_azure_tables_when_structure_confidence_low(self, _build_embeddings) -> None:
         service = self._service()
@@ -251,6 +283,38 @@ class TableVlmRepairTests(SimpleTestCase):
         self.assertEqual(repaired[0].metadata.get("detected_via"), "geometry")
         rejection = next(issue for issue in issues if issue.code == "table_vlm_rejected_regression")
         self.assertIn("row_order_regression", rejection.details.get("rejection_reasons") or [])
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_vlm_repair_accepts_row_merge_normalization_with_higher_cell_coverage(self, _build_embeddings) -> None:
+        service = self._service()
+        table = self._low_conf_geometry_table_four_rows()
+        vlm_payload = {
+            "columns": ["Fee", "Amount"],
+            # Candidate merges two adjacent baseline rows into one normalized row.
+            "rows": [
+                ["Annual fee", "100"],
+                ["Late fee + Processing fee", "90"],
+                ["Service fee", "30"],
+            ],
+        }
+
+        with (
+            mock.patch.dict(os.environ, {"OPENAI_API_KEY": "test"}, clear=False),
+            mock.patch("openai.OpenAI"),
+            mock.patch.object(KnowledgeIngestionService, "_render_table_crop", return_value=b"png"),
+            mock.patch.object(KnowledgeIngestionService, "_run_vlm_table_repair", return_value=vlm_payload),
+        ):
+            repaired, issues, meta = service._repair_tables_with_vlm(Path("dummy.pdf"), [table])
+
+        self.assertEqual(meta.get("attempted"), 1)
+        self.assertEqual(meta.get("repaired"), 1)
+        self.assertEqual(meta.get("rejected"), 0)
+        self.assertEqual(len(issues), 0)
+        self.assertEqual(repaired[0].metadata.get("detected_via"), "geometry+vlm")
+        diagnostics = (meta.get("guardrail_diagnostics") or [{}])[0]
+        self.assertEqual(diagnostics.get("rejection_reasons"), [])
+        self.assertIn("row_count_normalization", diagnostics.get("soft_signals") or [])
+        self.assertTrue((diagnostics.get("metrics") or {}).get("row_merge_normalization"))
 
     @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
     def test_vlm_repair_tracks_attempted_modes_when_crop_and_full_page_fail(self, _build_embeddings) -> None:

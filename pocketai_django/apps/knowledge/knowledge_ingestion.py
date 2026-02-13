@@ -2040,11 +2040,47 @@ class AzureDocumentIntelligenceExtractor:
         if not rows or not column_schema:
             return rows
 
+        column_count = len(column_schema)
+
+        def _is_contextual_broad_span_row(row: TableRowPayload) -> bool:
+            if row.row_index in header_rows:
+                return False
+            non_empty_cells: list[TableCellPayload] = []
+            normalized_values: set[str] = set()
+            has_broad_context_span = False
+            for cell in row.cells:
+                value = str(cell.raw_text or "").strip()
+                if not value:
+                    continue
+                non_empty_cells.append(cell)
+                normalized_values.add(self._normalized_cell_text(value))
+                try:
+                    col_idx = int(cell.column_index)
+                    span_width = int((cell.metadata or {}).get("column_span") or 1)
+                except (TypeError, ValueError):
+                    continue
+                if (
+                    span_width >= max(4, column_count - 1)
+                    and col_idx <= 1
+                ):
+                    has_broad_context_span = True
+            if not has_broad_context_span:
+                return False
+            # A near full-width span carrying one repeated phrase is usually a
+            # note/footer row and should not shape scope-axis inference.
+            return len(normalized_values) <= 1 or len(non_empty_cells) <= 2
+
+        rows_for_structure = [row for row in rows if not _is_contextual_broad_span_row(row)]
+        if not rows_for_structure:
+            rows_for_structure = rows
+
         segment_indices = self._infer_segment_indices_from_structure(
-            table_rows=rows,
+            table_rows=rows_for_structure,
             column_schema=column_schema,
             header_rows=header_rows,
         )
+        base_segment_indices = sorted(set(segment_indices))
+        base_segment_set = set(base_segment_indices)
         span_evidence_indices: set[int] = set()
         for row in rows:
             if row.row_index in header_rows:
@@ -2057,8 +2093,29 @@ class AzureDocumentIntelligenceExtractor:
                     continue
                 if span_width <= 1:
                     continue
-                for idx in range(col_idx, min(len(column_schema), col_idx + span_width)):
-                    span_evidence_indices.add(idx)
+                span_targets = set(range(col_idx, min(len(column_schema), col_idx + span_width)))
+                if len(span_targets) <= 1:
+                    continue
+
+                if len(base_segment_set) >= 3:
+                    # Keep span evidence constrained to the structurally inferred
+                    # scope axis so wide note/footer rows do not pollute scope
+                    # dimensions with descriptor or qualifier columns.
+                    overlap = sorted(span_targets & base_segment_set)
+                    if len(overlap) <= 1:
+                        continue
+                    span_evidence_indices.update(overlap)
+                    continue
+
+                # Bootstrap mode for weak structural inference: reject near
+                # full-width spans beginning in contextual columns because these
+                # are usually note rows, not scope axes.
+                if (
+                    len(span_targets) >= max(4, len(column_schema) - 1)
+                    and min(span_targets) <= 1
+                ):
+                    continue
+                span_evidence_indices.update(span_targets)
         if span_evidence_indices:
             segment_indices = sorted(set(segment_indices) | span_evidence_indices)
         if len(segment_indices) < 3:
@@ -3361,6 +3418,9 @@ class KnowledgeIngestionService:
         self.table_vlm_guardrails_enabled = bool(getattr(settings, "RAG_TABLE_VLM_GUARDRAILS_ENABLED", True))
         self.table_vlm_guardrail_min_row_recall = float(
             getattr(settings, "RAG_TABLE_VLM_GUARDRAIL_MIN_ROW_RECALL", 0.99)
+        )
+        self.table_vlm_guardrail_hard_row_recall_floor = float(
+            getattr(settings, "RAG_TABLE_VLM_GUARDRAIL_HARD_ROW_RECALL_FLOOR", 0.75)
         )
         self.table_vlm_guardrail_min_order_ratio = float(
             getattr(settings, "RAG_TABLE_VLM_GUARDRAIL_MIN_ORDER_RATIO", 0.7)
@@ -5698,28 +5758,58 @@ class KnowledgeIngestionService:
         candidate_axis_violations = int(candidate_snapshot.get("scope_axis_violations") or 0)
 
         reasons: list[str] = []
+        soft_signals: list[str] = []
         if self.table_vlm_guardrails_enabled:
+            hard_row_floor = max(
+                0.0,
+                min(1.0, float(self.table_vlm_guardrail_hard_row_recall_floor)),
+            )
+            row_merge_normalization = bool(
+                row_recall < self.table_vlm_guardrail_min_row_recall
+                and cell_recall >= max(self.table_vlm_guardrail_min_cell_recall, 1.08)
+                and schema_recall >= self.table_vlm_guardrail_min_schema_recall
+            )
             if row_recall < self.table_vlm_guardrail_min_row_recall:
-                reasons.append("row_coverage_regression")
+                if row_recall < hard_row_floor:
+                    reasons.append("row_coverage_regression")
+                elif row_merge_normalization:
+                    soft_signals.append("row_count_normalization")
+                else:
+                    reasons.append("row_coverage_regression")
             if baseline_rows >= 3 and baseline_labels and candidate_labels:
                 if row_order_ratio < self.table_vlm_guardrail_min_order_ratio:
-                    reasons.append("row_order_regression")
+                    if row_recall >= self.table_vlm_guardrail_min_row_recall:
+                        reasons.append("row_order_regression")
+                    elif row_merge_normalization:
+                        soft_signals.append("row_order_shift_with_row_merge")
+                    else:
+                        reasons.append("row_order_regression")
             if schema_recall < self.table_vlm_guardrail_min_schema_recall:
                 reasons.append("schema_coverage_regression")
             if cell_recall < self.table_vlm_guardrail_min_cell_recall:
                 reasons.append("value_coverage_regression")
             if baseline_scope_rows > 0 and scope_row_recall < 1.0:
-                reasons.append("scope_row_regression")
+                if row_merge_normalization:
+                    soft_signals.append("scope_row_delta_with_row_merge")
+                else:
+                    reasons.append("scope_row_regression")
             if baseline_scope_non_abstain > 0 and scope_non_abstain_recall < 1.0:
-                reasons.append("scope_quality_regression")
+                if row_merge_normalization:
+                    soft_signals.append("scope_quality_delta_with_row_merge")
+                else:
+                    reasons.append("scope_quality_regression")
             if candidate_axis_violations > baseline_axis_violations:
                 reasons.append("scope_axis_violation_increase")
+        else:
+            row_merge_normalization = False
 
         diagnostics = {
             "accepted": not reasons,
             "rejection_reasons": reasons,
+            "soft_signals": soft_signals,
             "thresholds": {
                 "row_recall": self.table_vlm_guardrail_min_row_recall,
+                "hard_row_recall_floor": self.table_vlm_guardrail_hard_row_recall_floor,
                 "row_order_ratio": self.table_vlm_guardrail_min_order_ratio,
                 "schema_recall": self.table_vlm_guardrail_min_schema_recall,
                 "cell_recall": self.table_vlm_guardrail_min_cell_recall,
@@ -5731,6 +5821,7 @@ class KnowledgeIngestionService:
                 "cell_recall": round(cell_recall, 4),
                 "scope_row_recall": round(scope_row_recall, 4),
                 "scope_non_abstain_recall": round(scope_non_abstain_recall, 4),
+                "row_merge_normalization": row_merge_normalization,
                 "baseline_scope_axis_violations": baseline_axis_violations,
                 "candidate_scope_axis_violations": candidate_axis_violations,
             },
@@ -5845,7 +5936,7 @@ class KnowledgeIngestionService:
             "rejected": 0,
             "model": self.table_vlm_model,
             "guardrails_enabled": self.table_vlm_guardrails_enabled,
-            "guardrail_version": "v1",
+            "guardrail_version": "v2",
         }
         remaining_budget = max(0, self.table_vlm_max_repairs)
 
