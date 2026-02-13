@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from unittest.mock import patch
+
 from django.test import TestCase
 
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession, User
@@ -55,6 +58,45 @@ class _TailMismatchProvider:
                 "Summary:\n"
                 "- Applicable to: All customer segments (Prime, Plus, Wealth, Exclusive Wealth, "
             )
+        return {"message": {"role": "assistant", "content": final}}
+
+
+class _ToolLoopFinalStreamProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def chat(
+        self,
+        messages,
+        *,
+        tools=None,
+        on_stream_delta=None,
+        on_reasoning_delta=None,
+        on_tool_call_start=None,
+        on_tool_call_delta=None,
+        response_format=None,
+        should_cancel=None,
+    ):
+        del messages, tools, on_reasoning_delta, on_tool_call_delta, response_format, should_cancel
+        self.calls += 1
+        if self.calls == 1:
+            tool_call = {
+                "id": "call_search_1",
+                "type": "function",
+                "function": {
+                    "name": "search_knowledge",
+                    "arguments": json.dumps(
+                        {"queries": ["traveler cheques fee", "traveler cheques private fee"]},
+                        ensure_ascii=False,
+                    ),
+                },
+            }
+            if on_tool_call_start:
+                on_tool_call_start(tool_call)
+            return {"message": {"role": "assistant", "content": "", "tool_calls": [tool_call]}}
+        final = "Final answer: 1% with minimum USD 2, applies to Prime/Plus/Wealth/Exclusive Wealth/Private."
+        if on_stream_delta:
+            on_stream_delta(final)
         return {"message": {"role": "assistant", "content": final}}
 
 
@@ -142,5 +184,30 @@ class McpObservabilityTests(TestCase):
             "Summary:\n- Applicable to: All customer segments (Prime, Plus, Wealth, Exclusive Wealth, Private)",
         )
         self.assertTrue(streamed)
+        self.assertEqual("".join(streamed), context.response_text)
+        self.assertEqual("".join(context.streamed_chunks), context.response_text)
+
+    @patch("apps.mcp.orchestrator.mcp_tools.execute_tool")
+    def test_tool_loop_stream_does_not_replay_full_answer(self, execute_tool_mock) -> None:
+        execute_tool_mock.return_value = {
+            "tool": "search_knowledge",
+            "status": "ok",
+            "snippets": [],
+        }
+        provider = _ToolLoopFinalStreamProvider()
+        orchestrator = McpOrchestratorService(agent=self.agent, provider=provider)
+        streamed: list[str] = []
+
+        context = orchestrator.stream_turn(
+            conversation=self.conversation,
+            user_message="What is the traveler cheques fee?",
+            on_response_text_delta=streamed.append,
+        )
+
+        self.assertEqual(provider.calls, 2)
+        self.assertEqual(
+            context.response_text,
+            "Final answer: 1% with minimum USD 2, applies to Prime/Plus/Wealth/Exclusive Wealth/Private.",
+        )
         self.assertEqual("".join(streamed), context.response_text)
         self.assertEqual("".join(context.streamed_chunks), context.response_text)

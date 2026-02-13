@@ -1226,6 +1226,11 @@ class McpOrchestratorService:
         # (including additional model turns with tools) before the final-answer pass.
         if first_stream_tool_calls:
             assistant_message = pending_assistant or {}
+            if streaming_allowed:
+                # All subsequent streamed content belongs to the tool-loop answer path.
+                # Keep it in the final-answer buffer so tail reconciliation can compare
+                # against what was already emitted to the visitor.
+                streaming_mode = "final"
             # Seed transcript with the assistant message containing tool_calls.
             seed_turn: dict[str, object] = {
                 "role": "assistant",
@@ -2637,11 +2642,8 @@ class McpOrchestratorService:
                 first_stream_tool_calls = next_tool_calls
             else:
                 raise RuntimeError("MCP tool loop exceeded iteration limit.")
-            # Reset streaming buffers for the final-answer pass.
-            answer_streamed_chunks.clear()
-            stream_buffer = ""
-            stream_dropped = []
-            streaming_mode = "final"
+            # Preserve streamed answer buffers from tool-loop turns. Clearing here
+            # causes full-answer replay during tail reconciliation.
             final_separator_pending = bool(first_pass_streamed_chunks)
         # No tool calls from the first streaming pass: take single-pass fast path.
         else:
