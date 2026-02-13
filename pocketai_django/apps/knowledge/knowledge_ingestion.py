@@ -101,7 +101,6 @@ from apps.knowledge.table_scope_engine import (
     build_scope_table_profile,
     canonical_scope_reason,
     infer_scope_for_row,
-    legacy_scope_reason,
 )
 
 logger = logging.getLogger(__name__)
@@ -2103,7 +2102,6 @@ class AzureDocumentIntelligenceExtractor:
                 idx for idx in scope_decision.detected_indices if idx in scope_set
             ]
             scope_reason = canonical_scope_reason(scope_decision.reason)
-            legacy_mode = legacy_scope_reason(scope_reason)
             scope_confidence = round(float(scope_decision.confidence), 3)
 
             applies_to_labels = [
@@ -2149,13 +2147,9 @@ class AzureDocumentIntelligenceExtractor:
                     "scope_confidence": scope_confidence,
                     "scope_reason": scope_reason,
                     "applicability_source": "scope_engine_v3",
-                    # Legacy compatibility aliases (Phase 1 dual-write).
-                    "applies_to_columns": applies_to_labels,
-                    "applicability_mode": legacy_mode,
-                    "applicability_confidence": scope_confidence,
                     "applicability_detected_columns": detected_labels,
                     "applicability_segment_columns": scope_dimension_labels,
-                    "applicability_value": representative_value or "",
+                    "scope_value": representative_value or "",
                 }
             )
 
@@ -5655,8 +5649,8 @@ class KnowledgeIngestionService:
         has_scope_meta = True
         for row in data_rows:
             row_meta = row.metadata if isinstance(row.metadata, Mapping) else {}
-            inferred_scope = row_meta.get("inferred_scope_columns") or row_meta.get("applies_to_columns")
-            scope_reason = row_meta.get("scope_reason") or row_meta.get("applicability_mode")
+            inferred_scope = row_meta.get("inferred_scope_columns")
+            scope_reason = row_meta.get("scope_reason")
             if inferred_scope is None or scope_reason is None:
                 has_scope_meta = False
                 break
@@ -5695,18 +5689,14 @@ class KnowledgeIngestionService:
         scope_axis_violations = 0
         for row in self._table_data_rows(table):
             row_meta = row.metadata if isinstance(row.metadata, Mapping) else {}
-            inferred_scope = self._clean_scope_labels(
-                row_meta.get("inferred_scope_columns") or row_meta.get("applies_to_columns")
-            )
+            inferred_scope = self._clean_scope_labels(row_meta.get("inferred_scope_columns"))
             scope_dimensions = self._clean_scope_labels(row_meta.get("scope_dimension_columns"))
             if inferred_scope:
                 rows_with_scope += 1
-            reason = canonical_scope_reason(row_meta.get("scope_reason") or row_meta.get("applicability_mode"))
+            reason = canonical_scope_reason(row_meta.get("scope_reason"))
             if inferred_scope and reason != SCOPE_REASON_ABSTAIN:
                 rows_with_non_abstain += 1
-            confidence = self._coerce_scope_confidence(
-                row_meta.get("scope_confidence") if row_meta.get("scope_confidence") is not None else row_meta.get("applicability_confidence")
-            )
+            confidence = self._coerce_scope_confidence(row_meta.get("scope_confidence"))
             if inferred_scope and confidence is not None:
                 rows_with_confidence += 1
             if inferred_scope and scope_dimensions:
@@ -12942,43 +12932,22 @@ class KnowledgeIngestionService:
         qualifier_columns = list(dict.fromkeys(qualifier_columns))
 
         scope_dimension_columns = self._clean_scope_labels(row_model_meta.get("scope_dimension_columns"))
-        has_explicit_scope_dimensions = bool(scope_dimension_columns)
         if not scope_dimension_columns:
             scope_dimension_columns = list(dict.fromkeys(inferred_segment_labels))
-        if not scope_dimension_columns:
-            scope_dimension_columns = [label for label in observed_value_columns if label not in qualifier_columns]
         scope_dimension_columns = list(dict.fromkeys(scope_dimension_columns))
 
         inferred_scope_columns = self._clean_scope_labels(row_model_meta.get("inferred_scope_columns"))
-        if not inferred_scope_columns:
-            inferred_scope_columns = self._clean_scope_labels(row_model_meta.get("applies_to_columns"))
         if scope_dimension_columns:
             scope_dimension_set = set(scope_dimension_columns)
-            if inferred_scope_columns:
-                if has_explicit_scope_dimensions:
-                    inferred_scope_columns = [
-                        label for label in inferred_scope_columns if label in scope_dimension_set
-                    ]
-            else:
-                inferred_scope_columns = [
-                    label for label in observed_value_columns if label in scope_dimension_set
-                ]
-        else:
-            if not inferred_scope_columns:
-                inferred_scope_columns = [label for label in observed_value_columns if label not in qualifier_columns]
-            if not inferred_scope_columns:
-                inferred_scope_columns = list(observed_value_columns)
+            inferred_scope_columns = [
+                label for label in inferred_scope_columns if label in scope_dimension_set
+            ]
         inferred_scope_columns = list(dict.fromkeys(inferred_scope_columns))
 
         scope_confidence = self._coerce_scope_confidence(row_model_meta.get("scope_confidence"))
-        if scope_confidence is None:
-            scope_confidence = self._coerce_scope_confidence(row_model_meta.get("applicability_confidence"))
 
         raw_scope_reason = self._table_cell_text(row_model_meta.get("scope_reason"))
-        if not raw_scope_reason:
-            raw_scope_reason = self._table_cell_text(row_model_meta.get("applicability_mode"))
         scope_reason = canonical_scope_reason(raw_scope_reason)
-        legacy_mode = legacy_scope_reason(scope_reason)
 
         return {
             "contract_version": str(row_model_meta.get("table_scope_contract_version") or TABLE_SCOPE_CONTRACT_VERSION),
@@ -12988,10 +12957,6 @@ class KnowledgeIngestionService:
             "inferred_scope_columns": inferred_scope_columns,
             "scope_confidence": scope_confidence,
             "scope_reason": scope_reason,
-            # Legacy compatibility aliases during migration.
-            "applies_to_columns": inferred_scope_columns,
-            "applicability_mode": legacy_mode,
-            "applicability_confidence": scope_confidence,
         }
 
     def _table_header_labels_for_model(
@@ -13307,19 +13272,18 @@ class KnowledgeIngestionService:
                 contextual_labels=contextual_labels,
                 inferred_segment_labels=inferred_segment_labels,
             )
-            applies_to_columns = list(scope_contract.get("inferred_scope_columns") or [])
+            inferred_scope_columns = list(scope_contract.get("inferred_scope_columns") or [])
             observed_value_columns = list(scope_contract.get("observed_value_columns") or [])
             qualifier_columns = list(scope_contract.get("qualifier_columns") or [])
             scope_dimension_columns = list(scope_contract.get("scope_dimension_columns") or [])
             scope_reason = canonical_scope_reason(scope_contract.get("scope_reason"))
-            scope_legacy_mode = legacy_scope_reason(scope_contract.get("applicability_mode") or scope_reason)
             scope_confidence = self._coerce_scope_confidence(scope_contract.get("scope_confidence"))
 
-            fee_value = self._table_cell_text(str(row_model_meta.get("applicability_value") or ""))
+            fee_value = self._table_cell_text(str(row_model_meta.get("scope_value") or ""))
             if not fee_value:
                 scoped_values = [
                     value_by_label.get(label, "")
-                    for label in applies_to_columns
+                    for label in inferred_scope_columns
                     if value_by_label.get(label, "")
                 ]
                 unique_values = list(dict.fromkeys(scoped_values))
@@ -13336,8 +13300,8 @@ class KnowledgeIngestionService:
                 preface.append(f"[Section] {table.section_heading}")
             preface.append(f"[Table] {title}")
             preface.append(f"[Row] {row.row_index}")
-            if applies_to_columns:
-                preface.append(f"[Applies To] {', '.join(applies_to_columns)}")
+            if inferred_scope_columns:
+                preface.append(f"[Scope] {', '.join(inferred_scope_columns)}")
             text = "\n".join(preface + pairs)
             row_meta = dict(base_metadata)
             row_meta.update(
@@ -13352,13 +13316,9 @@ class KnowledgeIngestionService:
                     "table_row_observed_value_columns": observed_value_columns,
                     "table_row_qualifier_columns": qualifier_columns,
                     "table_row_scope_dimension_columns": scope_dimension_columns,
-                    "table_row_inferred_scope_columns": applies_to_columns,
+                    "table_row_inferred_scope_columns": inferred_scope_columns,
                     "table_row_scope_reason": scope_reason or SCOPE_REASON_ABSTAIN,
                     "table_row_scope_confidence": scope_confidence,
-                    # Temporary v1 compatibility mapping.
-                    "table_row_applies_to_columns": applies_to_columns,
-                    "table_row_applicability_mode": scope_legacy_mode or "explicit_cells",
-                    "table_row_applicability_confidence": scope_confidence,
                     "table_row_fee_value": fee_value,
                     "table_row_evidence_cell_ids": evidence_cell_ids,
                 }

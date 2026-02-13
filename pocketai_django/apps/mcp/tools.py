@@ -8142,31 +8142,25 @@ def _agentic_read_v2_handler(
 
             rows_out.append(values)
             row_meta = row.metadata if isinstance(getattr(row, "metadata", None), Mapping) else {}
-            applies_to_columns: list[str] = []
+            inferred_scope_columns: list[str] = []
             raw_applies_to = row_meta.get("inferred_scope_columns")
-            if not isinstance(raw_applies_to, (list, tuple)):
-                raw_applies_to = row_meta.get("applies_to_columns")
             if isinstance(raw_applies_to, (list, tuple)):
                 for entry in raw_applies_to:
                     label = str(entry or "").strip()
                     if label:
-                        applies_to_columns.append(label)
-            applicability_mode = str(row_meta.get("scope_reason") or row_meta.get("applicability_mode") or "").strip()
-            applicability_confidence_raw = (
-                row_meta.get("scope_confidence")
-                if row_meta.get("scope_confidence") is not None
-                else row_meta.get("applicability_confidence")
-            )
-            applicability_confidence: float | None = None
-            if isinstance(applicability_confidence_raw, (int, float)):
-                applicability_confidence = float(applicability_confidence_raw)
-            elif isinstance(applicability_confidence_raw, str):
+                        inferred_scope_columns.append(label)
+            scope_reason = str(row_meta.get("scope_reason") or "").strip()
+            scope_confidence_raw = row_meta.get("scope_confidence")
+            scope_confidence: float | None = None
+            if isinstance(scope_confidence_raw, (int, float)):
+                scope_confidence = float(scope_confidence_raw)
+            elif isinstance(scope_confidence_raw, str):
                 try:
-                    applicability_confidence = float(applicability_confidence_raw)
+                    scope_confidence = float(scope_confidence_raw)
                 except (TypeError, ValueError):
-                    applicability_confidence = None
-            fee_value = str(row_meta.get("applicability_value") or "").strip()
-            if applies_to_columns or applicability_mode or applicability_confidence is not None or fee_value:
+                    scope_confidence = None
+            fee_value = str(row_meta.get("scope_value") or "").strip()
+            if inferred_scope_columns or scope_reason or scope_confidence is not None or fee_value:
                 row_entry: dict[str, object] = {
                     "row_index": row_index_int if row_index_int is not None else row_index,
                 }
@@ -8188,12 +8182,12 @@ def _agentic_read_v2_handler(
                     row_entry["scope_dimension_columns"] = [
                         str(entry).strip() for entry in scope_dimension_columns if str(entry or "").strip()
                     ]
-                if applies_to_columns:
-                    row_entry["applies_to_columns"] = applies_to_columns
-                if applicability_mode:
-                    row_entry["applicability_mode"] = applicability_mode
-                if applicability_confidence is not None:
-                    row_entry["applicability_confidence"] = applicability_confidence
+                if inferred_scope_columns:
+                    row_entry["inferred_scope_columns"] = inferred_scope_columns
+                if scope_reason:
+                    row_entry["scope_reason"] = scope_reason
+                if scope_confidence is not None:
+                    row_entry["scope_confidence"] = scope_confidence
                 if fee_value:
                     row_entry["fee_value"] = fee_value
                 row_metadata_out.append(row_entry)
@@ -10682,30 +10676,24 @@ def _serialize_table_row_for_cache(row: KnowledgeUploadTableRow) -> dict[str, ob
                 "is_total_column": total_priority > 0,
             }
         )
-    applies_to_columns: list[str] = []
+    inferred_scope_columns: list[str] = []
     raw_applies_to = row_metadata.get("inferred_scope_columns")
-    if not isinstance(raw_applies_to, (list, tuple)):
-        raw_applies_to = row_metadata.get("applies_to_columns")
     if isinstance(raw_applies_to, (list, tuple)):
         for entry in raw_applies_to:
             label = str(entry or "").strip()
             if label:
-                applies_to_columns.append(label)
-    applicability_mode = str(row_metadata.get("scope_reason") or row_metadata.get("applicability_mode") or "").strip()
-    applicability_confidence_raw = (
-        row_metadata.get("scope_confidence")
-        if row_metadata.get("scope_confidence") is not None
-        else row_metadata.get("applicability_confidence")
-    )
-    applicability_confidence: float | None = None
-    if isinstance(applicability_confidence_raw, (int, float)):
-        applicability_confidence = float(applicability_confidence_raw)
-    elif isinstance(applicability_confidence_raw, str):
+                inferred_scope_columns.append(label)
+    scope_reason = str(row_metadata.get("scope_reason") or "").strip()
+    scope_confidence_raw = row_metadata.get("scope_confidence")
+    scope_confidence: float | None = None
+    if isinstance(scope_confidence_raw, (int, float)):
+        scope_confidence = float(scope_confidence_raw)
+    elif isinstance(scope_confidence_raw, str):
         try:
-            applicability_confidence = float(applicability_confidence_raw)
+            scope_confidence = float(scope_confidence_raw)
         except (TypeError, ValueError):
-            applicability_confidence = None
-    fee_value = str(row_metadata.get("applicability_value") or "").strip()
+            scope_confidence = None
+    fee_value = str(row_metadata.get("scope_value") or "").strip()
 
     observed_value_columns = (
         row_metadata.get("observed_value_columns")
@@ -10747,9 +10735,9 @@ def _serialize_table_row_for_cache(row: KnowledgeUploadTableRow) -> dict[str, ob
             for entry in scope_dimension_columns
             if str(entry or "").strip()
         ],
-        "applies_to_columns": applies_to_columns,
-        "applicability_mode": applicability_mode,
-        "applicability_confidence": applicability_confidence,
+        "inferred_scope_columns": inferred_scope_columns,
+        "scope_reason": scope_reason,
+        "scope_confidence": scope_confidence,
         "fee_value": fee_value,
     }
 

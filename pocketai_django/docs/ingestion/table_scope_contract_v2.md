@@ -28,21 +28,9 @@ Each table row should publish:
 - `scope_confidence`: confidence for `inferred_scope_columns` (0-1 when available).
 - `scope_reason`: deterministic reason code/mode for scope inference.
 
-## Backward Compatibility (Temporary)
+## Active Runtime Fields
 
-Phase 1 dual-writes legacy aliases:
-
-- `applies_to_columns` -> alias of `inferred_scope_columns`
-- `applicability_mode` -> alias of `scope_reason`
-- `applicability_confidence` -> alias of `scope_confidence`
-
-Chunk metadata keeps compatibility aliases too:
-
-- `table_row_applies_to_columns`
-- `table_row_applicability_mode`
-- `table_row_applicability_confidence`
-
-while also emitting v2 keys:
+Runtime row chunk metadata emits only v2 keys:
 
 - `table_row_contract_version`
 - `table_row_observed_value_columns`
@@ -54,9 +42,9 @@ while also emitting v2 keys:
 
 ## Consumer Migration Notes
 
-All internal consumers must read v2-first and fall back to legacy aliases only during migration.
+Phase 7 completed migration by removing internal reads/writes of v1 aliases.
 
-Updated in Phase 1:
+Updated components:
 
 - Ingestion row chunk builder (`KnowledgeIngestionService`)
 - RAG orchestrator diagnostics + applicability guardrails
@@ -66,6 +54,7 @@ Updated in Phase 1:
 
 ## Deprecation Plan
 
-1. Phase 2-4: continue dual-write + v2-first reads.
-2. Phase 5 CI gates: enforce v2 field presence on table rows/chunks.
-3. Phase 7 cleanup: remove legacy alias reads/writes and keep v2 only.
+1. Phases 2-4: dual-write + v2-first reads.
+2. Phase 5: CI gates enforce v2 field presence on table rows/chunks.
+3. Phase 7: remove v1 alias reads/writes from runtime codepaths.
+4. Post-phase 7: any historical snapshot/fixture using v1 aliases must be migrated to v2 keys.

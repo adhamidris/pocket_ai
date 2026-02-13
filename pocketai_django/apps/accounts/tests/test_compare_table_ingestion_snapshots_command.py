@@ -20,16 +20,16 @@ class CompareTableIngestionSnapshotsCommandTests(SimpleTestCase):
             "row_chunks": [
                 {
                     "table_row_index": 6,
-                    "applies_to_columns": ["tariff", "prime"],
-                    "applicability_mode": "explicit_cells",
-                    "table_row_applicability_confidence": 1.0,
+                    "inferred_scope_columns": ["tariff", "prime"],
+                    "scope_reason": "explicit_cells",
+                    "table_row_scope_confidence": 1.0,
                     "table_row_fee_value": "EGP",
                 },
                 {
                     "table_row_index": 7,
-                    "applies_to_columns": ["tariff", "prime"],
-                    "applicability_mode": "explicit_cells",
-                    "table_row_applicability_confidence": 1.0,
+                    "inferred_scope_columns": ["tariff", "prime"],
+                    "scope_reason": "explicit_cells",
+                    "table_row_scope_confidence": 1.0,
                     "table_row_fee_value": "USD 5",
                 },
             ],
@@ -76,9 +76,9 @@ class CompareTableIngestionSnapshotsCommandTests(SimpleTestCase):
                 "row_chunks": [
                     {
                         "table_row_index": 7,
-                        "applies_to_columns": ["tariff"],
-                        "applicability_mode": "",
-                        "table_row_applicability_confidence": None,
+                        "inferred_scope_columns": ["tariff"],
+                        "scope_reason": "",
+                        "table_row_scope_confidence": None,
                         "table_row_fee_value": "USD 100",
                     }
                 ],

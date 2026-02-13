@@ -13,14 +13,14 @@ class IngestionBenchmarkTests(SimpleTestCase):
             "row_chunks": [
                 {
                     "table_row_index": 6,
-                    "applies_to_columns": ["tariff", "wealth"],
-                    "applicability_mode": "explicit_cells",
+                    "inferred_scope_columns": ["tariff", "wealth"],
+                    "scope_reason": "explicit_cells",
                     "table_row_fee_value": "EGP",
                 },
                 {
                     "table_row_index": 7,
-                    "applies_to_columns": ["tariff", "wealth"],
-                    "applicability_mode": "explicit_cells",
+                    "inferred_scope_columns": ["tariff", "wealth"],
+                    "scope_reason": "explicit_cells",
                     "table_row_fee_value": "USD",
                 },
             ],
@@ -33,15 +33,15 @@ class IngestionBenchmarkTests(SimpleTestCase):
                 {
                     "table_id": "table-uuid-1",
                     "table_row_index": 6,
-                    "applies_to_columns": ["tariff", "wealth"],
-                    "applicability_mode": "explicit_cells",
+                    "inferred_scope_columns": ["tariff", "wealth"],
+                    "scope_reason": "explicit_cells",
                     "table_row_fee_value": "EGP",
                 },
                 {
                     "table_id": "table-uuid-1",
                     "table_row_index": 7,
-                    "applies_to_columns": ["tariff", "wealth"],
-                    "applicability_mode": "explicit_cells",
+                    "inferred_scope_columns": ["tariff", "wealth"],
+                    "scope_reason": "explicit_cells",
                     "table_row_fee_value": "USD",
                 },
             ],
@@ -58,13 +58,13 @@ class IngestionBenchmarkTests(SimpleTestCase):
         baseline = {
             "snapshot_label": "baseline",
             "upload_id": "u1",
-            "row_chunks": [{"table_row_index": 1, "applies_to_columns": ["a", "b"]}],
+            "row_chunks": [{"table_row_index": 1, "inferred_scope_columns": ["a", "b"]}],
             "tables": [{"rows": [{"row_type": "header"}, {"row_type": "data"}]}],
         }
         candidate = {
             "snapshot_label": "candidate",
             "upload_id": "u2",
-            "row_chunks": [{"table_row_index": 1, "applies_to_columns": ["a", "b"]}],
+            "row_chunks": [{"table_row_index": 1, "inferred_scope_columns": ["a", "b"]}],
             "tables": [{"rows": [{"row_type": "header"}, {"row_type": "data"}, {"row_type": "data"}]}],
         }
 
@@ -82,16 +82,16 @@ class IngestionBenchmarkTests(SimpleTestCase):
             "row_chunks": [
                 {
                     "table_row_index": 6,
-                    "applies_to_columns": ["tariff", "prime"],
-                    "applicability_mode": "explicit_cells",
-                    "table_row_applicability_confidence": 1.0,
+                    "inferred_scope_columns": ["tariff", "prime"],
+                    "scope_reason": "explicit_cells",
+                    "table_row_scope_confidence": 1.0,
                     "table_row_fee_value": "EGP",
                 },
                 {
                     "table_row_index": 7,
-                    "applies_to_columns": ["tariff", "prime"],
-                    "applicability_mode": "explicit_cells",
-                    "table_row_applicability_confidence": 1.0,
+                    "inferred_scope_columns": ["tariff", "prime"],
+                    "scope_reason": "explicit_cells",
+                    "table_row_scope_confidence": 1.0,
                     "table_row_fee_value": "USD 5",
                 },
             ],
@@ -104,17 +104,17 @@ class IngestionBenchmarkTests(SimpleTestCase):
                 {
                     "table_id": "table-1",
                     "table_row_index": 6,
-                    "applies_to_columns": ["tariff", "prime"],
-                    "applicability_mode": "explicit_cells",
-                    "table_row_applicability_confidence": 0.9,
+                    "inferred_scope_columns": ["tariff", "prime"],
+                    "scope_reason": "explicit_cells",
+                    "table_row_scope_confidence": 0.9,
                     "table_row_fee_value": "EGP",
                 },
                 {
                     "table_id": "table-1",
                     "table_row_index": 7,
-                    "applies_to_columns": ["tariff", "prime"],
-                    "applicability_mode": "explicit_cells",
-                    "table_row_applicability_confidence": 0.9,
+                    "inferred_scope_columns": ["tariff", "prime"],
+                    "scope_reason": "explicit_cells",
+                    "table_row_scope_confidence": 0.9,
                     "table_row_fee_value": "USD 5",
                 },
             ],
@@ -140,16 +140,16 @@ class IngestionBenchmarkTests(SimpleTestCase):
             "row_chunks": [
                 {
                     "table_row_index": 1,
-                    "applies_to_columns": ["tariff", "prime"],
-                    "applicability_mode": "explicit_cells",
-                    "table_row_applicability_confidence": 1.0,
+                    "inferred_scope_columns": ["tariff", "prime"],
+                    "scope_reason": "explicit_cells",
+                    "table_row_scope_confidence": 1.0,
                     "table_row_fee_value": "EGP",
                 },
                 {
                     "table_row_index": 2,
-                    "applies_to_columns": ["tariff", "plus"],
-                    "applicability_mode": "explicit_cells",
-                    "table_row_applicability_confidence": 1.0,
+                    "inferred_scope_columns": ["tariff", "plus"],
+                    "scope_reason": "explicit_cells",
+                    "table_row_scope_confidence": 1.0,
                     "table_row_fee_value": "USD 2",
                 },
             ],
@@ -161,9 +161,9 @@ class IngestionBenchmarkTests(SimpleTestCase):
             "row_chunks": [
                 {
                     "table_row_index": 2,
-                    "applies_to_columns": ["tariff"],
-                    "applicability_mode": "",
-                    "table_row_applicability_confidence": None,
+                    "inferred_scope_columns": ["tariff"],
+                    "scope_reason": "",
+                    "table_row_scope_confidence": None,
                     "table_row_fee_value": "USD 99",
                 },
             ],

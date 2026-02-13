@@ -116,17 +116,17 @@ def _scope_metrics(row_chunks: Sequence[dict[str, Any]]) -> dict[str, Any]:
     explicit = 0
     histogram: Counter[int] = Counter()
     for row in row_chunks:
-        applies = _clean_list(row.get("applies_to_columns"))
+        applies = _row_scope_columns(row)
         card = len(applies)
         histogram[card] += 1
         if card > 1:
             multi_scope += 1
         if card <= 1:
             ambiguous += 1
-        mode = str(row.get("applicability_mode") or "").strip().lower()
-        if mode.startswith("inferred"):
+        mode = _row_scope_reason(row).lower()
+        if mode.startswith("inferred") or mode in {"scope_repeated_value_span", "scope_sparse_expansion"}:
             inferred += 1
-        if mode == "explicit_cells":
+        if mode in {"scope_explicit_span", "explicit_span"}:
             explicit += 1
     return {
         "row_chunk_count": total,
@@ -146,17 +146,32 @@ def _normalized_token(value: Any) -> str:
     return " ".join(str(value or "").strip().lower().split())
 
 
+def _row_scope_columns(row: Mapping[str, Any]) -> list[str]:
+    return _clean_list(row.get("inferred_scope_columns"))
+
+
+def _row_scope_reason(row: Mapping[str, Any]) -> str:
+    return str(row.get("scope_reason") or "").strip()
+
+
+def _row_scope_confidence(row: Mapping[str, Any]) -> float | None:
+    confidence = _safe_float(row.get("table_row_scope_confidence"))
+    if confidence is not None:
+        return confidence
+    return _safe_float(row.get("scope_confidence"))
+
+
 def _normalized_scope_set(row: Mapping[str, Any]) -> set[str]:
     return {
         token
-        for token in (_normalized_token(item) for item in _clean_list(row.get("applies_to_columns")))
+        for token in (_normalized_token(item) for item in _row_scope_columns(row))
         if token
     }
 
 
 def _row_has_scope_metadata(row: Mapping[str, Any]) -> bool:
-    mode = _normalized_token(row.get("applicability_mode"))
-    confidence = _safe_float(row.get("table_row_applicability_confidence"))
+    mode = _normalized_token(_row_scope_reason(row))
+    confidence = _row_scope_confidence(row)
     return bool(mode) and confidence is not None
 
 
@@ -243,7 +258,7 @@ def _build_quality_gate_metrics(
     candidate_scope_rows = [
         row
         for row in candidate_rows
-        if _clean_list(row.get("applies_to_columns"))
+        if _row_scope_columns(row)
     ]
     scope_rows_count = len(candidate_scope_rows)
     scope_metadata_ready = sum(1 for row in candidate_scope_rows if _row_has_scope_metadata(row))
@@ -422,18 +437,8 @@ def capture_upload_snapshot(
             row_index = _safe_int(metadata.get("table_row_index"))
             is_row_chunk = source == "table_row" or role == "row" or row_index is not None
             inferred_scope = _clean_list(metadata.get("table_row_inferred_scope_columns"))
-            if not inferred_scope:
-                inferred_scope = _clean_list(metadata.get("table_row_applies_to_columns"))
-            scope_reason = str(
-                metadata.get("table_row_scope_reason")
-                or metadata.get("table_row_applicability_mode")
-                or ""
-            ).strip()
-            scope_confidence = _safe_float(
-                metadata.get("table_row_scope_confidence")
-                if metadata.get("table_row_scope_confidence") is not None
-                else metadata.get("table_row_applicability_confidence")
-            )
+            scope_reason = str(metadata.get("table_row_scope_reason") or "").strip()
+            scope_confidence = _safe_float(metadata.get("table_row_scope_confidence"))
             record = {
                 "chunk_index": int(chunk.chunk_index),
                 "table_id": str(metadata.get("table_id") or ""),
@@ -441,13 +446,13 @@ def capture_upload_snapshot(
                 "content_source": source or None,
                 "table_chunk_role": role or None,
                 "table_row_index": row_index,
-                "applies_to_columns": inferred_scope,
+                "inferred_scope_columns": inferred_scope,
                 "observed_value_columns": _clean_list(metadata.get("table_row_observed_value_columns")),
                 "qualifier_columns": _clean_list(metadata.get("table_row_qualifier_columns")),
                 "scope_dimension_columns": _clean_list(metadata.get("table_row_scope_dimension_columns")),
-                "applicability_mode": scope_reason or None,
+                "scope_reason": scope_reason or None,
                 "table_row_fee_value": str(metadata.get("table_row_fee_value") or "").strip() or None,
-                "table_row_applicability_confidence": scope_confidence,
+                "table_row_scope_confidence": scope_confidence,
                 "text": str(chunk.content or ""),
             }
             chunk_cache.append(record)
@@ -515,19 +520,9 @@ def capture_upload_snapshot(
                         "observed_value_columns": _clean_list(row_meta.get("observed_value_columns")) or None,
                         "qualifier_columns": _clean_list(row_meta.get("qualifier_columns")) or None,
                         "scope_dimension_columns": _clean_list(row_meta.get("scope_dimension_columns")) or None,
-                        "applies_to_columns": (
-                            _clean_list(row_meta.get("inferred_scope_columns"))
-                            or _clean_list(row_meta.get("applies_to_columns"))
-                            or None
-                        ),
-                        "applicability_mode": (
-                            str(row_meta.get("scope_reason") or row_meta.get("applicability_mode") or "").strip() or None
-                        ),
-                        "applicability_confidence": _safe_float(
-                            row_meta.get("scope_confidence")
-                            if row_meta.get("scope_confidence") is not None
-                            else row_meta.get("applicability_confidence")
-                        ),
+                        "inferred_scope_columns": _clean_list(row_meta.get("inferred_scope_columns")) or None,
+                        "scope_reason": str(row_meta.get("scope_reason") or "").strip() or None,
+                        "scope_confidence": _safe_float(row_meta.get("scope_confidence")),
                         "non_empty_cells": non_empty_cells,
                     }
                 )
@@ -689,10 +684,10 @@ def compare_snapshots(
                 }
             )
             continue
-        left_scope = _clean_list(left.get("applies_to_columns"))
-        right_scope = _clean_list(right.get("applies_to_columns"))
-        left_mode = str(left.get("applicability_mode") or "")
-        right_mode = str(right.get("applicability_mode") or "")
+        left_scope = _row_scope_columns(left)
+        right_scope = _row_scope_columns(right)
+        left_mode = _row_scope_reason(left)
+        right_mode = _row_scope_reason(right)
         left_fee = str(left.get("table_row_fee_value") or "")
         right_fee = str(right.get("table_row_fee_value") or "")
         changed = left_scope != right_scope or left_mode != right_mode or left_fee != right_fee
@@ -704,14 +699,14 @@ def compare_snapshots(
                 "changed": True,
                 "baseline": {
                     "table_row_index": left.get("table_row_index"),
-                    "applies_to_columns": left_scope,
-                    "applicability_mode": left_mode,
+                    "inferred_scope_columns": left_scope,
+                    "scope_reason": left_mode,
                     "table_row_fee_value": left_fee,
                 },
                 "candidate": {
                     "table_row_index": right.get("table_row_index"),
-                    "applies_to_columns": right_scope,
-                    "applicability_mode": right_mode,
+                    "inferred_scope_columns": right_scope,
+                    "scope_reason": right_mode,
                     "table_row_fee_value": right_fee,
                 },
                 "reason": "scope_or_mode_or_fee_changed",
@@ -890,10 +885,10 @@ def render_snapshot_markdown(snapshot: Mapping[str, Any]) -> str:
         lines.append("")
         for row in focus_rows:
             lines.append(
-                "- row {row}: applies_to={scope} mode={mode} fee={fee}".format(
+                "- row {row}: scope={scope} reason={mode} fee={fee}".format(
                     row=row.get("table_row_index"),
-                    scope=row.get("applies_to_columns"),
-                    mode=row.get("applicability_mode"),
+                    scope=_row_scope_columns(row),
+                    mode=_row_scope_reason(row),
                     fee=row.get("table_row_fee_value"),
                 )
             )
@@ -967,8 +962,8 @@ def render_comparison_markdown(report: Mapping[str, Any]) -> str:
             lines.append(
                 "- {key}: baseline={left} | candidate={right} | reason={reason}".format(
                     key=row.get("row_key"),
-                    left=(row.get("baseline") or {}).get("applies_to_columns"),
-                    right=(row.get("candidate") or {}).get("applies_to_columns"),
+                    left=(row.get("baseline") or {}).get("inferred_scope_columns"),
+                    right=(row.get("candidate") or {}).get("inferred_scope_columns"),
                     reason=row.get("reason"),
                 )
             )

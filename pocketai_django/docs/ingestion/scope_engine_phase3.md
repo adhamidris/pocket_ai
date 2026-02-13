@@ -17,7 +17,7 @@ Canonical reason codes:
 - `scope_sparse_expansion`
 - `scope_abstain`
 
-Legacy compatibility mapping:
+Historical legacy mapping (for migration context only):
 
 - `scope_explicit_span` -> `explicit_span`
 - `scope_repeated_value_span` -> `inferred_span_extension`
@@ -50,11 +50,7 @@ Row metadata now includes:
 - `scope_confidence`
 - `inferred_scope_columns` (scope-axis only)
 
-Legacy fields remain populated for compatibility:
-
-- `applies_to_columns`
-- `applicability_mode` (legacy alias)
-- `applicability_confidence`
+Phase 7 removes legacy alias writes/reads from runtime paths; v2 fields are now the only internal contract.
 
 ## Why This Is Multi-Tenant Safe
 

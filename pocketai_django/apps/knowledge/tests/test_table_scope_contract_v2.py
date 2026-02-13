@@ -8,10 +8,7 @@ from apps.knowledge.knowledge_ingestion import (
     TableCellPayload,
     TableRowPayload,
 )
-from apps.knowledge.table_scope_engine import (
-    SCOPE_REASON_EXPLICIT_SPAN,
-    legacy_scope_reason,
-)
+from apps.knowledge.table_scope_engine import SCOPE_REASON_EXPLICIT_SPAN
 
 
 class TableScopeContractV2Tests(SimpleTestCase):
@@ -44,7 +41,7 @@ class TableScopeContractV2Tests(SimpleTestCase):
             cells=cells,
         )
 
-    def test_row_annotation_writes_v2_scope_contract_with_legacy_alias(self) -> None:
+    def test_row_annotation_writes_v2_scope_contract_without_legacy_alias(self) -> None:
         extractor = AzureDocumentIntelligenceExtractor(endpoint="https://example.test", key="secret")
         schema = [
             "service",
@@ -88,16 +85,15 @@ class TableScopeContractV2Tests(SimpleTestCase):
         meta = annotated[2].metadata
 
         self.assertEqual(meta.get("table_scope_contract_version"), "v2")
-        self.assertEqual(
-            meta.get("applicability_mode"),
-            legacy_scope_reason(meta.get("scope_reason")),
-        )
-        self.assertEqual(meta.get("scope_confidence"), meta.get("applicability_confidence"))
-        self.assertEqual(meta.get("inferred_scope_columns"), meta.get("applies_to_columns"))
+        self.assertTrue(str(meta.get("scope_reason") or "").strip())
+        self.assertIsNotNone(meta.get("scope_confidence"))
+        self.assertNotIn("applies_to_columns", meta)
+        self.assertNotIn("applicability_mode", meta)
+        self.assertNotIn("applicability_confidence", meta)
         self.assertTrue(meta.get("observed_value_columns"))
         self.assertTrue(meta.get("scope_dimension_columns"))
 
-    def test_table_row_chunk_payload_dual_writes_contract_v2_and_legacy_fields(self) -> None:
+    def test_table_row_chunk_payload_emits_v2_only_scope_fields(self) -> None:
         class _Manager:
             def __init__(self, items):
                 self._items = list(items)
@@ -124,7 +120,7 @@ class TableScopeContractV2Tests(SimpleTestCase):
                     "inferred_scope_columns": ["Prime", "Plus", "Wealth"],
                     "scope_reason": "explicit_span",
                     "scope_confidence": 0.91,
-                    "applicability_value": "USD 2",
+                    "scope_value": "USD 2",
                 }
                 self.cells = _Manager(
                     [
@@ -169,8 +165,6 @@ class TableScopeContractV2Tests(SimpleTestCase):
         self.assertEqual(metadata.get("table_row_inferred_scope_columns"), ["Prime", "Plus", "Wealth"])
         self.assertEqual(metadata.get("table_row_scope_reason"), SCOPE_REASON_EXPLICIT_SPAN)
         self.assertEqual(metadata.get("table_row_scope_confidence"), 0.91)
-
-        # Legacy compatibility aliases.
-        self.assertEqual(metadata.get("table_row_applies_to_columns"), ["Prime", "Plus", "Wealth"])
-        self.assertEqual(metadata.get("table_row_applicability_mode"), "explicit_span")
-        self.assertEqual(metadata.get("table_row_applicability_confidence"), 0.91)
+        self.assertNotIn("table_row_applies_to_columns", metadata)
+        self.assertNotIn("table_row_applicability_mode", metadata)
+        self.assertNotIn("table_row_applicability_confidence", metadata)

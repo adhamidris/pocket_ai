@@ -5,25 +5,25 @@
     {
       "table_row_index": 6,
       "table_anchor": "p1-t1",
-      "applies_to_columns": ["tariff", "prime", "plus"],
-      "applicability_mode": "inferred_sparse_row_expansion",
-      "table_row_applicability_confidence": 0.96,
+      "inferred_scope_columns": ["tariff", "prime", "plus"],
+      "scope_reason": "inferred_sparse_row_expansion",
+      "table_row_scope_confidence": 0.96,
       "table_row_fee_value": "EGP"
     },
     {
       "table_row_index": 7,
       "table_anchor": "p1-t1",
-      "applies_to_columns": ["tariff", "prime", "plus"],
-      "applicability_mode": "inferred_sparse_row_expansion",
-      "table_row_applicability_confidence": 0.96,
+      "inferred_scope_columns": ["tariff", "prime", "plus"],
+      "scope_reason": "inferred_sparse_row_expansion",
+      "table_row_scope_confidence": 0.96,
       "table_row_fee_value": "USD 5"
     },
     {
       "table_row_index": 8,
       "table_anchor": "p1-t1",
-      "applies_to_columns": ["tariff", "prime", "plus"],
-      "applicability_mode": "inferred_sparse_row_expansion",
-      "table_row_applicability_confidence": 0.96,
+      "inferred_scope_columns": ["tariff", "prime", "plus"],
+      "scope_reason": "inferred_sparse_row_expansion",
+      "table_row_scope_confidence": 0.96,
       "table_row_fee_value": "EGP"
     }
   ],

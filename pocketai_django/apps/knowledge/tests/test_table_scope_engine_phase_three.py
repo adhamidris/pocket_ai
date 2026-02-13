@@ -60,7 +60,6 @@ class TableScopeEnginePhaseThreeTests(SimpleTestCase):
 
         row_one_meta = annotated[1].metadata
         self.assertEqual(row_one_meta.get("scope_reason"), SCOPE_REASON_EXPLICIT_SPAN)
-        self.assertEqual(row_one_meta.get("applicability_mode"), "explicit_span")
 
     def test_precedence_repeated_value_span_before_sparse_expansion(self) -> None:
         extractor = AzureDocumentIntelligenceExtractor(endpoint="https://example.test", key="secret")
@@ -116,7 +115,6 @@ class TableScopeEnginePhaseThreeTests(SimpleTestCase):
             header_rows={0},
         )
         self.assertEqual(dense_annotated[5].metadata.get("scope_reason"), SCOPE_REASON_ABSTAIN)
-        self.assertEqual(dense_annotated[5].metadata.get("applicability_mode"), "explicit_cells")
 
     def test_scattered_rows_expand_over_scope_dimensions_only(self) -> None:
         extractor = AzureDocumentIntelligenceExtractor(endpoint="https://example.test", key="secret")
@@ -158,4 +156,3 @@ class TableScopeEnginePhaseThreeTests(SimpleTestCase):
 
         self.assertEqual(scope_contract.get("inferred_scope_columns"), ["Prime"])
         self.assertEqual(scope_contract.get("scope_reason"), SCOPE_REASON_EXPLICIT_SPAN)
-        self.assertEqual(scope_contract.get("applicability_mode"), "explicit_span")

@@ -669,8 +669,6 @@ class RAGEvaluationHarness:
                 continue
             raw_scope = top_diag.get("table_row_inferred_scope_columns")
             if not isinstance(raw_scope, (list, tuple)):
-                raw_scope = top_diag.get("table_row_applies_to_columns")
-            if not isinstance(raw_scope, (list, tuple)):
                 continue
             scope = [str(item or "").strip() for item in raw_scope if str(item or "").strip()]
             if not scope:
@@ -678,14 +676,10 @@ class RAGEvaluationHarness:
             table_applicability_observations += 1
             if len(scope) > 1:
                 table_multi_scope_hits += 1
-            mode = str(
-                top_diag.get("table_row_scope_reason")
-                or top_diag.get("table_row_applicability_mode")
-                or ""
-            ).strip().lower()
-            if mode.startswith("inferred_"):
+            mode = str(top_diag.get("table_row_scope_reason") or "").strip().lower()
+            if mode.startswith("inferred_") or mode in {"scope_repeated_value_span", "scope_sparse_expansion"}:
                 table_inferred_scope_hits += 1
-            if mode == "ambiguous":
+            if mode in {"ambiguous", "scope_abstain"}:
                 table_ambiguous_scope_hits += 1
         return {
             "top1_recall": round(top1, 4),

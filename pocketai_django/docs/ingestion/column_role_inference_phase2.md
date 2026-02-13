@@ -45,9 +45,13 @@ No tenant, language, or industry-specific header keywords are required.
 3. Persist inferred roles and confidence in table `data_dictionary`.
 4. Row-level scope contract reads cached `column_roles` first, then falls back to on-the-fly inference if missing.
 
-## Backward Compatibility
+## Contract Status
 
-Phase 2 does not remove v1/v2 scope aliases. `applies_to_columns` compatibility fields remain available while internal scope logic shifts to role-aware columns.
+Phase 7 cleanup removes v1 scope aliases from internal codepaths. Role-aware scope logic now operates on v2-only fields:
+
+- `inferred_scope_columns`
+- `scope_reason`
+- `scope_confidence`
 
 ## Why This Is Multi-Tenant Safe
 
