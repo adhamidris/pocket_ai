@@ -53,7 +53,7 @@ class _FakeOrchestrator:
         should_cancel=None,
         **_kwargs,
     ):
-        del conversation, user_message, on_placeholder_response, on_stream_complete, on_spinner_update, on_tool_event, on_reasoning_event, should_cancel
+        del conversation, user_message, on_placeholder_response, on_spinner_update, on_tool_event, on_reasoning_event, should_cancel
 
         if self.emit_model_blocks and on_block_event:
             on_block_event(
@@ -74,10 +74,77 @@ class _FakeOrchestrator:
 
         if on_response_text_delta:
             on_response_text_delta(self.stream_text)
+        if on_stream_complete:
+            on_stream_complete()
 
         return SimpleNamespace(
             streamed_chunks=(self.stream_text,),
             response_text=self.response_text,
+        )
+
+
+class _FakeToolLoopOrchestrator:
+    def __init__(self) -> None:
+        self.pre_tool_text = "I'll search for the fee now."
+        self.final_text = "Final answer: 1% with minimum USD 2, applies to Private too."
+
+    def stream_turn(
+        self,
+        *,
+        conversation: Conversation,
+        user_message: str,
+        on_response_text_delta=None,
+        on_status_change=None,
+        on_placeholder_response=None,
+        on_stream_complete=None,
+        on_spinner_update=None,
+        on_tool_event=None,
+        on_block_event=None,
+        on_reasoning_event=None,
+        should_cancel=None,
+        **_kwargs,
+    ):
+        del conversation, user_message, on_placeholder_response, on_spinner_update, on_block_event, on_reasoning_event, should_cancel
+
+        if on_status_change:
+            on_status_change({"code": "thinking"})
+
+        if on_response_text_delta:
+            on_response_text_delta(self.pre_tool_text)
+
+        if on_tool_event:
+            on_tool_event(
+                {
+                    "event_id": "evt_tool_1",
+                    "phase": "started",
+                    "status": "running",
+                    "tool_call_id": "call_tool_1",
+                    "tool_name": "search_knowledge",
+                    "kind": "tool",
+                }
+            )
+            on_tool_event(
+                {
+                    "event_id": "evt_tool_1",
+                    "phase": "finished",
+                    "status": "ok",
+                    "tool_call_id": "call_tool_1",
+                    "tool_name": "search_knowledge",
+                    "kind": "tool",
+                    "duration_ms": 45,
+                    "output": {"status": "ok"},
+                }
+            )
+
+        if on_response_text_delta:
+            on_response_text_delta(self.final_text)
+
+        if on_stream_complete:
+            on_stream_complete()
+
+        return SimpleNamespace(
+            streamed_chunks=(self.pre_tool_text, self.final_text),
+            response_text=self.final_text,
         )
 
 
@@ -169,15 +236,41 @@ class PortalTurnSingleModeTests(TransactionTestCase):
         self.assertIn("block_delta", event_types)
         self.assertIn("turn_persisted", event_types)
         self.assertNotIn("text_delta", event_types)
+        streamed_ids: list[str] = []
+        for event_type, payload in events:
+            if event_type != "block_start":
+                continue
+            block = payload.get("block")
+            if not isinstance(block, dict):
+                continue
+            block_id = str(block.get("block_id") or "").strip()
+            if block_id and block_id not in streamed_ids:
+                streamed_ids.append(block_id)
+        persisted_payloads = [payload for event_type, payload in events if event_type == "turn_persisted"]
+        self.assertTrue(persisted_payloads)
+        persisted_blocks = persisted_payloads[-1].get("content_blocks")
+        self.assertIsInstance(persisted_blocks, list)
+        persisted_ids = [
+            str(block.get("block_id") or "").strip()
+            for block in (persisted_blocks or [])
+            if isinstance(block, dict) and str(block.get("block_id") or "").strip()
+        ]
+        self.assertEqual(streamed_ids, persisted_ids)
 
         turn.refresh_from_db()
         self.assertEqual(turn.status, PortalTurnStatus.FINALIZED)
         self.assertIsNotNone(turn.message_id)
         self.assertIsNotNone(turn.message)
         self.assertEqual(turn.message.sender, ConversationSender.AI)
+        message_ids = [
+            str(block.get("block_id") or "").strip()
+            for block in (turn.message.content_blocks or [])
+            if isinstance(block, dict) and str(block.get("block_id") or "").strip()
+        ]
+        self.assertEqual(streamed_ids, message_ids)
         self.assertIn("Hello from stream.", turn.message.body)
 
-    def test_portal_turn_prefers_orchestrator_response_text_for_persistence(self) -> None:
+    def test_portal_turn_persists_streamed_blocks_as_source_of_truth(self) -> None:
         turn = PortalTurn.objects.create(
             conversation=self.conversation,
             agent_profile=self.agent,
@@ -206,9 +299,12 @@ class PortalTurnSingleModeTests(TransactionTestCase):
 
         turn.refresh_from_db()
         self.assertIsNotNone(turn.message)
-        self.assertEqual(turn.message.body, final_text)
+        block_text = extract_text_from_content_blocks(turn.message.content_blocks or [])
+        self.assertEqual(turn.message.body, block_text)
+        self.assertIn("Interest Rate: 3.", turn.message.body)
+        self.assertNotIn("Interest Rate: 3.99%", turn.message.body)
 
-    def test_portal_turn_reconciles_streamed_blocks_with_final_response_text(self) -> None:
+    def test_portal_turn_preserves_streamed_blocks_without_text_reconciliation(self) -> None:
         turn = PortalTurn.objects.create(
             conversation=self.conversation,
             agent_profile=self.agent,
@@ -236,10 +332,71 @@ class PortalTurnSingleModeTests(TransactionTestCase):
 
         turn.refresh_from_db()
         self.assertIsNotNone(turn.message)
-        self.assertEqual(turn.message.body, final_text)
+        self.assertEqual(turn.message.body, extract_text_from_content_blocks(turn.message.content_blocks or []))
         block_text = extract_text_from_content_blocks(turn.message.content_blocks or [])
-        self.assertNotIn("I'll search for fees.", block_text)
-        self.assertIn("Exclusive Wealth, Private)", block_text)
+        self.assertIn("I'll search for fees.", block_text)
+        self.assertNotIn("Exclusive Wealth, Private)", block_text)
+
+    def test_portal_turn_preserves_pre_tool_text_for_tool_use_turns(self) -> None:
+        turn = PortalTurn.objects.create(
+            conversation=self.conversation,
+            agent_profile=self.agent,
+            status=PortalTurnStatus.STREAMING,
+            user_message="What is traveler cheque fee?",
+        )
+        orchestrator = _FakeToolLoopOrchestrator()
+        runner = PortalTurnRunner(turn=turn, conversation=self.conversation)
+
+        events: list[tuple[str, dict]] = []
+
+        def _append_event(*, turn_id, event_type, payload=None):
+            del turn_id
+            events.append((str(event_type), dict(payload or {})))
+            return None
+
+        with (
+            mock.patch.object(PortalTurnRunner, "_select_orchestrator", return_value=orchestrator),
+            mock.patch("apps.conversations.portal_turn_runner.append_turn_event", side_effect=_append_event),
+        ):
+            runner.run()
+
+        turn.refresh_from_db()
+        self.assertIsNotNone(turn.message)
+        # Body includes both pre-tool narration and the final answer.
+        block_text = extract_text_from_content_blocks(turn.message.content_blocks or [])
+        self.assertIn(orchestrator.pre_tool_text, block_text)
+        self.assertIn(orchestrator.final_text, block_text)
+
+        first_tool_use_idx = next((idx for idx, item in enumerate(events) if item[0] == "block_tool_use"), -1)
+        first_block_remove_idx = next((idx for idx, item in enumerate(events) if item[0] == "block_remove"), -1)
+        first_text_delta_idx = -1
+        for idx, (event_type, payload) in enumerate(events):
+            if event_type != "block_delta":
+                continue
+            ops = payload.get("ops")
+            if not isinstance(ops, list):
+                continue
+            delta_text = ""
+            for op in ops:
+                if not isinstance(op, dict):
+                    continue
+                if str(op.get("op") or "").strip() != "append_inline":
+                    continue
+                nodes = op.get("nodes")
+                if isinstance(nodes, list):
+                    for node in nodes:
+                        if isinstance(node, dict):
+                            delta_text += str(node.get("text") or "")
+            if delta_text.strip():
+                first_text_delta_idx = idx
+                break
+
+        self.assertGreaterEqual(first_tool_use_idx, 0)
+        # Pre-tool text stays — no block_remove during streaming.
+        self.assertEqual(first_block_remove_idx, -1)
+        self.assertGreaterEqual(first_text_delta_idx, 0)
+        # Pre-tool text streams before tool cards appear.
+        self.assertLess(first_text_delta_idx, first_tool_use_idx)
 
     @override_settings(PORTAL_DEBUG_TOOL_TRACE=True)
     def test_portal_turn_persists_debug_tools_in_message_metadata(self) -> None:

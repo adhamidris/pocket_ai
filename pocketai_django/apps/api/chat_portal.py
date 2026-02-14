@@ -76,6 +76,9 @@ from apps.conversations.portal_session_event_bus import (
     portal_session_conversation_stream_key,
 )
 from apps.conversations.portal_turn_runner import run_turn_background
+from apps.conversations.content_blocks import (
+    extract_text_from_content_blocks,
+)
 from core.tenancy import tenant_context
 
 logger = logging.getLogger(__name__)
@@ -1117,6 +1120,65 @@ def _normalize_portal_content_blocks(blocks: list[dict[str, object]]) -> list[di
     return [*head, *tail]
 
 
+def _canonicalize_portal_message_blocks(
+    *,
+    body: str,
+    blocks: object | None,
+) -> list[dict[str, object]]:
+    del body  # Body is fallback text; canonical source-of-truth is persisted content_blocks.
+    if not isinstance(blocks, list):
+        return []
+    canonical: list[dict[str, object]] = []
+    for entry in blocks:
+        if isinstance(entry, Mapping):
+            canonical.append(dict(entry))
+    return canonical
+
+
+def _canonicalize_turn_event_payload(
+    event_type: str,
+    payload_obj: object | None,
+) -> dict[str, object]:
+    payload = payload_obj if isinstance(payload_obj, dict) else {}
+    if str(event_type or "").strip().lower() != "turn_persisted":
+        return payload
+
+    # Preserve turn_persisted payload as streamed/persisted source-of-truth.
+    # Only coerce camelCase alias when present for compatibility.
+    blocks = payload.get("content_blocks")
+    if blocks is None and "contentBlocks" in payload:
+        payload["content_blocks"] = _canonicalize_portal_message_blocks(body="", blocks=payload.get("contentBlocks"))
+        payload.pop("contentBlocks", None)
+    elif blocks is not None:
+        payload["content_blocks"] = _canonicalize_portal_message_blocks(body="", blocks=blocks)
+    return payload
+
+
+def _safe_canonicalize_blocks(
+    *,
+    body: str,
+    blocks: object | None,
+) -> list[dict[str, object]]:
+    """Guarded wrapper: returns raw blocks on failure instead of crashing."""
+    try:
+        return _canonicalize_portal_message_blocks(body=body, blocks=blocks)
+    except Exception:
+        logger.exception("_canonicalize_portal_message_blocks failed; using raw blocks")
+        return list(blocks) if isinstance(blocks, list) else []
+
+
+def _safe_canonicalize_turn_event(
+    event_type: str,
+    payload_obj: object | None,
+) -> dict[str, object]:
+    """Guarded wrapper: returns original payload on failure instead of crashing the SSE generator."""
+    try:
+        return _canonicalize_turn_event_payload(event_type, payload_obj)
+    except Exception:
+        logger.exception("_canonicalize_turn_event_payload failed; passing through raw payload")
+        return payload_obj if isinstance(payload_obj, dict) else {}
+
+
 def _apply_portal_tool_approval_state(
     blocks: list[dict[str, object]],
     *,
@@ -1378,13 +1440,17 @@ def _build_portal_agent_requests_snapshot(
 
 
 def _message_to_dict(message: PortalMessage) -> dict:
+    body = message.body if isinstance(message.body, str) else str(message.body or "")
+    content_blocks = _safe_canonicalize_blocks(body=body, blocks=message.content_blocks)
+    if not body and content_blocks:
+        body = extract_text_from_content_blocks(content_blocks)
     return {
         "id": str(message.id),
         "sender": message.sender,
-        "body": message.body,
+        "body": body,
         "sent_at": message.sent_at.isoformat(),
         "metadata": message.metadata,
-        "content_blocks": message.content_blocks,
+        "content_blocks": content_blocks,
     }
 
 
@@ -3688,6 +3754,8 @@ def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHtt
                                     payload_obj = json.loads(payload_text) if payload_text else {}
                                 except Exception:
                                     payload_obj = {}
+                                # Events from Redis are already canonicalized by _finalize_turn;
+                                # re-canonicalizing here is a lossy round-trip.  Skip it.
 
                                 if seq_value is None:
                                     # Fallback: keep Last-Event-ID monotonic even if the Redis stream ID is unexpected.
@@ -3748,7 +3816,7 @@ def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHtt
                                 "turn_id": str(turn.id),
                                 "seq": last_seq,
                                 "type": evt.type,
-                                "payload": evt.payload or {},
+                                "payload": _safe_canonicalize_turn_event(evt.type, evt.payload or {}),
                             }
                             event_type = str(evt.type or "").strip() or "event"
                             if event_type.strip().lower() == "text_delta":
@@ -3858,6 +3926,7 @@ def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHtt
                                             payload_obj = json.loads(payload_text) if payload_text else {}
                                         except Exception:
                                             payload_obj = {}
+                                        # Events from Redis are already canonicalized by _finalize_turn.
 
                                         if seq_value is None:
                                             seq_value = int(payload_obj.get("seq") or 0) if isinstance(payload_obj, dict) else 0
@@ -3872,6 +3941,8 @@ def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHtt
                                         if event_type.strip().lower() == "text_delta":
                                             # Block-only portal stream contract: ignore legacy raw text events.
                                             continue
+                                        if event_type.strip().lower() == "turn_persisted":
+                                            sent_turn_persisted = True
                                         if first_event_at is None:
                                             first_event_at = time.perf_counter()
                                         events_sent += 1
@@ -3914,7 +3985,10 @@ def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHtt
                                             "message_id": str(msg.id),
                                             "session_status": None,
                                             "metadata_version": 1,
-                                            "content_blocks": msg.content_blocks or [],
+                                            "content_blocks": _safe_canonicalize_blocks(
+                                                body=msg.body or "",
+                                                blocks=msg.content_blocks or [],
+                                            ),
                                         },
                                     }
                                     sent_turn_persisted = True

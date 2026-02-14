@@ -16,7 +16,6 @@ from apps.conversations.content_blocks import (
     ensure_assistant_text_blocks,
     extract_text_from_content_blocks,
     new_block_id,
-    normalize_assistant_content_blocks,
 )
 from apps.conversations.portal import ChatPortalService
 from apps.conversations.portal_stream_trace import PortalStreamTrace
@@ -139,6 +138,10 @@ class PortalTurnEventBuilder:
         self.rich_builder = RichBlockStreamBuilder()
         self.tool_use_block_id_by_event_id: dict[str, str] = {}
         self.reasoning_block_id_by_call_id: dict[str, str] = {}
+        # Track text blocks streamed before tool/no-tool decision is known.
+        # If tools are later used, these blocks are pruned via a dedicated stream event.
+        self._pre_tool_stream_block_ids: list[str] = []
+        self._tool_decision: str = "unknown"  # unknown | used | no_tools
         # Backpressure/coalescing: reduce per-token event spam by batching adjacent block_delta ops.
         # Force-disable coalescing to ensure normalized (smooth) streaming delta-by-delta.
         self.coalesce_block_deltas = False
@@ -334,18 +337,81 @@ class PortalTurnEventBuilder:
             self.block_ops_active = True
         self.emit_block_events([normalized])
 
+    def _emit_text_chunk_as_blocks(self, chunk: str, *, track_pre_tool_blocks: bool = False) -> None:
+        if not chunk:
+            return
+        self.trace.record_text("delta.in", chunk)
+        events = self.rich_builder.feed_text(chunk)
+        if events:
+            self.trace.record("rich.feed_text", {"events": int(len(events))})
+            if track_pre_tool_blocks:
+                for event in events:
+                    if not isinstance(event, Mapping):
+                        continue
+                    event_type = str(event.get("type") or "").strip().lower()
+                    if event_type != "block_start":
+                        continue
+                    payload = event.get("payload")
+                    if not isinstance(payload, Mapping):
+                        continue
+                    block = payload.get("block")
+                    if not isinstance(block, Mapping):
+                        continue
+                    block_id = str(block.get("block_id") or "").strip()
+                    if block_id and block_id not in self._pre_tool_stream_block_ids:
+                        self._pre_tool_stream_block_ids.append(block_id)
+            self.emit_block_events(events)
+
+    def _prune_pre_tool_stream_blocks(self, *, reason: str) -> None:
+        block_ids = [block_id for block_id in self._pre_tool_stream_block_ids if block_id]
+        self._pre_tool_stream_block_ids = []
+        if not block_ids:
+            return
+        block_id_set = set(block_ids)
+        self.trace.record(
+            "delta.pruned_pre_tool_blocks",
+            {
+                "blocks": int(len(block_ids)),
+                "reason": str(reason or "tool_decision_used"),
+            },
+        )
+        self.blocks = [block for block in self.blocks if str(block.get("block_id") or "").strip() not in block_id_set]
+        self.blocks_by_id = {
+            key: value
+            for key, value in self.blocks_by_id.items()
+            if key not in block_id_set
+        }
+        self.append_event("block_remove", {"block_ids": block_ids, "reason": reason or "tool_decision_used"})
+
+    def on_tool_decision(self, decision: str | None) -> None:
+        normalized = str(decision or "").strip().lower()
+        if not normalized:
+            return
+        if normalized in {"used", "tool_calls", "tools_used"}:
+            if self._tool_decision == "used":
+                return
+            if self._tool_decision == "no_tools":
+                # Do not downgrade an already-confirmed no-tools turn.
+                return
+            self._tool_decision = "used"
+            return
+        if normalized in {"no_tools", "none", "no_tool_calls"}:
+            if self._tool_decision == "unknown":
+                self._tool_decision = "no_tools"
+                self.trace.record("delta.tool_decision_no_tools", {"pre_tool_blocks": int(len(self._pre_tool_stream_block_ids))})
+            return
+
+    def on_stream_complete(self) -> None:
+        if self._tool_decision == "unknown":
+            self.on_tool_decision("no_tools")
+
     def on_response_text_delta(self, chunk: str) -> None:
         if not chunk:
             return
         if self.block_ops_active:
             self.trace.record_text("delta.dropped", chunk, {"reason": "block_ops_active"})
             return
-        self.trace.record_text("delta.in", chunk)
-        # Block-only streaming contract: convert model text deltas into block events.
-        events = self.rich_builder.feed_text(chunk)
-        if events:
-            self.trace.record("rich.feed_text", {"events": int(len(events))})
-            self.emit_block_events(events)
+        self._emit_text_chunk_as_blocks(chunk, track_pre_tool_blocks=self._tool_decision == "unknown")
 
     def on_reasoning_event(self, event: Mapping[str, object] | None) -> None:
         if not event or not isinstance(event, Mapping):
@@ -430,6 +496,8 @@ class PortalTurnEventBuilder:
         self.append_event("status", payload)
 
     def finalize_text(self) -> None:
+        if self._tool_decision == "unknown":
+            self.on_tool_decision("no_tools")
         if not self.block_ops_active:
             events = self.rich_builder.finalize()
             if events:
@@ -453,6 +521,7 @@ class PortalTurnEventBuilder:
         phase = str(event.get("phase") or "").strip().lower()
         if phase not in TOOL_EVENT_PHASES:
             return
+        self.on_tool_decision("used")
         tool_name = str(event.get("tool_name") or "").strip()
         kind = str(event.get("kind") or "").strip() or "tool"
         status_value = str(event.get("status") or "").strip()
@@ -556,7 +625,7 @@ class PortalTurnEventBuilder:
                 except Exception:  # pragma: no cover - defensive
                     boundary_events = []
                 if boundary_events:
-                    self._apply_block_events_internally(boundary_events)
+                    self.emit_block_events(boundary_events)
             tool_use_block = {
                 "block_id": new_block_id(),
                 "type": "tool_use",
@@ -773,18 +842,20 @@ class PortalTurnRunner:
         message_body: str | None = None
         existing_message_metadata: dict[str, object] = {}
         blocks_source = "none"
+        existing_message_blocks: list[dict[str, object]] = []
         if self.turn.message_id:
             with tenant_context(getattr(self.conversation, "business_profile_id", None)):
                 existing = ConversationMessage.objects.filter(id=self.turn.message_id).first()
             if existing is not None:
-                blocks = existing.content_blocks or []
+                existing_message_blocks = existing.content_blocks or []
                 message_body = existing.body
                 if isinstance(getattr(existing, "metadata", None), Mapping):
                     existing_message_metadata = dict(existing.metadata)
-                if blocks:
+                if existing_message_blocks:
                     blocks_source = "existing_message"
 
-        if not blocks and getattr(self.builder, "blocks", None):
+        # Streamed builder blocks are canonical for portal turns.
+        if getattr(self.builder, "blocks", None):
             try:
                 blocks = copy.deepcopy(self.builder.blocks)
             except Exception:
@@ -801,32 +872,21 @@ class PortalTurnRunner:
                 blocks = fold_turn_events(turn_id=self.turn.id)
             if blocks:
                 blocks_source = "db_fold"
-
-        normalized_blocks = normalize_assistant_content_blocks(blocks)
-        if normalized_blocks != blocks:
-            self.builder.trace.record(
-                "turn.finalize.blocks_normalized",
-                {
-                    "before": int(len(blocks)),
-                    "after": int(len(normalized_blocks)),
-                    "source": blocks_source,
-                },
-            )
-            blocks = normalized_blocks
+        if not blocks and existing_message_blocks:
+            blocks = existing_message_blocks
+            blocks_source = "existing_message"
 
         orchestrator_text = str(getattr(stream_context, "response_text", "") or "").strip() if stream_context else ""
         body_from_blocks = extract_text_from_content_blocks(blocks).strip()
         persisted_body = (message_body or "").strip()
         streamed_text = "".join(getattr(stream_context, "streamed_chunks", None) or ()).strip() if stream_context else ""
 
-        # Prefer orchestrator final text first. Rich-block reconstruction can be lossy for
-        # malformed markdown/stream boundaries (especially number-heavy outputs).
-        if orchestrator_text:
-            body_text = orchestrator_text
-            body_source = "orchestrator_response"
-        elif body_from_blocks:
+        if body_from_blocks:
             body_text = body_from_blocks
             body_source = "content_blocks"
+        elif orchestrator_text:
+            body_text = orchestrator_text
+            body_source = "orchestrator_response"
         elif persisted_body:
             body_text = persisted_body
             body_source = "message_body"
@@ -844,33 +904,38 @@ class PortalTurnRunner:
                 "body_source": body_source,
                 "orchestrator_body_len": int(len(orchestrator_text or "")),
                 "body_from_blocks_len": int(len(body_from_blocks or "")),
-                "body_len_pre_sanitize": int(len(body_text or "")),
+                "body_len": int(len(body_text or "")),
             },
         )
 
-        # Sanitize final text the same way the portal does for persistence.
-        body_text, _ = sanitize_with_diagnostics(
-            body_text,
-            conversation=self.conversation,
-            stage="portal_turn_finalize",
-        )
-
-        canonical_blocks = ensure_assistant_text_blocks(
-            body_text,
-            existing_blocks=blocks,
-            force_regenerate_text=True,
-        )
-        canonical_blocks = normalize_assistant_content_blocks(canonical_blocks)
-        if canonical_blocks != blocks:
+        # Fallback only: if no streamed/folded blocks exist, synthesize from final text.
+        if not blocks and body_text:
+            sanitized_body, _ = sanitize_with_diagnostics(
+                body_text,
+                conversation=self.conversation,
+                stage="portal_turn_finalize_fallback",
+            )
+            if sanitized_body:
+                body_text = sanitized_body
+            synthesized = ensure_assistant_text_blocks(
+                body_text,
+                existing_blocks=[],
+                force_regenerate_text=True,
+            )
+            if synthesized:
+                blocks = synthesized
+                blocks_source = "fallback_from_text"
+                body_from_blocks = extract_text_from_content_blocks(blocks).strip()
+                if body_from_blocks:
+                    body_text = body_from_blocks
+                    body_source = "content_blocks"
             self.builder.trace.record(
-                "turn.finalize.rebuilt_text_blocks",
+                "turn.finalize.fallback_blocks_synthesized",
                 {
-                    "before_blocks": int(len(blocks)),
-                    "after_blocks": int(len(canonical_blocks)),
+                    "blocks": int(len(blocks)),
                     "body_len": int(len(body_text or "")),
                 },
             )
-            blocks = canonical_blocks
 
         block_types: dict[str, int] = {}
         for block in blocks:
@@ -879,7 +944,7 @@ class PortalTurnRunner:
             t = str(block.get("type") or "").strip().lower() or "unknown"
             block_types[t] = block_types.get(t, 0) + 1
         self.builder.trace.record(
-            "turn.finalize.sanitized",
+            "turn.finalize.canonical",
             {
                 "blocks_source": blocks_source,
                 "blocks": int(len(blocks)),
@@ -1113,7 +1178,7 @@ class PortalTurnRunner:
             "on_response_text_delta": self.builder.on_response_text_delta,
             "on_status_change": self.builder.on_status_change,
             "on_placeholder_response": lambda _text: None,
-            "on_stream_complete": lambda: None,
+            "on_stream_complete": self.builder.on_stream_complete,
             "on_spinner_update": lambda _text: None,
             "on_tool_event": self.builder.on_tool_event,
             "on_block_event": _on_model_block_event,
@@ -1129,6 +1194,8 @@ class PortalTurnRunner:
         if "portal_emit_blocks_enabled" in parameters:
             # Portal turns stream server-built blocks only (no model-driven portal_emit_blocks).
             stream_kwargs["portal_emit_blocks_enabled"] = False
+        if "on_tool_decision" in parameters:
+            stream_kwargs["on_tool_decision"] = self.builder.on_tool_decision
         stream_context = None
         try:
             stream_context = orchestrator.stream_turn(**stream_kwargs)

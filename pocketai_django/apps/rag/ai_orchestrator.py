@@ -9238,14 +9238,24 @@ class AiOrchestratorService:
         applicability_soft_penalty = False
         for snippet in citations:
             diag = snippet.source_diagnostics if isinstance(snippet.source_diagnostics, Mapping) else {}
-            mode = str(diag.get("table_row_scope_reason") or "").strip().lower()
+            mode = str(
+                diag.get("table_row_scope_reason")
+                or diag.get("table_row_applicability_mode")
+                or ""
+            ).strip().lower()
             scope = diag.get("table_row_inferred_scope_columns")
+            if not isinstance(scope, (list, tuple)):
+                scope = diag.get("table_row_applies_to_columns")
             if not mode or not isinstance(scope, (list, tuple)):
                 continue
             if mode in {"ambiguous", "scope_abstain"}:
                 applicability_penalty = True
                 break
-            if mode.startswith("inferred_") or mode in {"scope_repeated_value_span", "scope_sparse_expansion"}:
+            if mode.startswith("inferred_") or mode in {
+                "scope_repeated_value_span",
+                "scope_sparse_expansion",
+                "scope_edge_completion",
+            }:
                 applicability_soft_penalty = True
 
         if applicability_penalty:
@@ -9323,6 +9333,8 @@ class AiOrchestratorService:
                 else {}
             )
             raw_scope = diagnostics.get("table_row_inferred_scope_columns")
+            if not isinstance(raw_scope, (list, tuple)):
+                raw_scope = diagnostics.get("table_row_applies_to_columns")
             if not isinstance(raw_scope, (list, tuple)):
                 continue
             cleaned_scope: list[str] = []

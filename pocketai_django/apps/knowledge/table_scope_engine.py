@@ -8,12 +8,14 @@ from typing import Any, Mapping, Sequence
 SCOPE_ENGINE_VERSION = "v3"
 
 SCOPE_REASON_EXPLICIT_SPAN = "scope_explicit_span"
+SCOPE_REASON_EDGE_COMPLETION = "scope_edge_completion"
 SCOPE_REASON_REPEATED_VALUE_SPAN = "scope_repeated_value_span"
 SCOPE_REASON_SPARSE_EXPANSION = "scope_sparse_expansion"
 SCOPE_REASON_ABSTAIN = "scope_abstain"
 
 SCOPE_REASON_TO_LEGACY: dict[str, str] = {
     SCOPE_REASON_EXPLICIT_SPAN: "explicit_span",
+    SCOPE_REASON_EDGE_COMPLETION: "inferred_span_extension",
     SCOPE_REASON_REPEATED_VALUE_SPAN: "inferred_span_extension",
     SCOPE_REASON_SPARSE_EXPANSION: "inferred_sparse_expansion",
     SCOPE_REASON_ABSTAIN: "explicit_cells",
@@ -25,6 +27,7 @@ LEGACY_TO_SCOPE_REASON: dict[str, str] = {
     "inferred_sparse_expansion": SCOPE_REASON_SPARSE_EXPANSION,
     "explicit_cells": SCOPE_REASON_ABSTAIN,
     SCOPE_REASON_EXPLICIT_SPAN: SCOPE_REASON_EXPLICIT_SPAN,
+    SCOPE_REASON_EDGE_COMPLETION: SCOPE_REASON_EDGE_COMPLETION,
     SCOPE_REASON_REPEATED_VALUE_SPAN: SCOPE_REASON_REPEATED_VALUE_SPAN,
     SCOPE_REASON_SPARSE_EXPANSION: SCOPE_REASON_SPARSE_EXPANSION,
     SCOPE_REASON_ABSTAIN: SCOPE_REASON_ABSTAIN,
@@ -198,6 +201,49 @@ def infer_scope_for_row(
         if len(span_targets) > len(best_span):
             best_span = span_targets
     if len(best_span) > 1:
+        # Guarded edge completion:
+        # Some documents encode a merged value as an explicit prefix span that
+        # omits only the trailing scope dimension (e.g., prime..exclusive, with
+        # private visually aligned but extractor-reported span=4). In that case,
+        # complete the scope to full dimensions only when evidence indicates
+        # merged/sparse table behavior and row values are consistent.
+        span_sorted = sorted(set(best_span))
+        span_set = set(span_sorted)
+        contiguous_span = span_sorted == list(range(span_sorted[0], span_sorted[-1] + 1))
+        trailing_scope = [idx for idx in scope_indices if idx > span_sorted[-1]]
+        trailing_gap = len(trailing_scope)
+        span_values = [
+            _normalized_text(value)
+            for idx, value, _cell in non_empty
+            if idx in span_set and _normalized_text(value)
+        ]
+        span_unique_values = set(span_values)
+        has_out_of_span_scope_values = any(
+            idx not in span_set
+            for idx, _value, _cell in non_empty
+            if idx in scope_set
+        )
+        edge_completion_allowed = bool(
+            contiguous_span
+            and span_sorted[0] == first_scope
+            and span_sorted[-1] < last_scope
+            and 0 < trailing_gap <= 2
+            and len(span_unique_values) == 1
+            and len(span_values) >= 2
+            and not has_out_of_span_scope_values
+            and (
+                table_profile.merged_span_evidence
+                or table_profile.sparse_row_expansion
+            )
+        )
+        if edge_completion_allowed:
+            confidence = 0.89 if table_profile.merged_span_evidence else 0.84
+            return ScopeDecision(
+                applies_to_indices=list(scope_indices),
+                detected_indices=detected_indices,
+                reason=SCOPE_REASON_EDGE_COMPLETION,
+                confidence=confidence,
+            )
         return ScopeDecision(
             applies_to_indices=best_span,
             detected_indices=detected_indices,

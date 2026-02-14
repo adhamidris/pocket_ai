@@ -103,7 +103,7 @@ class KnowledgeIngestionChunkingTests(SimpleTestCase):
                 self.metadata = {
                     "row_type": "data",
                     "applies_to_columns": ["Prime", "Plus", "Wealth", "Exclusive Wealth", "Private"],
-                    "applicability_mode": "inferred_center_collapse",
+                    "applicability_mode": "inferred_sparse_expansion",
                     "applicability_confidence": 0.72,
                     "applicability_value": "1% (Min USD 2)",
                 }
@@ -149,7 +149,7 @@ class KnowledgeIngestionChunkingTests(SimpleTestCase):
             metadata.get("table_row_applies_to_columns"),
             ["Prime", "Plus", "Wealth", "Exclusive Wealth", "Private"],
         )
-        self.assertEqual(metadata.get("table_row_applicability_mode"), "inferred_center_collapse")
+        self.assertEqual(metadata.get("table_row_applicability_mode"), "inferred_sparse_expansion")
         self.assertEqual(metadata.get("table_row_fee_value"), "1% (Min USD 2)")
 
     def test_table_row_chunks_derive_scope_with_structural_context_columns(self) -> None:

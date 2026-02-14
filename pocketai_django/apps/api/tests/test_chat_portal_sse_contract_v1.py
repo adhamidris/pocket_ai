@@ -10,7 +10,8 @@ from django.utils import timezone
 from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
 from apps.api import chat_portal
-from apps.conversations.models import Conversation, PortalTurn, PortalTurnStatus
+from apps.conversations.content_blocks import extract_text_from_content_blocks
+from apps.conversations.models import Conversation, ConversationMessage, PortalTurn, PortalTurnStatus
 from apps.conversations.portal_turn_events import append_turn_event
 from core.tenancy import tenant_context
 
@@ -155,6 +156,103 @@ class PortalSseContractV1Tests(TestCase):
         events = _parse_sse_events(b"".join(response.streaming_content).decode("utf-8"))
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["data"]["type"], "block_start")
+
+    @override_settings(PORTAL_TURN_EVENT_BUS="postgres")
+    def test_turn_persisted_payload_preserves_streamed_content_blocks(self) -> None:
+        with tenant_context(self.business.id):
+            turn = PortalTurn.objects.create(
+                conversation=self.conversation,
+                agent_profile=self.agent,
+                status=PortalTurnStatus.STREAMING,
+                run_after=timezone.now(),
+                user_message="hello",
+                metadata={"source": "test"},
+            )
+            append_turn_event(
+                turn_id=turn.id,
+                event_type="turn_persisted",
+                payload={
+                    "text": "Final answer only.",
+                    "message_id": "msg_1",
+                    "metadata_version": 1,
+                    "content_blocks": [
+                        {
+                            "block_id": "blk_pre",
+                            "type": "paragraph",
+                            "created_at": timezone.now().isoformat(),
+                            "payload": {"content": [{"text": "I'll search for this first."}]},
+                        },
+                        {
+                            "block_id": "blk_tool",
+                            "type": "tool_use",
+                            "created_at": timezone.now().isoformat(),
+                            "payload": {"tool_name": "search_knowledge", "phase": "finished", "status": "ok"},
+                        },
+                        {
+                            "block_id": "blk_final",
+                            "type": "paragraph",
+                            "created_at": timezone.now().isoformat(),
+                            "payload": {"content": [{"text": "Final answer only."}]},
+                        },
+                    ],
+                },
+            )
+            PortalTurn.objects.filter(id=turn.id).update(status=PortalTurnStatus.FINALIZED, finalized_at=timezone.now())
+
+        request = self.factory.get(
+            f"/api/chat/turns/{turn.id}/events/?session_token={self.conversation.session_token}",
+        )
+        with mock.patch.object(chat_portal, "_open_portal_turn_listen_connection", return_value=None):
+            response = chat_portal.portal_turn_events(request, turn_id=turn.id)
+
+        events = _parse_sse_events(b"".join(response.streaming_content).decode("utf-8"))
+        self.assertEqual(len(events), 1)
+        payload = events[0]["data"]["payload"]
+        self.assertIsInstance(payload, dict)
+        blocks = payload.get("content_blocks")
+        self.assertIsInstance(blocks, list)
+        block_ids = [str(block.get("block_id") or "") for block in blocks if isinstance(block, dict)]
+        self.assertEqual(block_ids, ["blk_pre", "blk_tool", "blk_final"])
+        block_text = extract_text_from_content_blocks(blocks or [])
+        self.assertIn("I'll search", block_text)
+        self.assertIn("Final answer only.", block_text)
+
+    def test_message_to_dict_preserves_persisted_content_blocks(self) -> None:
+        with tenant_context(self.business.id):
+            message = ConversationMessage.objects.create(
+                conversation=self.conversation,
+                sender="ai",
+                body="Final answer only.",
+                content_blocks=[
+                    {
+                        "block_id": "blk_pre",
+                        "type": "paragraph",
+                        "created_at": timezone.now().isoformat(),
+                        "payload": {"content": [{"text": "I'll search first."}]},
+                    },
+                    {
+                        "block_id": "blk_tool",
+                        "type": "tool_use",
+                        "created_at": timezone.now().isoformat(),
+                        "payload": {"tool_name": "search_knowledge", "phase": "finished", "status": "ok"},
+                    },
+                    {
+                        "block_id": "blk_final",
+                        "type": "paragraph",
+                        "created_at": timezone.now().isoformat(),
+                        "payload": {"content": [{"text": "Final answer only."}]},
+                    },
+                ],
+            )
+
+        payload = chat_portal._message_to_dict(message)
+        blocks = payload.get("content_blocks")
+        self.assertIsInstance(blocks, list)
+        block_ids = [str(block.get("block_id") or "") for block in blocks if isinstance(block, dict)]
+        self.assertEqual(block_ids, ["blk_pre", "blk_tool", "blk_final"])
+        block_text = extract_text_from_content_blocks(blocks or [])
+        self.assertIn("I'll search", block_text)
+        self.assertIn("Final answer only.", block_text)
 
     @override_settings(PORTAL_TURN_EVENT_BUS="redis")
     def test_turn_events_redis_drain_does_not_block_forever(self) -> None:

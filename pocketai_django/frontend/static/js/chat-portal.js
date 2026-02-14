@@ -89,21 +89,24 @@ class ChatPortalClient {
 	    this.streamingMessageId = null;
     this.activeTurnId = null;
     this.activeTurnLastSeq = 0;
+    this.lastFinalizedTurnId = null;
     this.turnCancelled = false;
 	    this.streamingBlocksEl = null;
 	    // Canonical block streaming state (block_id -> DOM + buffers)
 	    this.usingBlockStream = false;
 	    this.streamingContentBlockEls = new Map();
     this.streamingContentBlocksById = new Map();
-    this.streamingPendingBlockOps = new Map();
+	    this.streamingPendingBlockOps = new Map();
     this.streamingTextBlockActiveIds = new Set();
 	    this.streamingToolBlockActiveIds = new Set();
 	    this.streamingDirtyTextBlocks = new Set();
+    this.streamingMissingBlockWrapperCounts = new Map();
 	    this.streamingBlockRenderRaf = null;
     this.streamingBlockPacerBudget = 0;
     this.streamingBlockPacerLastAt = 0;
     this.streamingBlockPacerMode = "normal";
     this.streamingBlockDeferredActions = [];
+    this.turnPersistedFinalizeTimer = null;
     this.streamingBlockPacerConfig = {
       baseCharsPerSecond: 60,
       maxCharsPerSecond: 120,
@@ -947,6 +950,16 @@ class ChatPortalClient {
       this.handleBlockToolResultEvent(data);
       return;
     }
+    if (eventType === "block_remove") {
+      this.usingBlockStream = true;
+      this.handleBlockRemoveEvent(data);
+      return;
+    }
+
+    if (eventType === "text_delta") {
+      this.traceStream("text_delta_ignored", { rawLen: data ? data.length : 0 });
+      return;
+    }
 
     if (eventType === "spinnerStatus") {
       this.handleSpinnerStatusEvent(data);
@@ -1093,12 +1106,7 @@ class ChatPortalClient {
 	    const blockType = (block.type || "").toString().trim().toLowerCase();
 	    const blockId = (block.block_id || block.blockId || "").toString().trim();
 	    const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
-	    this._queueAfterBlockDrain(
-      () => {
-        this._processBlockStart(payload, block, blockType, blockId, messageId);
-      },
-      { mode: "boundary" },
-    );
+	    this._processBlockStart(payload, block, blockType, blockId, messageId);
 	  }
 
 		  _processBlockStart(payload, block, blockType, blockId, messageId) {
@@ -1112,6 +1120,10 @@ class ChatPortalClient {
 	        this.clearStreamingIdleStatusTimer();
 	        // Keep the status row pinned after inserting new streaming blocks.
 	        this.repositionStreamingStatusRow();
+          if (this.streamingPendingBlockOps.has(blockId)) {
+            this.streamingDirtyTextBlocks.add(blockId);
+            this.scheduleStreamingBlockRender();
+          }
 		    }
 		  }
 
@@ -1271,10 +1283,10 @@ class ChatPortalClient {
         const blockPayload = block.payload && typeof block.payload === "object" ? block.payload : {};
         const phase = (blockPayload.phase || "").toString().trim().toLowerCase();
         const status = (blockPayload.status || "").toString().trim().toLowerCase();
-        const isApprovalPending = phase === "approval_requested" || status === "pending_approval" || status === "pending";
+        const isApprovalPending = phase === "approval_requested" || status === "pending_approval";
         if (
           blockId &&
-          (phase === "started" || phase === "approval_requested" || status === "running" || status === "pending_approval" || status === "pending")
+          (phase === "started" || phase === "approval_requested" || status === "running" || status === "pending_approval")
         ) {
           this.streamingToolBlockActiveIds.add(blockId);
           this.hadToolsThisTurn = true;
@@ -1338,6 +1350,45 @@ class ChatPortalClient {
     );
   }
 
+  handleBlockRemoveEvent(data) {
+    let payload = null;
+    try {
+      payload = data ? JSON.parse(data) : null;
+    } catch (error) {
+      console.warn("Failed to parse block_remove payload", error);
+      return;
+    }
+    if (!payload || typeof payload !== "object") return;
+    const blockIds = Array.isArray(payload.block_ids)
+      ? payload.block_ids.map((value) => (value == null ? "" : value.toString().trim())).filter(Boolean)
+      : [];
+    if (!blockIds.length) return;
+
+    this._queueAfterBlockDrain(
+      () => {
+        blockIds.forEach((blockId) => {
+          const wrapper = this.streamingContentBlockEls.get(blockId);
+          const escapedBlockId =
+            typeof CSS !== "undefined" && CSS && typeof CSS.escape === "function"
+              ? CSS.escape(blockId)
+              : blockId.replace(/"/g, '\\"');
+          const target =
+            wrapper || (this.streamingBlocksEl ? this.streamingBlocksEl.querySelector(`[data-block-id="${escapedBlockId}"]`) : null);
+          if (target && target.parentNode) {
+            target.parentNode.removeChild(target);
+          }
+          this.streamingContentBlockEls.delete(blockId);
+          this.streamingContentBlocksById.delete(blockId);
+          this.streamingPendingBlockOps.delete(blockId);
+          this.streamingDirtyTextBlocks.delete(blockId);
+          this.streamingTextBlockActiveIds.delete(blockId);
+          this.streamingToolBlockActiveIds.delete(blockId);
+        });
+      },
+      { mode: "boundary" },
+    );
+  }
+
   traceStream(event, meta) {
     if (!this.streamTraceEnabled) return;
     if (this.streamTrace.length >= 20_000) return;
@@ -1393,6 +1444,9 @@ class ChatPortalClient {
           (wrapper.dataset && wrapper.dataset.contentBlockText ? wrapper : null);
         if (target) {
           this.appendInlineNodes(target, nodes);
+          if (wrapper && wrapper.dataset && wrapper.dataset.blockType === "list_item") {
+            this.syncListItemBulletVisibility(wrapper);
+          }
         }
         return;
       }
@@ -1618,6 +1672,23 @@ class ChatPortalClient {
 
   flushStreamingBlockRenders(force = false) {
     if (!this.streamingDirtyTextBlocks.size) {
+      if (this.streamingPendingBlockOps && this.streamingPendingBlockOps.size) {
+        let seeded = 0;
+        this.streamingPendingBlockOps.forEach((ops, blockId) => {
+          if (!Array.isArray(ops) || !ops.length) {
+            this.streamingPendingBlockOps.delete(blockId);
+            this.streamingMissingBlockWrapperCounts.delete(blockId);
+            return;
+          }
+          if (!blockId) return;
+          this.streamingDirtyTextBlocks.add(blockId);
+          seeded += 1;
+        });
+        if (seeded > 0) {
+          this.scheduleStreamingBlockRender();
+          return;
+        }
+      }
       if (this.streamingBlockDeferredActions && this.streamingBlockDeferredActions.length && !this.hasStreamingBlockBacklog()) {
         const actions = this.streamingBlockDeferredActions.slice(0);
         this.streamingBlockDeferredActions = [];
@@ -1637,9 +1708,14 @@ class ChatPortalClient {
     if (force) {
       blockIds.forEach((blockId) => {
         const wrapper = this.streamingContentBlockEls.get(blockId);
-        if (!wrapper) return;
         const ops = this.streamingPendingBlockOps.get(blockId);
         if (!ops || !ops.length) return;
+        if (!wrapper) {
+          this.streamingPendingBlockOps.delete(blockId);
+          this.streamingMissingBlockWrapperCounts.delete(blockId);
+          return;
+        }
+        this.streamingMissingBlockWrapperCounts.delete(blockId);
         this.streamingPendingBlockOps.delete(blockId);
         this.applyBlockOps(blockId, ops);
       });
@@ -1723,9 +1799,20 @@ class ChatPortalClient {
     for (let idx = 0; idx < blockIds.length; idx += 1) {
       const blockId = blockIds[idx];
       const wrapper = this.streamingContentBlockEls.get(blockId);
-      if (!wrapper) continue;
       const ops = this.streamingPendingBlockOps.get(blockId);
       if (!ops || !ops.length) continue;
+      if (!wrapper) {
+        const misses = (this.streamingMissingBlockWrapperCounts.get(blockId) || 0) + 1;
+        if (misses >= 6) {
+          this.streamingPendingBlockOps.delete(blockId);
+          this.streamingMissingBlockWrapperCounts.delete(blockId);
+          continue;
+        }
+        this.streamingMissingBlockWrapperCounts.set(blockId, misses);
+        nextDirty.add(blockId);
+        continue;
+      }
+      this.streamingMissingBlockWrapperCounts.delete(blockId);
 
       if (revealBudget <= 0) {
         nextDirty.add(blockId);
@@ -1745,6 +1832,7 @@ class ChatPortalClient {
         nextDirty.add(blockId);
       } else {
         this.streamingPendingBlockOps.delete(blockId);
+        this.streamingMissingBlockWrapperCounts.delete(blockId);
       }
     }
 
@@ -1779,6 +1867,7 @@ class ChatPortalClient {
 	    const blockType = (block.type || "").toString().trim().toLowerCase();
 	    const blockId = (block.block_id || block.blockId || "").toString().trim();
     if (!blockId) return;
+    this.streamingContentBlocksById.set(blockId, block);
 
     // Special handling for email_send_draft: update the existing draft card (avoid duplicate cards)
     if (blockType === "tool_use") {
@@ -4662,22 +4751,183 @@ class ChatPortalClient {
     return `${raw.slice(0, Math.max(0, limit - 1)).trim()}…`;
   }
 
-				  handleTurnPersistedEvent(data) {
-				    this.finalizingTurn = true;
-				    if (this.container && this.container.dataset) {
-				      this.container.dataset.finalizing = "true";
-				    }
-				    this._queueAfterBlockDrain(
+  _clearTurnPersistedFinalizeTimer() {
+    if (!this.turnPersistedFinalizeTimer) return;
+    clearTimeout(this.turnPersistedFinalizeTimer);
+    this.turnPersistedFinalizeTimer = null;
+  }
+
+  _scheduleTurnPersistedFinalizeTimer(data) {
+    this._clearTurnPersistedFinalizeTimer();
+    this.turnPersistedFinalizeTimer = setTimeout(() => {
+      if (!this.finalizingTurn) return;
+      this.traceStream("turn_persisted_finalize_watchdog", {
+        pendingOps: this.streamingPendingBlockOps ? this.streamingPendingBlockOps.size : 0,
+        dirtyBlocks: this.streamingDirtyTextBlocks ? this.streamingDirtyTextBlocks.size : 0,
+      });
+      if (this.streamingPendingBlockOps && this.streamingPendingBlockOps.size) {
+        this.streamingPendingBlockOps.forEach((_ops, blockId) => {
+          if (blockId) this.streamingDirtyTextBlocks.add(blockId);
+        });
+      }
+      this.flushStreamingBlockRenders(true);
+      if (this.finalizingTurn) {
+        this._doTurnPersistedReconcile(data);
+      }
+    }, 1200);
+  }
+
+  handleTurnPersistedEvent(data) {
+    this.finalizingTurn = true;
+    if (this.container && this.container.dataset) {
+      this.container.dataset.finalizing = "true";
+    }
+    this._scheduleTurnPersistedFinalizeTimer(data);
+    this._queueAfterBlockDrain(
       () => {
-        this.streamingBlockPacerMode = "finalize";
-        this.flushStreamingBlockRenders(true);
+        if (!this.finalizingTurn) return;
+        this._clearTurnPersistedFinalizeTimer();
         this._doTurnPersistedReconcile(data);
       },
       { mode: "finalize" },
     );
-				  }
+  }
 
-			  _doTurnPersistedReconcile(data) {
+  _canonicalBlockIds(blocks) {
+    if (!Array.isArray(blocks) || !blocks.length) return [];
+    const ids = [];
+    let hasInvalidBlock = false;
+    blocks.forEach((block) => {
+      if (hasInvalidBlock) return;
+      if (!block || typeof block !== "object") return;
+      const blockId = (block.block_id || block.blockId || "").toString().trim();
+      if (!blockId) {
+        hasInvalidBlock = true;
+        return;
+      }
+      ids.push(blockId);
+    });
+    if (hasInvalidBlock) return [];
+    return ids;
+  }
+
+  _normalizeComparableText(value) {
+    return (value || "").toString().replace(/\s+/g, " ").trim();
+  }
+
+  _canonicalBlockComparableText(block) {
+    if (!block || typeof block !== "object") return "";
+    const type = (block.type || "").toString().trim().toLowerCase();
+    const payload = block.payload && typeof block.payload === "object" ? block.payload : {};
+    if (type === "paragraph" || type === "heading" || type === "list_item") {
+      const content = Array.isArray(payload.content) ? payload.content : [];
+      return this._normalizeComparableText(this.inlineNodesToText(content));
+    }
+    if (type === "text") {
+      const text = typeof payload.text === "string" ? payload.text : "";
+      return this._normalizeComparableText(this.stripInlineResponseBlocks(text));
+    }
+    if (type === "code_block" || type === "reasoning") {
+      const text = typeof payload.code === "string" ? payload.code : typeof payload.text === "string" ? payload.text : "";
+      return this._normalizeComparableText(text);
+    }
+    return "";
+  }
+
+  _streamedBlockComparableText(blockId) {
+    if (!blockId) return "";
+    const streamed =
+      this.streamingContentBlocksById && this.streamingContentBlocksById.has(blockId)
+        ? this.streamingContentBlocksById.get(blockId)
+        : null;
+    if (!streamed || typeof streamed !== "object") return "";
+    return this._canonicalBlockComparableText(streamed);
+  }
+
+  _renderedBlockComparableText(blockEl, type) {
+    if (!blockEl) return "";
+    const normalizedType = (type || "").toString().trim().toLowerCase();
+    if (normalizedType === "paragraph" || normalizedType === "heading" || normalizedType === "list_item") {
+      return this._normalizeComparableText(blockEl.textContent || "");
+    }
+    if (normalizedType === "text") {
+      return this._normalizeComparableText(this.stripInlineResponseBlocks(blockEl.textContent || ""));
+    }
+    if (normalizedType === "code_block" || normalizedType === "reasoning") {
+      const codeEl = blockEl.querySelector("[data-content-block-code]");
+      const value = codeEl ? codeEl.textContent || "" : blockEl.textContent || "";
+      return this._normalizeComparableText(value);
+    }
+    return "";
+  }
+
+  _renderedBlockParentId(blockEl, blocksRoot) {
+    if (!blockEl) return "";
+    let cursor = blockEl.parentElement;
+    while (cursor && cursor !== blocksRoot) {
+      if (cursor.dataset && cursor.dataset.blockId) {
+        return (cursor.dataset.blockId || "").toString().trim();
+      }
+      cursor = cursor.parentElement;
+    }
+    return "";
+  }
+
+  _renderedBlockIds(messageBodyEl) {
+    if (!messageBodyEl) return [];
+    const root = messageBodyEl.querySelector("[data-message-blocks]");
+    if (!root) return [];
+    return Array.from(root.querySelectorAll("[data-block-id]"))
+      .map((node) => (node && node.dataset ? (node.dataset.blockId || "").toString().trim() : ""))
+      .filter(Boolean);
+  }
+
+  _turnPersistedCanAckStreamedBlocks(messageBodyEl, contentBlocks) {
+    if (!messageBodyEl) return false;
+    if (!this.usingBlockStream) return false;
+    if (!this.streamingContentBlockEls || this.streamingContentBlockEls.size === 0) return false;
+    if (this.hasStreamingBlockBacklog()) return false;
+    const canonicalIds = this._canonicalBlockIds(contentBlocks);
+    if (!canonicalIds.length) return false;
+    if (canonicalIds.length !== contentBlocks.length) return false;
+    const blocksRoot = messageBodyEl.querySelector("[data-message-blocks]");
+    if (!blocksRoot) return false;
+    const renderedIds = this._renderedBlockIds(messageBodyEl);
+    if (renderedIds.length !== canonicalIds.length) return false;
+    const renderedById = new Map();
+    Array.from(blocksRoot.querySelectorAll("[data-block-id]")).forEach((node) => {
+      if (!node || !node.dataset) return;
+      const blockId = (node.dataset.blockId || "").toString().trim();
+      if (!blockId || renderedById.has(blockId)) return;
+      renderedById.set(blockId, node);
+    });
+    for (let idx = 0; idx < canonicalIds.length; idx += 1) {
+      if (canonicalIds[idx] !== renderedIds[idx]) return false;
+    }
+    for (let idx = 0; idx < contentBlocks.length; idx += 1) {
+      const block = contentBlocks[idx];
+      if (!block || typeof block !== "object") continue;
+      const blockId = canonicalIds[idx];
+      const renderedEl = renderedById.get(blockId);
+      if (!renderedEl) return false;
+      const canonicalType = (block.type || "").toString().trim().toLowerCase();
+      const renderedType =
+        renderedEl && renderedEl.dataset ? (renderedEl.dataset.blockType || "").toString().trim().toLowerCase() : "";
+      if (canonicalType && renderedType && canonicalType !== renderedType) return false;
+      const canonicalParentId = (block.parent_block_id || block.parentBlockId || "").toString().trim();
+      const renderedParentId = this._renderedBlockParentId(renderedEl, blocksRoot);
+      if (canonicalParentId !== renderedParentId) return false;
+      const canonicalText = this._canonicalBlockComparableText(block);
+      if (!canonicalText) continue;
+      const renderedText = this._renderedBlockComparableText(renderedEl, canonicalType);
+      if (!renderedText || renderedText !== canonicalText) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  _doTurnPersistedReconcile(data) {
 			    try {
 			      const payload = data ? JSON.parse(data) : null;
 		      if (!payload) return;
@@ -4701,20 +4951,25 @@ class ChatPortalClient {
 	        Array.isArray(payload.content_blocks) ? payload.content_blocks : Array.isArray(payload.contentBlocks) ? payload.contentBlocks : [];
 	      const persistedText = payload.text ? payload.text.toString() : "";
 
-	      if (contentBlocks.length) {
-	        this.ensureStreamingMessageNode(messageId);
-	        const bodyEl = this.getMessageBodyElement(messageId) || this.streamingMessageBodyEl;
-	        if (bodyEl) {
-	          // Canonical reconcile: update/insert/remove/reorder by block_id without doing a full
-	          // re-render, and prevent streaming-only animations from firing during finalization.
-	          const streamedBlocks =
-	            this.usingBlockStream && this.streamingBlocksEl && this.streamingContentBlockEls && this.streamingContentBlockEls.size > 0;
-	          if (streamedBlocks) {
-	            this.reconcileMessageContentBlocks(bodyEl, contentBlocks);
-	          } else {
-	            this.renderMessageContentBlocks(bodyEl, contentBlocks);
-	          }
-	          this.injectCopyButton(bodyEl);
+		      if (contentBlocks.length) {
+		        this.ensureStreamingMessageNode(messageId);
+		        const bodyEl = this.getMessageBodyElement(messageId) || this.streamingMessageBodyEl;
+		        if (bodyEl) {
+		          // Canonical reconcile: update/insert/remove/reorder by block_id without doing a full
+		          // re-render, and prevent streaming-only animations from firing during finalization.
+		          const streamedBlocks =
+		            this.usingBlockStream && this.streamingBlocksEl && this.streamingContentBlockEls && this.streamingContentBlockEls.size > 0;
+              const ackOnly = streamedBlocks && this._turnPersistedCanAckStreamedBlocks(bodyEl, contentBlocks);
+              if (ackOnly) {
+                this.traceStream("turn_persisted_ack", {
+                  blocks: contentBlocks.length,
+                });
+              } else if (streamedBlocks) {
+		            this.reconcileMessageContentBlocks(bodyEl, contentBlocks);
+		          } else {
+		            this.renderMessageContentBlocks(bodyEl, contentBlocks);
+		          }
+		          this.injectCopyButton(bodyEl);
 	        }
 	        if (messageId) {
 	          const scriptTag = document.getElementById(messageId);
@@ -4758,7 +5013,22 @@ class ChatPortalClient {
         this.closeTurnEventStream();
 	    } catch (error) {
 	      console.warn("Failed to parse persisted turn", error);
+        this.setSpinnerText("", { pending: false, force: true });
+        this.resetStreamingState(false, false);
+        this.pendingMessageId = null;
+        this.usingStateMachine = false;
+        this.usingBlockStream = false;
+        this.streamFinished = true;
+        this.isStreaming = false;
+        this.awaitingReply = false;
+        this.workflowLocked = false;
+        this.updateSendButtonState(false);
+        this.setComposerAvailability(true);
+        this.updateComposerNotice(false);
+        this.clearActiveTurnState();
+        this.closeTurnEventStream();
 	    } finally {
+        this._clearTurnPersistedFinalizeTimer();
 	      this.finalizingTurn = false;
 	      if (this.container) {
 	        delete this.container.dataset.finalizing;
@@ -7507,6 +7777,9 @@ class ChatPortalClient {
       }
       el.innerHTML = "";
       this.appendInlineNodes(el, content);
+      if (type === "list_item") {
+        this.syncListItemBulletVisibility(el);
+      }
       return el;
     }
 
@@ -7603,6 +7876,17 @@ class ChatPortalClient {
     }
 
     const canonical = Array.isArray(blocks) ? blocks.filter((b) => b && typeof b === "object") : [];
+    if (
+      canonical.some((block) => {
+        const blockId = (block.block_id || block.blockId || "").toString().trim();
+        return !blockId;
+      })
+    ) {
+      this.renderContentBlocksInto(containerEl, canonical);
+      const visibilityRoot = containerEl.closest ? containerEl.closest("[data-message-id]") || containerEl : containerEl;
+      this.updateInlineToolCardsVisibility(visibilityRoot);
+      return;
+    }
 
     // Map existing blocks by block_id (remove duplicates proactively).
     const existingById = new Map();
@@ -7714,22 +7998,10 @@ class ChatPortalClient {
       }
     });
 
-    // Remove blocks not present in canonical output, but preserve blocks that existed
-    // before a tool approval. This prevents text that appeared before an approval card
-    // from being wiped when the approval is resolved and a new turn continues.
-    // Post-approval blocks should always come from canonical (server's source of truth).
+    // Remove blocks not present in canonical output. Finalized payload is authoritative.
     existingById.forEach((node, id) => {
       if (!keepIds.has(id) && node && node.parentNode) {
-        // Check if this block was part of the pre-approval snapshot
-        const wasPreApprovalBlock = this.preApprovalContentBlocksSnapshot && this.preApprovalContentBlocksSnapshot.has(id);
-        // Preserve only pre-approval blocks (not post-approval streamed blocks)
-        if (wasPreApprovalBlock) {
-          // Keep the block but mark it as preserved
-          node.dataset.preservedFromStream = "true";
-          keepIds.add(id);
-        } else {
-          node.remove();
-        }
+        node.remove();
       }
     });
 
@@ -7854,9 +8126,12 @@ class ChatPortalClient {
 	        this.applyMarkdownTableStyles(markdownWrapper);
         return markdownWrapper;
       }
-      this.appendInlineNodes(wrapper, content);
-      return wrapper;
-    }
+	      this.appendInlineNodes(wrapper, content);
+      if (type === "list_item") {
+        this.syncListItemBulletVisibility(wrapper);
+      }
+	      return wrapper;
+	    }
 
 	    if (type === "list") {
 	      const ordered = payload.ordered === true;
@@ -8525,7 +8800,23 @@ class ChatPortalClient {
     return escaped.replace(/\n/g, "<br>");
   }
 
-	  appendInlineNodes(target, nodes) {
+  syncListItemBulletVisibility(listItemEl) {
+    if (!listItemEl || listItemEl.tagName !== "LI") return;
+    const hasContent = this._normalizeComparableText(listItemEl.textContent || "").length > 0;
+    if (hasContent) {
+      if (listItemEl.dataset) {
+        delete listItemEl.dataset.awaitingText;
+      }
+      listItemEl.style.listStyleType = "";
+      return;
+    }
+    if (listItemEl.dataset) {
+      listItemEl.dataset.awaitingText = "true";
+    }
+    listItemEl.style.listStyleType = "none";
+  }
+
+		  appendInlineNodes(target, nodes) {
 	    if (!target || !Array.isArray(nodes) || !nodes.length) return;
 
 	    const matchesWrapper = (el, mark) => {
@@ -8708,6 +8999,7 @@ class ChatPortalClient {
 	      this.streamingTextBlockActiveIds.clear();
 	      this.streamingToolBlockActiveIds.clear();
 	      this.streamingDirtyTextBlocks.clear();
+        this.streamingMissingBlockWrapperCounts.clear();
 	      this.usingBlockStream = false;
       // Do not inject copy button yet - wait for stream to finish
     }
@@ -10101,6 +10393,7 @@ class ChatPortalClient {
 			    this.streamingTextBlockActiveIds.clear();
 			    this.streamingToolBlockActiveIds.clear();
 		    this.streamingDirtyTextBlocks.clear();
+        this.streamingMissingBlockWrapperCounts.clear();
 			    if (this.streamingBlockRenderRaf) {
 			      cancelAnimationFrame(this.streamingBlockRenderRaf);
 		    }
@@ -10109,6 +10402,10 @@ class ChatPortalClient {
     this.streamingBlockPacerLastAt = 0;
     this.streamingBlockPacerMode = "normal";
     this.streamingBlockDeferredActions = [];
+    if (this.turnPersistedFinalizeTimer) {
+      clearTimeout(this.turnPersistedFinalizeTimer);
+      this.turnPersistedFinalizeTimer = null;
+    }
 		    this.spinnerDesiredText = "";
     this.spinnerDesiredPending = false;
     this.spinnerDesiredIsError = false;
@@ -10791,8 +11088,29 @@ class ChatPortalClient {
     const type = (payload.type || "").toString().trim();
     const eventPayload = payload.payload && typeof payload.payload === "object" ? payload.payload : {};
     if (!type) return;
+    const normalizedType = type.toLowerCase();
+    const isTurnPersistedType =
+      normalizedType === "turn_persisted" || normalizedType === "turnpersisted" || normalizedType === "turn_finalized";
 
-    if (type === "turn_persisted" || type === "turnPersisted" || type === "turn_finalized") {
+    if (this.finalizingTurn && !isTurnPersistedType) {
+      this.traceStream("event_ignored_finalizing", { type, turnId: turnId || null });
+      return;
+    }
+    if (
+      this.lastFinalizedTurnId &&
+      turnId &&
+      turnId === this.lastFinalizedTurnId &&
+      this.streamFinished &&
+      !isTurnPersistedType
+    ) {
+      this.traceStream("event_ignored_after_finalize", { type, turnId });
+      return;
+    }
+
+    if (isTurnPersistedType) {
+      if (turnId) {
+        this.lastFinalizedTurnId = turnId;
+      }
       const blocks = Array.isArray(eventPayload.content_blocks)
         ? eventPayload.content_blocks
         : Array.isArray(eventPayload.contentBlocks)

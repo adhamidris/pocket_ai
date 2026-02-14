@@ -220,7 +220,9 @@ class AzureDocumentIntelligenceApplicabilityTests(SimpleTestCase):
             ["segment_1", "segment_2", "segment_3", "segment_4", "segment_5"],
         )
 
-    def test_center_collapse_infers_multi_column_scope(self) -> None:
+    def test_sparse_expansion_infers_multi_column_scope(self) -> None:
+        """When >=40% of data rows have exactly one non-empty segment cell,
+        each such row should expand to all segment columns (sparse-row pattern)."""
         extractor = AzureDocumentIntelligenceExtractor(endpoint="https://example.test", key="secret")
         schema = [
             "descriptor_a",
@@ -256,8 +258,195 @@ class AzureDocumentIntelligenceApplicabilityTests(SimpleTestCase):
             header_rows={0},
         )
         meta = annotated[2].metadata
-        self.assertEqual(meta.get("applicability_mode"), "inferred_center_collapse")
+        self.assertEqual(meta.get("applicability_mode"), "inferred_sparse_expansion")
         self.assertEqual(
             meta.get("applies_to_columns"),
             ["segment_1", "segment_2", "segment_3", "segment_4", "segment_5"],
         )
+
+    def test_scattered_placement_triggers_sparse_expansion(self) -> None:
+        """When Azure DI scatters single values across different columns
+        (no dominant column), sparse-row expansion should still fire."""
+        extractor = AzureDocumentIntelligenceExtractor(endpoint="https://example.test", key="secret")
+        schema = [
+            "service",
+            "tariff",
+            "prime",
+            "plus",
+            "wealth",
+            "exclusive_wealth",
+            "private",
+        ]
+        rows = [
+            self._make_row(0, schema),
+            # Row 1: value lands in 'wealth' (col 4)
+            self._make_row(1, [
+                "Cashing cheques issued by Al Fardan Company",
+                "Local currency descriptor for retail banking",
+                "", "", "Free", "", "",
+            ]),
+            # Row 2: value lands in 'plus' (col 3) — scattered!
+            self._make_row(2, [
+                "Payment of bank cheques issued by Al Rajhi",
+                "Foreign currency descriptor for settlement",
+                "", "USD 2", "", "", "",
+            ]),
+            # Row 3: value lands in 'exclusive_wealth' (col 5) — scattered!
+            self._make_row(3, [
+                "Cashing Sharing coupons through MCDR representative",
+                "Coupon processing descriptor for clearance",
+                "", "", "", "0.5%", "",
+            ]),
+        ]
+
+        annotated = extractor._annotate_row_applicability(
+            table_rows=rows,
+            column_schema=schema,
+            header_rows={0},
+        )
+        # All three sparse rows should expand to all segment columns
+        for row_idx in (1, 2, 3):
+            meta = annotated[row_idx].metadata
+            self.assertEqual(
+                meta.get("applicability_mode"),
+                "inferred_sparse_expansion",
+                f"Row {row_idx} should be inferred_sparse_expansion",
+            )
+            self.assertEqual(
+                meta.get("applies_to_columns"),
+                ["prime", "plus", "wealth", "exclusive_wealth", "private"],
+                f"Row {row_idx} should apply to all segments",
+            )
+
+    def test_dense_table_does_not_trigger_sparse_expansion(self) -> None:
+        """A table where most rows have per-column values should NOT expand
+        single-value rows — they may genuinely apply to one column only."""
+        extractor = AzureDocumentIntelligenceExtractor(endpoint="https://example.test", key="secret")
+        schema = ["service", "band_a", "band_b", "band_c", "band_d"]
+        rows = [
+            self._make_row(0, schema),
+            self._make_row(1, ["Service A", "10", "20", "30", "40"]),
+            self._make_row(2, ["Service B", "15", "25", "35", "45"]),
+            self._make_row(3, ["Service C", "12", "22", "32", "42"]),
+            self._make_row(4, ["Service D", "8", "18", "28", "38"]),
+            # One row with single value — should NOT expand because table is mostly dense
+            self._make_row(5, ["Service E", "", "", "50", ""]),
+        ]
+
+        annotated = extractor._annotate_row_applicability(
+            table_rows=rows,
+            column_schema=schema,
+            header_rows={0},
+        )
+        meta = annotated[5].metadata
+        # sparse_fraction = 1/5 = 0.2 < 0.4, so no expansion
+        self.assertEqual(meta.get("applicability_mode"), "explicit_cells")
+        self.assertEqual(meta.get("applies_to_columns"), ["band_c"])
+
+
+class AzureDocumentIntelligenceGeometricReconciliationTests(SimpleTestCase):
+    def test_geometric_reconciliation_detects_spanning_cell(self) -> None:
+        """A data cell whose bbox spans 5 header columns should get
+        column_span updated and its value duplicated across the grid."""
+        extractor = AzureDocumentIntelligenceExtractor(endpoint="https://example.test", key="secret")
+
+        # 7 columns: 2 context + 5 segment.  Each header cell is ~80px wide.
+        col_count = 7
+        row_count = 2
+        grid = [["" for _ in range(col_count)] for _ in range(row_count)]
+        cell_lookup: dict[tuple[int, int], dict] = {}
+
+        # Header row (row 0) — each column has a distinct x-range.
+        headers = ["Service", "Tariff", "Prime", "Plus", "Wealth", "Exclusive Wealth", "Private"]
+        for c, label in enumerate(headers):
+            x0 = 50.0 + c * 80.0
+            x1 = x0 + 75.0
+            grid[0][c] = label
+            cell_lookup[(0, c)] = {
+                "row_span": 1,
+                "column_span": 1,
+                "kind": "columnheader",
+                "confidence": 0.99,
+                "regions": [{"pageNumber": 1, "polygon": [x0, 100, x1, 100, x1, 120, x0, 120]}],
+            }
+
+        # Data row (row 1) — Azure DI placed value only in column 4 (Wealth)
+        # but the bbox physically spans columns 2-6 (Prime through Private).
+        grid[1][0] = "Traveler cheques"
+        cell_lookup[(1, 0)] = {
+            "row_span": 1, "column_span": 1, "kind": "content", "confidence": 0.95,
+            "regions": [{"pageNumber": 1, "polygon": [50, 130, 125, 130, 125, 150, 50, 150]}],
+        }
+        grid[1][1] = ""
+        cell_lookup[(1, 1)] = {
+            "row_span": 1, "column_span": 1, "kind": "content", "confidence": 0.95,
+            "regions": [{"pageNumber": 1, "polygon": [130, 130, 205, 130, 205, 150, 130, 150]}],
+        }
+        # Column 4 (Wealth) has the value, but its bbox spans from Prime (col 2) to Private (col 6)
+        wide_x0 = 50.0 + 2 * 80.0  # Start of Prime column
+        wide_x1 = 50.0 + 7 * 80.0  # End of Private column
+        grid[1][4] = "1% (Min USD 2)"
+        cell_lookup[(1, 4)] = {
+            "row_span": 1, "column_span": 1, "kind": "content", "confidence": 0.95,
+            "regions": [{"pageNumber": 1, "polygon": [wide_x0, 130, wide_x1, 130, wide_x1, 150, wide_x0, 150]}],
+        }
+        # Columns 2,3,5,6 are empty in the grid
+        for c in (2, 3, 5, 6):
+            grid[1][c] = ""
+
+        extractor._reconcile_spans_from_geometry(
+            grid=grid,
+            cell_lookup=cell_lookup,
+            header_rows={0},
+            row_count=row_count,
+            col_count=col_count,
+            page_unit_scale=None,
+        )
+
+        # After reconciliation, value should be duplicated across cols 2-6
+        for c in (2, 3, 4, 5, 6):
+            self.assertEqual(grid[1][c], "1% (Min USD 2)", f"Column {c} should have the duplicated value")
+            self.assertEqual(cell_lookup[(1, c)].get("column_span"), 5, f"Column {c} should have span=5")
+            self.assertTrue(cell_lookup[(1, c)].get("geometric_span_reconciled"))
+
+        # Context columns should be untouched
+        self.assertEqual(grid[1][0], "Traveler cheques")
+        self.assertEqual(grid[1][1], "")
+
+    def test_geometric_reconciliation_skips_already_spanned_cells(self) -> None:
+        """Cells that already have column_span > 1 should not be re-processed."""
+        extractor = AzureDocumentIntelligenceExtractor(endpoint="https://example.test", key="secret")
+
+        col_count = 4
+        row_count = 2
+        grid = [["" for _ in range(col_count)] for _ in range(row_count)]
+        cell_lookup: dict[tuple[int, int], dict] = {}
+
+        for c in range(col_count):
+            x0 = c * 100.0
+            x1 = x0 + 95.0
+            grid[0][c] = f"H{c}"
+            cell_lookup[(0, c)] = {
+                "row_span": 1, "column_span": 1, "kind": "columnheader", "confidence": 0.99,
+                "regions": [{"pageNumber": 1, "polygon": [x0, 0, x1, 0, x1, 20, x0, 20]}],
+            }
+
+        # Data cell with explicit column_span=3 already set by Azure DI
+        grid[1][1] = "Shared value"
+        cell_lookup[(1, 1)] = {
+            "row_span": 1, "column_span": 3, "kind": "content", "confidence": 0.9,
+            "regions": [{"pageNumber": 1, "polygon": [100, 30, 395, 30, 395, 50, 100, 50]}],
+        }
+
+        extractor._reconcile_spans_from_geometry(
+            grid=grid,
+            cell_lookup=cell_lookup,
+            header_rows={0},
+            row_count=row_count,
+            col_count=col_count,
+            page_unit_scale=None,
+        )
+
+        # Should NOT touch the cell — it already has a span
+        self.assertEqual(cell_lookup[(1, 1)].get("column_span"), 3)
+        self.assertFalse(cell_lookup[(1, 1)].get("geometric_span_reconciled"))

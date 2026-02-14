@@ -124,7 +124,11 @@ def _scope_metrics(row_chunks: Sequence[dict[str, Any]]) -> dict[str, Any]:
         if card <= 1:
             ambiguous += 1
         mode = _row_scope_reason(row).lower()
-        if mode.startswith("inferred") or mode in {"scope_repeated_value_span", "scope_sparse_expansion"}:
+        if mode.startswith("inferred") or mode in {
+            "scope_repeated_value_span",
+            "scope_sparse_expansion",
+            "scope_edge_completion",
+        }:
             inferred += 1
         if mode in {"scope_explicit_span", "explicit_span"}:
             explicit += 1

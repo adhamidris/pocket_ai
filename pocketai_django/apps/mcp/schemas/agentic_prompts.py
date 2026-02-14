@@ -85,6 +85,7 @@ Read canonical evidence for specific refs from `search_knowledge.refs[]`.
 - Cursors are opaque tokens returned by the tool; never invent or edit them—pass them back exactly.
 - Batch all relevant refs into ONE call.
 - Set `max_chars` using `read_budget_hint.total_suggested_max_chars` from the search results. For "list all" / large tables, prefer a higher `max_chars` (up to `read_budget_hint.max_chars_allowed`) to avoid repeat reads.
+- For table payloads, treat `row_metadata[].inferred_scope_columns` as the applicability source of truth. Blank cells in `rows` can reflect observed extraction gaps; rely on inferred scope + `scope_reason`/`scope_confidence` when present.
 
 ### initiate_phone_call(phone_number, objective)
 Make an outbound phone call to a customer or contact.
@@ -182,6 +183,7 @@ Read canonical evidence for specific refs from `search_knowledge.refs[]`.
 - You can continue multiple partial refs in ONE call by including multiple `{{id,cursor}}` entries in `refs`.
 - Batch all relevant items into ONE call.
 - Set `max_chars` using `read_budget_hint.total_suggested_max_chars` from the search results. For "list all" / large tables, prefer a higher `max_chars` (up to `read_budget_hint.max_chars_allowed`) to avoid repeat reads.
+- For table payloads, treat `row_metadata[].inferred_scope_columns` as the applicability source of truth. Blank cells in `rows` can reflect observed extraction gaps; rely on inferred scope + `scope_reason`/`scope_confidence` when present.
 
 ### initiate_phone_call(phone_number, objective)
 Make an outbound phone call to a customer or contact.
@@ -310,7 +312,7 @@ You are {agent_name}{for_business}.
 - If the tool returns `has_more=true` and a `next_cursor`, fetch more results using `search_knowledge(cursor=next_cursor)` instead of repeating the same search.
 - Use search refs/previews to select what to read next. For factual business answers, do one `read_knowledge` pass before the final answer.
 - Skip the read only for pure existence/navigation questions (for example: "do you have docs about X?") or when search returns no refs.
-- **read_knowledge(refs, max_chars)** — normal post-search step for factual business answers; batch all relevant refs in ONE call and use `read_budget_hint.total_suggested_max_chars` for `max_chars`.
+- **read_knowledge(refs, max_chars)** — normal post-search step for factual business answers; batch all relevant refs in ONE call and use `read_budget_hint.total_suggested_max_chars` for `max_chars`. For table payloads, use `row_metadata[].inferred_scope_columns` as applicability truth when present.
 - **initiate_phone_call(phone_number, objective)** — make an outbound phone call. Requires E.164 format (e.g., +201234567890) and a short call objective. Optional: `call_type`, `language`, `max_duration_minutes`. Recommended: include `context_items=[...]` for facts/talking points so they are preserved for approvals and the call runtime.
 
 ## Workflow (follow this order)
@@ -369,6 +371,7 @@ Read canonical evidence for specific refs from `search_knowledge.refs[]`.
 - You can continue multiple partial refs in ONE call by including multiple `{{id,cursor}}` entries in `refs`.
 - Batch all relevant items into ONE call.
 - Set `max_chars` using `read_budget_hint.total_suggested_max_chars` from the search results. For "list all" / large tables, prefer a higher `max_chars` (up to `read_budget_hint.max_chars_allowed`) to avoid repeat reads.
+- For table payloads, treat `row_metadata[].inferred_scope_columns` as the applicability source of truth. Blank cells in `rows` can reflect observed extraction gaps; rely on inferred scope + `scope_reason`/`scope_confidence` when present.
 
 ### initiate_phone_call(phone_number, objective)
 Make an outbound phone call to a customer or contact.
@@ -466,6 +469,7 @@ Read canonical evidence for specific refs from `search_knowledge.refs[]`.
 - You can continue multiple partial refs in ONE call by including multiple `{{id,cursor}}` entries in `refs`.
 - Batch all relevant items into ONE call.
 - Set `max_chars` using `read_budget_hint.total_suggested_max_chars` from the search results. For "list all" / large tables, prefer a higher `max_chars` (up to `read_budget_hint.max_chars_allowed`) to avoid repeat reads.
+- For table payloads, treat `row_metadata[].inferred_scope_columns` as the applicability source of truth. Blank cells in `rows` can reflect observed extraction gaps; rely on inferred scope + `scope_reason`/`scope_confidence` when present.
 
 ### initiate_phone_call(phone_number, objective)
 Make an outbound phone call to a customer or contact.
@@ -646,7 +650,7 @@ Arguments:
 
 Prefer a single batched call with all refs instead of multiple read_knowledge calls.
 Returns canonical evidence payloads:
-- For tables: lossless rows/columns (paged via next_cursor if too large)
+- For tables: rows/columns with scope-normalized effective values for answering + row_metadata for provenance (paged via next_cursor if too large)
 - For text: relevant excerpts (paged via next_cursor if needed)
 """
 

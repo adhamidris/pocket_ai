@@ -342,6 +342,7 @@ class McpOrchestratorService:
         on_placeholder_response: Callable[[str], None] | None = None,
         on_spinner_update: Callable[[str], None] | None = None,
         on_tool_event: Callable[[Mapping[str, object]], None] | None = None,
+        on_tool_decision: Callable[[str], None] | None = None,
         on_block_event: Callable[[Mapping[str, object]], None] | None = None,
         on_reasoning_event: Callable[[Mapping[str, object]], None] | None = None,
         should_cancel: Callable[[], bool] | None = None,
@@ -573,7 +574,6 @@ class McpOrchestratorService:
         streaming_mode = "initial"
         final_separator_pending = False
         last_stream_char = ""
-        sentence_space_pending = False
         single_pass_candidate: str | None = None
         first_stream_tool_calls: list[Mapping[str, object]] = []
         first_stream_message: dict[str, object] | None = None
@@ -1018,64 +1018,6 @@ class McpOrchestratorService:
             final_separator_pending = False
             _emit_stream_chunks(lambda chunk: _append_chunk(chunk, answer_streamed_chunks), text)
 
-        def _reconcile_streamed_answer_tail(final_text: str, *, stage: str) -> None:
-            """
-            Ensure live streamed text is not missing the final suffix when the
-            canonical post-processed answer is longer than streamed chunks.
-            """
-            if not streaming_allowed:
-                return
-            canonical = str(final_text or "")
-            if not canonical:
-                return
-            streamed = "".join(answer_streamed_chunks)
-            if streamed == canonical:
-                return
-
-            suffix = ""
-            if canonical.startswith(streamed):
-                suffix = canonical[len(streamed):]
-            else:
-                # Minor trailing-whitespace drift: try prefix comparison on rstrip.
-                streamed_rstrip = streamed.rstrip()
-                canonical_rstrip = canonical.rstrip()
-                if streamed_rstrip and canonical_rstrip.startswith(streamed_rstrip):
-                    suffix = canonical_rstrip[len(streamed_rstrip):]
-
-            if not suffix:
-                structured_log(
-                    "mcp",
-                    "stream.reconcile_skipped",
-                    {
-                        "stage": stage,
-                        "streamed_len": len(streamed),
-                        "canonical_len": len(canonical),
-                    },
-                    context={
-                        "conversation": conversation.id,
-                        "business": conversation.business_profile_id,
-                    },
-                    logger_obj=logger,
-                )
-                return
-
-            _emit_tokens(suffix)
-            structured_log(
-                "mcp",
-                "stream.reconciled_tail",
-                {
-                    "stage": stage,
-                    "suffix_len": len(suffix),
-                    "streamed_len_before": len(streamed),
-                    "canonical_len": len(canonical),
-                },
-                context={
-                    "conversation": conversation.id,
-                    "business": conversation.business_profile_id,
-                },
-                logger_obj=logger,
-            )
-
         def _flush_stream_buffer(stage: str, *, filter_override: str | None = None) -> None:
             nonlocal stream_buffer
             trailing = stream_buffer
@@ -1108,7 +1050,7 @@ class McpOrchestratorService:
         # and we have content, we can keep this streamed text and skip the
         # second content call.
         def _first_stream_chunk(chunk: str) -> None:
-            nonlocal stream_buffer, sentence_space_pending, initial_stream_started, inline_response_blocks_detected
+            nonlocal stream_buffer, initial_stream_started, inline_response_blocks_detected
             if not chunk:
                 return
             chunk = _filter_dsml_stream(chunk)
@@ -1122,7 +1064,7 @@ class McpOrchestratorService:
             _emit_tokens(chunk)
 
         def _answer_stream_chunk(chunk: str) -> None:
-            nonlocal stream_buffer, sentence_space_pending, inline_response_blocks_detected
+            nonlocal stream_buffer, inline_response_blocks_detected
             if not chunk:
                 return
             chunk = _filter_dsml_stream(chunk)
@@ -1134,47 +1076,32 @@ class McpOrchestratorService:
                 _mark_answer_started()
             stream_buffer = f"{stream_buffer}{chunk}"
             block_match = INLINE_RESPONSE_BLOCK_PATTERN.search(stream_buffer)
+            emit_text = stream_buffer
             if block_match:
-                stream_buffer = stream_buffer[: block_match.start()]
+                emit_text = stream_buffer[: block_match.start()]
                 inline_response_blocks_detected = True
-            while True:
-                match = re.search(r"(.+?[.!?])([\s]|$)", stream_buffer)
-                if match:
-                    sentence = match.group(1)
-                    remainder = stream_buffer[match.end(1):]
-                    ensure_spacing = not bool(match.group(2))
-                    stripped = sentence.strip()
-                    if is_investigative_filler_with_level(stripped, filter_level=filter_level):
-                        stream_dropped.append(stripped)
-                        structured_log(
-                            "mcp",
-                            "sanitizer.dropped_sentence",
-                            {
-                                "stage": "streaming_answer",
-                                "text": stripped[:200],
-                            },
-                            indent=1,
-                            context={
-                                "conversation": conversation.id,
-                                "business": conversation.business_profile_id,
-                            },
-                            logger_obj=logger,
-                        )
-                    else:
-                        _emit_sentence(sentence + (match.group(2) or ""))
-                        if ensure_spacing:
-                            sentence_space_pending = True
-                    stream_buffer = remainder
-                    continue
-                if is_investigative_filler_with_level(stream_buffer.strip(), filter_level=filter_level):
-                    break
-                words = stream_buffer.split(" ")
-                if len(words) > 1:
-                    emit_part = " ".join(words[:-1]) + " "
-                    stream_buffer = words[-1]
-                    _emit_tokens(emit_part)
-                    continue
-                break
+            stream_buffer = ""
+            if not emit_text:
+                return
+            stripped = emit_text.strip()
+            if stripped and is_investigative_filler_with_level(stripped, filter_level=filter_level):
+                stream_dropped.append(stripped)
+                structured_log(
+                    "mcp",
+                    "sanitizer.dropped_sentence",
+                    {
+                        "stage": "streaming_answer",
+                        "text": stripped[:200],
+                    },
+                    indent=1,
+                    context={
+                        "conversation": conversation.id,
+                        "business": conversation.business_profile_id,
+                    },
+                    logger_obj=logger,
+                )
+                return
+            _emit_tokens(emit_text)
 
         # Limit the initial payload so the provider only sees the guardrails and
         # the latest transcript entries needed for intent selection.
@@ -1203,6 +1130,11 @@ class McpOrchestratorService:
         first_stream_tool_calls, portal_tool_calls = _split_portal_tool_calls(first_stream_tool_calls_raw)
         if portal_tool_calls:
             portal_block_stream.ingest_tool_calls(portal_tool_calls)
+        if on_tool_decision:
+            try:
+                on_tool_decision("used" if first_stream_tool_calls else "no_tools")
+            except Exception:  # pragma: no cover - defensive
+                logger.exception("on_tool_decision callback failed")
         if first_stream_tool_calls:
             _prime_phase_starts(first_stream_tool_calls)
         first_content_raw = ""
@@ -2727,25 +2659,6 @@ class McpOrchestratorService:
             streaming_mode = "final"
             if streaming_allowed:
                 answer_streamed_chunks[:] = list(first_pass_streamed_chunks)
-                _reconcile_streamed_answer_tail(clean_single, stage="single_pass")
-                # If streamed chunks still diverge from the canonical answer
-                # (e.g., pre-sanitization narration), keep persisted stream state
-                # aligned to the final answer text.
-                if "".join(answer_streamed_chunks) != clean_single:
-                    answer_streamed_chunks[:] = [clean_single] if clean_single else []
-                    structured_log(
-                        "mcp",
-                        "stream.state_rebased_to_canonical",
-                        {
-                            "stage": "single_pass",
-                            "canonical_len": len(clean_single),
-                        },
-                        context={
-                            "conversation": conversation.id,
-                            "business": conversation.business_profile_id,
-                        },
-                        logger_obj=logger,
-                    )
             else:
                 answer_streamed_chunks.clear()
                 _emit_final_answer(clean_single)
@@ -2913,8 +2826,6 @@ class McpOrchestratorService:
         if not streaming_allowed:
             answer_streamed_chunks.clear()
             _emit_final_answer(clean_answer_text)
-        else:
-            _reconcile_streamed_answer_tail(clean_answer_text, stage="tool_loop_final")
         _status_event("stream_complete", "")
 
         self._log_turn_metrics(conversation, tool_context)
@@ -2963,6 +2874,7 @@ class McpOrchestratorService:
         on_stream_complete: Callable[[], None] | None = None,
         on_spinner_update: Callable[[str], None] | None = None,
         on_tool_event: Callable[[Mapping[str, object]], None] | None = None,
+        on_tool_decision: Callable[[str], None] | None = None,
         on_block_event: Callable[[Mapping[str, object]], None] | None = None,
         on_reasoning_event: Callable[[Mapping[str, object]], None] | None = None,
         should_cancel: Callable[[], bool] | None = None,
@@ -2979,6 +2891,7 @@ class McpOrchestratorService:
             on_placeholder_response=on_placeholder_response,
             on_spinner_update=on_spinner_update,
             on_tool_event=on_tool_event,
+            on_tool_decision=on_tool_decision,
             on_block_event=on_block_event,
             on_reasoning_event=on_reasoning_event,
             should_cancel=should_cancel,

@@ -7965,14 +7965,16 @@ def _agentic_read_v2_handler(
         business_profile,
     ) -> tuple[dict[str, object], dict[str, object] | None, bool]:
         """
-        Lossless structured table read (rows/columns).
+        Structured table read (rows/columns) with scope-normalized effective values.
 
         Returns a canonical payload:
           {type:"table", table_id, columns:[...], rows:[[...]], row_offset, rows_shown, total_rows}
+        Row-level provenance remains available in row_metadata.
         """
 
         remaining = max(0, int(budget_chars))
         payload: dict[str, object] = {"type": "table", "table_id": str(table_id), "columns": [], "rows": []}
+        payload["row_value_mode"] = "effective_scope_normalized"
         cursor_next: dict[str, object] | None = None
         complete = True
 
@@ -8092,8 +8094,22 @@ def _agentic_read_v2_handler(
 
         rows_out: list[list[str]] = []
         row_metadata_out: list[dict[str, object]] = []
+        scope_overlay_reasons = {
+            "scope_explicit_span",
+            "scope_repeated_value_span",
+            "scope_sparse_expansion",
+            "scope_edge_completion",
+        }
         index_offset: int | None = None
         next_row_index: int | None = None
+        column_index_lookup: dict[str, int] = {}
+        for idx, label in enumerate(columns):
+            normalized = _normalize_column_name(label)
+            if normalized and normalized not in column_index_lookup:
+                column_index_lookup[normalized] = idx
+            lowered = str(label or "").strip().lower()
+            if lowered and lowered not in column_index_lookup:
+                column_index_lookup[lowered] = idx
 
         for row in row_qs:
             row_index = getattr(row, "row_index", None)
@@ -8128,19 +8144,6 @@ def _agentic_read_v2_handler(
             for col_idx in range(len(columns)):
                 values.append(str(cell_lookup.get(int(col_idx) + int(index_offset or 0), "")))
 
-            # Rough prompt-char estimate: sum of cell text + JSON framing overhead.
-            row_chars = sum(len(v) for v in values) + (len(values) * 6) + 32
-            if rows_out and remaining < row_chars:
-                next_row_index = row_index_int if row_index_int is not None else None
-                complete = False
-                break
-            if not rows_out and remaining < row_chars:
-                # Not even one row fits; signal continuation so the assistant can narrow.
-                next_row_index = row_index_int if row_index_int is not None else start_row
-                complete = False
-                break
-
-            rows_out.append(values)
             row_meta = row.metadata if isinstance(getattr(row, "metadata", None), Mapping) else {}
             inferred_scope_columns: list[str] = []
             raw_applies_to = row_meta.get("inferred_scope_columns")
@@ -8150,6 +8153,7 @@ def _agentic_read_v2_handler(
                     if label:
                         inferred_scope_columns.append(label)
             scope_reason = str(row_meta.get("scope_reason") or "").strip()
+            scope_reason_key = scope_reason.lower()
             scope_confidence_raw = row_meta.get("scope_confidence")
             scope_confidence: float | None = None
             if isinstance(scope_confidence_raw, (int, float)):
@@ -8160,6 +8164,44 @@ def _agentic_read_v2_handler(
                 except (TypeError, ValueError):
                     scope_confidence = None
             fee_value = str(row_meta.get("scope_value") or "").strip()
+
+            effective_values = list(values)
+            applied_scope_overrides: list[str] = []
+            if (
+                fee_value
+                and inferred_scope_columns
+                and (
+                    scope_reason_key.startswith("inferred_")
+                    or scope_reason_key in scope_overlay_reasons
+                )
+            ):
+                for scope_label in inferred_scope_columns:
+                    normalized_scope = _normalize_column_name(scope_label)
+                    if not normalized_scope:
+                        continue
+                    col_pos = column_index_lookup.get(normalized_scope)
+                    if col_pos is None:
+                        col_pos = column_index_lookup.get(str(scope_label).strip().lower())
+                    if col_pos is None or col_pos < 0 or col_pos >= len(effective_values):
+                        continue
+                    if str(effective_values[col_pos] or "").strip():
+                        continue
+                    effective_values[col_pos] = fee_value
+                    applied_scope_overrides.append(str(columns[col_pos]))
+
+            # Rough prompt-char estimate: sum of cell text + JSON framing overhead.
+            row_chars = sum(len(v) for v in effective_values) + (len(effective_values) * 6) + 32
+            if rows_out and remaining < row_chars:
+                next_row_index = row_index_int if row_index_int is not None else None
+                complete = False
+                break
+            if not rows_out and remaining < row_chars:
+                # Not even one row fits; signal continuation so the assistant can narrow.
+                next_row_index = row_index_int if row_index_int is not None else start_row
+                complete = False
+                break
+
+            rows_out.append(effective_values)
             if inferred_scope_columns or scope_reason or scope_confidence is not None or fee_value:
                 row_entry: dict[str, object] = {
                     "row_index": row_index_int if row_index_int is not None else row_index,
@@ -8190,6 +8232,8 @@ def _agentic_read_v2_handler(
                     row_entry["scope_confidence"] = scope_confidence
                 if fee_value:
                     row_entry["fee_value"] = fee_value
+                if applied_scope_overrides:
+                    row_entry["effective_scope_overrides"] = applied_scope_overrides
                 row_metadata_out.append(row_entry)
             remaining = max(0, remaining - row_chars)
 

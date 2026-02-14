@@ -1,0 +1,121 @@
+{
+  "generated_at": "2026-02-13T18:17:40.283428+00:00",
+  "focus": {
+    "row_start": null,
+    "row_end": null
+  },
+  "baseline": {
+    "snapshot_label": "phase5_ci_baseline",
+    "upload_id": "phase5-baseline-upload",
+    "table_count": 1,
+    "table_data_row_count": 3,
+    "chunk_counts": {},
+    "scope_metrics": {
+      "row_chunk_count": 3,
+      "multi_scope_count": 3,
+      "multi_scope_rate": 1.0,
+      "ambiguous_scope_count": 0,
+      "ambiguous_scope_rate": 0.0,
+      "inferred_scope_count": 3,
+      "inferred_scope_rate": 1.0,
+      "explicit_scope_count": 0,
+      "explicit_scope_rate": 0.0,
+      "scope_cardinality_histogram": {
+        "3": 3
+      }
+    },
+    "quality_metrics": {
+      "table_bbox_coverage_ratio": 0.91,
+      "residual_text_ratio": 0.08,
+      "table_row_unique_evidence_count": 3
+    },
+    "settings": {}
+  },
+  "candidate": {
+    "snapshot_label": "phase5_ci_candidate",
+    "upload_id": "phase5-candidate-upload",
+    "table_count": 1,
+    "table_data_row_count": 3,
+    "chunk_counts": {},
+    "scope_metrics": {
+      "row_chunk_count": 3,
+      "multi_scope_count": 3,
+      "multi_scope_rate": 1.0,
+      "ambiguous_scope_count": 0,
+      "ambiguous_scope_rate": 0.0,
+      "inferred_scope_count": 3,
+      "inferred_scope_rate": 1.0,
+      "explicit_scope_count": 0,
+      "explicit_scope_rate": 0.0,
+      "scope_cardinality_histogram": {
+        "3": 3
+      }
+    },
+    "quality_metrics": {
+      "table_bbox_coverage_ratio": 0.92,
+      "residual_text_ratio": 0.07,
+      "table_row_unique_evidence_count": 3
+    },
+    "settings": {}
+  },
+  "deltas": {
+    "table_count_delta": 0,
+    "table_data_row_count_delta": 0,
+    "row_chunk_count_delta": 0,
+    "multi_scope_rate_delta": 0.0,
+    "ambiguous_scope_rate_delta": 0.0,
+    "inferred_scope_rate_delta": 0.0,
+    "table_bbox_coverage_ratio_delta": 0.01,
+    "residual_text_ratio_delta": -0.01,
+    "table_row_unique_evidence_count_delta": 0
+  },
+  "changed_row_count": 0,
+  "changed_rows": [],
+  "regressions": [],
+  "quality_gate_metrics": {
+    "row_recall": 1.0,
+    "row_precision": 1.0,
+    "row_order_stability": 1.0,
+    "scope_precision": 1.0,
+    "scope_recall": 1.0,
+    "scope_f1": 1.0,
+    "critical_value_total": 3,
+    "critical_value_present_count": 3,
+    "critical_value_matched_count": 3,
+    "critical_value_presence_coverage": 1.0,
+    "critical_value_coverage": 1.0,
+    "scope_rows_count": 3,
+    "scope_metadata_ready_count": 3,
+    "scope_metadata_coverage": 1.0
+  },
+  "term_hits_baseline": {},
+  "term_hits_candidate": {},
+  "quality_gate": {
+    "passed": true,
+    "thresholds": {
+      "min_row_recall": 0.99,
+      "min_row_order_stability": 0.95,
+      "min_scope_f1": 0.95,
+      "min_critical_value_coverage": 0.95,
+      "min_scope_metadata_coverage": 1.0
+    },
+    "metrics": {
+      "row_recall": 1.0,
+      "row_precision": 1.0,
+      "row_order_stability": 1.0,
+      "scope_precision": 1.0,
+      "scope_recall": 1.0,
+      "scope_f1": 1.0,
+      "critical_value_total": 3,
+      "critical_value_present_count": 3,
+      "critical_value_matched_count": 3,
+      "critical_value_presence_coverage": 1.0,
+      "critical_value_coverage": 1.0,
+      "scope_rows_count": 3,
+      "scope_metadata_ready_count": 3,
+      "scope_metadata_coverage": 1.0
+    },
+    "failed_checks": [],
+    "regressions": []
+  }
+}

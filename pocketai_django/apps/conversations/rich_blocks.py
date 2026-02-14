@@ -562,6 +562,16 @@ class RichBlockStreamBuilder:
         safe_idx = find_inline_safe_boundary(buffer)
         events: list[dict[str, object]] = []
 
+        # Streaming smoothness guardrail: if markdown-safe parsing cannot make progress
+        # for too long, emit most of the buffer as plain text and keep only a short tail.
+        # This avoids late "burst" deltas when providers emit chunks with unfinished marks.
+        if safe_idx <= 0 and not final and len(buffer) >= 24:
+            emit_upto = max(0, len(buffer) - 8)
+            if emit_upto > 0:
+                events.extend(self._emit_inline_nodes(self.line_block_id, [{"text": buffer[:emit_upto]}]))
+                buffer = buffer[emit_upto:]
+                safe_idx = 0
+
         if safe_idx > 0:
             safe_text = buffer[:safe_idx]
             nodes = parse_inline_nodes(safe_text)

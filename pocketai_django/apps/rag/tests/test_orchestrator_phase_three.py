@@ -280,7 +280,7 @@ class OrchestratorPhaseThreeTests(TestCase):
             truncated=False,
             source_diagnostics={
                 "table_row_applies_to_columns": ["Prime", "Plus", "Wealth", "Exclusive Wealth", "Private"],
-                "table_row_applicability_mode": "inferred_center_collapse",
+                "table_row_applicability_mode": "inferred_sparse_expansion",
             },
             partial_index=False,
             structured_table_count=1,
@@ -303,7 +303,7 @@ class OrchestratorPhaseThreeTests(TestCase):
             base_snippet,
             source_diagnostics={
                 "table_row_applies_to_columns": ["Prime", "Plus", "Wealth"],
-                "table_row_applicability_mode": "inferred_center_collapse",
+                "table_row_applicability_mode": "inferred_sparse_expansion",
             },
         )
         orchestrator = self._make_orchestrator(StubKnowledgeService(snippets=[inferred_snippet], diagnostics={"path": "hybrid"}))

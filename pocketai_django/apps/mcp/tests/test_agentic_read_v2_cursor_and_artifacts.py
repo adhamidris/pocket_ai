@@ -144,6 +144,155 @@ class AgenticReadV2CursorAndArtifactTests(TestCase):
         MCP_AGENTIC_READ_V2_ENABLED=True,
         MCP_TEXT_PII_REDACTION_ENABLED=False,
     )
+    def test_table_rows_apply_inferred_scope_to_effective_values(self) -> None:
+        """Effective table rows should reflect inferred applicability for answer-time consistency."""
+
+        fee_value = "1% (with Min USD 2 and no Max)"
+        table = KnowledgeUploadTable.objects.create(
+            upload=self.upload,
+            order_index=1,
+            title="Traveler Cheques",
+            column_schema=["service", "tariff", "prime", "plus", "wealth", "exclusive_wealth", "private"],
+        )
+        KnowledgeUploadPage.objects.create(upload=self.upload, page_number=1)
+        row = KnowledgeUploadTableRow.objects.create(
+            table=table,
+            row_index=0,
+            metadata={
+                "row_type": "body",
+                "table_scope_contract_version": "v2",
+                "observed_value_columns": ["service", "prime", "plus", "wealth", "exclusive_wealth"],
+                "qualifier_columns": ["service"],
+                "scope_dimension_columns": ["prime", "plus", "wealth", "exclusive_wealth", "private"],
+                "inferred_scope_columns": ["prime", "plus", "wealth", "exclusive_wealth", "private"],
+                "scope_reason": "scope_edge_completion",
+                "scope_confidence": 0.89,
+                "scope_value": fee_value,
+            },
+        )
+        KnowledgeUploadTableCell.objects.create(
+            table=table,
+            row=row,
+            column_index=0,
+            column_key="service",
+            raw_text="Traveler cheques (sell) in foreign currency",
+        )
+        KnowledgeUploadTableCell.objects.create(
+            table=table,
+            row=row,
+            column_index=2,
+            column_key="prime",
+            raw_text=fee_value,
+        )
+        KnowledgeUploadTableCell.objects.create(
+            table=table,
+            row=row,
+            column_index=3,
+            column_key="plus",
+            raw_text=fee_value,
+        )
+        KnowledgeUploadTableCell.objects.create(
+            table=table,
+            row=row,
+            column_index=4,
+            column_key="wealth",
+            raw_text=fee_value,
+        )
+        KnowledgeUploadTableCell.objects.create(
+            table=table,
+            row=row,
+            column_index=5,
+            column_key="exclusive_wealth",
+            raw_text=fee_value,
+        )
+
+        ctx = ToolExecutionContext(char_budget_per_turn=100_000)
+        with self._enable_agentic_mode():
+            result = tools.execute_tool(
+                "read_knowledge",
+                {"refs": [{"id": str(table.id)}], "max_chars": 4000},
+                conversation=self.conversation,
+                context=ctx,
+            )
+
+        self.assertIn(result["status"], {"ok", "truncated"}, json.dumps(result, indent=2, default=str))
+        self.assertTrue(result.get("evidence"), json.dumps(result, indent=2, default=str))
+        payload = result["evidence"][0]["payload"]
+        self.assertEqual(payload.get("row_value_mode"), "effective_scope_normalized")
+        self.assertEqual(payload["rows"][0][6], fee_value)
+        row_metadata = payload.get("row_metadata") or []
+        self.assertEqual(len(row_metadata), 1)
+        self.assertIn("private", row_metadata[0].get("effective_scope_overrides") or [])
+        self.assertEqual(row_metadata[0].get("scope_reason"), "scope_edge_completion")
+
+    @override_settings(
+        MCP_NEW_CONTRACT_ENABLED=True,
+        MCP_AGENTIC_READ_V2_ENABLED=True,
+        MCP_TEXT_PII_REDACTION_ENABLED=False,
+    )
+    def test_table_rows_do_not_fill_scope_for_abstain_reason(self) -> None:
+        """Rows marked as scope_abstain should keep observed blanks in effective values."""
+
+        table = KnowledgeUploadTable.objects.create(
+            upload=self.upload,
+            order_index=1,
+            title="Ambiguous Scope",
+            column_schema=["service", "prime", "plus", "private"],
+        )
+        KnowledgeUploadPage.objects.create(upload=self.upload, page_number=1)
+        row = KnowledgeUploadTableRow.objects.create(
+            table=table,
+            row_index=0,
+            metadata={
+                "row_type": "body",
+                "inferred_scope_columns": ["prime", "plus", "private"],
+                "scope_reason": "scope_abstain",
+                "scope_confidence": 0.58,
+                "scope_value": "EGP 40",
+            },
+        )
+        KnowledgeUploadTableCell.objects.create(
+            table=table,
+            row=row,
+            column_index=0,
+            column_key="service",
+            raw_text="Ambiguous sample",
+        )
+        KnowledgeUploadTableCell.objects.create(
+            table=table,
+            row=row,
+            column_index=1,
+            column_key="prime",
+            raw_text="EGP 40",
+        )
+        KnowledgeUploadTableCell.objects.create(
+            table=table,
+            row=row,
+            column_index=2,
+            column_key="plus",
+            raw_text="EGP 40",
+        )
+
+        ctx = ToolExecutionContext(char_budget_per_turn=100_000)
+        with self._enable_agentic_mode():
+            result = tools.execute_tool(
+                "read_knowledge",
+                {"refs": [{"id": str(table.id)}], "max_chars": 2000},
+                conversation=self.conversation,
+                context=ctx,
+            )
+
+        payload = result["evidence"][0]["payload"]
+        self.assertEqual(payload["rows"][0][3], "")
+        row_metadata = payload.get("row_metadata") or []
+        self.assertEqual(len(row_metadata), 1)
+        self.assertNotIn("effective_scope_overrides", row_metadata[0])
+
+    @override_settings(
+        MCP_NEW_CONTRACT_ENABLED=True,
+        MCP_AGENTIC_READ_V2_ENABLED=True,
+        MCP_TEXT_PII_REDACTION_ENABLED=False,
+    )
     def test_table_row_ref_reads_single_row(self) -> None:
         """Row refs (KnowledgeUploadTableRow.id) should be readable and return a single row."""
 

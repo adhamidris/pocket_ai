@@ -10,6 +10,7 @@ from apps.knowledge.knowledge_ingestion import (
 )
 from apps.knowledge.table_scope_engine import (
     SCOPE_REASON_ABSTAIN,
+    SCOPE_REASON_EDGE_COMPLETION,
     SCOPE_REASON_EXPLICIT_SPAN,
     SCOPE_REASON_REPEATED_VALUE_SPAN,
     SCOPE_REASON_SPARSE_EXPANSION,
@@ -79,6 +80,33 @@ class TableScopeEnginePhaseThreeTests(SimpleTestCase):
 
         row_one_meta = annotated[1].metadata
         self.assertEqual(row_one_meta.get("scope_reason"), SCOPE_REASON_REPEATED_VALUE_SPAN)
+        self.assertEqual(
+            row_one_meta.get("inferred_scope_columns"),
+            ["prime", "plus", "wealth", "exclusive_wealth", "private"],
+        )
+
+    def test_explicit_span_edge_completion_extends_trailing_scope_dimension(self) -> None:
+        extractor = AzureDocumentIntelligenceExtractor(endpoint="https://example.test", key="secret")
+        schema = ["service", "tariff", "prime", "plus", "wealth", "exclusive_wealth", "private"]
+        rows = [
+            self._make_row(0, schema),
+            self._make_row(
+                1,
+                ["Traveler cheques", "", "1% (Min USD 2)", "1% (Min USD 2)", "1% (Min USD 2)", "1% (Min USD 2)", ""],
+                spans={2: 4, 3: 4, 4: 4, 5: 4},
+            ),
+            self._make_row(2, ["Blank cheques", "USD", "", "", "EGP 10", "", ""]),
+            self._make_row(3, ["MCDR", "USD", "", "", "0.5%", "", ""]),
+        ]
+
+        annotated = extractor._annotate_row_applicability(
+            table_rows=rows,
+            column_schema=schema,
+            header_rows={0},
+        )
+
+        row_one_meta = annotated[1].metadata
+        self.assertEqual(row_one_meta.get("scope_reason"), SCOPE_REASON_EDGE_COMPLETION)
         self.assertEqual(
             row_one_meta.get("inferred_scope_columns"),
             ["prime", "plus", "wealth", "exclusive_wealth", "private"],
