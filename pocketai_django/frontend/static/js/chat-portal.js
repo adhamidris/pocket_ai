@@ -100,6 +100,19 @@ class ChatPortalClient {
 	    this.streamingToolBlockActiveIds = new Set();
 	    this.streamingDirtyTextBlocks = new Set();
 	    this.streamingBlockRenderRaf = null;
+    this.streamingBlockPacerBudget = 0;
+    this.streamingBlockPacerLastAt = 0;
+    this.streamingBlockPacerMode = "normal";
+    this.streamingBlockPacerConfig = {
+      baseCharsPerSecond: 72,
+      maxCharsPerSecond: 165,
+      backlogForMaxRate: 300,
+      maxCharsPerTick: 16,
+      maxBudgetChars: 36,
+      boundaryModeMultiplier: 1.2,
+      finalizeModeMultiplier: 1.35,
+      dtCapMs: 50,
+    };
 	    // Snapshot of content blocks when a tool approval is pending (preserves text before approval card)
 	    this.preApprovalContentBlocksSnapshot = new Map();
 	    this.followScrollEnabled = false;
@@ -1079,7 +1092,8 @@ class ChatPortalClient {
 	    const blockType = (block.type || "").toString().trim().toLowerCase();
 	    const blockId = (block.block_id || block.blockId || "").toString().trim();
 	    const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
-	    this.flushStreamingBlockRenders();
+	    this.streamingBlockPacerMode = "boundary";
+	    this.flushStreamingBlockRenders(true);
 	    this._processBlockStart(payload, block, blockType, blockId, messageId);
 	  }
 
@@ -1130,7 +1144,7 @@ class ChatPortalClient {
 		    this.scheduleScrollToBottom({ behavior: "auto" });
 		  }
 
-	  handleBlockEndEvent(data) {
+  handleBlockEndEvent(data) {
 		    let payload = null;
 		    try {
 		      payload = data ? JSON.parse(data) : null;
@@ -1144,9 +1158,8 @@ class ChatPortalClient {
 
 		    const pendingOps = this.streamingPendingBlockOps.get(blockId);
 		    if (pendingOps && pendingOps.length) {
-		      this.streamingPendingBlockOps.delete(blockId);
-		      this.streamingDirtyTextBlocks.delete(blockId);
-		      this.applyBlockOps(blockId, pendingOps);
+		      this.streamingDirtyTextBlocks.add(blockId);
+		      this.scheduleStreamingBlockRender();
 		    }
 		    this.streamingTextBlockActiveIds.delete(blockId);
 	      const wrapper = this.streamingContentBlockEls.get(blockId);
@@ -1233,7 +1246,7 @@ class ChatPortalClient {
 	    );
 	  }
 
-		  handleBlockToolUseEvent(data) {
+  handleBlockToolUseEvent(data) {
 		    let payload = null;
 		    try {
 	      payload = data ? JSON.parse(data) : null;
@@ -1249,7 +1262,8 @@ class ChatPortalClient {
 	    this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
 	    const blockId = (block.block_id || block.blockId || "").toString().trim();
 
-	    this.flushStreamingBlockRenders();
+	    this.streamingBlockPacerMode = "boundary";
+	    this.flushStreamingBlockRenders(true);
 	    const blockPayload = block.payload && typeof block.payload === "object" ? block.payload : {};
 	    const phase = (blockPayload.phase || "").toString().trim().toLowerCase();
 	    const status = (blockPayload.status || "").toString().trim().toLowerCase();
@@ -1295,7 +1309,8 @@ class ChatPortalClient {
     this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
     const blockId = (block.block_id || block.blockId || "").toString().trim();
 
-    this.flushStreamingBlockRenders();
+    this.streamingBlockPacerMode = "boundary";
+    this.flushStreamingBlockRenders(true);
     const blockPayload = block.payload && typeof block.payload === "object" ? block.payload : {};
     const phase = (blockPayload.phase || "").toString().trim().toLowerCase();
     const status = (blockPayload.status || "").toString().trim().toLowerCase();
@@ -1425,24 +1440,267 @@ class ChatPortalClient {
     if (this.streamingBlockRenderRaf) return;
     this.streamingBlockRenderRaf = requestAnimationFrame(() => {
       this.streamingBlockRenderRaf = null;
-      this.flushStreamingBlockRenders();
+      this.flushStreamingBlockRenders(false);
     });
   }
 
-	  flushStreamingBlockRenders() {
-	    if (!this.streamingDirtyTextBlocks.size) return;
-	    const blockIds = Array.from(this.streamingDirtyTextBlocks);
-	    this.streamingDirtyTextBlocks.clear();
+  estimateBlockOpsChars(ops) {
+    if (!Array.isArray(ops) || !ops.length) return 0;
+    let total = 0;
+    ops.forEach((op) => {
+      if (!op || typeof op !== "object") return;
+      const kind = (op.op || "").toString().trim();
+      if (kind === "append_inline") {
+        const nodes = Array.isArray(op.nodes) ? op.nodes : op.node ? [op.node] : [];
+        nodes.forEach((node) => {
+          if (!node || typeof node !== "object") return;
+          const text = typeof node.text === "string" ? node.text : "";
+          total += text.length;
+        });
+        return;
+      }
+      if (kind === "append_code") {
+        const text = typeof op.text === "string" ? op.text : "";
+        total += text.length;
+      }
+    });
+    return total;
+  }
 
-	    blockIds.forEach((blockId) => {
-	      const wrapper = this.streamingContentBlockEls.get(blockId);
-	      if (!wrapper) return;
-	      const ops = this.streamingPendingBlockOps.get(blockId);
-	      if (!ops || !ops.length) return;
-	      this.streamingPendingBlockOps.delete(blockId);
-	      this.applyBlockOps(blockId, ops);
-	    });
-	  }
+  estimateStreamingPendingChars() {
+    let total = 0;
+    this.streamingPendingBlockOps.forEach((ops) => {
+      total += this.estimateBlockOpsChars(ops);
+    });
+    return total;
+  }
+
+  splitInlineNodesByBudget(nodes, budget) {
+    if (!Array.isArray(nodes) || !nodes.length) {
+      return { emittedNodes: [], remainingNodes: [], consumed: 0 };
+    }
+    let remainingBudget = Math.max(0, Number(budget) || 0);
+    const emittedNodes = [];
+    const remainingNodes = [];
+    let consumed = 0;
+    for (let idx = 0; idx < nodes.length; idx += 1) {
+      const node = nodes[idx];
+      if (!node || typeof node !== "object") continue;
+      const text = typeof node.text === "string" ? node.text : "";
+      if (!text) {
+        if (remainingBudget > 0) {
+          emittedNodes.push({ ...node });
+        } else {
+          remainingNodes.push({ ...node });
+        }
+        continue;
+      }
+      if (remainingBudget <= 0) {
+        remainingNodes.push({ ...node });
+        continue;
+      }
+      if (text.length <= remainingBudget) {
+        emittedNodes.push({ ...node });
+        remainingBudget -= text.length;
+        consumed += text.length;
+        continue;
+      }
+      const headText = text.slice(0, remainingBudget);
+      const tailText = text.slice(remainingBudget);
+      emittedNodes.push({ ...node, text: headText });
+      remainingNodes.push({ ...node, text: tailText });
+      consumed += remainingBudget;
+      remainingBudget = 0;
+      for (let j = idx + 1; j < nodes.length; j += 1) {
+        const tailNode = nodes[j];
+        if (tailNode && typeof tailNode === "object") {
+          remainingNodes.push({ ...tailNode });
+        }
+      }
+      break;
+    }
+    return { emittedNodes, remainingNodes, consumed };
+  }
+
+  sliceBlockOpsForBudget(ops, budgetChars) {
+    const budget = Math.max(0, Number(budgetChars) || 0);
+    if (!Array.isArray(ops) || !ops.length || budget <= 0) {
+      return { emitOps: [], remainingOps: Array.isArray(ops) ? ops.slice(0) : [], consumedChars: 0 };
+    }
+    const emitOps = [];
+    const remainingOps = [];
+    let remainingBudget = budget;
+    let consumedChars = 0;
+
+    for (let idx = 0; idx < ops.length; idx += 1) {
+      const op = ops[idx];
+      if (!op || typeof op !== "object") continue;
+      const kind = (op.op || "").toString().trim();
+
+      if (kind === "append_inline") {
+        const nodes = Array.isArray(op.nodes) ? op.nodes : op.node ? [op.node] : [];
+        const split = this.splitInlineNodesByBudget(nodes, remainingBudget);
+        if (split.emittedNodes.length) {
+          emitOps.push({ ...op, nodes: split.emittedNodes });
+        }
+        consumedChars += split.consumed;
+        remainingBudget = Math.max(0, remainingBudget - split.consumed);
+        if (split.remainingNodes.length) {
+          remainingOps.push({ ...op, nodes: split.remainingNodes });
+          for (let j = idx + 1; j < ops.length; j += 1) remainingOps.push(ops[j]);
+          break;
+        }
+        continue;
+      }
+
+      if (kind === "append_code") {
+        const text = typeof op.text === "string" ? op.text : "";
+        if (!text) continue;
+        if (text.length <= remainingBudget) {
+          emitOps.push({ ...op });
+          consumedChars += text.length;
+          remainingBudget = Math.max(0, remainingBudget - text.length);
+          continue;
+        }
+        if (remainingBudget > 0) {
+          emitOps.push({ ...op, text: text.slice(0, remainingBudget) });
+          remainingOps.push({ ...op, text: text.slice(remainingBudget) });
+          consumedChars += remainingBudget;
+          remainingBudget = 0;
+        } else {
+          remainingOps.push({ ...op });
+        }
+        for (let j = idx + 1; j < ops.length; j += 1) remainingOps.push(ops[j]);
+        break;
+      }
+
+      // Non-text ops: pass through immediately.
+      emitOps.push({ ...op });
+      if (remainingBudget <= 0) {
+        for (let j = idx + 1; j < ops.length; j += 1) remainingOps.push(ops[j]);
+        break;
+      }
+    }
+
+    return { emitOps, remainingOps, consumedChars };
+  }
+
+  flushStreamingBlockRenders(force = false) {
+    if (!this.streamingDirtyTextBlocks.size) return;
+    const blockIds = Array.from(this.streamingDirtyTextBlocks);
+    this.streamingDirtyTextBlocks.clear();
+
+    if (force) {
+      blockIds.forEach((blockId) => {
+        const wrapper = this.streamingContentBlockEls.get(blockId);
+        if (!wrapper) return;
+        const ops = this.streamingPendingBlockOps.get(blockId);
+        if (!ops || !ops.length) return;
+        this.streamingPendingBlockOps.delete(blockId);
+        this.applyBlockOps(blockId, ops);
+      });
+      this.streamingBlockPacerBudget = 0;
+      this.streamingBlockPacerLastAt = 0;
+      this.streamingBlockPacerMode = "normal";
+      return;
+    }
+
+    const backlogChars = this.estimateStreamingPendingChars();
+    if (backlogChars <= 0) return;
+
+    const now = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+    const lastAt = this.streamingBlockPacerLastAt || now;
+    let dtMs = now - lastAt;
+    if (!Number.isFinite(dtMs) || dtMs < 0) dtMs = 0;
+    const pacerCfg = this.streamingBlockPacerConfig || {};
+    const dtCapMs = Number.isFinite(Number(pacerCfg.dtCapMs)) ? Number(pacerCfg.dtCapMs) : 50;
+    dtMs = Math.min(dtMs, Math.max(1, dtCapMs));
+    this.streamingBlockPacerLastAt = now;
+
+    const baseCharsPerSecond = Number.isFinite(Number(pacerCfg.baseCharsPerSecond))
+      ? Number(pacerCfg.baseCharsPerSecond)
+      : 72;
+    const maxCharsPerSecond = Number.isFinite(Number(pacerCfg.maxCharsPerSecond))
+      ? Number(pacerCfg.maxCharsPerSecond)
+      : 165;
+    const backlogForMaxRate = Number.isFinite(Number(pacerCfg.backlogForMaxRate))
+      ? Number(pacerCfg.backlogForMaxRate)
+      : 300;
+    const maxCharsPerTick = Number.isFinite(Number(pacerCfg.maxCharsPerTick))
+      ? Number(pacerCfg.maxCharsPerTick)
+      : 16;
+    const maxBudgetChars = Number.isFinite(Number(pacerCfg.maxBudgetChars))
+      ? Number(pacerCfg.maxBudgetChars)
+      : 36;
+    const boundaryModeMultiplier = Number.isFinite(Number(pacerCfg.boundaryModeMultiplier))
+      ? Number(pacerCfg.boundaryModeMultiplier)
+      : 1.2;
+    const finalizeModeMultiplier = Number.isFinite(Number(pacerCfg.finalizeModeMultiplier))
+      ? Number(pacerCfg.finalizeModeMultiplier)
+      : 1.35;
+
+    const backlogFactor = Math.min(1, backlogChars / Math.max(1, backlogForMaxRate));
+    const effectiveBase = Math.max(1, Math.min(baseCharsPerSecond, maxCharsPerSecond));
+    const effectiveMax = Math.max(effectiveBase, maxCharsPerSecond);
+    let charsPerSecond = effectiveBase + (effectiveMax - effectiveBase) * backlogFactor;
+    const mode = (this.streamingBlockPacerMode || "normal").toString();
+    if (mode === "boundary") {
+      charsPerSecond *= boundaryModeMultiplier;
+    } else if (mode === "finalize") {
+      charsPerSecond *= finalizeModeMultiplier;
+    }
+    charsPerSecond = Math.max(1, charsPerSecond);
+
+    this.streamingBlockPacerBudget =
+      (this.streamingBlockPacerBudget || 0) + charsPerSecond * (Math.max(0, dtMs || 16) / 1000);
+    this.streamingBlockPacerBudget = Math.min(maxBudgetChars, Math.max(0, this.streamingBlockPacerBudget || 0));
+
+    let revealBudget = Math.floor(this.streamingBlockPacerBudget);
+    if (revealBudget <= 0 && this.streamingBlockPacerBudget >= 0.75) revealBudget = 1;
+    revealBudget = Math.min(revealBudget, maxCharsPerTick, backlogChars);
+    if (revealBudget <= 0) {
+      this.scheduleStreamingBlockRender();
+      return;
+    }
+
+    const nextDirty = new Set();
+    let consumedTotal = 0;
+    for (let idx = 0; idx < blockIds.length; idx += 1) {
+      const blockId = blockIds[idx];
+      const wrapper = this.streamingContentBlockEls.get(blockId);
+      if (!wrapper) continue;
+      const ops = this.streamingPendingBlockOps.get(blockId);
+      if (!ops || !ops.length) continue;
+
+      if (revealBudget <= 0) {
+        nextDirty.add(blockId);
+        continue;
+      }
+
+      const sliced = this.sliceBlockOpsForBudget(ops, revealBudget);
+      if (sliced.emitOps.length) {
+        this.applyBlockOps(blockId, sliced.emitOps);
+      }
+      const consumed = Math.max(0, Number(sliced.consumedChars) || 0);
+      consumedTotal += consumed;
+      revealBudget = Math.max(0, revealBudget - consumed);
+
+      if (sliced.remainingOps.length) {
+        this.streamingPendingBlockOps.set(blockId, sliced.remainingOps);
+        nextDirty.add(blockId);
+      } else {
+        this.streamingPendingBlockOps.delete(blockId);
+      }
+    }
+
+    this.streamingBlockPacerBudget = Math.max(0, (this.streamingBlockPacerBudget || 0) - consumedTotal);
+    this.streamingDirtyTextBlocks = nextDirty;
+    if (this.streamingDirtyTextBlocks.size) {
+      this.scheduleStreamingBlockRender();
+      return;
+    }
+    this.streamingBlockPacerMode = "normal";
+  }
 
   upsertStreamingContentBlock(block) {
 	    if (!block || typeof block !== "object") return;
@@ -4338,7 +4596,8 @@ class ChatPortalClient {
 				    if (this.container && this.container.dataset) {
 				      this.container.dataset.finalizing = "true";
 				    }
-				    this.flushStreamingBlockRenders();
+				    this.streamingBlockPacerMode = "finalize";
+				    this.flushStreamingBlockRenders(true);
 				    this._doTurnPersistedReconcile(data);
 				  }
 
@@ -9765,11 +10024,14 @@ class ChatPortalClient {
 			    this.streamingPendingBlockOps.clear();
 			    this.streamingTextBlockActiveIds.clear();
 			    this.streamingToolBlockActiveIds.clear();
-			    this.streamingDirtyTextBlocks.clear();
+		    this.streamingDirtyTextBlocks.clear();
 			    if (this.streamingBlockRenderRaf) {
 			      cancelAnimationFrame(this.streamingBlockRenderRaf);
 		    }
 		    this.streamingBlockRenderRaf = null;
+    this.streamingBlockPacerBudget = 0;
+    this.streamingBlockPacerLastAt = 0;
+    this.streamingBlockPacerMode = "normal";
 		    this.spinnerDesiredText = "";
     this.spinnerDesiredPending = false;
     this.spinnerDesiredIsError = false;
