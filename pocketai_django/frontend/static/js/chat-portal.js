@@ -103,12 +103,13 @@ class ChatPortalClient {
     this.streamingBlockPacerBudget = 0;
     this.streamingBlockPacerLastAt = 0;
     this.streamingBlockPacerMode = "normal";
+    this.streamingBlockDeferredActions = [];
     this.streamingBlockPacerConfig = {
-      baseCharsPerSecond: 72,
-      maxCharsPerSecond: 165,
+      baseCharsPerSecond: 60,
+      maxCharsPerSecond: 120,
       backlogForMaxRate: 300,
-      maxCharsPerTick: 16,
-      maxBudgetChars: 36,
+      maxCharsPerTick: 8,
+      maxBudgetChars: 20,
       boundaryModeMultiplier: 1.2,
       finalizeModeMultiplier: 1.35,
       dtCapMs: 50,
@@ -1092,9 +1093,12 @@ class ChatPortalClient {
 	    const blockType = (block.type || "").toString().trim().toLowerCase();
 	    const blockId = (block.block_id || block.blockId || "").toString().trim();
 	    const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
-	    this.streamingBlockPacerMode = "boundary";
-	    this.flushStreamingBlockRenders(true);
-	    this._processBlockStart(payload, block, blockType, blockId, messageId);
+	    this._queueAfterBlockDrain(
+      () => {
+        this._processBlockStart(payload, block, blockType, blockId, messageId);
+      },
+      { mode: "boundary" },
+    );
 	  }
 
 		  _processBlockStart(payload, block, blockType, blockId, messageId) {
@@ -1262,35 +1266,38 @@ class ChatPortalClient {
 	    this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
 	    const blockId = (block.block_id || block.blockId || "").toString().trim();
 
-	    this.streamingBlockPacerMode = "boundary";
-	    this.flushStreamingBlockRenders(true);
-	    const blockPayload = block.payload && typeof block.payload === "object" ? block.payload : {};
-	    const phase = (blockPayload.phase || "").toString().trim().toLowerCase();
-	    const status = (blockPayload.status || "").toString().trim().toLowerCase();
-	    const isApprovalPending = phase === "approval_requested" || status === "pending_approval" || status === "pending";
-	    if (
-	      blockId &&
-	      (phase === "started" || phase === "approval_requested" || status === "running" || status === "pending_approval" || status === "pending")
-	    ) {
-	      this.streamingToolBlockActiveIds.add(blockId);
-	      this.hadToolsThisTurn = true;
-	    }
-	    if (isApprovalPending && this.streamingContentBlocksById && this.streamingContentBlocksById.size > 0) {
-	      this.streamingContentBlocksById.forEach((blockData, id) => {
-	        if (!this.preApprovalContentBlocksSnapshot.has(id)) {
-	          this.preApprovalContentBlocksSnapshot.set(id, JSON.parse(JSON.stringify(blockData)));
-	        }
-	      });
-	    }
-	    this.setSpinnerText(this.spinnerDesiredText || "", {
-	      pending: true,
-	      isError: this.spinnerDesiredIsError,
-	      force: true,
-	    });
+	    this._queueAfterBlockDrain(
+      () => {
+        const blockPayload = block.payload && typeof block.payload === "object" ? block.payload : {};
+        const phase = (blockPayload.phase || "").toString().trim().toLowerCase();
+        const status = (blockPayload.status || "").toString().trim().toLowerCase();
+        const isApprovalPending = phase === "approval_requested" || status === "pending_approval" || status === "pending";
+        if (
+          blockId &&
+          (phase === "started" || phase === "approval_requested" || status === "running" || status === "pending_approval" || status === "pending")
+        ) {
+          this.streamingToolBlockActiveIds.add(blockId);
+          this.hadToolsThisTurn = true;
+        }
+        if (isApprovalPending && this.streamingContentBlocksById && this.streamingContentBlocksById.size > 0) {
+          this.streamingContentBlocksById.forEach((blockData, id) => {
+            if (!this.preApprovalContentBlocksSnapshot.has(id)) {
+              this.preApprovalContentBlocksSnapshot.set(id, JSON.parse(JSON.stringify(blockData)));
+            }
+          });
+        }
+        this.setSpinnerText(this.spinnerDesiredText || "", {
+          pending: true,
+          isError: this.spinnerDesiredIsError,
+          force: true,
+        });
 
-	    this.upsertStreamingContentBlock(block);
-	    this.repositionStreamingStatusRow();
-	    this.scheduleScrollToBottom({ behavior: "auto" });
+        this.upsertStreamingContentBlock(block);
+        this.repositionStreamingStatusRow();
+        this.scheduleScrollToBottom({ behavior: "auto" });
+      },
+      { mode: "boundary" },
+    );
 		  }
 
   handleBlockToolResultEvent(data) {
@@ -1309,24 +1316,26 @@ class ChatPortalClient {
     this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
     const blockId = (block.block_id || block.blockId || "").toString().trim();
 
-    this.streamingBlockPacerMode = "boundary";
-    this.flushStreamingBlockRenders(true);
-    const blockPayload = block.payload && typeof block.payload === "object" ? block.payload : {};
-    const phase = (blockPayload.phase || "").toString().trim().toLowerCase();
-    const status = (blockPayload.status || "").toString().trim().toLowerCase();
-    if (blockId) {
-      if (phase === "finished") {
-        this.streamingToolBlockActiveIds.delete(blockId);
-      } else if (phase === "approval_resolved") {
-        if (status && status !== "approved") {
-          this.streamingToolBlockActiveIds.delete(blockId);
+    this._queueAfterBlockDrain(
+      () => {
+        const blockPayload = block.payload && typeof block.payload === "object" ? block.payload : {};
+        const phase = (blockPayload.phase || "").toString().trim().toLowerCase();
+        const status = (blockPayload.status || "").toString().trim().toLowerCase();
+        if (blockId) {
+          if (phase === "finished") {
+            this.streamingToolBlockActiveIds.delete(blockId);
+          } else if (phase === "approval_resolved") {
+            if (status && status !== "approved") {
+              this.streamingToolBlockActiveIds.delete(blockId);
+            }
+          }
         }
-      }
-    }
-
-    this.upsertStreamingContentBlock(block);
-    this.repositionStreamingStatusRow();
-    this.scheduleScrollToBottom({ behavior: "auto" });
+        this.upsertStreamingContentBlock(block);
+        this.repositionStreamingStatusRow();
+        this.scheduleScrollToBottom({ behavior: "auto" });
+      },
+      { mode: "boundary" },
+    );
   }
 
   traceStream(event, meta) {
@@ -1475,6 +1484,14 @@ class ChatPortalClient {
     return total;
   }
 
+  hasStreamingBlockBacklog() {
+    if (this.streamingDirtyTextBlocks && this.streamingDirtyTextBlocks.size) return true;
+    if (this.streamingPendingBlockOps && this.streamingPendingBlockOps.size) {
+      return this.estimateStreamingPendingChars() > 0;
+    }
+    return false;
+  }
+
   splitInlineNodesByBudget(nodes, budget) {
     if (!Array.isArray(nodes) || !nodes.length) {
       return { emittedNodes: [], remainingNodes: [], consumed: 0 };
@@ -1585,8 +1602,35 @@ class ChatPortalClient {
     return { emitOps, remainingOps, consumedChars };
   }
 
+  _queueAfterBlockDrain(fn, { mode = "boundary" } = {}) {
+    if (typeof fn !== "function") return;
+    if (!this.hasStreamingBlockBacklog()) {
+      fn();
+      return;
+    }
+    if (!Array.isArray(this.streamingBlockDeferredActions)) {
+      this.streamingBlockDeferredActions = [];
+    }
+    this.streamingBlockDeferredActions.push(fn);
+    this.streamingBlockPacerMode = (mode || "boundary").toString();
+    this.scheduleStreamingBlockRender();
+  }
+
   flushStreamingBlockRenders(force = false) {
-    if (!this.streamingDirtyTextBlocks.size) return;
+    if (!this.streamingDirtyTextBlocks.size) {
+      if (this.streamingBlockDeferredActions && this.streamingBlockDeferredActions.length && !this.hasStreamingBlockBacklog()) {
+        const actions = this.streamingBlockDeferredActions.slice(0);
+        this.streamingBlockDeferredActions = [];
+        actions.forEach((fn) => {
+          try {
+            fn();
+          } catch (_err) {
+            // ignore
+          }
+        });
+      }
+      return;
+    }
     const blockIds = Array.from(this.streamingDirtyTextBlocks);
     this.streamingDirtyTextBlocks.clear();
 
@@ -1602,6 +1646,17 @@ class ChatPortalClient {
       this.streamingBlockPacerBudget = 0;
       this.streamingBlockPacerLastAt = 0;
       this.streamingBlockPacerMode = "normal";
+      if (this.streamingBlockDeferredActions && this.streamingBlockDeferredActions.length) {
+        const actions = this.streamingBlockDeferredActions.slice(0);
+        this.streamingBlockDeferredActions = [];
+        actions.forEach((fn) => {
+          try {
+            fn();
+          } catch (_err) {
+            // ignore
+          }
+        });
+      }
       return;
     }
 
@@ -1697,6 +1752,22 @@ class ChatPortalClient {
     this.streamingDirtyTextBlocks = nextDirty;
     if (this.streamingDirtyTextBlocks.size) {
       this.scheduleStreamingBlockRender();
+      return;
+    }
+    if (this.streamingBlockDeferredActions && this.streamingBlockDeferredActions.length) {
+      const actions = this.streamingBlockDeferredActions.slice(0);
+      this.streamingBlockDeferredActions = [];
+      this.streamingBlockPacerMode = "normal";
+      actions.forEach((fn) => {
+        try {
+          fn();
+        } catch (_err) {
+          // ignore
+        }
+      });
+      if (this.hasStreamingBlockBacklog()) {
+        this.scheduleStreamingBlockRender();
+      }
       return;
     }
     this.streamingBlockPacerMode = "normal";
@@ -4596,9 +4667,14 @@ class ChatPortalClient {
 				    if (this.container && this.container.dataset) {
 				      this.container.dataset.finalizing = "true";
 				    }
-				    this.streamingBlockPacerMode = "finalize";
-				    this.flushStreamingBlockRenders(true);
-				    this._doTurnPersistedReconcile(data);
+				    this._queueAfterBlockDrain(
+      () => {
+        this.streamingBlockPacerMode = "finalize";
+        this.flushStreamingBlockRenders(true);
+        this._doTurnPersistedReconcile(data);
+      },
+      { mode: "finalize" },
+    );
 				  }
 
 			  _doTurnPersistedReconcile(data) {
@@ -10032,6 +10108,7 @@ class ChatPortalClient {
     this.streamingBlockPacerBudget = 0;
     this.streamingBlockPacerLastAt = 0;
     this.streamingBlockPacerMode = "normal";
+    this.streamingBlockDeferredActions = [];
 		    this.spinnerDesiredText = "";
     this.spinnerDesiredPending = false;
     this.spinnerDesiredIsError = false;
