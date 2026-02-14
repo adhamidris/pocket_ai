@@ -128,8 +128,8 @@ def ensure_assistant_text_blocks(
     - If existing_blocks has a valid structure with both text and non-text blocks,
       preserve it as-is to maintain correct ordering (e.g., pre-approval text → tool → post-approval text)
     - Only regenerate text blocks from body if existing_blocks are missing or invalid
-    - If `force_regenerate_text` is True, always rebuild text blocks from `body`
-      while preserving non-text blocks
+    - If `force_regenerate_text` is True, rebuild text blocks from `body` and merge
+      them back into the existing block timeline without reordering tool/reasoning blocks
     """
     blocks = _coerce_block_list(existing_blocks)
     body_value = body.strip()
@@ -173,9 +173,9 @@ def ensure_assistant_text_blocks(
         # Fallback: return existing blocks if we couldn't generate anything
         return blocks
 
-    # Combine: non-text blocks first (tools, reasoning), then text blocks
-    # This maintains the visual order: tool indicators at top, response text below
-    return non_text_blocks + rich_blocks
+    # Merge rebuilt text into the existing timeline order. This avoids tools-first
+    # reordering when we regenerate text for already-streamed messages.
+    return _merge_rebuilt_text_blocks(blocks, rich_blocks)
 
 
 def normalize_assistant_content_blocks(existing_blocks: object | None) -> list[dict[str, object]]:
@@ -342,6 +342,35 @@ def _has_inline_embedded_lists(text: str) -> bool:
             if before and not re.match(r"^[-*+]\s+", before):
                 return True
     return False
+
+
+def _merge_rebuilt_text_blocks(
+    existing_blocks: list[dict[str, object]],
+    rebuilt_text_blocks: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    if not rebuilt_text_blocks:
+        return existing_blocks
+    if not existing_blocks:
+        return rebuilt_text_blocks
+
+    merged: list[dict[str, object]] = []
+    inserted = False
+    for block in existing_blocks:
+        if not isinstance(block, Mapping):
+            continue
+        block_type = str(block.get("type") or "").strip().lower()
+        is_text = block_type == "text" or _is_rich_text_block(block)
+        if is_text:
+            if not inserted:
+                merged.extend(rebuilt_text_blocks)
+                inserted = True
+            continue
+        merged.append(block)
+
+    if not inserted:
+        # No prior text blocks existed (e.g. tool-only message): append rebuilt text.
+        merged.extend(rebuilt_text_blocks)
+    return merged
 
 
 def make_tool_use_block(

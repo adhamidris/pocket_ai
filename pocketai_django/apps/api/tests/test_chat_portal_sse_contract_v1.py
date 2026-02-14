@@ -119,6 +119,43 @@ class PortalSseContractV1Tests(TestCase):
             self.assertIn("type", data)
             self.assertIn("payload", data)
 
+    @override_settings(PORTAL_TURN_EVENT_BUS="postgres")
+    def test_turn_events_stream_omits_legacy_text_delta(self) -> None:
+        with tenant_context(self.business.id):
+            turn = PortalTurn.objects.create(
+                conversation=self.conversation,
+                agent_profile=self.agent,
+                status=PortalTurnStatus.STREAMING,
+                run_after=timezone.now(),
+                user_message="hello",
+                metadata={"source": "test"},
+            )
+            append_turn_event(turn_id=turn.id, event_type="text_delta", payload={"text": "legacy"})
+            append_turn_event(
+                turn_id=turn.id,
+                event_type="block_start",
+                payload={
+                    "block": {
+                        "block_id": "blk_1",
+                        "type": "paragraph",
+                        "created_at": timezone.now().isoformat(),
+                        "payload": {"content": []},
+                    }
+                },
+            )
+            PortalTurn.objects.filter(id=turn.id).update(status=PortalTurnStatus.FINALIZED, finalized_at=timezone.now())
+
+        request = self.factory.get(
+            f"/api/chat/turns/{turn.id}/events/?session_token={self.conversation.session_token}",
+        )
+
+        with mock.patch.object(chat_portal, "_open_portal_turn_listen_connection", return_value=None):
+            response = chat_portal.portal_turn_events(request, turn_id=turn.id)
+
+        events = _parse_sse_events(b"".join(response.streaming_content).decode("utf-8"))
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["data"]["type"], "block_start")
+
     @override_settings(PORTAL_TURN_EVENT_BUS="redis")
     def test_turn_events_redis_drain_does_not_block_forever(self) -> None:
         with tenant_context(self.business.id):

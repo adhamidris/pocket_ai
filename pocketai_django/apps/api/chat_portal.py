@@ -3700,9 +3700,10 @@ def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHtt
                                     "type": event_type,
                                     "payload": payload_obj or {},
                                 }
+                                if event_type.strip().lower() == "text_delta":
+                                    # Block-only portal stream contract: ignore legacy raw text events.
+                                    continue
                                 batch_types[event_type] = batch_types.get(event_type, 0) + 1
-                                if event_type == "text_delta" and isinstance(payload_obj, dict):
-                                    batch_text_chars += len(str(payload_obj.get("text") or ""))
                                 if event_type.strip().lower() == "turn_persisted":
                                     sent_turn_persisted = True
                                 if first_event_at is None:
@@ -3750,9 +3751,10 @@ def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHtt
                                 "payload": evt.payload or {},
                             }
                             event_type = str(evt.type or "").strip() or "event"
+                            if event_type.strip().lower() == "text_delta":
+                                # Block-only portal stream contract: ignore legacy raw text events.
+                                continue
                             batch_types[event_type] = batch_types.get(event_type, 0) + 1
-                            if event_type == "text_delta":
-                                batch_text_chars += len(str((evt.payload or {}).get("text") or ""))
                             if str(evt.type or "").strip().lower() == "turn_persisted":
                                 sent_turn_persisted = True
                             if first_event_at is None:
@@ -3867,6 +3869,9 @@ def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHtt
                                             "type": event_type,
                                             "payload": payload_obj or {},
                                         }
+                                        if event_type.strip().lower() == "text_delta":
+                                            # Block-only portal stream contract: ignore legacy raw text events.
+                                            continue
                                         if first_event_at is None:
                                             first_event_at = time.perf_counter()
                                         events_sent += 1

@@ -13,7 +13,6 @@ from django.db import close_old_connections
 from django.utils import timezone
 
 from apps.conversations.content_blocks import (
-    ensure_assistant_text_blocks,
     extract_text_from_content_blocks,
     new_block_id,
     normalize_assistant_content_blocks,
@@ -192,9 +191,7 @@ class PortalTurnEventBuilder:
         # Trace before append so we can see what the worker tried to emit even if persistence fails.
         trace_meta: dict[str, object] = {"type": str(event_type or "event")}
         lowered = str(event_type or "").strip().lower()
-        if lowered == "text_delta":
-            trace_meta["text_len"] = int(len(str(payload_obj.get("text") or "")))
-        elif lowered == "block_delta":
+        if lowered == "block_delta":
             ops = payload_obj.get("ops")
             trace_meta["ops"] = int(len(ops)) if isinstance(ops, list) else 0
         elif lowered == "block_start":
@@ -343,14 +340,11 @@ class PortalTurnEventBuilder:
             self.trace.record_text("delta.dropped", chunk, {"reason": "block_ops_active"})
             return
         self.trace.record_text("delta.in", chunk)
-        # Emit raw text_delta to Redis for immediate frontend rendering via marked.js.
-        self.append_event("text_delta", {"text": chunk})
-        # Still feed the rich builder for finalization block building (persistence only).
+        # Block-only streaming contract: convert model text deltas into block events.
         events = self.rich_builder.feed_text(chunk)
         if events:
             self.trace.record("rich.feed_text", {"events": int(len(events))})
-        if events:
-            self._apply_block_events_internally(events)
+            self.emit_block_events(events)
 
     def on_reasoning_event(self, event: Mapping[str, object] | None) -> None:
         if not event or not isinstance(event, Mapping):
@@ -439,7 +433,7 @@ class PortalTurnEventBuilder:
             events = self.rich_builder.finalize()
             if events:
                 self.trace.record("rich.finalize", {"events": int(len(events))})
-                self._apply_block_events_internally(events)
+                self.emit_block_events(events)
         # Ensure any buffered block_delta ops are emitted before finalization persists.
         self._flush_pending_block_delta()
         self.trace.record(
@@ -859,19 +853,6 @@ class PortalTurnRunner:
             conversation=self.conversation,
             stage="portal_turn_finalize",
         )
-
-        # Use final orchestrator text as the canonical text source for persisted
-        # rich blocks. Stream-built blocks can carry provisional narration or miss
-        # trailing suffixes in rare stream boundary cases.
-        if body_source == "orchestrator_response":
-            rebuilt_blocks = ensure_assistant_text_blocks(
-                body_text,
-                existing_blocks=blocks,
-                force_regenerate_text=True,
-            )
-            rebuilt_blocks = normalize_assistant_content_blocks(rebuilt_blocks)
-            blocks = rebuilt_blocks
-            blocks_source = "orchestrator_body_regenerated"
 
         block_types: dict[str, int] = {}
         for block in blocks:
