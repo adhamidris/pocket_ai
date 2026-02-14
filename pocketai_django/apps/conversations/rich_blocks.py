@@ -133,6 +133,31 @@ def parse_inline_nodes(text: str) -> list[dict[str, object]]:
     return merged
 
 
+def parse_inline_nodes_lenient(text: str) -> list[dict[str, object]]:
+    """
+    Parse inline markdown with a fallback for unfinished trailing markers.
+
+    Streaming can end with an open marker sequence (e.g. ``**bold text``) when
+    the provider truncates or omits the closing token. In that case, preserve
+    readable formatting instead of rendering raw marker characters.
+    """
+
+    raw = text or ""
+    if not raw:
+        return []
+
+    parsed = parse_inline_nodes(raw)
+
+    if raw.startswith("**") and raw.count("**") == 1 and len(raw) > 2:
+        return [{"text": raw[2:], "marks": ["bold"]}]
+    if raw.startswith("*") and not raw.startswith("**") and raw.count("*") == 1 and len(raw) > 1:
+        return [{"text": raw[1:], "marks": ["italic"]}]
+    if raw.startswith("`") and raw.count("`") == 1 and len(raw) > 1:
+        return [{"text": raw[1:], "marks": ["code"]}]
+
+    return parsed
+
+
 def find_inline_safe_boundary(text: str) -> int:
     """
     Return the last index (0..len(text)) that can be safely parsed for inline marks.
@@ -562,15 +587,13 @@ class RichBlockStreamBuilder:
         safe_idx = find_inline_safe_boundary(buffer)
         events: list[dict[str, object]] = []
 
-        # Streaming smoothness guardrail: if markdown-safe parsing cannot make progress
-        # for too long, emit most of the buffer as plain text and keep only a short tail.
-        # This avoids late "burst" deltas when providers emit chunks with unfinished marks.
-        if safe_idx <= 0 and not final and len(buffer) >= 24:
-            emit_upto = max(0, len(buffer) - 8)
-            if emit_upto > 0:
-                events.extend(self._emit_inline_nodes(self.line_block_id, [{"text": buffer[:emit_upto]}]))
-                buffer = buffer[emit_upto:]
-                safe_idx = 0
+        # Keep unresolved markdown markers buffered so we don't leak raw token text
+        # (e.g. literal "**") into streamed output.
+        if safe_idx <= 0 and not final:
+            leading_marker = buffer.startswith("**") or buffer.startswith("*") or buffer.startswith("`") or buffer.startswith("[")
+            if leading_marker:
+                self.line_inline_buffer = buffer
+                return events
 
         if safe_idx > 0:
             safe_text = buffer[:safe_idx]
@@ -579,8 +602,12 @@ class RichBlockStreamBuilder:
             buffer = buffer[safe_idx:]
 
         if final and buffer:
-            # Emit any unfinished tail as plain text so we don't drop characters.
-            events.extend(self._emit_inline_nodes(self.line_block_id, [{"text": buffer}]))
+            # Final tail: prefer lenient parsing over raw marker output.
+            nodes = parse_inline_nodes_lenient(buffer)
+            if nodes:
+                events.extend(self._emit_inline_nodes(self.line_block_id, nodes))
+            else:
+                events.extend(self._emit_inline_nodes(self.line_block_id, [{"text": buffer}]))
             buffer = ""
 
         self.line_inline_buffer = buffer
