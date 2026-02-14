@@ -13,6 +13,7 @@ from django.db import close_old_connections
 from django.utils import timezone
 
 from apps.conversations.content_blocks import (
+    ensure_assistant_text_blocks,
     extract_text_from_content_blocks,
     new_block_id,
     normalize_assistant_content_blocks,
@@ -853,6 +854,23 @@ class PortalTurnRunner:
             conversation=self.conversation,
             stage="portal_turn_finalize",
         )
+
+        canonical_blocks = ensure_assistant_text_blocks(
+            body_text,
+            existing_blocks=blocks,
+            force_regenerate_text=True,
+        )
+        canonical_blocks = normalize_assistant_content_blocks(canonical_blocks)
+        if canonical_blocks != blocks:
+            self.builder.trace.record(
+                "turn.finalize.rebuilt_text_blocks",
+                {
+                    "before_blocks": int(len(blocks)),
+                    "after_blocks": int(len(canonical_blocks)),
+                    "body_len": int(len(body_text or "")),
+                },
+            )
+            blocks = canonical_blocks
 
         block_types: dict[str, int] = {}
         for block in blocks:

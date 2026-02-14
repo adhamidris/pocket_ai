@@ -51,3 +51,39 @@ class EnsureAssistantTextBlocksPreserveExistingTests(SimpleTestCase):
         content = paragraph.get("payload", {}).get("content", [])
         text = "".join(node.get("text", "") for node in content if isinstance(node, dict))
         self.assertIn("Final canonical text", text)
+
+    def test_force_regenerate_inserts_final_text_after_last_tool_run(self) -> None:
+        existing_blocks = [
+            {
+                "block_id": "blk_preface",
+                "type": "paragraph",
+                "created_at": "2026-02-05T00:00:00Z",
+                "payload": {"content": [{"text": "I'll search now"}]},
+            },
+            {
+                "block_id": "blk_tool",
+                "type": "tool_use",
+                "created_at": "2026-02-05T00:00:01Z",
+                "payload": {"tool_name": "search_knowledge"},
+            },
+            {
+                "block_id": "blk_tail",
+                "type": "paragraph",
+                "created_at": "2026-02-05T00:00:02Z",
+                "payload": {"content": [{"text": "Stale tail"}]},
+            },
+        ]
+
+        out = ensure_assistant_text_blocks(
+            "Final answer with complete details",
+            existing_blocks=existing_blocks,
+            force_regenerate_text=True,
+        )
+
+        types = [str(block.get("type")) for block in out]
+        self.assertEqual(types[0], "tool_use")
+        paragraph = next(block for block in out if block.get("type") == "paragraph")
+        content = paragraph.get("payload", {}).get("content", [])
+        text = "".join(node.get("text", "") for node in content if isinstance(node, dict))
+        self.assertIn("Final answer with complete details", text)
+        self.assertNotIn("I'll search now", text)

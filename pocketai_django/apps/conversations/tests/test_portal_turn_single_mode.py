@@ -208,7 +208,7 @@ class PortalTurnSingleModeTests(TransactionTestCase):
         self.assertIsNotNone(turn.message)
         self.assertEqual(turn.message.body, final_text)
 
-    def test_portal_turn_preserves_streamed_blocks_without_regeneration(self) -> None:
+    def test_portal_turn_reconciles_streamed_blocks_with_final_response_text(self) -> None:
         turn = PortalTurn.objects.create(
             conversation=self.conversation,
             agent_profile=self.agent,
@@ -238,8 +238,8 @@ class PortalTurnSingleModeTests(TransactionTestCase):
         self.assertIsNotNone(turn.message)
         self.assertEqual(turn.message.body, final_text)
         block_text = extract_text_from_content_blocks(turn.message.content_blocks or [])
-        self.assertIn("I'll search for fees.", block_text)
-        self.assertNotIn("Exclusive Wealth, Private)", block_text)
+        self.assertNotIn("I'll search for fees.", block_text)
+        self.assertIn("Exclusive Wealth, Private)", block_text)
 
     @override_settings(PORTAL_DEBUG_TOOL_TRACE=True)
     def test_portal_turn_persists_debug_tools_in_message_metadata(self) -> None:

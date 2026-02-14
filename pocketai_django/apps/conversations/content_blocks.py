@@ -353,22 +353,41 @@ def _merge_rebuilt_text_blocks(
     if not existing_blocks:
         return rebuilt_text_blocks
 
-    merged: list[dict[str, object]] = []
-    inserted = False
-    for block in existing_blocks:
+    def _is_textual(block: Mapping[str, object]) -> bool:
+        block_type = str(block.get("type") or "").strip().lower()
+        return block_type == "text" or _is_rich_text_block(block)
+
+    # Insert rebuilt text at the start of the *last* text run so tool/reasoning
+    # blocks remain before the final assistant answer in tool-loop turns.
+    insert_at: int | None = None
+    in_text_run = False
+    for idx, block in enumerate(existing_blocks):
         if not isinstance(block, Mapping):
             continue
-        block_type = str(block.get("type") or "").strip().lower()
-        is_text = block_type == "text" or _is_rich_text_block(block)
+        is_text = _is_textual(block)
         if is_text:
-            if not inserted:
-                merged.extend(rebuilt_text_blocks)
-                inserted = True
+            if not in_text_run:
+                insert_at = idx
+                in_text_run = True
+            continue
+        in_text_run = False
+
+    merged: list[dict[str, object]] = []
+    inserted = False
+    for idx, block in enumerate(existing_blocks):
+        if not isinstance(block, Mapping):
+            continue
+        if insert_at is not None and idx == insert_at and not inserted:
+            merged.extend(rebuilt_text_blocks)
+            inserted = True
+        is_text = _is_textual(block)
+        if is_text:
             continue
         merged.append(block)
 
     if not inserted:
         # No prior text blocks existed (e.g. tool-only message): append rebuilt text.
+        # If there were text blocks but no insertion anchor, this still guarantees one text run.
         merged.extend(rebuilt_text_blocks)
     return merged
 

@@ -10732,21 +10732,31 @@ class ChatPortalClient {
     if (!this.sessionToken) return;
     if (this.isStreaming || this.isSending) return;
     let state = this.loadActiveTurnState();
-    let turnId = state && state.turn_id ? state.turn_id : null;
-    if (!turnId) {
-      const bootstrapTurn =
-        this.bootstrapPayload && this.bootstrapPayload.active_turn && typeof this.bootstrapPayload.active_turn === "object"
-          ? this.bootstrapPayload.active_turn
-          : null;
-      const bootstrapTurnId = bootstrapTurn && bootstrapTurn.id ? bootstrapTurn.id.toString().trim() : "";
-      if (bootstrapTurnId) {
-        // Persist so subsequent refreshes can resume instantly, even if bootstrap is slow.
-        this.storeActiveTurnState(bootstrapTurnId, 0);
-        state = { turn_id: bootstrapTurnId, last_seq: 0 };
-        turnId = bootstrapTurnId;
+    const bootstrapTurn =
+      this.bootstrapPayload && this.bootstrapPayload.active_turn && typeof this.bootstrapPayload.active_turn === "object"
+        ? this.bootstrapPayload.active_turn
+        : null;
+    const bootstrapTurnId = bootstrapTurn && bootstrapTurn.id ? bootstrapTurn.id.toString().trim() : "";
+    if (!bootstrapTurnId) {
+      if (state && state.turn_id) {
+        this.traceStream("resume.clear_stale_state", { staleTurnId: state.turn_id });
+        this.clearActiveTurnState();
       }
+      return;
     }
-    if (!turnId) return;
+
+    const stateTurnId = state && state.turn_id ? state.turn_id.toString().trim() : "";
+    if (stateTurnId && stateTurnId !== bootstrapTurnId) {
+      this.traceStream("resume.drop_mismatched_state", {
+        staleTurnId: stateTurnId,
+        activeTurnId: bootstrapTurnId,
+      });
+      this.clearActiveTurnState();
+      state = null;
+    }
+
+    const cachedSeq = state && Number.isFinite(Number(state.last_seq)) ? Number(state.last_seq) : 0;
+    const resumeSince = stateTurnId === bootstrapTurnId && cachedSeq > 0 ? cachedSeq : 0;
 
     this.awaitingReply = true;
     this.isStreaming = true;
@@ -10756,9 +10766,10 @@ class ChatPortalClient {
     this.setComposerAvailability(false);
     this.updateComposerNotice(true);
     this.setSpinnerText("", { pending: true });
+    this.traceStream("resume.start", { turnId: bootstrapTurnId, since: resumeSince });
 
-    // Rehydrate from the start to reconstruct the streamed blocks.
-    this.startTurnEventStream(turnId, { since: 0 });
+    // Resume from the latest known sequence for the same active turn when available.
+    this.startTurnEventStream(bootstrapTurnId, { since: resumeSince });
   }
 
   handleTurnEventPayload(payload) {
