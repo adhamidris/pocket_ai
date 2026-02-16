@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import time
+from django.utils.translation import gettext_lazy as _
 
 # Base directory of the Django project (the folder that contains manage.py)
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -1909,6 +1910,7 @@ SECURE_BROWSER_XSS_FILTER = True
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.locale.LocaleMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -1928,6 +1930,7 @@ TEMPLATES = [
             "context_processors": [
                 "django.template.context_processors.debug",
                 "django.template.context_processors.request",
+                "django.template.context_processors.i18n",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
                 "frontend.context_processors.site_globals",
@@ -2019,9 +2022,24 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LANGUAGE_CODE = "en-us"
 
+LANGUAGES = [
+    ("en", _("English")),
+    ("ar", _("Arabic")),
+]
+
 TIME_ZONE = "UTC"
 
 USE_I18N = True
+
+LOCALE_PATHS = [
+    BASE_DIR / "locale",
+]
+
+LANGUAGE_COOKIE_NAME = "pocketai_language"
+LANGUAGE_COOKIE_AGE = 60 * 60 * 24 * 365
+LANGUAGE_COOKIE_PATH = "/"
+LANGUAGE_COOKIE_SAMESITE = "Lax"
+LANGUAGE_COOKIE_SECURE = SESSION_COOKIE_SECURE
 
 USE_TZ = True
 

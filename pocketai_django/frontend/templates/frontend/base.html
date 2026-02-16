@@ -1,6 +1,8 @@
-{% load static %}
+{% load static i18n %}
+{% get_current_language as CURRENT_LANGUAGE %}
+{% get_current_language_bidi as CURRENT_LANGUAGE_BIDI %}
 <!DOCTYPE html>
-<html lang="{{ request.LANGUAGE_CODE|default:'en' }}">
+<html lang="{{ CURRENT_LANGUAGE|default:'en' }}" dir="{% if CURRENT_LANGUAGE_BIDI %}rtl{% else %}ltr{% endif %}">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
