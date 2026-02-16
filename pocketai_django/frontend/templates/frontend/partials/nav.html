@@ -1,3 +1,4 @@
+{% load i18n %}
 {% with brand=site.brand nav_links=site.nav_links auth_links=site.auth_links %}
 <header class="sticky top-0 z-50 bg-background/80 backdrop-blur-xl">
   <div class="container mx-auto px-6 py-4">
@@ -22,15 +23,25 @@
       <div class="hidden md:flex items-center gap-4">
         {% with options=site.language_toggle.options %}
           {% if options|length > 1 %}
-            <button
-              type="button"
-              class="inline-flex items-center rounded-lg px-2.5 py-1.5 text-sm transition-colors hover:bg-accent/40"
-              aria-label="{{ site.language_toggle.label }}"
-            >
-              <span class="font-medium">{{ options.0.label|default:"EN" }}</span>
-              <span class="mx-1 text-neutral-400">/</span>
-              <span class="text-neutral-500">{{ options.1.label|default:"AR" }}</span>
-            </button>
+            {% get_current_language as CURRENT_LANGUAGE %}
+            {% with ACTIVE_LANGUAGE=CURRENT_LANGUAGE|slice:":2" %}
+              <div class="inline-flex items-center rounded-lg border border-border/60 bg-card/70 p-0.5 text-xs" aria-label="{{ site.language_toggle.label }}">
+                {% for option in options %}
+                  <form method="post" action="{% url 'set_language' %}" class="inline">
+                    {% csrf_token %}
+                    <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                    <input type="hidden" name="language" value="{{ option.code }}">
+                    <button
+                      type="submit"
+                      class="rounded-md px-2.5 py-1 font-medium transition-colors {% if ACTIVE_LANGUAGE == option.code %}bg-accent/70 text-foreground{% else %}text-muted-foreground hover:text-foreground{% endif %}"
+                      {% if ACTIVE_LANGUAGE == option.code %}aria-current="true"{% endif %}
+                    >
+                      {{ option.label|default:option.code|upper }}
+                    </button>
+                  </form>
+                {% endfor %}
+              </div>
+            {% endwith %}
           {% endif %}
         {% endwith %}
         <button
@@ -120,14 +131,25 @@
         <div class="flex flex-col space-y-2 pt-2">
           {% with options=site.language_toggle.options %}
             {% if options|length > 1 %}
-              <button
-                type="button"
-                class="inline-flex items-center justify-start rounded-lg px-3 py-2 text-sm transition-colors hover:bg-accent/40"
-              >
-                <span class="font-medium">{{ options.0.label|default:"EN" }}</span>
-                <span class="mx-1 text-neutral-400">/</span>
-                <span class="text-neutral-500">{{ options.1.label|default:"AR" }}</span>
-              </button>
+              {% get_current_language as CURRENT_LANGUAGE %}
+              {% with ACTIVE_LANGUAGE=CURRENT_LANGUAGE|slice:":2" %}
+                <div class="inline-flex items-center self-start rounded-lg border border-border/60 bg-card/70 p-0.5 text-xs">
+                  {% for option in options %}
+                    <form method="post" action="{% url 'set_language' %}" class="inline">
+                      {% csrf_token %}
+                      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                      <input type="hidden" name="language" value="{{ option.code }}">
+                      <button
+                        type="submit"
+                        class="rounded-md px-3 py-1.5 font-medium transition-colors {% if ACTIVE_LANGUAGE == option.code %}bg-accent/70 text-foreground{% else %}text-muted-foreground hover:text-foreground{% endif %}"
+                        {% if ACTIVE_LANGUAGE == option.code %}aria-current="true"{% endif %}
+                      >
+                        {{ option.label|default:option.code|upper }}
+                      </button>
+                    </form>
+                  {% endfor %}
+                </div>
+              {% endwith %}
             {% endif %}
           {% endwith %}
           <button

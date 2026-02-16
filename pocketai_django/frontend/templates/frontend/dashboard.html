@@ -1,4 +1,5 @@
 {% extends "frontend/base_app.html" %}
+{% load i18n %}
 
 {% block title %}Dashboard | Pocket AI{% endblock %}
 
@@ -31,17 +32,31 @@
                   </svg>
                   <span class="sr-only">Notifications</span>
                 </button>
-                <button type="button" class="inline-flex items-center gap-1 rounded-full border border-border/60 px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent/40 transition-colors">
-                  <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                    <circle cx="12" cy="12" r="10" />
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M2 12h20" />
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10Z" />
-                  </svg>
-                  <span>EN</span>
-                  <svg class="h-3 w-3 text-muted-foreground/80" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                    <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.084l3.71-3.853a.75.75 0 0 1 1.08 1.04l-4.243 4.4a.75.75 0 0 1-1.08 0l-4.243-4.4a.75.75 0 0 1 .026-1.06Z" clip-rule="evenodd" />
-                  </svg>
-                </button>
+                {% get_current_language as CURRENT_LANGUAGE %}
+                {% with ACTIVE_LANGUAGE=CURRENT_LANGUAGE|slice:":2" %}
+                  <div class="inline-flex items-center gap-1 rounded-full border border-border/60 px-1 py-1 text-xs font-medium text-muted-foreground">
+                    <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                      <circle cx="12" cy="12" r="10" />
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M2 12h20" />
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10Z" />
+                    </svg>
+                    {% for option in site.language_toggle.options %}
+                      <form method="post" action="{% url 'set_language' %}" class="inline">
+                        {% csrf_token %}
+                        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                        <input type="hidden" name="language" value="{{ option.code }}">
+                        <button
+                          type="submit"
+                          class="rounded-full px-2 py-1 transition-colors {% if ACTIVE_LANGUAGE == option.code %}bg-accent/70 text-foreground{% else %}text-muted-foreground hover:text-foreground{% endif %}"
+                          {% if ACTIVE_LANGUAGE == option.code %}aria-current="true"{% endif %}
+                          aria-label="Language: {{ option.label }}"
+                        >
+                          {{ option.code|upper }}
+                        </button>
+                      </form>
+                    {% endfor %}
+                  </div>
+                {% endwith %}
                 <button
                   type="button"
                   class="h-9 w-9 inline-flex items-center justify-center rounded-full border border-border/60 hover:bg-accent/40 transition-colors"

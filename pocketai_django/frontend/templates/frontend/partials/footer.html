@@ -1,4 +1,4 @@
-{% load lucide %}
+{% load i18n lucide %}
 <footer class="footer-section bg-background">
   <div class="container mx-auto px-6 pt-16 pb-12">
     <div class="grid lg:grid-cols-6 gap-8">
@@ -57,15 +57,33 @@
         </div>
 
         <div class="flex justify-center md:justify-end md:flex-1">
-          <button
-            type="button"
-            class="inline-flex items-center gap-2 rounded-full border border-border/60 bg-card/80 px-4 py-2 text-sm text-muted-foreground shadow-sm hover:bg-accent/40 transition-colors"
-            aria-label="{{ site.language_toggle.label }}"
-          >
-            {% lucide "globe" "w-4 h-4" %}
-            <span class="text-foreground font-medium">{{ site.language_toggle.options.0.label|default:"English" }}</span>
-            <span class="text-neutral-400">United States</span>
-          </button>
+          {% with options=site.language_toggle.options %}
+            {% if options|length > 1 %}
+              {% get_current_language as CURRENT_LANGUAGE %}
+              {% with ACTIVE_LANGUAGE=CURRENT_LANGUAGE|slice:":2" %}
+                <div class="inline-flex items-center gap-2 rounded-full border border-border/60 bg-card/80 px-2 py-1 text-sm text-muted-foreground shadow-sm">
+                  {% lucide "globe" "w-4 h-4" %}
+                  <div class="inline-flex items-center rounded-full bg-background/80 p-0.5">
+                    {% for option in options %}
+                      <form method="post" action="{% url 'set_language' %}" class="inline">
+                        {% csrf_token %}
+                        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                        <input type="hidden" name="language" value="{{ option.code }}">
+                        <button
+                          type="submit"
+                          class="rounded-full px-3 py-1 text-xs font-medium transition-colors {% if ACTIVE_LANGUAGE == option.code %}bg-accent/70 text-foreground{% else %}text-muted-foreground hover:text-foreground{% endif %}"
+                          {% if ACTIVE_LANGUAGE == option.code %}aria-current="true"{% endif %}
+                          aria-label="{{ site.language_toggle.label }}: {{ option.label }}"
+                        >
+                          {{ option.label }}
+                        </button>
+                      </form>
+                    {% endfor %}
+                  </div>
+                </div>
+              {% endwith %}
+            {% endif %}
+          {% endwith %}
         </div>
       </div>
     </div>

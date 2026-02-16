@@ -1,4 +1,4 @@
-{% load static %}
+{% load static i18n %}
 <style>
   [data-sidebar] {
     transition: width 0.2s ease;
@@ -296,6 +296,29 @@
       >
         Workspace settings <span class="ml-2 rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">Soon</span>
       </button>
+      {% get_current_language as CURRENT_LANGUAGE %}
+      {% with ACTIVE_LANGUAGE=CURRENT_LANGUAGE|slice:":2" %}
+        <div class="flex items-center justify-between rounded-lg px-3 py-2">
+          <span class="text-sm font-medium text-foreground">Language</span>
+          <div class="inline-flex items-center rounded-full border border-border/60 bg-background/80 p-0.5 text-xs">
+            {% for option in site.language_toggle.options %}
+              <form method="post" action="{% url 'set_language' %}" class="inline">
+                {% csrf_token %}
+                <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                <input type="hidden" name="language" value="{{ option.code }}">
+                <button
+                  type="submit"
+                  class="rounded-full px-2.5 py-1 font-medium transition-colors {% if ACTIVE_LANGUAGE == option.code %}bg-accent/70 text-foreground{% else %}text-muted-foreground hover:text-foreground{% endif %}"
+                  {% if ACTIVE_LANGUAGE == option.code %}aria-current="true"{% endif %}
+                  aria-label="Language: {{ option.label }}"
+                >
+                  {{ option.code|upper }}
+                </button>
+              </form>
+            {% endfor %}
+          </div>
+        </div>
+      {% endwith %}
       <button
         type="button"
         class="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-muted focus:outline-none focus:ring-2 focus:ring-primary/40"
