@@ -23,6 +23,8 @@ class ChatPortalClient {
     this.agentSlug = container.getAttribute("data-agent-slug") || "";
     this.agentName = container.getAttribute("data-agent-name") || "Pocket AI";
     this.agentInitials = container.getAttribute("data-agent-initials") || "AI";
+    this.uiLanguage = this.resolveUiLanguage(container.getAttribute("data-ui-language") || "");
+    this.locale = this.resolveLocale(this.uiLanguage);
     this.sessionToken = container.getAttribute("data-session-token") || null;
     this.sessionCacheKey = container.getAttribute("data-session-cache-key") || "";
     this.bootstrapScriptId = container.getAttribute("data-bootstrap-script-id") || "";
@@ -886,6 +888,7 @@ class ChatPortalClient {
       const requestBody = {
         session_token: this.sessionToken,
         body: message,
+        metadata: this.buildTurnMetadata(),
       };
       const response = await fetch(this.endpoints.turnCreate, {
         method: "POST",
@@ -9948,7 +9951,12 @@ class ChatPortalClient {
 
   formatTokenCount(count) {
     const safe = Number.isFinite(count) ? Math.max(0, Math.round(count)) : 0;
-    return safe.toLocaleString("en-US");
+    const locale = this.getLocale();
+    try {
+      return safe.toLocaleString(locale);
+    } catch (_err) {
+      return safe.toLocaleString();
+    }
   }
 
   getUsagePayload(payload) {
@@ -10837,9 +10845,52 @@ class ChatPortalClient {
     container.classList.toggle("hidden", !resolved);
   }
 
+  resolveUiLanguage(source) {
+    let candidate = (source || "").toString().trim().toLowerCase();
+    if (!candidate && typeof document !== "undefined" && document.documentElement) {
+      candidate = (document.documentElement.getAttribute("lang") || "").toString().trim().toLowerCase();
+    }
+    if (!candidate && typeof navigator !== "undefined") {
+      candidate = (navigator.language || "").toString().trim().toLowerCase();
+    }
+    if (candidate.indexOf("ar") === 0) {
+      return "ar";
+    }
+    return "en";
+  }
+
+  resolveLocale(languageCode) {
+    const code = (languageCode || "").toString().trim().toLowerCase();
+    if (code.indexOf("ar") === 0) {
+      return "ar";
+    }
+    if (typeof navigator !== "undefined") {
+      const browserLocale = (navigator.language || "").toString().trim();
+      if (browserLocale && browserLocale.toLowerCase().indexOf("en") === 0) {
+        return browserLocale;
+      }
+    }
+    return "en-US";
+  }
+
+  getUiLanguage() {
+    const resolved = this.resolveUiLanguage(this.uiLanguage);
+    this.uiLanguage = resolved;
+    return resolved;
+  }
+
+  getLocale() {
+    const resolved = this.resolveLocale(this.getUiLanguage());
+    this.locale = resolved;
+    return resolved;
+  }
+
   buildVisitorMetadata() {
+    const uiLanguage = this.getUiLanguage();
+    const locale = this.getLocale();
     const metadata = {
-      locale: navigator.language,
+      locale,
+      ui_language: uiLanguage,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       path: window.location.pathname,
       referrer: document.referrer,
@@ -10848,6 +10899,13 @@ class ChatPortalClient {
       metadata.screen = `${window.screen.width}x${window.screen.height}`;
     }
     return metadata;
+  }
+
+  buildTurnMetadata() {
+    return {
+      ui_language: this.getUiLanguage(),
+      locale: this.getLocale(),
+    };
   }
 
   setComposerAvailability(enabled) {
@@ -11469,7 +11527,12 @@ class ChatPortalClient {
     if (diffHours < 24) return `${diffHours}h ago`;
     if (diffDays < 7) return `${diffDays}d ago`;
     
-    return date.toLocaleDateString();
+    const locale = this.getLocale();
+    try {
+      return date.toLocaleDateString(locale);
+    } catch (_err) {
+      return date.toLocaleDateString();
+    }
   }
 
   escapeHtml(text) {

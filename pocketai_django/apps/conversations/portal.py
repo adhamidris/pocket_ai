@@ -11,6 +11,8 @@ from django.db.models import Count, Prefetch
 from django.utils import timezone
 from django.utils.text import slugify
 
+from pocketai.language import normalize_language_code
+
 from apps.accounts.models import (
     AgentProfile,
     BusinessProfile,
@@ -84,6 +86,22 @@ class PortalSessionBootstrap:
 DEFAULT_SESSION_TTL: timedelta | None = None
 
 
+def _metadata_ui_language(metadata: dict | None) -> str:
+    if not isinstance(metadata, dict):
+        return ""
+    candidates = (
+        metadata.get("ui_language"),
+        metadata.get("uiLanguage"),
+        metadata.get("selected_language"),
+        metadata.get("selectedLanguage"),
+    )
+    for candidate in candidates:
+        normalized = normalize_language_code(candidate)
+        if normalized:
+            return normalized
+    return ""
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class PortalSessionSummary:
     """Lightweight session info for session history list."""
@@ -94,6 +112,7 @@ class PortalSessionSummary:
     status: str
     message_count: int
     preview: str
+
 
 class ChatPortalService:
     """High-level orchestration for public chat portal lifecycle."""
@@ -166,7 +185,10 @@ class ChatPortalService:
         )
         if not body.strip():
             raise PortalValidationError("Message body cannot be empty")
-        metadata = metadata or {}
+        metadata = dict(metadata or {})
+        selected_ui_language = _metadata_ui_language(metadata)
+        if selected_ui_language:
+            metadata["ui_language"] = selected_ui_language
         with transaction.atomic():
             create_kwargs = {
                 "conversation": conversation,
@@ -181,13 +203,16 @@ class ChatPortalService:
             if message_id:
                 create_kwargs["id"] = message_id
             message = ConversationMessage.objects.create(**create_kwargs)
-            metadata_updated = False
+            metadata_updated = self._capture_ui_language_preference(
+                conversation=conversation,
+                language=selected_ui_language,
+            )
             if sender == ConversationSender.CUSTOMER:
                 metadata_updated = self._capture_customer_identifiers(
                     conversation=conversation,
                     body=body,
                     message_metadata=metadata,
-                )
+                ) or metadata_updated
             self._touch_conversation_after_message(conversation, message, metadata_updated=metadata_updated)
         return self._serialize_message(message)
 
@@ -542,6 +567,10 @@ class ChatPortalService:
         existing_session_token: str | None,
         metadata: dict,
     ) -> Conversation:
+        incoming_metadata = dict(metadata or {})
+        selected_ui_language = _metadata_ui_language(incoming_metadata)
+        if selected_ui_language:
+            incoming_metadata["ui_language"] = selected_ui_language
         now = timezone.now()
         conversation = None
         if existing_session_token:
@@ -557,14 +586,14 @@ class ChatPortalService:
             conversation = Conversation.objects.create(
                 business_profile=business,
                 agent_profile=agent,
-                metadata=metadata,
+                metadata=incoming_metadata,
                 expires_at=expires_at,
             )
             # self._ensure_welcome_message(conversation) # Disabled to support empty state
             conversation.refresh_from_db()
             return conversation
 
-        updated_metadata = {**(conversation.metadata or {}), **metadata}
+        updated_metadata = {**(conversation.metadata or {}), **incoming_metadata}
         update_fields: list[str] = ["last_activity_at"]
         if updated_metadata != conversation.metadata:
             conversation.metadata = updated_metadata
@@ -619,6 +648,18 @@ class ChatPortalService:
         if metadata_updated:
             update_fields.append("metadata")
         conversation.save(update_fields=list(dict.fromkeys(update_fields)))
+
+    def _capture_ui_language_preference(self, *, conversation: Conversation, language: str | None) -> bool:
+        normalized = normalize_language_code(language)
+        if not normalized:
+            return False
+        convo_meta = conversation.metadata if isinstance(getattr(conversation, "metadata", None), dict) else {}
+        if convo_meta.get("ui_language") == normalized:
+            return False
+        updated_meta = dict(convo_meta)
+        updated_meta["ui_language"] = normalized
+        conversation.metadata = updated_meta
+        return True
 
     def _capture_customer_identifiers(self, *, conversation, body: str, message_metadata: dict | None) -> bool:
         """

@@ -21,6 +21,8 @@ from core.otel import otel_trace
 from django.conf import settings
 from django.utils import timezone
 
+from pocketai.language import normalize_language_code
+
 from apps.accounts.models import AgentProfile
 from apps.conversations.models import (
     AgentRun,
@@ -107,6 +109,23 @@ SUB_AGENT_BACKGROUND_RUN_INSTRUCTIONS = textwrap.dedent(
 ).strip()
 
 _ARABIC_CHAR_PATTERN = re.compile(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]")
+
+
+def _selected_ui_language(conversation: Conversation) -> str:
+    metadata = conversation.metadata if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
+    if not isinstance(metadata, Mapping):
+        return ""
+    candidates = (
+        metadata.get("ui_language"),
+        metadata.get("uiLanguage"),
+        metadata.get("selected_language"),
+        metadata.get("selectedLanguage"),
+    )
+    for candidate in candidates:
+        normalized = normalize_language_code(candidate)
+        if normalized:
+            return normalized
+    return ""
 
 
 def _build_runs_context_summary(conversation: Conversation, *, limit: int = 8) -> str | None:
@@ -1057,7 +1076,22 @@ def build_messages(
                     system_sections.append(runs_context)
 
         normalized_user_message = (user_message or "").strip()
-        if normalized_user_message:
+        selected_ui_language = _selected_ui_language(conversation)
+        if selected_ui_language.startswith("ar"):
+            system_sections.append(
+                (
+                    "Language enforcement: The visitor selected Arabic in the UI. Reply ONLY in Modern Standard Arabic (MSA). "
+                    "Do not include English translations unless the visitor asks."
+                ).strip()
+            )
+        elif selected_ui_language.startswith("en"):
+            system_sections.append(
+                (
+                    "Language enforcement: The visitor selected English in the UI. Reply ONLY in English. "
+                    "Do not include Arabic translations unless the visitor asks."
+                ).strip()
+            )
+        elif normalized_user_message:
             if _ARABIC_CHAR_PATTERN.search(normalized_user_message):
                 system_sections.append(
                     (
@@ -1476,6 +1510,22 @@ def build_final_answer_messages(
     """
 
     business_name = conversation.business_profile.name
+    selected_ui_language = _selected_ui_language(conversation)
+    if selected_ui_language.startswith("ar"):
+        language_instruction = (
+            "Language: The visitor selected Arabic in the UI. Reply ONLY in Modern Standard Arabic (MSA). "
+            "Do not include English translations unless the visitor asks."
+        )
+    elif selected_ui_language.startswith("en"):
+        language_instruction = (
+            "Language: The visitor selected English in the UI. Reply ONLY in English. "
+            "Do not include Arabic translations unless the visitor asks."
+        )
+    else:
+        language_instruction = (
+            "Language: Reply in the visitor's language. If the visitor writes in Arabic, respond in Modern Standard Arabic (MSA)."
+        )
+
     system_lines = [
         f"You are now drafting the final customer-facing answer for {business_name}.",
         "Tools have already been executed this turn. Answer only from the provided reads/snippets—no outside knowledge and no document titles, IDs, or citations.",
@@ -1484,7 +1534,7 @@ def build_final_answer_messages(
         "Do not mention cases or leads. Offer human follow-up only if the visitor explicitly asks or has repeated/insisted, and request consent before stating that a follow-up will happen.",
         "Add short bullet next steps only when needed, otherwise end after the answer.",
         "Safety: share documented policy/process only; no personal advice or diagnostics for health/finance/legal topics.",
-        "Language: Reply in the visitor's language. If the visitor writes in Arabic, respond in Modern Standard Arabic (MSA).",
+        language_instruction,
     ]
     system_message = "\n".join(system_lines)
 

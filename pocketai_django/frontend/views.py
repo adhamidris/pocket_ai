@@ -30,6 +30,8 @@ from django.utils.text import slugify
 from django.utils.translation import gettext_lazy as _
 from django.views.decorators.http import require_http_methods
 
+from pocketai.language import normalize_language_code
+
 from apps.accounts.models import (
     AgentProfile,
     BusinessProfile,
@@ -3063,10 +3065,12 @@ def chat_portal(request: HttpRequest, business_slug: str, agent_slug: str) -> Ht
     """Render the public chat portal view backed by the API bootstrap endpoint."""
 
     existing_token = request.GET.get("session") or request.COOKIES.get(f"chat_session_{business_slug}_{agent_slug}")
+    ui_language = normalize_language_code(getattr(request, "LANGUAGE_CODE", "")) or "en"
     visitor_metadata = {
         "ip": request.META.get("REMOTE_ADDR"),
         "user_agent": request.META.get("HTTP_USER_AGENT"),
         "referer": request.META.get("HTTP_REFERER"),
+        "ui_language": ui_language,
     }
     bootstrap_payload = _call_portal_bootstrap_api(
         request,
@@ -3136,6 +3140,7 @@ def chat_portal(request: HttpRequest, business_slug: str, agent_slug: str) -> Ht
         },
         "session_token": session.get("session_token", ""),
         "session_storage_key": storage_key,
+        "ui_language": ui_language,
         "conversation_status": session_status.replace("_", " ").title(),
         "conversation_status_code": session_status,
         "messages": messages,

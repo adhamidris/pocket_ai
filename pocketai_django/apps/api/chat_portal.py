@@ -24,6 +24,8 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 from core.otel import otel_context, otel_trace
 
+from pocketai.language import normalize_language_code
+
 from apps.accounts.models import (
     BusinessProfile,
     McpConnectionApprovalMode,
@@ -990,6 +992,43 @@ def _parse_json_body(request: HttpRequest) -> dict:
         raise PortalValidationError("Invalid JSON payload") from exc
 
 
+def _normalize_portal_metadata(raw: object) -> dict[str, object]:
+    return dict(raw) if isinstance(raw, Mapping) else {}
+
+
+def _metadata_ui_language(metadata: Mapping[str, object]) -> str:
+    candidates = (
+        metadata.get("ui_language"),
+        metadata.get("uiLanguage"),
+        metadata.get("selected_language"),
+        metadata.get("selectedLanguage"),
+    )
+    for candidate in candidates:
+        normalized = normalize_language_code(candidate)
+        if normalized:
+            return normalized
+    return ""
+
+
+def _request_ui_language(request: HttpRequest) -> str:
+    normalized = normalize_language_code(getattr(request, "LANGUAGE_CODE", ""))
+    if normalized:
+        return normalized
+    cookie_name = str(getattr(settings, "LANGUAGE_COOKIE_NAME", "django_language") or "django_language")
+    cookie_language = normalize_language_code(request.COOKIES.get(cookie_name))
+    if cookie_language:
+        return cookie_language
+    return ""
+
+
+def _with_ui_language(request: HttpRequest, metadata: Mapping[str, object] | None) -> dict[str, object]:
+    payload: dict[str, object] = dict(metadata) if isinstance(metadata, Mapping) else {}
+    selected = _metadata_ui_language(payload) or _request_ui_language(request)
+    if selected:
+        payload["ui_language"] = selected
+    return payload
+
+
 def _business_prefers_mcp(business: BusinessProfile | None, *, conversation=None) -> bool:
     """
     Evaluate whether a business should use the MCP orchestrator.
@@ -1520,8 +1559,7 @@ def bootstrap_session(request: HttpRequest) -> JsonResponse:
     business_slug = (payload.get("business_slug") or payload.get("businessSlug") or "").strip()
     agent_slug = (payload.get("agent_slug") or payload.get("agentSlug") or "").strip()
     existing_session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip() or None
-    metadata_raw = payload.get("metadata") or {}
-    metadata: dict[str, object] = dict(metadata_raw) if isinstance(metadata_raw, Mapping) else {}
+    metadata = _with_ui_language(request, _normalize_portal_metadata(payload.get("metadata") or {}))
 
     if not business_slug or not agent_slug:
         return _json_error("validation_error", "business_slug and agent_slug are required.")
@@ -1591,7 +1629,7 @@ def messages_endpoint(request: HttpRequest) -> JsonResponse:
 
     session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
     body = (payload.get("body") or "").strip()
-    metadata = payload.get("metadata") or {}
+    metadata = _with_ui_language(request, _normalize_portal_metadata(payload.get("metadata") or {}))
 
     try:
         message = service.append_message(
@@ -3451,8 +3489,7 @@ def create_portal_session(request: HttpRequest) -> JsonResponse:
 
     business_slug = (payload.get("business_slug") or payload.get("businessSlug") or "").strip()
     agent_slug = (payload.get("agent_slug") or payload.get("agentSlug") or "").strip()
-    metadata_raw = payload.get("metadata") or {}
-    metadata: dict[str, object] = dict(metadata_raw) if isinstance(metadata_raw, Mapping) else {}
+    metadata = _with_ui_language(request, _normalize_portal_metadata(payload.get("metadata") or {}))
 
     if not business_slug or not agent_slug:
         return _json_error("validation_error", "business_slug and agent_slug are required.")
@@ -3511,8 +3548,7 @@ def portal_turn_create(request: HttpRequest) -> JsonResponse:
 
     session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
     body = (payload.get("body") or "").strip()
-    metadata_raw = payload.get("metadata") or {}
-    metadata: dict[str, object] = dict(metadata_raw) if isinstance(metadata_raw, Mapping) else {}
+    metadata = _with_ui_language(request, _normalize_portal_metadata(payload.get("metadata") or {}))
 
     if not session_token or not body:
         return _json_error("validation_error", "session_token and body are required.")
