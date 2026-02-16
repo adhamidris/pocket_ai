@@ -9,7 +9,9 @@ import requests
 from django.test import SimpleTestCase
 
 from apps.knowledge.knowledge_ingestion import AzureDocumentIntelligenceExtractor
+from apps.knowledge.knowledge_ingestion import KnowledgeIngestionService
 from apps.knowledge.knowledge_ingestion import TableCellPayload, TableRowPayload
+from apps.knowledge.knowledge_ingestion import TablePayload
 
 
 def _mock_response(
@@ -152,6 +154,51 @@ class AzureDocumentIntelligenceExtractorTests(SimpleTestCase):
         self.assertEqual(meta.get("failure_reason"), "request_http_error")
         self.assertEqual(meta.get("request_attempts"), 1)
         self.assertFalse(mock_sleep.called)
+
+    def test_extract_tables_normalizes_dict_caption_to_string(self) -> None:
+        extractor = AzureDocumentIntelligenceExtractor(endpoint="https://example.test", key="secret")
+        analyze_result = {
+            "pages": [],
+            "tables": [
+                {
+                    "caption": {"content": "Account Fees Table"},
+                    "rowCount": 1,
+                    "columnCount": 1,
+                    "cells": [
+                        {
+                            "rowIndex": 0,
+                            "columnIndex": 0,
+                            "content": "Service",
+                            "kind": "columnHeader",
+                        }
+                    ],
+                }
+            ],
+        }
+
+        with mock.patch.object(
+            extractor,
+            "_analyze_document",
+            return_value=(analyze_result, [], {"status": "succeeded"}),
+        ):
+            tables, issues, meta = extractor.extract_tables(self.path)
+
+        self.assertEqual(len(tables), 1)
+        self.assertEqual(tables[0].title, "Account Fees Table")
+        self.assertEqual(issues, [])
+        self.assertEqual(meta.get("table_count"), 1)
+
+    def test_derive_table_title_handles_mapping_title_without_crashing(self) -> None:
+        table_payload = TablePayload(
+            order_index=1,
+            title={"content": "Bedaya Accounts"},
+            section_heading="",
+            page_number=1,
+        )
+        upload = mock.Mock(display_name="CIB-Account-EN.pdf", source_name="CIB-Account-EN.pdf")
+
+        title = KnowledgeIngestionService._derive_table_title(table_payload, upload)
+        self.assertEqual(title, "Bedaya Accounts")
 
 
 class AzureDocumentIntelligenceApplicabilityTests(SimpleTestCase):

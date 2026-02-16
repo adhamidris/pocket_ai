@@ -605,6 +605,67 @@ class McpSearchKnowledgeHandlerTests(TestCase):
         self.assertNotIn(table_b, table_row_table_ids)
 
     @override_settings(MCP_NEW_CONTRACT_ENABLED=True, MCP_AGENTIC_READ_V2_ENABLED=True)
+    def test_agentic_search_caches_table_anchor_manifest_for_promoted_table_ref(self) -> None:
+        import uuid
+
+        upload_id = str(uuid.uuid4())
+        table_id = str(uuid.uuid4())
+        context = ToolExecutionContext(char_budget_per_turn=100_000)
+        legacy_payload = {
+            "tool": "search_knowledge",
+            "status": "ok",
+            "snippets": [
+                {
+                    "is_table_chunk": True,
+                    "chunk_id": str(uuid.uuid4()),
+                    "upload_id": upload_id,
+                    "title": "Fees row 19",
+                    "summary": "row 19",
+                    "search_stage": "table_row_expansion",
+                    "source_diagnostics": {
+                        "table_id": table_id,
+                        "row_index": 19,
+                        "table_total_rows": 23,
+                        "table_column_count": 7,
+                    },
+                },
+                {
+                    "is_table_chunk": True,
+                    "chunk_id": str(uuid.uuid4()),
+                    "upload_id": upload_id,
+                    "title": "Fees row 20",
+                    "summary": "row 20",
+                    "search_stage": "table_row_expansion",
+                    "source_diagnostics": {
+                        "table_id": table_id,
+                        "row_index": 20,
+                        "table_total_rows": 23,
+                        "table_column_count": 7,
+                    },
+                },
+            ],
+            "completeness": {"total_found": 2},
+        }
+
+        result = tools._convert_to_agentic_search_response(
+            legacy_payload,
+            conversation=self.conversation,
+            context=context,
+        )
+        refs = result.get("refs") or []
+        self.assertEqual(len(refs), 1, refs)
+        self.assertEqual(refs[0].get("id"), table_id)
+        coverage = refs[0].get("coverage_hint") or {}
+        self.assertEqual(coverage.get("matched_row_index"), 19)
+
+        manifest = context.table_row_anchor_manifests.get(table_id)
+        self.assertIsInstance(manifest, dict)
+        self.assertEqual(manifest.get("table_id"), table_id)
+        self.assertEqual(manifest.get("matched_row_index"), 19)
+        self.assertEqual(manifest.get("estimated_rows"), 23)
+        self.assertEqual(manifest.get("estimated_columns"), 7)
+
+    @override_settings(MCP_NEW_CONTRACT_ENABLED=True, MCP_AGENTIC_READ_V2_ENABLED=True)
     def test_agentic_search_scales_table_read_hint_for_large_tables(self) -> None:
         import uuid
 

@@ -114,7 +114,7 @@ class ChatPortalClient {
       maxCharsPerTick: 8,
       maxBudgetChars: 20,
       boundaryModeMultiplier: 1.2,
-      finalizeModeMultiplier: 1.35,
+      finalizeModeMultiplier: 1.1,
       dtCapMs: 50,
     };
 	    // Snapshot of content blocks when a tool approval is pending (preserves text before approval card)
@@ -4774,7 +4774,7 @@ class ChatPortalClient {
       if (this.finalizingTurn) {
         this._doTurnPersistedReconcile(data);
       }
-    }, 1200);
+    }, 1800);
   }
 
   handleTurnPersistedEvent(data) {
@@ -4955,20 +4955,18 @@ class ChatPortalClient {
 		        this.ensureStreamingMessageNode(messageId);
 		        const bodyEl = this.getMessageBodyElement(messageId) || this.streamingMessageBodyEl;
 		        if (bodyEl) {
-		          // Canonical reconcile: update/insert/remove/reorder by block_id without doing a full
-		          // re-render, and prevent streaming-only animations from firing during finalization.
+		          // Final canonical commit: persisted content_blocks are authoritative.
 		          const streamedBlocks =
 		            this.usingBlockStream && this.streamingBlocksEl && this.streamingContentBlockEls && this.streamingContentBlockEls.size > 0;
-              const ackOnly = streamedBlocks && this._turnPersistedCanAckStreamedBlocks(bodyEl, contentBlocks);
-              if (ackOnly) {
-                this.traceStream("turn_persisted_ack", {
-                  blocks: contentBlocks.length,
-                });
-              } else if (streamedBlocks) {
-		            this.reconcileMessageContentBlocks(bodyEl, contentBlocks);
-		          } else {
-		            this.renderMessageContentBlocks(bodyEl, contentBlocks);
-		          }
+              const ackCandidate = streamedBlocks && this._turnPersistedCanAckStreamedBlocks(bodyEl, contentBlocks);
+              this.traceStream("turn_persisted_commit", {
+                blocks: contentBlocks.length,
+                streamed: Boolean(streamedBlocks),
+                ackCandidate: Boolean(ackCandidate),
+              });
+              this.renderMessageContentBlocks(bodyEl, contentBlocks);
+              const visibilityRoot = bodyEl.closest ? bodyEl.closest("[data-message-id]") || bodyEl : bodyEl;
+              this.updateInlineToolCardsVisibility(visibilityRoot);
 		          this.injectCopyButton(bodyEl);
 	        }
 	        if (messageId) {
@@ -5119,6 +5117,12 @@ class ChatPortalClient {
     if (!message) return;
     const messageId = typeof message.id === "string" ? message.id.trim() : "";
     if (!messageId) return;
+    const sender = (message.sender || "").toString().trim().toLowerCase();
+    const turnActive = Boolean(this.activeTurnId || this.awaitingReply || this.isStreaming || this.finalizingTurn);
+    if (sender === "ai" && turnActive) {
+      this.traceStream("conversationMessage_ignored_turn_active", { messageId });
+      return;
+    }
 
     const container = this.elements.messagesInner || this.elements.messages;
     const safeId = window.CSS && typeof window.CSS.escape === "function" ? window.CSS.escape(messageId) : messageId;
@@ -7869,6 +7873,29 @@ class ChatPortalClient {
 
     // Remove streaming-only affordances; persisted renders do not include them.
     containerEl.querySelectorAll("[data-streaming-status]").forEach((el) => el.remove());
+    // Remove non-canonical loose children (legacy/plain-text fallbacks).
+    Array.from(containerEl.childNodes || []).forEach((node) => {
+      if (!node) return;
+      if (node.nodeType === Node.TEXT_NODE) {
+        if ((node.textContent || "").trim()) {
+          node.remove();
+          return;
+        }
+        node.remove();
+        return;
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) {
+        node.remove();
+        return;
+      }
+      const el = node;
+      const isStatus = Boolean(el.matches && el.matches("[data-streaming-status]"));
+      const hasBlockId = Boolean(el.dataset && el.dataset.blockId);
+      const isContentBlock = Boolean(el.dataset && el.dataset.contentBlock === "true");
+      if (!isStatus && !hasBlockId && !isContentBlock) {
+        el.remove();
+      }
+    });
 
     // If we are finalizing, ensure we don't leave email field timers/cursors running.
     if (this.finalizingTurn) {

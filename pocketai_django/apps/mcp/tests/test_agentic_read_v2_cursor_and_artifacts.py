@@ -83,6 +83,15 @@ class AgenticReadV2CursorAndArtifactTests(TestCase):
             return_value=SimpleNamespace(rag_agentic_mode=True),
         )
 
+    @staticmethod
+    def _resolve_signed_cursor(context: ToolExecutionContext, cursor_token: str) -> str:
+        mapping = getattr(context, "read_cursor_handles", None)
+        if isinstance(mapping, dict):
+            resolved = mapping.get(str(cursor_token))
+            if isinstance(resolved, str) and resolved.strip():
+                return resolved.strip()
+        return str(cursor_token)
+
     @override_settings(
         MCP_NEW_CONTRACT_ENABLED=True,
         MCP_AGENTIC_READ_V2_ENABLED=True,
@@ -403,6 +412,394 @@ class AgenticReadV2CursorAndArtifactTests(TestCase):
         MCP_AGENTIC_READ_V2_ENABLED=True,
         MCP_TEXT_PII_REDACTION_ENABLED=False,
     )
+    def test_promoted_table_ref_uses_anchor_manifest_on_first_read(self) -> None:
+        table = KnowledgeUploadTable.objects.create(
+            upload=self.upload,
+            order_index=2,
+            title="Teller Fees",
+            column_schema=["service", "fee"],
+        )
+        KnowledgeUploadPage.objects.create(upload=self.upload, page_number=2)
+        for idx in range(8):
+            service = f"Service {idx}"
+            fee = f"Fee {idx}"
+            if idx == 6:
+                service = "Cash deposit with same day value date"
+                fee = "0.2% min EGP 100"
+            row = KnowledgeUploadTableRow.objects.create(
+                table=table,
+                row_index=idx,
+                metadata={"row_type": "body"},
+            )
+            KnowledgeUploadTableCell.objects.create(
+                table=table,
+                row=row,
+                column_index=0,
+                column_key="service",
+                raw_text=service,
+            )
+            KnowledgeUploadTableCell.objects.create(
+                table=table,
+                row=row,
+                column_index=1,
+                column_key="fee",
+                raw_text=fee,
+            )
+
+        context = ToolExecutionContext(char_budget_per_turn=100_000)
+        legacy_payload = {
+            "tool": "search_knowledge",
+            "status": "ok",
+            "snippets": [
+                {
+                    "is_table_chunk": True,
+                    "chunk_id": str(self.chunk.id),
+                    "upload_id": str(self.upload.id),
+                    "title": "Teller Fees row 6",
+                    "summary": "row 6",
+                    "search_stage": "table_row_expansion",
+                    "source_diagnostics": {
+                        "table_id": str(table.id),
+                        "row_index": 6,
+                        "table_total_rows": 8,
+                        "table_column_count": 2,
+                    },
+                },
+                {
+                    "is_table_chunk": True,
+                    "chunk_id": str(self.chunk.id),
+                    "upload_id": str(self.upload.id),
+                    "title": "Teller Fees row 7",
+                    "summary": "row 7",
+                    "search_stage": "table_row_expansion",
+                    "source_diagnostics": {
+                        "table_id": str(table.id),
+                        "row_index": 7,
+                        "table_total_rows": 8,
+                        "table_column_count": 2,
+                    },
+                },
+            ],
+            "completeness": {"total_found": 2},
+        }
+        search_out = tools._convert_to_agentic_search_response(
+            legacy_payload,
+            conversation=self.conversation,
+            context=context,
+        )
+        refs = search_out.get("refs") or []
+        self.assertEqual(len(refs), 1, refs)
+        self.assertEqual(str(refs[0].get("id")), str(table.id))
+
+        with self._enable_agentic_mode():
+            result = tools.execute_tool(
+                "read_knowledge",
+                {"refs": [{"id": str(table.id)}], "max_chars": 3000},
+                conversation=self.conversation,
+                context=context,
+            )
+
+        self.assertEqual(result.get("status"), "ok", json.dumps(result, indent=2, default=str))
+        evidence = result.get("evidence") or []
+        self.assertEqual(len(evidence), 1, json.dumps(result, indent=2, default=str))
+        item = evidence[0]
+        payload = item.get("payload") or {}
+        self.assertEqual(payload.get("row_offset"), 5)
+        row_services = [str(row[0]) for row in (payload.get("rows") or []) if isinstance(row, list) and row]
+        self.assertIn("Cash deposit with same day value date", row_services)
+        semantic_links = payload.get("semantic_links") or []
+        self.assertTrue(semantic_links, json.dumps(payload, indent=2, default=str))
+        self.assertFalse(item.get("next_cursor"))
+
+    @override_settings(
+        MCP_NEW_CONTRACT_ENABLED=True,
+        MCP_AGENTIC_READ_V2_ENABLED=True,
+        MCP_TEXT_PII_REDACTION_ENABLED=False,
+    )
+    def test_table_anchor_falls_back_to_row_zero_when_anchor_is_non_informative(self) -> None:
+        table = KnowledgeUploadTable.objects.create(
+            upload=self.upload,
+            order_index=3,
+            title="Fallback Table",
+            column_schema=["service", "fee"],
+        )
+        KnowledgeUploadPage.objects.create(upload=self.upload, page_number=3)
+        for idx in range(2):
+            row = KnowledgeUploadTableRow.objects.create(
+                table=table,
+                row_index=idx,
+                metadata={"row_type": "body"},
+            )
+            KnowledgeUploadTableCell.objects.create(
+                table=table,
+                row=row,
+                column_index=0,
+                column_key="service",
+                raw_text=f"Service {idx}",
+            )
+            KnowledgeUploadTableCell.objects.create(
+                table=table,
+                row=row,
+                column_index=1,
+                column_key="fee",
+                raw_text=f"Fee {idx}",
+            )
+
+        context = ToolExecutionContext(char_budget_per_turn=100_000)
+        context.table_row_anchor_manifests[str(table.id)] = {
+            "ref_id": str(table.id),
+            "table_id": str(table.id),
+            "matched_row_index": 99,
+            "estimated_rows": 2,
+            "estimated_columns": 2,
+        }
+
+        with self._enable_agentic_mode():
+            result = tools.execute_tool(
+                "read_knowledge",
+                {"refs": [{"id": str(table.id)}], "max_chars": 1500},
+                conversation=self.conversation,
+                context=context,
+            )
+
+        self.assertIn(result["status"], {"ok", "truncated"}, json.dumps(result, indent=2, default=str))
+        evidence = result.get("evidence") or []
+        self.assertEqual(len(evidence), 1, json.dumps(result, indent=2, default=str))
+        payload = evidence[0].get("payload") or {}
+        self.assertEqual(payload.get("row_offset"), 0)
+        rows = payload.get("rows") or []
+        self.assertTrue(rows, json.dumps(payload, indent=2, default=str))
+        self.assertEqual(rows[0][0], "Service 0")
+
+    @override_settings(
+        MCP_NEW_CONTRACT_ENABLED=True,
+        MCP_AGENTIC_READ_V2_ENABLED=True,
+        MCP_TEXT_PII_REDACTION_ENABLED=False,
+    )
+    def test_anchor_read_includes_trailing_section_note_as_context_row(self) -> None:
+        table = KnowledgeUploadTable.objects.create(
+            upload=self.upload,
+            order_index=4,
+            title="Value Date Rules",
+            column_schema=["service", "tariff", "prime", "plus", "wealth", "exclusive_wealth", "private"],
+        )
+        KnowledgeUploadPage.objects.create(upload=self.upload, page_number=4)
+
+        value_row = KnowledgeUploadTableRow.objects.create(
+            table=table,
+            row_index=0,
+            metadata={"row_type": "body"},
+        )
+        for idx, value in enumerate(
+            [
+                "Cash deposit with same day value date (T+5 customers)",
+                "",
+                "(With minimum EGP 100 or Equivalent and with no maximum) 0,5%",
+                "(With minimum EGP 100 or Equivalent and with no maximum) 0,5%",
+                "(With minimum EGP 100 or Equivalent and with no maximum) 0,5%",
+                "(With minimum EGP 100 or Equivalent and with no maximum) 0,5%",
+                "(With minimum EGP 100 or Equivalent and with no maximum) 0,5%",
+            ]
+        ):
+            KnowledgeUploadTableCell.objects.create(
+                table=table,
+                row=value_row,
+                column_index=idx,
+                column_key=table.column_schema[idx],
+                raw_text=value,
+            )
+
+        section_note = (
+            "*In case of cash deposits made after 2:00 pm, Saturdays or public holidays: "
+            "An extra working day will be counted to the applied value date according to the account type and currency"
+        )
+        note_row = KnowledgeUploadTableRow.objects.create(
+            table=table,
+            row_index=1,
+            metadata={"row_type": "body"},
+        )
+        for idx, key in enumerate(table.column_schema):
+            KnowledgeUploadTableCell.objects.create(
+                table=table,
+                row=note_row,
+                column_index=idx,
+                column_key=key,
+                raw_text=section_note,
+            )
+
+        context = ToolExecutionContext(char_budget_per_turn=100_000)
+        context.table_row_anchor_manifests[str(table.id)] = {
+            "ref_id": str(table.id),
+            "table_id": str(table.id),
+            "matched_row_index": 1,
+            "estimated_rows": 2,
+            "estimated_columns": 7,
+        }
+
+        with self._enable_agentic_mode():
+            result = tools.execute_tool(
+                "read_knowledge",
+                {"refs": [{"id": str(table.id)}], "max_chars": 4500},
+                conversation=self.conversation,
+                context=context,
+            )
+
+        self.assertIn(result["status"], {"ok", "truncated"}, json.dumps(result, indent=2, default=str))
+        evidence = result.get("evidence") or []
+        self.assertEqual(len(evidence), 1, json.dumps(result, indent=2, default=str))
+        payload = evidence[0].get("payload") or {}
+        self.assertEqual(payload.get("row_offset"), 0)
+        rows = payload.get("rows") or []
+        self.assertEqual(len(rows), 1, json.dumps(payload, indent=2, default=str))
+        self.assertEqual(rows[0][0], "Cash deposit with same day value date (T+5 customers)")
+
+        context_rows = payload.get("context_rows") or []
+        self.assertEqual(len(context_rows), 1, json.dumps(payload, indent=2, default=str))
+        self.assertEqual(str(context_rows[0].get("text") or "").strip(), section_note)
+        self.assertIn("after 2:00 pm", str(context_rows[0].get("text") or "").lower())
+
+    @override_settings(
+        MCP_NEW_CONTRACT_ENABLED=True,
+        MCP_AGENTIC_READ_V2_ENABLED=True,
+        MCP_TEXT_PII_REDACTION_ENABLED=False,
+    )
+    def test_table_rows_skip_uniform_separator_rows_and_preserve_context_label(self) -> None:
+        table = KnowledgeUploadTable.objects.create(
+            upload=self.upload,
+            order_index=4,
+            title="Section Separator Table",
+            column_schema=["service", "tariff", "prime", "plus", "wealth"],
+        )
+        KnowledgeUploadPage.objects.create(upload=self.upload, page_number=4)
+
+        section_text = "*Cash deposit with same day value date (upon customer request)"
+        separator_row = KnowledgeUploadTableRow.objects.create(
+            table=table,
+            row_index=0,
+            metadata={"row_type": "body"},
+        )
+        for idx, column_key in enumerate(["service", "tariff", "prime", "plus", "wealth"]):
+            KnowledgeUploadTableCell.objects.create(
+                table=table,
+                row=separator_row,
+                column_index=idx,
+                column_key=column_key,
+                raw_text=section_text,
+            )
+
+        value_row = KnowledgeUploadTableRow.objects.create(
+            table=table,
+            row_index=1,
+            metadata={"row_type": "body"},
+        )
+        row_values = [
+            "Cash deposit with same day value date",
+            "",
+            "(With minimum EGP 100 or Equivalent 0,2% and with no maximum)",
+            "(With minimum EGP 100 or Equivalent 0,2% and with no maximum)",
+            "(With minimum EGP 100 or Equivalent 0,2% and with no maximum)",
+        ]
+        for idx, column_key in enumerate(["service", "tariff", "prime", "plus", "wealth"]):
+            KnowledgeUploadTableCell.objects.create(
+                table=table,
+                row=value_row,
+                column_index=idx,
+                column_key=column_key,
+                raw_text=row_values[idx],
+            )
+
+        context = ToolExecutionContext(char_budget_per_turn=100_000)
+        with self._enable_agentic_mode():
+            result = tools.execute_tool(
+                "read_knowledge",
+                {"refs": [{"id": str(table.id)}], "max_chars": 5000},
+                conversation=self.conversation,
+                context=context,
+            )
+
+        self.assertIn(result["status"], {"ok", "truncated"}, json.dumps(result, indent=2, default=str))
+        evidence = result.get("evidence") or []
+        self.assertEqual(len(evidence), 1, json.dumps(result, indent=2, default=str))
+        payload = evidence[0].get("payload") or {}
+        rows = payload.get("rows") or []
+        self.assertEqual(len(rows), 1, json.dumps(payload, indent=2, default=str))
+        self.assertEqual(rows[0][0], "Cash deposit with same day value date")
+
+        context_rows = payload.get("context_rows") or []
+        self.assertEqual(len(context_rows), 1, json.dumps(payload, indent=2, default=str))
+        self.assertEqual(context_rows[0].get("text"), section_text)
+
+        row_metadata = payload.get("row_metadata") or []
+        self.assertEqual(len(row_metadata), 1, json.dumps(payload, indent=2, default=str))
+        self.assertEqual(row_metadata[0].get("contextual_service_label"), section_text)
+
+    @override_settings(
+        MCP_NEW_CONTRACT_ENABLED=True,
+        MCP_AGENTIC_READ_V2_ENABLED=True,
+        MCP_TEXT_PII_REDACTION_ENABLED=False,
+    )
+    def test_table_row_budgeting_uses_serialized_payload_size(self) -> None:
+        table = KnowledgeUploadTable.objects.create(
+            upload=self.upload,
+            order_index=6,
+            title="Budget Table",
+            column_schema=["service", "fee"],
+        )
+        KnowledgeUploadPage.objects.create(upload=self.upload, page_number=6)
+        row = KnowledgeUploadTableRow.objects.create(
+            table=table,
+            row_index=0,
+            metadata={
+                "row_type": "body",
+                "table_scope_contract_version": "v2",
+                "observed_value_columns": [f"observed_column_{idx:03d}" for idx in range(180)],
+                "qualifier_columns": [f"qualifier_column_{idx:03d}" for idx in range(160)],
+                "scope_dimension_columns": [f"scope_dimension_{idx:03d}" for idx in range(160)],
+                "inferred_scope_columns": ["fee"],
+                "scope_reason": "scope_abstain",
+                "scope_confidence": 0.51,
+                "scope_value": "EGP 40",
+            },
+        )
+        KnowledgeUploadTableCell.objects.create(
+            table=table,
+            row=row,
+            column_index=0,
+            column_key="service",
+            raw_text="Oversized metadata row",
+        )
+        KnowledgeUploadTableCell.objects.create(
+            table=table,
+            row=row,
+            column_index=1,
+            column_key="fee",
+            raw_text="EGP 40",
+        )
+
+        context = ToolExecutionContext(char_budget_per_turn=100_000)
+        with self._enable_agentic_mode():
+            result = tools.execute_tool(
+                "read_knowledge",
+                {"refs": [{"id": str(table.id)}], "max_chars": 700},
+                conversation=self.conversation,
+                context=context,
+            )
+
+        self.assertIn(result["status"], {"ok", "truncated"}, json.dumps(result, indent=2, default=str))
+        evidence = result.get("evidence") or []
+        self.assertEqual(len(evidence), 1, json.dumps(result, indent=2, default=str))
+        item = evidence[0]
+        payload = item.get("payload") or {}
+        payload_chars = len(json.dumps(payload, ensure_ascii=False, default=str))
+        self.assertLessEqual(payload_chars, 700)
+        self.assertEqual(payload.get("rows"), [])
+        self.assertTrue(item.get("next_cursor"))
+
+    @override_settings(
+        MCP_NEW_CONTRACT_ENABLED=True,
+        MCP_AGENTIC_READ_V2_ENABLED=True,
+        MCP_TEXT_PII_REDACTION_ENABLED=False,
+    )
     def test_table_columns_are_deduped_when_schema_has_duplicates(self) -> None:
         """Duplicate column labels should be deduped for stable structured payloads."""
 
@@ -544,8 +941,10 @@ class AgenticReadV2CursorAndArtifactTests(TestCase):
         cursor_1 = first_item.get("next_cursor")
         self.assertIsInstance(cursor_1, str)
         self.assertTrue(cursor_1)
+        self.assertTrue(str(cursor_1).startswith("c_"))
 
-        cursor_payload = tools._verify_agentic_read_cursor_v2(cursor_1)  # type: ignore[attr-defined]
+        signed_cursor_1 = self._resolve_signed_cursor(ctx, str(cursor_1))
+        cursor_payload = tools._verify_agentic_read_cursor_v2(signed_cursor_1)  # type: ignore[attr-defined]
         self.assertEqual(cursor_payload.get("kind"), "chunk_window")
         self.assertEqual(int(cursor_payload.get("char_offset") or 0), 1000)
 
@@ -626,7 +1025,8 @@ class AgenticReadV2CursorAndArtifactTests(TestCase):
         self.assertTrue(first_trace.get("artifact_id"))
 
         cursor_1 = first_item["next_cursor"]
-        cursor_payload_1 = tools._verify_agentic_read_cursor_v2(cursor_1)  # type: ignore[attr-defined]
+        self.assertTrue(str(cursor_1).startswith("c_"))
+        cursor_payload_1 = tools._verify_agentic_read_cursor_v2(self._resolve_signed_cursor(ctx, str(cursor_1)))  # type: ignore[attr-defined]
         self.assertEqual(cursor_payload_1.get("kind"), "artifact")
         self.assertEqual(int(cursor_payload_1.get("char_offset") or 0), preview_len)
 
@@ -651,7 +1051,9 @@ class AgenticReadV2CursorAndArtifactTests(TestCase):
             next_cursor = page_item.get("next_cursor")
             self.assertIsInstance(next_cursor, str)
             self.assertTrue(next_cursor)
-            cursor_payload = tools._verify_agentic_read_cursor_v2(next_cursor)  # type: ignore[attr-defined]
+            cursor_payload = tools._verify_agentic_read_cursor_v2(
+                self._resolve_signed_cursor(ctx, str(next_cursor))
+            )  # type: ignore[attr-defined]
             if cursor_payload.get("kind") == "chunk_window":
                 chunk_cursor = next_cursor
                 self.assertEqual(int(cursor_payload.get("char_offset") or 0), 2000)

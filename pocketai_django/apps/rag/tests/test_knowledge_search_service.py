@@ -269,6 +269,12 @@ class KnowledgeSearchServiceTableTests(TestCase):
         self.assertEqual(snippet.source, "table_direct")
         self.assertEqual(snippet.upload_id, self.upload.id)
         self.assertIn("Gold", snippet.summary)
+        self.assertIn("plan: Gold", snippet.summary)
+        self.assertIn("annual fee: $199", snippet.summary)
+        self.assertEqual(snippet.summary.count("plan: Gold"), 1)
+        self.assertEqual(snippet.summary.count("annual fee: $199"), 1)
+        self.assertNotIn("[Table]", snippet.summary)
+        self.assertNotIn("[Row]", snippet.summary)
         self.assertEqual(snippet.chunk_id, self.row_chunk.id)
         self.assertEqual(snippet.id, self.row_chunk.id)
 

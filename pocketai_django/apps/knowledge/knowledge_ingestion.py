@@ -1827,6 +1827,20 @@ class AzureDocumentIntelligenceExtractor:
         return re.sub(r"\s+", " ", str(value or "").strip()).lower()
 
     @staticmethod
+    def _caption_text(caption: Any) -> str:
+        if isinstance(caption, str):
+            return caption.strip()
+        if isinstance(caption, Mapping):
+            content = caption.get("content")
+            if isinstance(content, str):
+                return content.strip()
+            text = caption.get("text")
+            if isinstance(text, str):
+                return text.strip()
+            return ""
+        return str(caption or "").strip()
+
+    @staticmethod
     def _infer_segment_indices_from_structure(
         *,
         table_rows: Sequence[TableRowPayload],
@@ -2109,6 +2123,11 @@ class AzureDocumentIntelligenceExtractor:
                 ):
                     has_broad_context_span = True
             if not has_broad_context_span:
+                # Secondary heuristic: all cells same text (no column_span needed).
+                # Covers pdfplumber/heuristic extractors that duplicate the section
+                # label into every column instead of reporting a column_span.
+                if len(non_empty_cells) >= 4 and len(normalized_values) == 1:
+                    return True
                 return False
             # A near full-width span carrying one repeated phrase is usually a
             # note/footer row and should not shape scope-axis inference.
@@ -2117,6 +2136,12 @@ class AzureDocumentIntelligenceExtractor:
         rows_for_structure = [row for row in rows if not _is_contextual_broad_span_row(row)]
         if not rows_for_structure:
             rows_for_structure = rows
+
+        section_header_indices: set[int] = {
+            row.row_index
+            for row in rows
+            if row.row_index not in header_rows and _is_contextual_broad_span_row(row)
+        }
 
         segment_indices = self._infer_segment_indices_from_structure(
             table_rows=rows_for_structure,
@@ -2186,6 +2211,21 @@ class AzureDocumentIntelligenceExtractor:
         for row in rows:
             if row.row_index in header_rows:
                 updated_rows.append(row)
+                continue
+
+            if row.row_index in section_header_indices:
+                row_meta = dict(row.metadata or {})
+                row_meta["row_type"] = "section_header"
+                updated_rows.append(
+                    TableRowPayload(
+                        row_index=row.row_index,
+                        page_number=row.page_number,
+                        bbox=row.bbox,
+                        raw_text=row.raw_text,
+                        metadata=row_meta,
+                        cells=row.cells,
+                    )
+                )
                 continue
 
             scope_decision = infer_scope_for_row(
@@ -2805,10 +2845,11 @@ class AzureDocumentIntelligenceExtractor:
             )
 
             avg_conf = round(sum(cell_confidences) / max(1, len(cell_confidences)), 4) if cell_confidences else None
+            caption_text = self._caption_text(table.get("caption"))
             table_payloads.append(
                 TablePayload(
                     order_index=order_index,
-                    title=table.get("caption") or f"Table {order_index}",
+                    title=caption_text or f"Table {order_index}",
                     section_heading="",
                     page_number=page_number,
                     bbox=table_bbox,
@@ -13819,11 +13860,26 @@ class KnowledgeIngestionService:
                 for idx, (label, _canonical, _raw_idx) in enumerate(column_map)
                 if idx not in contextual_index_set
             ]
+        active_subsection: str = ""
         for row in table_rows:
             if (row.metadata or {}).get("row_type") == "header":
                 continue
             if max_rows and data_rows >= max_rows:
                 break
+
+            # ── Section header rows: track label, skip as data ──
+            row_model_meta = row.metadata if isinstance(row.metadata, Mapping) else {}
+            if row_model_meta.get("row_type") == "section_header":
+                row_cells = list(row.cells.all())
+                cell_lookup = {cell.column_index: cell.raw_text for cell in row_cells}
+                label = ""
+                for _, _, idx in column_map:
+                    label = self._table_cell_text(cell_lookup.get(idx, ""))
+                    if label:
+                        break
+                active_subsection = label
+                continue
+
             row_attributes = self._row_model_attributes(row, raw_schema)
             if self._row_is_internal(row_attributes, privacy_rules):
                 continue
@@ -13843,7 +13899,12 @@ class KnowledgeIngestionService:
                         row_label = value
             if not pairs:
                 continue
-            row_model_meta = row.metadata if isinstance(row.metadata, Mapping) else {}
+
+            # Fallback: detect uniform-value rows not caught by annotation
+            unique_values = set(value_by_label.values())
+            if len(unique_values) == 1 and len(value_by_label) >= 4:
+                active_subsection = next(iter(unique_values), "")
+                continue
             scope_contract = self._resolve_row_scope_contract(
                 row_model_meta=row_model_meta,
                 value_by_label=value_by_label,
@@ -13876,6 +13937,8 @@ class KnowledgeIngestionService:
             preface = []
             if table.section_heading:
                 preface.append(f"[Section] {table.section_heading}")
+            if active_subsection:
+                preface.append(f"[SubSection] {active_subsection}")
             preface.append(f"[Table] {title}")
             preface.append(f"[Row] {row.row_index}")
             if inferred_scope_columns:
@@ -14079,7 +14142,10 @@ class KnowledgeIngestionService:
 
     @staticmethod
     def _derive_table_title(table_payload: TablePayload, upload: KnowledgeUpload) -> str:
-        current = (table_payload.title or "").strip()
+        raw_title: Any = table_payload.title
+        if isinstance(raw_title, Mapping):
+            raw_title = raw_title.get("content") or raw_title.get("text") or ""
+        current = str(raw_title or "").strip()
         if current and not KnowledgeIngestionService._GENERIC_TABLE_TITLE_RE.match(current):
             return current
 

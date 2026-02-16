@@ -4321,6 +4321,7 @@ def _convert_to_agentic_search_response(
     )
     promoted_upload_ids: set[str] = set()
     promoted_text_group_manifests: dict[str, dict[str, object]] = {}
+    promoted_table_anchor_manifests: dict[str, dict[str, object]] = {}
 
     for snippet in planned_snippets:
         
@@ -4504,6 +4505,24 @@ def _convert_to_agentic_search_response(
             except (TypeError, ValueError):
                 canonical_table_id = ""
             if canonical_table_id:
+                matched_row_index = _coerce_int(row_index)
+                if (
+                    matched_row_index is not None
+                    and matched_row_index >= 0
+                    and canonical_table_id not in promoted_table_anchor_manifests
+                ):
+                    table_manifest: dict[str, object] = {
+                        "ref_id": canonical_table_id,
+                        "table_id": canonical_table_id,
+                        "matched_row_index": int(matched_row_index),
+                    }
+                    estimated_rows = _coerce_int(row_count)
+                    if estimated_rows is not None and estimated_rows > 0:
+                        table_manifest["estimated_rows"] = int(estimated_rows)
+                    estimated_columns = _coerce_int(column_count)
+                    if estimated_columns is not None and estimated_columns > 0:
+                        table_manifest["estimated_columns"] = int(estimated_columns)
+                    promoted_table_anchor_manifests[canonical_table_id] = table_manifest
                 if canonical_table_id in promoted_table_ids:
                     continue
                 promoted_table_ids.add(canonical_table_id)
@@ -4630,6 +4649,14 @@ def _convert_to_agentic_search_response(
             while len(manifest_cache) > 50:
                 oldest_key = next(iter(manifest_cache))
                 manifest_cache.pop(oldest_key, None)
+    if context is not None and promoted_table_anchor_manifests:
+        table_manifest_cache = getattr(context, "table_row_anchor_manifests", None)
+        if isinstance(table_manifest_cache, dict):
+            for table_ref_id, manifest in promoted_table_anchor_manifests.items():
+                table_manifest_cache[str(table_ref_id)] = dict(manifest)
+            while len(table_manifest_cache) > 100:
+                oldest_key = next(iter(table_manifest_cache))
+                table_manifest_cache.pop(oldest_key, None)
     
     # Build agentic response
     status = legacy_payload.get("status", "ok")
@@ -4708,6 +4735,7 @@ def _convert_to_agentic_search_response(
                 1 for ref in refs if isinstance(ref, Mapping) and str(ref.get("kind") or "") == "document_anchor"
             ),
             "text_group_manifests_cached": len(promoted_text_group_manifests),
+            "table_anchor_manifests_cached": len(promoted_table_anchor_manifests),
         },
         context={
             "conversation": conversation.id,
@@ -7626,6 +7654,49 @@ def _agentic_read_v2_handler(
             return None, {"id": item_id, "error_code": "invalid_cursor", "hint": "Unsupported cursor version."}
         return payload, None
 
+    def _resolve_cursor_from_handle(cursor_token: str | None) -> str | None:
+        token = str(cursor_token or "").strip()
+        if not token:
+            return None
+        cache_value = getattr(context, "read_cursor_handles", None)
+        if isinstance(cache_value, dict):
+            mapped = cache_value.get(token)
+            if isinstance(mapped, str) and mapped.strip():
+                return mapped.strip()
+        return token
+
+    def _store_cursor_handle(cursor_signed: str | None) -> str | None:
+        token = str(cursor_signed or "").strip()
+        if not token:
+            return None
+        cache_value = getattr(context, "read_cursor_handles", None)
+        reverse_cache_value = getattr(context, "read_cursor_reverse_handles", None)
+        if not isinstance(cache_value, dict) or not isinstance(reverse_cache_value, dict):
+            return token
+
+        existing_handle = reverse_cache_value.get(token)
+        if isinstance(existing_handle, str) and existing_handle.strip():
+            cached_token = cache_value.get(existing_handle.strip())
+            if isinstance(cached_token, str) and cached_token == token:
+                return existing_handle.strip()
+
+        handle = f"c_{uuid.uuid4().hex[:20]}"
+        cache_value[handle] = token
+        reverse_cache_value[token] = handle
+
+        while len(cache_value) > 500:
+            oldest_handle = next(iter(cache_value))
+            oldest_cursor = cache_value.pop(oldest_handle, None)
+            if isinstance(oldest_cursor, str):
+                reverse_cache_value.pop(oldest_cursor, None)
+        while len(reverse_cache_value) > 500:
+            oldest_cursor_key = next(iter(reverse_cache_value))
+            oldest_handle_value = reverse_cache_value.pop(oldest_cursor_key, None)
+            if isinstance(oldest_handle_value, str):
+                cache_value.pop(oldest_handle_value, None)
+
+        return handle
+
     def _load_text_group_manifest(upload_id: str) -> dict[str, object] | None:
         cache_value = getattr(context, "text_chunk_group_manifests", None)
         if not isinstance(cache_value, dict):
@@ -7699,6 +7770,51 @@ def _agentic_read_v2_handler(
             "char_estimate": max(0, char_estimate),
             "best_score": raw_manifest.get("best_score"),
         }
+
+    def _load_table_anchor_manifest(*, ref_id: str, table_id: str | None = None) -> dict[str, object] | None:
+        cache_value = getattr(context, "table_row_anchor_manifests", None)
+        if not isinstance(cache_value, dict):
+            return None
+        candidate_keys: list[str] = []
+        ref_key = str(ref_id or "").strip()
+        table_key = str(table_id or "").strip()
+        if ref_key:
+            candidate_keys.append(ref_key)
+        if table_key and table_key not in candidate_keys:
+            candidate_keys.append(table_key)
+        for key in candidate_keys:
+            raw_manifest = cache_value.get(key)
+            if not isinstance(raw_manifest, Mapping):
+                continue
+            try:
+                matched_row_index = int(raw_manifest.get("matched_row_index"))
+            except (TypeError, ValueError):
+                continue
+            if matched_row_index < 0:
+                continue
+
+            out: dict[str, object] = {
+                "ref_id": key,
+                "table_id": table_key or str(raw_manifest.get("table_id") or "").strip(),
+                "matched_row_index": int(matched_row_index),
+            }
+
+            try:
+                estimated_rows = int(raw_manifest.get("estimated_rows") or 0)
+            except (TypeError, ValueError):
+                estimated_rows = 0
+            if estimated_rows > 0:
+                out["estimated_rows"] = int(estimated_rows)
+
+            try:
+                estimated_columns = int(raw_manifest.get("estimated_columns") or 0)
+            except (TypeError, ValueError):
+                estimated_columns = 0
+            if estimated_columns > 0:
+                out["estimated_columns"] = int(estimated_columns)
+
+            return out
+        return None
 
     def _resolve_target(item_id: str) -> tuple[
         KnowledgeUploadChunk | None,
@@ -7972,7 +8088,7 @@ def _agentic_read_v2_handler(
         Row-level provenance remains available in row_metadata.
         """
 
-        remaining = max(0, int(budget_chars))
+        budget_limit = max(0, int(budget_chars))
         payload: dict[str, object] = {"type": "table", "table_id": str(table_id), "columns": [], "rows": []}
         payload["row_value_mode"] = "effective_scope_normalized"
         cursor_next: dict[str, object] | None = None
@@ -8022,8 +8138,11 @@ def _agentic_read_v2_handler(
                         break
         columns = columns[:200]
 
-        # Treat missing row_type as non-header (NULL should be included).
-        non_header_q = models.Q(metadata__row_type__isnull=True) | ~models.Q(metadata__row_type="header")
+        # Treat missing row_type as non-header (NULL should be included). Exclude
+        # explicit table header/separator rows when ingestion has tagged them.
+        non_header_q = models.Q(metadata__row_type__isnull=True) | ~models.Q(
+            metadata__row_type__in=["header", "section_header"]
+        )
 
         # If schema is missing/empty, infer columns from the first non-header row's cells.
         if not columns:
@@ -8060,6 +8179,90 @@ def _agentic_read_v2_handler(
             start_row = 0
         payload["row_offset"] = start_row
 
+        def _serialized_table_chars(
+            rows_value: Sequence[Sequence[str]],
+            row_metadata_value: Sequence[Mapping[str, object]],
+            context_rows_value: Sequence[Mapping[str, object]] | None = None,
+        ) -> int:
+            candidate_payload: dict[str, object] = {
+                "type": "table",
+                "table_id": str(table_id),
+                "columns": list(columns),
+                "rows": [list(row) for row in rows_value],
+                "row_value_mode": "effective_scope_normalized",
+                "row_offset": int(start_row),
+                "rows_shown": len(rows_value),
+                "total_rows": payload.get("total_rows"),
+            }
+            if row_metadata_value:
+                candidate_payload["row_metadata"] = [dict(entry) for entry in row_metadata_value]
+            if context_rows_value:
+                candidate_payload["context_rows"] = [dict(entry) for entry in context_rows_value]
+            try:
+                return len(json.dumps(candidate_payload, ensure_ascii=False, default=str))
+            except Exception:
+                return 0
+
+        def _semantic_tokens(value: str) -> set[str]:
+            normalized = re.sub(r"[^a-z0-9 ]+", " ", str(value or "").lower())
+            normalized = re.sub(r"\s+", " ", normalized).strip()
+            if not normalized:
+                return set()
+            return {tok for tok in normalized.split(" ") if tok and (len(tok) >= 3 or tok.isdigit())}
+
+        def _semantic_overlap(left: str, right: str) -> float:
+            left_tokens = _semantic_tokens(left)
+            right_tokens = _semantic_tokens(right)
+            if not left_tokens or not right_tokens:
+                return 0.0
+            union = left_tokens | right_tokens
+            if not union:
+                return 0.0
+            return float(len(left_tokens & right_tokens)) / float(len(union))
+
+        def _has_numeric_signal(value: str) -> bool:
+            text = str(value or "").strip().lower()
+            if not text:
+                return False
+            return bool(re.search(r"\d|%|egp|usd|eur|min|max|t\+\d", text))
+
+        def _classify_row_role(values: Sequence[str]) -> str:
+            non_empty = [str(cell or "").strip() for cell in values if str(cell or "").strip()]
+            if not non_empty:
+                return "empty"
+            lowered = [cell.lower() for cell in non_empty]
+            counts = Counter(lowered)
+            max_repeat = max(counts.values()) if counts else 0
+            repeat_ratio = (float(max_repeat) / float(len(non_empty))) if non_empty else 0.0
+            numeric_signal = any(_has_numeric_signal(cell) for cell in non_empty[1:] if cell)
+            starred_lead = bool(non_empty and non_empty[0].startswith("*"))
+            if (len(non_empty) >= 3 and repeat_ratio >= 0.75 and not numeric_signal) or (starred_lead and not numeric_signal):
+                return "context_marker"
+            if numeric_signal:
+                return "value_detail"
+            return "neutral"
+
+        def _normalize_cell_text(value: str) -> str:
+            normalized = str(value or "").strip().lower()
+            normalized = re.sub(r"\s+", " ", normalized)
+            return normalized
+
+        def _is_uniform_section_separator(values: Sequence[str]) -> tuple[bool, str]:
+            """
+            Runtime fallback for old ingestions: broad-span separator rows can be
+            materialized as the same text duplicated across many columns.
+            """
+            non_empty = [str(cell or "").strip() for cell in values if str(cell or "").strip()]
+            if len(non_empty) < 4:
+                return False, ""
+            normalized = [_normalize_cell_text(cell) for cell in non_empty]
+            first = normalized[0] if normalized else ""
+            if not first:
+                return False, ""
+            if any(cell != first for cell in normalized[1:]):
+                return False, ""
+            return True, non_empty[0]
+
         row_qs = (
             table.rows.filter(non_header_q, row_index__gte=start_row)
             .order_by("row_index")
@@ -8094,6 +8297,9 @@ def _agentic_read_v2_handler(
 
         rows_out: list[list[str]] = []
         row_metadata_out: list[dict[str, object]] = []
+        context_rows_out: list[dict[str, object]] = []
+        row_indices_out: list[int | None] = []
+        row_labels_out: list[str] = []
         scope_overlay_reasons = {
             "scope_explicit_span",
             "scope_repeated_value_span",
@@ -8102,6 +8308,7 @@ def _agentic_read_v2_handler(
         }
         index_offset: int | None = None
         next_row_index: int | None = None
+        active_subsection_label: str = ""
         column_index_lookup: dict[str, int] = {}
         for idx, label in enumerate(columns):
             normalized = _normalize_column_name(label)
@@ -8145,6 +8352,46 @@ def _agentic_read_v2_handler(
                 values.append(str(cell_lookup.get(int(col_idx) + int(index_offset or 0), "")))
 
             row_meta = row.metadata if isinstance(getattr(row, "metadata", None), Mapping) else {}
+            row_type = str(row_meta.get("row_type") or "").strip().lower()
+
+            is_uniform_section, uniform_section_label = _is_uniform_section_separator(values)
+            if row_type in {"header", "section_header"} or is_uniform_section:
+                subsection_label = uniform_section_label or next(
+                    (str(cell or "").strip() for cell in values if str(cell or "").strip()),
+                    "",
+                )
+                if subsection_label:
+                    active_subsection_label = subsection_label
+                    if len(context_rows_out) < 5:
+                        context_row_index: int | object
+                        if row_index_int is not None:
+                            context_row_index = int(row_index_int)
+                        else:
+                            context_row_index = row_index if row_index is not None else start_row
+                        context_row = {
+                            "row_index": context_row_index,
+                            "kind": "section_header" if row_type in {"header", "section_header"} else "uniform_separator",
+                            "text": subsection_label,
+                        }
+                        duplicate_context = False
+                        if context_rows_out:
+                            last = context_rows_out[-1]
+                            if (
+                                str(last.get("text") or "").strip().lower()
+                                == subsection_label.strip().lower()
+                            ):
+                                duplicate_context = True
+                        if not duplicate_context:
+                            candidate_context_rows = [*context_rows_out, context_row]
+                            context_chars = _serialized_table_chars(
+                                rows_out,
+                                row_metadata_out,
+                                candidate_context_rows,
+                            )
+                            if context_chars <= budget_limit:
+                                context_rows_out = candidate_context_rows
+                continue
+
             inferred_scope_columns: list[str] = []
             raw_applies_to = row_meta.get("inferred_scope_columns")
             if isinstance(raw_applies_to, (list, tuple)):
@@ -8189,43 +8436,9 @@ def _agentic_read_v2_handler(
                     effective_values[col_pos] = fee_value
                     applied_scope_overrides.append(str(columns[col_pos]))
 
-            # Rough prompt-char estimate: sum of cell text + JSON framing overhead.
-            row_chars = sum(len(v) for v in effective_values) + (len(effective_values) * 6) + 32
-            if rows_out and remaining < row_chars:
-                next_row_index = row_index_int if row_index_int is not None else None
-                complete = False
-                break
-            if not rows_out and remaining < row_chars:
-                # Not even one row fits; signal continuation so the assistant can narrow.
-                next_row_index = row_index_int if row_index_int is not None else start_row
-                complete = False
-                break
-
-            rows_out.append(effective_values)
+            row_entry: dict[str, object] | None = None
             if inferred_scope_columns or scope_reason or scope_confidence is not None or fee_value:
-                row_entry: dict[str, object] = {
-                    "row_index": row_index_int if row_index_int is not None else row_index,
-                }
-                contract_version = str(row_meta.get("table_scope_contract_version") or "").strip()
-                if contract_version:
-                    row_entry["contract_version"] = contract_version
-                observed_value_columns = row_meta.get("observed_value_columns")
-                qualifier_columns = row_meta.get("qualifier_columns")
-                scope_dimension_columns = row_meta.get("scope_dimension_columns")
-                if isinstance(observed_value_columns, (list, tuple)):
-                    row_entry["observed_value_columns"] = [
-                        str(entry).strip() for entry in observed_value_columns if str(entry or "").strip()
-                    ]
-                if isinstance(qualifier_columns, (list, tuple)):
-                    row_entry["qualifier_columns"] = [
-                        str(entry).strip() for entry in qualifier_columns if str(entry or "").strip()
-                    ]
-                if isinstance(scope_dimension_columns, (list, tuple)):
-                    row_entry["scope_dimension_columns"] = [
-                        str(entry).strip() for entry in scope_dimension_columns if str(entry or "").strip()
-                    ]
-                if inferred_scope_columns:
-                    row_entry["inferred_scope_columns"] = inferred_scope_columns
+                row_entry = {"row_index": row_index_int if row_index_int is not None else row_index}
                 if scope_reason:
                     row_entry["scope_reason"] = scope_reason
                 if scope_confidence is not None:
@@ -8234,13 +8447,169 @@ def _agentic_read_v2_handler(
                     row_entry["fee_value"] = fee_value
                 if applied_scope_overrides:
                     row_entry["effective_scope_overrides"] = applied_scope_overrides
-                row_metadata_out.append(row_entry)
-            remaining = max(0, remaining - row_chars)
+
+                # Compact metadata by default. Expand only for ambiguous scope cases where
+                # additional provenance helps disambiguation/debugging.
+                needs_detailed_metadata = bool(
+                    scope_reason_key == "scope_abstain"
+                    or (scope_confidence is not None and scope_confidence < 0.7)
+                    or (inferred_scope_columns and not applied_scope_overrides)
+                )
+                if needs_detailed_metadata:
+                    contract_version = str(row_meta.get("table_scope_contract_version") or "").strip()
+                    if contract_version:
+                        row_entry["contract_version"] = contract_version
+                    observed_value_columns = row_meta.get("observed_value_columns")
+                    qualifier_columns = row_meta.get("qualifier_columns")
+                    scope_dimension_columns = row_meta.get("scope_dimension_columns")
+                    if isinstance(observed_value_columns, (list, tuple)):
+                        row_entry["observed_value_columns"] = [
+                            str(entry).strip() for entry in observed_value_columns if str(entry or "").strip()
+                        ]
+                    if isinstance(qualifier_columns, (list, tuple)):
+                        row_entry["qualifier_columns"] = [
+                            str(entry).strip() for entry in qualifier_columns if str(entry or "").strip()
+                        ]
+                    if isinstance(scope_dimension_columns, (list, tuple)):
+                        row_entry["scope_dimension_columns"] = [
+                            str(entry).strip() for entry in scope_dimension_columns if str(entry or "").strip()
+                        ]
+                    if inferred_scope_columns:
+                        row_entry["inferred_scope_columns"] = inferred_scope_columns
+
+            if active_subsection_label:
+                if row_entry is None:
+                    row_entry = {"row_index": row_index_int if row_index_int is not None else row_index}
+                row_entry["contextual_service_label"] = active_subsection_label
+
+            candidate_rows = [*rows_out, effective_values]
+            candidate_row_metadata = [*row_metadata_out, row_entry] if row_entry else list(row_metadata_out)
+            candidate_row_indices = [*row_indices_out, row_index_int]
+            row_label = str(effective_values[0]).strip() if effective_values else ""
+            if (
+                active_subsection_label
+                and row_label
+                and active_subsection_label.lower() not in row_label.lower()
+            ):
+                row_label = f"{active_subsection_label} {row_label}"
+            candidate_row_labels = [*row_labels_out, row_label]
+            candidate_chars = _serialized_table_chars(
+                candidate_rows,
+                candidate_row_metadata,
+                context_rows_out,
+            )
+            if candidate_chars > budget_limit:
+                next_row_index = row_index_int if row_index_int is not None else start_row
+                complete = False
+                break
+
+            rows_out = candidate_rows
+            row_metadata_out = candidate_row_metadata
+            row_indices_out = candidate_row_indices
+            row_labels_out = candidate_row_labels
 
         payload["rows"] = rows_out
         payload["rows_shown"] = len(rows_out)
+        if context_rows_out:
+            payload["context_rows"] = context_rows_out
+        semantic_links_out: list[dict[str, object]] = []
+        if rows_out and row_indices_out:
+            roles = [_classify_row_role(row_values) for row_values in rows_out]
+            grouped_rows: dict[int, dict[str, object]] = {}
+            for idx, existing in enumerate(row_metadata_out):
+                try:
+                    existing_row_index = int(existing.get("row_index"))
+                except (TypeError, ValueError):
+                    continue
+                grouped_rows[existing_row_index] = dict(existing)
+
+            for marker_pos, role in enumerate(roles):
+                if role != "context_marker":
+                    continue
+                marker_label = row_labels_out[marker_pos] if marker_pos < len(row_labels_out) else ""
+                marker_row_index = row_indices_out[marker_pos]
+                if marker_row_index is None:
+                    continue
+                best_pos: int | None = None
+                best_score = 0.0
+                window_end = min(len(rows_out), marker_pos + 4)
+                for candidate_pos in range(marker_pos + 1, window_end):
+                    if roles[candidate_pos] != "value_detail":
+                        continue
+                    candidate_label = row_labels_out[candidate_pos] if candidate_pos < len(row_labels_out) else ""
+                    overlap = _semantic_overlap(marker_label, candidate_label)
+                    if overlap > best_score:
+                        best_score = overlap
+                        best_pos = candidate_pos
+                if best_pos is None:
+                    continue
+                if best_score < 0.15:
+                    # Weak lexical coupling; skip uncertain links to avoid misleading semantics.
+                    continue
+                value_row_index = row_indices_out[best_pos]
+                if value_row_index is None:
+                    continue
+                semantic_group_id = f"g_{int(marker_row_index)}_{int(value_row_index)}"
+                semantic_links_out.append(
+                    {
+                        "relation": "context_to_value",
+                        "group_id": semantic_group_id,
+                        "context_row_index": int(marker_row_index),
+                        "value_row_index": int(value_row_index),
+                        "context_label": marker_label,
+                        "confidence": round(float(best_score), 4),
+                    }
+                )
+
+                marker_entry = grouped_rows.get(int(marker_row_index), {"row_index": int(marker_row_index)})
+                marker_entry["row_role"] = "context_marker"
+                marker_entry["semantic_group_id"] = semantic_group_id
+                marker_entry["linked_value_row_index"] = int(value_row_index)
+                grouped_rows[int(marker_row_index)] = marker_entry
+
+                value_entry = grouped_rows.get(int(value_row_index), {"row_index": int(value_row_index)})
+                value_entry["row_role"] = "value_detail"
+                value_entry["semantic_group_id"] = semantic_group_id
+                value_entry["context_row_index"] = int(marker_row_index)
+                if marker_label:
+                    value_entry["contextual_service_label"] = marker_label
+                grouped_rows[int(value_row_index)] = value_entry
+
+            if grouped_rows:
+                row_metadata_out = sorted(
+                    (dict(entry) for entry in grouped_rows.values()),
+                    key=lambda entry: int(entry.get("row_index") or 0),
+                )
+            if semantic_links_out:
+                payload["semantic_links"] = semantic_links_out
         if row_metadata_out:
             payload["row_metadata"] = row_metadata_out
+
+        try:
+            final_payload_chars = len(json.dumps(payload, ensure_ascii=False, default=str))
+        except Exception:
+            final_payload_chars = 0
+        if final_payload_chars > budget_limit and "semantic_links" in payload:
+            payload.pop("semantic_links", None)
+            if isinstance(payload.get("row_metadata"), list):
+                slimmed: list[dict[str, object]] = []
+                semantic_keys = {
+                    "row_role",
+                    "semantic_group_id",
+                    "linked_value_row_index",
+                    "context_row_index",
+                    "contextual_service_label",
+                }
+                for entry in payload.get("row_metadata") or []:
+                    if not isinstance(entry, Mapping):
+                        continue
+                    out_entry = {str(k): v for k, v in entry.items() if str(k) not in semantic_keys}
+                    if out_entry:
+                        slimmed.append(out_entry)
+                if slimmed:
+                    payload["row_metadata"] = slimmed
+                else:
+                    payload.pop("row_metadata", None)
 
         if not complete:
             cursor_next = {
@@ -8252,6 +8621,67 @@ def _agentic_read_v2_handler(
 
         cursor_str = _sign_agentic_read_cursor_v2(cursor_next) if cursor_next else None
         return payload, ({"cursor": cursor_str} if cursor_str else None), complete
+
+    def _table_payload_is_informative(table_payload: Mapping[str, object]) -> bool:
+        rows_value = table_payload.get("rows")
+        if not isinstance(rows_value, list) or not rows_value:
+            return False
+        for row in rows_value:
+            if isinstance(row, (list, tuple)):
+                if any(str(cell or "").strip() for cell in row):
+                    return True
+            elif str(row or "").strip():
+                return True
+        return False
+
+    def _read_table_rows_with_anchor(
+        *,
+        item_id: str,
+        upload_id: str,
+        table_id: str,
+        start_row_index: int,
+        budget_chars: int,
+        max_rows: int | None,
+        business_profile,
+        use_anchor: bool,
+    ) -> tuple[dict[str, object], dict[str, object] | None, bool, bool, bool]:
+        anchor_used = False
+        fallback_used = False
+        anchor_start_row = int(start_row_index)
+        if use_anchor and anchor_start_row <= 0:
+            manifest = _load_table_anchor_manifest(ref_id=item_id, table_id=table_id)
+            if isinstance(manifest, Mapping):
+                try:
+                    matched_row_index = int(manifest.get("matched_row_index"))
+                except (TypeError, ValueError):
+                    matched_row_index = -1
+                if matched_row_index >= 0:
+                    anchor_start_row = max(0, int(matched_row_index) - 1)
+                    anchor_used = True
+
+        table_payload, cursor_out, complete = _read_table_rows_segment(
+            item_id=item_id,
+            upload_id=upload_id,
+            table_id=table_id,
+            start_row_index=anchor_start_row,
+            budget_chars=budget_chars,
+            max_rows=max_rows,
+            business_profile=business_profile,
+        )
+
+        if anchor_used and not _table_payload_is_informative(table_payload):
+            fallback_used = True
+            table_payload, cursor_out, complete = _read_table_rows_segment(
+                item_id=item_id,
+                upload_id=upload_id,
+                table_id=table_id,
+                start_row_index=max(0, int(start_row_index)),
+                budget_chars=budget_chars,
+                max_rows=max_rows,
+                business_profile=business_profile,
+            )
+
+        return table_payload, cursor_out, complete, anchor_used, fallback_used
 
     def _read_chunk_window_segment(
         *,
@@ -8447,12 +8877,16 @@ def _agentic_read_v2_handler(
 
     expanded_row_tables_seen: set[str] = set()
     expanded_upload_reads_seen: set[str] = set()
+    successfully_read_ids: set[str] = set()
     text_group_manifest_lookups = 0
     text_group_manifest_hits = 0
     text_group_manifest_misses = 0
     text_group_window_reads = 0
     text_group_chunk_refs_covered = 0
     text_group_upload_refs_covered = 0
+    table_anchor_manifest_lookups = 0
+    table_anchor_manifest_hits = 0
+    table_anchor_fallback_reads = 0
 
     remaining_chars = max(0, int(max_chars))
     total_chars = 0
@@ -8460,6 +8894,7 @@ def _agentic_read_v2_handler(
     for idx, entry in enumerate(ordered_items):
         item_id = str(entry.get("id") or "").strip()
         cursor_in = entry.get("cursor")
+        cursor_in_resolved = _resolve_cursor_from_handle(cursor_in if isinstance(cursor_in, str) else None)
         if remaining_chars < 200:
             deferred.append(
                 {
@@ -8475,8 +8910,8 @@ def _agentic_read_v2_handler(
         per_item_budget = max(200, remaining_chars // items_left)
 
         cursor_payload: dict[str, object] | None = None
-        if isinstance(cursor_in, str) and cursor_in.strip():
-            cursor_payload, cursor_error = _decode_cursor(item_id, cursor_in)
+        if isinstance(cursor_in_resolved, str) and cursor_in_resolved.strip():
+            cursor_payload, cursor_error = _decode_cursor(item_id, cursor_in_resolved)
             if cursor_error:
                 errors.append(cursor_error)
                 read.append({"id": item_id, "status": "error"})
@@ -8545,7 +8980,11 @@ def _agentic_read_v2_handler(
         payload_type = "text"
         evidence_kind = "text_excerpt"
         title = _upload_title(upload)
-        cursor_used = cursor_in if isinstance(cursor_in, str) and cursor_in.strip() else None
+        cursor_used = (
+            cursor_in_resolved
+            if isinstance(cursor_in_resolved, str) and cursor_in_resolved.strip()
+            else None
+        )
         next_cursor: str | None = None
         complete = True
         evidence_coverage_hint: dict[str, object] | None = None
@@ -8710,14 +9149,21 @@ def _agentic_read_v2_handler(
                     table_title = f"Table {order_index}" if order_index else "Table"
                 title = redact_free_text(table_title) if redact_text else table_title
 
-                table_payload, cursor_out, complete = _read_table_rows_segment(
+                table_anchor_manifest_lookups += 1
+                table_payload, cursor_out, complete, anchor_used, fallback_used = _read_table_rows_with_anchor(
                     item_id=item_id,
                     upload_id=upload_id,
                     table_id=table_id,
                     start_row_index=0,
                     budget_chars=per_item_budget,
+                    max_rows=None,
                     business_profile=business,
+                    use_anchor=True,
                 )
+                if anchor_used:
+                    table_anchor_manifest_hits += 1
+                if fallback_used:
+                    table_anchor_fallback_reads += 1
                 payload = table_payload
                 next_cursor = cursor_out.get("cursor") if cursor_out else None
             elif upload_record is not None and chunk_record is None:
@@ -8853,14 +9299,21 @@ def _agentic_read_v2_handler(
                 except Exception:
                     pass
 
-                table_payload, cursor_out, complete = _read_table_rows_segment(
+                table_anchor_manifest_lookups += 1
+                table_payload, cursor_out, complete, anchor_used, fallback_used = _read_table_rows_with_anchor(
                     item_id=item_id,
                     upload_id=upload_id,
                     table_id=table_id,
                     start_row_index=0,
                     budget_chars=per_item_budget,
+                    max_rows=None,
                     business_profile=business,
+                    use_anchor=True,
                 )
+                if anchor_used:
+                    table_anchor_manifest_hits += 1
+                if fallback_used:
+                    table_anchor_fallback_reads += 1
                 payload = table_payload
                 next_cursor = cursor_out.get("cursor") if cursor_out else None
             elif mode != "excerpt" and is_table_chunk and table_id and table_role == "row":
@@ -8964,15 +9417,27 @@ def _agentic_read_v2_handler(
             text_value = payload.get("text")
             has_payload = isinstance(text_value, str) and bool(text_value)
         if not has_payload:
-            deferred.append(
-                {
-                    "id": item_id,
-                    "reason": "empty",
-                    "hint": "No readable content was available for this item.",
-                }
-            )
+            if not complete:
+                # Budget was too small to fit even one row/block — data exists but didn't fit.
+                deferred.append(
+                    {
+                        "id": item_id,
+                        "reason": "budget_too_small",
+                        "hint": "Budget too small to fit content. Retry with a higher max_chars (at least the suggested_max_chars from search).",
+                    }
+                )
+            else:
+                deferred.append(
+                    {
+                        "id": item_id,
+                        "reason": "empty",
+                        "hint": "No readable content was available for this item.",
+                    }
+                )
             read.append({"id": item_id, "status": "deferred"})
             continue
+
+        successfully_read_ids.add(item_id)
 
         try:
             if payload_type == "table":
@@ -9015,11 +9480,12 @@ def _agentic_read_v2_handler(
                 pass
         if cursor_used:
             evidence_entry["cursor_used"] = cursor_used
-        if next_cursor:
-            evidence_entry["next_cursor"] = next_cursor
+        next_cursor_handle = _store_cursor_handle(next_cursor) if next_cursor else None
+        if next_cursor_handle:
+            evidence_entry["next_cursor"] = next_cursor_handle
         contents.append(evidence_entry)
 
-        is_truncated = not complete or bool(next_cursor)
+        is_truncated = not complete or bool(next_cursor_handle)
         read_entry: dict[str, object] = {
             "id": item_id,
             "status": "full" if not is_truncated else "truncated",
@@ -9210,7 +9676,8 @@ def _agentic_read_v2_handler(
         if len(full_text) >= PROMPT_VIEW_INLINE_MIN_CHARS:
             preview_len = max(PROMPT_VIEW_INLINE_MIN_CHARS, preview_len)
         preview_text = full_text[:preview_len]
-        cursor_after = item.get("next_cursor")
+        cursor_after_raw = item.get("next_cursor")
+        cursor_after = _resolve_cursor_from_handle(cursor_after_raw if isinstance(cursor_after_raw, str) else None)
         cursor_used_local = item.get("cursor_used")
         if isinstance(cursor_used_local, str) and cursor_used_local.strip():
             # Avoid nested artifacts: if this segment was already read from an artifact cursor,
@@ -9259,7 +9726,7 @@ def _agentic_read_v2_handler(
         payload_obj["text"] = preview_text
         item["payload"] = payload_obj
         item["chars"] = len(preview_text)
-        item["next_cursor"] = cursor_str
+        item["next_cursor"] = _store_cursor_handle(cursor_str) or cursor_str
         item["complete"] = False
         item["truncated"] = True
 
@@ -9377,7 +9844,8 @@ def _agentic_read_v2_handler(
                     "artifact_id": target_artifact_id,
                     "char_offset": int(base_offset + len(clipped_text)),
                 }
-                target["next_cursor"] = _sign_agentic_read_cursor_v2(cursor_next)
+                cursor_signed = _sign_agentic_read_cursor_v2(cursor_next)
+                target["next_cursor"] = _store_cursor_handle(cursor_signed) or cursor_signed
                 target["complete"] = False
                 target["truncated"] = True
 
@@ -9421,6 +9889,9 @@ def _agentic_read_v2_handler(
                 "text_group_window_reads": int(text_group_window_reads),
                 "text_group_chunk_refs_covered": int(text_group_chunk_refs_covered),
                 "text_group_upload_refs_covered": int(text_group_upload_refs_covered),
+                "table_anchor_manifest_lookups": int(table_anchor_manifest_lookups),
+                "table_anchor_manifest_hits": int(table_anchor_manifest_hits),
+                "table_anchor_fallback_reads": int(table_anchor_fallback_reads),
             },
             context={"conversation": conversation.id, "business": conversation.business_profile_id},
             logger_obj=logger,
@@ -9442,9 +9913,10 @@ def _agentic_read_v2_handler(
             "hint": "Prompt budget exceeded. Ask a narrower question or request fewer items.",
         }
 
-    # Record all successfully read ref IDs for repeat-read detection.
-    for item in ordered_items:
-        context.read_ref_ids_this_turn.add(str(item["id"]))
+    # Record only refs that actually returned content for repeat-read detection.
+    # Deferred/errored refs must remain retryable within the same turn.
+    for ref_id in successfully_read_ids:
+        context.read_ref_ids_this_turn.add(ref_id)
 
     return response
 

@@ -132,6 +132,13 @@ class ToolExecutionContext:
     # Used by read_knowledge v2 to resolve grouped document anchors into
     # bounded chunk windows around matched regions.
     text_chunk_group_manifests: dict[str, dict[str, object]] = dataclasses.field(default_factory=dict)
+    # Search-time table row anchor manifests keyed by promoted table ref id.
+    # Used by read_knowledge v2 to start first table reads near matched rows.
+    table_row_anchor_manifests: dict[str, dict[str, object]] = dataclasses.field(default_factory=dict)
+    # Opaque cursor handles exposed to the model for read_knowledge continuation.
+    # Maps handle -> signed cursor payload, and reverse map for stable reuse.
+    read_cursor_handles: dict[str, str] = dataclasses.field(default_factory=dict)
+    read_cursor_reverse_handles: dict[str, str] = dataclasses.field(default_factory=dict)
     llm_usage: dict[str, int] = dataclasses.field(
         default_factory=lambda: {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     )

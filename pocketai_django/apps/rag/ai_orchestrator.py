@@ -6395,12 +6395,9 @@ class KnowledgeSearchService:
             if pairs:
                 sample_text = "; ".join(pairs)[:500]
         
-        # For table chunks, combine sample with summary instead of overwriting
+        # For table chunks, keep a single canonical preview source.
         if sample_text and is_table_chunk_flag:
-            if summary:
-                summary = f"{summary}\n{sample_text}"[:500]
-            else:
-                summary = sample_text[:500]
+            summary = sample_text[:500]
 
         # For text chunks, promote a query-matching span as summary so literal
         # matches (for example exact service names) are visible in previews.
