@@ -1,6 +1,7 @@
 {% extends "frontend/base_app.html" %}
+{% load i18n %}
 
-{% block title %}Controls | Pocket AI{% endblock %}
+{% block title %}{% trans "Controls" %} | Pocket AI{% endblock %}
 
 {% block content %}
 <div class="h-screen bg-background flex overflow-hidden controls-page">
@@ -9,8 +10,8 @@
     <div class="w-full px-4 md:px-6 lg:px-8 py-6 space-y-6">
       <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div class="space-y-1.5">
-          <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">Controls</h1>
-          <p class="text-sm text-muted-foreground">Review tools exposed to the LLM and set approval behavior for connected integrations.</p>
+          <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">{% trans "Controls" %}</h1>
+          <p class="text-sm text-muted-foreground">{% trans "Review tools exposed to the LLM and set approval behavior for connected integrations." %}</p>
         </div>
         <div class="flex flex-wrap items-center gap-2">
           <button
@@ -24,7 +25,7 @@
               <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 0 1-15.3 6.3" />
               <path stroke-linecap="round" stroke-linejoin="round" d="M5.7 20.3V16H10" />
             </svg>
-            <span data-controls-refresh-label>Refresh</span>
+            <span data-controls-refresh-label>{% trans "Refresh" %}</span>
           </button>
           <button
             type="button"
@@ -32,7 +33,7 @@
             data-controls-save
             disabled
           >
-            Save changes
+            {% trans "Save changes" %}
           </button>
         </div>
       </header>
@@ -42,8 +43,8 @@
       <section class="rounded-xl border border-border/60 bg-card/70 p-4 md:p-5">
         <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div class="space-y-1">
-            <div class="text-sm font-semibold text-foreground">LLM Tool Exposure</div>
-            <p class="text-xs text-muted-foreground">`Auto approve` executes directly. `Always confirm` requires approval before every execution.</p>
+            <div class="text-sm font-semibold text-foreground">{% trans "LLM Tool Exposure" %}</div>
+            <p class="text-xs text-muted-foreground">{% trans "`Auto approve` executes directly. `Always confirm` requires approval before every execution." %}</p>
           </div>
           <div class="text-xs text-muted-foreground">
             <span data-controls-total>0</span> tools ·
@@ -56,27 +57,27 @@
       <section class="space-y-4">
         <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div class="inline-flex rounded-lg border border-border/40 bg-muted/70 p-1" data-controls-filter-root>
-            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase transition-colors bg-primary text-primary-foreground shadow-sm" data-controls-filter="all">All</button>
-            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase transition-colors text-muted-foreground hover:text-primary" data-controls-filter="integration">Integration</button>
-            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase transition-colors text-muted-foreground hover:text-primary" data-controls-filter="internal">Internal</button>
+            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase transition-colors bg-primary text-primary-foreground shadow-sm" data-controls-filter="all">{% trans "All" %}</button>
+            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase transition-colors text-muted-foreground hover:text-primary" data-controls-filter="integration">{% trans "Integration" %}</button>
+            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase transition-colors text-muted-foreground hover:text-primary" data-controls-filter="internal">{% trans "Internal" %}</button>
           </div>
           <input
             type="text"
             class="w-full md:w-72 h-9 rounded-md border border-border/60 bg-muted/40 px-3 text-xs focus-visible:ring-0 focus-visible:border-border"
-            placeholder="Search tool, description, or connection"
+            placeholder="{% trans 'Search tool, description, or connection' %}"
             data-controls-search
           />
         </div>
 
         <div class="rounded-xl border border-border/70 bg-background/60 overflow-hidden">
           <div class="hidden md:grid md:grid-cols-[2.2fr_1fr_0.8fr_1fr] gap-3 px-4 py-3 border-b border-border/60 bg-muted/40 text-[11px] uppercase tracking-wide text-muted-foreground font-semibold">
-            <div>Tool</div>
-            <div>Type</div>
-            <div>Exposed</div>
-            <div>Approval</div>
+            <div>{% trans "Tool" %}</div>
+            <div>{% trans "Type" %}</div>
+            <div>{% trans "Exposed" %}</div>
+            <div>{% trans "Approval" %}</div>
           </div>
           <div class="divide-y divide-border/60" data-controls-list>
-            <div class="p-6 text-sm text-muted-foreground">Loading controls…</div>
+            <div class="p-6 text-sm text-muted-foreground">{% trans "Loading controls…" %}</div>
           </div>
         </div>
       </section>
@@ -267,6 +268,27 @@
     query: "",
   };
   const pendingModeById = new Map();
+  const I18N = {
+    refreshing: "{% trans 'Refreshing' %}",
+    updatedJustNow: "{% trans 'Updated just now' %}",
+    refreshFailed: "{% trans 'Refresh failed' %}",
+    refresh: "{% trans 'Refresh' %}",
+    saveChanges: "{% trans 'Save changes' %}",
+    noToolsMatch: "{% trans 'No tools match this filter.' %}",
+    tool: "{% trans 'Tool' %}",
+    toolExposedToRuntime: "{% trans 'Tool exposed to the LLM runtime.' %}",
+    integration: "{% trans 'Integration' %}",
+    internalTool: "{% trans 'Internal tool' %}",
+    exposed: "{% trans 'Exposed' %}",
+    auto: "{% trans 'Auto' %}",
+    alwaysConfirm: "{% trans 'Always confirm' %}",
+    unsavedChange: "{% trans 'Unsaved change' %}",
+    failedToLoadControlsPrefix: "{% trans 'Failed to load controls:' %}",
+    failedToLoadControls: "{% trans 'Failed to load controls.' %}",
+    noEditableChanges: "{% trans 'No editable changes to save.' %}",
+    toolControlsUpdated: "{% trans 'Tool controls updated.' %}",
+    failedToSaveControls: "{% trans 'Failed to save controls.' %}",
+  };
 
   function escapeHtml(value) {
     return String(value || "")
@@ -327,26 +349,26 @@
     if (state === "loading") {
       refreshBtn.disabled = true;
       refreshBtn.classList.add("is-loading");
-      refreshLabelEl.textContent = "Refreshing";
+      refreshLabelEl.textContent = I18N.refreshing;
       return;
     }
     refreshBtn.disabled = false;
     refreshBtn.classList.remove("is-loading");
     if (state === "success") {
-      refreshLabelEl.textContent = "Updated just now";
+      refreshLabelEl.textContent = I18N.updatedJustNow;
       refreshTimer = setTimeout(() => {
-        refreshLabelEl.textContent = "Refresh";
+        refreshLabelEl.textContent = I18N.refresh;
       }, 1800);
       return;
     }
     if (state === "error") {
-      refreshLabelEl.textContent = "Refresh failed";
+      refreshLabelEl.textContent = I18N.refreshFailed;
       refreshTimer = setTimeout(() => {
-        refreshLabelEl.textContent = "Refresh";
+        refreshLabelEl.textContent = I18N.refresh;
       }, 1800);
       return;
     }
-    refreshLabelEl.textContent = "Refresh";
+    refreshLabelEl.textContent = I18N.refresh;
   }
 
   function formatSourceBadge(item) {
@@ -393,7 +415,7 @@
   function updateSaveButton() {
     if (!saveBtn) return;
     const count = pendingModeById.size;
-    saveBtn.textContent = count > 0 ? ("Save changes (" + count + ")") : "Save changes";
+    saveBtn.textContent = count > 0 ? (I18N.saveChanges + " (" + count + ")") : I18N.saveChanges;
     saveBtn.disabled = count === 0 || saveInFlight;
   }
 
@@ -410,7 +432,7 @@
     if (!listEl) return;
     const visible = getFilteredItems();
     if (!visible.length) {
-      listEl.innerHTML = '<div class="p-6 text-sm text-muted-foreground">No tools match this filter.</div>';
+      listEl.innerHTML = '<div class="p-6 text-sm text-muted-foreground">' + escapeHtml(I18N.noToolsMatch) + "</div>";
       updateSaveButton();
       return;
     }
@@ -428,8 +450,8 @@
         <div class="ctrl-row" data-controls-row="${escapeHtml(item.id)}">
           <div>
             <div class="ctrl-cell-label">Tool</div>
-            <div class="ctrl-title">${escapeHtml(item.label || item.toolName || "Tool")}</div>
-            <div class="ctrl-desc">${escapeHtml(item.description || "Tool exposed to the LLM runtime.")}</div>
+            <div class="ctrl-title">${escapeHtml(item.label || item.toolName || I18N.tool)}</div>
+            <div class="ctrl-desc">${escapeHtml(item.description || I18N.toolExposedToRuntime)}</div>
             <div class="ctrl-meta">
               <span class="ctrl-chip ${sourceClass}">${escapeHtml(sourceText)}</span>
               <span class="ctrl-chip ${opClass}">${escapeHtml(String(item.operationType || "unknown"))}</span>
@@ -438,11 +460,11 @@
           </div>
           <div>
             <div class="ctrl-cell-label">Type</div>
-            <div class="text-sm text-foreground">${escapeHtml(item.sourceType === "integration" ? "Integration" : "Internal tool")}</div>
+            <div class="text-sm text-foreground">${escapeHtml(item.sourceType === "integration" ? I18N.integration : I18N.internalTool)}</div>
           </div>
           <div>
             <div class="ctrl-cell-label">Exposed</div>
-            <span class="ctrl-chip integration">Exposed</span>
+            <span class="ctrl-chip integration">${escapeHtml(I18N.exposed)}</span>
           </div>
           <div>
             <div class="ctrl-cell-label">Approval</div>
@@ -454,7 +476,7 @@
                 data-controls-row="${escapeHtml(item.id)}"
                 ${editable ? "" : "disabled"}
               >
-                Auto
+                ${escapeHtml(I18N.auto)}
               </button>
               <button
                 type="button"
@@ -463,10 +485,10 @@
                 data-controls-row="${escapeHtml(item.id)}"
                 ${editable ? "" : "disabled"}
               >
-                Always confirm
+                ${escapeHtml(I18N.alwaysConfirm)}
               </button>
             </div>
-            <div class="ctrl-unsaved ${unsaved ? "is-visible" : ""}">Unsaved change</div>
+            <div class="ctrl-unsaved ${unsaved ? "is-visible" : ""}">${escapeHtml(I18N.unsavedChange)}</div>
           </div>
         </div>
       `;
@@ -531,9 +553,9 @@
     } catch (err) {
       loadError = err;
       if (listEl) {
-        listEl.innerHTML = '<div class="p-6 text-sm text-destructive">Failed to load controls: ' + escapeHtml(err.message || "Error") + '</div>';
+        listEl.innerHTML = '<div class="p-6 text-sm text-destructive">' + escapeHtml(I18N.failedToLoadControlsPrefix) + " " + escapeHtml(err.message || "Error") + "</div>";
       }
-      showFlash(err.message || "Failed to load controls.", "error");
+      showFlash(err.message || I18N.failedToLoadControls, "error");
       if (isManual) {
         setRefreshState("error");
       }
@@ -563,7 +585,7 @@
     });
 
     if (!updates.length) {
-      showFlash("No editable changes to save.", "error");
+      showFlash(I18N.noEditableChanges, "error");
       return;
     }
 
@@ -578,10 +600,10 @@
         }),
       });
       pendingModeById.clear();
-      showFlash("Tool controls updated.", "success");
+      showFlash(I18N.toolControlsUpdated, "success");
       await loadControls();
     } catch (err) {
-      showFlash(err.message || "Failed to save controls.", "error");
+      showFlash(err.message || I18N.failedToSaveControls, "error");
     } finally {
       saveInFlight = false;
       updateSaveButton();

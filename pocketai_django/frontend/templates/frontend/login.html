@@ -1,6 +1,7 @@
 {% extends "frontend/base.html" %}
+{% load i18n %}
 
-{% block title %}Sign In | Pocket AI{% endblock %}
+{% block title %}{% trans "Sign In" %} | Pocket AI{% endblock %}
 
 {% block content %}
 <section class="relative overflow-hidden bg-gradient-to-b from-background via-background to-background/80">
@@ -11,8 +12,8 @@
   <div class="relative container mx-auto px-6 py-16 md:py-24">
     <div class="mx-auto max-w-lg rounded-2xl border border-border/80 bg-card/80 p-8 shadow-sm backdrop-blur">
       <header class="mb-8 text-center space-y-2">
-        <h1 class="text-3xl font-semibold text-foreground">Welcome back</h1>
-        <p class="text-sm text-muted-foreground">Sign in to continue orchestrating your AI customer experience.</p>
+        <h1 class="text-3xl font-semibold text-foreground">{% trans "Welcome back" %}</h1>
+        <p class="text-sm text-muted-foreground">{% trans "Sign in to continue orchestrating your AI customer experience." %}</p>
       </header>
       {% if messages %}
         <div class="mb-4 space-y-2">
@@ -29,7 +30,7 @@
           <input type="hidden" name="next" value="{{ next }}">
         {% endif %}
         <div class="space-y-2">
-          <label for="login-email-page" class="block text-sm font-medium text-foreground">Email address</label>
+          <label for="login-email-page" class="block text-sm font-medium text-foreground">{% trans "Email address" %}</label>
           <input
             id="login-email-page"
             name="email"
@@ -38,11 +39,11 @@
             autocomplete="email"
             required
             class="w-full rounded-md border border-input bg-input px-3 py-2 text-sm text-foreground shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
-            placeholder="you@company.com"
+            placeholder="{% trans 'you@company.com' %}"
           >
         </div>
         <div class="space-y-2">
-          <label for="login-password-page" class="block text-sm font-medium text-foreground">Password</label>
+          <label for="login-password-page" class="block text-sm font-medium text-foreground">{% trans "Password" %}</label>
           <input
             id="login-password-page"
             name="password"
@@ -50,20 +51,20 @@
             autocomplete="current-password"
             required
             class="w-full rounded-md border border-input bg-input px-3 py-2 text-sm text-foreground shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
-            placeholder="••••••••"
+            placeholder="{% trans '••••••••' %}"
           >
         </div>
         <button
           type="submit"
           class="w-full rounded-md bg-gradient-primary px-4 py-2 text-sm font-medium text-white shadow-premium transition-opacity hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary focus:ring-offset-background"
         >
-          Sign In
+          {% trans "Sign In" %}
         </button>
       </form>
       <div class="mt-6 text-center text-sm text-muted-foreground">
-        Need to create an account?
+        {% trans "Need to create an account?" %}
         <a href="{% url 'frontend:register' %}" class="text-primary hover:underline">
-          Start your onboarding
+          {% trans "Start your onboarding" %}
         </a>
       </div>
     </div>

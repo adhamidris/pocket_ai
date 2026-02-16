@@ -1,6 +1,7 @@
 {% extends "frontend/base_app.html" %}
+{% load i18n %}
 
-{% block title %}Integrations | Pocket AI{% endblock %}
+{% block title %}{% trans "Integrations" %} | Pocket AI{% endblock %}
 
 {% block content %}
 <div class="integr-page h-screen bg-background flex overflow-hidden">
@@ -9,8 +10,8 @@
     <div class="w-full px-4 md:px-6 lg:px-8 py-6 space-y-6">
       <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div class="space-y-1.5">
-          <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">Integrations</h1>
-          <p class="text-sm text-muted-foreground">Connect first-party native integrations. Your credentials are encrypted and never shared.</p>
+          <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">{% trans "Integrations" %}</h1>
+          <p class="text-sm text-muted-foreground">{% trans "Connect first-party native integrations. Your credentials are encrypted and never shared." %}</p>
         </div>
         <div class="flex flex-wrap items-center justify-start md:justify-end gap-2">
           <button
@@ -24,7 +25,7 @@
               <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 0 1-15.3 6.3" />
               <path stroke-linecap="round" stroke-linejoin="round" d="M5.7 20.3V16H10" />
             </svg>
-            <span data-refresh-label>Refresh</span>
+            <span data-refresh-label>{% trans "Refresh" %}</span>
           </button>
         </div>
       </header>
@@ -33,17 +34,17 @@
 
       <!-- Connected integrations -->
       <section class="space-y-4 hidden" data-integrations-connected-section>
-        <div class="text-sm font-semibold text-foreground">Connected</div>
+        <div class="text-sm font-semibold text-foreground">{% trans "Connected" %}</div>
         <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" data-integrations-connected-grid>
-          <div class="rounded-lg border border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground col-span-full">Loading connected integrations...</div>
+          <div class="rounded-lg border border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground col-span-full">{% trans "Loading connected integrations..." %}</div>
         </div>
       </section>
 
       <!-- Available integrations -->
       <section class="space-y-4">
-        <div class="text-sm font-semibold text-foreground">Available</div>
+        <div class="text-sm font-semibold text-foreground">{% trans "Available" %}</div>
         <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" data-integrations-available-grid>
-          <div class="rounded-lg border border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground col-span-full">Loading available integrations...</div>
+          <div class="rounded-lg border border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground col-span-full">{% trans "Loading available integrations..." %}</div>
         </div>
       </section>
 
@@ -56,8 +57,11 @@
             <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m0 13.5V21" />
           </svg>
           <div>
-            <div class="text-sm font-medium text-foreground">Looking for third-party MCP connectors?</div>
-            <div class="text-xs text-muted-foreground">Notion, Trello, Salesforce, and more are available on the <a href="{% url 'frontend:dashboard-mcp' %}" class="text-primary hover:underline">MCP Connector page</a>.</div>
+            <div class="text-sm font-medium text-foreground">{% trans "Looking for third-party MCP connectors?" %}</div>
+            <div class="text-xs text-muted-foreground">
+              {% trans "Notion, Trello, Salesforce, and more are available on the" %}
+              <a href="{% url 'frontend:dashboard-mcp' %}" class="text-primary hover:underline">{% trans "MCP Connector page" %}</a>.
+            </div>
           </div>
         </div>
       </section>
@@ -478,34 +482,34 @@
 </style>
 
 <div class="integr-tools-modal" data-integration-tools-modal aria-hidden="true">
-  <div class="integr-tools-panel" role="dialog" aria-modal="true" aria-label="Manage integration tools">
+  <div class="integr-tools-panel" role="dialog" aria-modal="true" aria-label="{% trans 'Manage integration tools' %}">
     <div class="integr-tools-panel-header">
       <div>
-        <h3 class="integr-tools-title" data-integration-tools-title>Manage Tools</h3>
-        <div class="integr-tools-summary" data-integration-tools-subtitle>Loading tools...</div>
+        <h3 class="integr-tools-title" data-integration-tools-title>{% trans "Manage Tools" %}</h3>
+        <div class="integr-tools-summary" data-integration-tools-subtitle>{% trans "Loading tools..." %}</div>
       </div>
       <button type="button" class="integr-tools-btn ghost" data-integration-tools-close>
-        Close
+        {% trans "Close" %}
       </button>
     </div>
     <div class="integr-tools-panel-body" data-integration-tools-body>
-      <div class="integr-tools-placeholder">Loading tools...</div>
+      <div class="integr-tools-placeholder">{% trans "Loading tools..." %}</div>
     </div>
     <div class="integr-tools-panel-footer">
       <div class="integr-tools-actions">
         <button type="button" class="integr-tools-btn subtle" data-integration-tools-enable-all>
-          Enable All
+          {% trans "Enable All" %}
         </button>
         <button type="button" class="integr-tools-btn subtle" data-integration-tools-read-only>
-          Read Only
+          {% trans "Read Only" %}
         </button>
       </div>
       <div class="integr-tools-actions">
         <button type="button" class="integr-tools-btn ghost" data-integration-tools-cancel>
-          Cancel
+          {% trans "Cancel" %}
         </button>
         <button type="button" class="integr-tools-btn save" data-integration-tools-save>
-          Save Changes
+          {% trans "Save Changes" %}
         </button>
       </div>
     </div>
@@ -547,6 +551,34 @@
     slack: { label: "Slack", type: "integration_oauth", integration_type: "slack", logo: "/static/img/mcp/slack.svg" },
     hubspot: { label: "HubSpot", type: "integration_oauth", integration_type: "hubspot", logo: "/static/img/mcp/hubspot.svg" },
   };
+  const I18N = {
+    integration: "{% trans 'Integration' %}",
+    refresh: "{% trans 'Refresh' %}",
+    refreshing: "{% trans 'Refreshing' %}",
+    updatedJustNow: "{% trans 'Updated just now' %}",
+    refreshFailed: "{% trans 'Refresh failed' %}",
+    failedToLoad: "{% trans 'Failed to load' %}",
+    failedToLoadIntegrationsPrefix: "{% trans 'Failed to load integrations:' %}",
+    connected: "{% trans 'Connected' %}",
+    nativeIntegrationEncrypted: "{% trans 'Native integration with encrypted credentials.' %}",
+    toolsEnabled: "{% trans 'tools enabled' %}",
+    manageTools: "{% trans 'Manage Tools' %}",
+    disconnect: "{% trans 'Disconnect' %}",
+    toolManagementUnavailable: "{% trans 'Tool management is not available for this integration.' %}",
+    disconnectIntegrationConfirm: "{% trans 'Disconnect this integration?' %}",
+    unsupportedEmailType: "{% trans 'Unsupported email integration type.' %}",
+    missingIntegrationType: "{% trans 'Missing integration type.' %}",
+    unsupportedIntegrationType: "{% trans 'Unsupported integration type.' %}",
+    failedToDisconnectIntegration: "{% trans 'Failed to disconnect integration.' %}",
+    integrationDisconnectedSuccessfully: "{% trans 'Integration disconnected successfully.' %}",
+    disconnectFailedPrefix: "{% trans 'Disconnect failed:' %}",
+    unknownError: "{% trans 'Unknown error' %}",
+    loadingTools: "{% trans 'Loading tools...' %}",
+    noToolsAvailableForIntegration: "{% trans 'No tools available for this integration.' %}",
+    noToolsAvailable: "{% trans 'No tools available.' %}",
+    toolDescriptionFallback: "{% trans 'Native integration tool.' %}",
+    disabledToolsHiddenHint: "{% trans 'tools enabled. Disabled tools are hidden from the AI for this integration.' %}",
+  };
 
   function flash(msg, type) {
     flashEl.textContent = msg;
@@ -571,7 +603,7 @@
   }
 
   function renderIntegrationLogo(item) {
-    const label = String(item && item.label ? item.label : "Integration");
+    const label = String(item && item.label ? item.label : I18N.integration);
     if (item && item.logo) {
       return '<img class="integr-brand-logo" src="' + escapeHtml(item.logo) + '" alt="' + escapeHtml(label) + ' logo" loading="lazy" decoding="async">';
     }
@@ -588,27 +620,27 @@
       refreshBtn.disabled = true;
       refreshBtn.classList.add("is-loading");
       refreshBtn.setAttribute("aria-busy", "true");
-      refreshLabelEl.textContent = "Refreshing";
+      refreshLabelEl.textContent = I18N.refreshing;
       return;
     }
     refreshBtn.disabled = false;
     refreshBtn.classList.remove("is-loading");
     refreshBtn.setAttribute("aria-busy", "false");
     if (state === "success") {
-      refreshLabelEl.textContent = "Updated just now";
+      refreshLabelEl.textContent = I18N.updatedJustNow;
       refreshResetTimer = setTimeout(() => {
-        refreshLabelEl.textContent = "Refresh";
+        refreshLabelEl.textContent = I18N.refresh;
       }, 1800);
       return;
     }
     if (state === "error") {
-      refreshLabelEl.textContent = "Refresh failed";
+      refreshLabelEl.textContent = I18N.refreshFailed;
       refreshResetTimer = setTimeout(() => {
-        refreshLabelEl.textContent = "Refresh";
+        refreshLabelEl.textContent = I18N.refresh;
       }, 1800);
       return;
     }
-    refreshLabelEl.textContent = "Refresh";
+    refreshLabelEl.textContent = I18N.refresh;
   }
 
   async function fetchConnections(options = {}) {
@@ -626,7 +658,7 @@
         cache: "no-store",
         credentials: "same-origin",
       });
-      if (!resp.ok) throw new Error("Failed to load");
+      if (!resp.ok) throw new Error(I18N.failedToLoad);
       const data = await resp.json();
       const catalog = data.marketplace || [];
 
@@ -674,7 +706,7 @@
       }
     } catch (e) {
       loadError = e;
-      flash("Failed to load integrations: " + e.message, "error");
+      flash(I18N.failedToLoadIntegrationsPrefix + " " + e.message, "error");
     }
 
     renderConnected(connected);
@@ -700,16 +732,16 @@
           <div class="integr-card-meta">
             <div class="integr-card-title-row">
               <div class="integr-card-title">${escapeHtml(item.label)}</div>
-              <span class="integr-status-chip">Connected</span>
+              <span class="integr-status-chip">${escapeHtml(I18N.connected)}</span>
             </div>
-            <div class="integr-card-sub">${escapeHtml(item.identifier || "Connected")}</div>
+            <div class="integr-card-sub">${escapeHtml(item.identifier || I18N.connected)}</div>
           </div>
         </div>
-        <div class="integr-card-info">${escapeHtml(item.catEntry ? item.catEntry.description : "Native integration with encrypted credentials.")}</div>
+        <div class="integr-card-info">${escapeHtml(item.catEntry ? item.catEntry.description : I18N.nativeIntegrationEncrypted)}</div>
         <div class="integr-card-actions integr-card-actions-connected">
           <span class="integr-card-tools-count">
             ${item.accountData && Number(item.accountData.totalToolCount || 0) > 0
-              ? `${item.accountData.enabledToolCount || 0}/${item.accountData.totalToolCount || 0} tools enabled`
+              ? `${item.accountData.enabledToolCount || 0}/${item.accountData.totalToolCount || 0} ${I18N.toolsEnabled}`
               : ""}
           </span>
           <div class="integr-card-actions-controls">
@@ -724,7 +756,7 @@
                     data-manage-tools-provider-key="${escapeHtml(item.provider_key || '')}"
                     data-manage-tools-label="${escapeHtml(item.label)}"
                   >
-                    Manage Tools
+                    ${escapeHtml(I18N.manageTools)}
                   </button>`
                 : ""
             }
@@ -735,7 +767,7 @@
               data-disconnect-type="${escapeHtml(item.type)}"
               data-disconnect-integration-type="${escapeHtml(item.integration_type || '')}"
             >
-              Disconnect
+              ${escapeHtml(I18N.disconnect)}
             </button>
           </div>
         </div>
@@ -747,17 +779,17 @@
         const connectionType = btn.dataset.manageToolsType || "";
         const integrationType = btn.dataset.manageToolsIntegrationType || "";
         const providerKey = btn.dataset.manageToolsProviderKey || "";
-        const label = btn.dataset.manageToolsLabel || "Integration";
+        const label = btn.dataset.manageToolsLabel || I18N.integration;
         if (connectionType === "integration_oauth" && !integrationType) {
-          flash("Tool management is not available for this integration.", "error");
+          flash(I18N.toolManagementUnavailable, "error");
           return;
         }
         if (connectionType === "email_oauth" && !providerKey) {
-          flash("Tool management is not available for this integration.", "error");
+          flash(I18N.toolManagementUnavailable, "error");
           return;
         }
         if (connectionType !== "integration_oauth" && connectionType !== "email_oauth") {
-          flash("Tool management is not available for this integration.", "error");
+          flash(I18N.toolManagementUnavailable, "error");
           return;
         }
         openToolsModal({ connectionType, integrationType, providerKey, label });
@@ -769,7 +801,7 @@
         const connType = btn.dataset.disconnectType;
         const key = btn.dataset.disconnectKey;
 
-        if (!window.confirm("Disconnect this integration?")) {
+        if (!window.confirm(I18N.disconnectIntegrationConfirm)) {
           return;
         }
 
@@ -777,19 +809,19 @@
         if (connType === "email_oauth") {
           const providerKey = key === "gmail" ? "google" : key === "outlook" ? "microsoft" : "";
           if (!providerKey) {
-            flash("Unsupported email integration type.", "error");
+            flash(I18N.unsupportedEmailType, "error");
             return;
           }
           url = API_BASE + "/email/oauth/disconnect/" + providerKey + "/";
         } else if (connType === "integration_oauth") {
           const intType = btn.dataset.disconnectIntegrationType;
           if (!intType) {
-            flash("Missing integration type.", "error");
+            flash(I18N.missingIntegrationType, "error");
             return;
           }
           url = API_BASE + "/integrations/oauth/disconnect/" + intType + "/";
         } else {
-          flash("Unsupported integration type.", "error");
+          flash(I18N.unsupportedIntegrationType, "error");
           return;
         }
 
@@ -806,12 +838,12 @@
           });
           const data = await resp.json().catch(() => ({}));
           if (!resp.ok) {
-            throw new Error(data.message || data.error || "Failed to disconnect integration.");
+            throw new Error(data.message || data.error || I18N.failedToDisconnectIntegration);
           }
-          flash("Integration disconnected successfully.", "success");
+          flash(I18N.integrationDisconnectedSuccessfully, "success");
           fetchConnections();
         } catch (e) {
-          flash("Disconnect failed: " + (e.message || "Unknown error"), "error");
+          flash(I18N.disconnectFailedPrefix + " " + (e.message || I18N.unknownError), "error");
         } finally {
           btn.disabled = false;
         }
@@ -825,20 +857,20 @@
     activeToolsProviderKey = "";
     toolsModalEl.classList.remove("is-open");
     toolsModalEl.setAttribute("aria-hidden", "true");
-    toolsBodyEl.innerHTML = '<div class="integr-tools-placeholder">Loading tools...</div>';
+    toolsBodyEl.innerHTML = '<div class="integr-tools-placeholder">' + escapeHtml(I18N.loadingTools) + "</div>";
   }
 
   function renderToolsSummary() {
     const checks = Array.from(toolsBodyEl.querySelectorAll("[data-tool-enabled]"));
     const total = checks.length;
     const enabled = checks.filter((el) => el.checked).length;
-    toolsSubtitleEl.textContent = `${enabled}/${total} tools enabled. Disabled tools are hidden from the AI for this integration.`;
+    toolsSubtitleEl.textContent = `${enabled}/${total} ${I18N.disabledToolsHiddenHint}`;
   }
 
   function renderToolsRows(tools) {
     if (!tools.length) {
-      toolsBodyEl.innerHTML = '<div class="integr-tools-placeholder">No tools available for this integration.</div>';
-      toolsSubtitleEl.textContent = "No tools available.";
+      toolsBodyEl.innerHTML = '<div class="integr-tools-placeholder">' + escapeHtml(I18N.noToolsAvailableForIntegration) + "</div>";
+      toolsSubtitleEl.textContent = I18N.noToolsAvailable;
       return;
     }
     toolsBodyEl.innerHTML = tools.map((tool) => `
@@ -846,7 +878,7 @@
         <input class="integr-tools-check" type="checkbox" data-tool-enabled data-tool-name="${escapeHtml(tool.toolName)}" data-operation-type="${escapeHtml(tool.operationType || 'unknown')}" ${tool.enabled ? "checked" : ""} />
         <div class="integr-tools-meta">
           <h4 class="integr-tools-name">${escapeHtml(tool.label || tool.toolName)}</h4>
-          <p class="integr-tools-desc">${escapeHtml(tool.description || "Native integration tool.")}</p>
+          <p class="integr-tools-desc">${escapeHtml(tool.description || I18N.toolDescriptionFallback)}</p>
           <span class="integr-tools-badge ${tool.operationType === "write" ? "write" : "read"}">${escapeHtml(tool.operationType || "unknown")}</span>
         </div>
       </label>

@@ -1,6 +1,7 @@
 {% extends "frontend/base_app.html" %}
+{% load i18n %}
 
-{% block title %}Agents | Pocket AI{% endblock %}
+{% block title %}{% trans "Agents" %} | Pocket AI{% endblock %}
 
 {% block content %}
 <div class="h-screen bg-background flex overflow-hidden">
@@ -9,8 +10,8 @@
     <div class="w-full px-4 md:px-6 lg:px-8 py-6 space-y-6">
       <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div class="space-y-1.5">
-          <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">Agents</h1>
-          <p class="text-sm text-muted-foreground">Create, configure, and monitor conversational agents for every channel.</p>
+          <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">{% trans "Agents" %}</h1>
+          <p class="text-sm text-muted-foreground">{% trans "Create, configure, and monitor conversational agents for every channel." %}</p>
         </div>
         <div class="flex flex-wrap items-center justify-start md:justify-end gap-2">
           <button
@@ -21,7 +22,7 @@
             <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
             </svg>
-            Create agent
+            {% trans "Create agent" %}
           </button>
         </div>
       </header>
@@ -40,7 +41,7 @@
           </div>
         {% empty %}
           <div class="rounded-lg border border-dashed border-border/70 bg-muted/40 p-6 text-center text-sm text-muted-foreground">
-            Metrics will surface once you start deploying agents.
+            {% trans "Metrics will surface once you start deploying agents." %}
           </div>
         {% endfor %}
       </section>
@@ -55,7 +56,7 @@
               type="search"
               name="agent-search"
               class="rtl-search-input pl-9 w-full h-10 rounded-md border border-border/60 bg-muted/70 text-sm focus-visible:ring-0 focus-visible:border-border transition-colors"
-              placeholder="Search agents..."
+              placeholder="{% trans 'Search agents...' %}"
               autocomplete="off"
               data-search-ready="true"
             />
@@ -85,7 +86,7 @@
             aria-haspopup="true"
             aria-expanded="false"
           >
-            <span>Page size: {{ agents_filters.limit|default:25 }}</span>
+            <span>{% blocktrans with limit=agents_filters.limit|default:25 %}Page size: {{ limit }}{% endblocktrans %}</span>
             <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20" aria-hidden="true">
               <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m6 8 4 4 4-4" />
             </svg>

@@ -1,6 +1,7 @@
 {% extends "frontend/base_app.html" %}
+{% load i18n %}
 
-{% block title %}MCP Connector (BETA) | Pocket AI{% endblock %}
+{% block title %}{% trans "MCP Connector (BETA)" %} | Pocket AI{% endblock %}
 
 {% block content %}
 <div class="h-screen bg-background flex overflow-hidden">
@@ -10,10 +11,10 @@
       <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div class="space-y-1.5">
           <div class="flex flex-wrap items-center gap-2">
-            <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">MCP Connector</h1>
-            <span class="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-400">Beta</span>
+            <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">{% trans "MCP Connector" %}</h1>
+            <span class="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-400">{% trans "Beta" %}</span>
           </div>
-          <p class="text-sm text-muted-foreground">Connect MCP servers, toggle them on/off, and control which agents can use them.</p>
+          <p class="text-sm text-muted-foreground">{% trans "Connect MCP servers, toggle them on/off, and control which agents can use them." %}</p>
         </div>
         <div class="flex flex-wrap items-center justify-start md:justify-end gap-2">
           <button
@@ -21,7 +22,7 @@
             class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 border border-input bg-background hover:bg-accent hover:text-accent-foreground hover:border-primary/50 h-10 px-4 py-2"
             data-mcp-open-marketplace
           >
-            Browse marketplace
+            {% trans "Browse marketplace" %}
           </button>
           <button
             type="button"
@@ -31,16 +32,16 @@
             <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
             </svg>
-            Add MCP server
+            {% trans "Add MCP server" %}
           </button>
         </div>
       </header>
       <section class="space-y-4" data-mcp-tabs data-active-tab="industry">
         <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div class="inline-flex rounded-lg border border-border/40 bg-muted/70 p-1" data-tabs-list>
-            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase transition-colors bg-primary text-primary-foreground shadow-sm" data-tab-button="industry">Industry Tools</button>
-            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase transition-colors text-muted-foreground hover:text-primary" data-tab-button="all">All MCPs</button>
-            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase transition-colors text-muted-foreground hover:text-primary" data-tab-button="connected">Connected</button>
+            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase transition-colors bg-primary text-primary-foreground shadow-sm" data-tab-button="industry">{% trans "Industry Tools" %}</button>
+            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase transition-colors text-muted-foreground hover:text-primary" data-tab-button="all">{% trans "All MCPs" %}</button>
+            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase transition-colors text-muted-foreground hover:text-primary" data-tab-button="connected">{% trans "Connected" %}</button>
           </div>
 	          <div class="flex flex-wrap items-center gap-2 md:ml-auto">
 	            <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-refresh>
@@ -50,7 +51,7 @@
                   <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 0 1-15.3 6.3" />
                   <path stroke-linecap="round" stroke-linejoin="round" d="M5.7 20.3V16H10" />
                 </svg>
-                <span data-mcp-refresh-label>Refresh</span>
+                <span data-mcp-refresh-label>{% trans "Refresh" %}</span>
 	            </button>
 	          </div>
 	        </div>
@@ -62,8 +63,8 @@
           <div class="rounded-xl border border-border/70 bg-background/60 p-4">
             <div class="flex items-center justify-between gap-3">
               <div>
-                <div class="text-sm font-semibold text-foreground">Recommended for <span data-mcp-industry-name>your industry</span></div>
-                <div class="text-xs text-muted-foreground">Tools commonly used by businesses in your industry. Click to add.</div>
+                <div class="text-sm font-semibold text-foreground">{% trans "Recommended for" %} <span data-mcp-industry-name>{% trans "your industry" %}</span></div>
+                <div class="text-xs text-muted-foreground">{% trans "Tools commonly used by businesses in your industry. Click to add." %}</div>
               </div>
               <div class="text-xs text-muted-foreground" data-mcp-industry-count>—</div>
             </div>
@@ -73,8 +74,8 @@
           <div class="rounded-xl border border-border/70 bg-background/60 p-4">
             <div class="flex items-center justify-between gap-3">
               <div>
-                <div class="text-sm font-semibold text-foreground">Common Tools</div>
-                <div class="text-xs text-muted-foreground">Universal tools used across all industries.</div>
+                <div class="text-sm font-semibold text-foreground">{% trans "Common Tools" %}</div>
+                <div class="text-xs text-muted-foreground">{% trans "Universal tools used across all industries." %}</div>
               </div>
               <div class="text-xs text-muted-foreground" data-mcp-common-count>—</div>
             </div>
@@ -87,17 +88,17 @@
           <div class="rounded-xl border border-border/70 bg-background/60 p-4">
             <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
-                <div class="text-sm font-semibold text-foreground">All Available MCPs</div>
-                <div class="text-xs text-muted-foreground">Browse all MCP integrations. Filter by category or search.</div>
+                <div class="text-sm font-semibold text-foreground">{% trans "All Available MCPs" %}</div>
+                <div class="text-xs text-muted-foreground">{% trans "Browse all MCP integrations. Filter by category or search." %}</div>
               </div>
               <div class="flex items-center gap-2">
-                <input type="text" class="h-9 w-48 rounded-md border border-border/60 bg-muted/60 px-3 text-xs focus-visible:ring-0 focus-visible:border-border" data-mcp-search placeholder="Search MCPs..." />
+                <input type="text" class="h-9 w-48 rounded-md border border-border/60 bg-muted/60 px-3 text-xs focus-visible:ring-0 focus-visible:border-border" data-mcp-search placeholder="{% trans 'Search MCPs...' %}" />
                 <div class="text-xs text-muted-foreground" data-mcp-marketplace-count>—</div>
               </div>
             </div>
           </div>
           <div class="flex flex-wrap gap-2" data-mcp-category-filters>
-            <button type="button" class="rounded-full px-3 py-1 text-xs font-medium transition-colors bg-primary text-primary-foreground" data-mcp-category="all">All</button>
+            <button type="button" class="rounded-full px-3 py-1 text-xs font-medium transition-colors bg-primary text-primary-foreground" data-mcp-category="all">{% trans "All" %}</button>
           </div>
           <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" data-mcp-marketplace-grid></div>
         </div>
@@ -107,15 +108,15 @@
 	          <div class="rounded-xl border border-border/70 bg-background/60 p-4">
 	            <div class="flex items-center justify-between gap-3">
 	              <div>
-	                <div class="text-sm font-semibold text-foreground">Your Connected MCPs</div>
-	                <div class="text-xs text-muted-foreground">Enable/disable connections, test connectivity, and manage agent opt-outs.</div>
+	                <div class="text-sm font-semibold text-foreground">{% trans "Your Connected MCPs" %}</div>
+	                <div class="text-xs text-muted-foreground">{% trans "Enable/disable connections, test connectivity, and manage agent opt-outs." %}</div>
 	              </div>
 	              <div class="text-xs text-muted-foreground" data-mcp-count>—</div>
 	            </div>
 	          </div>
 
 	          <div class="space-y-3" data-mcp-connection-list>
-	            <div class="rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">Loading MCP connections…</div>
+	            <div class="rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">{% trans "Loading MCP connections…" %}</div>
 	          </div>
 	        </div>
       </section>
@@ -139,10 +140,10 @@
   <div class="fixed inset-x-4 top-10 z-50 mx-auto max-w-lg rounded-xl border border-border/60 bg-card p-5 shadow-lg opacity-0 transition-opacity duration-150" role="dialog" aria-modal="true" data-mcp-modal-content tabindex="-1">
     <div class="flex items-start justify-between gap-3">
       <div class="space-y-0.5">
-        <div class="text-sm font-semibold text-foreground" data-mcp-modal-title>Add MCP server</div>
-        <div class="text-xs text-muted-foreground">SSE/HTTP remote MCP servers only.</div>
+        <div class="text-sm font-semibold text-foreground" data-mcp-modal-title>{% trans "Add MCP server" %}</div>
+        <div class="text-xs text-muted-foreground">{% trans "SSE/HTTP remote MCP servers only." %}</div>
       </div>
-      <button type="button" class="h-8 w-8 inline-flex items-center justify-center rounded-md border border-border/60 hover:bg-accent/50" data-mcp-modal-close aria-label="Close">
+      <button type="button" class="h-8 w-8 inline-flex items-center justify-center rounded-md border border-border/60 hover:bg-accent/50" data-mcp-modal-close aria-label="{% trans 'Close' %}">
         <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
         </svg>
@@ -154,18 +155,18 @@
       <div class="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-300 hidden" data-mcp-simple-info>
         <div class="flex items-center gap-2">
           <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-          <span>Server URL pre-configured. Just add your credentials below.</span>
+          <span>{% trans "Server URL pre-configured. Just add your credentials below." %}</span>
         </div>
       </div>
 
       <div class="space-y-1.5" data-mcp-name-row>
-        <label class="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Name</label>
-        <input type="text" class="w-full h-10 rounded-md border border-border/60 bg-muted/60 px-3 text-sm focus-visible:ring-0 focus-visible:border-border" data-mcp-field="name" placeholder="e.g. GitHub Tools" />
+        <label class="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{% trans "Name" %}</label>
+        <input type="text" class="w-full h-10 rounded-md border border-border/60 bg-muted/60 px-3 text-sm focus-visible:ring-0 focus-visible:border-border" data-mcp-field="name" placeholder="{% trans 'e.g. GitHub Tools' %}" />
       </div>
       <div class="space-y-1.5" data-mcp-url-row>
-        <label class="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Server URL</label>
-        <input type="url" class="w-full h-10 rounded-md border border-border/60 bg-muted/60 px-3 text-sm focus-visible:ring-0 focus-visible:border-border" data-mcp-field="serverUrl" placeholder="https://your-domain.com/mcp" />
-        <div class="text-[11px] text-muted-foreground">Use the MCP endpoint (Streamable HTTP) or legacy SSE endpoint.</div>
+        <label class="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{% trans "Server URL" %}</label>
+        <input type="url" class="w-full h-10 rounded-md border border-border/60 bg-muted/60 px-3 text-sm focus-visible:ring-0 focus-visible:border-border" data-mcp-field="serverUrl" placeholder="{% trans 'https://your-domain.com/mcp' %}" />
+        <div class="text-[11px] text-muted-foreground">{% trans "Use the MCP endpoint (Streamable HTTP) or legacy SSE endpoint." %}</div>
       </div>
 
       <!-- Dynamic setup fields container (for marketplace items) -->
@@ -173,53 +174,53 @@
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3" data-mcp-auth-row>
         <div class="space-y-1.5">
-          <label class="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Auth</label>
+          <label class="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{% trans "Auth" %}</label>
           <select class="w-full h-10 rounded-md border border-border/60 bg-muted/60 px-3 text-sm focus-visible:ring-0 focus-visible:border-border" data-mcp-field="authType">
-            <option value="none">No auth</option>
-            <option value="bearer">Bearer token</option>
-            <option value="header">Custom header</option>
+            <option value="none">{% trans "No auth" %}</option>
+            <option value="bearer">{% trans "Bearer token" %}</option>
+            <option value="header">{% trans "Custom header" %}</option>
           </select>
         </div>
         <div class="space-y-1.5">
-          <label class="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Tool Approval</label>
+          <label class="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{% trans "Tool Approval" %}</label>
           <select class="w-full h-10 rounded-md border border-border/60 bg-muted/60 px-3 text-sm focus-visible:ring-0 focus-visible:border-border" data-mcp-field="approvalMode">
-            <option value="auto">Auto-approve all</option>
-            <option value="approve_writes" selected>Approve writes only</option>
-            <option value="approve_all">Approve all operations</option>
+            <option value="auto">{% trans "Auto-approve all" %}</option>
+            <option value="approve_writes" selected>{% trans "Approve writes only" %}</option>
+            <option value="approve_all">{% trans "Approve all operations" %}</option>
           </select>
         </div>
       </div>
       <div class="flex items-center gap-2" data-mcp-enabled-row>
         <input type="checkbox" class="h-4 w-4 rounded border-border/60" data-mcp-field="enabled" checked />
-        <label class="text-sm text-muted-foreground">Enabled</label>
+        <label class="text-sm text-muted-foreground">{% trans "Enabled" %}</label>
       </div>
 
       <div class="space-y-3 hidden" data-mcp-auth-panel="bearer">
         <div class="space-y-1.5">
-          <label class="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Bearer token</label>
-          <input type="password" class="w-full h-10 rounded-md border border-border/60 bg-muted/60 px-3 text-sm focus-visible:ring-0 focus-visible:border-border" data-mcp-field="bearerToken" placeholder="Paste token" autocomplete="off" />
+          <label class="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{% trans "Bearer token" %}</label>
+          <input type="password" class="w-full h-10 rounded-md border border-border/60 bg-muted/60 px-3 text-sm focus-visible:ring-0 focus-visible:border-border" data-mcp-field="bearerToken" placeholder="{% trans 'Paste token' %}" autocomplete="off" />
         </div>
       </div>
 
       <div class="space-y-3 hidden" data-mcp-auth-panel="header">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div class="space-y-1.5">
-            <label class="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Header name</label>
-            <input type="text" class="w-full h-10 rounded-md border border-border/60 bg-muted/60 px-3 text-sm focus-visible:ring-0 focus-visible:border-border" data-mcp-field="headerName" placeholder="e.g. X-API-Key" />
+            <label class="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{% trans "Header name" %}</label>
+            <input type="text" class="w-full h-10 rounded-md border border-border/60 bg-muted/60 px-3 text-sm focus-visible:ring-0 focus-visible:border-border" data-mcp-field="headerName" placeholder="{% trans 'e.g. X-API-Key' %}" />
           </div>
           <div class="space-y-1.5">
-            <label class="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Header value</label>
-            <input type="password" class="w-full h-10 rounded-md border border-border/60 bg-muted/60 px-3 text-sm focus-visible:ring-0 focus-visible:border-border" data-mcp-field="headerValue" placeholder="Secret value" autocomplete="off" />
+            <label class="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{% trans "Header value" %}</label>
+            <input type="password" class="w-full h-10 rounded-md border border-border/60 bg-muted/60 px-3 text-sm focus-visible:ring-0 focus-visible:border-border" data-mcp-field="headerValue" placeholder="{% trans 'Secret value' %}" autocomplete="off" />
           </div>
         </div>
       </div>
 
       <div class="rounded-lg border border-border/60 bg-muted/30 p-3 text-xs text-muted-foreground hidden" data-mcp-modal-error></div>
       <div class="flex items-center justify-between gap-3 pt-1">
-	        <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-modal-cancel>Cancel</button>
+	        <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-modal-cancel>{% trans "Cancel" %}</button>
 	        <div class="flex items-center gap-2">
-	          <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none" data-mcp-modal-test>Test connection</button>
-	          <button type="button" class="inline-flex items-center gap-2 rounded-md bg-primary text-primary-foreground px-4 py-2 text-xs font-semibold hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none" data-mcp-modal-save>Save</button>
+	          <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none" data-mcp-modal-test>{% trans "Test connection" %}</button>
+	          <button type="button" class="inline-flex items-center gap-2 rounded-md bg-primary text-primary-foreground px-4 py-2 text-xs font-semibold hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none" data-mcp-modal-save>{% trans "Save" %}</button>
 	        </div>
 	      </div>
     </div>
@@ -231,10 +232,10 @@
   <div class="fixed inset-x-4 top-10 z-50 mx-auto max-w-lg rounded-xl border border-border/60 bg-card p-5 shadow-lg opacity-0 transition-opacity duration-150" role="dialog" aria-modal="true" data-mcp-agents-content tabindex="-1">
     <div class="flex items-start justify-between gap-3">
       <div class="space-y-0.5">
-        <div class="text-sm font-semibold text-foreground">Agent access</div>
-        <div class="text-xs text-muted-foreground">Opt out specific agents while keeping others enabled.</div>
+        <div class="text-sm font-semibold text-foreground">{% trans "Agent access" %}</div>
+        <div class="text-xs text-muted-foreground">{% trans "Opt out specific agents while keeping others enabled." %}</div>
       </div>
-      <button type="button" class="h-8 w-8 inline-flex items-center justify-center rounded-md border border-border/60 hover:bg-accent/50" data-mcp-agents-close aria-label="Close">
+      <button type="button" class="h-8 w-8 inline-flex items-center justify-center rounded-md border border-border/60 hover:bg-accent/50" data-mcp-agents-close aria-label="{% trans 'Close' %}">
         <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
         </svg>
@@ -244,7 +245,7 @@
       <div class="text-xs text-muted-foreground" data-mcp-agents-subtitle>—</div>
       <div class="space-y-2 max-h-[52vh] overflow-auto pr-1" data-mcp-agents-list></div>
       <div class="flex items-center justify-end gap-2 pt-2">
-        <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-agents-done>Done</button>
+        <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-agents-done>{% trans "Done" %}</button>
       </div>
     </div>
   </div>
@@ -255,10 +256,10 @@
   <div class="fixed inset-x-4 top-10 z-50 mx-auto max-w-2xl rounded-xl border border-border/60 bg-card p-5 shadow-lg opacity-0 transition-opacity duration-150" role="dialog" aria-modal="true" data-mcp-tools-content tabindex="-1">
     <div class="flex items-start justify-between gap-3">
       <div class="space-y-0.5">
-        <div class="text-sm font-semibold text-foreground">Tool approvals</div>
-        <div class="text-xs text-muted-foreground">Set per-tool approvals and operation type for this MCP connection.</div>
+        <div class="text-sm font-semibold text-foreground">{% trans "Tool approvals" %}</div>
+        <div class="text-xs text-muted-foreground">{% trans "Set per-tool approvals and operation type for this MCP connection." %}</div>
       </div>
-      <button type="button" class="h-8 w-8 inline-flex items-center justify-center rounded-md border border-border/60 hover:bg-accent/50" data-mcp-tools-close aria-label="Close">
+      <button type="button" class="h-8 w-8 inline-flex items-center justify-center rounded-md border border-border/60 hover:bg-accent/50" data-mcp-tools-close aria-label="{% trans 'Close' %}">
         <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
         </svg>
@@ -269,8 +270,8 @@
       <div class="rounded-lg border border-border/60 bg-muted/30 p-3 text-xs text-muted-foreground hidden" data-mcp-tools-error></div>
       <div class="space-y-2 max-h-[60vh] overflow-auto pr-1" data-mcp-tools-list></div>
       <div class="flex items-center justify-end gap-2 pt-2">
-        <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-tools-cancel>Cancel</button>
-        <button type="button" class="inline-flex items-center gap-2 rounded-md bg-primary text-primary-foreground px-4 py-2 text-xs font-semibold hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none" data-mcp-tools-save>Save changes</button>
+        <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-tools-cancel>{% trans "Cancel" %}</button>
+        <button type="button" class="inline-flex items-center gap-2 rounded-md bg-primary text-primary-foreground px-4 py-2 text-xs font-semibold hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none" data-mcp-tools-save>{% trans "Save changes" %}</button>
       </div>
     </div>
   </div>

@@ -1,6 +1,7 @@
 {% extends "frontend/base_app.html" %}
+{% load i18n %}
 
-{% block title %}Cases | Pocket AI{% endblock %}
+{% block title %}{% trans "Cases" %} | Pocket AI{% endblock %}
 
 {% block content %}
 <div class="h-screen bg-background flex overflow-hidden">
@@ -11,19 +12,19 @@
         <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div class="space-y-1.5">
             <div class="flex flex-wrap items-center gap-3">
-              <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">Cases</h1>
+              <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">{% trans "Cases" %}</h1>
               <span class="hidden md:inline-flex items-center rounded-full border border-border/60 bg-muted/50 px-3 py-1 text-xs font-medium text-muted-foreground">
-                {{ cases_total|default:0 }} results
+                {% blocktrans with count=cases_total|default:0 %}{{ count }} results{% endblocktrans %}
               </span>
             </div>
-            <p class="text-sm text-muted-foreground">Triage customer issues, track escalations, and keep resolution moving.</p>
+            <p class="text-sm text-muted-foreground">{% trans "Triage customer issues, track escalations, and keep resolution moving." %}</p>
           </div>
           <div class="flex flex-wrap items-center justify-start md:justify-end gap-2">
             <button type="button" class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm hover:shadow-md h-10 px-4 py-2">
               <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v12m6-6H6" />
               </svg>
-              New Case
+              {% trans "New Case" %}
             </button>
             <button type="button" class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 border border-input bg-background hover:bg-accent hover:text-accent-foreground hover:border-primary/50 h-10 px-4 py-2">
               <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
@@ -31,7 +32,7 @@
                 <polyline points="17 8 12 3 7 8" stroke-linecap="round" stroke-linejoin="round" />
                 <line x1="12" y1="3" x2="12" y2="15" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
-              Import Cases
+              {% trans "Import Cases" %}
               <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20" aria-hidden="true">
                 <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m6 8 4 4 4-4" />
               </svg>
@@ -42,21 +43,21 @@
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div class="rounded-lg bg-card/70 backdrop-blur shadow-sm transition-all duration-300">
             <div class="p-5 space-y-2">
-              <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">Open cases</span>
+              <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">{% trans "Open cases" %}</span>
               <div class="text-3xl font-semibold tracking-tight text-foreground">{{ cases_metrics.open|default:"—" }}</div>
               <div class="text-xs font-medium text-muted-foreground">Target &lt; 15</div>
             </div>
           </div>
           <div class="rounded-lg bg-card/70 backdrop-blur shadow-sm transition-all duration-300">
             <div class="p-5 space-y-2">
-              <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">Urgent cases</span>
+              <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">{% trans "Urgent cases" %}</span>
               <div class="text-3xl font-semibold tracking-tight text-foreground">{{ cases_metrics.urgent|default:"—" }}</div>
               <div class="text-xs font-medium text-muted-foreground">{{ cases_metrics.urgent_delta|default:"All clear" }}</div>
             </div>
           </div>
           <div class="rounded-lg bg-card/70 backdrop-blur shadow-sm transition-all duration-300">
             <div class="p-5 space-y-2">
-              <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">Avg. time open</span>
+              <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">{% trans "Avg. time open" %}</span>
               <div class="text-3xl font-semibold tracking-tight text-foreground">{{ cases_metrics.avg_open|default:"—" }}</div>
               <div class="text-xs font-medium text-muted-foreground">Goal &lt; 12h</div>
             </div>
@@ -74,9 +75,9 @@
               </svg>
               <input
                 type="search"
-                placeholder="Search name, email, text…"
+                placeholder="{% trans 'Search name, email, text…' %}"
                 class="rtl-search-input h-10 w-full rounded-lg border border-border/60 bg-muted/70 pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-0 focus-visible:border-border transition"
-                aria-label="Search cases"
+                aria-label="{% trans 'Search cases' %}"
               >
             </div>
           </div>
@@ -91,7 +92,7 @@
                 <path d="M10 14h4" stroke-linecap="round" stroke-linejoin="round" />
                 <path d="M10 18h4" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
-              All Cases
+              {% trans "All Cases" %}
               <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20" aria-hidden="true">
                 <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m6 8 4 4 4-4" />
               </svg>
@@ -100,7 +101,7 @@
               <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
                 <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
-              All types
+              {% trans "All types" %}
               <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20" aria-hidden="true">
                 <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m6 8 4 4 4-4" />
               </svg>
@@ -118,7 +119,7 @@
                 <path d="M12 18h.01" stroke-linecap="round" stroke-linejoin="round" />
                 <path d="M16 18h.01" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
-              All time
+              {% trans "All time" %}
               <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20" aria-hidden="true">
                 <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m6 8 4 4 4-4" />
               </svg>
@@ -129,7 +130,7 @@
                 <path d="M7 12h10" stroke-linecap="round" stroke-linejoin="round" />
                 <path d="M10 18h4" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
-              Columns
+              {% trans "Columns" %}
             </button>
           </div>
         </div>
@@ -146,16 +147,16 @@
                       <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground w-8">
                         <span class="peer h-3.5 w-3.5 shrink-0 rounded-full border border-secondary bg-secondary ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground data-[state=checked]:border-primary block"></span>
                       </th>
-                      <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Case ID</th>
-                      <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Priority</th>
-                      <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Type</th>
-                      <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Case Title</th>
-                      <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Description</th>
-                      <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Status</th>
-                      <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Customer</th>
-                      <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Channel</th>
-                      <th class="h-12 px-4 text-right align-middle font-medium text-muted-foreground">Started</th>
-                      <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Transcript</th>
+                      <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">{% trans "Case ID" %}</th>
+                      <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">{% trans "Priority" %}</th>
+                      <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">{% trans "Type" %}</th>
+                      <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">{% trans "Case Title" %}</th>
+                      <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">{% trans "Description" %}</th>
+                      <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">{% trans "Status" %}</th>
+                      <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">{% trans "Customer" %}</th>
+                      <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">{% trans "Channel" %}</th>
+                      <th class="h-12 px-4 text-right align-middle font-medium text-muted-foreground">{% trans "Started" %}</th>
+                      <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">{% trans "Transcript" %}</th>
                       <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground w-8"></th>
                     </tr>
                   </thead>
@@ -252,7 +253,7 @@
                               href="{% url 'frontend:dashboard-case-detail' case.uuid %}"
                               class="inline-flex items-center gap-1 rounded-full border border-border/60 px-3 py-1 text-xs font-semibold text-foreground hover:border-primary/60 hover:text-primary transition"
                             >
-                              View transcript
+                              {% trans "View transcript" %}
                               <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M6 12h12m0 0-4-4m4 4-4 4" />
                               </svg>
@@ -281,7 +282,7 @@
               </div>
               <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between border-t border-border/70 px-4 py-3 text-xs text-muted-foreground">
                 <div>
-                  Showing {{ cases_showing_count|default:0 }} of {{ cases_total|default:0 }} cases
+                  {% blocktrans with showing=cases_showing_count|default:0 total=cases_total|default:0 %}Showing {{ showing }} of {{ total }} cases{% endblocktrans %}
                 </div>
                 <div class="flex items-center gap-2">
                   <button
@@ -290,7 +291,7 @@
                     {% if not cases_has_prev %}disabled{% endif %}
                     data-page="prev"
                   >
-                    Previous
+                    {% trans "Previous" %}
                   </button>
                   <button
                     type="button"
@@ -298,7 +299,7 @@
                     {% if not cases_has_next %}disabled{% endif %}
                     data-page="next"
                   >
-                    Next
+                    {% trans "Next" %}
                   </button>
                   {% if cases_loading %}
                     <svg class="h-3.5 w-3.5 animate-spin text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -335,12 +336,12 @@
   style="transform: translateX(100%);"
 >
   <div class="relative flex h-full w-full flex-col">
-    <div id="case-panel-heading" class="sr-only" data-case-aria-title>Select a case</div>
+    <div id="case-panel-heading" class="sr-only" data-case-aria-title>{% trans "Select a case" %}</div>
     <button
       type="button"
       class="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-background/80 text-muted-foreground transition hover:bg-background"
       data-case-close
-      aria-label="Close case details"
+      aria-label="{% trans 'Close case details' %}"
     >
       <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
         <path stroke-linecap="round" stroke-linejoin="round" d="m8 8 8 8m0-8-8 8" />
@@ -350,11 +351,11 @@
       <div class="flex-1 overflow-y-auto" data-case-scroll>
         <div class="space-y-6 px-6 py-10" data-case-empty>
           <div class="space-y-2">
-            <h2 class="text-xl font-semibold text-foreground">Select a case</h2>
+            <h2 class="text-xl font-semibold text-foreground">{% trans "Select a case" %}</h2>
             <p class="text-sm text-muted-foreground">Choose a case from the list to review AI insights and activity.</p>
           </div>
           <div class="rounded-xl border border-dashed border-border/60 bg-muted/40 px-4 py-6 text-center text-sm text-muted-foreground">
-            Nothing to show yet.
+            {% trans "Nothing to show yet." %}
           </div>
         </div>
         <div class="hidden space-y-6 px-6 py-10" data-case-loading>
@@ -380,7 +381,7 @@
         </div>
         <div class="hidden space-y-4 px-6 py-10" data-case-error>
           <div class="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive" data-case-error-message>
-            Unable to load case details. Please try again.
+            {% trans "Unable to load case details. Please try again." %}
           </div>
         </div>
         <div class="hidden h-full flex-col" data-case-content>
@@ -399,7 +400,7 @@
             <div class="flex items-center gap-3">
               <span class="inline-flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary uppercase" data-case-customer-initials>CU</span>
               <div class="flex flex-col">
-                <span class="text-sm font-semibold text-foreground" data-case-customer-name>Customer</span>
+                <span class="text-sm font-semibold text-foreground" data-case-customer-name>{% trans "Customer" %}</span>
                 <span class="text-xs text-muted-foreground" data-case-customer-email>—</span>
               </div>
               <span class="ml-auto inline-flex items-center rounded-full border border-border/60 px-2.5 py-0.5 text-xs font-medium capitalize text-muted-foreground" data-case-channel-label>—</span>
@@ -457,7 +458,7 @@
                     <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Summary</div>
                     <div class="rounded-xl border border-border/60 bg-card/95 px-4 py-4 space-y-3">
                       <div>
-                        <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground/80">Description</div>
+                        <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground/80">{% trans "Description" %}</div>
                         <p class="mt-1 text-sm leading-relaxed text-foreground" data-case-description>No summary provided.</p>
                       </div>
                       <div>
@@ -465,13 +466,13 @@
                         <p class="mt-1 text-sm leading-relaxed text-foreground" data-case-diagnosis>No AI diagnosis yet.</p>
                       </div>
                       <div>
-                        <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground/80">Actions taken</div>
+                        <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground/80">{% trans "Actions taken" %}</div>
                         <p class="mt-1 text-sm leading-relaxed text-foreground" data-case-actions>No resolution actions captured.</p>
                       </div>
                     </div>
                   </section>
                   <section class="space-y-3">
-                    <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Suggested next steps</div>
+                    <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{% trans "Suggested next steps" %}</div>
                     <div class="rounded-xl border border-border/60 bg-muted/60 px-4 py-3">
                       <ul class="space-y-2 text-sm text-foreground" data-case-suggestions>
                         <li class="text-muted-foreground">No suggestions available.</li>
@@ -614,6 +615,33 @@
     var isPanelOpen = false;
     var rootDir = document.documentElement ? document.documentElement.getAttribute("dir") : "";
     var isRtl = (rootDir || "").toLowerCase() === "rtl";
+    var STRINGS = {
+      selectCase: "{% trans 'Select a case' %}",
+      loadingCaseDetails: "{% trans 'Loading case details' %}",
+      caseDetailsUnavailable: "{% trans 'Case details unavailable' %}",
+      dash: "{% trans '—' %}",
+      caseLabel: "{% trans 'Case' %}",
+      untitledCase: "{% trans 'Untitled case' %}",
+      startedPrefix: "{% trans 'Started' %}",
+      startTimeUnavailable: "{% trans 'Start time unavailable' %}",
+      customer: "{% trans 'Customer' %}",
+      noSummaryProvided: "{% trans 'No summary provided.' %}",
+      noAiDiagnosisYet: "{% trans 'No AI diagnosis yet.' %}",
+      noResolutionActionsCaptured: "{% trans 'No resolution actions captured.' %}",
+      noSuggestionsAvailable: "{% trans 'No suggestions available.' %}",
+      activity: "{% trans 'Activity' %}",
+      system: "{% trans 'system' %}",
+      noHistoryYet: "{% trans 'No history yet.' %}",
+      participant: "{% trans 'Participant' %}",
+      noConversationMessagesYet: "{% trans 'No conversation messages yet.' %}",
+      agent: "{% trans 'agent' %}",
+      noNotesOnCase: "{% trans 'No notes on this case.' %}",
+      document: "{% trans 'Document' %}",
+      open: "{% trans 'Open' %}",
+      noDocumentsAttached: "{% trans 'No documents attached.' %}",
+      failedToLoad: "{% trans 'Failed to load' %}",
+      unableToLoadCaseDetails: "{% trans 'Unable to load case details. Please try again.' %}"
+    };
 
     function hiddenPanelTransform() {
       return "translateX(" + (isRtl ? "-100%" : "100%") + ")";
@@ -628,15 +656,15 @@
       if (contentState) contentState.classList.toggle("hidden", state !== "content");
       if (fieldAriaTitle) {
         if (state === "empty") {
-          fieldAriaTitle.textContent = "Select a case";
+          fieldAriaTitle.textContent = STRINGS.selectCase;
         } else if (state === "loading") {
-          fieldAriaTitle.textContent = "Loading case details";
+          fieldAriaTitle.textContent = STRINGS.loadingCaseDetails;
         } else if (state === "error") {
-          fieldAriaTitle.textContent = "Case details unavailable";
+          fieldAriaTitle.textContent = STRINGS.caseDetailsUnavailable;
         }
       }
       if (state !== "content" && fieldChannel) {
-        fieldChannel.textContent = "—";
+        fieldChannel.textContent = STRINGS.dash;
       }
       if (state === "content") {
         activateTab(defaultTab);
@@ -678,10 +706,10 @@
         setPanelState("empty");
       } else {
         if (fieldChannel) {
-          fieldChannel.textContent = "—";
+          fieldChannel.textContent = STRINGS.dash;
         }
         if (fieldAriaTitle) {
-          fieldAriaTitle.textContent = "Select a case";
+          fieldAriaTitle.textContent = STRINGS.selectCase;
         }
       }
       if (!isPanelOpen && !options.force) {
@@ -714,7 +742,7 @@
 
     function formatDateTime(value) {
       if (!value) {
-        return "—";
+        return STRINGS.dash;
       }
       try {
         var date = new Date(value);
@@ -756,8 +784,8 @@
     function applyBadge(badge, value, map) {
       if (!badge) return;
       var normalized = (value || "").toString().toLowerCase();
-      var display = value ? value.replace(/_/g, " ") : "—";
-      if (display !== "—") {
+      var display = value ? value.replace(/_/g, " ") : STRINGS.dash;
+      if (display !== STRINGS.dash) {
         display = display.charAt(0).toUpperCase() + display.slice(1);
       }
       badge.textContent = display;
@@ -771,20 +799,20 @@
 
     function populatePanel(payload, rowDataset) {
       var summary = payload.case || {};
-      if (fieldNumber) fieldNumber.textContent = summary.caseNumber || rowDataset.caseNumber || "Case";
-      var resolvedTitle = summary.title || rowDataset.caseTitle || "Untitled case";
+      if (fieldNumber) fieldNumber.textContent = summary.caseNumber || rowDataset.caseNumber || STRINGS.caseLabel;
+      var resolvedTitle = summary.title || rowDataset.caseTitle || STRINGS.untitledCase;
       if (fieldTitle) fieldTitle.textContent = resolvedTitle;
       if (fieldAriaTitle) fieldAriaTitle.textContent = resolvedTitle;
       applyBadge(fieldPriority, summary.priority || rowDataset.casePriority || "unknown", priorityMap);
       applyBadge(fieldStatus, summary.status || rowDataset.caseStatus || "unknown", statusMap);
       if (fieldStarted) {
         var started = summary.startedAt || rowDataset.caseStarted;
-        fieldStarted.textContent = started ? "Started " + formatDateTime(started) : "Start time unavailable";
+        fieldStarted.textContent = started ? STRINGS.startedPrefix + " " + formatDateTime(started) : STRINGS.startTimeUnavailable;
       }
 
       if (fieldChannel) {
-        var channelDisplay = summary.channel || rowDataset.caseChannel || "—";
-        if (channelDisplay && channelDisplay !== "—") {
+        var channelDisplay = summary.channel || rowDataset.caseChannel || STRINGS.dash;
+        if (channelDisplay && channelDisplay !== STRINGS.dash) {
           channelDisplay = channelDisplay.toString().replace(/_/g, " ");
           channelDisplay = channelDisplay.charAt(0).toUpperCase() + channelDisplay.slice(1);
         }
@@ -793,15 +821,15 @@
 
       var customer = summary.customer || {};
       if (fieldCustomerInitials) {
-        var initials = customer.initials || (rowDataset.caseCustomer || "CU").slice(0, 2).toUpperCase();
+        var initials = customer.initials || (rowDataset.caseCustomer || "{% trans 'CU' %}").slice(0, 2).toUpperCase();
         fieldCustomerInitials.textContent = initials;
       }
-      if (fieldCustomerName) fieldCustomerName.textContent = customer.displayName || rowDataset.caseCustomer || "Customer";
-      if (fieldCustomerEmail) fieldCustomerEmail.textContent = customer.email || rowDataset.caseEmail || "—";
+      if (fieldCustomerName) fieldCustomerName.textContent = customer.displayName || rowDataset.caseCustomer || STRINGS.customer;
+      if (fieldCustomerEmail) fieldCustomerEmail.textContent = customer.email || rowDataset.caseEmail || STRINGS.dash;
 
-      if (fieldDescription) fieldDescription.textContent = payload.description || "No summary provided.";
-      if (fieldDiagnosis) fieldDiagnosis.textContent = payload.aiDiagnosis || "No AI diagnosis yet.";
-      if (fieldActions) fieldActions.textContent = payload.aiActionsTaken || "No resolution actions captured.";
+      if (fieldDescription) fieldDescription.textContent = payload.description || STRINGS.noSummaryProvided;
+      if (fieldDiagnosis) fieldDiagnosis.textContent = payload.aiDiagnosis || STRINGS.noAiDiagnosisYet;
+      if (fieldActions) fieldActions.textContent = payload.aiActionsTaken || STRINGS.noResolutionActionsCaptured;
 
       populateList(
         fieldSuggestions,
@@ -812,7 +840,7 @@
           li.textContent = action;
           return li;
         },
-        "No suggestions available."
+        STRINGS.noSuggestionsAvailable
       );
 
       populateList(
@@ -823,15 +851,15 @@
           li.className = "rounded-lg border border-border/60 bg-muted/40 px-3 py-2";
           var title = document.createElement("div");
           title.className = "text-sm font-medium text-foreground";
-          title.textContent = item.summary || "Activity";
+          title.textContent = item.summary || STRINGS.activity;
           var meta = document.createElement("div");
           meta.className = "mt-1 text-xs text-muted-foreground";
-          meta.textContent = (item.source || "system").replace(/_/g, " ") + " • " + formatDateTime(item.occurredAt);
+          meta.textContent = (item.source || STRINGS.system).replace(/_/g, " ") + " • " + formatDateTime(item.occurredAt);
           li.appendChild(title);
           li.appendChild(meta);
           return li;
         },
-        "No history yet."
+        STRINGS.noHistoryYet
       );
 
       populateList(
@@ -842,7 +870,7 @@
           li.className = "rounded-lg border border-border/60 bg-background/70 px-3 py-2";
           var header = document.createElement("div");
           header.className = "flex items-center justify-between text-xs text-muted-foreground";
-          header.textContent = (item.senderDisplayName || item.sender || "Participant") + " • " + formatDateTime(item.sentAt);
+          header.textContent = (item.senderDisplayName || item.sender || STRINGS.participant) + " • " + formatDateTime(item.sentAt);
           var body = document.createElement("div");
           body.className = "mt-2 text-sm text-foreground whitespace-pre-line";
           body.textContent = item.content || "";
@@ -850,7 +878,7 @@
           li.appendChild(body);
           return li;
         },
-        "No conversation messages yet."
+        STRINGS.noConversationMessagesYet
       );
 
       populateList(
@@ -861,7 +889,7 @@
           li.className = "rounded-lg border border-border/60 bg-muted/60 px-3 py-2";
           var header = document.createElement("div");
           header.className = "flex items-center justify-between text-xs text-muted-foreground";
-          header.textContent = (item.authorType || "agent").replace(/_/g, " ") + " • " + formatDateTime(item.createdAt);
+          header.textContent = (item.authorType || STRINGS.agent).replace(/_/g, " ") + " • " + formatDateTime(item.createdAt);
           var body = document.createElement("div");
           body.className = "mt-2 text-sm text-foreground whitespace-pre-line";
           body.textContent = item.content || "";
@@ -869,7 +897,7 @@
           li.appendChild(body);
           return li;
         },
-        "No notes on this case."
+        STRINGS.noNotesOnCase
       );
 
       populateList(
@@ -882,7 +910,7 @@
           left.className = "flex-1";
           var title = document.createElement("div");
           title.className = "text-sm font-medium text-foreground truncate";
-          title.textContent = item.name || "Document";
+          title.textContent = item.name || STRINGS.document;
           var meta = document.createElement("div");
           meta.className = "text-xs text-muted-foreground mt-1";
           meta.textContent = formatDateTime(item.capturedAt);
@@ -895,12 +923,12 @@
             link.href = item.documentUrl;
             link.target = "_blank";
             link.rel = "noreferrer";
-            link.textContent = "Open";
+            link.textContent = STRINGS.open;
             li.appendChild(link);
           }
           return li;
         },
-        "No documents attached."
+        STRINGS.noDocumentsAttached
       );
       activateTab(defaultTab);
     }
@@ -953,7 +981,7 @@
       })
         .then(function (response) {
           if (!response.ok) {
-            throw new Error("Failed to load");
+            throw new Error(STRINGS.failedToLoad);
           }
           return response.json();
         })
@@ -982,7 +1010,7 @@
           }
           console.error("Failed to load case detail", error);
           if (errorMessage) {
-            errorMessage.textContent = "Unable to load case details. Please try again.";
+            errorMessage.textContent = STRINGS.unableToLoadCaseDetails;
           }
           setPanelState("error");
           if (scrollRoot) {

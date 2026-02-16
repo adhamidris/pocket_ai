@@ -1,4 +1,5 @@
 {% extends "frontend/base.html" %}
+{% load i18n %}
 
 {% block title %}{{ page.title }} | Pocket AI{% endblock %}
 
@@ -10,7 +11,7 @@
         <span class="text-gradient-hero">{{ page.title }}</span>
       </h1>
       {% if page.last_updated %}
-        <p class="text-muted-foreground text-lg">Last updated: {{ page.last_updated }}</p>
+        <p class="text-muted-foreground text-lg">{% trans "Last updated:" %} {{ page.last_updated }}</p>
       {% endif %}
     </div>
   </div>
@@ -41,7 +42,7 @@
     <aside class="hidden lg:block lg:col-span-4">
       <div class="sticky top-28 space-y-4">
         <div class="bg-card border border-border rounded-2xl shadow-premium p-5">
-          <div class="text-sm uppercase tracking-wider text-muted-foreground mb-3">On this page</div>
+          <div class="text-sm uppercase tracking-wider text-muted-foreground mb-3">{% trans "On this page" %}</div>
           <ul class="space-y-2 text-sm">
             {% for section in page.sections %}
               <li>
@@ -59,4 +60,3 @@
   {% include "frontend/components/sections/mobile_app.html" with section=page.sections_mobile %}
 {% endif %}
 {% endblock %}
-*** End Patch

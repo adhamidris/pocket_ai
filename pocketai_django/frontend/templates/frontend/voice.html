@@ -1,7 +1,8 @@
 {% extends "frontend/base_app.html" %}
 {% load static %}
+{% load i18n %}
 
-{% block title %}Voice Calling | Pocket AI{% endblock %}
+{% block title %}{% trans "Voice Calling" %} | Pocket AI{% endblock %}
 
 {% block extra_head %}
 <link rel="stylesheet" href="{% static 'css/mcp-cards.css' %}">
@@ -112,9 +113,9 @@
     <div class="w-full px-4 md:px-6 lg:px-8 py-6 space-y-6">
       <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div class="space-y-1.5">
-          <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">Voice Calling Providers</h1>
+          <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">{% trans "Voice Calling Providers" %}</h1>
           <p class="text-sm text-muted-foreground">
-            Configure tenant-owned transport providers and monitor platform-managed voice services.
+            {% trans "Configure tenant-owned transport providers and monitor platform-managed voice services." %}
           </p>
         </div>
         <div class="flex flex-wrap items-center gap-2">
@@ -123,18 +124,18 @@
             class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm font-medium hover:bg-accent hover:text-accent-foreground"
             data-voice-refresh
           >
-            Refresh
+            {% trans "Refresh" %}
           </button>
         </div>
       </header>
 
       <section class="voice-how-panel">
-        <h2 class="voice-how-title">How this works</h2>
+        <h2 class="voice-how-title">{% trans "How this works" %}</h2>
         <ul class="voice-how-list">
-          <li>Each workspace stores its own encrypted transport credentials (Twilio/Telnyx).</li>
-          <li>Pick exactly one active outbound transport provider when multiple are configured.</li>
-          <li>Deepgram and ElevenLabs are managed centrally by the platform.</li>
-          <li>Use “Test” after setup to validate credentials before live calls.</li>
+          <li>{% trans "Each workspace stores its own encrypted transport credentials (Twilio/Telnyx)." %}</li>
+          <li>{% trans "Pick exactly one active outbound transport provider when multiple are configured." %}</li>
+          <li>{% trans "Deepgram and ElevenLabs are managed centrally by the platform." %}</li>
+          <li>{% trans "Use “Test” after setup to validate credentials before live calls." %}</li>
         </ul>
       </section>
 
@@ -142,7 +143,7 @@
 
       <section class="space-y-4">
         <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" data-voice-grid>
-          <div class="rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">Loading providers…</div>
+          <div class="rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">{% trans "Loading providers…" %}</div>
         </div>
       </section>
     </div>
@@ -154,10 +155,10 @@
   <div class="fixed inset-x-4 top-10 z-50 mx-auto max-w-xl rounded-xl border border-border/60 bg-card p-5 shadow-lg opacity-0 transition-opacity duration-150" role="dialog" aria-modal="true" data-voice-modal-content tabindex="-1">
     <div class="flex items-start justify-between gap-3">
       <div class="space-y-0.5">
-        <div class="text-sm font-semibold text-foreground" data-voice-modal-title>Configure provider</div>
-        <div class="text-xs text-muted-foreground" data-voice-modal-subtitle>Store encrypted tenant credentials.</div>
+        <div class="text-sm font-semibold text-foreground" data-voice-modal-title>{% trans "Configure provider" %}</div>
+        <div class="text-xs text-muted-foreground" data-voice-modal-subtitle>{% trans "Store encrypted tenant credentials." %}</div>
       </div>
-      <button type="button" class="h-8 w-8 inline-flex items-center justify-center rounded-md border border-border/60 hover:bg-accent/50" data-voice-modal-close aria-label="Close">
+      <button type="button" class="h-8 w-8 inline-flex items-center justify-center rounded-md border border-border/60 hover:bg-accent/50" data-voice-modal-close aria-label="{% trans 'Close' %}">
         <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
         </svg>
@@ -169,20 +170,20 @@
 
       <label class="inline-flex items-center gap-2 text-sm text-muted-foreground">
         <input type="checkbox" class="h-4 w-4 rounded border-border/60" data-voice-field-enabled />
-        Enable this provider for this workspace
+        {% trans "Enable this provider for this workspace" %}
       </label>
       <label class="inline-flex items-center gap-2 text-sm text-muted-foreground">
         <input type="checkbox" class="h-4 w-4 rounded border-border/60" data-voice-field-active />
-        Set as active outbound transport provider
+        {% trans "Set as active outbound transport provider" %}
       </label>
 
       <div class="rounded-lg border border-border/60 bg-muted/30 p-3 text-xs text-muted-foreground hidden" data-voice-modal-error></div>
 
       <div class="flex items-center justify-between gap-3 pt-1">
-        <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-voice-modal-cancel>Cancel</button>
+        <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-voice-modal-cancel>{% trans "Cancel" %}</button>
         <div class="flex items-center gap-2">
-          <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-voice-modal-test>Test</button>
-          <button type="button" class="inline-flex items-center gap-2 rounded-md bg-primary text-primary-foreground px-4 py-2 text-xs font-semibold hover:bg-primary/90" data-voice-modal-save>Save</button>
+          <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-voice-modal-test>{% trans "Test" %}</button>
+          <button type="button" class="inline-flex items-center gap-2 rounded-md bg-primary text-primary-foreground px-4 py-2 text-xs font-semibold hover:bg-primary/90" data-voice-modal-save>{% trans "Save" %}</button>
         </div>
       </div>
     </div>
@@ -193,6 +194,42 @@
   (function () {
     var businessId = "{{ business_id|escapejs }}";
     var state = { providers: [], current: null };
+    var I18N = {
+      requestFailed: "{% trans 'Request failed.' %}",
+      connected: "{% trans 'Connected' %}",
+      disabled: "{% trans 'Disabled' %}",
+      error: "{% trans 'Error' %}",
+      notConfigured: "{% trans 'Not Configured' %}",
+      noProvidersFound: "{% trans 'No providers found.' %}",
+      testedPrefix: "{% trans 'Tested' %}",
+      notTestedYet: "{% trans 'Not tested yet' %}",
+      tenantSetup: "{% trans 'Tenant setup' %}",
+      platformManaged: "{% trans 'Platform managed' %}",
+      activeTransport: "{% trans 'Active transport' %}",
+      setActive: "{% trans 'Set Active' %}",
+      configure: "{% trans 'Configure' %}",
+      test: "{% trans 'Test' %}",
+      disconnect: "{% trans 'Disconnect' %}",
+      managedByPlatform: "{% trans 'Managed by platform and shared across all workspaces.' %}",
+      linkBusinessProfile: "{% trans 'Link a business profile to configure voice providers.' %}",
+      loadingProviderStatus: "{% trans 'Loading voice provider status…' %}",
+      failedToLoadProviders: "{% trans 'Failed to load voice providers.' %}",
+      providerManagedNotEditable: "{% trans 'is managed by the platform and cannot be edited here.' %}",
+      thisProvider: "{% trans 'This provider' %}",
+      configurePrefix: "{% trans 'Configure' %}",
+      provider: "{% trans 'provider' %}",
+      storeEncryptedCredentials: "{% trans 'Store encrypted tenant credentials.' %}",
+      storedPrefix: "{% trans 'Stored:' %}",
+      leaveBlankToKeep: "{% trans 'Leave blank to keep existing value.' %}",
+      savedSuffix: "{% trans 'saved.' %}",
+      failedToSaveProvider: "{% trans 'Failed to save provider.' %}",
+      providerTestSucceeded: "{% trans 'Provider test succeeded.' %}",
+      providerTestFailed: "{% trans 'Provider test failed.' %}",
+      providerDisconnected: "{% trans 'Provider disconnected.' %}",
+      failedToDisconnectProvider: "{% trans 'Failed to disconnect provider.' %}",
+      activeProviderUpdated: "{% trans 'Active transport provider updated.' %}",
+      failedToSetActiveProvider: "{% trans 'Failed to set active provider.' %}",
+    };
 
     var PROVIDER_FIELDS = {
       twilio: [
@@ -239,7 +276,7 @@
             payload = {};
           }
           if (!resp.ok) {
-            var message = (payload && (payload.message || payload.error)) || "Request failed.";
+            var message = (payload && (payload.message || payload.error)) || I18N.requestFailed;
             var error = new Error(message);
             error.payload = payload;
             error.status = resp.status;
@@ -271,10 +308,10 @@
     }
 
     function statusLabel(status) {
-      if (status === "connected") return "Connected";
-      if (status === "disabled") return "Disabled";
-      if (status === "error") return "Error";
-      return "Not Configured";
+      if (status === "connected") return I18N.connected;
+      if (status === "disabled") return I18N.disabled;
+      if (status === "error") return I18N.error;
+      return I18N.notConfigured;
     }
 
     function statusClass(status) {
@@ -289,7 +326,7 @@
       if (!gridEl) return;
       var providers = state.providers || [];
       if (!providers.length) {
-        gridEl.innerHTML = '<div class="rounded-xl border border-dashed border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">No providers found.</div>';
+        gridEl.innerHTML = '<div class="rounded-xl border border-dashed border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">' + escapeHtml(I18N.noProvidersFound) + "</div>";
         return;
       }
       gridEl.innerHTML = providers.map(function (item) {
@@ -297,22 +334,22 @@
         var hasCreds = !!item.hasCredentials;
         var editable = item.editable !== false;
         var lastError = String(item.lastError || "");
-        var tested = item.lastTestedAt ? ("Tested " + new Date(item.lastTestedAt).toLocaleString()) : "Not tested yet";
-        var modeLabel = editable ? "Tenant setup" : "Platform managed";
-        var activeTag = item.isActiveTransport ? '<span class="mcp-tag">Active transport</span>' : "";
+        var tested = item.lastTestedAt ? (I18N.testedPrefix + " " + new Date(item.lastTestedAt).toLocaleString()) : I18N.notTestedYet;
+        var modeLabel = editable ? I18N.tenantSetup : I18N.platformManaged;
+        var activeTag = item.isActiveTransport ? ('<span class="mcp-tag">' + escapeHtml(I18N.activeTransport) + "</span>") : "";
         var modeTag = '<span class="mcp-tag">' + escapeHtml(modeLabel) + "</span>";
         var tagsHtml = '<div class="voice-provider-meta-tags">' + activeTag + modeTag + "</div>";
         var canSetActive = editable && hasCreds && status !== "not_configured" && !item.isActiveTransport;
         var actionsHtml = editable
           ? (
               '<div class="voice-provider-buttons">' +
-              (canSetActive ? ('  <button class="mcp-btn mcp-btn-outline voice-provider-btn" type="button" data-voice-set-active="' + escapeHtml(item.provider) + '">Set Active</button>') : "") +
-              '  <button class="mcp-btn mcp-btn-outline voice-provider-btn" type="button" data-voice-open="' + escapeHtml(item.provider) + '">Configure</button>' +
-              '  <button class="mcp-btn mcp-btn-outline voice-provider-btn" type="button" data-voice-test="' + escapeHtml(item.provider) + '"' + (hasCreds ? "" : " disabled") + '">Test</button>' +
-              '  <button class="mcp-btn mcp-btn-outline voice-provider-btn" type="button" data-voice-disconnect="' + escapeHtml(item.provider) + '"' + (hasCreds ? "" : " disabled") + '">Disconnect</button>' +
+              (canSetActive ? ('  <button class="mcp-btn mcp-btn-outline voice-provider-btn" type="button" data-voice-set-active="' + escapeHtml(item.provider) + '">' + escapeHtml(I18N.setActive) + "</button>") : "") +
+              '  <button class="mcp-btn mcp-btn-outline voice-provider-btn" type="button" data-voice-open="' + escapeHtml(item.provider) + '">' + escapeHtml(I18N.configure) + "</button>" +
+              '  <button class="mcp-btn mcp-btn-outline voice-provider-btn" type="button" data-voice-test="' + escapeHtml(item.provider) + '"' + (hasCreds ? "" : " disabled") + ">" + escapeHtml(I18N.test) + "</button>" +
+              '  <button class="mcp-btn mcp-btn-outline voice-provider-btn" type="button" data-voice-disconnect="' + escapeHtml(item.provider) + '"' + (hasCreds ? "" : " disabled") + ">" + escapeHtml(I18N.disconnect) + "</button>" +
               "</div>"
             )
-          : '<div class="voice-provider-managed-note">Managed by platform and shared across all workspaces.</div>';
+          : ('<div class="voice-provider-managed-note">' + escapeHtml(I18N.managedByPlatform) + "</div>");
         return '' +
           '<article class="mcp-card">' +
           '  <div class="mcp-card-header">' +
@@ -337,10 +374,10 @@
 
     function loadProviders() {
       if (!businessId) {
-        setFlash("Link a business profile to configure voice providers.", "error");
+        setFlash(I18N.linkBusinessProfile, "error");
         return Promise.resolve();
       }
-      setFlash("Loading voice provider status…", "info");
+      setFlash(I18N.loadingProviderStatus, "info");
       return apiFetch("/api/voice/providers/?business_id=" + encodeURIComponent(businessId), { method: "GET" })
         .then(function (payload) {
           state.providers = payload.providers || [];
@@ -349,7 +386,7 @@
         })
         .catch(function (error) {
           console.error(error);
-          setFlash(error.message || "Failed to load voice providers.", "error");
+          setFlash(error.message || I18N.failedToLoadProviders, "error");
         });
     }
 
@@ -388,15 +425,15 @@
       var provider = currentProvider(providerKey);
       if (!provider) return;
       if (provider.editable === false) {
-        setFlash((provider.label || "This provider") + " is managed by the platform and cannot be edited here.", "info");
+        setFlash((provider.label || I18N.thisProvider) + " " + I18N.providerManagedNotEditable, "info");
         return;
       }
       state.current = provider;
       var els = modalEls();
       if (!els.root || !els.content || !els.fields) return;
 
-      els.title.textContent = "Configure " + (provider.label || provider.provider || "provider");
-      els.subtitle.textContent = provider.description || "Store encrypted tenant credentials.";
+      els.title.textContent = I18N.configurePrefix + " " + (provider.label || provider.provider || I18N.provider);
+      els.subtitle.textContent = provider.description || I18N.storeEncryptedCredentials;
       els.enabled.checked = !!provider.enabled;
       if (els.active) els.active.checked = !!provider.isActiveTransport;
       setModalError("");
@@ -413,9 +450,9 @@
         }
         var helper = "";
         if (field.secret && secretHints[field.key]) {
-          helper = '<div class="text-[11px] text-muted-foreground mt-1">Stored: ' + escapeHtml(secretHints[field.key]) + "</div>";
+          helper = '<div class="text-[11px] text-muted-foreground mt-1">' + escapeHtml(I18N.storedPrefix) + " " + escapeHtml(secretHints[field.key]) + "</div>";
         } else if (field.secret) {
-          helper = '<div class="text-[11px] text-muted-foreground mt-1">Leave blank to keep existing value.</div>';
+          helper = '<div class="text-[11px] text-muted-foreground mt-1">' + escapeHtml(I18N.leaveBlankToKeep) + "</div>";
         }
         var inputType = field.type || "text";
         return '' +
@@ -481,11 +518,11 @@
           credentials: credentials
         })
       }).then(function () {
-        setFlash((state.current.label || provider) + " saved.", "success");
+        setFlash((state.current.label || provider) + " " + I18N.savedSuffix, "success");
         closeModal();
         return loadProviders();
       }).catch(function (error) {
-        setModalError(error.message || "Failed to save provider.");
+        setModalError(error.message || I18N.failedToSaveProvider);
       });
     }
 
@@ -495,10 +532,10 @@
         method: "POST",
         body: JSON.stringify({ businessId: businessId })
       }).then(function (payload) {
-        setFlash(payload.message || "Provider test succeeded.", "success");
+        setFlash(payload.message || I18N.providerTestSucceeded, "success");
         return loadProviders();
       }).catch(function (error) {
-        setFlash(error.message || "Provider test failed.", "error");
+        setFlash(error.message || I18N.providerTestFailed, "error");
         return loadProviders();
       });
     }
@@ -509,10 +546,10 @@
         method: "DELETE",
         body: JSON.stringify({ businessId: businessId })
       }).then(function () {
-        setFlash("Provider disconnected.", "success");
+        setFlash(I18N.providerDisconnected, "success");
         return loadProviders();
       }).catch(function (error) {
-        setFlash(error.message || "Failed to disconnect provider.", "error");
+        setFlash(error.message || I18N.failedToDisconnectProvider, "error");
       });
     }
 
@@ -526,10 +563,10 @@
           setAsActive: true
         })
       }).then(function () {
-        setFlash("Active transport provider updated.", "success");
+        setFlash(I18N.activeProviderUpdated, "success");
         return loadProviders();
       }).catch(function (error) {
-        setFlash(error.message || "Failed to set active provider.", "error");
+        setFlash(error.message || I18N.failedToSetActiveProvider, "error");
       });
     }
 

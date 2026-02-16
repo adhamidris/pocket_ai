@@ -571,3 +571,909 @@ msgstr "تمت إضافة \"%(name)s\" إلى قاعدة معرفتك."
 #, python-format
 msgid "%(count)s files added to your knowledge base."
 msgstr "تمت إضافة %(count)s ملفات إلى قاعدة معرفتك."
+
+msgid "PocketAI OAuth"
+msgstr "تفويض PocketAI"
+
+msgid "You can close this window."
+msgstr "يمكنك إغلاق هذه النافذة."
+
+msgid "Welcome back"
+msgstr "أهلًا بعودتك"
+
+msgid "Sign in to continue orchestrating your AI customer experience."
+msgstr "سجّل الدخول لمواصلة إدارة تجربة العملاء بالذكاء الاصطناعي."
+
+msgid "Email address"
+msgstr "عنوان البريد الإلكتروني"
+
+msgid "Need to create an account?"
+msgstr "هل تحتاج إلى إنشاء حساب؟"
+
+msgid "Start your onboarding"
+msgstr "ابدأ الإعداد"
+
+msgid "Last updated:"
+msgstr "آخر تحديث:"
+
+msgid "On this page"
+msgstr "في هذه الصفحة"
+
+msgid "New Customer"
+msgstr "عميل جديد"
+
+msgid "Import customers"
+msgstr "استيراد العملاء"
+
+msgid "Manage your customer relationships, activity, and notes in one hub."
+msgstr "أدر علاقات العملاء والنشاط والملاحظات في مركز واحد."
+
+msgid "Metrics will surface once customer activity starts flowing in."
+msgstr "ستظهر المقاييس عند بدء تدفق نشاط العملاء."
+
+msgid "Conversations"
+msgstr "المحادثات"
+
+msgid "Satisfaction"
+msgstr "الرضا"
+
+msgid "Close customer details"
+msgstr "إغلاق تفاصيل العميل"
+
+msgid "Nothing to show yet."
+msgstr "لا يوجد ما يمكن عرضه بعد."
+
+msgid "No recent contact"
+msgstr "لا يوجد تواصل حديث"
+
+msgid "Overview"
+msgstr "نظرة عامة"
+
+msgid "Total cases"
+msgstr "إجمالي الحالات"
+
+msgid "First seen"
+msgstr "أول ظهور"
+
+msgid "Primary contact"
+msgstr "جهة الاتصال الأساسية"
+
+msgid "Additional contacts"
+msgstr "جهات اتصال إضافية"
+
+msgid "Tags"
+msgstr "الوسوم"
+
+msgid "No extra contact methods."
+msgstr "لا توجد وسائل تواصل إضافية."
+
+msgid "No tags assigned."
+msgstr "لا توجد وسوم."
+
+msgid "Resolved cases"
+msgstr "الحالات المحلولة"
+
+msgid "No closed cases."
+msgstr "لا توجد حالات مغلقة."
+
+msgid "No notes yet."
+msgstr "لا توجد ملاحظات بعد."
+
+msgid "No description."
+msgstr "لا يوجد وصف."
+
+msgid "Failed to load customer"
+msgstr "تعذر تحميل العميل"
+
+msgid "Monitor pipeline momentum, accelerate hot opportunities, and keep SLAs on track."
+msgstr "راقب زخم المسار وسرّع الفرص الساخنة وحافظ على الالتزام باتفاقيات مستوى الخدمة."
+
+msgid "New Lead"
+msgstr "عميل محتمل جديد"
+
+msgid "Lead"
+msgstr "عميل محتمل"
+
+msgid "Stage"
+msgstr "المرحلة"
+
+msgid "Owner"
+msgstr "المالك"
+
+msgid "Source"
+msgstr "المصدر"
+
+msgid "Last touch"
+msgstr "آخر تواصل"
+
+msgid "Score"
+msgstr "التقييم"
+
+msgid "No tags"
+msgstr "لا توجد وسوم"
+
+msgid "View details"
+msgstr "عرض التفاصيل"
+
+msgid "Pipeline breakdown"
+msgstr "تفصيل مسار المبيعات"
+
+msgid "Sync CRM stages to visualise full pipeline metrics and conversion rates."
+msgstr "زامن مراحل إدارة علاقات العملاء لعرض مقاييس المسار ومعدلات التحويل بالكامل."
+
+msgid "Triage customer issues, track escalations, and keep resolution moving."
+msgstr "فرز مشكلات العملاء وتتبع التصعيدات ومواصلة مسار الحل."
+
+msgid "New Case"
+msgstr "حالة جديدة"
+
+msgid "Import Cases"
+msgstr "استيراد الحالات"
+
+msgid "Urgent cases"
+msgstr "الحالات العاجلة"
+
+msgid "Avg. time open"
+msgstr "متوسط زمن الفتح"
+
+msgid "Search cases"
+msgstr "البحث في الحالات"
+
+msgid "All Cases"
+msgstr "كل الحالات"
+
+msgid "All types"
+msgstr "كل الأنواع"
+
+msgid "All time"
+msgstr "كل الفترات"
+
+msgid "Columns"
+msgstr "الأعمدة"
+
+msgid "Case ID"
+msgstr "معرّف الحالة"
+
+msgid "Priority"
+msgstr "الأولوية"
+
+msgid "Type"
+msgstr "النوع"
+
+msgid "Case Title"
+msgstr "عنوان الحالة"
+
+msgid "Description"
+msgstr "الوصف"
+
+msgid "Channel"
+msgstr "القناة"
+
+msgid "Started"
+msgstr "بدأت"
+
+msgid "Transcript"
+msgstr "التفريغ"
+
+msgid "View transcript"
+msgstr "عرض التفريغ"
+
+msgid "Select a case"
+msgstr "اختر حالة"
+
+msgid "Close case details"
+msgstr "إغلاق تفاصيل الحالة"
+
+msgid "Actions taken"
+msgstr "الإجراءات المتخذة"
+
+msgid "Suggested next steps"
+msgstr "الخطوات التالية المقترحة"
+
+msgid "Case details unavailable"
+msgstr "تفاصيل الحالة غير متاحة"
+
+msgid "Loading case details"
+msgstr "جارٍ تحميل تفاصيل الحالة"
+
+msgid "No summary provided."
+msgstr "لا يوجد ملخص."
+
+msgid "No AI diagnosis yet."
+msgstr "لا يوجد تشخيص بالذكاء الاصطناعي بعد."
+
+msgid "No resolution actions captured."
+msgstr "لم يتم تسجيل إجراءات الحل."
+
+msgid "No suggestions available."
+msgstr "لا توجد اقتراحات متاحة."
+
+msgid "No history yet."
+msgstr "لا يوجد سجل بعد."
+
+msgid "Participant"
+msgstr "مشارك"
+
+msgid "No conversation messages yet."
+msgstr "لا توجد رسائل محادثة بعد."
+
+msgid "No notes on this case."
+msgstr "لا توجد ملاحظات على هذه الحالة."
+
+msgid "No documents attached."
+msgstr "لا توجد مستندات مرفقة."
+
+msgid "Back to cases"
+msgstr "العودة إلى الحالات."
+
+msgid "Conversation transcript"
+msgstr "تفريغ المحادثة"
+
+msgid "This case has not been linked to a conversation yet."
+msgstr "لم يتم ربط هذه الحالة بمحادثة بعد."
+
+msgid "Sources"
+msgstr "المصادر"
+
+msgid "Case summary"
+msgstr "ملخص الحالة"
+
+msgid "Lifecycle & assignment details"
+msgstr "تفاصيل دورة الحياة والإسناد."
+
+msgid "Opened"
+msgstr "مفتوحة"
+
+msgid "Closed"
+msgstr "مغلقة"
+
+msgid "No follow-up actions captured."
+msgstr "لم يتم تسجيل أي إجراءات متابعة."
+
+msgid "No data extractions captured."
+msgstr "لا توجد بيانات مستخرجة مسجلة."
+
+msgid "Create, configure, and monitor conversational agents for every channel."
+msgstr "أنشئ واضبط وراقب وكلاء المحادثة لكل قناة."
+
+msgid "Create agent"
+msgstr "إنشاء وكيل"
+
+msgid "Metrics will surface once you start deploying agents."
+msgstr "ستظهر المقاييس عند بدء نشر الوكلاء."
+
+msgid "Search agents..."
+msgstr "ابحث عن الوكلاء..."
+
+msgid "Upload documents, connect integrations, and organize collections for retrieval."
+msgstr "ارفع المستندات واربط التكاملات ونظّم المجموعات للاسترجاع."
+
+msgid "Visualizer"
+msgstr "العارض"
+
+msgid "Dump JSON"
+msgstr "تفريغ JSON"
+
+msgid "Connect Google Drive"
+msgstr "ربط Google Drive"
+
+msgid "Documents"
+msgstr "المستندات"
+
+msgid "Collections"
+msgstr "المجموعات"
+
+msgid "Data Guardrails"
+msgstr "ضوابط البيانات"
+
+msgid "Actions"
+msgstr "الإجراءات"
+
+msgid "Sort by activity"
+msgstr "ترتيب حسب النشاط"
+
+msgid "New collection"
+msgstr "مجموعة جديدة"
+
+msgid "Add content"
+msgstr "إضافة محتوى"
+
+msgid "Drop files here or upload to add knowledge"
+msgstr "أسقط الملفات هنا أو ارفعها لإضافة المعرفة."
+
+msgid "Supports PDF, DOCX, CSV, XLSX, and TXT. We auto-detect format."
+msgstr "يدعم PDF وDOCX وCSV وXLSX وTXT. نكتشف التنسيق تلقائيًا."
+
+msgid "Paste text"
+msgstr "لصق نص"
+
+msgid "Add link"
+msgstr "إضافة رابط"
+
+msgid "Upload files"
+msgstr "رفع ملفات"
+
+msgid "Uploading…"
+msgstr "جارٍ الرفع…"
+
+msgid "Rename"
+msgstr "إعادة تسمية"
+
+msgid "Update title"
+msgstr "تحديث العنوان"
+
+msgid "Title (optional)"
+msgstr "العنوان (اختياري)"
+
+msgid "External link"
+msgstr "رابط خارجي"
+
+msgid "Save to knowledge"
+msgstr "حفظ في المعرفة"
+
+msgid "Document library"
+msgstr "مكتبة المستندات"
+
+msgid "Knowledge Visualizer"
+msgstr "عارض المعرفة"
+
+msgid "Back to Knowledge"
+msgstr "العودة إلى المعرفة"
+
+msgid "Document selector"
+msgstr "محدد المستند"
+
+msgid "Choose an upload to inspect its ingestion output."
+msgstr "اختر عملية رفع لفحص مخرجات المعالجة."
+
+msgid "total"
+msgstr "الإجمالي"
+
+msgid "Select a document…"
+msgstr "اختر مستندًا…"
+
+msgid "Prev"
+msgstr "السابق"
+
+msgid "Select a document to see its ingested output."
+msgstr "اختر مستندًا لرؤية مخرجات معالجته."
+
+msgid "Pipeline"
+msgstr "مسار المعالجة"
+
+msgid "Connect first-party native integrations. Your credentials are encrypted and never shared."
+msgstr "اربط التكاملات الأصلية المباشرة. بيانات اعتمادك مشفرة ولا تتم مشاركتها."
+
+msgid "Loading connected integrations..."
+msgstr "جارٍ تحميل التكاملات المتصلة..."
+
+msgid "Available"
+msgstr "المتاحة"
+
+msgid "Loading available integrations..."
+msgstr "جارٍ تحميل التكاملات المتاحة..."
+
+msgid "Looking for third-party MCP connectors?"
+msgstr "هل تبحث عن موصلات MCP لطرف ثالث؟"
+
+msgid "MCP Connector page"
+msgstr "صفحة موصل MCP"
+
+msgid "Manage integration tools"
+msgstr "إدارة أدوات التكامل"
+
+msgid "Manage Tools"
+msgstr "إدارة الأدوات"
+
+msgid "Loading tools..."
+msgstr "جارٍ تحميل الأدوات..."
+
+msgid "Enable All"
+msgstr "تفعيل الكل"
+
+msgid "Read Only"
+msgstr "قراءة فقط"
+
+msgid "Save Changes"
+msgstr "حفظ التغييرات"
+
+msgid "Refreshing"
+msgstr "جارٍ التحديث"
+
+msgid "Updated just now"
+msgstr "تم التحديث الآن"
+
+msgid "Refresh failed"
+msgstr "فشل التحديث"
+
+msgid "Failed to load integrations:"
+msgstr "تعذر تحميل التكاملات:"
+
+msgid "Tool management is not available for this integration."
+msgstr "إدارة الأدوات غير متاحة لهذا التكامل."
+
+msgid "Disconnect this integration?"
+msgstr "هل تريد فصل هذا التكامل؟"
+
+msgid "Integration disconnected successfully."
+msgstr "تم فصل التكامل بنجاح."
+
+msgid "Disconnect failed:"
+msgstr "فشل الفصل:"
+
+msgid "Unknown error"
+msgstr "خطأ غير معروف"
+
+msgid "No tools available for this integration."
+msgstr "لا توجد أدوات متاحة لهذا التكامل."
+
+msgid "Review tools exposed to the LLM and set approval behavior for connected integrations."
+msgstr "راجع الأدوات المكشوفة لنموذج اللغة واضبط سلوك الموافقة للتكاملات المتصلة."
+
+msgid "LLM Tool Exposure"
+msgstr "إتاحة أدوات نموذج اللغة"
+
+msgid "Loading controls…"
+msgstr "جارٍ تحميل عناصر التحكم…"
+
+msgid "No tools match this filter."
+msgstr "لا توجد أدوات تطابق هذا الفلتر."
+
+msgid "Always confirm"
+msgstr "يتطلب موافقة دائمًا"
+
+msgid "Unsaved change"
+msgstr "تغيير غير محفوظ"
+
+msgid "Failed to load controls."
+msgstr "تعذر تحميل عناصر التحكم."
+
+msgid "Tool controls updated."
+msgstr "تم تحديث عناصر التحكم الخاصة بالأدوات."
+
+msgid "Failed to save controls."
+msgstr "فشل حفظ عناصر التحكم."
+
+msgid "MCP Connector (BETA)"
+msgstr "موصل MCP (تجريبي)"
+
+msgid "Connect MCP servers, toggle them on/off, and control which agents can use them."
+msgstr "اربط خوادم MCP وشغّلها أو أوقفها وتحكم في الوكلاء الذين يمكنهم استخدامها."
+
+msgid "Browse marketplace"
+msgstr "تصفح السوق"
+
+msgid "Add MCP server"
+msgstr "إضافة خادم MCP"
+
+msgid "Industry Tools"
+msgstr "أدوات المجال"
+
+msgid "All MCPs"
+msgstr "كل موصلات MCP"
+
+msgid "Recommended for"
+msgstr "موصى به لـ"
+
+msgid "your industry"
+msgstr "مجالك"
+
+msgid "Tools commonly used by businesses in your industry. Click to add."
+msgstr "أدوات شائعة الاستخدام لدى الشركات في مجالك. انقر للإضافة."
+
+msgid "Common Tools"
+msgstr "أدوات شائعة"
+
+msgid "Universal tools used across all industries."
+msgstr "أدوات عامة مستخدمة عبر جميع المجالات."
+
+msgid "All Available MCPs"
+msgstr "كل موصلات MCP المتاحة"
+
+msgid "Browse all MCP integrations. Filter by category or search."
+msgstr "تصفح كل تكاملات MCP. صفِّ حسب الفئة أو ابحث."
+
+msgid "Search MCPs..."
+msgstr "ابحث في موصلات MCP..."
+
+msgid "Your Connected MCPs"
+msgstr "موصلات MCP المتصلة لديك"
+
+msgid "Enable/disable connections, test connectivity, and manage agent opt-outs."
+msgstr "فعّل أو عطّل الاتصالات واختبر الاتصال وأدر استثناءات الوكلاء."
+
+msgid "Loading MCP connections…"
+msgstr "جارٍ تحميل اتصالات MCP…"
+
+msgid "SSE/HTTP remote MCP servers only."
+msgstr "خوادم MCP بعيدة عبر SSE/HTTP فقط."
+
+msgid "Auth"
+msgstr "المصادقة"
+
+msgid "No auth"
+msgstr "بدون مصادقة"
+
+msgid "Custom header"
+msgstr "ترويسة مخصصة"
+
+msgid "Tool Approval"
+msgstr "موافقة الأداة"
+
+msgid "Auto-approve all"
+msgstr "موافقة تلقائية على الكل"
+
+msgid "Approve writes only"
+msgstr "الموافقة على الكتابة فقط"
+
+msgid "Approve all operations"
+msgstr "الموافقة على كل العمليات"
+
+msgid "Enabled"
+msgstr "مفعّل"
+
+msgid "Header name"
+msgstr "اسم الترويسة"
+
+msgid "Header value"
+msgstr "قيمة الترويسة"
+
+msgid "Test connection"
+msgstr "اختبار الاتصال"
+
+msgid "Agent access"
+msgstr "وصول الوكيل"
+
+msgid "Opt out specific agents while keeping others enabled."
+msgstr "استبعد وكلاء محددين مع إبقاء الآخرين مفعّلين."
+
+msgid "Done"
+msgstr "تم"
+
+msgid "Tool approvals"
+msgstr "موافقات الأدوات"
+
+msgid "Set per-tool approvals and operation type for this MCP connection."
+msgstr "اضبط الموافقة لكل أداة ونوع العملية لهذا اتصال MCP."
+
+msgid "Voice Calling Providers"
+msgstr "مزودو المكالمات الصوتية"
+
+msgid "Configure tenant-owned transport providers and monitor platform-managed voice services."
+msgstr "اضبط مزودي النقل المملوكين للعميل وراقب خدمات الصوت المُدارة من المنصة."
+
+msgid "How this works"
+msgstr "آلية العمل"
+
+msgid "Each workspace stores its own encrypted transport credentials (Twilio/Telnyx)."
+msgstr "كل مساحة عمل تخزن بيانات اعتماد النقل المشفرة الخاصة بها (Twilio/Telnyx)."
+
+msgid "Pick exactly one active outbound transport provider when multiple are configured."
+msgstr "اختر مزود نقل صادر نشط واحد فقط عند إعداد أكثر من مزود."
+
+msgid "Deepgram and ElevenLabs are managed centrally by the platform."
+msgstr "يتم إدارة Deepgram وElevenLabs مركزيًا من المنصة."
+
+msgid "Use “Test” after setup to validate credentials before live calls."
+msgstr "استخدم زر الاختبار بعد الإعداد للتحقق من بيانات الاعتماد قبل المكالمات الحية."
+
+msgid "Loading providers…"
+msgstr "جارٍ تحميل المزوّدين…"
+
+msgid "Configure provider"
+msgstr "تهيئة المزوّد"
+
+msgid "Store encrypted tenant credentials."
+msgstr "احفظ بيانات اعتماد العميل المشفرة."
+
+msgid "Enable this provider for this workspace"
+msgstr "تفعيل هذا المزوّد لهذه المساحة."
+
+msgid "Set as active outbound transport provider"
+msgstr "تعيين كمزوّد نقل صادر نشط."
+
+msgid "AI Powered"
+msgstr "مدعوم بالذكاء الاصطناعي"
+
+msgid "Customer Service"
+msgstr "خدمة العملاء"
+
+msgid "Start Free Trial"
+msgstr "ابدأ التجربة المجانية"
+
+msgid "Watch Demo"
+msgstr "شاهد العرض التوضيحي"
+
+msgid "Faster Response"
+msgstr "استجابة أسرع"
+
+msgid "Happy Customers"
+msgstr "عملاء سعداء"
+
+msgid "Online"
+msgstr "متصل"
+
+msgid "This is a demo - try the real widget below! →"
+msgstr "هذا عرض توضيحي - جرّب الأداة الحقيقية بالأسفل! →"
+
+msgid "Everything You Need for"
+msgstr "كل ما تحتاجه من أجل"
+
+msgid "Perfect Support"
+msgstr "دعم مثالي"
+
+msgid "Customers who"
+msgstr "عملاء"
+
+msgid "build differently"
+msgstr "يبنون بشكل مختلف"
+
+msgid "Trusted by"
+msgstr "موثوق من قبل"
+
+msgid "Flexible pricing"
+msgstr "تسعير مرن"
+
+msgid "Choose what fits "
+msgstr "اختر ما يناسب"
+
+msgid "your motion"
+msgstr "وتيرتك"
+
+msgid "Wage based"
+msgstr "بنظام الرصيد المسبق"
+
+msgid "Packages"
+msgstr "الباقات"
+
+msgid "One-time setup (self-hosted)"
+msgstr "إعداد لمرة واحدة (استضافة ذاتية)"
+
+msgid "Frequently asked"
+msgstr "الأسئلة"
+
+msgid "questions"
+msgstr "الشائعة"
+
+msgid "Create your"
+msgstr "أنشئ"
+
+msgid "Your clients, served better."
+msgstr "خدمة أفضل لعملائك."
+
+msgid "OR"
+msgstr "أو"
+
+msgid "Continue with Google"
+msgstr "المتابعة عبر Google"
+
+msgid "Create Account"
+msgstr "إنشاء حساب"
+
+msgid "Creating..."
+msgstr "جارٍ الإنشاء..."
+
+msgid "First name"
+msgstr "الاسم الأول"
+
+msgid "First name is required"
+msgstr "الاسم الأول مطلوب."
+
+msgid "Please enter a valid email"
+msgstr "يرجى إدخال بريد إلكتروني صالح."
+
+msgid "Password must be at least 8 characters"
+msgstr "يجب أن تكون كلمة المرور 8 أحرف على الأقل."
+
+msgid "Confirm password"
+msgstr "تأكيد كلمة المرور"
+
+msgid "Passwords do not match"
+msgstr "كلمتا المرور غير متطابقتين."
+
+msgid "Already have an account?"
+msgstr "لديك حساب بالفعل؟"
+
+msgid "Log in"
+msgstr "تسجيل الدخول"
+
+msgid "Business Profile"
+msgstr "الملف التجاري"
+
+msgid "Step 2 · Business profile"
+msgstr "الخطوة 2 · الملف التجاري"
+
+msgid "Help us understand your business"
+msgstr "ساعدنا على فهم نشاطك."
+
+msgid "Business name"
+msgstr "اسم النشاط التجاري"
+
+msgid "Business name is required"
+msgstr "اسم النشاط التجاري مطلوب."
+
+msgid "Website"
+msgstr "الموقع الإلكتروني"
+
+msgid "(optional)"
+msgstr "(اختياري)"
+
+msgid "Back"
+msgstr "رجوع"
+
+msgid "Next"
+msgstr "التالي"
+
+msgid "Saving..."
+msgstr "جارٍ الحفظ..."
+
+msgid "Add"
+msgstr "إضافة"
+
+msgid "Agent"
+msgstr "الوكيل"
+
+msgid "Set up your agent basics"
+msgstr "إعداد أساسيات الوكيل."
+
+msgid "Agent name"
+msgstr "اسم الوكيل"
+
+msgid "Please enter an agent name"
+msgstr "يرجى إدخال اسم للوكيل."
+
+msgid "Role"
+msgstr "الدور"
+
+msgid "Select a role"
+msgstr "اختر دورًا"
+
+msgid "Please select a role"
+msgstr "يرجى اختيار دور."
+
+msgid "Tone"
+msgstr "النبرة"
+
+msgid "Select tone"
+msgstr "اختر النبرة"
+
+msgid "Please choose a tone"
+msgstr "يرجى اختيار نبرة."
+
+msgid "Traits"
+msgstr "السمات"
+
+msgid "Pick as many as you like"
+msgstr "اختر ما تشاء من السمات."
+
+msgid "Escalation rule"
+msgstr "قاعدة التصعيد"
+
+msgid "Choose escalation rule"
+msgstr "اختر قاعدة التصعيد."
+
+msgid "Please choose when to escalate"
+msgstr "يرجى اختيار وقت التصعيد."
+
+msgid "Uploads"
+msgstr "عمليات الرفع"
+
+msgid "Select at least one material above to start adding links."
+msgstr "اختر مصدرًا واحدًا على الأقل أعلاه لبدء إضافة الروابط."
+
+msgid "Attach"
+msgstr "إرفاق"
+
+msgid "added"
+msgstr "تمت إضافته"
+
+msgid "Select at least one material to continue"
+msgstr "اختر مصدرًا واحدًا على الأقل للمتابعة."
+
+msgid "Add at least one link for each selected source"
+msgstr "أضف رابطًا واحدًا على الأقل لكل مصدر محدد."
+
+msgid "Upload later"
+msgstr "الرفع لاحقًا"
+
+msgid "Finish"
+msgstr "إنهاء"
+
+msgid "Finishing…"
+msgstr "جارٍ الإنهاء…"
+
+msgid "Customer Support Agent"
+msgstr "وكيل دعم العملاء"
+
+msgid "Support Specialist"
+msgstr "أخصائي دعم"
+
+msgid "Customer Success Representative"
+msgstr "ممثل نجاح العملاء"
+
+msgid "Sales Support Agent"
+msgstr "وكيل دعم المبيعات"
+
+msgid "Front Desk Representative"
+msgstr "ممثل الاستقبال"
+
+msgid "Account Manager"
+msgstr "مدير حساب"
+
+msgid "Helpdesk Agent"
+msgstr "وكيل مكتب المساعدة"
+
+msgid "Friendly"
+msgstr "ودود"
+
+msgid "Professional"
+msgstr "مهني"
+
+msgid "Casual"
+msgstr "غير رسمي"
+
+msgid "Formal"
+msgstr "رسمي"
+
+msgid "Empathetic"
+msgstr "متعاطف"
+
+msgid "Playful"
+msgstr "مرح"
+
+msgid "Concise"
+msgstr "موجز"
+
+msgid "Detailed"
+msgstr "مفصل"
+
+msgid "Curious"
+msgstr "فضولي"
+
+msgid "Patient"
+msgstr "صبور"
+
+msgid "Proactive"
+msgstr "استباقي"
+
+msgid "Direct"
+msgstr "مباشر"
+
+msgid "Creative"
+msgstr "مبدع"
+
+msgid "Never"
+msgstr "أبدًا"
+
+msgid "On fallback"
+msgstr "عند الرجوع الاحتياطي"
+
+msgid "On negative sentiment"
+msgstr "عند المشاعر السلبية"
+
+msgid "On high value"
+msgstr "عند القيمة العالية"
+
+msgid "Always"
+msgstr "دائمًا"
+
+msgid "Vision"
+msgstr "الرؤية"
+
+msgid "Mission"
+msgstr "الرسالة"
+
+msgid "FAQs"
+msgstr "الأسئلة الشائعة"
+
+msgid "Knowledge Base"
+msgstr "قاعدة المعرفة"
+
+msgid "SOPs"
+msgstr "إجراءات التشغيل القياسية"
+
+msgid "T&C"
+msgstr "الشروط والأحكام"
+
+msgid "Products & Services"
+msgstr "المنتجات والخدمات"

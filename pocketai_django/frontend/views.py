@@ -432,29 +432,32 @@ def _format_diagnostics(data: dict[str, Any] | None) -> list[dict[str, str]]:
 def landing(request: HttpRequest) -> HttpResponse:
     """Render landing page with server-authored copy."""
     hero = {
-        "title_prefix": "AI Powered",
-        "title_highlight": "Customer Service",
-        "subtitle": "Deliver instant, intelligent support 24/7 with our AI-powered platform. Reduce response times by 90% and delight your customers.",
-        "primary_cta": {"label": "Start Free Trial", "href": "/register"},
-        "secondary_cta": {"label": "Watch Demo", "href": "#demo"},
+        "title_prefix": _("AI Powered"),
+        "title_highlight": _("Customer Service"),
+        "subtitle": _(
+            "Deliver instant, intelligent support 24/7 with our AI-powered platform. "
+            "Reduce response times by 90% and delight your customers."
+        ),
+        "primary_cta": {"label": _("Start Free Trial"), "href": "/register"},
+        "secondary_cta": {"label": _("Watch Demo"), "href": "#demo"},
         "stats": [
             {
                 "id": "faster-response",
-                "label": "Faster Response",
+                "label": _("Faster Response"),
                 "target": 90,
                 "suffix": "%",
                 "format": "integer",
             },
             {
                 "id": "ai-support",
-                "label": "AI Support",
+                "label": _("AI Support"),
                 "target": 24,
                 "suffix": "/7",
                 "format": "hours",
             },
             {
                 "id": "happy-customers",
-                "label": "Happy Customers",
+                "label": _("Happy Customers"),
                 "target": 10_000,
                 "suffix": "",
                 "format": "thousands-plus",
@@ -463,23 +466,23 @@ def landing(request: HttpRequest) -> HttpResponse:
         "store_links": [
             {
                 "id": "google-play",
-                "label_top": "GET IT ON",
-                "label_bottom": "Google Play",
+                "label_top": _("GET IT ON"),
+                "label_bottom": _("Google Play"),
                 "href": "#play",
                 "icon": """<svg width="30" height="30" viewBox="0 0 512 512" aria-hidden="true"><defs><linearGradient id="hero-google-play" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#34a853"/><stop offset="100%" stop-color="#4285f4"/></linearGradient></defs><path fill="currentColor" d="M325.3 234.3 90.7 28.6C79 19 64 24.7 64 39.3v433.4c0 14.7 15 20.3 26.7 10.7l234.6-205.7c9.3-8.1 9.3-23.1 0-30.4z"/><path fill="url(#hero-google-play)" d="M421.9 213.8 360.4 178 325.3 234.3c9.3 8.1 9.3 23.1 0 30.4l35.1 56.3 61.5-35.8c18.5-10.8 18.5-38.5 0-49.4z"/></svg>""",
             },
             {
                 "id": "app-store",
-                "label_top": "Download on the",
-                "label_bottom": "App Store",
+                "label_top": _("Download on the"),
+                "label_bottom": _("App Store"),
                 "href": "#store",
                 "icon": """<svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.365 1.43c0 1.14-.47 2.25-1.2 3.05-.76.83-2.01 1.47-3.12 1.39-.13-1.13.38-2.27 1.14-3.06.79-.85 2.12-1.46 3.18-1.38zm3.54 16.3c-.61 1.36-.9 1.95-1.68 3.15-1.09 1.67-2.63 3.75-4.53 3.75-1.7 0-2.14-1.1-4.46-1.1-2.34 0-2.83 1.1-4.53 1.1-1.92 0-3.36-1.8-4.45-3.46C-.02 17.9-.4 14.49 1.3 12.23c1.1-1.54 2.86-2.51 4.85-2.55 1.9-.04 3.69 1.28 4.46 1.28.77 0 2.54-1.58 4.3-1.35 1.47.17 2.85.76 3.88 1.73-3.52 1.93-2.95 6.97.1 7.49z"/></svg>""",
             },
         ],
         "demo": {
             "browser_bar": "chat.pocket.ai",
-            "online_label": "Online",
-            "input_placeholder": "This is a demo - try the real widget below! →",
+            "online_label": _("Online"),
+            "input_placeholder": _("This is a demo - try the real widget below! →"),
             "scenarios": [
                 {
                     "agent_name": "Nancy",
@@ -541,8 +544,8 @@ def landing(request: HttpRequest) -> HttpResponse:
     }
 
     features = {
-        "section_title_prefix": "Everything You Need for",
-        "section_title_highlight": "Perfect Support",
+        "section_title_prefix": _("Everything You Need for"),
+        "section_title_highlight": _("Perfect Support"),
         "section_subtitle": "",
         "tabs": [
             {
@@ -645,9 +648,9 @@ def landing(request: HttpRequest) -> HttpResponse:
     }
 
     testimonials = {
-        "title_prefix": "Customers who",
-        "title_highlight": "build differently",
-        "subtitle": "Real teams, real results. Built with speed, reliability, and brand in mind.",
+        "title_prefix": _("Customers who"),
+        "title_highlight": _("build differently"),
+        "subtitle": _("Real teams, real results. Built with speed, reliability, and brand in mind."),
         "items": [
             {
                 "quote": "Pocket helped us cut first response time from hours to minutes. Our customers finally feel heard instantly.",
@@ -663,7 +666,7 @@ def landing(request: HttpRequest) -> HttpResponse:
     }
 
     trusted_by = {
-        "title": "Trusted by",
+        "title": _("Trusted by"),
         "brands": [
             {"name": name, "slug": slug}
             for name, slug in [
@@ -688,13 +691,13 @@ def landing(request: HttpRequest) -> HttpResponse:
     mobile_app = _mobile_app_section()
 
     pricing = {
-        "flexible": "Flexible pricing",
-        "choose": "Choose what fits ",
-        "motion": "your motion",
+        "flexible": _("Flexible pricing"),
+        "choose": _("Choose what fits "),
+        "motion": _("your motion"),
         "tabs": [
-            {"key": "wage", "label": "Wage based"},
-            {"key": "packages", "label": "Packages"},
-            {"key": "self", "label": "One-time setup (self-hosted)"},
+            {"key": "wage", "label": _("Wage based")},
+            {"key": "packages", "label": _("Packages")},
+            {"key": "self", "label": _("One-time setup (self-hosted)")},
         ],
         "subheader": {
             "packages": "Simple plans for any stage. Switch billing to see savings with yearly.",
@@ -806,8 +809,8 @@ def landing(request: HttpRequest) -> HttpResponse:
     }
 
     faq = {
-        "title_prefix": "Frequently asked",
-        "title_highlight": "questions",
+        "title_prefix": _("Frequently asked"),
+        "title_highlight": _("questions"),
         "items": [
             {
                 "question": "How do agents learn our business?",
@@ -1147,89 +1150,89 @@ def register(request: HttpRequest) -> HttpResponse:
     ]
 
     agent_roles = [
-        "Customer Support Agent",
-        "Support Specialist",
-        "Customer Success Representative",
-        "Sales Support Agent",
-        "Front Desk Representative",
-        "Account Manager",
-        "Helpdesk Agent",
+        _("Customer Support Agent"),
+        _("Support Specialist"),
+        _("Customer Success Representative"),
+        _("Sales Support Agent"),
+        _("Front Desk Representative"),
+        _("Account Manager"),
+        _("Helpdesk Agent"),
     ]
 
     agent_tones = [
-        "Friendly",
-        "Professional",
-        "Casual",
-        "Formal",
-        "Empathetic",
-        "Playful",
+        _("Friendly"),
+        _("Professional"),
+        _("Casual"),
+        _("Formal"),
+        _("Empathetic"),
+        _("Playful"),
     ]
 
     agent_traits = [
-        "Concise",
-        "Detailed",
-        "Curious",
-        "Patient",
-        "Proactive",
-        "Direct",
-        "Creative",
+        _("Concise"),
+        _("Detailed"),
+        _("Curious"),
+        _("Patient"),
+        _("Proactive"),
+        _("Direct"),
+        _("Creative"),
     ]
 
     agent_escalations = [
-        "Never",
-        "On fallback",
-        "On negative sentiment",
-        "On high value",
-        "Always",
+        _("Never"),
+        _("On fallback"),
+        _("On negative sentiment"),
+        _("On high value"),
+        _("Always"),
     ]
 
-    catalog_entity = "Products & Services"
+    catalog_entity = _("Products & Services")
     uploads_materials = [
         {
             "id": "vision",
-            "label": "Vision",
+            "label": _("Vision"),
             "field": "uploadsVision",
             "pending_field": "uploadsVisionUrl",
             "placeholder": "https://your-site.com/vision",
         },
         {
             "id": "mission",
-            "label": "Mission",
+            "label": _("Mission"),
             "field": "uploadsMission",
             "pending_field": "uploadsMissionUrl",
             "placeholder": "https://your-site.com/mission",
         },
         {
             "id": "catalog",
-            "label": f"{catalog_entity} Catalog",
+            "label": _("%(entity)s Catalog") % {"entity": catalog_entity},
             "field": "uploadsCatalog",
             "pending_field": "uploadsCatalogUrl",
             "placeholder": "https://your-site.com/catalog",
         },
         {
             "id": "faqs",
-            "label": "FAQs",
+            "label": _("FAQs"),
             "field": "uploadsFaqs",
             "pending_field": "uploadsFaqsUrl",
             "placeholder": "https://your-site.com/faqs",
         },
         {
             "id": "kb",
-            "label": "Knowledge Base",
+            "label": _("Knowledge Base"),
             "field": "uploadsKb",
             "pending_field": "uploadsKbUrl",
             "placeholder": "https://help.your-site.com",
         },
         {
             "id": "sops",
-            "label": "SOPs",
+            "label": _("SOPs"),
             "field": "uploadsSops",
             "pending_field": "uploadsSopsUrl",
             "placeholder": "https://drive.google.com/...",
         },
         {
             "id": "tc",
-            "label": "T&C",
+            "label": _("T&C"),
             "field": "uploadsTc",
             "pending_field": "uploadsTcUrl",
             "placeholder": "https://your-site.com/terms",
@@ -1240,49 +1243,49 @@ def register(request: HttpRequest) -> HttpResponse:
 
     context = {
         "page": {
-            "title_prefix": "Create your",
-            "title_highlight": "Account",
-            "typed_subtitle": "Your clients, served better.",
+            "title_prefix": _("Create your"),
+            "title_highlight": _("Account"),
+            "typed_subtitle": _("Your clients, served better."),
             "step_indicator": "form",
-            "divider_label": "OR",
-            "google_label": "Continue with Google",
-            "cta_label": "Create Account",
-            "cta_loading": "Creating...",
+            "divider_label": _("OR"),
+            "google_label": _("Continue with Google"),
+            "cta_label": _("Create Account"),
+            "cta_loading": _("Creating..."),
             "google_icon": """<svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36 16.8 36 11 30.2 11 23S16.8 10 24 10c3.8 0 7.2 1.4 9.8 3.7l5.7-5.7C35.5 4.1 30 2 24 2 12 2 2 12 2 24s10 22 22 22 22-10 22-22c0-1.3-.1-2.5-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.4 16.3 18.8 14 24 14c3.8 0 7.2 1.4 9.8 3.7l5.7-5.7C35.5 4.1 30 2 24 2 15.3 2 7.8 7.1 4.2 14.1l2.1.6z"/><path fill="#4CAF50" d="M24 46c6 0 11.5-2.2 15.6-5.8l-7.2-5.9C30.7 35.7 27.6 37 24 37c-5.2 0-9.7-3.3-11.3-7.9l-6.6 5.1C9.7 40.9 16.3 46 24 46z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-1.3 3.8-4.8 6.5-9.3 6.5-5.2 0-9.7-3.3-11.3-7.9l-6.6 5.1C9.7 40.9 16.3 46 24 46c12 0 22-10 22-22 0-1.3-.1-2.5-.4-3.5z"/></svg>""",
             "fields": {
                 "first_name": {
-                    "label": "First name",
+                    "label": _("First name"),
                     "placeholder": "John",
-                    "error_required": "First name is required",
+                    "error_required": _("First name is required"),
                 },
                 "email": {
-                    "label": "Email",
+                    "label": _("Email"),
                     "placeholder": "you@company.com",
-                    "error_invalid": "Please enter a valid email",
+                    "error_invalid": _("Please enter a valid email"),
                 },
                 "password": {
-                    "label": "Password",
+                    "label": _("Password"),
                     "placeholder": "••••••••",
-                    "error_min": "Password must be at least 8 characters",
+                    "error_min": _("Password must be at least 8 characters"),
                 },
                 "confirm_password": {
-                    "label": "Confirm password",
+                    "label": _("Confirm password"),
                     "placeholder": "••••••••",
-                    "error_match": "Passwords do not match",
+                    "error_match": _("Passwords do not match"),
                 },
         },
-            "have_account_label": "Already have an account?",
-            "login_label": "Log in",
+            "have_account_label": _("Already have an account?"),
+            "login_label": _("Log in"),
             "business": {
-                "title_prefix": "Business Profile",
-                "title_highlight": "Setup",
-                "badge": "Step 2 · Business profile",
-                "subtitle": "Help us understand your business",
+                "title_prefix": _("Business Profile"),
+                "title_highlight": _("Setup"),
+                "badge": _("Step 2 · Business profile"),
+                "subtitle": _("Help us understand your business"),
                 "fields": {
                     "business_name": {
-                        "label": "Business name",
+                        "label": _("Business name"),
                         "placeholder": "Acme Inc.",
-                        "error_required": "Business name is required",
+                        "error_required": _("Business name is required"),
                     },
                     "industry": {
                         "label": "Industry",
@@ -1300,89 +1303,89 @@ def register(request: HttpRequest) -> HttpResponse:
                         "no_results": "No niches found.",
                     },
                     "country": {
-                        "label": "Country",
+                        "label": _("Country"),
                         "placeholder": "Select country",
                     },
                     "website": {
-                        "label": "Website",
-                        "optional": "(optional)",
+                        "label": _("Website"),
+                        "optional": _("(optional)"),
                         "placeholder": "https://example.com",
                     },
                 },
                 "buttons": {
-                    "back": "Back",
-                    "next": "Next",
-                    "loading": "Saving...",
-                    "add": "Add",
-                    "done": "Done",
+                    "back": _("Back"),
+                    "next": _("Next"),
+                    "loading": _("Saving..."),
+                    "add": _("Add"),
+                    "done": _("Done"),
                 },
             },
             "agent": {
-                "title_prefix": "Agent",
-                "title_highlight": "Setup",
-                "subtitle": "Set up your agent basics",
+                "title_prefix": _("Agent"),
+                "title_highlight": _("Setup"),
+                "subtitle": _("Set up your agent basics"),
                 "fields": {
                     "name": {
-                        "label": "Agent name",
+                        "label": _("Agent name"),
                         "placeholder": "e.g., Nancy",
-                        "error_required": "Please enter an agent name",
+                        "error_required": _("Please enter an agent name"),
                     },
                     "role": {
-                        "label": "Role",
-                        "placeholder": "Select a role",
-                        "error_required": "Please select a role",
+                        "label": _("Role"),
+                        "placeholder": _("Select a role"),
+                        "error_required": _("Please select a role"),
                         "options": agent_roles,
                     },
                     "tone": {
-                        "label": "Tone",
-                        "placeholder": "Select tone",
-                        "error_required": "Please choose a tone",
+                        "label": _("Tone"),
+                        "placeholder": _("Select tone"),
+                        "error_required": _("Please choose a tone"),
                         "options": agent_tones,
                     },
                     "traits": {
-                        "label": "Traits",
-                        "hint": "Pick as many as you like",
+                        "label": _("Traits"),
+                        "hint": _("Pick as many as you like"),
                         "options": agent_traits,
                     },
                     "escalation": {
-                        "label": "Escalation rule",
-                        "placeholder": "Choose escalation rule",
-                        "error_required": "Please choose when to escalate",
+                        "label": _("Escalation rule"),
+                        "placeholder": _("Choose escalation rule"),
+                        "error_required": _("Please choose when to escalate"),
                         "options": agent_escalations,
                     },
                 },
                 "buttons": {
-                    "back": "Back",
-                    "next": "Next",
-                    "loading": "Saving...",
+                    "back": _("Back"),
+                    "next": _("Next"),
+                    "loading": _("Saving..."),
                 },
             },
             "uploads": {
-                "title_prefix": "Knowledge",
-                "title_highlight": "Uploads",
-                "subtitle": "Add links to your key docs so your agent gets smart fast. You can skip this and do it later.",
+                "title_prefix": _("Knowledge"),
+                "title_highlight": _("Uploads"),
+                "subtitle": _("Add links to your key docs so your agent gets smart fast. You can skip this and do it later."),
                 "materials_card": {
-                    "title": "Which materials do you want to attach?",
-                    "description": "Select the knowledge sources you want to add now. You can always come back later.",
+                    "title": _("Which materials do you want to attach?"),
+                    "description": _("Select the knowledge sources you want to add now. You can always come back later."),
                 },
                 "materials": uploads_materials,
-                "empty_state": "Select at least one material above to start adding links.",
-                "attach_label": "Attach",
+                "empty_state": _("Select at least one material above to start adding links."),
+                "attach_label": _("Attach"),
                 "attach_icon": paperclip_icon,
-                "count_suffix": "added",
+                "count_suffix": _("added"),
                 "errors": {
-                    "invalid_url": "Enter a valid URL (https://example.com)",
-                    "duplicate_url": "This link is already attached",
-                    "materials": "Select at least one material to continue",
-                    "links": "Add at least one link for each selected source",
-                    "general": "We couldn't save your uploads. Try again.",
-                    "dependencies": "Complete the earlier steps before finishing registration.",
+                    "invalid_url": _("Enter a valid URL (https://example.com)"),
+                    "duplicate_url": _("This link is already attached"),
+                    "materials": _("Select at least one material to continue"),
+                    "links": _("Add at least one link for each selected source"),
+                    "general": _("We couldn't save your uploads. Try again."),
+                    "dependencies": _("Complete the earlier steps before finishing registration."),
                 },
                 "buttons": {
-                    "back": "Back",
-                    "skip": "Upload later",
-                    "finish": "Finish",
-                    "loading": "Finishing…",
+                    "back": _("Back"),
+                    "skip": _("Upload later"),
+                    "finish": _("Finish"),
+                    "loading": _("Finishing…"),
                 },
                 # where to go after uploads resolves (default in JS if no custom handler prevents)
                 "redirect_after": "/dashboard/",
@@ -1772,18 +1775,18 @@ def dashboard_customers(request: HttpRequest) -> HttpResponse:
         ).count()
         open_cases = Case.objects.filter(business_profile=business, status=CaseStatus.OPEN).count()
         stats = [
-            {"label": "New customers", "value": new_customers or 0, "helper": "Last 30 days"},
-            {"label": "Active customers", "value": active_customers or 0, "helper": "Currently engaged"},
-            {"label": "Open cases", "value": open_cases or 0, "helper": "Customer cases awaiting action"},
+            {"label": _("New customers"), "value": new_customers or 0, "helper": _("Last 30 days")},
+            {"label": _("Active customers"), "value": active_customers or 0, "helper": _("Currently engaged")},
+            {"label": _("Open cases"), "value": open_cases or 0, "helper": _("Customer cases awaiting action")},
         ]
 
     context = {
         "user_name": user_name,
         "customers_stats": stats,
         "customers_filters": {
-            "search_placeholder": "Search name, email, text…",
-            "lifecycle_label": "All lifecycle stages",
-            "date_label": "Any time",
+            "search_placeholder": _("Search name, email, text…"),
+            "lifecycle_label": _("All lifecycle stages"),
+            "date_label": _("Any time"),
             "limit": 25,
         },
         "customers_backend_notice": None,
@@ -1791,13 +1794,13 @@ def dashboard_customers(request: HttpRequest) -> HttpResponse:
         "customers_loading": False,
         "skeleton_rows": range(6),
         "customers": customers,
-        "customers_empty_message": "No customers added yet. Import customers or add one.",
+        "customers_empty_message": _("No customers added yet. Import customers or add one."),
         "customers_showing_count": len(customers),
         "customers_total": total_customers if total_customers else len(customers),
         "customers_has_prev": False,
         "customers_has_next": False,
-        "customers_detail_empty_title": "No customer selected",
-        "customers_detail_empty_message": "Choose a customer from the table to inspect profiles, activity, and notes.",
+        "customers_detail_empty_title": _("No customer selected"),
+        "customers_detail_empty_message": _("Choose a customer from the table to inspect profiles, activity, and notes."),
     }
     return render(request, "frontend/customers.html", context)
 
@@ -1806,9 +1809,9 @@ def dashboard_customers(request: HttpRequest) -> HttpResponse:
 def dashboard_agents(request: HttpRequest) -> HttpResponse:
     user_name = _current_user_name(request)
     stats = [
-        {"label": "Active agents", "value": None, "helper": "No agents deployed yet"},
-        {"label": "Avg. satisfaction", "value": None, "helper": "Scores will populate once conversations start"},
-        {"label": "Automation coverage", "value": None, "helper": "Connect channels to calculate coverage"},
+        {"label": _("Active agents"), "value": None, "helper": _("No agents deployed yet")},
+        {"label": _("Avg. satisfaction"), "value": None, "helper": _("Scores will populate once conversations start")},
+        {"label": _("Automation coverage"), "value": None, "helper": _("Connect channels to calculate coverage")},
     ]
     agents: list[dict[str, object]] = []
     total_agents = 0
@@ -1844,16 +1847,16 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
                 initials = initials_from_name(item.name)
                 identifier = agent_identifier(item.id)
                 role_label = display_role_label(item.role)
-                tone_label = display_tone_label(item.tone) or "—"
+                tone_label = display_tone_label(item.tone) or _("—")
                 updated_at = item.updated_at
-                updated_label = updated_at.strftime("%b %d, %Y %H:%M") if updated_at else "—"
+                updated_label = updated_at.strftime("%b %d, %Y %H:%M") if updated_at else _("—")
                 shareable_path = ""
                 if item.public_slug:
                     shareable_path = f"/{business_slug}/{item.public_slug}".replace("//", "/")
                 agents.append(
                     {
                         "uuid": str(item.id),
-                        "name": item.name or "Agent",
+                        "name": item.name or _("Agent"),
                         "initials": initials,
                         "identifier": identifier,
                         "roles": [role_label],
@@ -1861,7 +1864,7 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
                         "role_code": item.role or "",
                         "tone_label": tone_label,
                         "tone_code": item.tone or "",
-                        "status": (item.status or "").replace("_", " ").title() or "Draft",
+                        "status": (item.status or "").replace("_", " ").title() or _("Draft"),
                         "status_code": item.status or "",
                         "conversations": item.conversations or 0,
                         "satisfaction": None,
@@ -1965,12 +1968,12 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
                 escalation_enabled = _enabled("flag_escalation")
 
                 capability_flags = [
-                    ("Knowledge", knowledge_enabled),
-                    ("Cases", cases_enabled),
-                    ("Customers", customers_enabled),
-                    ("Leads", leads_enabled),
-                    ("Appointments", appointments_enabled),
-                    ("Escalation", escalation_enabled),
+                    (_("Knowledge"), knowledge_enabled),
+                    (_("Cases"), cases_enabled),
+                    (_("Customers"), customers_enabled),
+                    (_("Leads"), leads_enabled),
+                    (_("Appointments"), appointments_enabled),
+                    (_("Escalation"), escalation_enabled),
                 ]
                 enabled_labels = [label for label, enabled in capability_flags if enabled]
                 highlights = enabled_labels[:3]
@@ -1994,19 +1997,19 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
             )
         stats = [
             {
-                "label": "Active agents",
+                "label": _("Active agents"),
                 "value": active_agents or 0,
-                "helper": f"{total_recorded_agents or total_agents} total",
+                "helper": _("%(count)s total") % {"count": total_recorded_agents or total_agents},
             },
             {
-                "label": "Avg. satisfaction",
+                "label": _("Avg. satisfaction"),
                 "value": None,
-                "helper": "Scores populate once conversations sync",
+                "helper": _("Scores populate once conversations sync"),
             },
             {
-                "label": "Automation coverage",
+                "label": _("Automation coverage"),
                 "value": f"{coverage}%" if coverage is not None else None,
-                "helper": "Cases handled by AI",
+                "helper": _("Cases handled by AI"),
             },
         ]
 
@@ -2015,28 +2018,28 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
         "business_id": str(getattr(business, "id", "")) if business else "",
         "agents_stats": stats,
         "agents_filters": {
-            "search_placeholder": "Search name, ID, role…",
-            "status_label": "All statuses",
+            "search_placeholder": _("Search name, ID, role…"),
+            "status_label": _("All statuses"),
             "limit": 25,
         },
-        "agents_backend_notice": None if business else "Link a business profile to create agents.",
+        "agents_backend_notice": None if business else _("Link a business profile to create agents."),
         "agents_auth_notice": None,
         "agents_loading": False,
-        "agents_error_message": "Unable to load agents right now." if has_error else None,
+        "agents_error_message": _("Unable to load agents right now.") if has_error else None,
         "skeleton_rows": range(6),
         "agents": agents,
-        "agents_empty_message": "No agents created yet. Launch your first AI teammate to get started.",
+        "agents_empty_message": _("No agents created yet. Launch your first AI teammate to get started."),
         "agents_showing_count": len(agents),
         "agents_total": total_agents or len(agents),
         "agents_has_prev": False,
         "agents_has_next": bool(total_agents and total_agents > len(agents)),
-        "agents_panel_empty_title": "No agent selected",
-        "agents_panel_empty_message": "Choose an agent from the cards to preview configuration and analytics.",
+        "agents_panel_empty_title": _("No agent selected"),
+        "agents_panel_empty_message": _("Choose an agent from the cards to preview configuration and analytics."),
         "agents_modal_roles": [
-            "Support Agent",
-            "Sales Associate",
-            "Technical Specialist",
-            "Customer Success",
+            _("Support Agent"),
+            _("Sales Associate"),
+            _("Technical Specialist"),
+            _("Customer Success"),
         ],
     }
     return render(request, "frontend/agents.html", context)
@@ -2046,31 +2049,31 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
 def dashboard_leads(request: HttpRequest) -> HttpResponse:
     user_name = _current_user_name(request)
     stats = [
-        {"label": "Open leads", "value": None, "delta": "Up 0% vs last week"},
-        {"label": "Hot leads", "value": None, "delta": "Ready for outreach"},
-        {"label": "Avg. response SLA", "value": None, "delta": "< 3h target"},
+        {"label": _("Open leads"), "value": None, "delta": _("Up 0% vs last week")},
+        {"label": _("Hot leads"), "value": None, "delta": _("Ready for outreach")},
+        {"label": _("Avg. response SLA"), "value": None, "delta": _("< 3h target")},
     ]
     heat_options = [
-        {"label": "All", "value": "all"},
-        {"label": "Hot", "value": "hot"},
-        {"label": "Warm", "value": "warm"},
-        {"label": "Cold", "value": "cold"},
+        {"label": _("All"), "value": "all"},
+        {"label": _("Hot"), "value": "hot"},
+        {"label": _("Warm"), "value": "warm"},
+        {"label": _("Cold"), "value": "cold"},
     ]
     pipeline_breakdown = [
-        {"label": "New", "helper": "0 leads"},
-        {"label": "Qualified", "helper": "0 leads"},
-        {"label": "Engaged", "helper": "0 leads"},
-        {"label": "Negotiation", "helper": "0 leads"},
-        {"label": "Closed Won", "helper": "0 leads"},
+        {"label": _("New"), "helper": _("0 leads")},
+        {"label": _("Qualified"), "helper": _("0 leads")},
+        {"label": _("Engaged"), "helper": _("0 leads")},
+        {"label": _("Negotiation"), "helper": _("0 leads")},
+        {"label": _("Closed Won"), "helper": _("0 leads")},
     ]
     context = {
         "user_name": user_name,
         "leads_stats": stats,
         "leads_filters": {
-            "search_placeholder": "Search lead, company, or tag",
-            "stage_label": "All stages",
-            "owner_label": "All owners",
-            "range_label": "Last 14 days",
+            "search_placeholder": _("Search lead, company, or tag"),
+            "stage_label": _("All stages"),
+            "owner_label": _("All owners"),
+            "range_label": _("Last 14 days"),
         },
         "leads_heat_options": heat_options,
         "leads_heat_active": "all",
@@ -2080,13 +2083,13 @@ def dashboard_leads(request: HttpRequest) -> HttpResponse:
         "leads_error_message": None,
         "skeleton_rows": range(6),
         "leads": [],
-        "leads_empty_message": "No leads match this view yet.",
+        "leads_empty_message": _("No leads match this view yet."),
         "leads_showing_count": 0,
         "leads_total": 0,
         "leads_has_prev": False,
         "leads_has_next": False,
-        "leads_detail_empty_title": "Select a lead",
-        "leads_detail_empty_message": "Choose a lead to review stage, owner activity, and history.",
+        "leads_detail_empty_title": _("Select a lead"),
+        "leads_detail_empty_message": _("Choose a lead to review stage, owner activity, and history."),
         "leads_pipeline_breakdown": pipeline_breakdown,
     }
     return render(request, "frontend/leads.html", context)
@@ -2142,7 +2145,7 @@ def dashboard_voice(request: HttpRequest) -> HttpResponse:
 
 def _format_document_size(size_bytes: int | None) -> str:
     if not size_bytes:
-        return "—"
+        return _("—")
     size = float(size_bytes)
     units = ["B", "KB", "MB", "GB", "TB"]
     idx = 0
@@ -2156,7 +2159,7 @@ def _format_document_size(size_bytes: int | None) -> str:
 
 def _format_document_timestamp(value: datetime | None) -> str:
     if not value:
-        return "—"
+        return _("—")
     localized = timezone.localtime(value)
     return localized.strftime("%b %d, %Y %H:%M")
 
@@ -2188,9 +2191,9 @@ def _serialize_upload_for_dashboard(upload: KnowledgeUpload) -> dict[str, object
     status_label = (upload.status or "").replace("_", " ").title()
     return {
         "id": str(upload.id),
-        "name": upload.display_name or "Document",
+        "name": upload.display_name or _("Document"),
         "identifier": _document_identifier(upload.id),
-        "classification": upload.category or upload.language or "General",
+        "classification": upload.category or upload.language or _("General"),
         "type_badge": upload.get_source_type_display(),
         "source_type": upload.source_type,
         "source_label": upload.get_source_type_display(),
@@ -2449,9 +2452,9 @@ def dashboard_knowledge(request: HttpRequest) -> HttpResponse:
                 documents.append(
                     {
                         "uuid": str(item.id),
-                        "name": item.name or "Document",
+                        "name": item.name or _("Document"),
                         "identifier": _document_identifier(item.id),
-                        "classification": item.category or item.language or "General",
+                        "classification": item.category or item.language or _("General"),
                         "type_badge": item.source_label,
                         "source_type": item.source_type,
                         "source_label": item.source_label,
@@ -2463,9 +2466,9 @@ def dashboard_knowledge(request: HttpRequest) -> HttpResponse:
                         "size_display": _format_document_size(item.size_bytes),
                         "size_bytes": item.size_bytes or 0,
                         "collections": list(item.collections),
-                        "collections_display": ", ".join(item.collections) if item.collections else "—",
+                        "collections_display": ", ".join(item.collections) if item.collections else _("—"),
                         "tags": list(item.tags),
-                        "tags_display": ", ".join(item.tags) if item.tags else "—",
+                        "tags_display": ", ".join(item.tags) if item.tags else _("—"),
                         "language": item.language or "",
                         "category": item.category or "",
                         "token_count": item.token_count or 0,
@@ -2488,11 +2491,11 @@ def dashboard_knowledge(request: HttpRequest) -> HttpResponse:
                         "slug": item.slug,
                         "description": item.description,
                         "visibility": item.visibility,
-                        "visibility_label": (item.visibility or "").replace("_", " ").title() or "Private",
+                        "visibility_label": (item.visibility or "").replace("_", " ").title() or _("Private"),
                         "documents": item.documents,
-                        "owner": item.owner or "—",
-                        "focus": "—",
-                        "updated_at": _format_document_timestamp(item.updated_at) if item.updated_at else "—",
+                        "owner": item.owner or _("—"),
+                        "focus": _("—"),
+                        "updated_at": _format_document_timestamp(item.updated_at) if item.updated_at else _("—"),
                         "updated_at_iso": item.updated_at.isoformat() if item.updated_at else "",
                     }
                 )
@@ -2501,27 +2504,31 @@ def dashboard_knowledge(request: HttpRequest) -> HttpResponse:
 
     stats = [
         {
-            "label": "Documents indexed",
+            "label": _("Documents indexed"),
             "value": total_documents if business else None,
-            "helper": "Up-to-date count of synced files." if business else "Upload your first files to populate the knowledge base.",
+            "helper": (
+                _("Up-to-date count of synced files.")
+                if business
+                else _("Upload your first files to populate the knowledge base.")
+            ),
             "icon_svg": '<svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3-.75c0 .414.336.75.75.75h.75A2.25 2.25 0 0 0 19.5 15V6A2.25 2.25 0 0 0 17.25 3H6.75A2.25 2.25 0 0 0 4.5 5.25V18A2.25 2.25 0 0 0 6.75 20.25H18"/></svg>',
         },
         {
-            "label": "Integrations",
+            "label": _("Integrations"),
             "value": len({doc["integration_name"] for doc in documents if doc["integration_name"]}) if business else None,
-            "helper": "Connect Google Drive, Zendesk, or custom APIs.",
+            "helper": _("Connect Google Drive, Zendesk, or custom APIs."),
             "icon_svg": '<svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12a2.25 2.25 0 0 1 2.25-2.25h10.5A2.25 2.25 0 0 1 19.5 12m-15 0a2.25 2.25 0 0 0 2.25 2.25h10.5A2.25 2.25 0 0 0 19.5 12m-15 0V7.5m15 4.5V16.5m0-9A2.25 2.25 0 0 0 17.25 5.25H6.75A2.25 2.25 0 0 0 4.5 7.5M19.5 16.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 16.5"/></svg>',
         },
         {
-            "label": "Coverage",
+            "label": _("Coverage"),
             "value": None,
-            "helper": "Coverage metrics appear once agents use knowledge.",
+            "helper": _("Coverage metrics appear once agents use knowledge."),
             "icon_svg": '<svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v3m0 12v3m9-9h-3M6 12H3m15.364-6.364-2.121 2.121M8.757 15.243l-2.121 2.121m0-12.727 2.121 2.121m6.486 6.486 2.121 2.121"/></svg>',
         },
         {
-            "label": "Sync health",
+            "label": _("Sync health"),
             "value": None,
-            "helper": "Status updates will display after first sync.",
+            "helper": _("Status updates will display after first sync."),
             "icon_svg": '<svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12a7.5 7.5 0 0 1 13.35-4.35L21 8.25M19.5 3v5.25M19.5 12a7.5 7.5 0 0 1-13.35 4.35L3 15.75M4.5 21v-5.25"/></svg>',
         },
     ]
@@ -2567,16 +2574,18 @@ def dashboard_knowledge(request: HttpRequest) -> HttpResponse:
         "knowledge_stats": stats,
         "knowledge_active_tab": active_tab,
         "knowledge_filters": {
-            "search_placeholder": "Search documents, tags, sources…",
-            "collection_label": "All collections",
+            "search_placeholder": _("Search documents, tags, sources…"),
+            "collection_label": _("All collections"),
         },
-        "knowledge_backend_notice": None if business else "Link a business profile to start indexing knowledge.",
+        "knowledge_backend_notice": None if business else _("Link a business profile to start indexing knowledge."),
         "knowledge_auth_notice": None,
         "knowledge_loading": False,
-        "knowledge_error_message": "Unable to load documents right now." if has_error else None,
+        "knowledge_error_message": _("Unable to load documents right now.") if has_error else None,
         "skeleton_rows": range(5),
         "knowledge_documents": documents,
-        "knowledge_documents_empty_message": "No knowledge documents yet. Upload files or connect an integration to populate content.",
+        "knowledge_documents_empty_message": _(
+            "No knowledge documents yet. Upload files or connect an integration to populate content."
+        ),
         "knowledge_documents_showing": documents_showing,
         "knowledge_documents_total": total_documents if business else 0,
         "knowledge_documents_has_prev": False,
@@ -2585,15 +2594,17 @@ def dashboard_knowledge(request: HttpRequest) -> HttpResponse:
         "knowledge_integrations_active": integrations_active,
         "knowledge_integrations_attention": integrations_attention,
         "knowledge_integrations_summary": integrations_summary,
-        "knowledge_integrations_empty_message": "Connect a source to keep external docs and spreadsheets updated automatically.",
+        "knowledge_integrations_empty_message": _(
+            "Connect a source to keep external docs and spreadsheets updated automatically."
+        ),
         "knowledge_integrations_enabled": bool(business),
         "knowledge_business_id": str(business.id) if business else "",
         "knowledge_integrations_connect_url": reverse("frontend:dashboard-knowledge-integrations-connect"),
         "knowledge_collections": collections,
         "knowledge_collections_payload": collections,
-        "knowledge_collections_empty_message": "Group documents into collections to control agent access.",
-        "knowledge_panel_empty_title": "Select a document",
-        "knowledge_panel_empty_message": "Choose a document to preview summary, classification, and sync details here.",
+        "knowledge_collections_empty_message": _("Group documents into collections to control agent access."),
+        "knowledge_panel_empty_title": _("Select a document"),
+        "knowledge_panel_empty_message": _("Choose a document to preview summary, classification, and sync details here."),
         "knowledge_upload_types": [
             {"value": value, "label": label} for value, label in KNOWLEDGE_UPLOAD_SIMPLE_TYPES
         ],
@@ -2625,7 +2636,7 @@ def dashboard_knowledge_visualizer(request: HttpRequest) -> HttpResponse:
                     documents.append(
                         {
                             "uuid": str(item.id),
-                            "name": item.name or "Document",
+                            "name": item.name or _("Document"),
                             "source_label": item.source_label,
                             "status_label": item.status_label,
                             "status_code": item.status,
@@ -2645,12 +2656,14 @@ def dashboard_knowledge_visualizer(request: HttpRequest) -> HttpResponse:
         "visualizer_documents": documents,
         "visualizer_documents_total": total_documents if business else 0,
         "visualizer_documents_empty_message": (
-            "Upload a document to see ingestion artifacts here." if business else "Link a business profile to inspect documents."
+            _("Upload a document to see ingestion artifacts here.")
+            if business
+            else _("Link a business profile to inspect documents.")
         ),
-        "visualizer_empty_title": "Select a document",
-        "visualizer_empty_message": "Pick a document to inspect how it was ingested and chunked.",
+        "visualizer_empty_title": _("Select a document"),
+        "visualizer_empty_message": _("Pick a document to inspect how it was ingested and chunked."),
         "visualizer_selected_id": selected_id,
-        "visualizer_error_message": "Unable to load documents right now." if has_error else None,
+        "visualizer_error_message": _("Unable to load documents right now.") if has_error else None,
     }
     return render(request, "frontend/knowledge_visualizer.html", context)
 
@@ -2661,7 +2674,7 @@ def dashboard_knowledge_upload(request: HttpRequest) -> HttpResponse:
     wants_json = _wants_json(request)
     business = _primary_business_for_user(request.user)
     if not business:
-        message = "Link a business profile before uploading knowledge."
+        message = _("Link a business profile before uploading knowledge.")
         if wants_json:
             return JsonResponse({"success": False, "message": message}, status=HTTPStatus.BAD_REQUEST)
         messages.error(request, message)
@@ -2764,9 +2777,15 @@ def dashboard_knowledge_upload(request: HttpRequest) -> HttpResponse:
                     status=HTTPStatus.CREATED,
                 )
             if len(upload_records) == 1:
-                messages.success(request, f'"{latest_upload.display_name}" added to your knowledge base.')
+                messages.success(
+                    request,
+                    _('"%(name)s" added to your knowledge base.') % {"name": latest_upload.display_name},
+                )
             else:
-                messages.success(request, f"{len(upload_records)} files added to your knowledge base.")
+                messages.success(
+                    request,
+                    _("%(count)s files added to your knowledge base.") % {"count": len(upload_records)},
+                )
     return redirect("frontend:dashboard-knowledge")
 
 
@@ -2775,7 +2794,7 @@ def dashboard_knowledge_upload(request: HttpRequest) -> HttpResponse:
 def dashboard_knowledge_dump(request: HttpRequest) -> HttpResponse:
     business = _primary_business_for_user(request.user)
     if not business:
-        messages.error(request, "Link a business profile before exporting knowledge.")
+        messages.error(request, _("Link a business profile before exporting knowledge."))
         return redirect("frontend:dashboard-knowledge")
 
     uploads = (
@@ -2817,7 +2836,7 @@ def dashboard_knowledge_dump(request: HttpRequest) -> HttpResponse:
 def dashboard_knowledge_integrations_connect(request: HttpRequest) -> HttpResponse:
     business = _primary_business_for_user(request.user)
     if not business:
-        messages.error(request, "Link a business profile before connecting integrations.")
+        messages.error(request, _("Link a business profile before connecting integrations."))
         return redirect("frontend:dashboard-knowledge")
 
     payload = json.dumps({"businessId": str(business.id)})
@@ -2841,21 +2860,21 @@ def dashboard_knowledge_integrations_connect(request: HttpRequest) -> HttpRespon
     if response.status_code != 200:
         try:
             data = json.loads(response.content.decode("utf-8"))
-            message = data.get("message") or data.get("error") or "Unable to start Google authorization."
+            message = data.get("message") or data.get("error") or _("Unable to start Google authorization.")
         except (ValueError, UnicodeDecodeError):
-            message = "Unable to start Google authorization."
+            message = _("Unable to start Google authorization.")
         messages.error(request, message)
         return redirect("frontend:dashboard-knowledge")
 
     try:
         data = json.loads(response.content.decode("utf-8"))
     except (ValueError, UnicodeDecodeError):
-        messages.error(request, "Google returned an invalid authorization payload.")
+        messages.error(request, _("Google returned an invalid authorization payload."))
         return redirect("frontend:dashboard-knowledge")
 
     authorization_url = data.get("authorizationUrl")
     if not authorization_url:
-        messages.error(request, "Missing authorization URL from Google.")
+        messages.error(request, _("Missing authorization URL from Google."))
         return redirect("frontend:dashboard-knowledge")
     return redirect(authorization_url)
 
@@ -2865,7 +2884,7 @@ def dashboard_cases(request: HttpRequest) -> HttpResponse:
     user_name = _current_user_name(request)
     cases: List[Dict[str, object]] = []
     metrics = {"open": None, "urgent": None, "urgent_delta": None, "avg_open": None}
-    metrics_message = "Connect your customer channels to start measuring performance."
+    metrics_message = _("Connect your customer channels to start measuring performance.")
     total = 0
 
     business = None
@@ -2883,9 +2902,9 @@ def dashboard_cases(request: HttpRequest) -> HttpResponse:
                 "avg_open": result.metrics.average_open_hours,
             }
             metrics_message = (
-                f"You have {result.metrics.open_total} open cases."
+                _("You have %(count)s open cases.") % {"count": result.metrics.open_total}
                 if result.metrics.open_total
-                else "All cases resolved. Great job!"
+                else _("All cases resolved. Great job!")
             )
             for item in result.items:
                 cases.append(
@@ -2901,16 +2920,16 @@ def dashboard_cases(request: HttpRequest) -> HttpResponse:
                         "status_class": _case_status_class(item.status),
                         "customer": {
                             "name": item.customer_name,
-                            "email": item.customer_email or "—",
+                            "email": item.customer_email or _("—"),
                             "initials": item.customer_initials,
                         },
-                        "channel": (item.channel or "chat").replace("_", " ").title(),
+                        "channel": (item.channel or _("chat")).replace("_", " ").title(),
                         "started": item.started_at.strftime("%b %d, %Y %H:%M"),
                         "started_iso": item.started_at.isoformat(),
                     }
                 )
         except Exception:
-            metrics_message = "Unable to load cases right now. Please try again shortly."
+            metrics_message = _("Unable to load cases right now. Please try again shortly.")
 
     context = {
         "user_name": user_name,
@@ -2920,7 +2939,7 @@ def dashboard_cases(request: HttpRequest) -> HttpResponse:
         "skeleton_rows": range(6),
         "cases_loading": False,
         "cases": cases,
-        "cases_empty_message": "No cases yet. Connect Pocket AI to your support channels to see live traffic.",
+        "cases_empty_message": _("No cases yet. Connect Pocket AI to your support channels to see live traffic."),
         "cases_showing_count": len(cases),
         "cases_has_prev": False,
         "cases_has_next": bool(total and total > len(cases)),
@@ -2933,7 +2952,7 @@ def dashboard_case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpRespo
     user_name = _current_user_name(request)
     business = request.user.business_profiles.order_by("-created_at").first()
     if business is None:
-        raise Http404("Case not found")
+        raise Http404(_("Case not found"))
 
     case = (
         Case.objects.select_related("business_profile", "agent_profile", "customer")
@@ -2941,7 +2960,7 @@ def dashboard_case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpRespo
         .first()
     )
     if case is None:
-        raise Http404("Case not found")
+        raise Http404(_("Case not found"))
 
     conversation = (
         Conversation.objects.select_related("agent_profile", "customer")
@@ -2953,14 +2972,14 @@ def dashboard_case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpRespo
     customer_name = None
     customer_email = None
     if case.customer:
-        customer_name = case.customer.display_name or case.customer.primary_email or "Customer"
-        customer_email = case.customer.primary_email or "—"
+        customer_name = case.customer.display_name or case.customer.primary_email or _("Customer")
+        customer_email = case.customer.primary_email or _("—")
     elif conversation and conversation.customer:
-        customer_name = conversation.customer.display_name or "Customer"
-        customer_email = conversation.customer.primary_email or "—"
+        customer_name = conversation.customer.display_name or _("Customer")
+        customer_email = conversation.customer.primary_email or _("—")
     else:
-        customer_name = "Customer"
-        customer_email = "—"
+        customer_name = _("Customer")
+        customer_email = _("—")
 
     conversation_context: dict[str, str] | None = None
     messages: list[dict[str, Any]] = []
@@ -2969,13 +2988,13 @@ def dashboard_case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpRespo
         conversation_context = {
             "status": conversation.status,
             "status_label": (conversation.status or "").replace("_", " ").title(),
-            "channel": (conversation.channel or "chat").replace("_", " ").title(),
+            "channel": (conversation.channel or _("chat")).replace("_", " ").title(),
             "session_token": conversation.session_token,
             "started_at_label": _format_datetime_label(conversation.started_at),
             "last_activity_label": _format_datetime_label(conversation.last_activity_at),
         }
         agent_label = (conversation.agent_profile.name if conversation.agent_profile else None) or (
-            case.agent_profile.name if case.agent_profile else "Pocket AI"
+            case.agent_profile.name if case.agent_profile else _("Pocket AI")
         )
         customer_label = customer_name
         ordered_messages = conversation.messages.all().order_by("sent_at", "created_at")
@@ -2988,8 +3007,8 @@ def dashboard_case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpRespo
                 author = agent_label
                 initials = initials_from_name(agent_label, "AI")
             else:
-                author = "System"
-                initials = "SYS"
+                author = _("System")
+                initials = _("SYS")
             metadata = message.metadata or {}
             messages.append(
                 {
@@ -3038,13 +3057,13 @@ def dashboard_case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpRespo
         "started_at_label": _format_datetime_label(case.started_at),
         "updated_at_label": _format_datetime_label(case.updated_at),
         "closed_at_label": _format_datetime_label(case.closed_at),
-        "agent_name": case.agent_profile.name if case.agent_profile else "—",
+        "agent_name": case.agent_profile.name if case.agent_profile else _("—"),
         "customer": {
             "name": customer_name,
             "email": customer_email,
             "initials": initials_from_name(customer_name, "CU"),
         },
-        "ai_diagnosis": case.ai_diagnosis or "No diagnosis provided.",
+        "ai_diagnosis": case.ai_diagnosis or _("No diagnosis provided."),
         "ai_actions_taken": case.ai_actions_taken or "",
         "ai_suggested_actions": [str(item) for item in suggested_actions if item],
     }
@@ -3055,7 +3074,7 @@ def dashboard_case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpRespo
         "conversation": conversation_context,
         "messages": messages,
         "extractions": extractions,
-        "messages_empty_message": "No transcript available for this case yet.",
+        "messages_empty_message": _("No transcript available for this case yet."),
         "back_url": reverse("frontend:dashboard-cases"),
     }
     return render(request, "frontend/case_detail.html", context)

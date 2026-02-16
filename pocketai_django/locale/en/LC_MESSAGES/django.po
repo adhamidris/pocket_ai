@@ -572,3 +572,909 @@ msgstr "\"%(name)s\" added to your knowledge base."
 #, python-format
 msgid "%(count)s files added to your knowledge base."
 msgstr "%(count)s files added to your knowledge base."
+
+msgid "PocketAI OAuth"
+msgstr "PocketAI OAuth"
+
+msgid "You can close this window."
+msgstr "You can close this window."
+
+msgid "Welcome back"
+msgstr "Welcome back"
+
+msgid "Sign in to continue orchestrating your AI customer experience."
+msgstr "Sign in to continue orchestrating your AI customer experience."
+
+msgid "Email address"
+msgstr "Email address"
+
+msgid "Need to create an account?"
+msgstr "Need to create an account?"
+
+msgid "Start your onboarding"
+msgstr "Start your onboarding"
+
+msgid "Last updated:"
+msgstr "Last updated:"
+
+msgid "On this page"
+msgstr "On this page"
+
+msgid "New Customer"
+msgstr "New Customer"
+
+msgid "Import customers"
+msgstr "Import customers"
+
+msgid "Manage your customer relationships, activity, and notes in one hub."
+msgstr "Manage your customer relationships, activity, and notes in one hub."
+
+msgid "Metrics will surface once customer activity starts flowing in."
+msgstr "Metrics will surface once customer activity starts flowing in."
+
+msgid "Conversations"
+msgstr "Conversations"
+
+msgid "Satisfaction"
+msgstr "Satisfaction"
+
+msgid "Close customer details"
+msgstr "Close customer details"
+
+msgid "Nothing to show yet."
+msgstr "Nothing to show yet."
+
+msgid "No recent contact"
+msgstr "No recent contact"
+
+msgid "Overview"
+msgstr "Overview"
+
+msgid "Total cases"
+msgstr "Total cases"
+
+msgid "First seen"
+msgstr "First seen"
+
+msgid "Primary contact"
+msgstr "Primary contact"
+
+msgid "Additional contacts"
+msgstr "Additional contacts"
+
+msgid "Tags"
+msgstr "Tags"
+
+msgid "No extra contact methods."
+msgstr "No extra contact methods."
+
+msgid "No tags assigned."
+msgstr "No tags assigned."
+
+msgid "Resolved cases"
+msgstr "Resolved cases"
+
+msgid "No closed cases."
+msgstr "No closed cases."
+
+msgid "No notes yet."
+msgstr "No notes yet."
+
+msgid "No description."
+msgstr "No description."
+
+msgid "Failed to load customer"
+msgstr "Failed to load customer"
+
+msgid "Monitor pipeline momentum, accelerate hot opportunities, and keep SLAs on track."
+msgstr "Monitor pipeline momentum, accelerate hot opportunities, and keep SLAs on track."
+
+msgid "New Lead"
+msgstr "New Lead"
+
+msgid "Lead"
+msgstr "Lead"
+
+msgid "Stage"
+msgstr "Stage"
+
+msgid "Owner"
+msgstr "Owner"
+
+msgid "Source"
+msgstr "Source"
+
+msgid "Last touch"
+msgstr "Last touch"
+
+msgid "Score"
+msgstr "Score"
+
+msgid "No tags"
+msgstr "No tags"
+
+msgid "View details"
+msgstr "View details"
+
+msgid "Pipeline breakdown"
+msgstr "Pipeline breakdown"
+
+msgid "Sync CRM stages to visualise full pipeline metrics and conversion rates."
+msgstr "Sync CRM stages to visualise full pipeline metrics and conversion rates."
+
+msgid "Triage customer issues, track escalations, and keep resolution moving."
+msgstr "Triage customer issues, track escalations, and keep resolution moving."
+
+msgid "New Case"
+msgstr "New Case"
+
+msgid "Import Cases"
+msgstr "Import Cases"
+
+msgid "Urgent cases"
+msgstr "Urgent cases"
+
+msgid "Avg. time open"
+msgstr "Avg. time open"
+
+msgid "Search cases"
+msgstr "Search cases"
+
+msgid "All Cases"
+msgstr "All Cases"
+
+msgid "All types"
+msgstr "All types"
+
+msgid "All time"
+msgstr "All time"
+
+msgid "Columns"
+msgstr "Columns"
+
+msgid "Case ID"
+msgstr "Case ID"
+
+msgid "Priority"
+msgstr "Priority"
+
+msgid "Type"
+msgstr "Type"
+
+msgid "Case Title"
+msgstr "Case Title"
+
+msgid "Description"
+msgstr "Description"
+
+msgid "Channel"
+msgstr "Channel"
+
+msgid "Started"
+msgstr "Started"
+
+msgid "Transcript"
+msgstr "Transcript"
+
+msgid "View transcript"
+msgstr "View transcript"
+
+msgid "Select a case"
+msgstr "Select a case"
+
+msgid "Close case details"
+msgstr "Close case details"
+
+msgid "Actions taken"
+msgstr "Actions taken"
+
+msgid "Suggested next steps"
+msgstr "Suggested next steps"
+
+msgid "Case details unavailable"
+msgstr "Case details unavailable"
+
+msgid "Loading case details"
+msgstr "Loading case details"
+
+msgid "No summary provided."
+msgstr "No summary provided."
+
+msgid "No AI diagnosis yet."
+msgstr "No AI diagnosis yet."
+
+msgid "No resolution actions captured."
+msgstr "No resolution actions captured."
+
+msgid "No suggestions available."
+msgstr "No suggestions available."
+
+msgid "No history yet."
+msgstr "No history yet."
+
+msgid "Participant"
+msgstr "Participant"
+
+msgid "No conversation messages yet."
+msgstr "No conversation messages yet."
+
+msgid "No notes on this case."
+msgstr "No notes on this case."
+
+msgid "No documents attached."
+msgstr "No documents attached."
+
+msgid "Back to cases"
+msgstr "Back to cases"
+
+msgid "Conversation transcript"
+msgstr "Conversation transcript"
+
+msgid "This case has not been linked to a conversation yet."
+msgstr "This case has not been linked to a conversation yet."
+
+msgid "Sources"
+msgstr "Sources"
+
+msgid "Case summary"
+msgstr "Case summary"
+
+msgid "Lifecycle & assignment details"
+msgstr "Lifecycle & assignment details"
+
+msgid "Opened"
+msgstr "Opened"
+
+msgid "Closed"
+msgstr "Closed"
+
+msgid "No follow-up actions captured."
+msgstr "No follow-up actions captured."
+
+msgid "No data extractions captured."
+msgstr "No data extractions captured."
+
+msgid "Create, configure, and monitor conversational agents for every channel."
+msgstr "Create, configure, and monitor conversational agents for every channel."
+
+msgid "Create agent"
+msgstr "Create agent"
+
+msgid "Metrics will surface once you start deploying agents."
+msgstr "Metrics will surface once you start deploying agents."
+
+msgid "Search agents..."
+msgstr "Search agents..."
+
+msgid "Upload documents, connect integrations, and organize collections for retrieval."
+msgstr "Upload documents, connect integrations, and organize collections for retrieval."
+
+msgid "Visualizer"
+msgstr "Visualizer"
+
+msgid "Dump JSON"
+msgstr "Dump JSON"
+
+msgid "Connect Google Drive"
+msgstr "Connect Google Drive"
+
+msgid "Documents"
+msgstr "Documents"
+
+msgid "Collections"
+msgstr "Collections"
+
+msgid "Data Guardrails"
+msgstr "Data Guardrails"
+
+msgid "Actions"
+msgstr "Actions"
+
+msgid "Sort by activity"
+msgstr "Sort by activity"
+
+msgid "New collection"
+msgstr "New collection"
+
+msgid "Add content"
+msgstr "Add content"
+
+msgid "Drop files here or upload to add knowledge"
+msgstr "Drop files here or upload to add knowledge"
+
+msgid "Supports PDF, DOCX, CSV, XLSX, and TXT. We auto-detect format."
+msgstr "Supports PDF, DOCX, CSV, XLSX, and TXT. We auto-detect format."
+
+msgid "Paste text"
+msgstr "Paste text"
+
+msgid "Add link"
+msgstr "Add link"
+
+msgid "Upload files"
+msgstr "Upload files"
+
+msgid "Uploading…"
+msgstr "Uploading…"
+
+msgid "Rename"
+msgstr "Rename"
+
+msgid "Update title"
+msgstr "Update title"
+
+msgid "Title (optional)"
+msgstr "Title (optional)"
+
+msgid "External link"
+msgstr "External link"
+
+msgid "Save to knowledge"
+msgstr "Save to knowledge"
+
+msgid "Document library"
+msgstr "Document library"
+
+msgid "Knowledge Visualizer"
+msgstr "Knowledge Visualizer"
+
+msgid "Back to Knowledge"
+msgstr "Back to Knowledge"
+
+msgid "Document selector"
+msgstr "Document selector"
+
+msgid "Choose an upload to inspect its ingestion output."
+msgstr "Choose an upload to inspect its ingestion output."
+
+msgid "total"
+msgstr "total"
+
+msgid "Select a document…"
+msgstr "Select a document…"
+
+msgid "Prev"
+msgstr "Prev"
+
+msgid "Select a document to see its ingested output."
+msgstr "Select a document to see its ingested output."
+
+msgid "Pipeline"
+msgstr "Pipeline"
+
+msgid "Connect first-party native integrations. Your credentials are encrypted and never shared."
+msgstr "Connect first-party native integrations. Your credentials are encrypted and never shared."
+
+msgid "Loading connected integrations..."
+msgstr "Loading connected integrations..."
+
+msgid "Available"
+msgstr "Available"
+
+msgid "Loading available integrations..."
+msgstr "Loading available integrations..."
+
+msgid "Looking for third-party MCP connectors?"
+msgstr "Looking for third-party MCP connectors?"
+
+msgid "MCP Connector page"
+msgstr "MCP Connector page"
+
+msgid "Manage integration tools"
+msgstr "Manage integration tools"
+
+msgid "Manage Tools"
+msgstr "Manage Tools"
+
+msgid "Loading tools..."
+msgstr "Loading tools..."
+
+msgid "Enable All"
+msgstr "Enable All"
+
+msgid "Read Only"
+msgstr "Read Only"
+
+msgid "Save Changes"
+msgstr "Save Changes"
+
+msgid "Refreshing"
+msgstr "Refreshing"
+
+msgid "Updated just now"
+msgstr "Updated just now"
+
+msgid "Refresh failed"
+msgstr "Refresh failed"
+
+msgid "Failed to load integrations:"
+msgstr "Failed to load integrations:"
+
+msgid "Tool management is not available for this integration."
+msgstr "Tool management is not available for this integration."
+
+msgid "Disconnect this integration?"
+msgstr "Disconnect this integration?"
+
+msgid "Integration disconnected successfully."
+msgstr "Integration disconnected successfully."
+
+msgid "Disconnect failed:"
+msgstr "Disconnect failed:"
+
+msgid "Unknown error"
+msgstr "Unknown error"
+
+msgid "No tools available for this integration."
+msgstr "No tools available for this integration."
+
+msgid "Review tools exposed to the LLM and set approval behavior for connected integrations."
+msgstr "Review tools exposed to the LLM and set approval behavior for connected integrations."
+
+msgid "LLM Tool Exposure"
+msgstr "LLM Tool Exposure"
+
+msgid "Loading controls…"
+msgstr "Loading controls…"
+
+msgid "No tools match this filter."
+msgstr "No tools match this filter."
+
+msgid "Always confirm"
+msgstr "Always confirm"
+
+msgid "Unsaved change"
+msgstr "Unsaved change"
+
+msgid "Failed to load controls."
+msgstr "Failed to load controls."
+
+msgid "Tool controls updated."
+msgstr "Tool controls updated."
+
+msgid "Failed to save controls."
+msgstr "Failed to save controls."
+
+msgid "MCP Connector (BETA)"
+msgstr "MCP Connector (BETA)"
+
+msgid "Connect MCP servers, toggle them on/off, and control which agents can use them."
+msgstr "Connect MCP servers, toggle them on/off, and control which agents can use them."
+
+msgid "Browse marketplace"
+msgstr "Browse marketplace"
+
+msgid "Add MCP server"
+msgstr "Add MCP server"
+
+msgid "Industry Tools"
+msgstr "Industry Tools"
+
+msgid "All MCPs"
+msgstr "All MCPs"
+
+msgid "Recommended for"
+msgstr "Recommended for"
+
+msgid "your industry"
+msgstr "your industry"
+
+msgid "Tools commonly used by businesses in your industry. Click to add."
+msgstr "Tools commonly used by businesses in your industry. Click to add."
+
+msgid "Common Tools"
+msgstr "Common Tools"
+
+msgid "Universal tools used across all industries."
+msgstr "Universal tools used across all industries."
+
+msgid "All Available MCPs"
+msgstr "All Available MCPs"
+
+msgid "Browse all MCP integrations. Filter by category or search."
+msgstr "Browse all MCP integrations. Filter by category or search."
+
+msgid "Search MCPs..."
+msgstr "Search MCPs..."
+
+msgid "Your Connected MCPs"
+msgstr "Your Connected MCPs"
+
+msgid "Enable/disable connections, test connectivity, and manage agent opt-outs."
+msgstr "Enable/disable connections, test connectivity, and manage agent opt-outs."
+
+msgid "Loading MCP connections…"
+msgstr "Loading MCP connections…"
+
+msgid "SSE/HTTP remote MCP servers only."
+msgstr "SSE/HTTP remote MCP servers only."
+
+msgid "Auth"
+msgstr "Auth"
+
+msgid "No auth"
+msgstr "No auth"
+
+msgid "Custom header"
+msgstr "Custom header"
+
+msgid "Tool Approval"
+msgstr "Tool Approval"
+
+msgid "Auto-approve all"
+msgstr "Auto-approve all"
+
+msgid "Approve writes only"
+msgstr "Approve writes only"
+
+msgid "Approve all operations"
+msgstr "Approve all operations"
+
+msgid "Enabled"
+msgstr "Enabled"
+
+msgid "Header name"
+msgstr "Header name"
+
+msgid "Header value"
+msgstr "Header value"
+
+msgid "Test connection"
+msgstr "Test connection"
+
+msgid "Agent access"
+msgstr "Agent access"
+
+msgid "Opt out specific agents while keeping others enabled."
+msgstr "Opt out specific agents while keeping others enabled."
+
+msgid "Done"
+msgstr "Done"
+
+msgid "Tool approvals"
+msgstr "Tool approvals"
+
+msgid "Set per-tool approvals and operation type for this MCP connection."
+msgstr "Set per-tool approvals and operation type for this MCP connection."
+
+msgid "Voice Calling Providers"
+msgstr "Voice Calling Providers"
+
+msgid "Configure tenant-owned transport providers and monitor platform-managed voice services."
+msgstr "Configure tenant-owned transport providers and monitor platform-managed voice services."
+
+msgid "How this works"
+msgstr "How this works"
+
+msgid "Each workspace stores its own encrypted transport credentials (Twilio/Telnyx)."
+msgstr "Each workspace stores its own encrypted transport credentials (Twilio/Telnyx)."
+
+msgid "Pick exactly one active outbound transport provider when multiple are configured."
+msgstr "Pick exactly one active outbound transport provider when multiple are configured."
+
+msgid "Deepgram and ElevenLabs are managed centrally by the platform."
+msgstr "Deepgram and ElevenLabs are managed centrally by the platform."
+
+msgid "Use “Test” after setup to validate credentials before live calls."
+msgstr "Use “Test” after setup to validate credentials before live calls."
+
+msgid "Loading providers…"
+msgstr "Loading providers…"
+
+msgid "Configure provider"
+msgstr "Configure provider"
+
+msgid "Store encrypted tenant credentials."
+msgstr "Store encrypted tenant credentials."
+
+msgid "Enable this provider for this workspace"
+msgstr "Enable this provider for this workspace"
+
+msgid "Set as active outbound transport provider"
+msgstr "Set as active outbound transport provider"
+
+msgid "AI Powered"
+msgstr "AI Powered"
+
+msgid "Customer Service"
+msgstr "Customer Service"
+
+msgid "Start Free Trial"
+msgstr "Start Free Trial"
+
+msgid "Watch Demo"
+msgstr "Watch Demo"
+
+msgid "Faster Response"
+msgstr "Faster Response"
+
+msgid "Happy Customers"
+msgstr "Happy Customers"
+
+msgid "Online"
+msgstr "Online"
+
+msgid "This is a demo - try the real widget below! →"
+msgstr "This is a demo - try the real widget below! →"
+
+msgid "Everything You Need for"
+msgstr "Everything You Need for"
+
+msgid "Perfect Support"
+msgstr "Perfect Support"
+
+msgid "Customers who"
+msgstr "Customers who"
+
+msgid "build differently"
+msgstr "build differently"
+
+msgid "Trusted by"
+msgstr "Trusted by"
+
+msgid "Flexible pricing"
+msgstr "Flexible pricing"
+
+msgid "Choose what fits "
+msgstr "Choose what fits "
+
+msgid "your motion"
+msgstr "your motion"
+
+msgid "Wage based"
+msgstr "Wage based"
+
+msgid "Packages"
+msgstr "Packages"
+
+msgid "One-time setup (self-hosted)"
+msgstr "One-time setup (self-hosted)"
+
+msgid "Frequently asked"
+msgstr "Frequently asked"
+
+msgid "questions"
+msgstr "questions"
+
+msgid "Create your"
+msgstr "Create your"
+
+msgid "Your clients, served better."
+msgstr "Your clients, served better."
+
+msgid "OR"
+msgstr "OR"
+
+msgid "Continue with Google"
+msgstr "Continue with Google"
+
+msgid "Create Account"
+msgstr "Create Account"
+
+msgid "Creating..."
+msgstr "Creating..."
+
+msgid "First name"
+msgstr "First name"
+
+msgid "First name is required"
+msgstr "First name is required"
+
+msgid "Please enter a valid email"
+msgstr "Please enter a valid email"
+
+msgid "Password must be at least 8 characters"
+msgstr "Password must be at least 8 characters"
+
+msgid "Confirm password"
+msgstr "Confirm password"
+
+msgid "Passwords do not match"
+msgstr "Passwords do not match"
+
+msgid "Already have an account?"
+msgstr "Already have an account?"
+
+msgid "Log in"
+msgstr "Log in"
+
+msgid "Business Profile"
+msgstr "Business Profile"
+
+msgid "Step 2 · Business profile"
+msgstr "Step 2 · Business profile"
+
+msgid "Help us understand your business"
+msgstr "Help us understand your business"
+
+msgid "Business name"
+msgstr "Business name"
+
+msgid "Business name is required"
+msgstr "Business name is required"
+
+msgid "Website"
+msgstr "Website"
+
+msgid "(optional)"
+msgstr "(optional)"
+
+msgid "Back"
+msgstr "Back"
+
+msgid "Next"
+msgstr "Next"
+
+msgid "Saving..."
+msgstr "Saving..."
+
+msgid "Add"
+msgstr "Add"
+
+msgid "Agent"
+msgstr "Agent"
+
+msgid "Set up your agent basics"
+msgstr "Set up your agent basics"
+
+msgid "Agent name"
+msgstr "Agent name"
+
+msgid "Please enter an agent name"
+msgstr "Please enter an agent name"
+
+msgid "Role"
+msgstr "Role"
+
+msgid "Select a role"
+msgstr "Select a role"
+
+msgid "Please select a role"
+msgstr "Please select a role"
+
+msgid "Tone"
+msgstr "Tone"
+
+msgid "Select tone"
+msgstr "Select tone"
+
+msgid "Please choose a tone"
+msgstr "Please choose a tone"
+
+msgid "Traits"
+msgstr "Traits"
+
+msgid "Pick as many as you like"
+msgstr "Pick as many as you like"
+
+msgid "Escalation rule"
+msgstr "Escalation rule"
+
+msgid "Choose escalation rule"
+msgstr "Choose escalation rule"
+
+msgid "Please choose when to escalate"
+msgstr "Please choose when to escalate"
+
+msgid "Uploads"
+msgstr "Uploads"
+
+msgid "Select at least one material above to start adding links."
+msgstr "Select at least one material above to start adding links."
+
+msgid "Attach"
+msgstr "Attach"
+
+msgid "added"
+msgstr "added"
+
+msgid "Select at least one material to continue"
+msgstr "Select at least one material to continue"
+
+msgid "Add at least one link for each selected source"
+msgstr "Add at least one link for each selected source"
+
+msgid "Upload later"
+msgstr "Upload later"
+
+msgid "Finish"
+msgstr "Finish"
+
+msgid "Finishing…"
+msgstr "Finishing…"
+
+msgid "Customer Support Agent"
+msgstr "Customer Support Agent"
+
+msgid "Support Specialist"
+msgstr "Support Specialist"
+
+msgid "Customer Success Representative"
+msgstr "Customer Success Representative"
+
+msgid "Sales Support Agent"
+msgstr "Sales Support Agent"
+
+msgid "Front Desk Representative"
+msgstr "Front Desk Representative"
+
+msgid "Account Manager"
+msgstr "Account Manager"
+
+msgid "Helpdesk Agent"
+msgstr "Helpdesk Agent"
+
+msgid "Friendly"
+msgstr "Friendly"
+
+msgid "Professional"
+msgstr "Professional"
+
+msgid "Casual"
+msgstr "Casual"
+
+msgid "Formal"
+msgstr "Formal"
+
+msgid "Empathetic"
+msgstr "Empathetic"
+
+msgid "Playful"
+msgstr "Playful"
+
+msgid "Concise"
+msgstr "Concise"
+
+msgid "Detailed"
+msgstr "Detailed"
+
+msgid "Curious"
+msgstr "Curious"
+
+msgid "Patient"
+msgstr "Patient"
+
+msgid "Proactive"
+msgstr "Proactive"
+
+msgid "Direct"
+msgstr "Direct"
+
+msgid "Creative"
+msgstr "Creative"
+
+msgid "Never"
+msgstr "Never"
+
+msgid "On fallback"
+msgstr "On fallback"
+
+msgid "On negative sentiment"
+msgstr "On negative sentiment"
+
+msgid "On high value"
+msgstr "On high value"
+
+msgid "Always"
+msgstr "Always"
+
+msgid "Vision"
+msgstr "Vision"
+
+msgid "Mission"
+msgstr "Mission"
+
+msgid "FAQs"
+msgstr "FAQs"
+
+msgid "Knowledge Base"
+msgstr "Knowledge Base"
+
+msgid "SOPs"
+msgstr "SOPs"
+
+msgid "T&C"
+msgstr "T&C"
+
+msgid "Products & Services"
+msgstr "Products & Services"

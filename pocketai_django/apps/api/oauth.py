@@ -14,6 +14,7 @@ from django.shortcuts import redirect
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
+from django.utils.translation import get_language, get_language_bidi, gettext as _
 from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.http import require_http_methods
 
@@ -114,16 +115,20 @@ def _bootstrap_oauth_provider(provider_key: str) -> OAuthProvider | None:
 def _popup_html(payload: dict[str, object], *, fallback_redirect: str = "/dashboard/mcp/") -> HttpResponse:
     data_json = json.dumps(payload)
     redirect_json = json.dumps(fallback_redirect)
+    language_code = str(get_language() or "en")
+    direction = "rtl" if get_language_bidi() else "ltr"
+    popup_title = _("PocketAI OAuth")
+    close_message = _("You can close this window.")
     html = f"""<!doctype html>
-<html lang="en">
+<html lang="{language_code}" dir="{direction}">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PocketAI OAuth</title>
+    <title>{popup_title}</title>
   </head>
   <body>
     <p style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; padding: 16px;">
-      You can close this window.
+      {close_message}
     </p>
     <script>
       (function () {{

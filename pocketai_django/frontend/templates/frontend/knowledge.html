@@ -1,6 +1,7 @@
 {% extends "frontend/base_app.html" %}
+{% load i18n %}
 
-{% block title %}Knowledge | Pocket AI{% endblock %}
+{% block title %}{% trans "Knowledge" %} | Pocket AI{% endblock %}
 
 {% block extra_head %}
 <style>
@@ -54,8 +55,8 @@
     <div class="w-full px-4 md:px-6 lg:px-8 py-6 space-y-6">
       <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div class="space-y-1.5">
-          <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">Knowledge</h1>
-          <p class="text-sm text-muted-foreground">Upload documents, connect integrations, and organize collections for retrieval.</p>
+          <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">{% trans "Knowledge" %}</h1>
+          <p class="text-sm text-muted-foreground">{% trans "Upload documents, connect integrations, and organize collections for retrieval." %}</p>
         </div>
         <div class="flex flex-wrap items-center justify-start md:justify-end gap-2">
           <a
@@ -65,7 +66,7 @@
             <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" d="M3 3v18h18M7.5 15l3-3 3 2.25 3.75-4.5" />
             </svg>
-            Visualizer
+            {% trans "Visualizer" %}
           </a>
           <a
             href="{% if knowledge_dump_enabled %}{% url 'frontend:dashboard-knowledge-dump' %}{% else %}#{% endif %}"
@@ -75,7 +76,7 @@
             <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0 4-4m-4 4-4-4m-3 7h14" />
             </svg>
-            Dump JSON
+            {% trans "Dump JSON" %}
           </a>
           <form method="post" action="{{ knowledge_integrations_connect_url }}">
             {% csrf_token %}
@@ -83,7 +84,7 @@
               <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M3 6.75h2.25M17.25 3v2.25M21 6.75h-2.25M6.75 18.75V21M3 17.25h2.25m12-14.25L12 8.25m0 0L8.25 5.25M12 8.25v7.5m0 0L8.25 12.75M12 15.75l3.75-3" />
               </svg>
-              Connect Google Drive
+              {% trans "Connect Google Drive" %}
             </button>
           </form>
         </div>
@@ -105,16 +106,16 @@
         <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div class="inline-flex rounded-lg border border-border/40 bg-muted/70 p-1" data-tabs-list>
             <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase transition-colors {% if knowledge_active_tab == 'documents' %}bg-primary text-primary-foreground shadow-sm{% else %}text-muted-foreground hover:text-primary{% endif %}" data-tab-button="documents">
-              Documents
+              {% trans "Documents" %}
             </button>
             <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition-colors {% if knowledge_active_tab == 'integrations' %}bg-primary text-primary-foreground shadow-sm{% else %}text-muted-foreground hover:text-primary{% endif %}" data-tab-button="integrations">
-              Integrations
+              {% trans "Integrations" %}
             </button>
             <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition-colors {% if knowledge_active_tab == 'collections' %}bg-primary text-primary-foreground shadow-sm{% else %}text-muted-foreground hover:text-primary{% endif %}" data-tab-button="collections">
-              Collections
+              {% trans "Collections" %}
             </button>
             <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition-colors {% if knowledge_active_tab == 'guardrails' %}bg-primary text-primary-foreground shadow-sm{% else %}text-muted-foreground hover:text-primary{% endif %}" data-tab-button="guardrails">
-              Data Guardrails
+              {% trans "Data Guardrails" %}
             </button>
           </div>
           <div class="flex flex-wrap items-center gap-2 md:ml-auto {% if knowledge_active_tab != 'documents' %}hidden{% endif %}" data-tab-toolbar="documents">
@@ -123,7 +124,7 @@
                 <path stroke-linecap="round" stroke-linejoin="round" d="M3 7.5A2.25 2.25 0 0 1 5.25 5h13.5A2.25 2.25 0 0 1 21 7.5v9A2.25 2.25 0 0 1 18.75 18.75H5.25A2.25 2.25 0 0 1 3 16.5v-9Z" />
                 <path stroke-linecap="round" stroke-linejoin="round" d="M3 9h18" />
               </svg>
-              Collections
+              {% trans "Collections" %}
               <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20" aria-hidden="true">
                 <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m6 8 4 4 4-4" />
               </svg>
@@ -134,14 +135,14 @@
               <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M3 7.5 12 12l9-4.5M3 12l9 4.5 9-4.5M3 16.5 12 21l9-4.5" />
               </svg>
-              Actions
+              {% trans "Actions" %}
             </div>
             <div class="flex flex-wrap items-center gap-2">
               <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground">
-                Sort by activity
+                {% trans "Sort by activity" %}
               </button>
               <button type="button" class="inline-flex items-center gap-2 rounded-md bg-primary/10 text-primary px-3 py-2 text-xs font-medium hover:bg-primary/15" data-collection-create-open>
-                New collection
+                {% trans "New collection" %}
               </button>
             </div>
           </div>
@@ -153,7 +154,7 @@
               <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
               </svg>
-              Add content
+              {% trans "Add content" %}
             </div>
             <div
               class="rounded-2xl border-2 border-dashed border-primary/30 bg-primary/5 px-6 py-5 transition-shadow transition-colors {% if not knowledge_upload_enabled %}opacity-40 cursor-not-allowed{% else %}cursor-pointer{% endif %}"
@@ -175,20 +176,20 @@
                       </svg>
                     </div>
                     <div class="space-y-2">
-                      <div class="text-sm font-semibold text-foreground">Drop files here or upload to add knowledge</div>
-                      <p class="text-xs text-muted-foreground">Supports PDF, DOCX, CSV, XLSX, and TXT. We auto-detect format.</p>
+                      <div class="text-sm font-semibold text-foreground">{% trans "Drop files here or upload to add knowledge" %}</div>
+                      <p class="text-xs text-muted-foreground">{% trans "Supports PDF, DOCX, CSV, XLSX, and TXT. We auto-detect format." %}</p>
                       <div class="flex flex-wrap gap-2 pt-1">
                         <button type="button" class="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background px-3 py-1 text-[11px] font-semibold text-muted-foreground shadow-sm transition hover:border-primary/40 hover:text-primary" data-upload-action="text">
                           <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M5 5h14M5 9h14M5 13h14M5 17h10" />
                           </svg>
-                          Paste text
+                          {% trans "Paste text" %}
                         </button>
                         <button type="button" class="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background px-3 py-1 text-[11px] font-semibold text-muted-foreground shadow-sm transition hover:border-primary/40 hover:text-primary" data-upload-action="link">
                           <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6.75h3.75a2.25 2.25 0 0 1 2.25 2.25v3.75m-6 6.75H9a2.25 2.25 0 0 1-2.25-2.25v-3.75m1.5-3.75 7.5 7.5" />
                           </svg>
-                          Add link
+                          {% trans "Add link" %}
                         </button>
                       </div>
                     </div>
@@ -197,16 +198,16 @@
                     <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                       <path stroke-linecap="round" stroke-linejoin="round" d="M8 7h11M8 12h8m-8 5h6M3 5v14a2 2 0 0 0 2 2h14" />
                     </svg>
-                    Upload files
+                    {% trans "Upload files" %}
                   </button>
                 </div>
                 <div class="hidden space-y-2 rounded-lg border border-border/60 bg-background/80 px-3 py-2 text-[11px] text-muted-foreground transition-all duration-200 opacity-0 -translate-y-1" data-upload-status role="status" aria-live="polite">
                   <div class="flex items-center justify-between gap-2 text-xs">
                     <div class="flex min-w-0 items-center gap-2">
-                      <span class="font-semibold text-foreground" data-upload-status-label>Uploading…</span>
+                      <span class="font-semibold text-foreground" data-upload-status-label>{% trans "Uploading…" %}</span>
                       <span class="truncate text-muted-foreground" data-upload-status-file></span>
                       <button type="button" class="hidden text-[11px] font-semibold text-primary hover:underline" data-upload-rename-toggle>
-                        Rename
+                        {% trans "Rename" %}
                       </button>
                     </div>
                     <span class="tabular-nums text-muted-foreground" data-upload-status-percent></span>
@@ -219,33 +220,33 @@
                     <input
                       type="text"
                       class="h-8 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      placeholder="Update title"
+                      placeholder="{% trans 'Update title' %}"
                       data-upload-rename-input
                     />
                     <button type="button" class="inline-flex items-center rounded-md bg-primary px-2.5 py-1 text-[11px] font-semibold text-primary-foreground" data-upload-rename-save>
-                      Save
+                      {% trans "Save" %}
                     </button>
                     <button type="button" class="inline-flex items-center rounded-md border border-input bg-background px-2 py-1 text-[11px] font-semibold text-muted-foreground" data-upload-rename-cancel>
-                      Cancel
+                      {% trans "Cancel" %}
                     </button>
                   </div>
                 </div>
                 <div class="hidden space-y-3 pt-2" data-upload-inline>
                   <label class="space-y-1 text-sm">
-                    <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Title (optional)</span>
-                    <input type="text" name="display_name" placeholder="e.g. Corporate account FAQ" class="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" data-upload-display-name />
+                    <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{% trans "Title (optional)" %}</span>
+                    <input type="text" name="display_name" placeholder="{% trans 'e.g. Corporate account FAQ' %}" class="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" data-upload-display-name />
                   </label>
                   <div data-upload-inline-field="text" class="space-y-1 hidden">
-                    <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground block">Manual entry</span>
-                    <textarea name="knowledge_text" rows="4" placeholder="Paste a short SOP or message template…" class="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" disabled></textarea>
+                    <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground block">{% trans "Manual entry" %}</span>
+                    <textarea name="knowledge_text" rows="4" placeholder="{% trans 'Paste a short SOP or message template…' %}" class="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" disabled></textarea>
                   </div>
                   <div data-upload-inline-field="link" class="space-y-1 hidden">
-                    <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground block">External link</span>
-                    <input type="url" name="knowledge_url" placeholder="https://example.com/handbook" class="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" disabled />
+                    <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground block">{% trans "External link" %}</span>
+                    <input type="url" name="knowledge_url" placeholder="{% trans 'https://example.com/handbook' %}" class="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" disabled />
                   </div>
                   <div class="flex items-center justify-end gap-2">
-                    <button type="button" class="inline-flex items-center rounded-md border border-input bg-background px-3 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted" data-upload-inline-cancel>Cancel</button>
-                    <button type="submit" class="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-sm hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">Save to knowledge</button>
+                    <button type="button" class="inline-flex items-center rounded-md border border-input bg-background px-3 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted" data-upload-inline-cancel>{% trans "Cancel" %}</button>
+                    <button type="submit" class="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-sm hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">{% trans "Save to knowledge" %}</button>
                   </div>
                 </div>
               </form>
@@ -257,7 +258,7 @@
               <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M4 4h16v4H4zM4 12h16v8H4z" />
               </svg>
-              Document library
+              {% trans "Document library" %}
             </div>
             <div class="relative w-full md:w-64">
               <svg class="rtl-search-icon absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
