@@ -78,7 +78,7 @@ msgstr "منصة خدمة عملاء بالذكاء الاصطناعي"
 
 #: frontend/context_processors.py:90
 msgid "AI Support"
-msgstr "الدعم الذكي"
+msgstr "دعم الذكاء الاصطناعي"
 
 #: frontend/context_processors.py:92
 msgid ""
@@ -193,7 +193,7 @@ msgstr "البريد الإلكتروني"
 
 #: frontend/context_processors.py:132
 msgid "© 2024 AI Support. All rights reserved."
-msgstr "© 2024 الدعم الذكي. جميع الحقوق محفوظة."
+msgstr "© 2024 دعم الذكاء الاصطناعي. جميع الحقوق محفوظة."
 
 #: frontend/context_processors.py:135
 msgid "Cookie Policy"
@@ -265,7 +265,7 @@ msgstr "المعرفة"
 #: frontend/templates/frontend/components/dashboard/sidebar.html:193
 #: frontend/templates/frontend/components/dashboard/sidebar.html:198
 msgid "Controls"
-msgstr "عناصر التحكم"
+msgstr "الضوابط"
 
 #: frontend/templates/frontend/components/dashboard/sidebar.html:203
 msgid "MCP Connector (Beta)"
@@ -460,7 +460,7 @@ msgstr "App Store"
 
 #: frontend/views.py:403
 msgid "Knowledge snippet"
-msgstr "مقتطف معرفي"
+msgstr "مقتطف من المعرفة"
 
 #: frontend/views.py:419
 msgid "LLM strategy"

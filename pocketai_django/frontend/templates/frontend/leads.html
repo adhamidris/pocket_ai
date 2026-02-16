@@ -53,10 +53,10 @@
       <section class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div class="flex flex-col gap-3 md:flex-row md:items-center md:flex-wrap">
           <div class="relative w-full md:w-64">
-            <svg class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <svg class="rtl-search-icon absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.35-4.35m0 0A7.5 7.5 0 1 0 6.5 6.5a7.5 7.5 0 0 0 10.15 10.15Z" />
             </svg>
-            <input type="search" class="h-10 w-full rounded-md border border-border/60 bg-muted/70 pl-9 pr-3 text-sm focus-visible:border-border focus-visible:outline-none focus-visible:ring-0" placeholder="{{ leads_filters.search_placeholder|default:'Search lead, company, or tag' }}" autocomplete="off" data-search-ready="true">
+            <input type="search" class="rtl-search-input h-10 w-full rounded-md border border-border/60 bg-muted/70 pl-9 pr-3 text-sm focus-visible:border-border focus-visible:outline-none focus-visible:ring-0" placeholder="{{ leads_filters.search_placeholder|default:'Search lead, company, or tag' }}" autocomplete="off" data-search-ready="true">
           </div>
         </div>
         <div class="flex flex-wrap items-center gap-2">
@@ -122,7 +122,7 @@
             <div class="py-14 text-center text-sm text-muted-foreground">{{ leads_auth_notice }}</div>
           {% elif leads_loading %}
             <div class="py-6">
-              <table class="w-full caption-bottom text-sm rounded-xl bg-background/40 shadow-sm backdrop-blur">
+              <table class="rtl-table w-full caption-bottom text-sm rounded-xl bg-background/40 shadow-sm backdrop-blur">
                 <tbody>
                   {% for _ in skeleton_rows %}
                     <tr class="transition-colors hover:bg-muted/40">
@@ -167,7 +167,7 @@
           {% elif leads %}
             <div class="hidden md:block">
               <div class="relative overflow-x-auto overflow-y-auto max-h-[70vh]">
-                <table class="w-full caption-bottom text-sm rounded-xl bg-background/40 shadow-sm backdrop-blur [&_th]:px-3 [&_td]:px-3 [&_th:first-child]:pl-4 [&_td:first-child]:pl-4 [&_th:last-child]:pr-4 [&_td:last-child]:pr-4 [&_th]:py-3 [&_td]:py-3" data-leads-table>
+                <table class="rtl-table w-full caption-bottom text-sm rounded-xl bg-background/40 shadow-sm backdrop-blur [&_th]:px-3 [&_td]:px-3 [&_th:first-child]:pl-4 [&_td:first-child]:pl-4 [&_th:last-child]:pr-4 [&_td:last-child]:pr-4 [&_th]:py-3 [&_td]:py-3" data-leads-table>
                   <thead class="sticky top-0 z-10 bg-muted/80 backdrop-blur border-b border-border/60">
                     <tr class="transition-colors hover:bg-transparent">
                       <th scope="col" class="h-12 text-left font-medium text-muted-foreground w-[200px]">Lead</th>

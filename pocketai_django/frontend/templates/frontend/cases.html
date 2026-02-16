@@ -68,14 +68,14 @@
         <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div class="flex flex-col gap-3 md:flex-row md:items-center md:flex-wrap">
             <div class="relative w-full md:w-64">
-              <svg class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">
+              <svg class="rtl-search-icon w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">
                 <circle cx="7" cy="7" r="5"></circle>
                 <path d="m11.5 11.5 3 3" stroke-linecap="round"></path>
               </svg>
               <input
                 type="search"
                 placeholder="Search name, email, text…"
-                class="h-10 w-full rounded-lg border border-border/60 bg-muted/70 pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-0 focus-visible:border-border transition"
+                class="rtl-search-input h-10 w-full rounded-lg border border-border/60 bg-muted/70 pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-0 focus-visible:border-border transition"
                 aria-label="Search cases"
               >
             </div>
@@ -140,7 +140,7 @@
               <div class="relative bg-card text-card-foreground shadow-lg shadow-black/5 backdrop-blur transition-colors rounded-xl overflow-hidden">
               <div class="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary/35 via-primary/20 to-transparent"></div>
               <div class="relative overflow-x-auto overflow-y-auto max-h-[70vh]">
-                <table class="w-full caption-bottom text-sm rounded-xl bg-background/40 shadow-sm backdrop-blur [&_th]:px-3 [&_td]:px-3 [&_th:first-child]:pl-4 [&_td:first-child]:pl-4 [&_th:last-child]:pr-4 [&_td:last-child]:pr-4 [&_th]:py-3 [&_td]:py-3">
+                <table class="rtl-table w-full caption-bottom text-sm rounded-xl bg-background/40 shadow-sm backdrop-blur [&_th]:px-3 [&_td]:px-3 [&_th:first-child]:pl-4 [&_td:first-child]:pl-4 [&_th:last-child]:pr-4 [&_td:last-child]:pr-4 [&_th]:py-3 [&_td]:py-3">
                   <thead class="sticky top-0 z-10 bg-muted/80 backdrop-blur border-b border-border/60">
                     <tr class="transition-colors hover:bg-transparent">
                       <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground w-8">
@@ -612,6 +612,12 @@
     var activeRow = null;
     var inFlight = null;
     var isPanelOpen = false;
+    var rootDir = document.documentElement ? document.documentElement.getAttribute("dir") : "";
+    var isRtl = (rootDir || "").toLowerCase() === "rtl";
+
+    function hiddenPanelTransform() {
+      return "translateX(" + (isRtl ? "-100%" : "100%") + ")";
+    }
 
     function setPanelState(state) {
       panel.dataset.state = state;
@@ -689,7 +695,7 @@
       }
       panel.classList.add("translate-x-full");
       panel.classList.remove("translate-x-0");
-      panel.style.transform = "translateX(100%)";
+      panel.style.transform = hiddenPanelTransform();
       panel.setAttribute("aria-hidden", "true");
       if (body) {
         body.classList.remove("overflow-hidden");

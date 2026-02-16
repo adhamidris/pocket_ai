@@ -260,10 +260,10 @@
               Document library
             </div>
             <div class="relative w-full md:w-64">
-              <svg class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+              <svg class="rtl-search-icon absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.35-4.35m0 0A7.5 7.5 0 1 0 6.5 6.5a7.5 7.5 0 0 0 10.15 10.15Z" />
               </svg>
-              <input type="search" class="h-10 w-full rounded-md border border-border/60 bg-muted/70 pl-9 pr-3 text-sm focus-visible:border-border focus-visible:outline-none focus-visible:ring-0" placeholder="{{ knowledge_filters.search_placeholder|default:'Search documents…' }}" autocomplete="off">
+              <input type="search" class="rtl-search-input h-10 w-full rounded-md border border-border/60 bg-muted/70 pl-9 pr-3 text-sm focus-visible:border-border focus-visible:outline-none focus-visible:ring-0" placeholder="{{ knowledge_filters.search_placeholder|default:'Search documents…' }}" autocomplete="off">
             </div>
           </div>
 
@@ -271,7 +271,7 @@
             <div class="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary/35 via-primary/20 to-transparent"></div>
             <div class="relative overflow-x-auto overflow-y-auto max-h-[70vh]">
               <table
-                class="w-full caption-bottom text-sm rounded-xl bg-background/40 shadow-sm backdrop-blur [&_th]:px-3 [&_td]:px-3 [&_th:first-child]:pl-4 [&_td:first-child]:pl-4 [&_th:last-child]:pr-4 [&_td:last-child]:pr-4 [&_th]:py-3 [&_td]:py-3"
+                class="rtl-table w-full caption-bottom text-sm rounded-xl bg-background/40 shadow-sm backdrop-blur [&_th]:px-3 [&_td]:px-3 [&_th:first-child]:pl-4 [&_td:first-child]:pl-4 [&_th:last-child]:pr-4 [&_td:last-child]:pr-4 [&_th]:py-3 [&_td]:py-3"
                 data-documents-table
               >
                 <thead class="sticky top-0 z-10 bg-muted/80 backdrop-blur border-b border-border/60">
@@ -805,7 +805,7 @@
                   <span class="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-amber-800">Required {{ guardrails.events.summary.required }}</span>
                 </div>
                 <div class="overflow-x-auto rounded-lg border border-border/60">
-                  <table class="min-w-full divide-y divide-border/60 text-sm">
+                  <table class="rtl-table min-w-full divide-y divide-border/60 text-sm">
                     <thead class="bg-muted/50 text-[11px] uppercase tracking-wide text-muted-foreground">
                       <tr>
                         <th scope="col" class="px-3 py-2 text-left">Tool</th>
@@ -1150,12 +1150,12 @@
             <form class="w-full flex-none flex items-center gap-2" data-sheets-search-form>
               <label class="relative flex-1 block">
                 <span class="sr-only">Search sheets</span>
-                <svg class="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                <svg class="rtl-search-icon-tight absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                   <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
                 </svg>
                 <input
                   type="search"
-                  class="h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  class="rtl-search-input-tight h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
                   placeholder="Search by file name"
                   data-sheets-search
                 >
@@ -2771,6 +2771,12 @@
     var activeRow = null;
     var inFlight = null;
     var isPanelOpen = false;
+    var rootDir = document.documentElement ? document.documentElement.getAttribute("dir") : "";
+    var isRtl = (rootDir || "").toLowerCase() === "rtl";
+
+    function hiddenPanelTransform() {
+      return "translateX(" + (isRtl ? "-100%" : "100%") + ")";
+    }
     var currentDocumentTitle = "";
     var summaryExpanded = false;
     var detailCache = {};
@@ -3543,7 +3549,7 @@
       }
       panel.classList.add("translate-x-full");
       panel.classList.remove("translate-x-0");
-      panel.style.transform = "translateX(100%)";
+      panel.style.transform = hiddenPanelTransform();
       panel.setAttribute("aria-hidden", "true");
       if (body) {
         body.classList.remove("overflow-hidden");

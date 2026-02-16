@@ -378,6 +378,8 @@
       if (!content || !trigger) {
         return;
       }
+      var rootDir = document.documentElement ? document.documentElement.getAttribute("dir") : "";
+      var isRtl = (rootDir || "").toLowerCase() === "rtl";
       var rect = trigger.getBoundingClientRect();
       if (!rect.width || !rect.height) {
         return;
@@ -385,12 +387,21 @@
       var viewportPadding = 12;
       var maxWidth = Math.max(200, rect.width);
       var width = Math.min(maxWidth, window.innerWidth - viewportPadding * 2);
-      var left = Math.min(
-        Math.max(rect.left, viewportPadding),
-        Math.max(viewportPadding, window.innerWidth - width - viewportPadding)
-      );
-      content.style.left = Math.round(left) + "px";
-      content.style.right = "auto";
+      if (isRtl) {
+        var right = Math.min(
+          Math.max(window.innerWidth - rect.right, viewportPadding),
+          Math.max(viewportPadding, window.innerWidth - width - viewportPadding)
+        );
+        content.style.left = "auto";
+        content.style.right = Math.round(right) + "px";
+      } else {
+        var left = Math.min(
+          Math.max(rect.left, viewportPadding),
+          Math.max(viewportPadding, window.innerWidth - width - viewportPadding)
+        );
+        content.style.left = Math.round(left) + "px";
+        content.style.right = "auto";
+      }
       content.style.width = Math.round(width) + "px";
       content.style.maxWidth = Math.round(width) + "px";
       content.style.bottom = "auto";
