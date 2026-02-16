@@ -2023,10 +2023,15 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LANGUAGE_CODE = "en-us"
 
+# WEB_I18N_ARABIC_ENABLED: Rollout gate for Arabic in web surfaces.
+# Keep enabled by default; set false to temporarily roll back to English-only.
+WEB_I18N_ARABIC_ENABLED = os.getenv("WEB_I18N_ARABIC_ENABLED", "true").lower() in {"1", "true", "yes"}
+
 LANGUAGES = [
     ("en", _("English")),
-    ("ar", _("Arabic")),
 ]
+if WEB_I18N_ARABIC_ENABLED:
+    LANGUAGES.append(("ar", _("Arabic")))
 
 TIME_ZONE = "UTC"
 

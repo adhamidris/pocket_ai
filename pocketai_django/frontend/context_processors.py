@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, TypedDict
 
+from django.conf import settings
 from django.urls import reverse
 from django.utils.translation import gettext as _
 
@@ -81,6 +82,14 @@ def site_globals(request) -> Dict[str, Any]:
             {"label": _("Get Started"), "href": reverse("frontend:register"), "style": "primary"},
         ]
 
+    language_options = [
+        {"code": str(code), "label": label}
+        for code, label in getattr(settings, "LANGUAGES", ())
+        if str(code or "").strip()
+    ]
+    if not language_options:
+        language_options = [{"code": "en", "label": _("English")}]
+
     return {
         "site": {
             "brand": {"name": "Pocket", "tagline": _("AI Customer Service Platform"), "href": "/"},
@@ -137,10 +146,7 @@ def site_globals(request) -> Dict[str, Any]:
             },
             "language_toggle": {
                 "label": _("Language"),
-                "options": [
-                    {"code": "en", "label": _("English")},
-                    {"code": "ar", "label": _("Arabic")},
-                ],
+                "options": language_options,
             },
             "theme_toggle": {
                 "light_label": _("Light mode"),
