@@ -1,0 +1,574 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the PACKAGE package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: pocketai-web\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-02-16 18:34+0000\n"
+"PO-Revision-Date: 2026-02-16 18:34+0000\n"
+"Last-Translator: Pocket AI Team\n"
+"Language-Team: English\n"
+"Language: en\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#: apps/accounts/views.py:103
+msgid "Email and password are required."
+msgstr "Email and password are required."
+
+#: apps/accounts/views.py:115
+msgid "Invalid email or password."
+msgstr "Invalid email or password."
+
+#: apps/accounts/views.py:126
+msgid "This account is inactive. Contact support for help."
+msgstr "This account is inactive. Contact support for help."
+
+#: frontend/context_processors.py:45 frontend/context_processors.py:97
+msgid "Features"
+msgstr "Features"
+
+#: frontend/context_processors.py:46 frontend/context_processors.py:98
+msgid "Pricing"
+msgstr "Pricing"
+
+#: frontend/context_processors.py:47
+msgid "About"
+msgstr "About"
+
+#: frontend/context_processors.py:48 frontend/context_processors.py:108
+msgid "Contact"
+msgstr "Contact"
+
+#: frontend/context_processors.py:56
+#: frontend/templates/frontend/components/dashboard/sidebar.html:94
+msgid "Dashboard"
+msgstr "Dashboard"
+
+#: frontend/context_processors.py:61
+#, python-format
+msgid "Hi, %(name)s"
+msgstr "Hi, %(name)s"
+
+#: frontend/context_processors.py:66
+#: frontend/templates/frontend/components/dashboard/sidebar.html:353
+msgid "Log out"
+msgstr "Log out"
+
+#: frontend/context_processors.py:75
+msgid "Sign In"
+msgstr "Sign In"
+
+#: frontend/context_processors.py:80
+msgid "Register"
+msgstr "Register"
+
+#: frontend/context_processors.py:81
+msgid "Get Started"
+msgstr "Get Started"
+
+#: frontend/context_processors.py:86
+msgid "AI Customer Service Platform"
+msgstr "AI Customer Service Platform"
+
+#: frontend/context_processors.py:90
+msgid "AI Support"
+msgstr "AI Support"
+
+#: frontend/context_processors.py:92
+msgid ""
+"Transforming customer service with intelligent AI solutions. Deliver "
+"exceptional support experiences that delight your customers and grow your "
+"business."
+msgstr ""
+"Transforming customer service with intelligent AI solutions. Deliver "
+"exceptional support experiences that delight your customers and grow your "
+"business."
+
+#: frontend/context_processors.py:96
+msgid "Product"
+msgstr "Product"
+
+#: frontend/context_processors.py:99
+msgid "API Documentation"
+msgstr "API Documentation"
+
+#: frontend/context_processors.py:100
+#: frontend/templates/frontend/components/dashboard/sidebar.html:183
+#: frontend/templates/frontend/components/dashboard/sidebar.html:188
+msgid "Integrations"
+msgstr "Integrations"
+
+#: frontend/context_processors.py:101
+msgid "Security"
+msgstr "Security"
+
+#: frontend/context_processors.py:103
+msgid "Company"
+msgstr "Company"
+
+#: frontend/context_processors.py:104
+msgid "About Us"
+msgstr "About Us"
+
+#: frontend/context_processors.py:105
+msgid "Careers"
+msgstr "Careers"
+
+#: frontend/context_processors.py:106
+msgid "Press"
+msgstr "Press"
+
+#: frontend/context_processors.py:107
+msgid "Blog"
+msgstr "Blog"
+
+#: frontend/context_processors.py:110
+msgid "Resources"
+msgstr "Resources"
+
+#: frontend/context_processors.py:111
+msgid "Help Center"
+msgstr "Help Center"
+
+#: frontend/context_processors.py:112
+msgid "Community"
+msgstr "Community"
+
+#: frontend/context_processors.py:113
+msgid "Guides"
+msgstr "Guides"
+
+#: frontend/context_processors.py:114
+msgid "Status"
+msgstr "Status"
+
+#: frontend/context_processors.py:115
+msgid "Changelog"
+msgstr "Changelog"
+
+#: frontend/context_processors.py:117
+msgid "Legal"
+msgstr "Legal"
+
+#: frontend/context_processors.py:118 frontend/context_processors.py:133
+msgid "Privacy Policy"
+msgstr "Privacy Policy"
+
+#: frontend/context_processors.py:119 frontend/context_processors.py:134
+msgid "Terms of Service"
+msgstr "Terms of Service"
+
+#: frontend/context_processors.py:120
+msgid "GDPR"
+msgstr "GDPR"
+
+#: frontend/context_processors.py:121
+msgid "Compliance"
+msgstr "Compliance"
+
+#: frontend/context_processors.py:122
+msgid "Cookies"
+msgstr "Cookies"
+
+#: frontend/context_processors.py:126
+msgid "Twitter"
+msgstr "Twitter"
+
+#: frontend/context_processors.py:127
+msgid "LinkedIn"
+msgstr "LinkedIn"
+
+#: frontend/context_processors.py:128
+msgid "GitHub"
+msgstr "GitHub"
+
+#: frontend/context_processors.py:129
+msgid "Email"
+msgstr "Email"
+
+#: frontend/context_processors.py:132
+msgid "© 2024 AI Support. All rights reserved."
+msgstr "© 2024 AI Support. All rights reserved."
+
+#: frontend/context_processors.py:135
+msgid "Cookie Policy"
+msgstr "Cookie Policy"
+
+#: frontend/context_processors.py:139
+#: frontend/templates/frontend/components/dashboard/sidebar.html:304
+msgid "Language"
+msgstr "Language"
+
+#: frontend/context_processors.py:141 pocketai/settings.py:2027
+msgid "English"
+msgstr "English"
+
+#: frontend/context_processors.py:142 pocketai/settings.py:2028
+msgid "Arabic"
+msgstr "Arabic"
+
+#: frontend/context_processors.py:146
+#: frontend/templates/frontend/components/dashboard/sidebar.html:328
+msgid "Light mode"
+msgstr "Light mode"
+
+#: frontend/context_processors.py:147
+#: frontend/templates/frontend/components/dashboard/sidebar.html:329
+msgid "Dark mode"
+msgstr "Dark mode"
+
+#: frontend/templates/frontend/components/dashboard/sidebar.html:103
+#: frontend/templates/frontend/components/dashboard/sidebar.html:104
+msgid "Collapse sidebar"
+msgstr "Collapse sidebar"
+
+#: frontend/templates/frontend/components/dashboard/sidebar.html:105
+msgid "Expand sidebar"
+msgstr "Expand sidebar"
+
+#: frontend/templates/frontend/components/dashboard/sidebar.html:117
+#: frontend/templates/frontend/components/dashboard/sidebar.html:122
+msgid "Home"
+msgstr "Home"
+
+#: frontend/templates/frontend/components/dashboard/sidebar.html:127
+#: frontend/templates/frontend/components/dashboard/sidebar.html:133
+msgid "Cases"
+msgstr "Cases"
+
+#: frontend/templates/frontend/components/dashboard/sidebar.html:138
+#: frontend/templates/frontend/components/dashboard/sidebar.html:144
+msgid "Leads"
+msgstr "Leads"
+
+#: frontend/templates/frontend/components/dashboard/sidebar.html:149
+#: frontend/templates/frontend/components/dashboard/sidebar.html:157
+msgid "Customers"
+msgstr "Customers"
+
+#: frontend/templates/frontend/components/dashboard/sidebar.html:162
+#: frontend/templates/frontend/components/dashboard/sidebar.html:168
+msgid "Agents"
+msgstr "Agents"
+
+#: frontend/templates/frontend/components/dashboard/sidebar.html:173
+#: frontend/templates/frontend/components/dashboard/sidebar.html:178
+#: frontend/views.py:426
+msgid "Knowledge"
+msgstr "Knowledge"
+
+#: frontend/templates/frontend/components/dashboard/sidebar.html:193
+#: frontend/templates/frontend/components/dashboard/sidebar.html:198
+msgid "Controls"
+msgstr "Controls"
+
+#: frontend/templates/frontend/components/dashboard/sidebar.html:203
+msgid "MCP Connector (Beta)"
+msgstr "MCP Connector (Beta)"
+
+#: frontend/templates/frontend/components/dashboard/sidebar.html:211
+msgid "MCP Connector"
+msgstr "MCP Connector"
+
+#: frontend/templates/frontend/components/dashboard/sidebar.html:212
+msgid "Beta"
+msgstr "Beta"
+
+#: frontend/templates/frontend/components/dashboard/sidebar.html:218
+#: frontend/templates/frontend/components/dashboard/sidebar.html:223
+msgid "Voice Calling"
+msgstr "Voice Calling"
+
+#: frontend/templates/frontend/components/dashboard/sidebar.html:232
+#: frontend/templates/frontend/components/dashboard/sidebar.html:279
+msgid "Account"
+msgstr "Account"
+
+#: frontend/templates/frontend/components/dashboard/sidebar.html:250
+msgid "Manage account"
+msgstr "Manage account"
+
+#: frontend/templates/frontend/components/dashboard/sidebar.html:280
+msgid "Manage your Pocket AI workspace"
+msgstr "Manage your Pocket AI workspace"
+
+#: frontend/templates/frontend/components/dashboard/sidebar.html:286
+msgid "Close account menu"
+msgstr "Close account menu"
+
+#: frontend/templates/frontend/components/dashboard/sidebar.html:299
+msgid "Workspace settings"
+msgstr "Workspace settings"
+
+#: frontend/templates/frontend/components/dashboard/sidebar.html:299
+msgid "Soon"
+msgstr "Soon"
+
+#: frontend/templates/frontend/components/dashboard/sidebar.html:315
+#, python-format
+msgid "Language: %(label)s"
+msgstr "Language: %(label)s"
+
+#: frontend/templates/frontend/components/dashboard/sidebar.html:341
+msgid "Theme"
+msgstr "Theme"
+
+#: frontend/templates/frontend/dashboard.html:4
+msgid "Dashboard | Pocket AI"
+msgstr "Dashboard | Pocket AI"
+
+#: frontend/templates/frontend/dashboard.html:15
+msgid "Pocket AI Command Center"
+msgstr "Pocket AI Command Center"
+
+#: frontend/templates/frontend/dashboard.html:17
+msgid "Welcome back,"
+msgstr "Welcome back,"
+
+#: frontend/templates/frontend/dashboard.html:24
+msgid "Track automations, agents, and customer signals in one place."
+msgstr "Track automations, agents, and customer signals in one place."
+
+#: frontend/templates/frontend/dashboard.html:33
+msgid "Notifications"
+msgstr "Notifications"
+
+#: frontend/templates/frontend/dashboard.html:90
+msgid "Escalation monitor"
+msgstr "Escalation monitor"
+
+#: frontend/templates/frontend/dashboard.html:96
+msgid "Review now"
+msgstr "Review now"
+
+#: frontend/templates/frontend/dashboard.html:118
+msgid "Metric loading placeholder"
+msgstr "Metric loading placeholder"
+
+#: frontend/templates/frontend/dashboard.html:149
+msgid "Conversation radar"
+msgstr "Conversation radar"
+
+#: frontend/templates/frontend/dashboard.html:151
+msgid "Live"
+msgstr "Live"
+
+#: frontend/templates/frontend/dashboard.html:154
+msgid "Unified feed across AI automations and human specialists."
+msgstr "Unified feed across AI automations and human specialists."
+
+#: frontend/templates/frontend/dashboard.html:157
+msgid "Conversation filters"
+msgstr "Conversation filters"
+
+#: frontend/templates/frontend/dashboard.html:159
+msgid "All"
+msgstr "All"
+
+#: frontend/templates/frontend/dashboard.html:165
+msgid "Human"
+msgstr "Human"
+
+#: frontend/templates/frontend/partials/footer.html:55
+msgid "Manage Cookies"
+msgstr "Manage Cookies"
+
+#: frontend/views.py:81
+msgid "File Upload"
+msgstr "File Upload"
+
+#: frontend/views.py:82
+msgid "External Link"
+msgstr "External Link"
+
+#: frontend/views.py:83
+msgid "Manual Entry"
+msgstr "Manual Entry"
+
+#: frontend/views.py:88
+msgid "Sync Google Sheets automatically to keep SOPs and trackers up to date."
+msgstr "Sync Google Sheets automatically to keep SOPs and trackers up to date."
+
+#: frontend/views.py:90
+msgid "Mirror Notion pages into the knowledge base."
+msgstr "Mirror Notion pages into the knowledge base."
+
+#: frontend/views.py:91
+msgid "Import help-center articles from Zendesk Guide."
+msgstr "Import help-center articles from Zendesk Guide."
+
+#: frontend/views.py:92
+msgid "Bring HubSpot knowledge articles into Pocket AI."
+msgstr "Bring HubSpot knowledge articles into Pocket AI."
+
+#: frontend/views.py:93
+msgid "Capture curated Slack posts as living documentation."
+msgstr "Capture curated Slack posts as living documentation."
+
+#: frontend/views.py:94
+msgid "Sync wiki spaces from Confluence."
+msgstr "Sync wiki spaces from Confluence."
+
+#: frontend/views.py:95
+msgid "Custom connector managed by your team."
+msgstr "Custom connector managed by your team."
+
+#: frontend/views.py:129
+msgid "Chat portal not found"
+msgstr "Chat portal not found"
+
+#: frontend/views.py:131
+msgid "Unable to start chat session"
+msgstr "Unable to start chat session"
+
+#: frontend/views.py:135
+msgid "Invalid bootstrap payload"
+msgstr "Invalid bootstrap payload"
+
+#: frontend/views.py:170
+msgid "Manual"
+msgstr "Manual"
+
+#: frontend/views.py:180
+msgid "Keep this data source in sync with Pocket AI."
+msgstr "Keep this data source in sync with Pocket AI."
+
+#: frontend/views.py:196
+msgid "Connection needs attention. Reconnect to resume syncing."
+msgstr "Connection needs attention. Reconnect to resume syncing."
+
+#: frontend/views.py:198
+msgid "Sync failed. Review credentials and try again."
+msgstr "Sync failed. Review credentials and try again."
+
+#: frontend/views.py:244
+msgid "Try the mobile app"
+msgstr "Try the mobile app"
+
+#: frontend/views.py:247
+msgid "Google Play"
+msgstr "Google Play"
+
+#: frontend/views.py:252
+msgid "App Store"
+msgstr "App Store"
+
+#: frontend/views.py:403
+msgid "Knowledge snippet"
+msgstr "Knowledge snippet"
+
+#: frontend/views.py:419
+msgid "LLM strategy"
+msgstr "LLM strategy"
+
+#: frontend/views.py:421
+msgid "Planned actions"
+msgstr "Planned actions"
+
+#: frontend/views.py:423
+msgid "Extractions"
+msgstr "Extractions"
+
+#: frontend/views.py:1696
+msgid "Metrics will appear once you start receiving conversations."
+msgstr "Metrics will appear once you start receiving conversations."
+
+#: frontend/views.py:1697
+msgid "No escalations yet — monitoring continuously."
+msgstr "No escalations yet — monitoring continuously."
+
+#: frontend/views.py:1705
+msgid "Connect your support channels to start streaming conversations here."
+msgstr "Connect your support channels to start streaming conversations here."
+
+#: frontend/views.py:1708
+msgid "Metrics will appear once cases begin flowing in."
+msgstr "Metrics will appear once cases begin flowing in."
+
+#: frontend/views.py:1710
+msgid "Invite your team to see performance insights here."
+msgstr "Invite your team to see performance insights here."
+
+#: frontend/views.py:1719
+msgid "New customers"
+msgstr "New customers"
+
+#: frontend/views.py:1719
+msgid "No data to measure yet"
+msgstr "No data to measure yet"
+
+#: frontend/views.py:1720
+msgid "Active customers"
+msgstr "Active customers"
+
+#: frontend/views.py:1720
+msgid "No customers yet"
+msgstr "No customers yet"
+
+#: frontend/views.py:1721
+msgid "Open cases"
+msgstr "Open cases"
+
+#: frontend/views.py:1721
+msgid "Create cases to populate data"
+msgstr "Create cases to populate data"
+
+#: frontend/views.py:1736
+msgid "Customer"
+msgstr "Customer"
+
+#: frontend/views.py:1739
+msgid "CU"
+msgstr "CU"
+
+#: frontend/views.py:1744
+msgid "—"
+msgstr "—"
+
+#: frontend/views.py:2318 frontend/views.py:2691
+msgid "Select a file to upload."
+msgstr "Select a file to upload."
+
+#: frontend/views.py:2377
+msgid "External Resource"
+msgstr "External Resource"
+
+#: frontend/views.py:2410
+msgid "Add content to store a manual snippet."
+msgstr "Add content to store a manual snippet."
+
+#: frontend/views.py:2411
+msgid "Manual entry"
+msgstr "Manual entry"
+
+#: frontend/views.py:2671
+msgid "Select a valid knowledge type."
+msgstr "Select a valid knowledge type."
+
+#: frontend/views.py:2706
+msgid "Add a URL to capture this resource."
+msgstr "Add a URL to capture this resource."
+
+#: frontend/views.py:2725
+msgid "Unsupported knowledge type selected."
+msgstr "Unsupported knowledge type selected."
+
+#: frontend/views.py:2737
+msgid "Unable to save the document right now. Please try again."
+msgstr "Unable to save the document right now. Please try again."
+
+#: frontend/views.py:2751
+#, python-format
+msgid "\"%(name)s\" added to your knowledge base."
+msgstr "\"%(name)s\" added to your knowledge base."
+
+#: frontend/views.py:2753
+#, python-format
+msgid "%(count)s files added to your knowledge base."
+msgstr "%(count)s files added to your knowledge base."

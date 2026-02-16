@@ -1,7 +1,7 @@
 {% extends "frontend/base_app.html" %}
 {% load i18n %}
 
-{% block title %}Dashboard | Pocket AI{% endblock %}
+{% block title %}{% trans "Dashboard | Pocket AI" %}{% endblock %}
 
 {% block content %}
 <div class="h-screen bg-background flex overflow-hidden">
@@ -12,16 +12,16 @@
         <div class="flex flex-col gap-6">
           <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div class="space-y-2">
-              <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Pocket AI Command Center</div>
+              <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{% trans "Pocket AI Command Center" %}</div>
               <div class="text-2xl md:text-3xl font-semibold tracking-tight text-foreground">
-                Welcome back,
+                {% trans "Welcome back," %}
                 {% if user_name %}
                   <span class="text-primary">{{ user_name }}</span>
                 {% else %}
                   <span class="inline-flex align-middle h-7 w-32 rounded-md bg-muted/60 animate-pulse" aria-hidden="true"></span>
                 {% endif %}
               </div>
-              <p class="text-sm text-muted-foreground">Track automations, agents, and customer signals in one place.</p>
+              <p class="text-sm text-muted-foreground">{% trans "Track automations, agents, and customer signals in one place." %}</p>
             </div>
             <div class="flex flex-col gap-2 md:items-end">
               <div class="flex flex-wrap items-center gap-2 justify-start md:justify-end">
@@ -30,7 +30,7 @@
                     <path stroke-linecap="round" stroke-linejoin="round" d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
                     <path stroke-linecap="round" stroke-linejoin="round" d="M10.3 21a1.7 1.7 0 0 0 3.4 0" />
                   </svg>
-                  <span class="sr-only">Notifications</span>
+                  <span class="sr-only">{% trans "Notifications" %}</span>
                 </button>
                 {% get_current_language as CURRENT_LANGUAGE %}
                 {% with ACTIVE_LANGUAGE=CURRENT_LANGUAGE|slice:":2" %}
@@ -87,13 +87,13 @@
                   <path stroke-linecap="round" stroke-linejoin="round" d="M12 17h.01" />
                 </svg>
                 <div class="space-y-1">
-                  <div class="text-xs font-semibold uppercase tracking-[0.14em] text-amber-600">Escalation monitor</div>
+                  <div class="text-xs font-semibold uppercase tracking-[0.14em] text-amber-600">{% trans "Escalation monitor" %}</div>
                   <div class="text-sm font-semibold text-foreground">{{ dashboard_alert_message|default:"No escalations yet — monitoring continuously." }}</div>
                 </div>
               </div>
               <div class="flex items-center gap-2 md:ml-6">
                 <button type="button" disabled class="rounded-full px-4 py-1.5 bg-amber-500/70 text-white text-xs font-semibold cursor-not-allowed">
-                  Review now
+                  {% trans "Review now" %}
                 </button>
               </div>
             </div>
@@ -115,7 +115,7 @@
                   </div>
                   <div class="h-3 w-32 rounded bg-muted/60 animate-pulse" aria-hidden="true"></div>
                 </div>
-                <span class="sr-only">Metric loading placeholder</span>
+                <span class="sr-only">{% trans "Metric loading placeholder" %}</span>
               </div>
             {% endfor %}
           {% elif dashboard_metrics %}
@@ -145,24 +145,24 @@
               <div class="flex flex-col gap-4 p-5">
                 <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
                   <div class="space-y-1">
-                    <div class="flex items-center gap-2">
-                      <div class="text-base font-semibold">Conversation radar</div>
+                      <div class="flex items-center gap-2">
+                      <div class="text-base font-semibold">{% trans "Conversation radar" %}</div>
                       <span class="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-primary">
-                        Live
+                        {% trans "Live" %}
                       </span>
                     </div>
-                    <p class="text-xs text-muted-foreground">Unified feed across AI automations and human specialists.</p>
+                    <p class="text-xs text-muted-foreground">{% trans "Unified feed across AI automations and human specialists." %}</p>
                   </div>
                   <div class="self-end">
-                    <div class="inline-flex items-center gap-1 rounded-full bg-muted/30 p-1 text-xs font-medium" role="tablist" aria-label="Conversation filters">
+                    <div class="inline-flex items-center gap-1 rounded-full bg-muted/30 p-1 text-xs font-medium" role="tablist" aria-label="{% trans 'Conversation filters' %}">
                       <button type="button" class="px-3 py-1 rounded-full bg-background text-foreground border border-border/60">
-                        All <span class="ml-1 text-[10px] text-muted-foreground/80">{{ dashboard_conversation_counts.all|default:0 }}</span>
+                        {% trans "All" %} <span class="ml-1 text-[10px] text-muted-foreground/80">{{ dashboard_conversation_counts.all|default:0 }}</span>
                       </button>
                       <button type="button" class="px-3 py-1 rounded-full text-muted-foreground hover:text-foreground">
                         AI <span class="ml-1 text-[10px] text-muted-foreground/80">{{ dashboard_conversation_counts.ai|default:0 }}</span>
                       </button>
                       <button type="button" class="px-3 py-1 rounded-full text-muted-foreground hover:text-foreground">
-                        Human <span class="ml-1 text-[10px] text-muted-foreground/80">{{ dashboard_conversation_counts.human|default:0 }}</span>
+                        {% trans "Human" %} <span class="ml-1 text-[10px] text-muted-foreground/80">{{ dashboard_conversation_counts.human|default:0 }}</span>
                       </button>
                     </div>
                   </div>

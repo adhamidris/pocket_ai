@@ -91,7 +91,7 @@
     <div class="sidebar-header flex items-center justify-between px-2 py-3">
       <div class="sidebar-brand flex items-center gap-2 text-lg font-semibold">
         <span class="sidebar-brand-text flex items-center gap-2">
-          <span class="sidebar-title">Dashboard</span>
+          <span class="sidebar-title">{% trans "Dashboard" %}</span>
           <span class="sidebar-version text-xs align-top text-muted-foreground">v0.1</span>
         </span>
         <span class="sidebar-logo-collapsed text-sm font-semibold text-primary">PA</span>
@@ -100,7 +100,9 @@
         type="button"
         class="sidebar-toggle absolute right-0 top-1/2 z-20 inline-flex h-8 w-9 -translate-y-1/2 items-center justify-center rounded-md bg-background/90 text-muted-foreground transition hover:text-foreground focus:outline-none focus:ring-0"
         data-sidebar-toggle
-        aria-label="Collapse sidebar"
+        aria-label="{% trans 'Collapse sidebar' %}"
+        data-label-collapse="{% trans 'Collapse sidebar' %}"
+        data-label-expand="{% trans 'Expand sidebar' %}"
         aria-pressed="false"
       >
         <svg class="sidebar-toggle-icon h-4 w-4 transition-transform" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20" stroke-width="1.5" stroke="currentColor">
@@ -112,39 +114,39 @@
       <a
         href="{% url 'frontend:dashboard' %}"
         class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'home' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
-        title="Home"
+        title="{% trans 'Home' %}"
       >
         <svg class="sidebar-icon h-4 w-4 {% if active == 'home' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" d="m2.25 12 8.954-8.955a1.125 1.125 0 0 1 1.592 0L21.75 12M4.5 9.75v10.125A1.125 1.125 0 0 0 5.625 21h4.125v-4.875A1.125 1.125 0 0 1 10.875 15h2.25A1.125 1.125 0 0 1 14.25 16.125V21h4.125A1.125 1.125 0 0 0 19.5 19.875V9.75" />
         </svg>
-        <span class="sidebar-label">Home</span>
+        <span class="sidebar-label">{% trans "Home" %}</span>
       </a>
       <a
         href="{% url 'frontend:dashboard-cases' %}"
         class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'cases' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
-        title="Cases"
+        title="{% trans 'Cases' %}"
       >
         <svg class="sidebar-icon h-4 w-4 {% if active == 'cases' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 4.5h16.5a1.5 1.5 0 0 1 1.5 1.5v11.25a1.5 1.5 0 0 1-1.5 1.5H6.75L3.75 21V6A1.5 1.5 0 0 1 5.25 4.5Z" />
           <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 9h9M7.5 12h5.25" />
         </svg>
-        <span class="sidebar-label">Cases</span>
+        <span class="sidebar-label">{% trans "Cases" %}</span>
       </a>
       <a
         href="{% url 'frontend:dashboard-leads' %}"
         class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'leads' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
-        title="Leads"
+        title="{% trans 'Leads' %}"
       >
         <svg class="sidebar-icon h-4 w-4 {% if active == 'leads' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 6.75 12 2.25l2.187 4.5 4.94.72-3.563 3.472.84 4.908L12 13.5l-4.404 2.25.84-4.908L4.873 7.47l4.94-.72Z" />
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 13.5v7.5" />
         </svg>
-        <span class="sidebar-label">Leads</span>
+        <span class="sidebar-label">{% trans "Leads" %}</span>
       </a>
       <a
         href="{% url 'frontend:dashboard-customers' %}"
         class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'customers' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
-        title="Customers"
+        title="{% trans 'Customers' %}"
       >
         <svg class="sidebar-icon h-4 w-4 {% if active == 'customers' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.933 2.25 2.25 0 0 0-1.256-4.13h-1.047a8.1 8.1 0 0 0-3.434.732" />
@@ -152,53 +154,53 @@
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 13.5a4.5 4.5 0 1 0-4.5-4.5 4.5 4.5 0 0 0 4.5 4.5Z" />
           <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 21.75a4.5 4.5 0 0 0-9 0" />
         </svg>
-        <span class="sidebar-label">Customers</span>
+        <span class="sidebar-label">{% trans "Customers" %}</span>
       </a>
       <a
         href="{% url 'frontend:dashboard-agents' %}"
         class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'agents' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
-        title="Agents"
+        title="{% trans 'Agents' %}"
       >
         <svg class="sidebar-icon h-4 w-4 {% if active == 'agents' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" d="M9.75 3v2.25m4.5-2.25V5.25M4.5 9.75h15m-12 0V18a1.5 1.5 0 0 0 1.5 1.5h6a1.5 1.5 0 0 0 1.5-1.5V9.75m-9 0V7.5A1.5 1.5 0 0 1 9 6h6a1.5 1.5 0 0 1 1.5 1.5v2.25" />
           <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 14.25h3m-3 2.25h3" />
         </svg>
-        <span class="sidebar-label">Agents</span>
+        <span class="sidebar-label">{% trans "Agents" %}</span>
       </a>
       <a
         href="{% url 'frontend:dashboard-knowledge' %}"
         class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'knowledge' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
-        title="Knowledge"
+        title="{% trans 'Knowledge' %}"
       >
         <svg class="sidebar-icon h-4 w-4 {% if active == 'knowledge' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 19.5V6.75A2.25 2.25 0 0 1 6.75 4.5h10.5A2.25 2.25 0 0 1 19.5 6.75V19.5M4.5 19.5h15M8.25 8.25h7.5M8.25 11.25h7.5" />
         </svg>
-        <span class="sidebar-label">Knowledge</span>
+        <span class="sidebar-label">{% trans "Knowledge" %}</span>
       </a>
       <a
         href="{% url 'frontend:dashboard-integrations' %}"
         class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'integrations' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
-        title="Integrations"
+        title="{% trans 'Integrations' %}"
       >
         <svg class="sidebar-icon h-4 w-4 {% if active == 'integrations' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" />
         </svg>
-        <span class="sidebar-label">Integrations</span>
+        <span class="sidebar-label">{% trans "Integrations" %}</span>
       </a>
       <a
         href="{% url 'frontend:dashboard-controls' %}"
         class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'controls' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
-        title="Controls"
+        title="{% trans 'Controls' %}"
       >
         <svg class="sidebar-icon h-4 w-4 {% if active == 'controls' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 6h9m-15 0h2.25m6.75 12h6m-15 0h8.25M7.5 6a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Zm6 12a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Z" />
         </svg>
-        <span class="sidebar-label">Controls</span>
+        <span class="sidebar-label">{% trans "Controls" %}</span>
       </a>
       <a
         href="{% url 'frontend:dashboard-mcp' %}"
         class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'mcp' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
-        title="MCP Connector (Beta)"
+        title="{% trans 'MCP Connector (Beta)' %}"
       >
         <svg class="sidebar-icon h-4 w-4 {% if active == 'mcp' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 7.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9Z" />
@@ -206,19 +208,19 @@
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m0 13.5V21" />
         </svg>
         <span class="sidebar-label flex items-center">
-          <span>MCP Connector</span>
-          <span class="beta-chip">Beta</span>
+          <span>{% trans "MCP Connector" %}</span>
+          <span class="beta-chip">{% trans "Beta" %}</span>
         </span>
       </a>
       <a
         href="{% url 'frontend:dashboard-voice' %}"
         class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'voice' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
-        title="Voice Calling"
+        title="{% trans 'Voice Calling' %}"
       >
         <svg class="sidebar-icon h-4 w-4 {% if active == 'voice' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 6.75a.75.75 0 0 1 .75-.75h2.379a.75.75 0 0 1 .73.577l.61 2.438a.75.75 0 0 1-.227.74l-1.11 1.11a11.254 11.254 0 0 0 5.058 5.058l1.11-1.11a.75.75 0 0 1 .74-.227l2.438.61a.75.75 0 0 1 .577.73V21a.75.75 0 0 1-.75.75h-1.5C7.097 21.75 2.25 16.903 2.25 10.875v-4.125Z" />
         </svg>
-        <span class="sidebar-label">Voice Calling</span>
+        <span class="sidebar-label">{% trans "Voice Calling" %}</span>
       </a>
     </nav>
     <button
@@ -227,7 +229,7 @@
       data-dashboard-account-trigger
       aria-haspopup="dialog"
       aria-expanded="false"
-      title="Account"
+      title="{% trans 'Account' %}"
     >
       <div class="h-8 w-8 rounded-full bg-gradient-to-br from-primary/40 to-primary/20 flex items-center justify-center text-xs font-semibold text-primary-foreground uppercase">
         {% if user_name %}
@@ -245,7 +247,7 @@
           {% endif %}
         </div>
         <div class="sidebar-subtitle text-xs text-muted-foreground">
-          Manage account
+          {% trans "Manage account" %}
         </div>
       </div>
       <svg class="sidebar-caret h-4 w-4 text-muted-foreground transition-transform group-data-[open=true]:rotate-180" data-dashboard-account-caret xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20" stroke-width="1.5" stroke="currentColor">
@@ -274,14 +276,14 @@
   >
     <div class="flex items-center justify-between gap-3">
       <div>
-        <h2 id="dashboard-account-modal-title" class="text-sm font-semibold text-foreground">Account</h2>
-        <p class="text-xs text-muted-foreground">Manage your Pocket AI workspace</p>
+        <h2 id="dashboard-account-modal-title" class="text-sm font-semibold text-foreground">{% trans "Account" %}</h2>
+        <p class="text-xs text-muted-foreground">{% trans "Manage your Pocket AI workspace" %}</p>
       </div>
       <button
         type="button"
         class="rounded-md p-1 text-muted-foreground transition hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
         data-dashboard-account-dismiss
-        aria-label="Close account menu"
+        aria-label="{% trans 'Close account menu' %}"
       >
         <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
@@ -294,12 +296,12 @@
         class="w-full rounded-lg px-3 py-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-muted"
         disabled
       >
-        Workspace settings <span class="ml-2 rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">Soon</span>
+        {% trans "Workspace settings" %} <span class="ml-2 rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">{% trans "Soon" %}</span>
       </button>
       {% get_current_language as CURRENT_LANGUAGE %}
       {% with ACTIVE_LANGUAGE=CURRENT_LANGUAGE|slice:":2" %}
         <div class="flex items-center justify-between rounded-lg px-3 py-2">
-          <span class="text-sm font-medium text-foreground">Language</span>
+          <span class="text-sm font-medium text-foreground">{% trans "Language" %}</span>
           <div class="inline-flex items-center rounded-full border border-border/60 bg-background/80 p-0.5 text-xs">
             {% for option in site.language_toggle.options %}
               <form method="post" action="{% url 'set_language' %}" class="inline">
@@ -310,7 +312,7 @@
                   type="submit"
                   class="rounded-full px-2.5 py-1 font-medium transition-colors {% if ACTIVE_LANGUAGE == option.code %}bg-accent/70 text-foreground{% else %}text-muted-foreground hover:text-foreground{% endif %}"
                   {% if ACTIVE_LANGUAGE == option.code %}aria-current="true"{% endif %}
-                  aria-label="Language: {{ option.label }}"
+                  aria-label="{% blocktrans with label=option.label %}Language: {{ label }}{% endblocktrans %}"
                 >
                   {{ option.code|upper }}
                 </button>
@@ -323,8 +325,8 @@
         type="button"
         class="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-muted focus:outline-none focus:ring-2 focus:ring-primary/40"
         data-theme-toggle
-        data-light-label="Light mode"
-        data-dark-label="Dark mode"
+        data-light-label="{% trans 'Light mode' %}"
+        data-dark-label="{% trans 'Dark mode' %}"
       >
         <span class="inline-flex items-center gap-2">
           <span data-theme-icon-wrap>
@@ -336,7 +338,7 @@
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 2v2m0 16v2m10-10h-2M6 12H4m15.07 6.07-1.41-1.41M6.34 6.34 4.93 4.93m12.73 0-1.41 1.41M6.34 17.66l-1.41 1.41" />
             </svg>
           </span>
-          Theme
+          {% trans "Theme" %}
         </span>
         <span class="text-xs text-muted-foreground" data-theme-label>—</span>
       </button>
@@ -348,7 +350,7 @@
           class="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm font-medium text-destructive transition-colors hover:bg-destructive/10 focus:outline-none focus:ring-2 focus:ring-destructive/30"
           data-dashboard-logout
         >
-          <span>Log out</span>
+          <span>{% trans "Log out" %}</span>
           <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6A2.25 2.25 0 0 0 5.25 5.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15M18 12H9m0 0 3-3m-3 3 3 3" />
           </svg>
@@ -499,8 +501,10 @@
     function applyCollapsed(collapsed) {
       sidebar.setAttribute("data-collapsed", collapsed ? "true" : "false");
       if (toggle) {
+        var collapseLabel = toggle.getAttribute("data-label-collapse") || "Collapse sidebar";
+        var expandLabel = toggle.getAttribute("data-label-expand") || "Expand sidebar";
         toggle.setAttribute("aria-pressed", collapsed ? "true" : "false");
-        toggle.setAttribute("aria-label", collapsed ? "Expand sidebar" : "Collapse sidebar");
+        toggle.setAttribute("aria-label", collapsed ? expandLabel : collapseLabel);
       }
     }
 

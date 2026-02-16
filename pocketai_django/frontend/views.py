@@ -27,6 +27,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.utils.text import slugify
+from django.utils.translation import gettext_lazy as _
 from django.views.decorators.http import require_http_methods
 
 from apps.accounts.models import (
@@ -77,19 +78,21 @@ _portal_request_factory = RequestFactory()
 logger = logging.getLogger(__name__)
 
 KNOWLEDGE_UPLOAD_SIMPLE_TYPES: tuple[tuple[str, str], ...] = (
-    (KnowledgeSourceType.FILE, "File Upload"),
-    (KnowledgeSourceType.LINK, "External Link"),
-    (KnowledgeSourceType.TEXT, "Manual Entry"),
+    (KnowledgeSourceType.FILE, _("File Upload")),
+    (KnowledgeSourceType.LINK, _("External Link")),
+    (KnowledgeSourceType.TEXT, _("Manual Entry")),
 )
 
 INTEGRATION_TYPE_DESCRIPTIONS = {
-    KnowledgeIntegrationType.GOOGLE_DRIVE: "Sync Google Sheets automatically to keep SOPs and trackers up to date.",
-    KnowledgeIntegrationType.NOTION: "Mirror Notion pages into the knowledge base.",
-    KnowledgeIntegrationType.ZENDESK: "Import help-center articles from Zendesk Guide.",
-    KnowledgeIntegrationType.HUBSPOT: "Bring HubSpot knowledge articles into Pocket AI.",
-    KnowledgeIntegrationType.SLACK: "Capture curated Slack posts as living documentation.",
-    KnowledgeIntegrationType.CONFLUENCE: "Sync wiki spaces from Confluence.",
-    KnowledgeIntegrationType.CUSTOM: "Custom connector managed by your team.",
+    KnowledgeIntegrationType.GOOGLE_DRIVE: _(
+        "Sync Google Sheets automatically to keep SOPs and trackers up to date."
+    ),
+    KnowledgeIntegrationType.NOTION: _("Mirror Notion pages into the knowledge base."),
+    KnowledgeIntegrationType.ZENDESK: _("Import help-center articles from Zendesk Guide."),
+    KnowledgeIntegrationType.HUBSPOT: _("Bring HubSpot knowledge articles into Pocket AI."),
+    KnowledgeIntegrationType.SLACK: _("Capture curated Slack posts as living documentation."),
+    KnowledgeIntegrationType.CONFLUENCE: _("Sync wiki spaces from Confluence."),
+    KnowledgeIntegrationType.CUSTOM: _("Custom connector managed by your team."),
 }
 
 
@@ -123,13 +126,13 @@ def _call_portal_bootstrap_api(
     )
     response = bootstrap_session_view(api_request)
     if response.status_code == 404:
-        raise Http404("Chat portal not found")
+        raise Http404(_("Chat portal not found"))
     if response.status_code >= 400:
-        raise Http404("Unable to start chat session")
+        raise Http404(_("Unable to start chat session"))
     try:
         return json.loads(response.content.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:  # pragma: no cover - defensive
-        raise Http404("Invalid bootstrap payload") from exc
+        raise Http404(_("Invalid bootstrap payload")) from exc
 
 
 def _format_dashboard_datetime(value: datetime | str | None) -> str | None:
@@ -164,7 +167,7 @@ def _integration_status_badge(status: str) -> str:
 
 def _format_integration_frequency(frequency: str | None) -> str:
     if not frequency:
-        return "Manual"
+        return _("Manual")
     try:
         return IntegrationSyncFrequency(frequency).label
     except ValueError:
@@ -174,7 +177,7 @@ def _format_integration_frequency(frequency: str | None) -> str:
 def _describe_integration_type(integration_type: str) -> str:
     return INTEGRATION_TYPE_DESCRIPTIONS.get(
         integration_type,
-        "Keep this data source in sync with Pocket AI.",
+        _("Keep this data source in sync with Pocket AI."),
     )
 
 
@@ -190,9 +193,9 @@ def _serialize_dashboard_integration(integration: KnowledgeIntegration) -> dict[
     rows_ingested = sync_stats.get("rows_ingested")
     status_note = None
     if integration.status == KnowledgeIntegrationStatus.DISCONNECTED:
-        status_note = "Connection needs attention. Reconnect to resume syncing."
+        status_note = _("Connection needs attention. Reconnect to resume syncing.")
     elif integration.status == KnowledgeIntegrationStatus.ERROR and not integration.sync_error:
-        status_note = "Sync failed. Review credentials and try again."
+        status_note = _("Sync failed. Review credentials and try again.")
     sheets_url = ""
     sync_url = ""
     if integration.integration_type == KnowledgeIntegrationType.GOOGLE_DRIVE:
@@ -238,15 +241,15 @@ def _gather_dashboard_integrations(business: BusinessProfile | None) -> list[dic
 
 def _mobile_app_section() -> Dict[str, object]:
     return {
-        "title": "Try the mobile app",
+        "title": _("Try the mobile app"),
         "stores": [
             {
-                "label": "Google Play",
+                "label": _("Google Play"),
                 "href": "#play",
                 "icon": """<svg width="30" height="30" viewBox="0 0 512 512" aria-hidden="true"><path fill="currentColor" d="M325.3 234.3 90.7 28.6C79 19 64 24.7 64 39.3v433.4c0 14.7 15 20.3 26.7 10.7l234.6-205.7c9.3-8.1 9.3-23.1 0-30.4z"/><linearGradient id="g2-app" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#34a853"/><stop offset="100%" stop-color="#4285f4"/></linearGradient><path fill="url(#g2-app)" d="M421.9 213.8 360.4 178 325.3 234.3c9.3 8.1 9.3 23.1 0 30.4l35.1 56.3 61.5-35.8c18.5-10.8 18.5-38.5 0-49.4z"/></svg>""",
             },
             {
-                "label": "App Store",
+                "label": _("App Store"),
                 "href": "#store",
                 "icon": """<svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.365 1.43c0 1.14-.47 2.25-1.2 3.05-.76.83-2.01 1.47-3.12 1.39-.13-1.13.38-2.27 1.14-3.06.79-.85 2.12-1.46 3.18-1.38zm3.54 16.3c-.61 1.36-.9 1.95-1.68 3.15-1.09 1.67-2.63 3.75-4.53 3.75-1.7 0-2.14-1.1-4.46-1.1-2.34 0-2.83 1.1-4.53 1.1-1.92 0-3.36-1.8-4.45-3.46C-.02 17.9-.4 14.49 1.3 12.23c1.1-1.54 2.86-2.51 4.85-2.55 1.9-.04 3.69 1.28 4.46 1.28.77 0 2.54-1.58 4.3-1.35 1.47.17 2.85.76 3.88 1.73-3.52 1.93-2.95 6.97.1 7.49z"/></svg>""",
             },
@@ -397,7 +400,7 @@ def _format_citations(items: list[Any] | None) -> list[dict[str, str | None]]:
         if isinstance(item, dict):
             formatted.append(
                 {
-                    "title": item.get("title") or "Knowledge snippet",
+                    "title": item.get("title") or _("Knowledge snippet"),
                     "source": item.get("source"),
                 }
             )
@@ -413,14 +416,14 @@ def _format_diagnostics(data: dict[str, Any] | None) -> list[dict[str, str]]:
         return []
     entries: list[dict[str, str]] = []
     if data.get("llm_strategy"):
-        entries.append({"label": "LLM strategy", "value": str(data["llm_strategy"])})
+        entries.append({"label": _("LLM strategy"), "value": str(data["llm_strategy"])})
     if isinstance(data.get("planned_action_count"), (int, float)):
-        entries.append({"label": "Planned actions", "value": str(data["planned_action_count"])})
+        entries.append({"label": _("Planned actions"), "value": str(data["planned_action_count"])})
     if isinstance(data.get("extraction_count"), (int, float)):
-        entries.append({"label": "Extractions", "value": str(data["extraction_count"])})
+        entries.append({"label": _("Extractions"), "value": str(data["extraction_count"])})
     if isinstance(data.get("citations"), list) and data["citations"]:
         joined = ", ".join(str(value) for value in data["citations"][:4])
-        entries.append({"label": "Knowledge", "value": joined})
+        entries.append({"label": _("Knowledge"), "value": joined})
     return entries
 
 
@@ -1690,19 +1693,21 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         "user_name": user_name,
         "dashboard_loading": False,
         "dashboard_metrics": dashboard_metrics,
-        "dashboard_metrics_empty_message": "Metrics will appear once you start receiving conversations.",
-        "dashboard_alert_message": "No escalations yet — monitoring continuously.",
+        "dashboard_metrics_empty_message": _("Metrics will appear once you start receiving conversations."),
+        "dashboard_alert_message": _("No escalations yet — monitoring continuously."),
         "dashboard_conversation_groups": conversation_groups,
         "dashboard_conversation_counts": {
             "all": total_all,
             "ai": total_ai,
             "human": total_human,
         },
-        "dashboard_conversations_empty_message": "Connect your support channels to start streaming conversations here.",
+        "dashboard_conversations_empty_message": _(
+            "Connect your support channels to start streaming conversations here."
+        ),
         "dashboard_ai_pulse": ai_pulse_items,
-        "dashboard_ai_pulse_empty_message": "Metrics will appear once cases begin flowing in.",
+        "dashboard_ai_pulse_empty_message": _("Metrics will appear once cases begin flowing in."),
         "dashboard_agent_snapshot": agent_snapshot_items,
-        "dashboard_agent_snapshot_empty_message": "Invite your team to see performance insights here.",
+        "dashboard_agent_snapshot_empty_message": _("Invite your team to see performance insights here."),
     }
     return render(request, "frontend/dashboard.html", context)
 
@@ -1711,9 +1716,9 @@ def dashboard(request: HttpRequest) -> HttpResponse:
 def dashboard_customers(request: HttpRequest) -> HttpResponse:
     user_name = _current_user_name(request)
     stats = [
-        {"label": "New customers", "value": None, "helper": "No data to measure yet"},
-        {"label": "Active customers", "value": None, "helper": "No customers yet"},
-        {"label": "Open cases", "value": None, "helper": "Create cases to populate data"},
+        {"label": _("New customers"), "value": None, "helper": _("No data to measure yet")},
+        {"label": _("Active customers"), "value": None, "helper": _("No customers yet")},
+        {"label": _("Open cases"), "value": None, "helper": _("Create cases to populate data")},
     ]
     customers: list[dict[str, object]] = []
     total_customers = 0
@@ -1728,15 +1733,15 @@ def dashboard_customers(request: HttpRequest) -> HttpResponse:
             result = list_customers(business_profile=business, limit=50)
             total_customers = result.total_count
             for item in result.items:
-                name = item.display_name or "Customer"
+                name = item.display_name or _("Customer")
                 tokens = [token for token in name.split() if token]
                 if not tokens:
-                    initials = "CU"
+                    initials = _("CU")
                 elif len(tokens) == 1:
                     initials = tokens[0][:2].upper()
                 else:
                     initials = (tokens[0][0] + tokens[-1][0]).upper()
-                state_label = item.state.replace("_", " ").title() if item.state else "—"
+                state_label = item.state.replace("_", " ").title() if item.state else _("—")
                 last_contact = item.last_interaction_at
                 customers.append(
                     {
@@ -2310,7 +2315,7 @@ def _create_file_upload(
     upload_file,
 ) -> KnowledgeUpload:
     if not upload_file or not getattr(upload_file, "name", "").strip():
-        raise KnowledgeUploadError("Select a file to upload.", field="knowledge_file")
+        raise KnowledgeUploadError(_("Select a file to upload."), field="knowledge_file")
 
     root = _knowledge_storage_root()
     storage_dir = root / "knowledge" / str(business.id)
@@ -2369,7 +2374,7 @@ def _create_link_upload(
     validator(url_value)
     parsed = urlparse(url_value)
     host = parsed.netloc or parsed.path or url_value
-    label = display_name or host or "External Resource"
+    label = display_name or host or _("External Resource")
     metadata = {
         "uploaded_via": "dashboard",
         "public_label": label,
@@ -2402,8 +2407,8 @@ def _create_text_upload(
 ) -> KnowledgeUpload:
     normalized_content = (content or "").strip()
     if not normalized_content:
-        raise KnowledgeUploadError("Add content to store a manual snippet.", field="knowledge_text")
-    label = display_name or (normalized_content.splitlines()[0][:80] if normalized_content else "Manual entry")
+        raise KnowledgeUploadError(_("Add content to store a manual snippet."), field="knowledge_text")
+    label = display_name or (normalized_content.splitlines()[0][:80] if normalized_content else _("Manual entry"))
     metadata = {
         "uploaded_via": "dashboard",
         "public_label": label,
@@ -2663,7 +2668,7 @@ def dashboard_knowledge_upload(request: HttpRequest) -> HttpResponse:
     source_type = (request.POST.get("source_type") or "").strip().lower()
     valid_types = {value for value, _label in KNOWLEDGE_UPLOAD_SIMPLE_TYPES}
     if source_type not in valid_types:
-        message = "Select a valid knowledge type."
+        message = _("Select a valid knowledge type.")
         if wants_json:
             return JsonResponse({"success": False, "message": message}, status=HTTPStatus.BAD_REQUEST)
         messages.error(request, message)
@@ -2683,7 +2688,7 @@ def dashboard_knowledge_upload(request: HttpRequest) -> HttpResponse:
                 if fallback_file and getattr(fallback_file, "name", "").strip():
                     upload_files = [fallback_file]
             if not upload_files:
-                raise KnowledgeUploadError("Select a file to upload.", field="knowledge_file")
+                raise KnowledgeUploadError(_("Select a file to upload."), field="knowledge_file")
 
             per_file_display_name = display_name if len(upload_files) == 1 else ""
             for upload_file in upload_files:
@@ -2698,7 +2703,7 @@ def dashboard_knowledge_upload(request: HttpRequest) -> HttpResponse:
         elif source_type == KnowledgeSourceType.LINK:
             url_value = (request.POST.get("knowledge_url") or "").strip()
             if not url_value:
-                raise KnowledgeUploadError("Add a URL to capture this resource.", field="knowledge_url")
+                raise KnowledgeUploadError(_("Add a URL to capture this resource."), field="knowledge_url")
             upload_records = [
                 _create_link_upload(
                     request=request,
@@ -2717,7 +2722,7 @@ def dashboard_knowledge_upload(request: HttpRequest) -> HttpResponse:
                 )
             ]
         else:  # pragma: no cover - defensive fallback
-            raise KnowledgeUploadError("Unsupported knowledge type selected.", field="source_type")
+            raise KnowledgeUploadError(_("Unsupported knowledge type selected."), field="source_type")
     except (KnowledgeUploadError, ValidationError) as exc:
         message = str(exc)
         if wants_json:
@@ -2729,7 +2734,7 @@ def dashboard_knowledge_upload(request: HttpRequest) -> HttpResponse:
         return redirect("frontend:dashboard-knowledge")
     except Exception:  # pragma: no cover - defensive logging
         logger.exception("Failed to store knowledge upload from dashboard.")
-        message = "Unable to save the document right now. Please try again."
+        message = _("Unable to save the document right now. Please try again.")
         if wants_json:
             return JsonResponse({"success": False, "message": message}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
         messages.error(request, message)
@@ -2743,9 +2748,9 @@ def dashboard_knowledge_upload(request: HttpRequest) -> HttpResponse:
                     _serialize_upload_for_dashboard(upload_record) for upload_record in upload_records
                 ]
                 if len(serialized_uploads) == 1:
-                    message = f'"{latest_upload.display_name}" added to your knowledge base.'
+                    message = _('"%(name)s" added to your knowledge base.') % {"name": latest_upload.display_name}
                 else:
-                    message = f"{len(serialized_uploads)} files added to your knowledge base."
+                    message = _("%(count)s files added to your knowledge base.") % {"count": len(serialized_uploads)}
                 return JsonResponse(
                     {
                         "success": True,

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, TypedDict
 
 from django.urls import reverse
+from django.utils.translation import gettext as _
 
 
 class NavLink(TypedDict):
@@ -41,10 +42,10 @@ def site_globals(request) -> Dict[str, Any]:
     """Expose global navigation, footer, and CTA copy."""
 
     nav_links: List[NavLink] = [
-        {"label": "Features", "href": "#features", "external": False},
-        {"label": "Pricing", "href": "#pricing", "external": False},
-        {"label": "About", "href": "#about", "external": False},
-        {"label": "Contact", "href": "#contact", "external": False},
+        {"label": _("Features"), "href": "#features", "external": False},
+        {"label": _("Pricing"), "href": "#pricing", "external": False},
+        {"label": _("About"), "href": "#about", "external": False},
+        {"label": _("Contact"), "href": "#contact", "external": False},
     ]
 
     user_display_name = _user_display_name(request)
@@ -52,13 +53,17 @@ def site_globals(request) -> Dict[str, Any]:
 
     if is_authenticated:
         nav_links = [
-            {"label": "Dashboard", "href": reverse("frontend:dashboard"), "external": False},
+            {"label": _("Dashboard"), "href": reverse("frontend:dashboard"), "external": False},
             *nav_links,
         ]
         auth_links: List[CTALink] = [
-            {"label": f"Hi, {user_display_name}", "href": reverse("frontend:dashboard"), "style": "ghost"},
             {
-                "label": "Log out",
+                "label": _("Hi, %(name)s") % {"name": user_display_name},
+                "href": reverse("frontend:dashboard"),
+                "style": "ghost",
+            },
+            {
+                "label": _("Log out"),
                 "href": reverse("accounts:logout"),
                 "method": "post",
                 "style": "ghost",
@@ -67,76 +72,79 @@ def site_globals(request) -> Dict[str, Any]:
     else:
         auth_links = [
             {
-                "label": "Sign In",
+                "label": _("Sign In"),
                 "href": reverse("accounts:login"),
                 "style": "ghost",
                 "opens_modal": True,
             },
-            {"label": "Register", "href": reverse("frontend:register"), "style": "ghost"},
-            {"label": "Get Started", "href": reverse("frontend:register"), "style": "primary"},
+            {"label": _("Register"), "href": reverse("frontend:register"), "style": "ghost"},
+            {"label": _("Get Started"), "href": reverse("frontend:register"), "style": "primary"},
         ]
 
     return {
         "site": {
-            "brand": {"name": "Pocket", "tagline": "AI Customer Service Platform", "href": "/"},
+            "brand": {"name": "Pocket", "tagline": _("AI Customer Service Platform"), "href": "/"},
             "nav_links": nav_links,
             "auth_links": auth_links,
             "footer": {
-                "brand": "AI Support",
-                "blurb": "Transforming customer service with intelligent AI solutions. Deliver exceptional support experiences that delight your customers and grow your business.",
+                "brand": _("AI Support"),
+                "blurb": _(
+                    "Transforming customer service with intelligent AI solutions. "
+                    "Deliver exceptional support experiences that delight your customers and grow your business."
+                ),
                 "categories": {
-                    "Product": [
-                        {"label": "Features", "href": "#features"},
-                        {"label": "Pricing", "href": "#pricing"},
-                        {"label": "API Documentation", "href": "/api-docs"},
-                        {"label": "Integrations", "href": "/integrations"},
-                        {"label": "Security", "href": "/security"},
+                    _("Product"): [
+                        {"label": _("Features"), "href": "#features"},
+                        {"label": _("Pricing"), "href": "#pricing"},
+                        {"label": _("API Documentation"), "href": "/api-docs"},
+                        {"label": _("Integrations"), "href": "/integrations"},
+                        {"label": _("Security"), "href": "/security"},
                     ],
-                    "Company": [
-                        {"label": "About Us", "href": "/about"},
-                        {"label": "Careers", "href": "/careers"},
-                        {"label": "Press", "href": "/press"},
-                        {"label": "Blog", "href": "/blog"},
-                        {"label": "Contact", "href": "/contact"},
+                    _("Company"): [
+                        {"label": _("About Us"), "href": "/about"},
+                        {"label": _("Careers"), "href": "/careers"},
+                        {"label": _("Press"), "href": "/press"},
+                        {"label": _("Blog"), "href": "/blog"},
+                        {"label": _("Contact"), "href": "/contact"},
                     ],
-                    "Resources": [
-                        {"label": "Help Center", "href": "/help"},
-                        {"label": "Community", "href": "/community"},
-                        {"label": "Guides", "href": "/guides"},
-                        {"label": "Status", "href": "/status"},
-                        {"label": "Changelog", "href": "/changelog"},
+                    _("Resources"): [
+                        {"label": _("Help Center"), "href": "/help"},
+                        {"label": _("Community"), "href": "/community"},
+                        {"label": _("Guides"), "href": "/guides"},
+                        {"label": _("Status"), "href": "/status"},
+                        {"label": _("Changelog"), "href": "/changelog"},
                     ],
-                    "Legal": [
-                        {"label": "Privacy Policy", "href": "/privacy"},
-                        {"label": "Terms of Service", "href": "/terms"},
-                        {"label": "GDPR", "href": "/gdpr"},
-                        {"label": "Compliance", "href": "/compliance"},
-                        {"label": "Cookies", "href": "/cookies"},
+                    _("Legal"): [
+                        {"label": _("Privacy Policy"), "href": "/privacy"},
+                        {"label": _("Terms of Service"), "href": "/terms"},
+                        {"label": _("GDPR"), "href": "/gdpr"},
+                        {"label": _("Compliance"), "href": "/compliance"},
+                        {"label": _("Cookies"), "href": "/cookies"},
                     ],
                 },
                 "social": [
-                    {"label": "Twitter", "href": "#", "icon": "twitter"},
-                    {"label": "LinkedIn", "href": "#", "icon": "linkedin"},
-                    {"label": "GitHub", "href": "#", "icon": "github"},
-                    {"label": "Email", "href": "#", "icon": "mail"},
+                    {"label": _("Twitter"), "href": "#", "icon": "twitter"},
+                    {"label": _("LinkedIn"), "href": "#", "icon": "linkedin"},
+                    {"label": _("GitHub"), "href": "#", "icon": "github"},
+                    {"label": _("Email"), "href": "#", "icon": "mail"},
                 ],
                 "bottom": {
-                    "copyright": "© 2024 AI Support. All rights reserved.",
-                    "privacy": {"label": "Privacy Policy", "href": "/privacy"},
-                    "terms": {"label": "Terms of Service", "href": "/terms"},
-                    "cookie": {"label": "Cookie Policy", "href": "/cookies"},
+                    "copyright": _("© 2024 AI Support. All rights reserved."),
+                    "privacy": {"label": _("Privacy Policy"), "href": "/privacy"},
+                    "terms": {"label": _("Terms of Service"), "href": "/terms"},
+                    "cookie": {"label": _("Cookie Policy"), "href": "/cookies"},
                 },
             },
             "language_toggle": {
-                "label": "Language",
+                "label": _("Language"),
                 "options": [
-                    {"code": "en", "label": "English"},
-                    {"code": "ar", "label": "العربية"},
+                    {"code": "en", "label": _("English")},
+                    {"code": "ar", "label": _("Arabic")},
                 ],
             },
             "theme_toggle": {
-                "light_label": "Light mode",
-                "dark_label": "Dark mode",
+                "light_label": _("Light mode"),
+                "dark_label": _("Dark mode"),
             },
         }
     }

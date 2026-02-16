@@ -186,6 +186,25 @@ class ChatPortalClient {
     this.activeVoiceCalls = new Map(); // sessionId -> { transcripts: [], expanded }
   }
 
+  t(message, params) {
+    const source = message == null ? "" : String(message);
+    if (!source) return "";
+    const i18n = typeof window !== "undefined" ? window.PocketI18n : null;
+    if (i18n && typeof i18n.t === "function") {
+      return i18n.t(source, params);
+    }
+    if (!params || typeof params !== "object") {
+      return source;
+    }
+    return source.replace(/%\(([^)]+)\)s/g, (_match, key) => {
+      if (!Object.prototype.hasOwnProperty.call(params, key)) {
+        return "";
+      }
+      const value = params[key];
+      return value == null ? "" : String(value);
+    });
+  }
+
   async init() {
     await this.waitForDependencies();
     this.configureMarked();
@@ -2597,7 +2616,7 @@ class ChatPortalClient {
     const title = document.createElement("div");
     title.className = "portal-call-approval__title";
     title.dataset.callApprovalTitle = "true";
-    title.textContent = contactName || phoneNumber || "Phone call";
+    title.textContent = contactName || phoneNumber || this.t("Phone call");
 
     const subtitle = document.createElement("div");
     subtitle.className = "portal-call-approval__subtitle";
@@ -2605,7 +2624,7 @@ class ChatPortalClient {
     const subtitleParts = [];
     if (objective) subtitleParts.push(objective);
     if (phoneNumber && contactName) subtitleParts.push(phoneNumber);
-    subtitle.textContent = subtitleParts.join(" · ") || "Outgoing call";
+    subtitle.textContent = subtitleParts.join(" · ") || this.t("Outgoing call");
     if (objective) subtitle.title = objective;
 
     meta.appendChild(title);
@@ -2621,7 +2640,7 @@ class ChatPortalClient {
     toggle.type = "button";
     toggle.className = "portal-call-approval__toggle";
     toggle.dataset.callApprovalToggle = "true";
-    toggle.setAttribute("aria-label", "Toggle call details");
+    toggle.setAttribute("aria-label", this.t("Toggle call details"));
     toggle.setAttribute("aria-expanded", "false");
     toggle.innerHTML = `<svg class="portal-call-approval__toggle-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M6.5 8.25l3.5 3.5 3.5-3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
@@ -2640,17 +2659,17 @@ class ChatPortalClient {
     approveButton.type = "button";
     approveButton.dataset.toolApprovalAction = "approve";
     approveButton.className = "portal-call-approval__btn portal-call-approval__btn--accept";
-    approveButton.setAttribute("aria-label", "Accept call request");
-    approveButton.title = "Accept";
-    approveButton.textContent = "Accept";
+    approveButton.setAttribute("aria-label", this.t("Accept call request"));
+    approveButton.title = this.t("Accept");
+    approveButton.textContent = this.t("Accept");
 
     const denyButton = document.createElement("button");
     denyButton.type = "button";
     denyButton.dataset.toolApprovalAction = "deny";
     denyButton.className = "portal-call-approval__btn portal-call-approval__btn--deny";
-    denyButton.setAttribute("aria-label", "Reject call request");
-    denyButton.title = "Reject";
-    denyButton.textContent = "Reject";
+    denyButton.setAttribute("aria-label", this.t("Reject call request"));
+    denyButton.title = this.t("Reject");
+    denyButton.textContent = this.t("Reject");
 
     actions.appendChild(approveButton);
     actions.appendChild(denyButton);
@@ -2759,13 +2778,13 @@ class ChatPortalClient {
     const titleEl = card.querySelector("[data-call-approval-title]");
     const subtitleEl = card.querySelector("[data-call-approval-subtitle]");
     if (titleEl) {
-      titleEl.textContent = contactName || phoneNumber || "Phone call";
+      titleEl.textContent = contactName || phoneNumber || this.t("Phone call");
     }
     if (subtitleEl) {
       const subtitleParts = [];
       if (objective) subtitleParts.push(objective);
       if (phoneNumber && contactName) subtitleParts.push(phoneNumber);
-      subtitleEl.textContent = subtitleParts.join(" · ") || "Outgoing call";
+      subtitleEl.textContent = subtitleParts.join(" · ") || this.t("Outgoing call");
       subtitleEl.title = objective || subtitleEl.textContent;
     }
 
@@ -2827,28 +2846,28 @@ class ChatPortalClient {
     if (isPending) {
       pillLabel = "";
     } else if (isDenied) {
-      pillLabel = "Rejected";
+      pillLabel = this.t("Rejected");
       pillVariant = "error";
     } else if (isExpired) {
-      pillLabel = "Approval Expired";
+      pillLabel = this.t("Approval Expired");
       pillVariant = "muted";
     } else if (isApproved && (statusRaw === "running" || phase === "started")) {
-      pillLabel = "Calling…";
+      pillLabel = this.t("Calling…");
       pillVariant = "muted";
     } else if (isApproved) {
-      pillLabel = "Approved";
+      pillLabel = this.t("Approved");
       pillVariant = "success";
     } else if (statusRaw === "running" || phase === "started") {
-      pillLabel = "Calling…";
+      pillLabel = this.t("Calling…");
       pillVariant = "muted";
     } else if (hasCallSession && (statusRaw === "ok" || statusRaw === "needs_external" || phase === "finished")) {
-      pillLabel = "Queued";
+      pillLabel = this.t("Queued");
       pillVariant = "muted";
     } else if (statusRaw === "throttled") {
-      pillLabel = "Throttled";
+      pillLabel = this.t("Throttled");
       pillVariant = "error";
     } else if (statusRaw === "error" || statusRaw === "failed" || statusRaw === "failure") {
-      pillLabel = "Failed";
+      pillLabel = this.t("Failed");
       pillVariant = "error";
     }
 
@@ -2919,16 +2938,16 @@ class ChatPortalClient {
       recordKey(label);
     };
 
-    ensureItem("To", phoneNumber || "");
-    ensureItem("Contact", contactName || "");
-    ensureItem("Objective", objective || "");
-    ensureItem("Type", (inputObj.call_type || inputObj.callType || "").toString().trim());
-    ensureItem("Language", (inputObj.language || "").toString().trim());
+    ensureItem(this.t("To"), phoneNumber || "");
+    ensureItem(this.t("Contact"), contactName || "");
+    ensureItem(this.t("Objective"), objective || "");
+    ensureItem(this.t("Type"), (inputObj.call_type || inputObj.callType || "").toString().trim());
+    ensureItem(this.t("Language"), (inputObj.language || "").toString().trim());
     const maxDuration = inputObj.max_duration_minutes || inputObj.maxDurationMinutes || inputObj.max_duration || "";
     if (maxDuration !== "" && maxDuration != null) {
       const num = Number(maxDuration);
       const label = Number.isFinite(num) && num > 0 ? `${num} min` : maxDuration.toString();
-      ensureItem("Max duration", label);
+      ensureItem(this.t("Max duration"), label);
     }
 
     wrap.innerHTML = "";
@@ -2962,7 +2981,7 @@ class ChatPortalClient {
 
       const contextLabel = document.createElement("div");
       contextLabel.className = "portal-call-approval__context-label";
-      contextLabel.textContent = "Context";
+      contextLabel.textContent = this.t("Context");
 
       const contextBody = document.createElement("div");
       contextBody.className = "portal-call-approval__context-body";
@@ -3106,7 +3125,7 @@ class ChatPortalClient {
     }
     if (toggle) {
       toggle.setAttribute("aria-expanded", desired ? "true" : "false");
-      toggle.title = desired ? "Hide details" : "Show details";
+      toggle.title = desired ? this.t("Hide details") : this.t("Show details");
     }
     card.dataset.callApprovalDetailsOpen = desired ? "true" : "false";
     if (userAction) {
@@ -3169,7 +3188,7 @@ class ChatPortalClient {
 
     const status = document.createElement("span");
     status.className = "email-preview-status";
-    status.textContent = toolName === "email_send_draft" ? "Sending email..." : "Creating draft...";
+    status.textContent = toolName === "email_send_draft" ? this.t("Sending email...") : this.t("Creating draft...");
 
     const summary = document.createElement("span");
     summary.className = "email-preview-summary";
@@ -3182,7 +3201,7 @@ class ChatPortalClient {
     toggleBtn.type = "button";
     toggleBtn.className = "email-preview-toggle";
     toggleBtn.dataset.action = "toggle";
-    toggleBtn.textContent = "Hide email";
+    toggleBtn.textContent = this.t("Hide email");
     toggleBtn.setAttribute("aria-expanded", "true");
 
     header.appendChild(headerMain);
@@ -3198,7 +3217,7 @@ class ChatPortalClient {
     toField.dataset.field = "to";
     const toLabel = document.createElement("span");
     toLabel.className = "email-field-label";
-    toLabel.textContent = "To:";
+    toLabel.textContent = `${this.t("To")}:`;
     const toValue = document.createElement("span");
     toValue.className = "email-field-value";
     setFieldValue(toValue, to.join(", "));
@@ -3213,7 +3232,7 @@ class ChatPortalClient {
       ccField.dataset.field = "cc";
       const ccLabel = document.createElement("span");
       ccLabel.className = "email-field-label";
-      ccLabel.textContent = "CC:";
+      ccLabel.textContent = `${this.t("CC")}:`;
       const ccValue = document.createElement("span");
       ccValue.className = "email-field-value";
       setFieldValue(ccValue, cc.join(", "));
@@ -3228,7 +3247,7 @@ class ChatPortalClient {
     subjectField.dataset.field = "subject";
     const subjectLabel = document.createElement("span");
     subjectLabel.className = "email-field-label";
-    subjectLabel.textContent = "Subject:";
+    subjectLabel.textContent = `${this.t("Subject")}:`;
     const subjectValue = document.createElement("span");
     subjectValue.className = "email-field-value";
     setFieldValue(subjectValue, subject);
@@ -3242,7 +3261,7 @@ class ChatPortalClient {
     bodyField.dataset.field = "body";
     const bodyLabel = document.createElement("span");
     bodyLabel.className = "email-field-label";
-    bodyLabel.textContent = "Message:";
+    bodyLabel.textContent = `${this.t("Message")}:`;
     const bodyContent = document.createElement("div");
     bodyContent.className = "email-field-value email-body-content";
     setFieldValue(bodyContent, body);
@@ -4016,13 +4035,13 @@ class ChatPortalClient {
 
     const toggleBtn = card.querySelector('[data-action="toggle"]');
     if (toggleBtn) {
-      toggleBtn.textContent = isCollapsed ? "Show email" : "Hide email";
+      toggleBtn.textContent = isCollapsed ? this.t("Show email") : this.t("Hide email");
       toggleBtn.setAttribute("aria-expanded", (!isCollapsed).toString());
     }
   }
 
   getEmailPreviewSummaryText(data) {
-    if (!data || typeof data !== "object") return "Email details";
+    if (!data || typeof data !== "object") return this.t("Email details");
     const toRaw = Array.isArray(data.to)
       ? data.to.join(", ")
       : data.to != null
@@ -4032,9 +4051,9 @@ class ChatPortalClient {
     const toText = toRaw ? this.clipText(toRaw, 48) : "";
     const subjectText = subjectRaw ? this.clipText(subjectRaw, 64) : "";
     const parts = [];
-    if (toText) parts.push(`To: ${toText}`);
-    if (subjectText) parts.push(`Subject: ${subjectText}`);
-    return parts.length ? parts.join(" • ") : "Email details";
+    if (toText) parts.push(`${this.t("To")}: ${toText}`);
+    if (subjectText) parts.push(`${this.t("Subject")}: ${subjectText}`);
+    return parts.length ? parts.join(" • ") : this.t("Email details");
   }
 
   getEmailPreviewFieldValue(card, fieldName) {
@@ -4104,11 +4123,11 @@ class ChatPortalClient {
 
     // Phase: started (draft creation)
     if (phase === "started" && toolName === "email_create_draft") {
-      if (statusEl) statusEl.textContent = "Creating draft...";
+      if (statusEl) statusEl.textContent = this.t("Creating draft...");
     }
 
     if (phase === "started" && toolName === "email_send_draft") {
-      if (statusEl) statusEl.textContent = "Sending email...";
+      if (statusEl) statusEl.textContent = this.t("Sending email...");
       if (approvalEl) approvalEl.hidden = true;
       if (actionsEl) actionsEl.hidden = true;
       this.scheduleEmailSendReconcile(card);
@@ -4117,7 +4136,7 @@ class ChatPortalClient {
     // Phase: finished (draft created successfully)
     if (phase === "finished" && toolName === "email_create_draft") {
       if (status === "ok") {
-        if (statusEl) statusEl.textContent = "Draft created";
+        if (statusEl) statusEl.textContent = this.t("Draft created");
         card.classList.add("email-draft-created");
         if (actionsEl) actionsEl.hidden = false; // Show "Edit" button
         if (approvalEl) approvalEl.hidden = false; // Show "Send/Don't Send" buttons
@@ -4178,17 +4197,17 @@ class ChatPortalClient {
       if (approvalEl) approvalEl.hidden = true;
 
       if (approvalStatus === "approved" || status === "approved") {
-        if (statusEl) statusEl.textContent = "Sending email...";
+        if (statusEl) statusEl.textContent = this.t("Sending email...");
         if (actionsEl) actionsEl.hidden = true;
         this.setEmailPreviewCollapsed(card, true);
         this.scheduleEmailSendReconcile(card);
       } else if (approvalStatus === "denied" || status === "denied") {
-        if (statusEl) statusEl.textContent = "Not sent";
+        if (statusEl) statusEl.textContent = this.t("Not sent");
         card.classList.add("email-rejected");
         if (actionsEl) actionsEl.hidden = false; // Show edit button again
         this.setEmailPreviewCollapsed(card, true);
       } else if (approvalStatus === "expired" || status === "expired") {
-        if (statusEl) statusEl.textContent = "Approval expired";
+        if (statusEl) statusEl.textContent = this.t("Approval expired");
         card.classList.add("email-rejected");
         if (actionsEl) actionsEl.hidden = false;
         this.setEmailPreviewCollapsed(card, true);
@@ -6150,7 +6169,7 @@ class ChatPortalClient {
       .slice(-20) // Show last 20 lines
       .map((t) => {
         const roleClass = t.role === "customer" ? "transcript-customer" : "transcript-agent";
-        const roleLabel = t.role === "customer" ? "Customer" : "Agent";
+        const roleLabel = t.role === "customer" ? this.t("Customer") : this.t("Agent");
         return `<div class="portal-transcript-line ${roleClass}"><span class="portal-transcript-role">${this.escapeHtml(roleLabel)}:</span> ${this.escapeHtml(t.text)}</div>`;
       })
       .join("");
@@ -6160,17 +6179,17 @@ class ChatPortalClient {
         <button type="button" class="portal-task__header" data-voice-toggle="${this.escapeHtml(sessionId)}">
           <div class="portal-task__meta">
             <div class="portal-task__title-row">
-              <div class="portal-task__title">Active Voice Call</div>
-              <span class="portal-task__status portal-task__status--running">Live</span>
+              <div class="portal-task__title">${this.escapeHtml(this.t("Active Voice Call"))}</div>
+              <span class="portal-task__status portal-task__status--running">${this.escapeHtml(this.t("Live"))}</span>
             </div>
-            <div class="portal-task__subtitle">Real-time transcript</div>
+            <div class="portal-task__subtitle">${this.escapeHtml(this.t("Real-time transcript"))}</div>
           </div>
         </button>
         <div class="portal-task__body">
           <div class="portal-task__section">
-            <div class="portal-task__section-title">Transcript</div>
+            <div class="portal-task__section-title">${this.escapeHtml(this.t("Transcript"))}</div>
             <div class="portal-transcript-container">
-              ${transcriptLinesHtml || '<div class="portal-transcript-empty">Waiting for speech...</div>'}
+              ${transcriptLinesHtml || `<div class="portal-transcript-empty">${this.escapeHtml(this.t("Waiting for speech..."))}</div>`}
             </div>
           </div>
         </div>
@@ -6273,43 +6292,43 @@ class ChatPortalClient {
     if (call) {
       if (["in_progress", "in-progress", "inprogress"].includes(call)) {
         statusKey = "running";
-        label = "Live";
+        label = this.t("Live");
       } else if (call === "ringing") {
         statusKey = "running";
-        label = "Ringing";
+        label = this.t("Ringing");
       } else if (call === "initiating") {
         statusKey = "running";
-        label = "Dialing";
+        label = this.t("Dialing");
       } else if (call === "queued") {
         statusKey = "queued";
-        label = "Queued";
+        label = this.t("Queued");
       } else if (["completed", "finished", "done"].includes(call)) {
         statusKey = "completed";
-        label = "Done";
+        label = this.t("Done");
       } else if (["cancelled", "canceled"].includes(call)) {
         statusKey = "cancelled";
-        label = "Cancelled";
+        label = this.t("Cancelled");
       } else if (["failed", "error"].includes(call)) {
         statusKey = "failed";
-        label = "Failed";
+        label = this.t("Failed");
       } else {
         statusKey = call;
         label = call.replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
       }
     } else if (hasTranscript) {
       statusKey = "running";
-      label = "Live";
+      label = this.t("Live");
     } else if (run) {
       if (run === "waiting_external") {
         statusKey = "queued";
-        label = "Queued";
+        label = this.t("Queued");
       } else {
         statusKey = run;
         label = this.formatRunStatusLabel(run);
       }
     } else {
       statusKey = "queued";
-      label = "Queued";
+      label = this.t("Queued");
     }
 
     if (statusKey === "completed") {
@@ -6331,20 +6350,20 @@ class ChatPortalClient {
     const run = normalize(runStatus);
 
     if (["cancelled", "canceled"].includes(call) || ["cancelled", "canceled"].includes(run)) {
-      return "Call cancelled.";
+      return this.t("Call cancelled.");
     }
     if (["failed", "error"].includes(call) || ["failed", "error"].includes(run)) {
-      return "Call failed.";
+      return this.t("Call failed.");
     }
     if (["completed", "finished", "done"].includes(call) || ["completed", "succeeded", "success"].includes(run)) {
-      return "Call completed.";
+      return this.t("Call completed.");
     }
-    if (call === "ringing") return "Ringing…";
-    if (call === "initiating") return "Dialing…";
+    if (call === "ringing") return this.t("Ringing…");
+    if (call === "initiating") return this.t("Dialing…");
     if (call === "queued" || run === "waiting_external") {
-      return "Waiting for the call to start…";
+      return this.t("Waiting for the call to start…");
     }
-    return "Waiting for speech…";
+    return this.t("Waiting for speech…");
   }
 
   renderVoiceCallRunCardHtml(runId, state, run, info) {
@@ -6362,7 +6381,7 @@ class ChatPortalClient {
     const transcripts = transcriptState && Array.isArray(transcriptState.transcripts) ? transcriptState.transcripts : [];
     const hasTranscript = transcripts.length > 0;
 
-    const title = run && run.title ? String(run.title) : toPhone ? `Call ${toPhone}` : "Phone call";
+    const title = run && run.title ? String(run.title) : toPhone ? `${this.t("Call")} ${toPhone}` : this.t("Phone call");
 
     const subtitleParts = [];
     if (objective) subtitleParts.push(objective);
@@ -6370,15 +6389,15 @@ class ChatPortalClient {
     const subtitle = subtitleParts.join(" · ") || this.formatRunStatusLabel(runStatus || "queued");
 
     const detailsItems = [];
-    if (toPhone) detailsItems.push(`To: ${toPhone}`);
-    if (objective) detailsItems.push(`Objective: ${objective}`);
-    if (callType) detailsItems.push(`Type: ${callType}`);
-    if (language) detailsItems.push(`Language: ${language}`);
-    if (country) detailsItems.push(`Country: ${country}`);
+    if (toPhone) detailsItems.push(`${this.t("To")}: ${toPhone}`);
+    if (objective) detailsItems.push(`${this.t("Objective")}: ${objective}`);
+    if (callType) detailsItems.push(`${this.t("Type")}: ${callType}`);
+    if (language) detailsItems.push(`${this.t("Language")}: ${language}`);
+    if (country) detailsItems.push(`${this.t("Country")}: ${country}`);
     const detailsHtml = detailsItems.length
       ? `
         <div class="portal-task__section">
-          <div class="portal-task__section-title">Details</div>
+          <div class="portal-task__section-title">${this.escapeHtml(this.t("Details"))}</div>
           <div class="portal-task__list">
             ${detailsItems.map((line) => `<div class="portal-task__list-item">${this.escapeHtml(line)}</div>`).join("")}
           </div>
@@ -6390,7 +6409,7 @@ class ChatPortalClient {
       .slice(-20)
       .map((t) => {
         const roleClass = t.role === "customer" ? "transcript-customer" : "transcript-agent";
-        const roleLabel = t.role === "customer" ? "Customer" : "Agent";
+        const roleLabel = t.role === "customer" ? this.t("Customer") : this.t("Agent");
         return `<div class="portal-transcript-line ${roleClass}"><span class="portal-transcript-role">${this.escapeHtml(roleLabel)}:</span> ${this.escapeHtml(
           t.text
         )}</div>`;
@@ -6400,7 +6419,7 @@ class ChatPortalClient {
     const transcriptEmpty = this.getVoiceTranscriptEmptyMessage({ callStatus, runStatus });
     const transcriptHtml = `
       <div class="portal-task__section">
-        <div class="portal-task__section-title">Transcript</div>
+        <div class="portal-task__section-title">${this.escapeHtml(this.t("Transcript"))}</div>
         <div class="portal-transcript-container">
           ${transcriptLinesHtml || `<div class="portal-transcript-empty">${this.escapeHtml(transcriptEmpty)}</div>`}
         </div>
@@ -6435,7 +6454,7 @@ class ChatPortalClient {
 
   renderRunCardHtml(runId, state, run) {
     const statusRaw = (run && run.status ? run.status : "queued").toString().trim().toLowerCase() || "queued";
-    const title = run && run.title ? run.title : "Background task";
+    const title = run && run.title ? run.title : this.t("Background task");
     const lastEvent = state && Array.isArray(state.events) && state.events.length ? state.events[state.events.length - 1] : null;
     const subtitle = this.formatRunSubtitle(run, lastEvent);
     const expanded = Boolean(state && state.expanded);
@@ -6450,7 +6469,7 @@ class ChatPortalClient {
         <button type="button" class="portal-task__header" data-run-toggle="${this.escapeHtml(runId)}">
           <div class="portal-task__meta">
             <div class="portal-task__title-row">
-              <div class="portal-task__title">${this.escapeHtml(String(title || "Background task"))}</div>
+              <div class="portal-task__title">${this.escapeHtml(String(title || this.t("Background task")))}</div>
               ${this.renderRunStatusPill(statusRaw)}
             </div>
             <div class="portal-task__subtitle">${this.escapeHtml(subtitle)}</div>
@@ -6478,8 +6497,8 @@ class ChatPortalClient {
       if (!approvalId) {
         return `
           <div class="portal-task__section">
-            <div class="portal-task__section-title">Approval</div>
-            <div class="portal-task__subtitle">Waiting for approval.</div>
+            <div class="portal-task__section-title">${this.escapeHtml(this.t("Approval"))}</div>
+            <div class="portal-task__subtitle">${this.escapeHtml(this.t("Waiting for approval."))}</div>
           </div>
         `;
       }
@@ -6495,15 +6514,15 @@ class ChatPortalClient {
 
       return `
         <div class="portal-task__section">
-          <div class="portal-task__section-title">Approval</div>
-          <div class="portal-task__subtitle">${this.escapeHtml(summary || "This task needs your approval to continue.")}</div>
+          <div class="portal-task__section-title">${this.escapeHtml(this.t("Approval"))}</div>
+          <div class="portal-task__subtitle">${this.escapeHtml(summary || this.t("This task needs your approval to continue."))}</div>
           <div class="portal-task__actions">
             <button type="button" class="portal-task__btn portal-task__btn--approve" data-run-approval-action="approve" data-approval-id="${this.escapeHtml(
               approvalId
-            )}">Approve</button>
+            )}">${this.escapeHtml(this.t("Approve"))}</button>
             <button type="button" class="portal-task__btn portal-task__btn--deny" data-run-approval-action="deny" data-approval-id="${this.escapeHtml(
               approvalId
-            )}">Deny</button>
+            )}">${this.escapeHtml(this.t("Deny"))}</button>
           </div>
         </div>
       `;
@@ -6526,12 +6545,12 @@ class ChatPortalClient {
 
       return `
         <div class="portal-task__section">
-          <div class="portal-task__section-title">Question</div>
+          <div class="portal-task__section-title">${this.escapeHtml(this.t("Question"))}</div>
           ${promptText ? `<div class="portal-task__subtitle">${this.escapeHtml(promptText)}</div>` : ""}
           ${questionHtml}
-          <textarea class="portal-task__input" data-run-user-input-text rows="3" placeholder="Type your answer…"></textarea>
+          <textarea class="portal-task__input" data-run-user-input-text rows="3" placeholder="${this.escapeHtml(this.t("Type your answer…"))}"></textarea>
           <div class="portal-task__actions">
-            <button type="button" class="portal-task__btn" data-run-user-input-send="${this.escapeHtml(runId)}">Send</button>
+            <button type="button" class="portal-task__btn" data-run-user-input-send="${this.escapeHtml(runId)}">${this.escapeHtml(this.t("Send"))}</button>
           </div>
         </div>
       `;
@@ -6540,10 +6559,10 @@ class ChatPortalClient {
     if (status === "waiting_external") {
       return `
         <div class="portal-task__section">
-          <div class="portal-task__section-title">Waiting</div>
-          <div class="portal-task__subtitle">This task is waiting on another agent. Check the Inbox for updates.</div>
+          <div class="portal-task__section-title">${this.escapeHtml(this.t("Waiting"))}</div>
+          <div class="portal-task__subtitle">${this.escapeHtml(this.t("This task is waiting on another agent. Check the Inbox for updates."))}</div>
           <div class="portal-task__actions">
-            <button type="button" class="portal-task__btn" data-open-inbox="true">Open inbox</button>
+            <button type="button" class="portal-task__btn" data-open-inbox="true">${this.escapeHtml(this.t("Open inbox"))}</button>
           </div>
         </div>
       `;
@@ -6554,7 +6573,7 @@ class ChatPortalClient {
 
   formatRunStatusLabel(status) {
     const norm = (status || "").toString().trim().toLowerCase();
-    if (!norm) return "Queued";
+    if (!norm) return this.t("Queued");
     return norm
       .replace(/_/g, " ")
       .toLowerCase()
@@ -6600,10 +6619,10 @@ class ChatPortalClient {
         return `Tool: ${title}`;
       }
 
-      if (type === "needs_approval") return "Needs approval";
-      if (type === "needs_user") return "Needs your input";
-      if (type === "result") return "Completed";
-      if (type === "error") return "Error";
+      if (type === "needs_approval") return this.t("Needs approval");
+      if (type === "needs_user") return this.t("Needs your input");
+      if (type === "result") return this.t("Completed");
+      if (type === "error") return this.t("Error");
       return normalizeSystemLabel(raw || type);
     };
 
@@ -6618,7 +6637,7 @@ class ChatPortalClient {
     }
     if (label) return label;
     const status = run && run.status ? String(run.status) : "";
-    return status ? this.formatRunStatusLabel(status) : "Waiting for updates…";
+    return status ? this.formatRunStatusLabel(status) : this.t("Waiting for updates…");
   }
 
   renderRunPlanHtml(run) {
@@ -6628,15 +6647,15 @@ class ChatPortalClient {
       .slice(0, 12)
       .map((step) => {
         const title = step && (step.title || step.description || step.step_id || step.stepId) ? (step.title || step.description || step.step_id || step.stepId) : "";
-        return `<div class="portal-task__list-item">${this.escapeHtml(String(title || "").trim() || "Step")}</div>`;
+        return `<div class="portal-task__list-item">${this.escapeHtml(String(title || "").trim() || this.t("Step"))}</div>`;
       })
       .join("");
     const body = items
       ? `<div class="portal-task__list">${items}</div>`
-      : `<div class="portal-task__subtitle">No plan available yet.</div>`;
+      : `<div class="portal-task__subtitle">${this.escapeHtml(this.t("No plan available yet."))}</div>`;
     return `
       <div class="portal-task__section">
-        <div class="portal-task__section-title">Plan</div>
+        <div class="portal-task__section-title">${this.escapeHtml(this.t("Plan"))}</div>
         ${body}
       </div>
     `;
@@ -8078,7 +8097,7 @@ class ChatPortalClient {
 
       const titleRow = document.createElement("div");
       titleRow.className = "portal-call-summary__title";
-      const nameText = contactName || toPhone || "Phone call";
+      const nameText = contactName || toPhone || this.t("Phone call");
       titleRow.textContent = nameText;
 
       const subtitleRow = document.createElement("div");
@@ -11187,14 +11206,16 @@ class ChatPortalClient {
   showToast(title, description, destructive = false) {
     const root = this.elements.toastRoot;
     if (!root) return;
+    const titleText = this.t(title);
+    const descriptionText = this.t(description);
     const panel = document.createElement("div");
     panel.className = `pointer-events-auto rounded-xl border px-4 py-3 shadow-lg backdrop-blur transition ${destructive
       ? "border-destructive bg-destructive/10 text-destructive"
       : "border-border bg-card text-foreground"
       }`;
     panel.innerHTML = `
-      <div class="font-semibold">${title}</div>
-      <div class="text-sm">${description}</div>
+      <div class="font-semibold">${this.escapeHtml(titleText)}</div>
+      <div class="text-sm">${this.escapeHtml(descriptionText)}</div>
     `;
     root.appendChild(panel);
     setTimeout(() => {

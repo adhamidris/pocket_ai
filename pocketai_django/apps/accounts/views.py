@@ -15,6 +15,7 @@ from django.http import (
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
+from django.utils.translation import gettext as _
 from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.http import require_http_methods, require_POST
 
@@ -99,7 +100,7 @@ def login_view(request: HttpRequest) -> HttpResponse:
     wants_json = _wants_json(request)
 
     if not email or not password:
-        message = "Email and password are required."
+        message = _("Email and password are required.")
         if wants_json:
             return JsonResponse(
                 {"error": "VALIDATION_ERROR", "message": message},
@@ -111,7 +112,7 @@ def login_view(request: HttpRequest) -> HttpResponse:
 
     user = authenticate(request, username=email, password=password)
     if user is None:
-        message = "Invalid email or password."
+        message = _("Invalid email or password.")
         if wants_json:
             return JsonResponse(
                 {"error": "INVALID_CREDENTIALS", "message": message},
@@ -122,7 +123,7 @@ def login_view(request: HttpRequest) -> HttpResponse:
         return render(request, "frontend/login.html", context, status=400)
 
     if not user.is_active:
-        message = "This account is inactive. Contact support for help."
+        message = _("This account is inactive. Contact support for help.")
         if wants_json:
             return JsonResponse(
                 {"error": "ACCOUNT_INACTIVE", "message": message},
