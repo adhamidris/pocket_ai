@@ -250,7 +250,7 @@
             <div>{% blocktrans with showing=leads_showing_count|default:0 total=leads_total|default:0 %}Showing {{ showing }} of {{ total }} leads{% endblocktrans %}</div>
             <div class="flex items-center gap-2">
               <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-1 text-xs font-medium hover:bg-accent hover:text-accent-foreground {% if not leads_has_prev %}opacity-40 cursor-not-allowed{% endif %}" {% if not leads_has_prev %}disabled{% endif %}>
-                {% trans "Previous" %}
+                {% if LANGUAGE_BIDI %}السابق{% else %}{% trans "Previous" %}{% endif %}
               </button>
               <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-1 text-xs font-medium hover:bg-accent hover:text-accent-foreground {% if not leads_has_next %}opacity-40 cursor-not-allowed{% endif %}" {% if not leads_has_next %}disabled{% endif %}>
                 {% trans "Next" %}
