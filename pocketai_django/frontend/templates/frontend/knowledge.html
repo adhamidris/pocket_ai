@@ -776,12 +776,12 @@
   style="transform: translateX(100%);"
 >
   <div class="relative flex h-full w-full flex-col">
-	    <div id="document-panel-heading" class="sr-only" data-document-aria-title>{% trans "Select a document" %}</div>
+	    <div id="document-panel-heading" class="sr-only" data-document-aria-title>{% if LANGUAGE_BIDI %}اختر مستنداً{% else %}{% trans "Select a document" %}{% endif %}</div>
     <button
       type="button"
       class="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-background/80 text-muted-foreground transition hover:bg-background"
       data-document-close
-	      aria-label="{% trans 'Close document detail' %}"
+	      aria-label="{% if LANGUAGE_BIDI %}إغلاق تفاصيل المستند{% else %}{% trans 'Close document detail' %}{% endif %}"
     >
       <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
         <path stroke-linecap="round" stroke-linejoin="round" d="m8 8 8 8m0-8-8 8" />
@@ -800,14 +800,14 @@
               {% if knowledge_panel_empty_title %}
                 {{ knowledge_panel_empty_title }}
               {% else %}
-                {% trans "Select a document" %}
+                {% if LANGUAGE_BIDI %}اختر مستنداً{% else %}{% trans "Select a document" %}{% endif %}
               {% endif %}
             </h2>
             <p class="text-sm text-muted-foreground">
               {% if knowledge_panel_empty_message %}
                 {{ knowledge_panel_empty_message }}
               {% else %}
-                {% trans "Choose a document to preview summary, classification, and sync details here." %}
+                {% if LANGUAGE_BIDI %}اختر مستنداً لمعاينة الملخص والتصنيف وتفاصيل المزامنة هنا.{% else %}{% trans "Choose a document to preview summary, classification, and sync details here." %}{% endif %}
               {% endif %}
             </p>
           </div>
@@ -826,31 +826,31 @@
         </div>
         <div class="hidden space-y-4 px-6 py-10" data-document-error>
           <div class="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive" data-document-error-message>
-	            {% trans "Unable to load document details. Please try again." %}
+	            {% if LANGUAGE_BIDI %}تعذر تحميل تفاصيل المستند. يرجى المحاولة مرة أخرى.{% else %}{% trans "Unable to load document details. Please try again." %}{% endif %}
           </div>
           <button
             type="button"
             class="inline-flex items-center justify-center rounded-md border border-border/60 bg-background px-4 py-2 text-sm font-medium text-foreground shadow-sm hover:border-primary/40"
             data-document-retry
           >
-	            {% trans "Retry" %}
+	            {% if LANGUAGE_BIDI %}إعادة المحاولة{% else %}{% trans "Retry" %}{% endif %}
           </button>
         </div>
         <div class="hidden space-y-6 pb-16" data-document-content>
           <section class="border-b border-border/70 bg-card/90 px-6 pt-10 pb-6">
             <div class="flex items-start gap-3">
               <div class="flex-1 min-w-0">
-	                <div class="text-lg font-semibold text-foreground leading-tight" data-document-name>{% trans "Document name" %}</div>
+	                <div class="text-lg font-semibold text-foreground leading-tight" data-document-name>{% if LANGUAGE_BIDI %}اسم المستند{% else %}{% trans "Document name" %}{% endif %}</div>
                 <div class="text-xs text-muted-foreground" data-document-identifier>KN-0000</div>
               </div>
-	              <span class="text-[11px] font-semibold capitalize text-muted-foreground" data-document-status-badge>{% trans "Draft" %}</span>
+	              <span class="text-[11px] font-semibold capitalize text-muted-foreground" data-document-status-badge>{% if LANGUAGE_BIDI %}مسودة{% else %}{% trans "Draft" %}{% endif %}</span>
             </div>
             <div class="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-	              <span data-document-source-label>{% trans "Upload" %}</span>
+	              <span data-document-source-label>{% if LANGUAGE_BIDI %}رفع ملف{% else %}{% trans "Upload" %}{% endif %}</span>
               <span aria-hidden="true">•</span>
-	              <span data-document-updated>{% trans "Updated —" %}</span>
+	              <span data-document-updated>{% if LANGUAGE_BIDI %}آخر تحديث —{% else %}{% trans "Updated —" %}{% endif %}</span>
               <span aria-hidden="true">•</span>
-	              <span data-document-last-synced>{% trans "Last synced —" %}</span>
+	              <span data-document-last-synced>{% if LANGUAGE_BIDI %}آخر مزامنة —{% else %}{% trans "Last synced —" %}{% endif %}</span>
             </div>
             {% if knowledge_business_id %}
               <div class="mt-4 flex flex-wrap items-center gap-3">
@@ -861,7 +861,7 @@
                   disabled
                   aria-disabled="true"
                 >
-	                  {% trans "Delete document" %}
+	                  {% if LANGUAGE_BIDI %}حذف المستند{% else %}{% trans "Delete document" %}{% endif %}
                 </button>
               </div>
               <div class="hidden rounded-md border border-border/60 bg-muted/40 px-3 py-2 text-xs text-muted-foreground" data-document-delete-notice></div>
@@ -871,27 +871,27 @@
           <section class="px-6">
             <div class="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
               <div class="rounded-lg border border-border/50 bg-card/95 p-3">
-	                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">{% trans "Size" %}</div>
+	                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">{% if LANGUAGE_BIDI %}الحجم{% else %}{% trans "Size" %}{% endif %}</div>
                 <div class="text-base font-semibold text-foreground" data-document-size>—</div>
               </div>
               <div class="rounded-lg border border-border/50 bg-card/95 p-3">
-	                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">{% trans "Tokens" %}</div>
+	                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">{% if LANGUAGE_BIDI %}الرموز{% else %}{% trans "Tokens" %}{% endif %}</div>
                 <div class="text-base font-semibold text-foreground" data-document-tokens>—</div>
               </div>
               <div class="rounded-lg border border-border/50 bg-card/95 p-3">
-	                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">{% trans "Language" %}</div>
+	                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">{% if LANGUAGE_BIDI %}اللغة{% else %}{% trans "Language" %}{% endif %}</div>
                 <div class="text-base font-semibold text-foreground" data-document-language>—</div>
               </div>
               <div class="rounded-lg border border-border/50 bg-card/95 p-3">
-	                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">{% trans "Category" %}</div>
+	                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">{% if LANGUAGE_BIDI %}الفئة{% else %}{% trans "Category" %}{% endif %}</div>
                 <div class="text-base font-semibold text-foreground" data-document-category>—</div>
               </div>
               <div class="rounded-lg border border-border/50 bg-card/95 p-3">
-	                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">{% trans "Sensitivity" %}</div>
+	                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">{% if LANGUAGE_BIDI %}الحساسية{% else %}{% trans "Sensitivity" %}{% endif %}</div>
                 <div class="text-base font-semibold text-foreground" data-document-sensitive>—</div>
               </div>
               <div class="rounded-lg border border-border/50 bg-card/95 p-3">
-	                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">{% trans "Integration" %}</div>
+	                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">{% if LANGUAGE_BIDI %}التكامل{% else %}{% trans "Integration" %}{% endif %}</div>
                 <div class="text-base font-semibold text-foreground" data-document-integration>—</div>
               </div>
             </div>
@@ -900,12 +900,12 @@
           <section class="space-y-4 px-6">
             <div>
               <div class="flex items-center gap-2">
-	                <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{% trans "Summary" %}</div>
-	                <span class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/80">{% trans "Auto summary" %}</span>
+	                <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{% if LANGUAGE_BIDI %}الملخص{% else %}{% trans "Summary" %}{% endif %}</div>
+	                <span class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/80">{% if LANGUAGE_BIDI %}ملخص تلقائي{% else %}{% trans "Auto summary" %}{% endif %}</span>
               </div>
               <div class="mt-2 space-y-2">
                 <div class="summary-frame is-clamped text-sm leading-relaxed text-foreground" data-document-summary-wrap>
-	                  <div class="summary-body space-y-2" data-document-summary>{% trans "No summary available." %}</div>
+	                  <div class="summary-body space-y-2" data-document-summary>{% if LANGUAGE_BIDI %}لا يوجد ملخص متاح.{% else %}{% trans "No summary available." %}{% endif %}</div>
                 </div>
                 <button
                   type="button"
@@ -913,7 +913,7 @@
                   data-document-summary-toggle
                   aria-expanded="false"
                 >
-	                  {% trans "Show more" %}
+	                  {% if LANGUAGE_BIDI %}عرض المزيد{% else %}{% trans "Show more" %}{% endif %}
                 </button>
               </div>
             </div>
@@ -1020,12 +1020,12 @@
 	    var defaultUploadType = uploadTypeInput ? uploadTypeInput.value : "file";
 	    var I18N = {
 	      filesWord: "{% trans 'files' %}",
-	      document: "{% trans 'Document' %}",
-	      general: "{% trans 'General' %}",
-	      fileUpload: "{% trans 'File Upload' %}",
-	      processing: "{% trans 'Processing' %}",
-	      draft: "{% trans 'Draft' %}",
-	      openDocumentDetail: "{% trans 'Open document detail' %}",
+	      document: "{% if LANGUAGE_BIDI %}مستند{% else %}{% trans 'Document' %}{% endif %}",
+	      general: "{% if LANGUAGE_BIDI %}عام{% else %}{% trans 'General' %}{% endif %}",
+	      fileUpload: "{% if LANGUAGE_BIDI %}رفع ملف{% else %}{% trans 'File Upload' %}{% endif %}",
+	      processing: "{% if LANGUAGE_BIDI %}قيد المعالجة{% else %}{% trans 'Processing' %}{% endif %}",
+	      draft: "{% if LANGUAGE_BIDI %}مسودة{% else %}{% trans 'Draft' %}{% endif %}",
+	      openDocumentDetail: "{% if LANGUAGE_BIDI %}فتح تفاصيل المستند{% else %}{% trans 'Open document detail' %}{% endif %}",
 	      showing: "{% trans 'Showing' %}",
 	      of: "{% trans 'of' %}",
 	      documentsWord: "{% trans 'documents' %}",
@@ -1046,21 +1046,33 @@
 	      unableUpdateTitle: "{% trans 'Unable to update title.' %}",
 	      titleUpdated: "{% trans 'Title updated.' %}",
 	      unableSaveChangesNow: "{% trans 'Unable to save changes right now.' %}",
-	      selectDocument: "{% trans 'Select a document' %}",
-	      loadingDocument: "{% trans 'Loading document' %}",
-	      documentUnavailable: "{% trans 'Document unavailable' %}",
-	      documentDetail: "{% trans 'Document detail' %}",
-	      failedToLoadDetail: "{% trans 'Failed to load detail' %}",
-	      unableLoadDocDetails: "{% trans 'Unable to load document details. Please try again.' %}",
-	      unknownSource: "{% trans 'Unknown source' %}",
-	      updatedPrefix: "{% trans 'Updated' %}",
-	      lastSyncedPrefix: "{% trans 'Last synced' %}",
-	      loadingSummary: "{% trans 'Loading summary...' %}",
-	      noSummaryAvailable: "{% trans 'No summary available.' %}",
-	      showMore: "{% trans 'Show more' %}",
-	      showLess: "{% trans 'Show less' %}",
-	      sensitive: "{% trans 'Sensitive' %}",
-	      standard: "{% trans 'Standard' %}",
+	      selectDocument: "{% if LANGUAGE_BIDI %}اختر مستنداً{% else %}{% trans 'Select a document' %}{% endif %}",
+	      loadingDocument: "{% if LANGUAGE_BIDI %}جارٍ تحميل المستند{% else %}{% trans 'Loading document' %}{% endif %}",
+	      documentUnavailable: "{% if LANGUAGE_BIDI %}تفاصيل المستند غير متاحة{% else %}{% trans 'Document unavailable' %}{% endif %}",
+	      documentDetail: "{% if LANGUAGE_BIDI %}تفاصيل المستند{% else %}{% trans 'Document detail' %}{% endif %}",
+	      failedToLoadDetail: "{% if LANGUAGE_BIDI %}تعذر تحميل التفاصيل{% else %}{% trans 'Failed to load detail' %}{% endif %}",
+	      unableLoadDocDetails: "{% if LANGUAGE_BIDI %}تعذر تحميل تفاصيل المستند. يرجى المحاولة مرة أخرى.{% else %}{% trans 'Unable to load document details. Please try again.' %}{% endif %}",
+	      unknownSource: "{% if LANGUAGE_BIDI %}مصدر غير معروف{% else %}{% trans 'Unknown source' %}{% endif %}",
+	      updatedPrefix: "{% if LANGUAGE_BIDI %}آخر تحديث{% else %}{% trans 'Updated' %}{% endif %}",
+	      lastSyncedPrefix: "{% if LANGUAGE_BIDI %}آخر مزامنة{% else %}{% trans 'Last synced' %}{% endif %}",
+	      loadingSummary: "{% if LANGUAGE_BIDI %}جارٍ تحميل الملخص...{% else %}{% trans 'Loading summary...' %}{% endif %}",
+	      noSummaryAvailable: "{% if LANGUAGE_BIDI %}لا يوجد ملخص متاح.{% else %}{% trans 'No summary available.' %}{% endif %}",
+	      showMore: "{% if LANGUAGE_BIDI %}عرض المزيد{% else %}{% trans 'Show more' %}{% endif %}",
+	      showLess: "{% if LANGUAGE_BIDI %}عرض أقل{% else %}{% trans 'Show less' %}{% endif %}",
+	      sensitive: "{% if LANGUAGE_BIDI %}حساس{% else %}{% trans 'Sensitive' %}{% endif %}",
+	      standard: "{% if LANGUAGE_BIDI %}قياسي{% else %}{% trans 'Standard' %}{% endif %}",
+	      statusReady: "{% if LANGUAGE_BIDI %}جاهز{% else %}Ready{% endif %}",
+	      statusActive: "{% if LANGUAGE_BIDI %}نشط{% else %}Active{% endif %}",
+	      statusPending: "{% if LANGUAGE_BIDI %}قيد الانتظار{% else %}Pending{% endif %}",
+	      statusFailed: "{% if LANGUAGE_BIDI %}فشل{% else %}Failed{% endif %}",
+	      statusArchived: "{% if LANGUAGE_BIDI %}مؤرشف{% else %}Archived{% endif %}",
+	      fileUploadSource: "{% if LANGUAGE_BIDI %}رفع ملف{% else %}File Upload{% endif %}",
+	      pasteTextSource: "{% if LANGUAGE_BIDI %}لصق نص{% else %}Paste Text{% endif %}",
+	      linkSource: "{% if LANGUAGE_BIDI %}رابط{% else %}Link{% endif %}",
+	      manualSource: "{% if LANGUAGE_BIDI %}يدوي{% else %}Manual{% endif %}",
+	      integrationSource: "{% if LANGUAGE_BIDI %}تكامل{% else %}Integration{% endif %}",
+	      languageArabic: "{% if LANGUAGE_BIDI %}العربية{% else %}Arabic{% endif %}",
+	      languageEnglish: "{% if LANGUAGE_BIDI %}الإنجليزية{% else %}English{% endif %}",
 	      saving: "{% trans 'Saving...' %}",
 	      deleteDocumentConfirm: "{% trans 'Delete this document? This cannot be undone.' %}",
 	      deleting: "{% trans 'Deleting…' %}",
@@ -1105,7 +1117,7 @@
 	      rowsIngested: "{% trans 'Rows ingested:' %}",
 	      manageSheets: "{% trans 'Manage sheets' %}",
 	      googleDrive: "{% trans 'Google Drive' %}",
-	      deleteDocument: "{% trans 'Delete document' %}",
+	      deleteDocument: "{% if LANGUAGE_BIDI %}حذف المستند{% else %}{% trans 'Delete document' %}{% endif %}",
 	      save: "{% trans 'Save' %}",
 	    };
 	    if (uploadDropzone && uploadDropzone.dataset.uploadEnabled === "false") {
@@ -1449,7 +1461,7 @@
       classificationCell.className = "py-4";
       var classificationText = document.createElement("div");
       classificationText.className = "text-sm text-muted-foreground";
-	      classificationText.textContent = documentData.classification || I18N.general;
+	      classificationText.textContent = localizeCategoryLabel(documentData.classification || I18N.general);
       classificationCell.appendChild(classificationText);
 
       var typeCell = document.createElement("td");
@@ -1457,7 +1469,7 @@
       var typeBadge = document.createElement("span");
       typeBadge.className =
         "inline-flex items-center rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground";
-	      typeBadge.textContent = documentData.type_badge || documentData.source_label || I18N.fileUpload;
+	      typeBadge.textContent = localizeSourceLabel(documentData.type_badge || documentData.source_label || I18N.fileUpload, documentData.source_type || "");
       typeCell.appendChild(typeBadge);
 
       var statusCell = document.createElement("td");
@@ -1465,7 +1477,7 @@
       var statusBadge = document.createElement("span");
       statusBadge.className =
         "text-[11px] font-semibold capitalize " + (documentData.status_badge_class || "text-slate-500");
-	      statusBadge.textContent = documentData.status_label || I18N.processing;
+	      statusBadge.textContent = localizeStatusLabel(documentData.status_label || I18N.processing, documentData.status_code || "");
       statusCell.appendChild(statusBadge);
 
       var updatedCell = document.createElement("td");
@@ -1999,6 +2011,75 @@
       return flag ? I18N.sensitive : I18N.standard;
     }
 
+    function normalizeLabel(value) {
+      return (value || "").toString().trim().toLowerCase();
+    }
+
+    function localizeStatusLabel(label, code) {
+      var fallback = label || I18N.draft;
+      if (!isRtl) {
+        return fallback;
+      }
+      var normalized = normalizeLabel(code || label);
+      var statusLabels = {
+        ready: I18N.statusReady,
+        active: I18N.statusActive,
+        processing: I18N.processing,
+        pending: I18N.statusPending,
+        failed: I18N.statusFailed,
+        archived: I18N.statusArchived,
+        draft: I18N.draft,
+      };
+      return statusLabels[normalized] || fallback;
+    }
+
+    function localizeSourceLabel(label, sourceType) {
+      var fallback = label || I18N.unknownSource;
+      if (!isRtl) {
+        return fallback;
+      }
+      var normalized = normalizeLabel(sourceType || label);
+      var sourceLabels = {
+        file: I18N.fileUploadSource,
+        upload: I18N.fileUploadSource,
+        "file upload": I18N.fileUploadSource,
+        text: I18N.pasteTextSource,
+        note: I18N.pasteTextSource,
+        "paste text": I18N.pasteTextSource,
+        link: I18N.linkSource,
+        url: I18N.linkSource,
+        manual: I18N.manualSource,
+        integration: I18N.integrationSource,
+      };
+      return sourceLabels[normalized] || fallback;
+    }
+
+    function localizeLanguageLabel(value) {
+      var fallback = value || "—";
+      if (!isRtl) {
+        return fallback;
+      }
+      var normalized = normalizeLabel(value);
+      if (!normalized) {
+        return "—";
+      }
+      if (normalized === "ar" || normalized === "arabic") {
+        return I18N.languageArabic;
+      }
+      if (normalized === "en" || normalized === "english") {
+        return I18N.languageEnglish;
+      }
+      return fallback;
+    }
+
+    function localizeCategoryLabel(value) {
+      var fallback = value || "—";
+      if (!isRtl) {
+        return fallback;
+      }
+      return normalizeLabel(value) === "general" ? I18N.general : fallback;
+    }
+
     function applyStatusBadge(target, label, code) {
       if (!target) {
         return;
@@ -2006,7 +2087,7 @@
       var normalized = (code || label || "").toString().toLowerCase();
       target.className =
         "text-[11px] font-semibold capitalize " + (statusClassMap[normalized] || "text-slate-500");
-      target.textContent = label || I18N.draft;
+      target.textContent = localizeStatusLabel(label, code);
     }
 
     function normalizeSummaryText(value) {
@@ -2312,7 +2393,9 @@
       if (fieldName) fieldName.textContent = currentDocumentTitle;
       if (fieldIdentifier) fieldIdentifier.textContent = dataset.documentIdentifier || "";
       applyStatusBadge(fieldStatusBadge, dataset.documentStatusLabel || I18N.draft, dataset.documentStatus || "");
-      if (fieldSource) fieldSource.textContent = dataset.documentSource || I18N.unknownSource;
+      if (fieldSource) {
+        fieldSource.textContent = localizeSourceLabel(dataset.documentSource || I18N.unknownSource, dataset.documentType || "");
+      }
       if (fieldUpdated) {
         var updatedValue = dataset.documentUpdatedIso || dataset.documentUpdated || "";
         fieldUpdated.textContent = updatedValue ? I18N.updatedPrefix + " " + formatDate(updatedValue) : I18N.updatedPrefix + " —";
@@ -2323,8 +2406,8 @@
       }
       if (fieldSize) fieldSize.textContent = dataset.documentSize || "—";
       if (fieldTokens) fieldTokens.textContent = dataset.documentTokens || "—";
-	      if (fieldLanguage) fieldLanguage.textContent = dataset.documentLanguage || "—";
-	      if (fieldCategory) fieldCategory.textContent = dataset.documentCategory || "—";
+	      if (fieldLanguage) fieldLanguage.textContent = localizeLanguageLabel(dataset.documentLanguage || "");
+	      if (fieldCategory) fieldCategory.textContent = localizeCategoryLabel(dataset.documentCategory || "");
 	      if (fieldSensitive) fieldSensitive.textContent = formatBoolean(dataset.documentSensitive === "true");
 	      if (fieldIntegration) fieldIntegration.textContent = dataset.documentIntegration || "—";
 	      renderSummary(I18N.loadingSummary);
@@ -2347,7 +2430,12 @@
         summary.statusLabel || dataset.documentStatusLabel || I18N.draft,
         summary.status || dataset.documentStatus || ""
       );
-      if (fieldSource) fieldSource.textContent = summary.sourceLabel || dataset.documentSource || I18N.unknownSource;
+      if (fieldSource) {
+        fieldSource.textContent = localizeSourceLabel(
+          summary.sourceLabel || dataset.documentSource || I18N.unknownSource,
+          summary.sourceType || dataset.documentType || ""
+        );
+      }
       if (fieldUpdated) {
         var updated = summary.updatedAt || dataset.documentUpdatedIso || dataset.documentUpdated || "";
         fieldUpdated.textContent = updated ? I18N.updatedPrefix + " " + formatDate(updated) : I18N.updatedPrefix + " —";
@@ -2364,8 +2452,8 @@
         }
       }
       if (fieldTokens) fieldTokens.textContent = summary.tokenCount != null ? summary.tokenCount : dataset.documentTokens || "—";
-	      if (fieldLanguage) fieldLanguage.textContent = summary.language || dataset.documentLanguage || "—";
-	      if (fieldCategory) fieldCategory.textContent = summary.category || dataset.documentCategory || "—";
+	      if (fieldLanguage) fieldLanguage.textContent = localizeLanguageLabel(summary.language || dataset.documentLanguage || "");
+	      if (fieldCategory) fieldCategory.textContent = localizeCategoryLabel(summary.category || dataset.documentCategory || "");
 	      if (fieldSensitive) fieldSensitive.textContent = formatBoolean(summary.isSensitive || dataset.documentSensitive === "true");
 	      if (fieldIntegration) fieldIntegration.textContent = summary.integrationName || dataset.documentIntegration || "—";
 	      renderSummary(detail.summaryText || I18N.noSummaryAvailable);
