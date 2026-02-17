@@ -2,20 +2,20 @@
 <footer class="footer-section bg-background">
   <div class="container mx-auto px-6 pt-16 pb-12">
     <div class="grid lg:grid-cols-6 gap-8">
-      <div class="lg:col-span-2 md:text-left text-center">
+      <div class="lg:col-span-2 md:text-start text-center">
         <div class="flex items-center gap-2 mb-6 justify-center md:justify-start">
           <div class="w-10 h-10 bg-gradient-primary rounded-xl flex items-center justify-center">
             <span class="text-white font-bold text-xl">A</span>
           </div>
           <span class="text-2xl font-bold text-foreground">{{ site.footer.brand }}</span>
         </div>
-        <p class="text-muted-foreground mb-6 leading-relaxed md:text-left text-center">
+        <p class="text-muted-foreground mb-6 leading-relaxed md:text-start text-center">
           {{ site.footer.blurb }}
         </p>
       </div>
 
       {% for category, links in site.footer.categories.items %}
-        <div class="md:text-left text-center">
+        <div class="md:text-start text-center">
           <h4 class="font-semibold text-foreground mb-4">{{ category }}</h4>
           <ul class="space-y-3">
             {% for link in links %}

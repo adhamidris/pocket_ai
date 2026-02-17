@@ -1,6 +1,6 @@
 {% extends "frontend/base.html" %}
-{% load ui_components %}
-{% load static %}
+{% load i18n static ui_components %}
+{% get_current_language_bidi as CURRENT_LANGUAGE_BIDI %}
 
 {% block extra_head %}
 <link rel="stylesheet" href="{% static 'css/flip-words.css' %}">
@@ -33,11 +33,16 @@
             <a href="{{ page.hero.primary_cta.href }}"
               class="inline-flex items-center justify-center rounded-lg bg-gradient-primary px-6 py-3 text-base font-semibold text-white shadow-lg transition-all duration-200 hover:opacity-90 hover:scale-105 group">
               {{ page.hero.primary_cta.label }}
-              <svg class="ms-2 h-4 w-4 transition-transform group-hover:translate-x-1" viewBox="0 0 24 24" fill="none"
+              <svg class="ms-2 h-4 w-4 transition-transform {% if CURRENT_LANGUAGE_BIDI %}group-hover:-translate-x-1{% else %}group-hover:translate-x-1{% endif %}" viewBox="0 0 24 24" fill="none"
                 stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
                 aria-hidden="true">
+                {% if CURRENT_LANGUAGE_BIDI %}
+                <path d="M19 12H5"></path>
+                <path d="m12 19-7-7 7-7"></path>
+                {% else %}
                 <path d="M5 12h14"></path>
                 <path d="m12 5 7 7-7 7"></path>
+                {% endif %}
               </svg>
             </a>
           </div>
@@ -48,7 +53,7 @@
               <a href="{{ store.href }}"
                 class="inline-flex items-center gap-3 rounded-xl bg-card/90 px-5 py-3 shadow-sm hover:bg-accent/40 transition-colors">
                 <span aria-hidden="true" class="text-foreground">{{ store.icon|safe }}</span>
-                <div class="leading-tight text-left">
+                <div class="leading-tight text-start">
                   <div class="text-[15px] font-semibold text-foreground">{{ store.label_bottom }}</div>
                 </div>
               </a>
@@ -153,6 +158,8 @@
 
 <script>
   document.addEventListener("DOMContentLoaded", function () {
+    {% trans "Thinking..." as thinking_label %}
+    var defaultThinkingLabel = "{{ thinking_label|escapejs }}";
     var scenariosScript = document.getElementById("hero-demo-scenarios");
     var chatRoot = document.querySelector("[data-chat-root]");
     if (!scenariosScript || !chatRoot) {
@@ -370,7 +377,7 @@
         var statusText = document.createElement("span");
         statusText.className = "animate-pulse";
         statusText.setAttribute("data-bot-status-text", "true");
-        statusText.textContent = "Thinking...";
+        statusText.textContent = defaultThinkingLabel;
         statusRow.appendChild(statusDot);
         statusRow.appendChild(statusText);
         var finalEl = document.createElement("div");
@@ -494,9 +501,9 @@
 
     function getSpinnerText(message) {
       if (!message) {
-        return "Thinking...";
+        return defaultThinkingLabel;
       }
-      return message.spinner_text || message.spinner || message.status || "Thinking...";
+      return message.spinner_text || message.spinner || message.status || defaultThinkingLabel;
     }
 
     function getBotTextEl(bubble) {
@@ -532,7 +539,7 @@
       var statusRow = bubble.querySelector("[data-bot-status]");
       var statusText = bubble.querySelector("[data-bot-status-text]");
       if (statusText) {
-        statusText.textContent = label || "Thinking...";
+        statusText.textContent = label || defaultThinkingLabel;
       }
       if (statusRow) {
         statusRow.classList.remove("hidden");

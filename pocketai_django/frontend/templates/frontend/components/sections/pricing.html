@@ -1,4 +1,4 @@
-{% load lucide %}
+{% load i18n lucide %}
 <section id="pricing" class="bg-background pt-16 md:pt-20 pb-24 md:pb-28">
   <div class="container mx-auto px-6">
     <div class="text-center mb-12 md:mb-16">
@@ -28,7 +28,7 @@
       <div class="text-center text-muted-foreground mt-6 mb-10 max-w-3xl mx-auto text-sm leading-relaxed">
         {% for key, text in section.subheader.items %}
           <p data-pricing-subheader="{{ key }}" class="{% if key != 'packages' %}hidden{% endif %}">
-            <span class="text-primary mr-2">></span>{{ text }}
+            <span class="text-primary me-2">></span>{{ text }}
           </p>
         {% endfor %}
       </div>
@@ -71,7 +71,7 @@
               <div class="relative z-10 p-6 border-b border-border/50 bg-card/50 backdrop-blur-sm">
                  <div class="flex items-center justify-between mb-4">
                     <h3 class="text-sm uppercase tracking-wider text-foreground">
-                        <span class="text-primary mr-1">#</span>{{ plan.tier }}
+                        <span class="text-primary me-1">#</span>{{ plan.tier }}
                     </h3>
                     {% if plan.badge %}
                       <span class="text-[10px] uppercase px-2 py-0.5 border border-primary text-primary rounded bg-primary/5">
@@ -81,12 +81,26 @@
                  </div>
                  
                  <div class="flex items-baseline gap-1">
-                    <span class="text-4xl font-bold text-foreground tracking-tight">${{ plan.monthly }}</span>
-                    <span class="text-muted-foreground text-xs">/mo</span>
+                    <span
+                      class="text-4xl font-bold text-foreground tracking-tight"
+                      data-price
+                      data-price-monthly="{{ plan.monthly }}"
+                      data-price-yearly="{{ plan.yearly|default:plan.monthly }}"
+                    >
+                      ${{ plan.monthly }}
+                    </span>
+                    <span
+                      class="text-muted-foreground text-xs"
+                      data-price-suffix
+                      data-suffix-monthly="{{ section.billing_cycle.suffix_monthly }}"
+                      data-suffix-yearly="{{ section.billing_cycle.suffix_yearly }}"
+                    >
+                      {{ section.billing_cycle.suffix_monthly }}
+                    </span>
                  </div>
                  {% if plan.yearly %}
                     <p class="text-[10px] text-muted-foreground mt-1 opacity-70">
-                       // Billed ${{ plan.yearly }}/yr
+                      {% blocktrans with yearly=plan.yearly %}Billed ${{ yearly }}/yr{% endblocktrans %}
                     </p>
                  {% endif %}
               </div>
@@ -130,7 +144,7 @@
               <div class="relative z-10 p-6 border-b border-border/50 bg-card/50 backdrop-blur-sm">
                   <div class="flex items-center justify-between mb-4">
                     <div class="text-sm uppercase tracking-wider text-foreground">
-                        <span class="text-primary mr-1">#</span>{{ plan.label }}
+                        <span class="text-primary me-1">#</span>{{ plan.label }}
                     </div>
                   </div>
                   <div class="text-4xl font-bold text-foreground tracking-tight">${{ plan.min_credit }}</div>
@@ -142,7 +156,7 @@
               <div class="relative z-10 p-6 flex-1 bg-card/30">
                   <div class="flex items-center gap-3 mb-6 text-foreground text-xs">
                      <span class="text-primary">[{% lucide "wallet" "w-3 h-3" %}]</span>
-                     <span>Min. Credit: {{ section.billing_cycle.min_credit }}</span>
+                     <span>{{ section.billing_cycle.min_credit }}: ${{ plan.min_credit }}</span>
                   </div>
 
                   <ul class="space-y-3 text-xs text-muted-foreground">

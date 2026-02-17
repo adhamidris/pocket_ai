@@ -45,8 +45,8 @@ def site_globals(request) -> Dict[str, Any]:
     nav_links: List[NavLink] = [
         {"label": _("Features"), "href": "#features", "external": False},
         {"label": _("Pricing"), "href": "#pricing", "external": False},
-        {"label": _("About"), "href": "#about", "external": False},
-        {"label": _("Contact"), "href": "#contact", "external": False},
+        {"label": _("Testimonials"), "href": "#testimonials", "external": False},
+        {"label": _("FAQ"), "href": "#faq", "external": False},
     ]
 
     user_display_name = _user_display_name(request)

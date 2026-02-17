@@ -1,4 +1,4 @@
-{% load lucide %}
+{% load i18n lucide %}
 <div class="animate-panel-in relative h-full w-full transition-all duration-500 ease-out will-change-transform">
   {% if tab.key == "integrations" %}
     <div class="absolute inset-0 bg-gradient-hero"></div>
@@ -30,14 +30,14 @@
               {% lucide tab.icon "w-5 h-5" %}
               <span>{{ tab.label }}</span>
             </div>
-            <span class="text-white opacity-80 text-xs uppercase tracking-wider">Connect</span>
+            <span class="text-white opacity-80 text-xs uppercase tracking-wider">{% trans "Connect" %}</span>
           </div>
           <div class="grid grid-cols-4 gap-3">
             {% for integration in integrations %}
               <div class="flex items-center justify-center h-14 rounded-xl bg-white/10 border border-white/20">
                 <img
                   src="https://cdn.simpleicons.org/{{ integration.slug }}/ffffff"
-                  alt="{{ integration.name }} logo"
+                  alt="{% blocktrans with name=integration.name %}{{ name }} logo{% endblocktrans %}"
                   class="h-8 w-auto opacity-90"
                   loading="lazy"
                   decoding="async"

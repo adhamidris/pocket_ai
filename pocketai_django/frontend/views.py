@@ -486,57 +486,208 @@ def landing(request: HttpRequest) -> HttpResponse:
             "scenarios": [
                 {
                     "agent_name": "Nancy",
-                    "job_title": "E-Commerce Support Agent",
+                    "job_title": _("E-Commerce Support Agent"),
                     "conversation": [
-                        {"id": 1, "text": "Hi! I need help with my order #12345", "is_bot": False, "delay": 1000},
-                        {"id": 2, "text": "Hello, I’m Nancy. I’d be glad to help. I’ll check that order now.", "is_bot": True, "delay": 1400, "spinner_text": "Searching order details..."},
-                        {"id": 3, "text": "Thanks for waiting. Your order shipped yesterday and should arrive tomorrow by 3 PM. Tracking: TR123456789.", "is_bot": True, "delay": 1600, "spinner_text": "Checking shipping status..."},
-                        {"id": 4, "text": "Perfect. Can I change the delivery address?", "is_bot": False, "delay": 1200},
-                        {"id": 5, "text": "Certainly. What is the new address?", "is_bot": True, "delay": 1200, "spinner_text": "Preparing address update..."},
-                        {"id": 6, "text": "123 New Street, Los Angeles, CA 90210", "is_bot": False, "delay": 1300},
-                        {"id": 7, "text": "All set. I’ve updated the address. Anything else I can assist with today?", "is_bot": True, "delay": 1400, "spinner_text": "Saving changes..."},
-                        {"id": 8, "text": "No, that’s all. Thank you, Nancy.", "is_bot": False, "delay": 1100},
-                        {"id": 9, "text": "You’re welcome. Happy to help.", "is_bot": True, "delay": 1400, "spinner_text": "Wrapping up..."},
+                        {
+                            "id": 1,
+                            "text": _("Hi! I need help with my order #12345"),
+                            "is_bot": False,
+                            "delay": 1000,
+                        },
+                        {
+                            "id": 2,
+                            "text": _("Hello, I'm Nancy. I'd be glad to help. I'll check that order now."),
+                            "is_bot": True,
+                            "delay": 1400,
+                            "spinner_text": _("Searching order details..."),
+                        },
+                        {
+                            "id": 3,
+                            "text": _(
+                                "Thanks for waiting. Your order shipped yesterday and should arrive tomorrow by 3 PM. Tracking: TR123456789."
+                            ),
+                            "is_bot": True,
+                            "delay": 1600,
+                            "spinner_text": _("Checking shipping status..."),
+                        },
+                        {
+                            "id": 4,
+                            "text": _("Perfect. Can I change the delivery address?"),
+                            "is_bot": False,
+                            "delay": 1200,
+                        },
+                        {
+                            "id": 5,
+                            "text": _("Certainly. What is the new address?"),
+                            "is_bot": True,
+                            "delay": 1200,
+                            "spinner_text": _("Preparing address update..."),
+                        },
+                        {
+                            "id": 6,
+                            "text": _("123 New Street, Los Angeles, CA 90210"),
+                            "is_bot": False,
+                            "delay": 1300,
+                        },
+                        {
+                            "id": 7,
+                            "text": _("All set. I've updated the address. Anything else I can assist with today?"),
+                            "is_bot": True,
+                            "delay": 1400,
+                            "spinner_text": _("Saving changes..."),
+                        },
+                        {
+                            "id": 8,
+                            "text": _("No, that's all. Thank you, Nancy."),
+                            "is_bot": False,
+                            "delay": 1100,
+                        },
+                        {
+                            "id": 9,
+                            "text": _("You're welcome. Happy to help."),
+                            "is_bot": True,
+                            "delay": 1400,
+                            "spinner_text": _("Wrapping up..."),
+                        },
                     ],
                 },
                 {
                     "agent_name": "Jack",
-                    "job_title": "Banking Assistance Agent",
+                    "job_title": _("Banking Assistance Agent"),
                     "conversation": [
-                        {"id": 1, "text": "Hi. I believe the interest on my credit card was calculated incorrectly.", "is_bot": False, "delay": 1100},
-                        {"id": 2, "text": "Hello, this is Jack. I can clarify. Interest is calculated daily on the carried balance and summed for the billing cycle.", "is_bot": True, "delay": 1600, "spinner_text": "Reviewing account policy..."},
-                        {"id": 3, "text": "For example: 8 days at AED 5,000 and 22 days at AED 2,000 produce a blended amount based on each daily balance.", "is_bot": True, "delay": 1700, "spinner_text": "Calculating interest..."},
-                        {"id": 4, "text": "That helps. Could you send me the detailed breakdown?", "is_bot": False, "delay": 1200},
-                        {"id": 5, "text": "Of course. I’ve sent a statement breakdown to your registered email. Would you like assistance setting up autopay?", "is_bot": True, "delay": 1400, "spinner_text": "Preparing statement..."},
-                        {"id": 6, "text": "No, that’s fine for now. Thanks, Jack.", "is_bot": False, "delay": 1200},
-                        {"id": 7, "text": "Anytime. If anything else comes up, I’m here to help.", "is_bot": True, "delay": 1400, "spinner_text": "Finalizing response..."},
+                        {
+                            "id": 1,
+                            "text": _("Hi. I believe the interest on my credit card was calculated incorrectly."),
+                            "is_bot": False,
+                            "delay": 1100,
+                        },
+                        {
+                            "id": 2,
+                            "text": _(
+                                "Hello, this is Jack. I can clarify. Interest is calculated daily on the carried balance and summed for the billing cycle."
+                            ),
+                            "is_bot": True,
+                            "delay": 1600,
+                            "spinner_text": _("Reviewing account policy..."),
+                        },
+                        {
+                            "id": 3,
+                            "text": _(
+                                "For example: 8 days at AED 5,000 and 22 days at AED 2,000 produce a blended amount based on each daily balance."
+                            ),
+                            "is_bot": True,
+                            "delay": 1700,
+                            "spinner_text": _("Calculating interest..."),
+                        },
+                        {
+                            "id": 4,
+                            "text": _("That helps. Could you send me the detailed breakdown?"),
+                            "is_bot": False,
+                            "delay": 1200,
+                        },
+                        {
+                            "id": 5,
+                            "text": _(
+                                "Of course. I've sent a statement breakdown to your registered email. Would you like assistance setting up autopay?"
+                            ),
+                            "is_bot": True,
+                            "delay": 1400,
+                            "spinner_text": _("Preparing statement..."),
+                        },
+                        {
+                            "id": 6,
+                            "text": _("No, that's fine for now. Thanks, Jack."),
+                            "is_bot": False,
+                            "delay": 1200,
+                        },
+                        {
+                            "id": 7,
+                            "text": _("Anytime. If anything else comes up, I'm here to help."),
+                            "is_bot": True,
+                            "delay": 1400,
+                            "spinner_text": _("Finalizing response..."),
+                        },
                     ],
                 },
                 {
                     "agent_name": "Suzan",
-                    "job_title": "Realtor Agent",
+                    "job_title": _("Realtor Agent"),
                     "conversation": [
-                        {"id": 1, "text": "Hello Suzan. Are there any units available in Dubai Marina?", "is_bot": False, "delay": 1100},
-                        {"id": 2, "text": "Hello, I'm happy to help. Yes, here’s what’s currently available:", "is_bot": True, "delay": 1400, "spinner_text": "Searching listings..."},
-                        {"id": 3, "text": "2BR, 1,320 sqft, Marina view — AED 2.1M.\n3BR, 2,450 sqft, high floor — AED 4.5M.\n1BR, 820 sqft, furnished — AED 1.35M.", "is_bot": True, "delay": 1700, "spinner_text": "Compiling matches..."},
-                        {"id": 4, "text": "Would you like a sales specialist to contact you?", "is_bot": True, "delay": 1400, "spinner_text": "Drafting follow-up..."},
-                        {"id": 5, "text": "Not yet. Could I see some images?", "is_bot": False, "delay": 1300},
+                        {
+                            "id": 1,
+                            "text": _("Hello Suzan. Are there any units available in Dubai Marina?"),
+                            "is_bot": False,
+                            "delay": 1100,
+                        },
+                        {
+                            "id": 2,
+                            "text": _("Hello, I'm happy to help. Yes, here's what's currently available:"),
+                            "is_bot": True,
+                            "delay": 1400,
+                            "spinner_text": _("Searching listings..."),
+                        },
+                        {
+                            "id": 3,
+                            "text": _(
+                                "2BR, 1,320 sqft, Marina view — AED 2.1M.\n3BR, 2,450 sqft, high floor — AED 4.5M.\n1BR, 820 sqft, furnished — AED 1.35M."
+                            ),
+                            "is_bot": True,
+                            "delay": 1700,
+                            "spinner_text": _("Compiling matches..."),
+                        },
+                        {
+                            "id": 4,
+                            "text": _("Would you like a sales specialist to contact you?"),
+                            "is_bot": True,
+                            "delay": 1400,
+                            "spinner_text": _("Drafting follow-up..."),
+                        },
+                        {
+                            "id": 5,
+                            "text": _("Not yet. Could I see some images?"),
+                            "is_bot": False,
+                            "delay": 1300,
+                        },
                         {
                             "id": 6,
-                            "text": "Certainly. Sharing a few photos:",
+                            "text": _("Certainly. Sharing a few photos:"),
                             "is_bot": True,
                             "delay": 1600,
-                            "spinner_text": "Loading photos...",
+                            "spinner_text": _("Loading photos..."),
                             "images": [
                                 "https://images.unsplash.com/photo-1505691723518-36a5ac3b2b8f?w=600&q=80&auto=format&fit=crop",
                                 "https://images.unsplash.com/photo-1523217582562-09d0def993a6?w=600&q=80&auto=format&fit=crop",
                                 "https://images.unsplash.com/photo-1512917774080-9991f1c4c750?w=600&q=80&auto=format&fit=crop",
                             ],
                         },
-                        {"id": 7, "text": "Looks good. Please have someone contact me at +971 50 123 4567. Name: Ahmed.", "is_bot": False, "delay": 1500},
-                        {"id": 8, "text": "Done. I’ve scheduled a call for today at 4:30 PM. Our specialist Sara will contact you shortly.", "is_bot": True, "delay": 1600, "spinner_text": "Booking a call..."},
-                        {"id": 9, "text": "Great, thank you.", "is_bot": False, "delay": 1200},
-                        {"id": 10, "text": "You’re welcome. I’m here if you need anything else.", "is_bot": True, "delay": 1400, "spinner_text": "Wrapping up..."},
+                        {
+                            "id": 7,
+                            "text": _("Looks good. Please have someone contact me at +971 50 123 4567. Name: Ahmed."),
+                            "is_bot": False,
+                            "delay": 1500,
+                        },
+                        {
+                            "id": 8,
+                            "text": _(
+                                "Done. I've scheduled a call for today at 4:30 PM. Our specialist Sara will contact you shortly."
+                            ),
+                            "is_bot": True,
+                            "delay": 1600,
+                            "spinner_text": _("Booking a call..."),
+                        },
+                        {
+                            "id": 9,
+                            "text": _("Great, thank you."),
+                            "is_bot": False,
+                            "delay": 1200,
+                        },
+                        {
+                            "id": 10,
+                            "text": _("You're welcome. I'm here if you need anything else."),
+                            "is_bot": True,
+                            "delay": 1400,
+                            "spinner_text": _("Wrapping up..."),
+                        },
                     ],
                 },
             ],
@@ -550,88 +701,102 @@ def landing(request: HttpRequest) -> HttpResponse:
         "tabs": [
             {
                 "key": "setup",
-                "label": "Easy Setup",
+                "label": _("Easy Setup"),
                 "icon": "settings",
-                "title": "From sign-up to live in minutes",
-                "promo": "Create your account, connect your business data, configure the agent, and share the chat link instantly—everywhere.",
+                "title": _("From sign-up to live in minutes"),
+                "promo": _(
+                    "Create your account, connect your business data, configure the agent, and share the chat link instantly—everywhere."
+                ),
                 "bullets": [
-                    {"icon": "check-circle-2", "label": "Guided, no-code onboarding"},
-                    {"icon": "settings", "label": "Business profile & preferences"},
-                    {"icon": "link", "label": "Instant chat portal link"},
-                    {"icon": "globe", "label": "Omnichannel social & WhatsApp"},
+                    {"icon": "check-circle-2", "label": _("Guided, no-code onboarding")},
+                    {"icon": "settings", "label": _("Business profile & preferences")},
+                    {"icon": "link", "label": _("Instant chat portal link")},
+                    {"icon": "globe", "label": _("Omnichannel social & WhatsApp")},
                 ],
             },
             {
                 "key": "agents",
-                "label": "Multiple Agents",
+                "label": _("Multiple Agents"),
                 "icon": "users",
-                "title": "Scale with specialized, brand-aligned agents",
-                "promo": "Spin up dedicated agents for sales, support, onboarding, and more. Each agent carries your tone and executes actions confidently.",
+                "title": _("Scale with specialized, brand-aligned agents"),
+                "promo": _(
+                    "Spin up dedicated agents for sales, support, onboarding, and more. Each agent carries your tone and executes actions confidently."
+                ),
                 "bullets": [
-                    {"icon": "check-circle-2", "label": "Customizable personas and tone"},
-                    {"icon": "zap", "label": "Actionable workflows and tools"},
-                    {"icon": "clock", "label": "24/7 availability across timezones"},
-                    {"icon": "shield", "label": "Modern, fine-tuned LLM models"},
+                    {"icon": "check-circle-2", "label": _("Customizable personas and tone")},
+                    {"icon": "zap", "label": _("Actionable workflows and tools")},
+                    {"icon": "clock", "label": _("24/7 availability across timezones")},
+                    {"icon": "shield", "label": _("Modern, fine-tuned LLM models")},
                 ],
             },
             {
                 "key": "kb",
-                "label": "Knowledge Base",
+                "label": _("Knowledge Base"),
                 "icon": "book-open",
-                "title": "Instant business intelligence for your agents",
-                "promo": "Upload SOPs and docs, sync help centers and sites. Retrieval-augmented generation gives agents precise, grounded answers from your materials.",
+                "title": _("Instant business intelligence for your agents"),
+                "promo": _(
+                    "Upload SOPs and docs, sync help centers and sites. Retrieval-augmented generation gives agents precise, grounded answers from your materials."
+                ),
                 "bullets": [
-                    {"icon": "link", "label": "One-click uploads & syncs"},
-                    {"icon": "check-circle-2", "label": "Automatic chunking & embeddings"},
-                    {"icon": "shield", "label": "Citations & guardrails for trust"},
-                    {"icon": "zap", "label": "Realtime refresh & invalidation"},
+                    {"icon": "link", "label": _("One-click uploads & syncs")},
+                    {"icon": "check-circle-2", "label": _("Automatic chunking & embeddings")},
+                    {"icon": "shield", "label": _("Citations & guardrails for trust")},
+                    {"icon": "zap", "label": _("Realtime refresh & invalidation")},
                 ],
             },
             {
                 "key": "crm",
-                "label": "Flexible CRM",
+                "label": _("Flexible CRM"),
                 "icon": "layers",
-                "title": "Build the CRM your workflows deserve",
-                "promo": "Compose a flexible CRM—add or remove tabs, define data parameters to collect, track customer profiles, and manage insights your way.",
+                "title": _("Build the CRM your workflows deserve"),
+                "promo": _(
+                    "Compose a flexible CRM—add or remove tabs, define data parameters to collect, track customer profiles, and manage insights your way."
+                ),
                 "bullets": [
-                    {"icon": "layers", "label": "Dynamic tabs & fields"},
-                    {"icon": "users", "label": "Customer profiles & segments"},
-                    {"icon": "bar-chart-3", "label": "Insight management & exports"},
-                    {"icon": "link", "label": "Integrations: HubSpot, and more"},
+                    {"icon": "layers", "label": _("Dynamic tabs & fields")},
+                    {"icon": "users", "label": _("Customer profiles & segments")},
+                    {"icon": "bar-chart-3", "label": _("Insight management & exports")},
+                    {"icon": "link", "label": _("Integrations: HubSpot, and more")},
                 ],
             },
             {
                 "key": "integrations",
-                "label": "Integrations",
+                "label": _("Integrations"),
                 "icon": "link",
-                "title": "Connect your stack in minutes",
-                "promo": "Plug into tools your team already uses — CRM, support, messaging, and automation platforms.",
+                "title": _("Connect your stack in minutes"),
+                "promo": _(
+                    "Plug into tools your team already uses — CRM, support, messaging, and automation platforms."
+                ),
                 "bullets": [],
             },
             {
                 "key": "dashboard",
-                "label": "Operations",
+                "label": _("Operations"),
                 "icon": "layout-dashboard",
-                "title": "Run operations with clarity and control",
-                "promo": "Governance and operations: queue visibility, live sessions, agent routing, and scheduled reports—everything leaders need to steer performance.",
+                "title": _("Run operations with clarity and control"),
+                "promo": _(
+                    "Governance and operations: queue visibility, live sessions, agent routing, and scheduled reports—everything leaders need to steer performance."
+                ),
                 "bullets": [
-                    {"icon": "message-square", "label": "Live queue & session views"},
-                    {"icon": "users", "label": "Routing & assignment rules"},
-                    {"icon": "bar-chart-3", "label": "Scheduled reports & alerts"},
-                    {"icon": "shield", "label": "Roles, audit logs, and SSO"},
+                    {"icon": "message-square", "label": _("Live queue & session views")},
+                    {"icon": "users", "label": _("Routing & assignment rules")},
+                    {"icon": "bar-chart-3", "label": _("Scheduled reports & alerts")},
+                    {"icon": "shield", "label": _("Roles, audit logs, and SSO")},
                 ],
             },
             {
                 "key": "billing",
-                "label": "Billing",
+                "label": _("Billing"),
                 "icon": "credit-card",
-                "title": "Pay for outcomes—not idle seats",
-                "promo": "Activate agents when you need them. Use wage-based billing, predictable packages, and smart notifications to stay on budget.",
+                "title": _("Pay for outcomes—not idle seats"),
+                "promo": _(
+                    "Activate agents when you need them. Use wage-based billing, predictable packages, and smart notifications to stay on budget."
+                ),
                 "bullets": [
-                    {"icon": "credit-card", "label": "Wage-based activation"},
-                    {"icon": "zap", "label": "Usage packages"},
-                    {"icon": "clock", "label": "Credit depletion alerts"},
-                    {"icon": "shield", "label": "Spend caps & schedules"},
+                    {"icon": "credit-card", "label": _("Wage-based activation")},
+                    {"icon": "zap", "label": _("Usage packages")},
+                    {"icon": "clock", "label": _("Credit depletion alerts")},
+                    {"icon": "shield", "label": _("Spend caps & schedules")},
                 ],
             },
         ],
@@ -653,14 +818,18 @@ def landing(request: HttpRequest) -> HttpResponse:
         "subtitle": _("Real teams, real results. Built with speed, reliability, and brand in mind."),
         "items": [
             {
-                "quote": "Pocket helped us cut first response time from hours to minutes. Our customers finally feel heard instantly.",
+                "quote": _(
+                    "Pocket helped us cut first response time from hours to minutes. Our customers finally feel heard instantly."
+                ),
                 "author": "Sofia Martinez",
-                "role": "Director of Customer Experience, Luma",
+                "role": _("Director of Customer Experience, Luma"),
             },
             {
-                "quote": "The AI assistant handles 80% of inquiries, freeing our agents to focus on complex cases and high-value work.",
+                "quote": _(
+                    "The AI assistant handles 80% of inquiries, freeing our agents to focus on complex cases and high-value work."
+                ),
                 "author": "Elliot Rhodes",
-                "role": "Support Operations Lead, Northbeam",
+                "role": _("Support Operations Lead, Northbeam"),
             },
         ],
     }
@@ -700,111 +869,117 @@ def landing(request: HttpRequest) -> HttpResponse:
             {"key": "self", "label": _("One-time setup (self-hosted)")},
         ],
         "subheader": {
-            "packages": "Simple plans for any stage. Switch billing to see savings with yearly.",
-            "wage": "Prepay a minimum credit (wage) to activate agents and features, then scale usage.",
-            "self": "Deploy on your own infrastructure with your database, custom integrations, and add-ons.",
+            "packages": _(
+                "Simple plans for any stage. Switch billing to see savings with yearly."
+            ),
+            "wage": _(
+                "Prepay a minimum credit (wage) to activate agents and features, then scale usage."
+            ),
+            "self": _(
+                "Deploy on your own infrastructure with your database, custom integrations, and add-ons."
+            ),
         },
         "billing_cycle": {
-            "monthly": "Monthly",
-            "yearly": "Yearly",
-            "suffix_monthly": "/mo",
-            "suffix_yearly": "/mo · billed yearly",
-            "trial": "7-day free trial",
-            "get_started": "Get started",
-            "add_credit": "Add credit",
-            "flexible": "Flexible",
-            "min_credit": "Minimum credit (wage)",
-            "activates": "Activates agents and unlocks features. Credit is consumed by usage.",
-            "users_choice_badge": "Users’ Choice",
+            "monthly": _("Monthly"),
+            "yearly": _("Yearly"),
+            "suffix_monthly": _("/mo"),
+            "suffix_yearly": _("/mo · billed yearly"),
+            "trial": _("7-day free trial"),
+            "get_started": _("Get started"),
+            "add_credit": _("Add credit"),
+            "flexible": _("Flexible"),
+            "min_credit": _("Minimum credit (wage)"),
+            "activates": _("Activates agents and unlocks features. Credit is consumed by usage."),
+            "users_choice_badge": _("Users' Choice"),
         },
         "packages": [
             {
-                "tier": "Plus",
-                "description": "For frontliners who talk to customers daily — fits any industry.",
+                "tier": _("Plus"),
+                "description": _("For frontliners who talk to customers daily — fits any industry."),
                 "monthly": 29,
                 "yearly": 24,
                 "features": [
-                    "1 agent",
-                    "Branded chat portal",
-                    "Core knowledge base",
-                    "Inbox + basic analytics",
-                    "Email transcripts",
+                    _("1 agent"),
+                    _("Branded chat portal"),
+                    _("Core knowledge base"),
+                    _("Inbox + basic analytics"),
+                    _("Email transcripts"),
                 ],
             },
             {
-                "tier": "Pro",
-                "badge": "Users’ Choice",
-                "description": "For SMBs — multiple agents and advanced workflows.",
+                "tier": _("Pro"),
+                "badge": _("Users' Choice"),
+                "description": _("For SMBs — multiple agents and advanced workflows."),
                 "monthly": 89,
                 "yearly": 69,
                 "features": [
-                    "Up to 3 agents",
-                    "Advanced knowledge base + citations",
-                    "Workflows and tools (actions)",
-                    "CRM profiles + segments",
-                    "Reports & scheduled alerts",
+                    _("Up to 3 agents"),
+                    _("Advanced knowledge base + citations"),
+                    _("Workflows and tools (actions)"),
+                    _("CRM profiles + segments"),
+                    _("Reports & scheduled alerts"),
                 ],
             },
             {
-                "tier": "Enterprise",
-                "description": "For large teams — security, scale, and customization.",
+                "tier": _("Enterprise"),
+                "description": _("For large teams — security, scale, and customization."),
                 "monthly": 249,
                 "yearly": 199,
                 "features": [
-                    "Unlimited agents",
-                    "SSO, roles & audit logs",
-                    "Custom routing & priority queues",
-                    "Integrations (HubSpot, webhooks)",
-                    "Premium support & SLA",
+                    _("Unlimited agents"),
+                    _("SSO, roles & audit logs"),
+                    _("Custom routing & priority queues"),
+                    _("Integrations (HubSpot, webhooks)"),
+                    _("Premium support & SLA"),
                 ],
             },
         ],
         "wage_plans": [
             {
                 "id": "starter",
-                "label": "Starter",
+                "label": _("Starter"),
                 "min_credit": 50,
                 "bullets": [
-                    "1 agent active",
-                    "Up to 3k assisted messages",
-                    "All core features included",
-                    "Community support",
+                    _("1 agent active"),
+                    _("Up to 3k assisted messages"),
+                    _("All core features included"),
+                    _("Community support"),
                 ],
             },
             {
                 "id": "growth",
-                "label": "Growth",
+                "label": _("Growth"),
                 "min_credit": 200,
                 "bullets": [
-                    "Up to 3 agents active",
-                    "Up to 15k assisted messages",
-                    "Advanced KB + citations",
-                    "Priority email support",
+                    _("Up to 3 agents active"),
+                    _("Up to 15k assisted messages"),
+                    _("Advanced KB + citations"),
+                    _("Priority email support"),
                 ],
             },
             {
                 "id": "scale",
-                "label": "Scale",
+                "label": _("Scale"),
                 "min_credit": 1000,
                 "bullets": [
-                    "Unlimited agents active",
-                    "Up to 100k assisted messages",
-                    "Full platform + integrations",
-                    "Premium support & SLA",
+                    _("Unlimited agents active"),
+                    _("Up to 100k assisted messages"),
+                    _("Full platform + integrations"),
+                    _("Premium support & SLA"),
                 ],
             },
         ],
         "self": {
-            "title": "Self-hosted deployment",
+            "title": _("Self-hosted deployment"),
             "bullets": [
-                "On-prem or private cloud",
-                "Your database and VPC",
-                "Custom integrations & add-ons",
-                "SSO, roles & audit logs",
-                "Implementation support",
+                _("On-prem or private cloud"),
+                _("Your database and VPC"),
+                _("Custom integrations & add-ons"),
+                _("SSO, roles & audit logs"),
+                _("Implementation support"),
             ],
-            "cta_quote": "Get a quote",
-            "cta_sales": "Talk to sales",
+            "cta_quote": _("Get a quote"),
+            "cta_sales": _("Talk to sales"),
         },
     }
 
@@ -813,24 +988,32 @@ def landing(request: HttpRequest) -> HttpResponse:
         "title_highlight": _("questions"),
         "items": [
             {
-                "question": "How do agents learn our business?",
-                "answer": "Sync your docs and sites or upload files. Retrieval with citations keeps answers grounded and up to date.",
+                "question": _("How do agents learn our business?"),
+                "answer": _(
+                    "Sync your docs and sites or upload files. Retrieval with citations keeps answers grounded and up to date."
+                ),
             },
             {
-                "question": "What happens if the AI doesn’t know?",
-                "answer": "It can request clarification, route to a human, or create a follow-up with full context—your choice.",
+                "question": _("What happens if the AI doesn't know?"),
+                "answer": _(
+                    "It can request clarification, route to a human, or create a follow-up with full context—your choice."
+                ),
             },
             {
-                "question": "Can I customize tone and behavior?",
-                "answer": "Yes. Configure personas, guardrails, tools, and workflows per agent, then test in a live sandbox.",
+                "question": _("Can I customize tone and behavior?"),
+                "answer": _(
+                    "Yes. Configure personas, guardrails, tools, and workflows per agent, then test in a live sandbox."
+                ),
             },
             {
-                "question": "How does billing work?",
-                "answer": "Choose packages or prepay credit (wage) to activate agents. Switch to yearly for savings.",
+                "question": _("How does billing work?"),
+                "answer": _(
+                    "Choose packages or prepay credit (wage) to activate agents. Switch to yearly for savings."
+                ),
             },
             {
-                "question": "Is my data secure?",
-                "answer": "Bank-level encryption, roles and audit logs. Optional SSO and data residency controls.",
+                "question": _("Is my data secure?"),
+                "answer": _("Bank-level encryption, roles and audit logs. Optional SSO and data residency controls."),
             },
         ],
     }
