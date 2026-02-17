@@ -1442,8 +1442,6 @@ msgstr ""
 #: frontend/templates/frontend/integrations.html:563
 #: frontend/templates/frontend/mcp.html:44
 #: frontend/templates/frontend/voice.html:199
-#, fuzzy
-#| msgid "Your Connected MCPs"
 msgid "Connected"
 msgstr "متصل"
 
@@ -2410,195 +2408,157 @@ msgstr "تعيين كمزوّد نقل صادر نشط."
 #: frontend/templates/frontend/voice.html:185
 #: frontend/templates/frontend/voice.html:211
 msgid "Test"
-msgstr ""
+msgstr "اختبار"
 
 #: frontend/templates/frontend/voice.html:198
-#, fuzzy
-#| msgid "Refresh failed"
 msgid "Request failed."
-msgstr "فشل التحديث"
+msgstr "فشل الطلب."
 
 #: frontend/templates/frontend/voice.html:200 frontend/views.py:2042
-#, fuzzy
-#| msgid "Enabled"
 msgid "Disabled"
 msgstr "معطّل"
 
 #: frontend/templates/frontend/voice.html:202
-#, fuzzy
-#| msgid "Configure provider"
 msgid "Not Configured"
-msgstr "تهيئة المزوّد"
+msgstr "غير مُهيّأ"
 
 #: frontend/templates/frontend/voice.html:203
-#, fuzzy
-#| msgid "No summary provided."
 msgid "No providers found."
-msgstr "لا يوجد ملخص."
+msgstr "لم يتم العثور على مزوّدين."
 
 #: frontend/templates/frontend/voice.html:204
-#, fuzzy
-#| msgid "Trusted by"
 msgid "Tested"
-msgstr "موثوق من قبل"
+msgstr "تم الاختبار"
 
 #: frontend/templates/frontend/voice.html:205
-#, fuzzy
-#| msgid "No notes yet."
 msgid "Not tested yet"
-msgstr "لا توجد ملاحظات بعد."
+msgstr "لم يُختبر بعد"
 
 #: frontend/templates/frontend/voice.html:206
 msgid "Tenant setup"
-msgstr ""
+msgstr "إعداد العميل"
 
 #: frontend/templates/frontend/voice.html:207
 msgid "Platform managed"
-msgstr ""
+msgstr "مدار من المنصة"
 
 #: frontend/templates/frontend/voice.html:208
-#, fuzzy
-#| msgid "View transcript"
 msgid "Active transport"
-msgstr "عرض التفريغ"
+msgstr "النقل النشط"
 
 #: frontend/templates/frontend/voice.html:209
 msgid "Set Active"
-msgstr ""
+msgstr "تعيين كنشط"
 
 #: frontend/templates/frontend/voice.html:210
 #: frontend/templates/frontend/voice.html:219
-#, fuzzy
-#| msgid "Configure provider"
 msgid "Configure"
-msgstr "تهيئة المزوّد"
+msgstr "تهيئة"
 
 #: frontend/templates/frontend/voice.html:213
 msgid "Managed by platform and shared across all workspaces."
-msgstr ""
+msgstr "يُدار من المنصة ومشترك عبر جميع مساحات العمل."
 
 #: frontend/templates/frontend/voice.html:214
 msgid "Link a business profile to configure voice providers."
-msgstr ""
+msgstr "اربط ملف نشاط تجاري لتهيئة مزوّدي المكالمات الصوتية."
 
 #: frontend/templates/frontend/voice.html:215
-#, fuzzy
-#| msgid "Loading providers…"
 msgid "Loading voice provider status…"
-msgstr "جارٍ تحميل المزوّدين…"
+msgstr "جارٍ تحميل حالة مزوّدي الصوت…"
 
 #: frontend/templates/frontend/voice.html:216
-#, fuzzy
-#| msgid "Failed to load controls."
 msgid "Failed to load voice providers."
-msgstr "تعذر تحميل عناصر التحكم."
+msgstr "تعذّر تحميل مزوّدي الصوت."
 
 #: frontend/templates/frontend/voice.html:217
 msgid "is managed by the platform and cannot be edited here."
-msgstr ""
+msgstr "مدار من المنصة ولا يمكن تعديله هنا."
 
 #: frontend/templates/frontend/voice.html:218
-#, fuzzy
-#| msgid "Configure provider"
 msgid "This provider"
-msgstr "تهيئة المزوّد"
+msgstr "هذا المزوّد"
 
 #: frontend/templates/frontend/voice.html:220
-#, fuzzy
-#| msgid "Configure provider"
 msgid "provider"
-msgstr "تهيئة المزوّد"
+msgstr "مزوّد"
 
 #: frontend/templates/frontend/voice.html:222
-#, fuzzy
-#| msgid "App Store"
 msgid "Stored:"
-msgstr "App Store"
+msgstr "المحفوظ:"
 
 #: frontend/templates/frontend/voice.html:223
 msgid "Leave blank to keep existing value."
-msgstr ""
+msgstr "اتركه فارغًا للإبقاء على القيمة الحالية."
 
 #: frontend/templates/frontend/voice.html:224
 msgid "saved."
-msgstr ""
+msgstr "تم الحفظ."
 
 #: frontend/templates/frontend/voice.html:225
-#, fuzzy
-#| msgid "Failed to save controls."
 msgid "Failed to save provider."
-msgstr "فشل حفظ عناصر التحكم."
+msgstr "تعذّر حفظ المزوّد."
 
 #: frontend/templates/frontend/voice.html:226
 msgid "Provider test succeeded."
-msgstr ""
+msgstr "نجح اختبار المزوّد."
 
 #: frontend/templates/frontend/voice.html:227
-#, fuzzy
-#| msgid "Refresh failed"
 msgid "Provider test failed."
-msgstr "فشل التحديث"
+msgstr "فشل اختبار المزوّد."
 
 #: frontend/templates/frontend/voice.html:228
 msgid "Provider disconnected."
-msgstr ""
+msgstr "تم فصل المزوّد."
 
 #: frontend/templates/frontend/voice.html:229
-#, fuzzy
-#| msgid "Failed to load controls."
 msgid "Failed to disconnect provider."
-msgstr "تعذر تحميل عناصر التحكم."
+msgstr "تعذّر فصل المزوّد."
 
 #: frontend/templates/frontend/voice.html:230
-#, fuzzy
-#| msgid "Set as active outbound transport provider"
 msgid "Active transport provider updated."
-msgstr "تعيين كمزوّد نقل صادر نشط."
+msgstr "تم تحديث مزوّد النقل النشط."
 
 #: frontend/templates/frontend/voice.html:231
-#, fuzzy
-#| msgid "Failed to save controls."
 msgid "Failed to set active provider."
-msgstr "فشل حفظ عناصر التحكم."
+msgstr "تعذّر تعيين المزوّد النشط."
 
 #: frontend/templates/frontend/voice.html:232
 msgid "Live speech-to-text for caller audio."
-msgstr ""
+msgstr "تحويل الكلام إلى نص مباشر لصوت المتصل."
 
 #: frontend/templates/frontend/voice.html:233
 #: frontend/templates/frontend/voice.html:234
 msgid "Call transport, webhooks, and recording callbacks."
-msgstr ""
+msgstr "نقل المكالمات وخطافات الويب واستدعاءات التسجيل."
 
 #: frontend/templates/frontend/voice.html:235
 msgid "Low-latency text-to-speech voice responses."
-msgstr ""
+msgstr "استجابات صوتية لتحويل النص إلى كلام بزمن استجابة منخفض."
 
 #: frontend/templates/frontend/voice.html:236
-#, fuzzy
-#| msgid "Account"
 msgid "Account SID"
-msgstr "الحساب"
+msgstr "معرّف الحساب (SID)"
 
 #: frontend/templates/frontend/voice.html:237
 msgid "Auth Token"
-msgstr ""
+msgstr "رمز المصادقة"
 
 #: frontend/templates/frontend/voice.html:238
 msgid "Webhook Base URL"
-msgstr ""
+msgstr "رابط Webhook الأساسي"
 
 #: frontend/templates/frontend/voice.html:239
 msgid "From Number (E.164)"
-msgstr ""
+msgstr "رقم الإرسال (E.164)"
 
 #: frontend/templates/frontend/voice.html:240
 msgid "API Key"
-msgstr ""
+msgstr "مفتاح API"
 
 #: frontend/templates/frontend/voice.html:241
 msgid "Application SID"
-msgstr ""
+msgstr "معرّف التطبيق (SID)"
 
 #: frontend/templates/frontend/voice.html:242
 msgid "ACxxxxxxxxxxxx"
