@@ -426,8 +426,6 @@ msgstr "مفتوحة"
 
 #: frontend/templates/frontend/case_detail.html:115
 #: frontend/templates/frontend/knowledge.html:284
-#, fuzzy
-#| msgid "Update title"
 msgid "Updated"
 msgstr "آخر تحديث"
 
@@ -1882,8 +1880,6 @@ msgid "Name"
 msgstr "الاسم"
 
 #: frontend/templates/frontend/knowledge.html:281
-#, fuzzy
-#| msgid "Notifications"
 msgid "Classification"
 msgstr "التصنيف"
 
@@ -2599,6 +2595,38 @@ msgstr "رابط خارجي"
 #: frontend/views.py:85
 msgid "Manual Entry"
 msgstr "إدخال يدوي"
+
+#: frontend/views.py:2367
+msgid "Integration Sync"
+msgstr "مزامنة التكامل"
+
+#: frontend/views.py:2368
+msgid "Embedded Content"
+msgstr "محتوى مضمَّن"
+
+#: frontend/views.py:2390 frontend/views.py:2415
+msgid "Unknown"
+msgstr "غير معروف"
+
+#: frontend/views.py:2404 frontend/views.py:2425
+msgid "Pending"
+msgstr "قيد الانتظار"
+
+#: frontend/views.py:2405 frontend/views.py:2426
+msgid "Processing"
+msgstr "قيد المعالجة"
+
+#: frontend/views.py:2406 frontend/views.py:2427
+msgid "Ready"
+msgstr "جاهز"
+
+#: frontend/views.py:2408 frontend/views.py:2429
+msgid "Failed"
+msgstr "فشل"
+
+#: frontend/views.py:2409 frontend/views.py:2430
+msgid "Archived"
+msgstr "مؤرشف"
 
 #: frontend/views.py:90
 msgid "Sync Google Sheets automatically to keep SOPs and trackers up to date."
@@ -4082,7 +4110,7 @@ msgstr ""
 
 #: frontend/views.py:2391 frontend/views.py:2652
 msgid "General"
-msgstr ""
+msgstr "عام"
 
 #: frontend/views.py:2518 frontend/views.py:2901
 msgid "Select a file to upload."
@@ -4140,7 +4168,7 @@ msgstr ""
 
 #: frontend/views.py:2772
 msgid "Search documents, tags, sources…"
-msgstr ""
+msgstr "ابحث في المستندات والوسوم والمصادر…"
 
 #: frontend/views.py:2773
 #, fuzzy

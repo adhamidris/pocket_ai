@@ -25,9 +25,10 @@ from django.shortcuts import redirect, render
 from django.test.client import RequestFactory
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.formats import date_format
 from django.utils.dateparse import parse_datetime
 from django.utils.text import slugify
-from django.utils.translation import gettext_lazy as _
+from django.utils.translation import get_language, gettext_lazy as _
 from django.views.decorators.http import require_http_methods
 
 from pocketai.language import normalize_language_code
@@ -45,7 +46,6 @@ from apps.accounts.models import (
     RegistrationSession,
 )
 from apps.knowledge.models import (
-    KnowledgeCollection,
     KnowledgeUpload,
     KnowledgeUploadFile,
     KnowledgeUploadText,
@@ -67,7 +67,6 @@ from apps.accounts.action_controls import list_action_settings
 from apps.accounts.registration import KnowledgeUploadError
 from apps.cases.services import list_cases
 from apps.customers.services import list_customers
-from apps.knowledge.collections import KnowledgeCollectionValidationError, list_knowledge_collections
 from apps.knowledge.documents import DocumentListValidationError, list_documents
 from apps.knowledge.knowledge_ingestion import queue_ingestion_job
 from apps.mcp.identifier_registry import IdentifierRegistryService
@@ -2089,10 +2088,6 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
                         "allowed_documents",
                         queryset=KnowledgeUpload.objects.filter(business_profile=business).only("id", "status", "is_active"),
                     ),
-                    Prefetch(
-                        "allowed_collections",
-                        queryset=KnowledgeCollection.objects.filter(business_profile=business).only("id"),
-                    ),
                 )
                 .only("id", "escalation_rule", "business_profile__name", "business_profile__slug")
             }
@@ -2117,8 +2112,7 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
                     continue
 
                 allowed_docs = list(getattr(profile, "allowed_documents", []).all())
-                allowed_collections = list(getattr(profile, "allowed_collections", []).all())
-                has_restrictions = bool(allowed_docs or allowed_collections)
+                has_restrictions = bool(allowed_docs)
 
                 if knowledge_total == 0:
                     agent["knowledge_mode"] = "missing"
@@ -2127,9 +2121,7 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
                     agent["knowledge_failed"] = 0
                 elif has_restrictions:
                     allowed_doc_ids = [doc.id for doc in allowed_docs]
-                    scoped_qs = active_knowledge_qs.filter(
-                        Q(id__in=allowed_doc_ids) | Q(collections__in=allowed_collections)
-                    ).distinct()
+                    scoped_qs = active_knowledge_qs.filter(id__in=allowed_doc_ids).distinct()
                     scoped = scoped_qs.aggregate(
                         total=Count("id", distinct=True),
                         processing=Count(
@@ -2356,7 +2348,110 @@ def _format_document_timestamp(value: datetime | None) -> str:
     if not value:
         return _("—")
     localized = timezone.localtime(value)
-    return localized.strftime("%b %d, %Y %H:%M")
+    language = (get_language() or "").lower()
+    if language.startswith("ar"):
+        return date_format(localized, "d/m/Y H:i")
+    return date_format(localized, "M j, Y H:i")
+
+
+def _is_arabic_language() -> bool:
+    return (get_language() or "").lower().startswith("ar")
+
+
+def _localized_document_source_label(source_type: str | None, fallback: str | None = None) -> str:
+    if _is_arabic_language():
+        source_map = {
+            KnowledgeSourceType.FILE: "رفع ملف",
+            KnowledgeSourceType.LINK: "رابط خارجي",
+            KnowledgeSourceType.TEXT: "إدخال يدوي",
+            KnowledgeSourceType.INTEGRATION: "مزامنة التكامل",
+            KnowledgeSourceType.EMBED: "محتوى مضمَّن",
+        }
+        fallback_map = {
+            "file upload": "رفع ملف",
+            "external link": "رابط خارجي",
+            "manual entry": "إدخال يدوي",
+            "integration sync": "مزامنة التكامل",
+            "embedded content": "محتوى مضمَّن",
+        }
+    else:
+        source_map = {
+            KnowledgeSourceType.FILE: "File Upload",
+            KnowledgeSourceType.LINK: "External Link",
+            KnowledgeSourceType.TEXT: "Manual Entry",
+            KnowledgeSourceType.INTEGRATION: "Integration Sync",
+            KnowledgeSourceType.EMBED: "Embedded Content",
+        }
+        fallback_map = {
+            "file upload": "File Upload",
+            "external link": "External Link",
+            "manual entry": "Manual Entry",
+            "integration sync": "Integration Sync",
+            "embedded content": "Embedded Content",
+        }
+    normalized = (source_type or "").strip().lower()
+    if normalized in source_map:
+        return source_map[normalized]
+
+    fallback_text = (fallback or "").strip()
+    if fallback_text:
+        return fallback_map.get(fallback_text.lower(), fallback_text)
+    return "غير معروف" if _is_arabic_language() else "Unknown"
+
+
+def _localized_document_status_label(status: str | None, fallback: str | None = None) -> str:
+    if _is_arabic_language():
+        status_map = {
+            KnowledgeStatus.PENDING: "قيد الانتظار",
+            KnowledgeStatus.PROCESSING: "قيد المعالجة",
+            KnowledgeStatus.READY: "جاهز",
+            KnowledgeStatus.ACTIVE: "نشط",
+            KnowledgeStatus.FAILED: "فشل",
+            KnowledgeStatus.ARCHIVED: "مؤرشف",
+        }
+        fallback_map = {
+            "pending": "قيد الانتظار",
+            "processing": "قيد المعالجة",
+            "ready": "جاهز",
+            "active": "نشط",
+            "failed": "فشل",
+            "archived": "مؤرشف",
+        }
+    else:
+        status_map = {
+            KnowledgeStatus.PENDING: "Pending",
+            KnowledgeStatus.PROCESSING: "Processing",
+            KnowledgeStatus.READY: "Ready",
+            KnowledgeStatus.ACTIVE: "Active",
+            KnowledgeStatus.FAILED: "Failed",
+            KnowledgeStatus.ARCHIVED: "Archived",
+        }
+        fallback_map = {
+            "pending": "Pending",
+            "processing": "Processing",
+            "ready": "Ready",
+            "active": "Active",
+            "failed": "Failed",
+            "archived": "Archived",
+        }
+    normalized = (status or "").strip().lower()
+    if normalized in status_map:
+        return status_map[normalized]
+
+    fallback_text = (fallback or "").strip()
+    if fallback_text:
+        return fallback_map.get(fallback_text.lower(), fallback_text)
+    return "غير معروف" if _is_arabic_language() else "Unknown"
+
+
+def _localized_document_classification(category: str | None, language: str | None) -> str:
+    raw_value = (category or "").strip() or (language or "").strip()
+    if not raw_value:
+        return "عام" if _is_arabic_language() else "General"
+    normalized = raw_value.lower()
+    if normalized in {"general", "default", "uncategorized"}:
+        return "عام" if _is_arabic_language() else "General"
+    return raw_value
 
 
 def _document_status_class(status: str | None) -> str:
@@ -2383,15 +2478,20 @@ def _wants_json(request: HttpRequest) -> bool:
 
 def _serialize_upload_for_dashboard(upload: KnowledgeUpload) -> dict[str, object]:
     updated_at = upload.updated_at
-    status_label = (upload.status or "").replace("_", " ").title()
+    source_label = _localized_document_source_label(upload.source_type, upload.get_source_type_display())
+    status_label = _localized_document_status_label(
+        upload.status,
+        (upload.status or "").replace("_", " ").title(),
+    )
+    classification = _localized_document_classification(upload.category, upload.language)
     return {
         "id": str(upload.id),
         "name": upload.display_name or _("Document"),
         "identifier": _document_identifier(upload.id),
-        "classification": upload.category or upload.language or _("General"),
-        "type_badge": upload.get_source_type_display(),
+        "classification": classification,
+        "type_badge": source_label,
         "source_type": upload.source_type,
-        "source_label": upload.get_source_type_display(),
+        "source_label": source_label,
         "status_label": status_label,
         "status_code": upload.status or "",
         "status_badge_class": _document_status_class(upload.status),
@@ -2634,7 +2734,6 @@ def dashboard_knowledge(request: HttpRequest) -> HttpResponse:
     user_name = _current_user_name(request)
     documents: list[dict[str, object]] = []
     total_documents = 0
-    collections: list[dict[str, object]] = []
     has_error = False
     business = _primary_business_for_user(request.user)
     guardrails = _build_guardrails_snapshot(business)
@@ -2644,16 +2743,18 @@ def dashboard_knowledge(request: HttpRequest) -> HttpResponse:
             result = list_documents(business_profile=business, limit=50, offset=0)
             total_documents = result.total
             for item in result.items:
+                source_label = _localized_document_source_label(item.source_type, item.source_label)
+                status_label = _localized_document_status_label(item.status, item.status_label)
                 documents.append(
                     {
                         "uuid": str(item.id),
                         "name": item.name or _("Document"),
                         "identifier": _document_identifier(item.id),
-                        "classification": item.category or item.language or _("General"),
-                        "type_badge": item.source_label,
+                        "classification": _localized_document_classification(item.category, item.language),
+                        "type_badge": source_label,
                         "source_type": item.source_type,
-                        "source_label": item.source_label,
-                        "status_label": item.status_label,
+                        "source_label": source_label,
+                        "status_label": status_label,
                         "status_code": item.status,
                         "status_badge_class": _document_status_class(item.status),
                         "updated": _format_document_timestamp(item.updated_at),
@@ -2674,27 +2775,6 @@ def dashboard_knowledge(request: HttpRequest) -> HttpResponse:
                     }
                 )
         except DocumentListValidationError:
-            has_error = True
-
-        try:
-            collection_items = list_knowledge_collections(business_profile=business, limit=200, offset=0)
-            for item in collection_items:
-                collections.append(
-                    {
-                        "uuid": str(item.id),
-                        "name": item.name,
-                        "slug": item.slug,
-                        "description": item.description,
-                        "visibility": item.visibility,
-                        "visibility_label": (item.visibility or "").replace("_", " ").title() or _("Private"),
-                        "documents": item.documents,
-                        "owner": item.owner or _("—"),
-                        "focus": _("—"),
-                        "updated_at": _format_document_timestamp(item.updated_at) if item.updated_at else _("—"),
-                        "updated_at_iso": item.updated_at.isoformat() if item.updated_at else "",
-                    }
-                )
-        except KnowledgeCollectionValidationError:
             has_error = True
 
     stats = [
@@ -2731,7 +2811,7 @@ def dashboard_knowledge(request: HttpRequest) -> HttpResponse:
     documents_showing = len(documents)
     integrations_cards = _gather_dashboard_integrations(business)
     requested_tab = (request.GET.get("tab") or "").strip().lower()
-    valid_tabs = {"documents", "integrations", "collections", "guardrails"}
+    valid_tabs = {"documents", "integrations", "guardrails"}
     active_tab = requested_tab if requested_tab in valid_tabs else "documents"
     attention_statuses = {
         KnowledgeIntegrationStatus.ERROR,
@@ -2770,7 +2850,7 @@ def dashboard_knowledge(request: HttpRequest) -> HttpResponse:
         "knowledge_active_tab": active_tab,
         "knowledge_filters": {
             "search_placeholder": _("Search documents, tags, sources…"),
-            "collection_label": _("All collections"),
+            "collection_label": _("All sources"),
         },
         "knowledge_backend_notice": None if business else _("Link a business profile to start indexing knowledge."),
         "knowledge_auth_notice": None,
@@ -2795,9 +2875,6 @@ def dashboard_knowledge(request: HttpRequest) -> HttpResponse:
         "knowledge_integrations_enabled": bool(business),
         "knowledge_business_id": str(business.id) if business else "",
         "knowledge_integrations_connect_url": reverse("frontend:dashboard-knowledge-integrations-connect"),
-        "knowledge_collections": collections,
-        "knowledge_collections_payload": collections,
-        "knowledge_collections_empty_message": _("Group documents into collections to control agent access."),
         "knowledge_panel_empty_title": _("Select a document"),
         "knowledge_panel_empty_message": _("Choose a document to preview summary, classification, and sync details here."),
         "knowledge_upload_types": [
@@ -2828,12 +2905,14 @@ def dashboard_knowledge_visualizer(request: HttpRequest) -> HttpResponse:
                 result = list_documents(business_profile=business, limit=limit, offset=offset)
                 total_documents = result.total
                 for item in result.items:
+                    source_label = _localized_document_source_label(item.source_type, item.source_label)
+                    status_label = _localized_document_status_label(item.status, item.status_label)
                     documents.append(
                         {
                             "uuid": str(item.id),
                             "name": item.name or _("Document"),
-                            "source_label": item.source_label,
-                            "status_label": item.status_label,
+                            "source_label": source_label,
+                            "status_label": status_label,
                             "status_code": item.status,
                             "status_badge_class": _document_status_class(item.status),
                             "updated": _format_document_timestamp(item.updated_at),
