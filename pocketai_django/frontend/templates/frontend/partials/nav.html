@@ -24,22 +24,40 @@
         {% with options=site.language_toggle.options %}
           {% if options|length > 1 %}
             {% get_current_language as CURRENT_LANGUAGE %}
+            {% get_current_language_bidi as CURRENT_LANGUAGE_BIDI %}
             {% with ACTIVE_LANGUAGE=CURRENT_LANGUAGE|slice:":2" %}
               <div class="inline-flex items-center rounded-lg border border-border/60 bg-card/70 p-0.5 text-xs" aria-label="{{ site.language_toggle.label }}">
-                {% for option in options %}
-                  <form method="post" action="{% url 'set_language' %}" class="inline">
-                    {% csrf_token %}
-                    <input type="hidden" name="next" value="{{ request.get_full_path }}">
-                    <input type="hidden" name="language" value="{{ option.code }}">
-                    <button
-                      type="submit"
-                      class="rounded-md px-2.5 py-1 font-medium transition-colors {% if ACTIVE_LANGUAGE == option.code %}bg-accent/70 text-foreground{% else %}text-muted-foreground hover:text-foreground{% endif %}"
-                      {% if ACTIVE_LANGUAGE == option.code %}aria-current="true"{% endif %}
-                    >
-                      {{ option.label|default:option.code|upper }}
-                    </button>
-                  </form>
-                {% endfor %}
+                {% if CURRENT_LANGUAGE_BIDI %}
+                  {% for option in options reversed %}
+                    <form method="post" action="{% url 'set_language' %}" class="inline">
+                      {% csrf_token %}
+                      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                      <input type="hidden" name="language" value="{{ option.code }}">
+                      <button
+                        type="submit"
+                        class="rounded-md px-2.5 py-1 font-medium transition-colors {% if ACTIVE_LANGUAGE == option.code %}bg-accent/70 text-foreground{% else %}text-muted-foreground hover:text-foreground{% endif %}"
+                        {% if ACTIVE_LANGUAGE == option.code %}aria-current="true"{% endif %}
+                      >
+                        {{ option.label|default:option.code|upper }}
+                      </button>
+                    </form>
+                  {% endfor %}
+                {% else %}
+                  {% for option in options %}
+                    <form method="post" action="{% url 'set_language' %}" class="inline">
+                      {% csrf_token %}
+                      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                      <input type="hidden" name="language" value="{{ option.code }}">
+                      <button
+                        type="submit"
+                        class="rounded-md px-2.5 py-1 font-medium transition-colors {% if ACTIVE_LANGUAGE == option.code %}bg-accent/70 text-foreground{% else %}text-muted-foreground hover:text-foreground{% endif %}"
+                        {% if ACTIVE_LANGUAGE == option.code %}aria-current="true"{% endif %}
+                      >
+                        {{ option.label|default:option.code|upper }}
+                      </button>
+                    </form>
+                  {% endfor %}
+                {% endif %}
               </div>
             {% endwith %}
           {% endif %}
@@ -132,22 +150,40 @@
           {% with options=site.language_toggle.options %}
             {% if options|length > 1 %}
               {% get_current_language as CURRENT_LANGUAGE %}
+              {% get_current_language_bidi as CURRENT_LANGUAGE_BIDI %}
               {% with ACTIVE_LANGUAGE=CURRENT_LANGUAGE|slice:":2" %}
                 <div class="inline-flex items-center self-start rounded-lg border border-border/60 bg-card/70 p-0.5 text-xs">
-                  {% for option in options %}
-                    <form method="post" action="{% url 'set_language' %}" class="inline">
-                      {% csrf_token %}
-                      <input type="hidden" name="next" value="{{ request.get_full_path }}">
-                      <input type="hidden" name="language" value="{{ option.code }}">
-                      <button
-                        type="submit"
-                        class="rounded-md px-3 py-1.5 font-medium transition-colors {% if ACTIVE_LANGUAGE == option.code %}bg-accent/70 text-foreground{% else %}text-muted-foreground hover:text-foreground{% endif %}"
-                        {% if ACTIVE_LANGUAGE == option.code %}aria-current="true"{% endif %}
-                      >
-                        {{ option.label|default:option.code|upper }}
-                      </button>
-                    </form>
-                  {% endfor %}
+                  {% if CURRENT_LANGUAGE_BIDI %}
+                    {% for option in options reversed %}
+                      <form method="post" action="{% url 'set_language' %}" class="inline">
+                        {% csrf_token %}
+                        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                        <input type="hidden" name="language" value="{{ option.code }}">
+                        <button
+                          type="submit"
+                          class="rounded-md px-3 py-1.5 font-medium transition-colors {% if ACTIVE_LANGUAGE == option.code %}bg-accent/70 text-foreground{% else %}text-muted-foreground hover:text-foreground{% endif %}"
+                          {% if ACTIVE_LANGUAGE == option.code %}aria-current="true"{% endif %}
+                        >
+                          {{ option.label|default:option.code|upper }}
+                        </button>
+                      </form>
+                    {% endfor %}
+                  {% else %}
+                    {% for option in options %}
+                      <form method="post" action="{% url 'set_language' %}" class="inline">
+                        {% csrf_token %}
+                        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                        <input type="hidden" name="language" value="{{ option.code }}">
+                        <button
+                          type="submit"
+                          class="rounded-md px-3 py-1.5 font-medium transition-colors {% if ACTIVE_LANGUAGE == option.code %}bg-accent/70 text-foreground{% else %}text-muted-foreground hover:text-foreground{% endif %}"
+                          {% if ACTIVE_LANGUAGE == option.code %}aria-current="true"{% endif %}
+                        >
+                          {{ option.label|default:option.code|upper }}
+                        </button>
+                      </form>
+                    {% endfor %}
+                  {% endif %}
                 </div>
               {% endwith %}
             {% endif %}

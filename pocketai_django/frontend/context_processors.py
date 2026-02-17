@@ -39,6 +39,14 @@ def _user_display_name(request) -> str:
     return str(user)
 
 
+def _bidi_isolate(text: str) -> str:
+    """Wrap mixed-script user text in FSI/PDI to preserve visual order."""
+
+    if not text:
+        return text
+    return f"\u2068{text}\u2069"
+
+
 def site_globals(request) -> Dict[str, Any]:
     """Expose global navigation, footer, and CTA copy."""
 
@@ -53,13 +61,14 @@ def site_globals(request) -> Dict[str, Any]:
     is_authenticated = bool(user_display_name)
 
     if is_authenticated:
+        safe_display_name = _bidi_isolate(user_display_name)
         nav_links = [
             {"label": _("Dashboard"), "href": reverse("frontend:dashboard"), "external": False},
             *nav_links,
         ]
         auth_links: List[CTALink] = [
             {
-                "label": _("Hi, %(name)s") % {"name": user_display_name},
+                "label": _("Hi, %(name)s") % {"name": safe_display_name},
                 "href": reverse("frontend:dashboard"),
                 "style": "ghost",
             },
