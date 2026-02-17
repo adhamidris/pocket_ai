@@ -3495,6 +3495,10 @@ msgstr "ممثل نجاح العملاء"
 msgid "Sales Support Agent"
 msgstr "وكيل دعم المبيعات"
 
+#: apps/accounts/agents.py:26
+msgid "Growth & Marketing"
+msgstr "النمو والتسويق"
+
 #: frontend/views.py:1340
 msgid "Front Desk Representative"
 msgstr "ممثل الاستقبال"
@@ -3507,6 +3511,10 @@ msgstr "مدير حساب"
 msgid "Helpdesk Agent"
 msgstr "وكيل مكتب المساعدة"
 
+#: apps/accounts/agents.py:28
+msgid "Billing Assistant"
+msgstr "مساعد الفوترة"
+
 #: frontend/views.py:1346
 msgid "Friendly"
 msgstr "ودود"
@@ -3518,6 +3526,10 @@ msgstr "مهني"
 #: frontend/views.py:1348
 msgid "Casual"
 msgstr "غير رسمي"
+
+#: apps/accounts/agents.py:35
+msgid "Conversational"
+msgstr "حواري"
 
 #: frontend/views.py:1349
 msgid "Formal"
