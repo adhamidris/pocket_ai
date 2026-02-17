@@ -962,6 +962,8 @@ msgid ""
 "`Auto approve` executes directly. `Always confirm` requires approval before "
 "every execution."
 msgstr ""
+"`الموافقة التلقائية` تنفّذ مباشرة. `يتطلب موافقة دائمًا` يطلب الموافقة قبل "
+"كل تنفيذ."
 
 #: frontend/templates/frontend/controls.html:60
 #: frontend/templates/frontend/dashboard.html:171
@@ -972,37 +974,29 @@ msgstr "الكل"
 #: frontend/templates/frontend/controls.html:61
 #: frontend/templates/frontend/controls.html:280
 #: frontend/templates/frontend/integrations.html:555
-#, fuzzy
-#| msgid "Integrations"
 msgid "Integration"
-msgstr "التكاملات"
+msgstr "تكامل"
 
 #: frontend/templates/frontend/controls.html:62
-#, fuzzy
-#| msgid "Integrations"
 msgid "Internal"
-msgstr "التكاملات"
+msgstr "داخلي"
 
 #: frontend/templates/frontend/controls.html:67
 msgid "Search tool, description, or connection"
-msgstr ""
+msgstr "ابحث عن أداة أو وصف أو اتصال"
 
 #: frontend/templates/frontend/controls.html:74
 #: frontend/templates/frontend/controls.html:278
 msgid "Tool"
-msgstr ""
+msgstr "الأداة"
 
 #: frontend/templates/frontend/controls.html:76
 #: frontend/templates/frontend/controls.html:288
-#, fuzzy
-#| msgid "Closed"
 msgid "Exposed"
-msgstr "مغلقة"
+msgstr "مكشوف"
 
 #: frontend/templates/frontend/controls.html:77
 #: frontend/templates/frontend/controls.html:287
-#, fuzzy
-#| msgid "Tool Approval"
 msgid "Approval"
 msgstr "الموافقة"
 
@@ -1031,13 +1025,62 @@ msgstr "لا توجد أدوات تطابق هذا الفلتر."
 
 #: frontend/templates/frontend/controls.html:279
 msgid "Tool exposed to the LLM runtime."
-msgstr ""
+msgstr "أداة مكشوفة لمحرك نموذج اللغة."
 
 #: frontend/templates/frontend/controls.html:281
-#, fuzzy
-#| msgid "Integrations"
 msgid "Internal tool"
-msgstr "التكاملات"
+msgstr "أداة داخلية"
+
+#: apps/api/mcp_connections.py:2154
+msgid "Tool exposed from a connected MCP integration."
+msgstr "أداة مكشوفة من تكامل MCP متصل."
+
+#: apps/api/mcp_connections.py:2120
+msgid ""
+"Continue an existing background run (sub-agent) with a follow-up message. "
+"Use this to send additional instructions to a completed or waiting run "
+"instead of creating a new one. The sub-agent will resume with its full "
+"conversation history."
+msgstr ""
+"تابع تشغيلًا خلفيًا قائمًا (وكيل فرعي) برسالة متابعة. استخدم هذا لإرسال "
+"تعليمات إضافية إلى تشغيل مكتمل أو بانتظار الإجراء بدلًا من إنشاء تشغيل جديد. "
+"سيستأنف الوكيل الفرعي مع كامل سجل محادثته."
+
+#: apps/api/mcp_connections.py:2125
+msgid ""
+"Send a structured request from Agent A to Agent B (agent-to-agent inbox). "
+"Use this when you need another agent/department to answer something. Provide "
+"references (ids/links) instead of raw dumps."
+msgstr ""
+"أرسل طلبًا منظمًا من الوكيل A إلى الوكيل B (صندوق وارد وكيل إلى وكيل). "
+"استخدمه عندما تحتاج أن يجيب وكيل/قسم آخر على أمر ما. قدّم مراجع "
+"(معرّفات/روابط) بدلًا من نسخ نصوص خام."
+
+#: apps/api/mcp_connections.py:2130
+msgid ""
+"Create a background AgentRun (sub-agent) anchored to this conversation. Use "
+"this when the visitor asks for a long-running or multi-step task so the chat "
+"can continue while the work happens in the Tasks panel."
+msgstr ""
+"أنشئ تشغيل AgentRun في الخلفية (وكيل فرعي) مرتبطًا بهذه المحادثة. استخدمه "
+"عندما يطلب الزائر مهمة طويلة أو متعددة الخطوات بحيث تستمر الدردشة أثناء "
+"تنفيذ العمل في لوحة المهام."
+
+#: apps/api/mcp_connections.py:2135
+msgid ""
+"Get detailed status and result of a specific background run. Use this after "
+"list_agent_runs to check on a particular task."
+msgstr ""
+"احصل على الحالة التفصيلية ونتيجة تشغيل خلفي محدد. استخدم هذا بعد "
+"list_agent_runs للتحقق من مهمة معينة."
+
+#: apps/api/mcp_connections.py:2140
+msgid ""
+"Initiate a single outbound phone call. Creates a queued CallSession that "
+"will be executed by the voice_call_worker."
+msgstr ""
+"ابدأ مكالمة هاتفية صادرة واحدة. ينشئ ذلك جلسة CallSession في قائمة الانتظار "
+"ليتم تنفيذها بواسطة voice_call_worker."
 
 #: frontend/templates/frontend/controls.html:282
 msgid "Core"

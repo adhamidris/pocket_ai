@@ -15,6 +15,7 @@ from django.conf import settings
 from django.http import HttpRequest, JsonResponse
 from django.db.models import OuterRef, Subquery
 from django.utils import timezone
+from django.utils.translation import gettext as _
 from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.http import require_http_methods
 
@@ -2109,6 +2110,45 @@ def _controls_tool_label(tool_name: str) -> str:
     return normalized.replace("_", " ").strip().title()
 
 
+def _controls_tool_description(tool_name: str, description: str, *, source_type: str = "internal") -> str:
+    tool_key = str(tool_name or "").strip().lower()
+    localized_overrides = {
+        "continue_agent_run": _(
+            "Continue an existing background run (sub-agent) with a follow-up message. "
+            "Use this to send additional instructions to a completed or waiting run instead of creating a new one. "
+            "The sub-agent will resume with its full conversation history."
+        ),
+        "create_agent_request": _(
+            "Send a structured request from Agent A to Agent B (agent-to-agent inbox). "
+            "Use this when you need another agent/department to answer something. "
+            "Provide references (ids/links) instead of raw dumps."
+        ),
+        "create_agent_run": _(
+            "Create a background AgentRun (sub-agent) anchored to this conversation. "
+            "Use this when the visitor asks for a long-running or multi-step task so the chat can continue "
+            "while the work happens in the Tasks panel."
+        ),
+        "get_agent_run": _(
+            "Get detailed status and result of a specific background run. "
+            "Use this after list_agent_runs to check on a particular task."
+        ),
+        "initiate_phone_call": _(
+            "Initiate a single outbound phone call. "
+            "Creates a queued CallSession that will be executed by the voice_call_worker."
+        ),
+    }
+    if tool_key in localized_overrides:
+        return localized_overrides[tool_key]
+
+    normalized = str(description or "").strip()
+    if normalized:
+        return normalized
+
+    if str(source_type or "").strip().lower() == "integration":
+        return _("Tool exposed from a connected MCP integration.")
+    return _("Tool exposed to the LLM runtime.")
+
+
 def _controls_available_integration_tool_names(
     *,
     business: BusinessProfile,
@@ -2235,7 +2275,7 @@ def _controls_internal_tool_items(
                 "id": f"internal:{tool_name}",
                 "toolName": tool_name,
                 "label": _controls_tool_label(tool_name),
-                "description": description or "Tool exposed to the LLM runtime.",
+                "description": _controls_tool_description(tool_name, description, source_type=source_type),
                 "sourceType": source_type,
                 "sourceLabel": source_label,
                 "integrationType": integration_type,
@@ -2318,7 +2358,7 @@ def _controls_connection_tool_items(*, business: BusinessProfile, connections: l
                     "id": f"mcp:{connection.id}:{tool_name}",
                     "toolName": tool_name,
                     "label": _controls_tool_label(tool_name),
-                    "description": description or "Tool exposed from a connected MCP integration.",
+                    "description": _controls_tool_description(tool_name, description, source_type=source_type),
                     "sourceType": source_type,
                     "sourceLabel": source_label,
                     "integrationType": marketplace_key or "mcp_connection",
