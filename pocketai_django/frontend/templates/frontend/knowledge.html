@@ -245,7 +245,12 @@
               <svg class="rtl-search-icon absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.35-4.35m0 0A7.5 7.5 0 1 0 6.5 6.5a7.5 7.5 0 0 0 10.15 10.15Z" />
               </svg>
-              <input type="search" class="rtl-search-input h-10 w-full rounded-md border border-border/60 bg-muted/70 pl-9 pr-3 text-sm focus-visible:border-border focus-visible:outline-none focus-visible:ring-0" placeholder="{% if knowledge_filters.search_placeholder %}{{ knowledge_filters.search_placeholder }}{% else %}{% trans 'Search documents…' %}{% endif %}" autocomplete="off">
+              <input
+                type="search"
+                class="rtl-search-input h-10 w-full rounded-md border border-border/60 bg-muted/70 pl-9 pr-3 text-sm focus-visible:border-border focus-visible:outline-none focus-visible:ring-0"
+                placeholder="{% if LANGUAGE_BIDI %}ابحث في المستندات والوسوم والمصادر…{% elif knowledge_filters.search_placeholder %}{{ knowledge_filters.search_placeholder }}{% else %}{% trans 'Search documents…' %}{% endif %}"
+                autocomplete="off"
+              >
             </div>
           </div>
 
