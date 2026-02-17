@@ -8,12 +8,21 @@
   padding-right: 0.5rem;
 }
 
+html[dir="rtl"] .flip-words-wrapper {
+  padding-left: 0;
+  padding-right: 0.5rem;
+}
+
 .flip-word {
   display: block;
   grid-area: 1 / 1;
   white-space: nowrap;
   width: max-content;
   z-index: 2;
+}
+
+html[dir="rtl"] .flip-word {
+  width: auto;
 }
 
 /* Exiting words should be behind entering words */

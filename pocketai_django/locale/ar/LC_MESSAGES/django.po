@@ -2707,6 +2707,8 @@ msgid ""
 "Deliver instant, intelligent support 24/7 with our AI-powered platform. "
 "Reduce response times by 90% and delight your customers."
 msgstr ""
+"قدّم دعمًا فوريًا وذكيًا على مدار الساعة 24/7 عبر منصتنا المدعومة بالذكاء "
+"الاصطناعي. خفّض أوقات الاستجابة بنسبة 90% وأسعد عملاءك."
 
 #: frontend/views.py:441
 msgid "Start Free Trial"

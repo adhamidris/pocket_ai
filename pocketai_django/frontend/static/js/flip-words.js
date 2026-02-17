@@ -1,93 +1,98 @@
 document.addEventListener("DOMContentLoaded", () => {
-    const targetElement = document.querySelector(".flip-words-target");
-    if (!targetElement) return;
+  const targetElement = document.querySelector(".flip-words-target");
+  if (!targetElement) return;
 
-    const words = ["Support", "Assistants"];
-    let currentWordIndex = 0;
+  const documentDir = (document.documentElement.getAttribute("dir") || "ltr").toLowerCase();
+  const isRtlDocument = documentDir === "rtl";
 
-    // Create a wrapper
-    const wrapper = document.createElement("div");
-    wrapper.className = "flip-words-wrapper";
-    targetElement.innerHTML = "";
-    targetElement.appendChild(wrapper);
+  const initialWord = (targetElement.textContent || "").trim();
+  const wordsFromData = (targetElement.dataset.words || "")
+    .split("|")
+    .map((value) => value.trim())
+    .filter(Boolean);
 
-    // Function to wrap letters
-    const createWordSpan = (text) => {
-        const wordSpan = document.createElement("span");
-        wordSpan.className = "flip-word text-primary";
+  const words = wordsFromData.length ? wordsFromData : (initialWord ? [initialWord] : []);
+  if (!words.length) return;
 
-        const subWords = text.split(" ");
-        subWords.forEach((subWord, swIdx) => {
-            const subWordSpan = document.createElement("span");
-            subWordSpan.className = "inline-block whitespace-nowrap";
+  let currentWordIndex = 0;
 
-            subWord.split("").forEach((char) => {
-                const letterSpan = document.createElement("span");
-                letterSpan.textContent = char;
-                letterSpan.className = "flip-letter";
-                subWordSpan.appendChild(letterSpan);
-            });
+  const wrapper = document.createElement("div");
+  wrapper.className = "flip-words-wrapper";
+  targetElement.textContent = "";
+  targetElement.appendChild(wrapper);
 
-            wordSpan.appendChild(subWordSpan);
+  const containsArabic = (text) => /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/.test(text);
 
-            // Add space between subwords
-            if (swIdx < subWords.length - 1) {
-                const space = document.createElement("span");
-                space.innerHTML = "&nbsp;";
-                space.className = "inline-block";
-                wordSpan.appendChild(space);
-            }
-        });
+  const createWordSpan = (text) => {
+    const wordSpan = document.createElement("span");
+    wordSpan.className = "flip-word text-primary";
+    const isArabicWord = containsArabic(text);
 
-        return wordSpan;
-    };
+    // Keep bidi isolation per token to avoid reversed mixed-script rendering in RTL.
+    wordSpan.setAttribute("dir", isArabicWord ? "rtl" : "ltr");
+    wordSpan.style.unicodeBidi = "isolate";
 
-    const animateIn = (wordSpan) => {
-        const letters = wordSpan.querySelectorAll(".flip-letter");
-        letters.forEach((letter, i) => {
-            letter.style.animationDelay = `${i * 0.04}s`;
-            letter.classList.add("active");
-        });
-    };
+    // Arabic shaping breaks when split into single letters; render as one token in RTL.
+    const shouldSplitLetters = !isRtlDocument && !isArabicWord;
+    if (!shouldSplitLetters) {
+      const token = document.createElement("span");
+      token.textContent = text;
+      token.className = "flip-letter";
+      wordSpan.appendChild(token);
+      return wordSpan;
+    }
 
-    const animateOut = (wordSpan) => {
-        // CRITICAL: Clear all animation delays so letters exit simultaneously
-        const letters = wordSpan.querySelectorAll(".flip-letter");
-        letters.forEach((letter) => {
-            letter.style.animationDelay = '0s';
-        });
+    Array.from(text).forEach((char) => {
+      const letterSpan = document.createElement("span");
+      letterSpan.textContent = char;
+      letterSpan.className = "flip-letter";
+      wordSpan.appendChild(letterSpan);
+    });
 
-        // Remove after exit animation completes (0.2s animation + small buffer)
-        setTimeout(() => {
-            if (wordSpan.parentNode) {
-                wordSpan.remove();
-            }
-        }, 250);
-    };
+    return wordSpan;
+  };
 
-    const cycleWords = () => {
-        const currentWord = words[currentWordIndex];
-        const newWordSpan = createWordSpan(currentWord);
+  const animateIn = (wordSpan) => {
+    const letters = wordSpan.querySelectorAll(".flip-letter");
+    letters.forEach((letter, i) => {
+      letter.style.animationDelay = `${i * 0.04}s`;
+      letter.classList.add("active");
+    });
+  };
 
-        // Find and animate out ALL existing words (not just non-exiting ones)
-        const existingWords = wrapper.querySelectorAll(".flip-word");
-        existingWords.forEach(oldWordSpan => {
-            if (!oldWordSpan.classList.contains("exiting")) {
-                oldWordSpan.classList.add("exiting");
-                animateOut(oldWordSpan);
-            }
-        });
+  const animateOut = (wordSpan) => {
+    const letters = wordSpan.querySelectorAll(".flip-letter");
+    letters.forEach((letter) => {
+      letter.style.animationDelay = "0s";
+    });
 
-        // Add and animate in the new word
-        wrapper.appendChild(newWordSpan);
-        animateIn(newWordSpan);
+    setTimeout(() => {
+      if (wordSpan.parentNode) {
+        wordSpan.remove();
+      }
+    }, 250);
+  };
 
-        currentWordIndex = (currentWordIndex + 1) % words.length;
-    };
+  const cycleWords = () => {
+    const currentWord = words[currentWordIndex];
+    const newWordSpan = createWordSpan(currentWord);
 
-    // Initial start
-    cycleWords();
+    const existingWords = wrapper.querySelectorAll(".flip-word");
+    existingWords.forEach((oldWordSpan) => {
+      if (!oldWordSpan.classList.contains("exiting")) {
+        oldWordSpan.classList.add("exiting");
+        animateOut(oldWordSpan);
+      }
+    });
 
-    // Loop every 3 seconds
+    wrapper.appendChild(newWordSpan);
+    animateIn(newWordSpan);
+
+    currentWordIndex = (currentWordIndex + 1) % words.length;
+  };
+
+  cycleWords();
+  if (words.length > 1) {
     setInterval(cycleWords, 3000);
+  }
 });
