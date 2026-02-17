@@ -368,13 +368,15 @@
         var modeTag = '<span class="mcp-tag">' + escapeHtml(modeLabel) + "</span>";
         var tagsHtml = '<div class="voice-provider-meta-tags">' + activeTag + modeTag + "</div>";
         var canSetActive = editable && hasCreds && status !== "not_configured" && !item.isActiveTransport;
+        var canTest = editable && hasCreds;
+        var canDisconnect = editable && status !== "not_configured" && hasCreds;
         var actionsHtml = editable
           ? (
               '<div class="voice-provider-buttons">' +
               (canSetActive ? ('  <button class="mcp-btn mcp-btn-outline voice-provider-btn" type="button" data-voice-set-active="' + escapeHtml(item.provider) + '">' + escapeHtml(I18N.setActive) + "</button>") : "") +
               '  <button class="mcp-btn mcp-btn-outline voice-provider-btn" type="button" data-voice-open="' + escapeHtml(item.provider) + '">' + escapeHtml(I18N.configure) + "</button>" +
-              '  <button class="mcp-btn mcp-btn-outline voice-provider-btn" type="button" data-voice-test="' + escapeHtml(item.provider) + '"' + (hasCreds ? "" : " disabled") + ">" + escapeHtml(I18N.test) + "</button>" +
-              '  <button class="mcp-btn mcp-btn-outline voice-provider-btn" type="button" data-voice-disconnect="' + escapeHtml(item.provider) + '"' + (hasCreds ? "" : " disabled") + ">" + escapeHtml(I18N.disconnect) + "</button>" +
+              '  <button class="mcp-btn mcp-btn-outline voice-provider-btn" type="button" data-voice-test="' + escapeHtml(item.provider) + '"' + (canTest ? "" : " disabled") + ">" + escapeHtml(I18N.test) + "</button>" +
+              (canDisconnect ? ('  <button class="mcp-btn mcp-btn-outline voice-provider-btn" type="button" data-voice-disconnect="' + escapeHtml(item.provider) + '">' + escapeHtml(I18N.disconnect) + "</button>") : "") +
               "</div>"
             )
           : ('<div class="voice-provider-managed-note">' + escapeHtml(I18N.managedByPlatform) + "</div>");
