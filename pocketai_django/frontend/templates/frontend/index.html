@@ -19,7 +19,12 @@
         <div class="hero-title text-center lg:text-start animate-fade-in">
           <h1 class="text-5xl lg:text-7xl font-bold text-foreground leading-tight">
             {{ page.hero.title_prefix }}
-            <span class="flip-words-target"> {{ page.hero.title_highlight }}</span>
+            <span
+              class="flip-words-target text-primary"
+              {% if not CURRENT_LANGUAGE_BIDI %}data-words="{{ page.hero.title_highlight }}"{% endif %}
+            >
+              {{ page.hero.title_highlight }}
+            </span>
 
           </h1>
         </div>
@@ -568,5 +573,7 @@
 {% endblock %}
 
 {% block extra_js %}
+{% if not CURRENT_LANGUAGE_BIDI %}
 <script src="{% static 'js/flip-words.js' %}"></script>
+{% endif %}
 {% endblock %}
