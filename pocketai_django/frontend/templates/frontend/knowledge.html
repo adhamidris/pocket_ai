@@ -264,7 +264,7 @@
               <svg class="rtl-search-icon absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.35-4.35m0 0A7.5 7.5 0 1 0 6.5 6.5a7.5 7.5 0 0 0 10.15 10.15Z" />
               </svg>
-              <input type="search" class="rtl-search-input h-10 w-full rounded-md border border-border/60 bg-muted/70 pl-9 pr-3 text-sm focus-visible:border-border focus-visible:outline-none focus-visible:ring-0" placeholder="{{ knowledge_filters.search_placeholder|default:'Search documents…' }}" autocomplete="off">
+              <input type="search" class="rtl-search-input h-10 w-full rounded-md border border-border/60 bg-muted/70 pl-9 pr-3 text-sm focus-visible:border-border focus-visible:outline-none focus-visible:ring-0" placeholder="{% if knowledge_filters.search_placeholder %}{{ knowledge_filters.search_placeholder }}{% else %}{% trans 'Search documents…' %}{% endif %}" autocomplete="off">
             </div>
           </div>
 
@@ -277,11 +277,11 @@
               >
                 <thead class="sticky top-0 z-10 bg-muted/80 backdrop-blur border-b border-border/60">
                   <tr class="transition-colors hover:bg-transparent">
-                    <th scope="col" class="h-12 text-left font-medium text-muted-foreground w-[220px]">Name</th>
-                    <th scope="col" class="h-12 text-left font-medium text-muted-foreground">Classification</th>
-                    <th scope="col" class="h-12 text-left font-medium text-muted-foreground">Type</th>
-                    <th scope="col" class="h-12 text-left font-medium text-muted-foreground">Status</th>
-                    <th scope="col" class="h-12 text-right font-medium text-muted-foreground">Updated</th>
+                    <th scope="col" class="h-12 text-left font-medium text-muted-foreground w-[220px]">{% trans "Name" %}</th>
+                    <th scope="col" class="h-12 text-left font-medium text-muted-foreground">{% trans "Classification" %}</th>
+                    <th scope="col" class="h-12 text-left font-medium text-muted-foreground">{% trans "Type" %}</th>
+                    <th scope="col" class="h-12 text-left font-medium text-muted-foreground">{% trans "Status" %}</th>
+                    <th scope="col" class="h-12 text-right font-medium text-muted-foreground">{% trans "Updated" %}</th>
                     <th scope="col" class="h-12 w-10 text-left font-medium text-muted-foreground"></th>
                   </tr>
                 </thead>
@@ -397,14 +397,14 @@
             </div>
             <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between border-t border-border/70 px-4 py-3 text-xs text-muted-foreground">
               <div data-documents-count data-documents-showing="{{ knowledge_documents_showing|default:0 }}" data-documents-total="{{ knowledge_documents_total|default:0 }}">
-                Showing {{ knowledge_documents_showing|default:0 }} of {{ knowledge_documents_total|default:0 }} documents
+                {% blocktrans with showing=knowledge_documents_showing|default:0 total=knowledge_documents_total|default:0 %}Showing {{ showing }} of {{ total }} documents{% endblocktrans %}
               </div>
               <div class="flex items-center gap-2">
                 <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-1 text-xs font-medium hover:bg-accent hover:text-accent-foreground {% if not knowledge_documents_has_prev %}opacity-40 cursor-not-allowed{% endif %}" {% if not knowledge_documents_has_prev %}disabled{% endif %}>
-                  Previous
+                  {% trans "Previous" %}
                 </button>
                 <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-1 text-xs font-medium hover:bg-accent hover:text-accent-foreground {% if not knowledge_documents_has_next %}opacity-40 cursor-not-allowed{% endif %}" {% if not knowledge_documents_has_next %}disabled{% endif %}>
-                  Next
+                  {% trans "Next" %}
                 </button>
                 {% if knowledge_loading %}
                   <svg class="h-3.5 w-3.5 animate-spin text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -421,9 +421,9 @@
           <div class="rounded-2xl border border-border/60 bg-card/70 p-5 space-y-4">
             <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
               <div class="space-y-1">
-                <div class="text-sm font-semibold text-foreground">Keep external knowledge in sync</div>
+                <div class="text-sm font-semibold text-foreground">{% trans "Keep external knowledge in sync" %}</div>
                 <p class="text-xs text-muted-foreground">
-                  Connect Google Drive to keep spreadsheets, SOPs, and trackers updated automatically.
+                  {% trans "Connect Google Drive to keep spreadsheets, SOPs, and trackers updated automatically." %}
                 </p>
               </div>
               <form method="post" action="{{ knowledge_integrations_connect_url }}">
@@ -432,30 +432,30 @@
                   <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M3 6.75h2.25M17.25 3v2.25M21 6.75h-2.25M6.75 18.75V21M3 17.25h2.25m12-14.25L12 8.25m0 0L8.25 5.25M12 8.25v7.5m0 0L8.25 12.75M12 15.75l3.75-3" />
                   </svg>
-                  Connect Google Drive
+                  {% trans "Connect Google Drive" %}
                 </button>
               </form>
             </div>
             <div class="grid gap-3 sm:grid-cols-3">
               <div class="rounded-lg border border-border/60 bg-muted/30 px-3 py-3">
-                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">Active sources</div>
+                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">{% trans "Active sources" %}</div>
                 <div class="text-lg font-semibold text-foreground">{{ knowledge_integrations_summary.active }}</div>
-                <div class="text-[11px] text-muted-foreground">Connected or syncing</div>
+                <div class="text-[11px] text-muted-foreground">{% trans "Connected or syncing" %}</div>
               </div>
               <div class="rounded-lg border border-border/60 bg-muted/30 px-3 py-3">
-                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">Needs attention</div>
+                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">{% trans "Needs attention" %}</div>
                 <div class="text-lg font-semibold text-foreground">{{ knowledge_integrations_summary.attention }}</div>
-                <div class="text-[11px] text-muted-foreground">Reconnect or fix errors</div>
+                <div class="text-[11px] text-muted-foreground">{% trans "Reconnect or fix errors" %}</div>
               </div>
               <div class="rounded-lg border border-border/60 bg-muted/30 px-3 py-3">
-                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">Syncing now</div>
+                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">{% trans "Syncing now" %}</div>
                 <div class="text-lg font-semibold text-foreground">{{ knowledge_integrations_summary.syncing }}</div>
-                <div class="text-[11px] text-muted-foreground">In progress</div>
+                <div class="text-[11px] text-muted-foreground">{% trans "In progress" %}</div>
               </div>
             </div>
             {% if not knowledge_integrations_enabled %}
               <div class="rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                Link a business profile to connect integrations.
+                {% trans "Link a business profile to connect integrations." %}
               </div>
             {% endif %}
           </div>
@@ -468,7 +468,7 @@
                     <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m0 3.75h.007v.007H12v-.007Z" />
                     <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 19.5h15a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5h-15A1.5 1.5 0 0 0 3 6v12a1.5 1.5 0 0 0 1.5 1.5Z" />
                   </svg>
-                  Needs attention
+                  {% trans "Needs attention" %}
                 </div>
                 <div class="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
                   {% for integration in knowledge_integrations_attention %}
@@ -489,24 +489,26 @@
                       </div>
                       <div class="grid gap-3 text-xs text-muted-foreground sm:grid-cols-2">
                         <div class="space-y-1">
-                          <div class="text-[11px] uppercase tracking-wide">Last sync</div>
+                          <div class="text-[11px] uppercase tracking-wide">{% trans "Last sync" %}</div>
                           <div class="text-sm font-medium text-foreground">{{ integration.last_sync|default_if_none:"—" }}</div>
                         </div>
                         <div class="space-y-1">
-                          <div class="text-[11px] uppercase tracking-wide">Next sync</div>
+                          <div class="text-[11px] uppercase tracking-wide">{% trans "Next sync" %}</div>
                           <div class="text-sm font-medium text-foreground">{{ integration.next_sync|default_if_none:"—" }}</div>
                         </div>
                         <div class="space-y-1">
-                          <div class="text-[11px] uppercase tracking-wide">Auto-sync</div>
+                          <div class="text-[11px] uppercase tracking-wide">{% trans "Auto-sync" %}</div>
                           <div class="text-sm font-medium text-foreground">{{ integration.sync_frequency_label|default_if_none:"—" }}</div>
                         </div>
                         <div class="space-y-1">
-                          <div class="text-[11px] uppercase tracking-wide">Resources</div>
+                          <div class="text-[11px] uppercase tracking-wide">{% trans "Resources" %}</div>
                           <div class="text-sm font-medium text-foreground">{{ integration.resource_count }}</div>
                         </div>
                       </div>
                       {% if integration.rows_ingested %}
-                        <div class="text-xs text-muted-foreground">Last sync ingested {{ integration.rows_ingested }} rows.</div>
+                        <div class="text-xs text-muted-foreground">
+                          {% blocktrans with rows=integration.rows_ingested %}Last sync ingested {{ rows }} rows.{% endblocktrans %}
+                        </div>
                       {% endif %}
                       {% if integration.sync_error %}
                         <div class="rounded-md border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">
@@ -519,7 +521,7 @@
                       {% endif %}
                       {% if integration.resource_count == 0 %}
                         <div class="rounded-md border border-dashed border-amber-200 bg-amber-50/50 px-3 py-2 text-xs text-amber-800">
-                          No resources selected yet. Choose what to sync to start ingesting.
+                          {% trans "No resources selected yet. Choose what to sync to start ingesting." %}
                         </div>
                       {% endif %}
                       {% if integration.api.sheets and knowledge_business_id %}
@@ -536,10 +538,10 @@
                             data-default-visibility="{{ integration.default_visibility }}"
                             data-default-frequency="{{ integration.default_sync_frequency }}"
                           >
-                            Manage sheets
+                            {% trans "Manage sheets" %}
                           </button>
                         </div>
-                        <p class="text-[11px] text-muted-foreground">Syncs run on schedule or from the modal.</p>
+                        <p class="text-[11px] text-muted-foreground">{% trans "Syncs run on schedule or from the modal." %}</p>
                       {% endif %}
                     </div>
                   {% endfor %}
@@ -553,7 +555,7 @@
                   <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12a7.5 7.5 0 0 1 13.35-4.35L21 8.25M19.5 3v5.25M19.5 12a7.5 7.5 0 0 1-13.35 4.35L3 15.75M4.5 21v-5.25" />
                   </svg>
-                  Connected sources
+                  {% trans "Connected sources" %}
                 </div>
                 <div class="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
                   {% for integration in knowledge_integrations_active %}
@@ -574,24 +576,26 @@
                       </div>
                       <div class="grid gap-3 text-xs text-muted-foreground sm:grid-cols-2">
                         <div class="space-y-1">
-                          <div class="text-[11px] uppercase tracking-wide">Last sync</div>
+                          <div class="text-[11px] uppercase tracking-wide">{% trans "Last sync" %}</div>
                           <div class="text-sm font-medium text-foreground">{{ integration.last_sync|default_if_none:"—" }}</div>
                         </div>
                         <div class="space-y-1">
-                          <div class="text-[11px] uppercase tracking-wide">Next sync</div>
+                          <div class="text-[11px] uppercase tracking-wide">{% trans "Next sync" %}</div>
                           <div class="text-sm font-medium text-foreground">{{ integration.next_sync|default_if_none:"—" }}</div>
                         </div>
                         <div class="space-y-1">
-                          <div class="text-[11px] uppercase tracking-wide">Auto-sync</div>
+                          <div class="text-[11px] uppercase tracking-wide">{% trans "Auto-sync" %}</div>
                           <div class="text-sm font-medium text-foreground">{{ integration.sync_frequency_label|default_if_none:"—" }}</div>
                         </div>
                         <div class="space-y-1">
-                          <div class="text-[11px] uppercase tracking-wide">Resources</div>
+                          <div class="text-[11px] uppercase tracking-wide">{% trans "Resources" %}</div>
                           <div class="text-sm font-medium text-foreground">{{ integration.resource_count }}</div>
                         </div>
                       </div>
                       {% if integration.rows_ingested %}
-                        <div class="text-xs text-muted-foreground">Last sync ingested {{ integration.rows_ingested }} rows.</div>
+                        <div class="text-xs text-muted-foreground">
+                          {% blocktrans with rows=integration.rows_ingested %}Last sync ingested {{ rows }} rows.{% endblocktrans %}
+                        </div>
                       {% endif %}
                       {% if integration.sync_error %}
                         <div class="rounded-md border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">
@@ -604,7 +608,7 @@
                       {% endif %}
                       {% if integration.resource_count == 0 %}
                         <div class="rounded-md border border-dashed border-amber-200 bg-amber-50/50 px-3 py-2 text-xs text-amber-800">
-                          No resources selected yet. Choose what to sync to start ingesting.
+                          {% trans "No resources selected yet. Choose what to sync to start ingesting." %}
                         </div>
                       {% endif %}
                       {% if integration.api.sheets and knowledge_business_id %}
@@ -621,10 +625,10 @@
                             data-default-visibility="{{ integration.default_visibility }}"
                             data-default-frequency="{{ integration.default_sync_frequency }}"
                           >
-                            Manage sheets
+                            {% trans "Manage sheets" %}
                           </button>
                         </div>
-                        <p class="text-[11px] text-muted-foreground">Syncs run on schedule or from the modal.</p>
+                        <p class="text-[11px] text-muted-foreground">{% trans "Syncs run on schedule or from the modal." %}</p>
                       {% endif %}
                     </div>
                   {% endfor %}
@@ -643,7 +647,7 @@
             <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" d="M3 7.5 12 12l9-4.5M3 12l9 4.5 9-4.5M3 16.5 12 21l9-4.5" />
             </svg>
-            Collections
+            {% trans "Collections" %}
           </div>
           <div class="rounded-xl border border-dashed border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground {% if knowledge_collections %}hidden{% endif %}" data-collections-empty>
             {{ knowledge_collections_empty_message }}

@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: pocketai-web\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-02-16 18:34+0000\n"
+"POT-Creation-Date: 2026-02-17 13:36+0000\n"
 "PO-Revision-Date: 2026-02-16 18:34+0000\n"
 "Last-Translator: Pocket AI Team\n"
 "Language-Team: English\n"
@@ -29,58 +29,73 @@ msgstr "Invalid email or password."
 msgid "This account is inactive. Contact support for help."
 msgstr "This account is inactive. Contact support for help."
 
-#: frontend/context_processors.py:45 frontend/context_processors.py:97
+#: apps/api/email_oauth.py:76 apps/api/integration_oauth.py:76
+#: apps/api/oauth.py:120
+msgid "PocketAI OAuth"
+msgstr "PocketAI OAuth"
+
+#: apps/api/email_oauth.py:77 apps/api/integration_oauth.py:77
+#: apps/api/oauth.py:121
+msgid "You can close this window."
+msgstr "You can close this window."
+
+#: frontend/context_processors.py:46 frontend/context_processors.py:106
 msgid "Features"
 msgstr "Features"
 
-#: frontend/context_processors.py:46 frontend/context_processors.py:98
+#: frontend/context_processors.py:47 frontend/context_processors.py:107
 msgid "Pricing"
 msgstr "Pricing"
 
-#: frontend/context_processors.py:47
+#: frontend/context_processors.py:48
 msgid "About"
 msgstr "About"
 
-#: frontend/context_processors.py:48 frontend/context_processors.py:108
+#: frontend/context_processors.py:49 frontend/context_processors.py:117
 msgid "Contact"
 msgstr "Contact"
 
-#: frontend/context_processors.py:56
+#: frontend/context_processors.py:57
 #: frontend/templates/frontend/components/dashboard/sidebar.html:94
 msgid "Dashboard"
 msgstr "Dashboard"
 
-#: frontend/context_processors.py:61
+#: frontend/context_processors.py:62
 #, python-format
 msgid "Hi, %(name)s"
 msgstr "Hi, %(name)s"
 
-#: frontend/context_processors.py:66
+#: frontend/context_processors.py:67
 #: frontend/templates/frontend/components/dashboard/sidebar.html:353
 msgid "Log out"
 msgstr "Log out"
 
-#: frontend/context_processors.py:75
+#: frontend/context_processors.py:76 frontend/templates/frontend/login.html:4
+#: frontend/templates/frontend/login.html:61
 msgid "Sign In"
 msgstr "Sign In"
 
-#: frontend/context_processors.py:80
+#: frontend/context_processors.py:81
 msgid "Register"
 msgstr "Register"
 
-#: frontend/context_processors.py:81
+#: frontend/context_processors.py:82
 msgid "Get Started"
 msgstr "Get Started"
 
-#: frontend/context_processors.py:86
+#: frontend/context_processors.py:91 pocketai/settings.py:2031
+msgid "English"
+msgstr "English"
+
+#: frontend/context_processors.py:95
 msgid "AI Customer Service Platform"
 msgstr "AI Customer Service Platform"
 
-#: frontend/context_processors.py:90
+#: frontend/context_processors.py:99 frontend/views.py:453
 msgid "AI Support"
 msgstr "AI Support"
 
-#: frontend/context_processors.py:92
+#: frontend/context_processors.py:101
 msgid ""
 "Transforming customer service with intelligent AI solutions. Deliver "
 "exceptional support experiences that delight your customers and grow your "
@@ -90,138 +105,732 @@ msgstr ""
 "exceptional support experiences that delight your customers and grow your "
 "business."
 
-#: frontend/context_processors.py:96
+#: frontend/context_processors.py:105
 msgid "Product"
 msgstr "Product"
 
-#: frontend/context_processors.py:99
+#: frontend/context_processors.py:108
 msgid "API Documentation"
 msgstr "API Documentation"
 
-#: frontend/context_processors.py:100
+#: frontend/context_processors.py:109
 #: frontend/templates/frontend/components/dashboard/sidebar.html:183
 #: frontend/templates/frontend/components/dashboard/sidebar.html:188
+#: frontend/templates/frontend/integrations.html:4
+#: frontend/templates/frontend/integrations.html:13
+#: frontend/templates/frontend/knowledge.html:112 frontend/views.py:2529
 msgid "Integrations"
 msgstr "Integrations"
 
-#: frontend/context_processors.py:101
+#: frontend/context_processors.py:110
 msgid "Security"
 msgstr "Security"
 
-#: frontend/context_processors.py:103
+#: frontend/context_processors.py:112
+#: frontend/templates/frontend/leads.html:175
 msgid "Company"
 msgstr "Company"
 
-#: frontend/context_processors.py:104
+#: frontend/context_processors.py:113
 msgid "About Us"
 msgstr "About Us"
 
-#: frontend/context_processors.py:105
+#: frontend/context_processors.py:114
 msgid "Careers"
 msgstr "Careers"
 
-#: frontend/context_processors.py:106
+#: frontend/context_processors.py:115
 msgid "Press"
 msgstr "Press"
 
-#: frontend/context_processors.py:107
+#: frontend/context_processors.py:116
 msgid "Blog"
 msgstr "Blog"
 
-#: frontend/context_processors.py:110
+#: frontend/context_processors.py:119
+#: frontend/templates/frontend/knowledge.html:504
+#: frontend/templates/frontend/knowledge.html:591
 msgid "Resources"
 msgstr "Resources"
 
-#: frontend/context_processors.py:111
+#: frontend/context_processors.py:120
 msgid "Help Center"
 msgstr "Help Center"
 
-#: frontend/context_processors.py:112
+#: frontend/context_processors.py:121
 msgid "Community"
 msgstr "Community"
 
-#: frontend/context_processors.py:113
+#: frontend/context_processors.py:122
 msgid "Guides"
 msgstr "Guides"
 
-#: frontend/context_processors.py:114
+#: frontend/context_processors.py:123
+#: frontend/templates/frontend/cases.html:155
+#: frontend/templates/frontend/knowledge.html:283
 msgid "Status"
 msgstr "Status"
 
-#: frontend/context_processors.py:115
+#: frontend/context_processors.py:124
 msgid "Changelog"
 msgstr "Changelog"
 
-#: frontend/context_processors.py:117
+#: frontend/context_processors.py:126
 msgid "Legal"
 msgstr "Legal"
 
-#: frontend/context_processors.py:118 frontend/context_processors.py:133
+#: frontend/context_processors.py:127 frontend/context_processors.py:142
 msgid "Privacy Policy"
 msgstr "Privacy Policy"
 
-#: frontend/context_processors.py:119 frontend/context_processors.py:134
+#: frontend/context_processors.py:128 frontend/context_processors.py:143
 msgid "Terms of Service"
 msgstr "Terms of Service"
 
-#: frontend/context_processors.py:120
+#: frontend/context_processors.py:129
 msgid "GDPR"
 msgstr "GDPR"
 
-#: frontend/context_processors.py:121
+#: frontend/context_processors.py:130
 msgid "Compliance"
 msgstr "Compliance"
 
-#: frontend/context_processors.py:122
+#: frontend/context_processors.py:131
 msgid "Cookies"
 msgstr "Cookies"
 
-#: frontend/context_processors.py:126
+#: frontend/context_processors.py:135
 msgid "Twitter"
 msgstr "Twitter"
 
-#: frontend/context_processors.py:127
+#: frontend/context_processors.py:136
 msgid "LinkedIn"
 msgstr "LinkedIn"
 
-#: frontend/context_processors.py:128
+#: frontend/context_processors.py:137
 msgid "GitHub"
 msgstr "GitHub"
 
-#: frontend/context_processors.py:129
+#: frontend/context_processors.py:138
+#: frontend/templates/frontend/customers.html:134 frontend/views.py:1262
 msgid "Email"
 msgstr "Email"
 
-#: frontend/context_processors.py:132
+#: frontend/context_processors.py:141
 msgid "© 2024 AI Support. All rights reserved."
 msgstr "© 2024 AI Support. All rights reserved."
 
-#: frontend/context_processors.py:135
+#: frontend/context_processors.py:144
 msgid "Cookie Policy"
 msgstr "Cookie Policy"
 
-#: frontend/context_processors.py:139
+#: frontend/context_processors.py:148
 #: frontend/templates/frontend/components/dashboard/sidebar.html:304
 msgid "Language"
 msgstr "Language"
 
-#: frontend/context_processors.py:141 pocketai/settings.py:2027
-msgid "English"
-msgstr "English"
-
-#: frontend/context_processors.py:142 pocketai/settings.py:2028
-msgid "Arabic"
-msgstr "Arabic"
-
-#: frontend/context_processors.py:146
+#: frontend/context_processors.py:152
 #: frontend/templates/frontend/components/dashboard/sidebar.html:328
 msgid "Light mode"
 msgstr "Light mode"
 
-#: frontend/context_processors.py:147
+#: frontend/context_processors.py:153
 #: frontend/templates/frontend/components/dashboard/sidebar.html:329
 msgid "Dark mode"
 msgstr "Dark mode"
+
+#: frontend/templates/frontend/agents.html:4
+#: frontend/templates/frontend/agents.html:13
+#: frontend/templates/frontend/components/dashboard/sidebar.html:162
+#: frontend/templates/frontend/components/dashboard/sidebar.html:168
+msgid "Agents"
+msgstr "Agents"
+
+#: frontend/templates/frontend/agents.html:14
+msgid "Create, configure, and monitor conversational agents for every channel."
+msgstr ""
+"Create, configure, and monitor conversational agents for every channel."
+
+#: frontend/templates/frontend/agents.html:25
+msgid "Create agent"
+msgstr "Create agent"
+
+#: frontend/templates/frontend/agents.html:44
+msgid "Metrics will surface once you start deploying agents."
+msgstr "Metrics will surface once you start deploying agents."
+
+#: frontend/templates/frontend/agents.html:59
+msgid "Search agents..."
+msgstr "Search agents..."
+
+#: frontend/templates/frontend/agents.html:77 frontend/views.py:2034
+#, fuzzy
+#| msgid "All Cases"
+msgid "All statuses"
+msgstr "All Cases"
+
+#: frontend/templates/frontend/agents.html:89
+#: frontend/templates/frontend/customers.html:118
+#, python-format
+msgid "Page size: %(limit)s"
+msgstr ""
+
+#: frontend/templates/frontend/agents.html:148
+#: frontend/templates/frontend/agents.html:173
+#, fuzzy
+#| msgid "Create agent"
+msgid "Unnamed agent"
+msgstr "Create agent"
+
+#: frontend/templates/frontend/agents.html:152
+#: frontend/templates/frontend/agents.html:188 frontend/views.py:1855
+#: frontend/views.py:1863
+msgid "Draft"
+msgstr ""
+
+#: frontend/templates/frontend/agents.html:153
+#: frontend/templates/frontend/agents.html:175 frontend/views.py:2051
+#, fuzzy
+#| msgid "Sales Support Agent"
+msgid "Support Agent"
+msgstr "Sales Support Agent"
+
+#: frontend/templates/frontend/agents.html:197
+#: frontend/templates/frontend/components/dashboard/sidebar.html:173
+#: frontend/templates/frontend/components/dashboard/sidebar.html:178
+#: frontend/templates/frontend/knowledge.html:4
+#: frontend/templates/frontend/knowledge.html:58 frontend/views.py:428
+#: frontend/views.py:1364 frontend/views.py:1983
+msgid "Knowledge"
+msgstr "Knowledge"
+
+#: frontend/templates/frontend/agents.html:200
+#, fuzzy
+#| msgid "Mission"
+msgid "Missing"
+msgstr "Mission"
+
+#: frontend/templates/frontend/agents.html:202
+#, fuzzy
+#| msgid "Select tone"
+msgid "Selected"
+msgstr "Select tone"
+
+#: frontend/templates/frontend/agents.html:205
+#, fuzzy
+#| msgid "All MCPs"
+msgid "All docs"
+msgstr "All MCPs"
+
+#: frontend/templates/frontend/agents.html:211
+#, fuzzy
+#| msgid "No documents attached."
+msgid "No docs attached"
+msgstr "No documents attached."
+
+#: frontend/templates/frontend/agents.html:213
+#, fuzzy, python-format
+#| msgid "Disconnect failed:"
+msgid "%(count)s failed"
+msgstr "Disconnect failed:"
+
+#: frontend/templates/frontend/agents.html:215
+#, python-format
+msgid "%(count)s processing"
+msgstr ""
+
+#: frontend/templates/frontend/agents.html:217
+msgid "Up to date"
+msgstr ""
+
+#: frontend/templates/frontend/agents.html:222
+msgid "Tools"
+msgstr ""
+
+#: frontend/templates/frontend/agents.html:225
+#, fuzzy
+#| msgid "Enabled"
+msgid "enabled"
+msgstr "Enabled"
+
+#: frontend/templates/frontend/agents.html:229
+#, python-format
+msgid " +%(count)s more"
+msgstr ""
+
+#: frontend/templates/frontend/agents.html:231
+msgid "No tools enabled"
+msgstr ""
+
+#: frontend/templates/frontend/agents.html:240
+msgid "Chat link ready"
+msgstr ""
+
+#: frontend/templates/frontend/agents.html:242
+msgid "Not published"
+msgstr ""
+
+#: frontend/templates/frontend/agents.html:246
+#, fuzzy
+#| msgid "Escalation monitor"
+msgid "Escalation on"
+msgstr "Escalation monitor"
+
+#: frontend/templates/frontend/agents.html:256
+msgid "Copy link"
+msgstr ""
+
+#: frontend/templates/frontend/agents.html:259
+#: frontend/templates/frontend/cases.html:640
+#, fuzzy
+#| msgid "Opened"
+msgid "Open"
+msgstr "Opened"
+
+#: frontend/templates/frontend/case_detail.html:4
+#: frontend/templates/frontend/case_detail.html:13
+#, python-format
+msgid "Case %(number)s"
+msgstr ""
+
+#: frontend/templates/frontend/case_detail.html:22
+#, fuzzy, python-format
+#| msgid "Last updated:"
+msgid "Updated %(updated)s"
+msgstr "Last updated:"
+
+#: frontend/templates/frontend/case_detail.html:29
+msgid "Back to cases"
+msgstr "Back to cases"
+
+#: frontend/templates/frontend/case_detail.html:37
+msgid "Conversation transcript"
+msgstr "Conversation transcript"
+
+#: frontend/templates/frontend/case_detail.html:40
+#, python-format
+msgid "%(channel)s • %(status)s • Started %(started)s"
+msgstr ""
+
+#: frontend/templates/frontend/case_detail.html:43
+msgid "This case has not been linked to a conversation yet."
+msgstr "This case has not been linked to a conversation yet."
+
+#: frontend/templates/frontend/case_detail.html:48
+#, python-format
+msgid "Session %(token)s"
+msgstr ""
+
+#: frontend/templates/frontend/case_detail.html:76
+msgid "Sources"
+msgstr "Sources"
+
+#: frontend/templates/frontend/case_detail.html:106
+msgid "Case summary"
+msgstr "Case summary"
+
+#: frontend/templates/frontend/case_detail.html:107
+msgid "Lifecycle & assignment details"
+msgstr "Lifecycle & assignment details"
+
+#: frontend/templates/frontend/case_detail.html:111
+msgid "Opened"
+msgstr "Opened"
+
+#: frontend/templates/frontend/case_detail.html:115
+#: frontend/templates/frontend/knowledge.html:284
+#, fuzzy
+#| msgid "Update title"
+msgid "Updated"
+msgstr "Update title"
+
+#: frontend/templates/frontend/case_detail.html:119
+msgid "Closed"
+msgstr "Closed"
+
+#: frontend/templates/frontend/case_detail.html:123
+#: frontend/templates/frontend/dashboard.html:341 frontend/views.py:1324
+#: frontend/views.py:1871
+msgid "Agent"
+msgstr "Agent"
+
+#: frontend/templates/frontend/case_detail.html:127
+#: frontend/templates/frontend/cases.html:156
+#: frontend/templates/frontend/cases.html:403
+#: frontend/templates/frontend/cases.html:627
+#: frontend/templates/frontend/customers.html:133
+#: frontend/templates/frontend/customers.html:328
+#: frontend/templates/frontend/customers.html:528 frontend/views.py:1741
+#: frontend/views.py:2987 frontend/views.py:2990 frontend/views.py:2993
+msgid "Customer"
+msgstr "Customer"
+
+#: frontend/templates/frontend/case_detail.html:134
+#: frontend/templates/frontend/cases.html:465
+#, fuzzy
+#| msgid "No AI diagnosis yet."
+msgid "AI diagnosis"
+msgstr "No AI diagnosis yet."
+
+#: frontend/templates/frontend/case_detail.html:141
+#: frontend/templates/frontend/cases.html:469
+msgid "Actions taken"
+msgstr "Actions taken"
+
+#: frontend/templates/frontend/case_detail.html:146
+#: frontend/templates/frontend/cases.html:475
+msgid "Suggested next steps"
+msgstr "Suggested next steps"
+
+#: frontend/templates/frontend/case_detail.html:154
+msgid "No follow-up actions captured."
+msgstr "No follow-up actions captured."
+
+#: frontend/templates/frontend/case_detail.html:160 frontend/views.py:425
+msgid "Extractions"
+msgstr "Extractions"
+
+#: frontend/templates/frontend/case_detail.html:176
+msgid "No data extractions captured."
+msgstr "No data extractions captured."
+
+#: frontend/templates/frontend/cases.html:4
+#: frontend/templates/frontend/cases.html:15
+#: frontend/templates/frontend/components/dashboard/sidebar.html:127
+#: frontend/templates/frontend/components/dashboard/sidebar.html:133
+#: frontend/templates/frontend/customers.html:355 frontend/views.py:1984
+msgid "Cases"
+msgstr "Cases"
+
+#: frontend/templates/frontend/cases.html:17
+#, python-format
+msgid "%(count)s results"
+msgstr ""
+
+#: frontend/templates/frontend/cases.html:20
+msgid "Triage customer issues, track escalations, and keep resolution moving."
+msgstr "Triage customer issues, track escalations, and keep resolution moving."
+
+#: frontend/templates/frontend/cases.html:27
+msgid "New Case"
+msgstr "New Case"
+
+#: frontend/templates/frontend/cases.html:35
+msgid "Import Cases"
+msgstr "Import Cases"
+
+#: frontend/templates/frontend/cases.html:46
+#: frontend/templates/frontend/customers.html:381
+#: frontend/templates/frontend/customers.html:430 frontend/views.py:1726
+#: frontend/views.py:1780
+msgid "Open cases"
+msgstr "Open cases"
+
+#: frontend/templates/frontend/cases.html:48
+msgid "Target < 15"
+msgstr ""
+
+#: frontend/templates/frontend/cases.html:53
+msgid "Urgent cases"
+msgstr "Urgent cases"
+
+#: frontend/templates/frontend/cases.html:55
+msgid "All clear"
+msgstr ""
+
+#: frontend/templates/frontend/cases.html:60
+msgid "Avg. time open"
+msgstr "Avg. time open"
+
+#: frontend/templates/frontend/cases.html:62
+msgid "Goal < 12h"
+msgstr ""
+
+#: frontend/templates/frontend/cases.html:67
+msgid "Connect your data sources to populate metrics."
+msgstr ""
+
+#: frontend/templates/frontend/cases.html:78
+#: frontend/templates/frontend/customers.html:73 frontend/views.py:1787
+msgid "Search name, email, text…"
+msgstr ""
+
+#: frontend/templates/frontend/cases.html:80
+msgid "Search cases"
+msgstr "Search cases"
+
+#: frontend/templates/frontend/cases.html:95
+msgid "All Cases"
+msgstr "All Cases"
+
+#: frontend/templates/frontend/cases.html:104
+msgid "All types"
+msgstr "All types"
+
+#: frontend/templates/frontend/cases.html:122
+msgid "All time"
+msgstr "All time"
+
+#: frontend/templates/frontend/cases.html:133
+msgid "Columns"
+msgstr "Columns"
+
+#: frontend/templates/frontend/cases.html:150
+msgid "Case ID"
+msgstr "Case ID"
+
+#: frontend/templates/frontend/cases.html:151
+msgid "Priority"
+msgstr "Priority"
+
+#: frontend/templates/frontend/cases.html:152
+#: frontend/templates/frontend/controls.html:75
+#: frontend/templates/frontend/controls.html:286
+#: frontend/templates/frontend/knowledge.html:282
+msgid "Type"
+msgstr "Type"
+
+#: frontend/templates/frontend/cases.html:153
+msgid "Case Title"
+msgstr "Case Title"
+
+#: frontend/templates/frontend/cases.html:154
+#: frontend/templates/frontend/cases.html:461
+msgid "Description"
+msgstr "Description"
+
+#: frontend/templates/frontend/cases.html:157
+#: frontend/templates/frontend/dashboard.html:233
+msgid "Channel"
+msgstr "Channel"
+
+#: frontend/templates/frontend/cases.html:158
+#: frontend/templates/frontend/cases.html:625
+msgid "Started"
+msgstr "Started"
+
+#: frontend/templates/frontend/cases.html:159
+msgid "Transcript"
+msgstr "Transcript"
+
+#: frontend/templates/frontend/cases.html:256
+msgid "View transcript"
+msgstr "View transcript"
+
+#: frontend/templates/frontend/cases.html:285
+#, python-format
+msgid "Showing %(showing)s of %(total)s cases"
+msgstr ""
+
+#: frontend/templates/frontend/cases.html:294
+#: frontend/templates/frontend/customers.html:241
+#: frontend/templates/frontend/knowledge.html:404
+#: frontend/templates/frontend/leads.html:253
+#, fuzzy
+#| msgid "Prev"
+msgid "Previous"
+msgstr "Prev"
+
+#: frontend/templates/frontend/cases.html:302
+#: frontend/templates/frontend/customers.html:249
+#: frontend/templates/frontend/knowledge.html:407
+#: frontend/templates/frontend/knowledge_visualizer.html:109
+#: frontend/templates/frontend/leads.html:256 frontend/views.py:1317
+#: frontend/views.py:1359
+msgid "Next"
+msgstr "Next"
+
+#: frontend/templates/frontend/cases.html:339
+#: frontend/templates/frontend/cases.html:354
+#: frontend/templates/frontend/cases.html:619
+msgid "Select a case"
+msgstr "Select a case"
+
+#: frontend/templates/frontend/cases.html:344
+msgid "Close case details"
+msgstr "Close case details"
+
+#: frontend/templates/frontend/cases.html:355
+msgid "Choose a case from the list to review AI insights and activity."
+msgstr ""
+
+#: frontend/templates/frontend/cases.html:358
+#: frontend/templates/frontend/customers.html:303
+msgid "Nothing to show yet."
+msgstr "Nothing to show yet."
+
+#: frontend/templates/frontend/cases.html:384
+#: frontend/templates/frontend/cases.html:643
+#, fuzzy
+#| msgid "Unable to save the document right now. Please try again."
+msgid "Unable to load case details. Please try again."
+msgstr "Unable to save the document right now. Please try again."
+
+#: frontend/templates/frontend/cases.html:390
+#: frontend/templates/frontend/cases.html:623
+#, fuzzy
+#| msgid "Cases"
+msgid "Case"
+msgstr "Cases"
+
+#: frontend/templates/frontend/cases.html:392
+#, fuzzy
+#| msgid "Case Title"
+msgid "Case title"
+msgstr "Case Title"
+
+#: frontend/templates/frontend/cases.html:420
+#: frontend/templates/frontend/customers.html:334
+#: frontend/templates/frontend/customers.html:346
+msgid "Overview"
+msgstr "Overview"
+
+#: frontend/templates/frontend/cases.html:430
+#: frontend/templates/frontend/cases.html:492
+#: frontend/templates/frontend/knowledge.html:109
+msgid "Documents"
+msgstr "Documents"
+
+#: frontend/templates/frontend/cases.html:440
+msgid "History"
+msgstr ""
+
+#: frontend/templates/frontend/cases.html:450
+#: frontend/templates/frontend/cases.html:508
+msgid "Messages"
+msgstr ""
+
+#: frontend/templates/frontend/cases.html:458
+#, fuzzy
+#| msgid "Case summary"
+msgid "Summary"
+msgstr "Case summary"
+
+#: frontend/templates/frontend/cases.html:462
+#: frontend/templates/frontend/cases.html:628
+msgid "No summary provided."
+msgstr "No summary provided."
+
+#: frontend/templates/frontend/cases.html:466
+#: frontend/templates/frontend/cases.html:629
+msgid "No AI diagnosis yet."
+msgstr "No AI diagnosis yet."
+
+#: frontend/templates/frontend/cases.html:470
+#: frontend/templates/frontend/cases.html:630
+msgid "No resolution actions captured."
+msgstr "No resolution actions captured."
+
+#: frontend/templates/frontend/cases.html:478
+#: frontend/templates/frontend/cases.html:631
+msgid "No suggestions available."
+msgstr "No suggestions available."
+
+#: frontend/templates/frontend/cases.html:483
+#: frontend/templates/frontend/customers.html:373
+#: frontend/templates/frontend/customers.html:456
+msgid "Notes"
+msgstr ""
+
+#: frontend/templates/frontend/cases.html:486
+#: frontend/templates/frontend/cases.html:638
+msgid "No notes on this case."
+msgstr "No notes on this case."
+
+#: frontend/templates/frontend/cases.html:495
+#: frontend/templates/frontend/cases.html:641
+msgid "No documents attached."
+msgstr "No documents attached."
+
+#: frontend/templates/frontend/cases.html:500
+#: frontend/templates/frontend/cases.html:632
+#: frontend/templates/frontend/customers.html:364
+#: frontend/templates/frontend/customers.html:448
+msgid "Activity"
+msgstr ""
+
+#: frontend/templates/frontend/cases.html:503
+#: frontend/templates/frontend/cases.html:634
+msgid "No history yet."
+msgstr "No history yet."
+
+#: frontend/templates/frontend/cases.html:511
+#: frontend/templates/frontend/cases.html:636
+msgid "No conversation messages yet."
+msgstr "No conversation messages yet."
+
+#: frontend/templates/frontend/cases.html:518
+msgid "Assign owner"
+msgstr ""
+
+#: frontend/templates/frontend/cases.html:519
+msgid "Mark resolved"
+msgstr ""
+
+#: frontend/templates/frontend/cases.html:620
+msgid "Loading case details"
+msgstr "Loading case details"
+
+#: frontend/templates/frontend/cases.html:621
+msgid "Case details unavailable"
+msgstr "Case details unavailable"
+
+#: frontend/templates/frontend/cases.html:622
+#: frontend/templates/frontend/customers.html:527 frontend/views.py:1749
+#: frontend/views.py:1850 frontend/views.py:1852 frontend/views.py:2160
+#: frontend/views.py:2174 frontend/views.py:2481 frontend/views.py:2483
+#: frontend/views.py:2508 frontend/views.py:2509 frontend/views.py:2510
+#: frontend/views.py:2935 frontend/views.py:2988 frontend/views.py:2991
+#: frontend/views.py:2994 frontend/views.py:3072
+msgid "—"
+msgstr "—"
+
+#: frontend/templates/frontend/cases.html:624
+#, fuzzy
+#| msgid "Urgent cases"
+msgid "Untitled case"
+msgstr "Urgent cases"
+
+#: frontend/templates/frontend/cases.html:626
+#, fuzzy
+#| msgid "Case details unavailable"
+msgid "Start time unavailable"
+msgstr "Case details unavailable"
+
+#: frontend/templates/frontend/cases.html:633
+msgid "system"
+msgstr ""
+
+#: frontend/templates/frontend/cases.html:635
+msgid "Participant"
+msgstr "Participant"
+
+#: frontend/templates/frontend/cases.html:637
+#, fuzzy
+#| msgid "Agent"
+msgid "agent"
+msgstr "Agent"
+
+#: frontend/templates/frontend/cases.html:639
+#: frontend/templates/frontend/knowledge_visualizer.html:83
+#: frontend/templates/frontend/knowledge_visualizer.html:141
+#: frontend/views.py:2206 frontend/views.py:2467 frontend/views.py:2651
+#, fuzzy
+#| msgid "Documents"
+msgid "Document"
+msgstr "Documents"
+
+#: frontend/templates/frontend/cases.html:642
+#: frontend/templates/frontend/integrations.html:561
+#, fuzzy
+#| msgid "Failed to load customer"
+msgid "Failed to load"
+msgstr "Failed to load customer"
+
+#: frontend/templates/frontend/cases.html:824
+#: frontend/templates/frontend/customers.html:529 frontend/views.py:1744
+msgid "CU"
+msgstr "CU"
 
 #: frontend/templates/frontend/components/dashboard/sidebar.html:103
 #: frontend/templates/frontend/components/dashboard/sidebar.html:104
@@ -237,34 +846,24 @@ msgstr "Expand sidebar"
 msgid "Home"
 msgstr "Home"
 
-#: frontend/templates/frontend/components/dashboard/sidebar.html:127
-#: frontend/templates/frontend/components/dashboard/sidebar.html:133
-msgid "Cases"
-msgstr "Cases"
-
 #: frontend/templates/frontend/components/dashboard/sidebar.html:138
 #: frontend/templates/frontend/components/dashboard/sidebar.html:144
+#: frontend/templates/frontend/leads.html:4
+#: frontend/templates/frontend/leads.html:13 frontend/views.py:1986
 msgid "Leads"
 msgstr "Leads"
 
 #: frontend/templates/frontend/components/dashboard/sidebar.html:149
 #: frontend/templates/frontend/components/dashboard/sidebar.html:157
+#: frontend/templates/frontend/customers.html:4
+#: frontend/templates/frontend/customers.html:13 frontend/views.py:1985
 msgid "Customers"
 msgstr "Customers"
 
-#: frontend/templates/frontend/components/dashboard/sidebar.html:162
-#: frontend/templates/frontend/components/dashboard/sidebar.html:168
-msgid "Agents"
-msgstr "Agents"
-
-#: frontend/templates/frontend/components/dashboard/sidebar.html:173
-#: frontend/templates/frontend/components/dashboard/sidebar.html:178
-#: frontend/views.py:426
-msgid "Knowledge"
-msgstr "Knowledge"
-
 #: frontend/templates/frontend/components/dashboard/sidebar.html:193
 #: frontend/templates/frontend/components/dashboard/sidebar.html:198
+#: frontend/templates/frontend/controls.html:4
+#: frontend/templates/frontend/controls.html:13
 msgid "Controls"
 msgstr "Controls"
 
@@ -273,20 +872,24 @@ msgid "MCP Connector (Beta)"
 msgstr "MCP Connector (Beta)"
 
 #: frontend/templates/frontend/components/dashboard/sidebar.html:211
+#: frontend/templates/frontend/mcp.html:14
 msgid "MCP Connector"
 msgstr "MCP Connector"
 
 #: frontend/templates/frontend/components/dashboard/sidebar.html:212
+#: frontend/templates/frontend/mcp.html:15
 msgid "Beta"
 msgstr "Beta"
 
 #: frontend/templates/frontend/components/dashboard/sidebar.html:218
 #: frontend/templates/frontend/components/dashboard/sidebar.html:223
+#: frontend/templates/frontend/voice.html:5
 msgid "Voice Calling"
 msgstr "Voice Calling"
 
 #: frontend/templates/frontend/components/dashboard/sidebar.html:232
 #: frontend/templates/frontend/components/dashboard/sidebar.html:279
+#: frontend/views.py:1247
 msgid "Account"
 msgstr "Account"
 
@@ -311,6 +914,7 @@ msgid "Soon"
 msgstr "Soon"
 
 #: frontend/templates/frontend/components/dashboard/sidebar.html:315
+#: frontend/templates/frontend/dashboard.html:52
 #, python-format
 msgid "Language: %(label)s"
 msgstr "Language: %(label)s"
@@ -318,6 +922,329 @@ msgstr "Language: %(label)s"
 #: frontend/templates/frontend/components/dashboard/sidebar.html:341
 msgid "Theme"
 msgstr "Theme"
+
+#: frontend/templates/frontend/controls.html:14
+msgid ""
+"Review tools exposed to the LLM and set approval behavior for connected "
+"integrations."
+msgstr ""
+"Review tools exposed to the LLM and set approval behavior for connected "
+"integrations."
+
+#: frontend/templates/frontend/controls.html:28
+#: frontend/templates/frontend/controls.html:275
+#: frontend/templates/frontend/integrations.html:28
+#: frontend/templates/frontend/integrations.html:557
+#: frontend/templates/frontend/mcp.html:54
+#: frontend/templates/frontend/voice.html:127
+#, fuzzy
+#| msgid "Refreshing"
+msgid "Refresh"
+msgstr "Refreshing"
+
+#: frontend/templates/frontend/controls.html:36
+#: frontend/templates/frontend/controls.html:276
+#: frontend/templates/frontend/mcp.html:274
+#, fuzzy
+#| msgid "Save Changes"
+msgid "Save changes"
+msgstr "Save Changes"
+
+#: frontend/templates/frontend/controls.html:46
+msgid "LLM Tool Exposure"
+msgstr "LLM Tool Exposure"
+
+#: frontend/templates/frontend/controls.html:47
+msgid ""
+"`Auto approve` executes directly. `Always confirm` requires approval before "
+"every execution."
+msgstr ""
+
+#: frontend/templates/frontend/controls.html:60
+#: frontend/templates/frontend/dashboard.html:171
+#: frontend/templates/frontend/mcp.html:101 frontend/views.py:2069
+msgid "All"
+msgstr "All"
+
+#: frontend/templates/frontend/controls.html:61
+#: frontend/templates/frontend/controls.html:280
+#: frontend/templates/frontend/integrations.html:555
+#, fuzzy
+#| msgid "Integrations"
+msgid "Integration"
+msgstr "Integrations"
+
+#: frontend/templates/frontend/controls.html:62
+#, fuzzy
+#| msgid "Integrations"
+msgid "Internal"
+msgstr "Integrations"
+
+#: frontend/templates/frontend/controls.html:67
+msgid "Search tool, description, or connection"
+msgstr ""
+
+#: frontend/templates/frontend/controls.html:74
+#: frontend/templates/frontend/controls.html:278
+msgid "Tool"
+msgstr ""
+
+#: frontend/templates/frontend/controls.html:76
+#: frontend/templates/frontend/controls.html:288
+#, fuzzy
+#| msgid "Closed"
+msgid "Exposed"
+msgstr "Closed"
+
+#: frontend/templates/frontend/controls.html:77
+#: frontend/templates/frontend/controls.html:287
+#, fuzzy
+#| msgid "Tool Approval"
+msgid "Approval"
+msgstr "Tool Approval"
+
+#: frontend/templates/frontend/controls.html:80
+msgid "Loading controls…"
+msgstr "Loading controls…"
+
+#: frontend/templates/frontend/controls.html:272
+#: frontend/templates/frontend/integrations.html:558
+msgid "Refreshing"
+msgstr "Refreshing"
+
+#: frontend/templates/frontend/controls.html:273
+#: frontend/templates/frontend/integrations.html:559
+msgid "Updated just now"
+msgstr "Updated just now"
+
+#: frontend/templates/frontend/controls.html:274
+#: frontend/templates/frontend/integrations.html:560
+msgid "Refresh failed"
+msgstr "Refresh failed"
+
+#: frontend/templates/frontend/controls.html:277
+msgid "No tools match this filter."
+msgstr "No tools match this filter."
+
+#: frontend/templates/frontend/controls.html:279
+msgid "Tool exposed to the LLM runtime."
+msgstr ""
+
+#: frontend/templates/frontend/controls.html:281
+#, fuzzy
+#| msgid "Integrations"
+msgid "Internal tool"
+msgstr "Integrations"
+
+#: frontend/templates/frontend/controls.html:282
+msgid "Core"
+msgstr ""
+
+#: frontend/templates/frontend/controls.html:283
+#, fuzzy
+#| msgid "Creative"
+msgid "Native"
+msgstr "Creative"
+
+#: frontend/templates/frontend/controls.html:284
+msgid "MCP gateway"
+msgstr ""
+
+#: frontend/templates/frontend/controls.html:285
+msgid "MCP"
+msgstr ""
+
+#: frontend/templates/frontend/controls.html:289
+msgid "Auto"
+msgstr ""
+
+#: frontend/templates/frontend/controls.html:290
+msgid "Always confirm"
+msgstr "Always confirm"
+
+#: frontend/templates/frontend/controls.html:291
+msgid "Unsaved change"
+msgstr "Unsaved change"
+
+#: frontend/templates/frontend/controls.html:292
+#, fuzzy
+#| msgid "Failed to load controls."
+msgid "Failed to load controls:"
+msgstr "Failed to load controls."
+
+#: frontend/templates/frontend/controls.html:293
+msgid "Failed to load controls."
+msgstr "Failed to load controls."
+
+#: frontend/templates/frontend/controls.html:294
+msgid "No editable changes to save."
+msgstr ""
+
+#: frontend/templates/frontend/controls.html:295
+msgid "Tool controls updated."
+msgstr "Tool controls updated."
+
+#: frontend/templates/frontend/controls.html:296
+msgid "Failed to save controls."
+msgstr "Failed to save controls."
+
+#: frontend/templates/frontend/controls.html:297
+#: frontend/templates/frontend/voice.html:201
+msgid "Error"
+msgstr ""
+
+#: frontend/templates/frontend/customers.html:14
+msgid "Manage your customer relationships, activity, and notes in one hub."
+msgstr "Manage your customer relationships, activity, and notes in one hub."
+
+#: frontend/templates/frontend/customers.html:26
+msgid "New Customer"
+msgstr "New Customer"
+
+#: frontend/templates/frontend/customers.html:36
+msgid "Import customers"
+msgstr "Import customers"
+
+#: frontend/templates/frontend/customers.html:58
+msgid "Metrics will surface once customer activity starts flowing in."
+msgstr "Metrics will surface once customer activity starts flowing in."
+
+#: frontend/templates/frontend/customers.html:91 frontend/views.py:1788
+msgid "All lifecycle stages"
+msgstr ""
+
+#: frontend/templates/frontend/customers.html:106 frontend/views.py:1789
+#, fuzzy
+#| msgid "All time"
+msgid "Any time"
+msgstr "All time"
+
+#: frontend/templates/frontend/customers.html:135
+msgid "Conversations"
+msgstr "Conversations"
+
+#: frontend/templates/frontend/customers.html:136
+msgid "Satisfaction"
+msgstr "Satisfaction"
+
+#: frontend/templates/frontend/customers.html:137
+#: frontend/templates/frontend/customers.html:531
+#, fuzzy
+#| msgid "Primary contact"
+msgid "Last contact"
+msgstr "Primary contact"
+
+#: frontend/templates/frontend/customers.html:232
+#, python-format
+msgid "Showing %(showing)s of %(total)s customers"
+msgstr ""
+
+#: frontend/templates/frontend/customers.html:283
+#: frontend/templates/frontend/customers.html:524
+#, fuzzy
+#| msgid "Select a case"
+msgid "Select a customer"
+msgstr "Select a case"
+
+#: frontend/templates/frontend/customers.html:288
+msgid "Close customer details"
+msgstr "Close customer details"
+
+#: frontend/templates/frontend/customers.html:318
+#: frontend/templates/frontend/customers.html:541
+#, fuzzy
+#| msgid "Unable to save the document right now. Please try again."
+msgid "Unable to load customer details. Please try again."
+msgstr "Unable to save the document right now. Please try again."
+
+#: frontend/templates/frontend/customers.html:331
+#: frontend/templates/frontend/customers.html:530
+msgid "No recent contact"
+msgstr "No recent contact"
+
+#: frontend/templates/frontend/customers.html:385
+msgid "Total cases"
+msgstr "Total cases"
+
+#: frontend/templates/frontend/customers.html:389
+msgid "First seen"
+msgstr "First seen"
+
+#: frontend/templates/frontend/customers.html:394
+msgid "Primary contact"
+msgstr "Primary contact"
+
+#: frontend/templates/frontend/customers.html:412
+msgid "Additional contacts"
+msgstr "Additional contacts"
+
+#: frontend/templates/frontend/customers.html:415
+#: frontend/templates/frontend/customers.html:533
+msgid "No extra contact methods."
+msgstr "No extra contact methods."
+
+#: frontend/templates/frontend/customers.html:420
+msgid "Tags"
+msgstr "Tags"
+
+#: frontend/templates/frontend/customers.html:423
+#: frontend/templates/frontend/customers.html:534
+msgid "No tags assigned."
+msgstr "No tags assigned."
+
+#: frontend/templates/frontend/customers.html:433
+#: frontend/templates/frontend/customers.html:535
+#, fuzzy
+#| msgid "No closed cases."
+msgid "No open cases."
+msgstr "No closed cases."
+
+#: frontend/templates/frontend/customers.html:438
+msgid "Resolved cases"
+msgstr "Resolved cases"
+
+#: frontend/templates/frontend/customers.html:441
+#: frontend/templates/frontend/customers.html:536
+msgid "No closed cases."
+msgstr "No closed cases."
+
+#: frontend/templates/frontend/customers.html:450
+#: frontend/templates/frontend/customers.html:538
+#, fuzzy
+#| msgid "No recent contact"
+msgid "No recent activity."
+msgstr "No recent contact"
+
+#: frontend/templates/frontend/customers.html:458
+#: frontend/templates/frontend/customers.html:539
+msgid "No notes yet."
+msgstr "No notes yet."
+
+#: frontend/templates/frontend/customers.html:525
+#, fuzzy
+#| msgid "Loading case details"
+msgid "Loading customer details"
+msgstr "Loading case details"
+
+#: frontend/templates/frontend/customers.html:526
+#, fuzzy
+#| msgid "Case details unavailable"
+msgid "Customer details unavailable"
+msgstr "Case details unavailable"
+
+#: frontend/templates/frontend/customers.html:532
+#, fuzzy
+#| msgid "No summary provided."
+msgid "No address provided."
+msgstr "No summary provided."
+
+#: frontend/templates/frontend/customers.html:537
+msgid "No description."
+msgstr "No description."
+
+#: frontend/templates/frontend/customers.html:540
+msgid "Failed to load customer"
+msgstr "Failed to load customer"
 
 #: frontend/templates/frontend/dashboard.html:4
 msgid "Dashboard | Pocket AI"
@@ -339,1142 +1266,2490 @@ msgstr "Track automations, agents, and customer signals in one place."
 msgid "Notifications"
 msgstr "Notifications"
 
+#: frontend/templates/frontend/dashboard.html:64
+msgid "Toggle theme"
+msgstr ""
+
 #: frontend/templates/frontend/dashboard.html:90
 msgid "Escalation monitor"
 msgstr "Escalation monitor"
 
-#: frontend/templates/frontend/dashboard.html:96
+#: frontend/templates/frontend/dashboard.html:95 frontend/views.py:1702
+msgid "No escalations yet — monitoring continuously."
+msgstr "No escalations yet — monitoring continuously."
+
+#: frontend/templates/frontend/dashboard.html:102
 msgid "Review now"
 msgstr "Review now"
 
-#: frontend/templates/frontend/dashboard.html:118
+#: frontend/templates/frontend/dashboard.html:124
 msgid "Metric loading placeholder"
 msgstr "Metric loading placeholder"
 
-#: frontend/templates/frontend/dashboard.html:149
+#: frontend/templates/frontend/dashboard.html:132
+#: frontend/templates/frontend/dashboard.html:296
+msgid "Metric"
+msgstr ""
+
+#: frontend/templates/frontend/dashboard.html:138
+msgid "Awaiting data."
+msgstr ""
+
+#: frontend/templates/frontend/dashboard.html:148 frontend/views.py:1701
+msgid "Metrics will appear once you start receiving conversations."
+msgstr "Metrics will appear once you start receiving conversations."
+
+#: frontend/templates/frontend/dashboard.html:161
 msgid "Conversation radar"
 msgstr "Conversation radar"
 
-#: frontend/templates/frontend/dashboard.html:151
+#: frontend/templates/frontend/dashboard.html:163
 msgid "Live"
 msgstr "Live"
 
-#: frontend/templates/frontend/dashboard.html:154
+#: frontend/templates/frontend/dashboard.html:166
 msgid "Unified feed across AI automations and human specialists."
 msgstr "Unified feed across AI automations and human specialists."
 
-#: frontend/templates/frontend/dashboard.html:157
+#: frontend/templates/frontend/dashboard.html:169
 msgid "Conversation filters"
 msgstr "Conversation filters"
 
-#: frontend/templates/frontend/dashboard.html:159
-msgid "All"
-msgstr "All"
+#: frontend/templates/frontend/dashboard.html:174
+msgid "AI"
+msgstr ""
 
-#: frontend/templates/frontend/dashboard.html:165
+#: frontend/templates/frontend/dashboard.html:177
 msgid "Human"
 msgstr "Human"
+
+#: frontend/templates/frontend/dashboard.html:202
+msgid "Recent"
+msgstr ""
+
+#: frontend/templates/frontend/dashboard.html:205
+#, fuzzy, python-format
+#| msgid "Tool controls updated."
+msgid "%(count)s updates"
+msgstr "Tool controls updated."
+
+#: frontend/templates/frontend/dashboard.html:226
+#, fuzzy
+#| msgid "Conversations"
+msgid "Conversation"
+msgstr "Conversations"
+
+#: frontend/templates/frontend/dashboard.html:229
+#, fuzzy
+#| msgid "Agent"
+msgid "Urgent"
+msgstr "Agent"
+
+#: frontend/templates/frontend/dashboard.html:237
+#, fuzzy
+#| msgid "No summary provided."
+msgid "No summary available."
+msgstr "No summary provided."
+
+#: frontend/templates/frontend/dashboard.html:246
+msgid "View"
+msgstr ""
+
+#: frontend/templates/frontend/dashboard.html:263 frontend/views.py:1710
+msgid "Connect your support channels to start streaming conversations here."
+msgstr "Connect your support channels to start streaming conversations here."
+
+#: frontend/templates/frontend/dashboard.html:273
+msgid "AI pulse"
+msgstr ""
+
+#: frontend/templates/frontend/dashboard.html:306 frontend/views.py:1713
+msgid "Metrics will appear once cases begin flowing in."
+msgstr "Metrics will appear once cases begin flowing in."
+
+#: frontend/templates/frontend/dashboard.html:316
+#, fuzzy
+#| msgid "Agent name"
+msgid "Agent snapshot"
+msgstr "Agent name"
+
+#: frontend/templates/frontend/dashboard.html:342
+msgid "Role pending"
+msgstr ""
+
+#: frontend/templates/frontend/dashboard.html:355 frontend/views.py:1715
+msgid "Invite your team to see performance insights here."
+msgstr "Invite your team to see performance insights here."
+
+#: frontend/templates/frontend/integrations.html:14
+msgid ""
+"Connect first-party native integrations. Your credentials are encrypted and "
+"never shared."
+msgstr ""
+"Connect first-party native integrations. Your credentials are encrypted and "
+"never shared."
+
+#: frontend/templates/frontend/integrations.html:37
+#: frontend/templates/frontend/integrations.html:563
+#: frontend/templates/frontend/mcp.html:44
+#: frontend/templates/frontend/voice.html:199
+#, fuzzy
+#| msgid "Your Connected MCPs"
+msgid "Connected"
+msgstr "Your Connected MCPs"
+
+#: frontend/templates/frontend/integrations.html:39
+msgid "Loading connected integrations..."
+msgstr "Loading connected integrations..."
+
+#: frontend/templates/frontend/integrations.html:45
+msgid "Available"
+msgstr "Available"
+
+#: frontend/templates/frontend/integrations.html:47
+msgid "Loading available integrations..."
+msgstr "Loading available integrations..."
+
+#: frontend/templates/frontend/integrations.html:60
+msgid "Looking for third-party MCP connectors?"
+msgstr "Looking for third-party MCP connectors?"
+
+#: frontend/templates/frontend/integrations.html:62
+msgid "Notion, Trello, Salesforce, and more are available on the"
+msgstr ""
+
+#: frontend/templates/frontend/integrations.html:63
+msgid "MCP Connector page"
+msgstr "MCP Connector page"
+
+#: frontend/templates/frontend/integrations.html:485
+msgid "Manage integration tools"
+msgstr "Manage integration tools"
+
+#: frontend/templates/frontend/integrations.html:488
+#: frontend/templates/frontend/integrations.html:567
+msgid "Manage Tools"
+msgstr "Manage Tools"
+
+#: frontend/templates/frontend/integrations.html:489
+#: frontend/templates/frontend/integrations.html:496
+#: frontend/templates/frontend/integrations.html:578
+msgid "Loading tools..."
+msgstr "Loading tools..."
+
+#: frontend/templates/frontend/integrations.html:492
+#: frontend/templates/frontend/mcp.html:146
+#: frontend/templates/frontend/mcp.html:238
+#: frontend/templates/frontend/mcp.html:262
+#: frontend/templates/frontend/voice.html:161
+#, fuzzy
+#| msgid "Closed"
+msgid "Close"
+msgstr "Closed"
+
+#: frontend/templates/frontend/integrations.html:501
+msgid "Enable All"
+msgstr "Enable All"
+
+#: frontend/templates/frontend/integrations.html:504
+msgid "Read Only"
+msgstr "Read Only"
+
+#: frontend/templates/frontend/integrations.html:509
+#: frontend/templates/frontend/knowledge.html:230
+#: frontend/templates/frontend/knowledge.html:248
+#: frontend/templates/frontend/mcp.html:220
+#: frontend/templates/frontend/mcp.html:273
+#: frontend/templates/frontend/voice.html:183
+#, fuzzy
+#| msgid "Compliance"
+msgid "Cancel"
+msgstr "Compliance"
+
+#: frontend/templates/frontend/integrations.html:512
+msgid "Save Changes"
+msgstr "Save Changes"
+
+#: frontend/templates/frontend/integrations.html:546
+#, fuzzy
+#| msgid "Email"
+msgid "Gmail"
+msgstr "Email"
+
+#: frontend/templates/frontend/integrations.html:547
+msgid "Outlook / Microsoft 365"
+msgstr ""
+
+#: frontend/templates/frontend/integrations.html:548
+#, fuzzy
+#| msgid "Google Play"
+msgid "Google Calendar"
+msgstr "Google Play"
+
+#: frontend/templates/frontend/integrations.html:549
+#, fuzzy
+#| msgid "Connect Google Drive"
+msgid "Google Drive"
+msgstr "Connect Google Drive"
+
+#: frontend/templates/frontend/integrations.html:550
+msgid "OneDrive"
+msgstr ""
+
+#: frontend/templates/frontend/integrations.html:551
+msgid "Slack"
+msgstr ""
+
+#: frontend/templates/frontend/integrations.html:552
+msgid "HubSpot"
+msgstr ""
+
+#: frontend/templates/frontend/integrations.html:556
+#, fuzzy
+#| msgid "Manage integration tools"
+msgid "Native integration"
+msgstr "Manage integration tools"
+
+#: frontend/templates/frontend/integrations.html:562
+msgid "Failed to load integrations:"
+msgstr "Failed to load integrations:"
+
+#: frontend/templates/frontend/integrations.html:564
+#, fuzzy
+#| msgid "MCP Connector"
+msgid "Connect"
+msgstr "MCP Connector"
+
+#: frontend/templates/frontend/integrations.html:565
+#, fuzzy
+#| msgid "Store encrypted tenant credentials."
+msgid "Native integration with encrypted credentials."
+msgstr "Store encrypted tenant credentials."
+
+#: frontend/templates/frontend/integrations.html:566
+#, fuzzy
+#| msgid "Enabled"
+msgid "tools enabled"
+msgstr "Enabled"
+
+#: frontend/templates/frontend/integrations.html:568
+#: frontend/templates/frontend/voice.html:212
+#, fuzzy
+#| msgid "Disconnect failed:"
+msgid "Disconnect"
+msgstr "Disconnect failed:"
+
+#: frontend/templates/frontend/integrations.html:569
+msgid "Tool management is not available for this integration."
+msgstr "Tool management is not available for this integration."
+
+#: frontend/templates/frontend/integrations.html:570
+msgid "Disconnect this integration?"
+msgstr "Disconnect this integration?"
+
+#: frontend/templates/frontend/integrations.html:571
+msgid "Unsupported email integration type."
+msgstr ""
+
+#: frontend/templates/frontend/integrations.html:572
+#, fuzzy
+#| msgid "Manage integration tools"
+msgid "Missing integration type."
+msgstr "Manage integration tools"
+
+#: frontend/templates/frontend/integrations.html:573
+#: frontend/templates/frontend/integrations.html:585
+#, fuzzy
+#| msgid "Unsupported knowledge type selected."
+msgid "Unsupported integration type."
+msgstr "Unsupported knowledge type selected."
+
+#: frontend/templates/frontend/integrations.html:574
+#, fuzzy
+#| msgid "Failed to load integrations:"
+msgid "Failed to disconnect integration."
+msgstr "Failed to load integrations:"
+
+#: frontend/templates/frontend/integrations.html:575
+msgid "Integration disconnected successfully."
+msgstr "Integration disconnected successfully."
+
+#: frontend/templates/frontend/integrations.html:576
+msgid "Disconnect failed:"
+msgstr "Disconnect failed:"
+
+#: frontend/templates/frontend/integrations.html:577
+msgid "Unknown error"
+msgstr "Unknown error"
+
+#: frontend/templates/frontend/integrations.html:579
+#, fuzzy
+#| msgid "Loading controls…"
+msgid "Loading tools…"
+msgstr "Loading controls…"
+
+#: frontend/templates/frontend/integrations.html:580
+msgid "No tools available for this integration."
+msgstr "No tools available for this integration."
+
+#: frontend/templates/frontend/integrations.html:581
+#, fuzzy
+#| msgid "No suggestions available."
+msgid "No tools available."
+msgstr "No suggestions available."
+
+#: frontend/templates/frontend/integrations.html:582
+#, fuzzy
+#| msgid "Manage integration tools"
+msgid "Native integration tool."
+msgstr "Manage integration tools"
+
+#: frontend/templates/frontend/integrations.html:583
+msgid ""
+"tools enabled. Disabled tools are hidden from the AI for this integration."
+msgstr ""
+
+#: frontend/templates/frontend/integrations.html:584
+#, fuzzy
+#| msgid "Integration disconnected successfully."
+msgid "All integrations are connected."
+msgstr "Integration disconnected successfully."
+
+#: frontend/templates/frontend/integrations.html:586
+#, fuzzy
+#| msgid "Failed to load controls."
+msgid "Failed to load tools."
+msgstr "Failed to load controls."
+
+#: frontend/templates/frontend/integrations.html:587
+#, fuzzy
+#| msgid "Failed to load controls."
+msgid "Unable to load tool settings."
+msgstr "Failed to load controls."
+
+#: frontend/templates/frontend/integrations.html:588
+msgid "Missing provider key."
+msgstr ""
+
+#: frontend/templates/frontend/integrations.html:589
+#, fuzzy
+#| msgid "Failed to save controls."
+msgid "Failed to update tools."
+msgstr "Failed to save controls."
+
+#: frontend/templates/frontend/integrations.html:590
+#, fuzzy
+#| msgid "Tool controls updated."
+msgid "Tool settings updated."
+msgstr "Tool controls updated."
+
+#: frontend/templates/frontend/integrations.html:591
+#, fuzzy
+#| msgid "Tool controls updated."
+msgid "Tool settings update failed:"
+msgstr "Tool controls updated."
+
+#: frontend/templates/frontend/integrations.html:592
+#, fuzzy
+#| msgid "Integration disconnected successfully."
+msgid "connected successfully."
+msgstr "Integration disconnected successfully."
+
+#: frontend/templates/frontend/integrations.html:593
+#, fuzzy
+#| msgid "Disconnect failed:"
+msgid "Connection failed:"
+msgstr "Disconnect failed:"
+
+#: frontend/templates/frontend/integrations.html:594
+msgid ""
+"Search, read, and send emails via Gmail. Native integration with draft "
+"approval for safe sending."
+msgstr ""
+
+#: frontend/templates/frontend/integrations.html:595
+msgid ""
+"Search, read, and send emails via Microsoft Graph. Native integration with "
+"draft approval for safe sending."
+msgstr ""
+
+#: frontend/templates/frontend/integrations.html:596
+msgid ""
+"List, create, and manage calendar events. Native integration with encrypted "
+"credentials."
+msgstr ""
+
+#: frontend/templates/frontend/integrations.html:597
+msgid ""
+"Search, list, and read files in Google Drive. Native integration with "
+"encrypted credentials."
+msgstr ""
+
+#: frontend/templates/frontend/integrations.html:598
+msgid ""
+"Search, list, and read files in OneDrive. Native integration with encrypted "
+"credentials."
+msgstr ""
+
+#: frontend/templates/frontend/integrations.html:599
+msgid ""
+"Send messages, read channels, and search across your Slack workspace. Native "
+"integration with encrypted credentials."
+msgstr ""
+
+#: frontend/templates/frontend/integrations.html:600
+msgid ""
+"Search contacts, manage deals, and access CRM data. Native integration with "
+"encrypted credentials."
+msgstr ""
+
+#: frontend/templates/frontend/knowledge.html:59
+msgid ""
+"Upload documents, connect integrations, and organize collections for "
+"retrieval."
+msgstr ""
+"Upload documents, connect integrations, and organize collections for "
+"retrieval."
+
+#: frontend/templates/frontend/knowledge.html:69
+msgid "Visualizer"
+msgstr "Visualizer"
+
+#: frontend/templates/frontend/knowledge.html:79
+msgid "Dump JSON"
+msgstr "Dump JSON"
+
+#: frontend/templates/frontend/knowledge.html:87
+#: frontend/templates/frontend/knowledge.html:435
+msgid "Connect Google Drive"
+msgstr "Connect Google Drive"
+
+#: frontend/templates/frontend/knowledge.html:115
+#: frontend/templates/frontend/knowledge.html:127
+#: frontend/templates/frontend/knowledge.html:650
+msgid "Collections"
+msgstr "Collections"
+
+#: frontend/templates/frontend/knowledge.html:118
+msgid "Data Guardrails"
+msgstr "Data Guardrails"
+
+#: frontend/templates/frontend/knowledge.html:138
+msgid "Actions"
+msgstr "Actions"
+
+#: frontend/templates/frontend/knowledge.html:142
+msgid "Sort by activity"
+msgstr "Sort by activity"
+
+#: frontend/templates/frontend/knowledge.html:145
+msgid "New collection"
+msgstr "New collection"
+
+#: frontend/templates/frontend/knowledge.html:157
+msgid "Add content"
+msgstr "Add content"
+
+#: frontend/templates/frontend/knowledge.html:179
+msgid "Drop files here or upload to add knowledge"
+msgstr "Drop files here or upload to add knowledge"
+
+#: frontend/templates/frontend/knowledge.html:180
+msgid "Supports PDF, DOCX, CSV, XLSX, and TXT. We auto-detect format."
+msgstr "Supports PDF, DOCX, CSV, XLSX, and TXT. We auto-detect format."
+
+#: frontend/templates/frontend/knowledge.html:186
+msgid "Paste text"
+msgstr "Paste text"
+
+#: frontend/templates/frontend/knowledge.html:192
+msgid "Add link"
+msgstr "Add link"
+
+#: frontend/templates/frontend/knowledge.html:201
+msgid "Upload files"
+msgstr "Upload files"
+
+#: frontend/templates/frontend/knowledge.html:207
+msgid "Uploading…"
+msgstr "Uploading…"
+
+#: frontend/templates/frontend/knowledge.html:210
+msgid "Rename"
+msgstr "Rename"
+
+#: frontend/templates/frontend/knowledge.html:223
+msgid "Update title"
+msgstr "Update title"
+
+#: frontend/templates/frontend/knowledge.html:227
+#: frontend/templates/frontend/mcp.html:223
+#: frontend/templates/frontend/voice.html:186
+msgid "Save"
+msgstr ""
+
+#: frontend/templates/frontend/knowledge.html:236
+msgid "Title (optional)"
+msgstr "Title (optional)"
+
+#: frontend/templates/frontend/knowledge.html:237
+#, fuzzy
+#| msgid "Create Account"
+msgid "e.g. Corporate account FAQ"
+msgstr "Create Account"
+
+#: frontend/templates/frontend/knowledge.html:240 frontend/views.py:2428
+msgid "Manual entry"
+msgstr "Manual entry"
+
+#: frontend/templates/frontend/knowledge.html:241
+msgid "Paste a short SOP or message template…"
+msgstr ""
+
+#: frontend/templates/frontend/knowledge.html:244
+msgid "External link"
+msgstr "External link"
+
+#: frontend/templates/frontend/knowledge.html:245
+msgid "https://example.com/handbook"
+msgstr ""
+
+#: frontend/templates/frontend/knowledge.html:249
+msgid "Save to knowledge"
+msgstr "Save to knowledge"
+
+#: frontend/templates/frontend/knowledge.html:261
+msgid "Document library"
+msgstr "Document library"
+
+#: frontend/templates/frontend/knowledge.html:267
+#, fuzzy
+#| msgid "Select a document…"
+msgid "Search documents…"
+msgstr "Select a document…"
+
+#: frontend/templates/frontend/knowledge.html:280
+#: frontend/templates/frontend/mcp.html:163
+msgid "Name"
+msgstr ""
+
+#: frontend/templates/frontend/knowledge.html:281
+#, fuzzy
+#| msgid "Notifications"
+msgid "Classification"
+msgstr "Notifications"
+
+#: frontend/templates/frontend/knowledge.html:400
+#, python-format
+msgid "Showing %(showing)s of %(total)s documents"
+msgstr ""
+
+#: frontend/templates/frontend/knowledge.html:424
+msgid "Keep external knowledge in sync"
+msgstr ""
+
+#: frontend/templates/frontend/knowledge.html:426
+msgid ""
+"Connect Google Drive to keep spreadsheets, SOPs, and trackers updated "
+"automatically."
+msgstr ""
+
+#: frontend/templates/frontend/knowledge.html:441
+#, fuzzy
+#| msgid "Active customers"
+msgid "Active sources"
+msgstr "Active customers"
+
+#: frontend/templates/frontend/knowledge.html:443
+msgid "Connected or syncing"
+msgstr ""
+
+#: frontend/templates/frontend/knowledge.html:446
+#: frontend/templates/frontend/knowledge.html:471
+msgid "Needs attention"
+msgstr ""
+
+#: frontend/templates/frontend/knowledge.html:448
+msgid "Reconnect or fix errors"
+msgstr ""
+
+#: frontend/templates/frontend/knowledge.html:451
+msgid "Syncing now"
+msgstr ""
+
+#: frontend/templates/frontend/knowledge.html:453
+msgid "In progress"
+msgstr ""
+
+#: frontend/templates/frontend/knowledge.html:458
+#, fuzzy
+#| msgid "Loading connected integrations..."
+msgid "Link a business profile to connect integrations."
+msgstr "Loading connected integrations..."
+
+#: frontend/templates/frontend/knowledge.html:492
+#: frontend/templates/frontend/knowledge.html:579
+#, fuzzy
+#| msgid "Last touch"
+msgid "Last sync"
+msgstr "Last touch"
+
+#: frontend/templates/frontend/knowledge.html:496
+#: frontend/templates/frontend/knowledge.html:583
+#, fuzzy
+#| msgid "Next"
+msgid "Next sync"
+msgstr "Next"
+
+#: frontend/templates/frontend/knowledge.html:500
+#: frontend/templates/frontend/knowledge.html:587
+msgid "Auto-sync"
+msgstr ""
+
+#: frontend/templates/frontend/knowledge.html:510
+#: frontend/templates/frontend/knowledge.html:597
+#, python-format
+msgid "Last sync ingested %(rows)s rows."
+msgstr ""
+
+#: frontend/templates/frontend/knowledge.html:524
+#: frontend/templates/frontend/knowledge.html:611
+msgid "No resources selected yet. Choose what to sync to start ingesting."
+msgstr ""
+
+#: frontend/templates/frontend/knowledge.html:541
+#: frontend/templates/frontend/knowledge.html:628
+#, fuzzy
+#| msgid "Manage Cookies"
+msgid "Manage sheets"
+msgstr "Manage Cookies"
+
+#: frontend/templates/frontend/knowledge.html:544
+#: frontend/templates/frontend/knowledge.html:631
+msgid "Syncs run on schedule or from the modal."
+msgstr ""
+
+#: frontend/templates/frontend/knowledge.html:558
+#, fuzzy
+#| msgid "Resources"
+msgid "Connected sources"
+msgstr "Resources"
+
+#: frontend/templates/frontend/knowledge_visualizer.html:4
+#: frontend/templates/frontend/knowledge_visualizer.html:51
+msgid "Knowledge Visualizer"
+msgstr "Knowledge Visualizer"
+
+#: frontend/templates/frontend/knowledge_visualizer.html:52
+msgid ""
+"Inspect what the ingestion pipeline produces: blocks, tables, chunks, and "
+"issues."
+msgstr ""
+
+#: frontend/templates/frontend/knowledge_visualizer.html:59
+msgid "Back to Knowledge"
+msgstr "Back to Knowledge"
+
+#: frontend/templates/frontend/knowledge_visualizer.html:74
+msgid "Document selector"
+msgstr "Document selector"
+
+#: frontend/templates/frontend/knowledge_visualizer.html:75
+msgid "Choose an upload to inspect its ingestion output."
+msgstr "Choose an upload to inspect its ingestion output."
+
+#: frontend/templates/frontend/knowledge_visualizer.html:78
+msgid "total"
+msgstr "total"
+
+#: frontend/templates/frontend/knowledge_visualizer.html:88
+msgid "Select a document…"
+msgstr "Select a document…"
+
+#: frontend/templates/frontend/knowledge_visualizer.html:106
+msgid "Prev"
+msgstr "Prev"
+
+#: frontend/templates/frontend/knowledge_visualizer.html:117
+msgid "Select a document to see its ingested output."
+msgstr "Select a document to see its ingested output."
+
+#: frontend/templates/frontend/knowledge_visualizer.html:140
+msgid "Pipeline"
+msgstr "Pipeline"
+
+#: frontend/templates/frontend/leads.html:14
+msgid ""
+"Monitor pipeline momentum, accelerate hot opportunities, and keep SLAs on "
+"track."
+msgstr ""
+"Monitor pipeline momentum, accelerate hot opportunities, and keep SLAs on "
+"track."
+
+#: frontend/templates/frontend/leads.html:21
+msgid "New Lead"
+msgstr "New Lead"
+
+#: frontend/templates/frontend/leads.html:29
+#, fuzzy
+#| msgid "Import Cases"
+msgid "Import"
+msgstr "Import Cases"
+
+#: frontend/templates/frontend/leads.html:60 frontend/views.py:2085
+msgid "Search lead, company, or tag"
+msgstr ""
+
+#: frontend/templates/frontend/leads.html:69 frontend/views.py:2086
+#, fuzzy
+#| msgid "All Cases"
+msgid "All stages"
+msgstr "All Cases"
+
+#: frontend/templates/frontend/leads.html:78 frontend/views.py:2088
+msgid "Last 14 days"
+msgstr ""
+
+#: frontend/templates/frontend/leads.html:87 frontend/views.py:2087
+#, fuzzy
+#| msgid "All Cases"
+msgid "All owners"
+msgstr "All Cases"
+
+#: frontend/templates/frontend/leads.html:166
+msgid "Check your connection or refresh to try again."
+msgstr ""
+
+#: frontend/templates/frontend/leads.html:174
+msgid "Lead"
+msgstr "Lead"
+
+#: frontend/templates/frontend/leads.html:176
+msgid "Stage"
+msgstr "Stage"
+
+#: frontend/templates/frontend/leads.html:177
+msgid "Owner"
+msgstr "Owner"
+
+#: frontend/templates/frontend/leads.html:178
+msgid "Source"
+msgstr "Source"
+
+#: frontend/templates/frontend/leads.html:179
+msgid "Last touch"
+msgstr "Last touch"
+
+#: frontend/templates/frontend/leads.html:180
+msgid "Score"
+msgstr "Score"
+
+#: frontend/templates/frontend/leads.html:228
+msgid "No tags"
+msgstr "No tags"
+
+#: frontend/templates/frontend/leads.html:234
+msgid "View details"
+msgstr "View details"
+
+#: frontend/templates/frontend/leads.html:246
+msgid ""
+"Import a CSV, connect HubSpot, or add leads manually to jumpstart your "
+"pipeline."
+msgstr ""
+
+#: frontend/templates/frontend/leads.html:250
+#, python-format
+msgid "Showing %(showing)s of %(total)s leads"
+msgstr ""
+
+#: frontend/templates/frontend/leads.html:279
+msgid "Pipeline breakdown"
+msgstr "Pipeline breakdown"
+
+#: frontend/templates/frontend/leads.html:289
+msgid ""
+"Sync CRM stages to visualise full pipeline metrics and conversion rates."
+msgstr ""
+"Sync CRM stages to visualise full pipeline metrics and conversion rates."
+
+#: frontend/templates/frontend/legal/page.html:14
+msgid "Last updated:"
+msgstr "Last updated:"
+
+#: frontend/templates/frontend/legal/page.html:45
+msgid "On this page"
+msgstr "On this page"
+
+#: frontend/templates/frontend/login.html:15
+msgid "Welcome back"
+msgstr "Welcome back"
+
+#: frontend/templates/frontend/login.html:16
+msgid "Sign in to continue orchestrating your AI customer experience."
+msgstr "Sign in to continue orchestrating your AI customer experience."
+
+#: frontend/templates/frontend/login.html:33
+msgid "Email address"
+msgstr "Email address"
+
+#: frontend/templates/frontend/login.html:42
+msgid "you@company.com"
+msgstr ""
+
+#: frontend/templates/frontend/login.html:46 frontend/views.py:1267
+msgid "Password"
+msgstr ""
+
+#: frontend/templates/frontend/login.html:54
+msgid "••••••••"
+msgstr ""
+
+#: frontend/templates/frontend/login.html:65
+msgid "Need to create an account?"
+msgstr "Need to create an account?"
+
+#: frontend/templates/frontend/login.html:67
+msgid "Start your onboarding"
+msgstr "Start your onboarding"
+
+#: frontend/templates/frontend/mcp.html:4
+msgid "MCP Connector (BETA)"
+msgstr "MCP Connector (BETA)"
+
+#: frontend/templates/frontend/mcp.html:17
+msgid ""
+"Connect MCP servers, toggle them on/off, and control which agents can use "
+"them."
+msgstr ""
+"Connect MCP servers, toggle them on/off, and control which agents can use "
+"them."
+
+#: frontend/templates/frontend/mcp.html:25
+msgid "Browse marketplace"
+msgstr "Browse marketplace"
+
+#: frontend/templates/frontend/mcp.html:35
+#: frontend/templates/frontend/mcp.html:143
+msgid "Add MCP server"
+msgstr "Add MCP server"
+
+#: frontend/templates/frontend/mcp.html:42
+msgid "Industry Tools"
+msgstr "Industry Tools"
+
+#: frontend/templates/frontend/mcp.html:43
+msgid "All MCPs"
+msgstr "All MCPs"
+
+#: frontend/templates/frontend/mcp.html:66
+msgid "Recommended for"
+msgstr "Recommended for"
+
+#: frontend/templates/frontend/mcp.html:66
+msgid "your industry"
+msgstr "your industry"
+
+#: frontend/templates/frontend/mcp.html:67
+msgid "Tools commonly used by businesses in your industry. Click to add."
+msgstr "Tools commonly used by businesses in your industry. Click to add."
+
+#: frontend/templates/frontend/mcp.html:77
+msgid "Common Tools"
+msgstr "Common Tools"
+
+#: frontend/templates/frontend/mcp.html:78
+msgid "Universal tools used across all industries."
+msgstr "Universal tools used across all industries."
+
+#: frontend/templates/frontend/mcp.html:91
+msgid "All Available MCPs"
+msgstr "All Available MCPs"
+
+#: frontend/templates/frontend/mcp.html:92
+msgid "Browse all MCP integrations. Filter by category or search."
+msgstr "Browse all MCP integrations. Filter by category or search."
+
+#: frontend/templates/frontend/mcp.html:95
+msgid "Search MCPs..."
+msgstr "Search MCPs..."
+
+#: frontend/templates/frontend/mcp.html:111
+msgid "Your Connected MCPs"
+msgstr "Your Connected MCPs"
+
+#: frontend/templates/frontend/mcp.html:112
+msgid ""
+"Enable/disable connections, test connectivity, and manage agent opt-outs."
+msgstr ""
+"Enable/disable connections, test connectivity, and manage agent opt-outs."
+
+#: frontend/templates/frontend/mcp.html:119
+msgid "Loading MCP connections…"
+msgstr "Loading MCP connections…"
+
+#: frontend/templates/frontend/mcp.html:144
+msgid "SSE/HTTP remote MCP servers only."
+msgstr "SSE/HTTP remote MCP servers only."
+
+#: frontend/templates/frontend/mcp.html:158
+msgid "Server URL pre-configured. Just add your credentials below."
+msgstr ""
+
+#: frontend/templates/frontend/mcp.html:164
+msgid "e.g. GitHub Tools"
+msgstr ""
+
+#: frontend/templates/frontend/mcp.html:167
+msgid "Server URL"
+msgstr ""
+
+#: frontend/templates/frontend/mcp.html:168
+msgid "https://your-domain.com/mcp"
+msgstr ""
+
+#: frontend/templates/frontend/mcp.html:169
+msgid "Use the MCP endpoint (Streamable HTTP) or legacy SSE endpoint."
+msgstr ""
+
+#: frontend/templates/frontend/mcp.html:177
+msgid "Auth"
+msgstr "Auth"
+
+#: frontend/templates/frontend/mcp.html:179
+msgid "No auth"
+msgstr "No auth"
+
+#: frontend/templates/frontend/mcp.html:180
+#: frontend/templates/frontend/mcp.html:200
+msgid "Bearer token"
+msgstr ""
+
+#: frontend/templates/frontend/mcp.html:181
+msgid "Custom header"
+msgstr "Custom header"
+
+#: frontend/templates/frontend/mcp.html:185
+msgid "Tool Approval"
+msgstr "Tool Approval"
+
+#: frontend/templates/frontend/mcp.html:187
+msgid "Auto-approve all"
+msgstr "Auto-approve all"
+
+#: frontend/templates/frontend/mcp.html:188
+msgid "Approve writes only"
+msgstr "Approve writes only"
+
+#: frontend/templates/frontend/mcp.html:189
+msgid "Approve all operations"
+msgstr "Approve all operations"
+
+#: frontend/templates/frontend/mcp.html:195
+msgid "Enabled"
+msgstr "Enabled"
+
+#: frontend/templates/frontend/mcp.html:201
+#, fuzzy
+#| msgid "Paste text"
+msgid "Paste token"
+msgstr "Paste text"
+
+#: frontend/templates/frontend/mcp.html:208
+msgid "Header name"
+msgstr "Header name"
+
+#: frontend/templates/frontend/mcp.html:209
+msgid "e.g. X-API-Key"
+msgstr ""
+
+#: frontend/templates/frontend/mcp.html:212
+msgid "Header value"
+msgstr "Header value"
+
+#: frontend/templates/frontend/mcp.html:213
+#, fuzzy
+#| msgid "Header value"
+msgid "Secret value"
+msgstr "Header value"
+
+#: frontend/templates/frontend/mcp.html:222
+msgid "Test connection"
+msgstr "Test connection"
+
+#: frontend/templates/frontend/mcp.html:235
+msgid "Agent access"
+msgstr "Agent access"
+
+#: frontend/templates/frontend/mcp.html:236
+msgid "Opt out specific agents while keeping others enabled."
+msgstr "Opt out specific agents while keeping others enabled."
+
+#: frontend/templates/frontend/mcp.html:248 frontend/views.py:1320
+msgid "Done"
+msgstr "Done"
+
+#: frontend/templates/frontend/mcp.html:259
+msgid "Tool approvals"
+msgstr "Tool approvals"
+
+#: frontend/templates/frontend/mcp.html:260
+msgid "Set per-tool approvals and operation type for this MCP connection."
+msgstr "Set per-tool approvals and operation type for this MCP connection."
 
 #: frontend/templates/frontend/partials/footer.html:55
 msgid "Manage Cookies"
 msgstr "Manage Cookies"
 
-#: frontend/views.py:81
+#: frontend/templates/frontend/voice.html:116
+msgid "Voice Calling Providers"
+msgstr "Voice Calling Providers"
+
+#: frontend/templates/frontend/voice.html:118
+msgid ""
+"Configure tenant-owned transport providers and monitor platform-managed "
+"voice services."
+msgstr ""
+"Configure tenant-owned transport providers and monitor platform-managed "
+"voice services."
+
+#: frontend/templates/frontend/voice.html:133
+msgid "How this works"
+msgstr "How this works"
+
+#: frontend/templates/frontend/voice.html:135
+msgid ""
+"Each workspace stores its own encrypted transport credentials (Twilio/"
+"Telnyx)."
+msgstr ""
+"Each workspace stores its own encrypted transport credentials (Twilio/"
+"Telnyx)."
+
+#: frontend/templates/frontend/voice.html:136
+msgid ""
+"Pick exactly one active outbound transport provider when multiple are "
+"configured."
+msgstr ""
+"Pick exactly one active outbound transport provider when multiple are "
+"configured."
+
+#: frontend/templates/frontend/voice.html:137
+msgid "Deepgram and ElevenLabs are managed centrally by the platform."
+msgstr "Deepgram and ElevenLabs are managed centrally by the platform."
+
+#: frontend/templates/frontend/voice.html:138
+msgid "Use “Test” after setup to validate credentials before live calls."
+msgstr "Use “Test” after setup to validate credentials before live calls."
+
+#: frontend/templates/frontend/voice.html:146
+msgid "Loading providers…"
+msgstr "Loading providers…"
+
+#: frontend/templates/frontend/voice.html:158
+msgid "Configure provider"
+msgstr "Configure provider"
+
+#: frontend/templates/frontend/voice.html:159
+#: frontend/templates/frontend/voice.html:221
+msgid "Store encrypted tenant credentials."
+msgstr "Store encrypted tenant credentials."
+
+#: frontend/templates/frontend/voice.html:173
+msgid "Enable this provider for this workspace"
+msgstr "Enable this provider for this workspace"
+
+#: frontend/templates/frontend/voice.html:177
+msgid "Set as active outbound transport provider"
+msgstr "Set as active outbound transport provider"
+
+#: frontend/templates/frontend/voice.html:185
+#: frontend/templates/frontend/voice.html:211
+msgid "Test"
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:198
+#, fuzzy
+#| msgid "Refresh failed"
+msgid "Request failed."
+msgstr "Refresh failed"
+
+#: frontend/templates/frontend/voice.html:200 frontend/views.py:1859
+#, fuzzy
+#| msgid "Enabled"
+msgid "Disabled"
+msgstr "Enabled"
+
+#: frontend/templates/frontend/voice.html:202
+#, fuzzy
+#| msgid "Configure provider"
+msgid "Not Configured"
+msgstr "Configure provider"
+
+#: frontend/templates/frontend/voice.html:203
+#, fuzzy
+#| msgid "No summary provided."
+msgid "No providers found."
+msgstr "No summary provided."
+
+#: frontend/templates/frontend/voice.html:204
+#, fuzzy
+#| msgid "Trusted by"
+msgid "Tested"
+msgstr "Trusted by"
+
+#: frontend/templates/frontend/voice.html:205
+#, fuzzy
+#| msgid "No notes yet."
+msgid "Not tested yet"
+msgstr "No notes yet."
+
+#: frontend/templates/frontend/voice.html:206
+msgid "Tenant setup"
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:207
+msgid "Platform managed"
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:208
+#, fuzzy
+#| msgid "View transcript"
+msgid "Active transport"
+msgstr "View transcript"
+
+#: frontend/templates/frontend/voice.html:209
+msgid "Set Active"
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:210
+#: frontend/templates/frontend/voice.html:219
+#, fuzzy
+#| msgid "Configure provider"
+msgid "Configure"
+msgstr "Configure provider"
+
+#: frontend/templates/frontend/voice.html:213
+msgid "Managed by platform and shared across all workspaces."
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:214
+msgid "Link a business profile to configure voice providers."
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:215
+#, fuzzy
+#| msgid "Loading providers…"
+msgid "Loading voice provider status…"
+msgstr "Loading providers…"
+
+#: frontend/templates/frontend/voice.html:216
+#, fuzzy
+#| msgid "Failed to load controls."
+msgid "Failed to load voice providers."
+msgstr "Failed to load controls."
+
+#: frontend/templates/frontend/voice.html:217
+msgid "is managed by the platform and cannot be edited here."
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:218
+#, fuzzy
+#| msgid "Configure provider"
+msgid "This provider"
+msgstr "Configure provider"
+
+#: frontend/templates/frontend/voice.html:220
+#, fuzzy
+#| msgid "Configure provider"
+msgid "provider"
+msgstr "Configure provider"
+
+#: frontend/templates/frontend/voice.html:222
+#, fuzzy
+#| msgid "App Store"
+msgid "Stored:"
+msgstr "App Store"
+
+#: frontend/templates/frontend/voice.html:223
+msgid "Leave blank to keep existing value."
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:224
+msgid "saved."
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:225
+#, fuzzy
+#| msgid "Failed to save controls."
+msgid "Failed to save provider."
+msgstr "Failed to save controls."
+
+#: frontend/templates/frontend/voice.html:226
+msgid "Provider test succeeded."
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:227
+#, fuzzy
+#| msgid "Refresh failed"
+msgid "Provider test failed."
+msgstr "Refresh failed"
+
+#: frontend/templates/frontend/voice.html:228
+msgid "Provider disconnected."
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:229
+#, fuzzy
+#| msgid "Failed to load controls."
+msgid "Failed to disconnect provider."
+msgstr "Failed to load controls."
+
+#: frontend/templates/frontend/voice.html:230
+#, fuzzy
+#| msgid "Set as active outbound transport provider"
+msgid "Active transport provider updated."
+msgstr "Set as active outbound transport provider"
+
+#: frontend/templates/frontend/voice.html:231
+#, fuzzy
+#| msgid "Failed to save controls."
+msgid "Failed to set active provider."
+msgstr "Failed to save controls."
+
+#: frontend/templates/frontend/voice.html:232
+msgid "Live speech-to-text for caller audio."
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:233
+#: frontend/templates/frontend/voice.html:234
+msgid "Call transport, webhooks, and recording callbacks."
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:235
+msgid "Low-latency text-to-speech voice responses."
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:236
+#, fuzzy
+#| msgid "Account"
+msgid "Account SID"
+msgstr "Account"
+
+#: frontend/templates/frontend/voice.html:237
+msgid "Auth Token"
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:238
+msgid "Webhook Base URL"
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:239
+msgid "From Number (E.164)"
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:240
+msgid "API Key"
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:241
+msgid "Application SID"
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:242
+msgid "ACxxxxxxxxxxxx"
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:243
+msgid "Twilio auth token"
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:244
+msgid "https://your-domain.com"
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:245
+msgid "+15551234567"
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:246
+msgid "KEYxxxxxxxxxxxx"
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:247
+msgid "xxxxxxxxxxxx"
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:248
+msgid "Appxxxxxxxxxxxx"
+msgstr ""
+
+#: frontend/views.py:83
 msgid "File Upload"
 msgstr "File Upload"
 
-#: frontend/views.py:82
+#: frontend/views.py:84
 msgid "External Link"
 msgstr "External Link"
 
-#: frontend/views.py:83
+#: frontend/views.py:85
 msgid "Manual Entry"
 msgstr "Manual Entry"
 
-#: frontend/views.py:88
+#: frontend/views.py:90
 msgid "Sync Google Sheets automatically to keep SOPs and trackers up to date."
 msgstr "Sync Google Sheets automatically to keep SOPs and trackers up to date."
 
-#: frontend/views.py:90
+#: frontend/views.py:92
 msgid "Mirror Notion pages into the knowledge base."
 msgstr "Mirror Notion pages into the knowledge base."
 
-#: frontend/views.py:91
+#: frontend/views.py:93
 msgid "Import help-center articles from Zendesk Guide."
 msgstr "Import help-center articles from Zendesk Guide."
 
-#: frontend/views.py:92
+#: frontend/views.py:94
 msgid "Bring HubSpot knowledge articles into Pocket AI."
 msgstr "Bring HubSpot knowledge articles into Pocket AI."
 
-#: frontend/views.py:93
+#: frontend/views.py:95
 msgid "Capture curated Slack posts as living documentation."
 msgstr "Capture curated Slack posts as living documentation."
 
-#: frontend/views.py:94
+#: frontend/views.py:96
 msgid "Sync wiki spaces from Confluence."
 msgstr "Sync wiki spaces from Confluence."
 
-#: frontend/views.py:95
+#: frontend/views.py:97
 msgid "Custom connector managed by your team."
 msgstr "Custom connector managed by your team."
 
-#: frontend/views.py:129
+#: frontend/views.py:131
 msgid "Chat portal not found"
 msgstr "Chat portal not found"
 
-#: frontend/views.py:131
+#: frontend/views.py:133
 msgid "Unable to start chat session"
 msgstr "Unable to start chat session"
 
-#: frontend/views.py:135
+#: frontend/views.py:137
 msgid "Invalid bootstrap payload"
 msgstr "Invalid bootstrap payload"
 
-#: frontend/views.py:170
+#: frontend/views.py:172
 msgid "Manual"
 msgstr "Manual"
 
-#: frontend/views.py:180
+#: frontend/views.py:182
 msgid "Keep this data source in sync with Pocket AI."
 msgstr "Keep this data source in sync with Pocket AI."
 
-#: frontend/views.py:196
+#: frontend/views.py:198
 msgid "Connection needs attention. Reconnect to resume syncing."
 msgstr "Connection needs attention. Reconnect to resume syncing."
 
-#: frontend/views.py:198
+#: frontend/views.py:200
 msgid "Sync failed. Review credentials and try again."
 msgstr "Sync failed. Review credentials and try again."
 
-#: frontend/views.py:244
+#: frontend/views.py:246
 msgid "Try the mobile app"
 msgstr "Try the mobile app"
 
-#: frontend/views.py:247
+#: frontend/views.py:249 frontend/views.py:470
 msgid "Google Play"
 msgstr "Google Play"
 
-#: frontend/views.py:252
+#: frontend/views.py:254 frontend/views.py:477
 msgid "App Store"
 msgstr "App Store"
 
-#: frontend/views.py:403
+#: frontend/views.py:405
 msgid "Knowledge snippet"
 msgstr "Knowledge snippet"
 
-#: frontend/views.py:419
+#: frontend/views.py:421
 msgid "LLM strategy"
 msgstr "LLM strategy"
 
-#: frontend/views.py:421
+#: frontend/views.py:423
 msgid "Planned actions"
 msgstr "Planned actions"
 
-#: frontend/views.py:423
-msgid "Extractions"
-msgstr "Extractions"
+#: frontend/views.py:435
+msgid "AI Powered"
+msgstr "AI Powered"
 
-#: frontend/views.py:1696
-msgid "Metrics will appear once you start receiving conversations."
-msgstr "Metrics will appear once you start receiving conversations."
+#: frontend/views.py:436
+msgid "Customer Service"
+msgstr "Customer Service"
 
-#: frontend/views.py:1697
-msgid "No escalations yet — monitoring continuously."
-msgstr "No escalations yet — monitoring continuously."
+#: frontend/views.py:438
+msgid ""
+"Deliver instant, intelligent support 24/7 with our AI-powered platform. "
+"Reduce response times by 90% and delight your customers."
+msgstr ""
 
-#: frontend/views.py:1705
-msgid "Connect your support channels to start streaming conversations here."
-msgstr "Connect your support channels to start streaming conversations here."
+#: frontend/views.py:441
+msgid "Start Free Trial"
+msgstr "Start Free Trial"
 
-#: frontend/views.py:1708
-msgid "Metrics will appear once cases begin flowing in."
-msgstr "Metrics will appear once cases begin flowing in."
+#: frontend/views.py:442
+msgid "Watch Demo"
+msgstr "Watch Demo"
 
-#: frontend/views.py:1710
-msgid "Invite your team to see performance insights here."
-msgstr "Invite your team to see performance insights here."
+#: frontend/views.py:446
+msgid "Faster Response"
+msgstr "Faster Response"
 
-#: frontend/views.py:1719
+#: frontend/views.py:460
+msgid "Happy Customers"
+msgstr "Happy Customers"
+
+#: frontend/views.py:469
+msgid "GET IT ON"
+msgstr ""
+
+#: frontend/views.py:476
+msgid "Download on the"
+msgstr ""
+
+#: frontend/views.py:484
+msgid "Online"
+msgstr "Online"
+
+#: frontend/views.py:485
+msgid "This is a demo - try the real widget below! →"
+msgstr "This is a demo - try the real widget below! →"
+
+#: frontend/views.py:547
+msgid "Everything You Need for"
+msgstr "Everything You Need for"
+
+#: frontend/views.py:548
+msgid "Perfect Support"
+msgstr "Perfect Support"
+
+#: frontend/views.py:651
+msgid "Customers who"
+msgstr "Customers who"
+
+#: frontend/views.py:652
+msgid "build differently"
+msgstr "build differently"
+
+#: frontend/views.py:653
+msgid ""
+"Real teams, real results. Built with speed, reliability, and brand in mind."
+msgstr ""
+
+#: frontend/views.py:669
+msgid "Trusted by"
+msgstr "Trusted by"
+
+#: frontend/views.py:694
+msgid "Flexible pricing"
+msgstr "Flexible pricing"
+
+#: frontend/views.py:695
+msgid "Choose what fits "
+msgstr "Choose what fits "
+
+#: frontend/views.py:696
+msgid "your motion"
+msgstr "your motion"
+
+#: frontend/views.py:698
+msgid "Wage based"
+msgstr "Wage based"
+
+#: frontend/views.py:699
+msgid "Packages"
+msgstr "Packages"
+
+#: frontend/views.py:700
+msgid "One-time setup (self-hosted)"
+msgstr "One-time setup (self-hosted)"
+
+#: frontend/views.py:812
+msgid "Frequently asked"
+msgstr "Frequently asked"
+
+#: frontend/views.py:813
+msgid "questions"
+msgstr "questions"
+
+#: frontend/views.py:1153
+msgid "Customer Support Agent"
+msgstr "Customer Support Agent"
+
+#: frontend/views.py:1154
+msgid "Support Specialist"
+msgstr "Support Specialist"
+
+#: frontend/views.py:1155
+msgid "Customer Success Representative"
+msgstr "Customer Success Representative"
+
+#: frontend/views.py:1156
+msgid "Sales Support Agent"
+msgstr "Sales Support Agent"
+
+#: frontend/views.py:1157
+msgid "Front Desk Representative"
+msgstr "Front Desk Representative"
+
+#: frontend/views.py:1158
+msgid "Account Manager"
+msgstr "Account Manager"
+
+#: frontend/views.py:1159
+msgid "Helpdesk Agent"
+msgstr "Helpdesk Agent"
+
+#: frontend/views.py:1163
+msgid "Friendly"
+msgstr "Friendly"
+
+#: frontend/views.py:1164
+msgid "Professional"
+msgstr "Professional"
+
+#: frontend/views.py:1165
+msgid "Casual"
+msgstr "Casual"
+
+#: frontend/views.py:1166
+msgid "Formal"
+msgstr "Formal"
+
+#: frontend/views.py:1167
+msgid "Empathetic"
+msgstr "Empathetic"
+
+#: frontend/views.py:1168
+msgid "Playful"
+msgstr "Playful"
+
+#: frontend/views.py:1172
+msgid "Concise"
+msgstr "Concise"
+
+#: frontend/views.py:1173
+msgid "Detailed"
+msgstr "Detailed"
+
+#: frontend/views.py:1174
+msgid "Curious"
+msgstr "Curious"
+
+#: frontend/views.py:1175
+msgid "Patient"
+msgstr "Patient"
+
+#: frontend/views.py:1176
+msgid "Proactive"
+msgstr "Proactive"
+
+#: frontend/views.py:1177
+msgid "Direct"
+msgstr "Direct"
+
+#: frontend/views.py:1178
+msgid "Creative"
+msgstr "Creative"
+
+#: frontend/views.py:1182
+msgid "Never"
+msgstr "Never"
+
+#: frontend/views.py:1183
+msgid "On fallback"
+msgstr "On fallback"
+
+#: frontend/views.py:1184
+msgid "On negative sentiment"
+msgstr "On negative sentiment"
+
+#: frontend/views.py:1185
+msgid "On high value"
+msgstr "On high value"
+
+#: frontend/views.py:1186
+msgid "Always"
+msgstr "Always"
+
+#: frontend/views.py:1189
+msgid "Products & Services"
+msgstr "Products & Services"
+
+#: frontend/views.py:1193
+msgid "Vision"
+msgstr "Vision"
+
+#: frontend/views.py:1200
+msgid "Mission"
+msgstr "Mission"
+
+#: frontend/views.py:1207
+#, python-format
+msgid "%(entity)s Catalog"
+msgstr ""
+
+#: frontend/views.py:1214
+msgid "FAQs"
+msgstr "FAQs"
+
+#: frontend/views.py:1221
+msgid "Knowledge Base"
+msgstr "Knowledge Base"
+
+#: frontend/views.py:1228
+msgid "SOPs"
+msgstr "SOPs"
+
+#: frontend/views.py:1235
+msgid "T&C"
+msgstr "T&C"
+
+#: frontend/views.py:1246
+msgid "Create your"
+msgstr "Create your"
+
+#: frontend/views.py:1248
+msgid "Your clients, served better."
+msgstr "Your clients, served better."
+
+#: frontend/views.py:1250
+msgid "OR"
+msgstr "OR"
+
+#: frontend/views.py:1251
+msgid "Continue with Google"
+msgstr "Continue with Google"
+
+#: frontend/views.py:1252
+msgid "Create Account"
+msgstr "Create Account"
+
+#: frontend/views.py:1253
+msgid "Creating..."
+msgstr "Creating..."
+
+#: frontend/views.py:1257
+msgid "First name"
+msgstr "First name"
+
+#: frontend/views.py:1259
+msgid "First name is required"
+msgstr "First name is required"
+
+#: frontend/views.py:1264
+msgid "Please enter a valid email"
+msgstr "Please enter a valid email"
+
+#: frontend/views.py:1269
+msgid "Password must be at least 8 characters"
+msgstr "Password must be at least 8 characters"
+
+#: frontend/views.py:1272
+msgid "Confirm password"
+msgstr "Confirm password"
+
+#: frontend/views.py:1274
+msgid "Passwords do not match"
+msgstr "Passwords do not match"
+
+#: frontend/views.py:1277
+msgid "Already have an account?"
+msgstr "Already have an account?"
+
+#: frontend/views.py:1278
+msgid "Log in"
+msgstr "Log in"
+
+#: frontend/views.py:1280
+msgid "Business Profile"
+msgstr "Business Profile"
+
+#: frontend/views.py:1281 frontend/views.py:1325
+msgid "Setup"
+msgstr ""
+
+#: frontend/views.py:1282
+msgid "Step 2 · Business profile"
+msgstr "Step 2 · Business profile"
+
+#: frontend/views.py:1283
+msgid "Help us understand your business"
+msgstr "Help us understand your business"
+
+#: frontend/views.py:1286
+msgid "Business name"
+msgstr "Business name"
+
+#: frontend/views.py:1288
+msgid "Business name is required"
+msgstr "Business name is required"
+
+#: frontend/views.py:1306
+msgid "Country"
+msgstr ""
+
+#: frontend/views.py:1310
+msgid "Website"
+msgstr "Website"
+
+#: frontend/views.py:1311
+msgid "(optional)"
+msgstr "(optional)"
+
+#: frontend/views.py:1316 frontend/views.py:1358 frontend/views.py:1385
+msgid "Back"
+msgstr "Back"
+
+#: frontend/views.py:1318 frontend/views.py:1360
+msgid "Saving..."
+msgstr "Saving..."
+
+#: frontend/views.py:1319
+msgid "Add"
+msgstr "Add"
+
+#: frontend/views.py:1326
+msgid "Set up your agent basics"
+msgstr "Set up your agent basics"
+
+#: frontend/views.py:1329
+msgid "Agent name"
+msgstr "Agent name"
+
+#: frontend/views.py:1331
+msgid "Please enter an agent name"
+msgstr "Please enter an agent name"
+
+#: frontend/views.py:1334
+msgid "Role"
+msgstr "Role"
+
+#: frontend/views.py:1335
+msgid "Select a role"
+msgstr "Select a role"
+
+#: frontend/views.py:1336
+msgid "Please select a role"
+msgstr "Please select a role"
+
+#: frontend/views.py:1340
+msgid "Tone"
+msgstr "Tone"
+
+#: frontend/views.py:1341
+msgid "Select tone"
+msgstr "Select tone"
+
+#: frontend/views.py:1342
+msgid "Please choose a tone"
+msgstr "Please choose a tone"
+
+#: frontend/views.py:1346
+msgid "Traits"
+msgstr "Traits"
+
+#: frontend/views.py:1347
+msgid "Pick as many as you like"
+msgstr "Pick as many as you like"
+
+#: frontend/views.py:1351
+msgid "Escalation rule"
+msgstr "Escalation rule"
+
+#: frontend/views.py:1352
+msgid "Choose escalation rule"
+msgstr "Choose escalation rule"
+
+#: frontend/views.py:1353
+msgid "Please choose when to escalate"
+msgstr "Please choose when to escalate"
+
+#: frontend/views.py:1365
+msgid "Uploads"
+msgstr "Uploads"
+
+#: frontend/views.py:1366
+msgid ""
+"Add links to your key docs so your agent gets smart fast. You can skip this "
+"and do it later."
+msgstr ""
+
+#: frontend/views.py:1368
+msgid "Which materials do you want to attach?"
+msgstr ""
+
+#: frontend/views.py:1369
+msgid ""
+"Select the knowledge sources you want to add now. You can always come back "
+"later."
+msgstr ""
+
+#: frontend/views.py:1372
+msgid "Select at least one material above to start adding links."
+msgstr "Select at least one material above to start adding links."
+
+#: frontend/views.py:1373
+msgid "Attach"
+msgstr "Attach"
+
+#: frontend/views.py:1375
+msgid "added"
+msgstr "added"
+
+#: frontend/views.py:1377
+msgid "Enter a valid URL (https://example.com)"
+msgstr ""
+
+#: frontend/views.py:1378
+msgid "This link is already attached"
+msgstr ""
+
+#: frontend/views.py:1379
+msgid "Select at least one material to continue"
+msgstr "Select at least one material to continue"
+
+#: frontend/views.py:1380
+msgid "Add at least one link for each selected source"
+msgstr "Add at least one link for each selected source"
+
+#: frontend/views.py:1381
+msgid "We couldn't save your uploads. Try again."
+msgstr ""
+
+#: frontend/views.py:1382
+msgid "Complete the earlier steps before finishing registration."
+msgstr ""
+
+#: frontend/views.py:1386
+msgid "Upload later"
+msgstr "Upload later"
+
+#: frontend/views.py:1387
+msgid "Finish"
+msgstr "Finish"
+
+#: frontend/views.py:1388
+msgid "Finishing…"
+msgstr "Finishing…"
+
+#: frontend/views.py:1724 frontend/views.py:1778
 msgid "New customers"
 msgstr "New customers"
 
-#: frontend/views.py:1719
+#: frontend/views.py:1724
 msgid "No data to measure yet"
 msgstr "No data to measure yet"
 
-#: frontend/views.py:1720
+#: frontend/views.py:1725 frontend/views.py:1779
 msgid "Active customers"
 msgstr "Active customers"
 
-#: frontend/views.py:1720
+#: frontend/views.py:1725
 msgid "No customers yet"
 msgstr "No customers yet"
 
-#: frontend/views.py:1721
-msgid "Open cases"
-msgstr "Open cases"
-
-#: frontend/views.py:1721
+#: frontend/views.py:1726
 msgid "Create cases to populate data"
 msgstr "Create cases to populate data"
 
-#: frontend/views.py:1736
-msgid "Customer"
-msgstr "Customer"
+#: frontend/views.py:1778
+msgid "Last 30 days"
+msgstr ""
 
-#: frontend/views.py:1739
-msgid "CU"
-msgstr "CU"
+#: frontend/views.py:1779
+#, fuzzy
+#| msgid "Frequently asked"
+msgid "Currently engaged"
+msgstr "Frequently asked"
 
-#: frontend/views.py:1744
-msgid "—"
-msgstr "—"
+#: frontend/views.py:1780
+msgid "Customer cases awaiting action"
+msgstr ""
 
-#: frontend/views.py:2318 frontend/views.py:2691
+#: frontend/views.py:1797
+msgid "No customers added yet. Import customers or add one."
+msgstr ""
+
+#: frontend/views.py:1802
+#, fuzzy
+#| msgid "No customers yet"
+msgid "No customer selected"
+msgstr "No customers yet"
+
+#: frontend/views.py:1803
+#, fuzzy
+#| msgid "Manage your customer relationships, activity, and notes in one hub."
+msgid ""
+"Choose a customer from the table to inspect profiles, activity, and notes."
+msgstr "Manage your customer relationships, activity, and notes in one hub."
+
+#: frontend/views.py:1812 frontend/views.py:2012
+#, fuzzy
+#| msgid "Create agent"
+msgid "Active agents"
+msgstr "Create agent"
+
+#: frontend/views.py:1812
+msgid "No agents deployed yet"
+msgstr ""
+
+#: frontend/views.py:1813 frontend/views.py:2017
+#, fuzzy
+#| msgid "Satisfaction"
+msgid "Avg. satisfaction"
+msgstr "Satisfaction"
+
+#: frontend/views.py:1813
+msgid "Scores will populate once conversations start"
+msgstr ""
+
+#: frontend/views.py:1814 frontend/views.py:2022
+msgid "Automation coverage"
+msgstr ""
+
+#: frontend/views.py:1814
+msgid "Connect channels to calculate coverage"
+msgstr ""
+
+#: frontend/views.py:1856
+#, fuzzy
+#| msgid "Review now"
+msgid "Review"
+msgstr "Review now"
+
+#: frontend/views.py:1857
+#, fuzzy
+#| msgid "Proactive"
+msgid "Active"
+msgstr "Proactive"
+
+#: frontend/views.py:1858
+msgid "Paused"
+msgstr ""
+
+#: frontend/views.py:1987
+msgid "Appointments"
+msgstr ""
+
+#: frontend/views.py:1988
+#, fuzzy
+#| msgid "Escalation rule"
+msgid "Escalation"
+msgstr "Escalation rule"
+
+#: frontend/views.py:2014
+#, python-format
+msgid "%(count)s total"
+msgstr ""
+
+#: frontend/views.py:2019
+msgid "Scores populate once conversations sync"
+msgstr ""
+
+#: frontend/views.py:2024
+msgid "Cases handled by AI"
+msgstr ""
+
+#: frontend/views.py:2033
+msgid "Search name, ID, role…"
+msgstr ""
+
+#: frontend/views.py:2037
+msgid "Link a business profile to create agents."
+msgstr ""
+
+#: frontend/views.py:2040
+#, fuzzy
+#| msgid "Failed to load controls."
+msgid "Unable to load agents right now."
+msgstr "Failed to load controls."
+
+#: frontend/views.py:2043
+msgid "No agents created yet. Launch your first AI teammate to get started."
+msgstr ""
+
+#: frontend/views.py:2048
+#, fuzzy
+#| msgid "Document selector"
+msgid "No agent selected"
+msgstr "Document selector"
+
+#: frontend/views.py:2049
+msgid "Choose an agent from the cards to preview configuration and analytics."
+msgstr ""
+
+#: frontend/views.py:2052
+msgid "Sales Associate"
+msgstr ""
+
+#: frontend/views.py:2053
+msgid "Technical Specialist"
+msgstr ""
+
+#: frontend/views.py:2054
+#, fuzzy
+#| msgid "Customer Service"
+msgid "Customer Success"
+msgstr "Customer Service"
+
+#: frontend/views.py:2064
+#, fuzzy
+#| msgid "Opened"
+msgid "Open leads"
+msgstr "Opened"
+
+#: frontend/views.py:2064
+msgid "Up 0% vs last week"
+msgstr ""
+
+#: frontend/views.py:2065
+msgid "Hot leads"
+msgstr ""
+
+#: frontend/views.py:2065
+msgid "Ready for outreach"
+msgstr ""
+
+#: frontend/views.py:2066
+msgid "Avg. response SLA"
+msgstr ""
+
+#: frontend/views.py:2066
+msgid "< 3h target"
+msgstr ""
+
+#: frontend/views.py:2070
+msgid "Hot"
+msgstr ""
+
+#: frontend/views.py:2071
+msgid "Warm"
+msgstr ""
+
+#: frontend/views.py:2072
+msgid "Cold"
+msgstr ""
+
+#: frontend/views.py:2075
+msgid "New"
+msgstr ""
+
+#: frontend/views.py:2075 frontend/views.py:2076 frontend/views.py:2077
+#: frontend/views.py:2078 frontend/views.py:2079
+#, fuzzy
+#| msgid "Leads"
+msgid "0 leads"
+msgstr "Leads"
+
+#: frontend/views.py:2076
+msgid "Qualified"
+msgstr ""
+
+#: frontend/views.py:2077
+msgid "Engaged"
+msgstr ""
+
+#: frontend/views.py:2078
+#, fuzzy
+#| msgid "Notifications"
+msgid "Negotiation"
+msgstr "Notifications"
+
+#: frontend/views.py:2079
+#, fuzzy
+#| msgid "Closed"
+msgid "Closed Won"
+msgstr "Closed"
+
+#: frontend/views.py:2098
+#, fuzzy
+#| msgid "No tools match this filter."
+msgid "No leads match this view yet."
+msgstr "No tools match this filter."
+
+#: frontend/views.py:2103
+#, fuzzy
+#| msgid "Select a role"
+msgid "Select a lead"
+msgstr "Select a role"
+
+#: frontend/views.py:2104
+msgid "Choose a lead to review stage, owner activity, and history."
+msgstr ""
+
+#: frontend/views.py:2208 frontend/views.py:2469
+msgid "General"
+msgstr ""
+
+#: frontend/views.py:2335 frontend/views.py:2718
 msgid "Select a file to upload."
 msgstr "Select a file to upload."
 
-#: frontend/views.py:2377
+#: frontend/views.py:2394
 msgid "External Resource"
 msgstr "External Resource"
 
-#: frontend/views.py:2410
+#: frontend/views.py:2427
 msgid "Add content to store a manual snippet."
 msgstr "Add content to store a manual snippet."
 
-#: frontend/views.py:2411
-msgid "Manual entry"
-msgstr "Manual entry"
+#: frontend/views.py:2506
+msgid "Private"
+msgstr ""
+
+#: frontend/views.py:2519
+#, fuzzy
+#| msgid "Documents"
+msgid "Documents indexed"
+msgstr "Documents"
+
+#: frontend/views.py:2522
+msgid "Up-to-date count of synced files."
+msgstr ""
+
+#: frontend/views.py:2524
+#, fuzzy
+#| msgid "%(count)s files added to your knowledge base."
+msgid "Upload your first files to populate the knowledge base."
+msgstr "%(count)s files added to your knowledge base."
+
+#: frontend/views.py:2531
+#, fuzzy
+#| msgid "Connect Google Drive"
+msgid "Connect Google Drive, Zendesk, or custom APIs."
+msgstr "Connect Google Drive"
+
+#: frontend/views.py:2535
+msgid "Coverage"
+msgstr ""
+
+#: frontend/views.py:2537
+msgid "Coverage metrics appear once agents use knowledge."
+msgstr ""
+
+#: frontend/views.py:2541
+msgid "Sync health"
+msgstr ""
+
+#: frontend/views.py:2543
+msgid "Status updates will display after first sync."
+msgstr ""
+
+#: frontend/views.py:2589
+msgid "Search documents, tags, sources…"
+msgstr ""
+
+#: frontend/views.py:2590
+#, fuzzy
+#| msgid "Collections"
+msgid "All collections"
+msgstr "Collections"
+
+#: frontend/views.py:2592
+msgid "Link a business profile to start indexing knowledge."
+msgstr ""
+
+#: frontend/views.py:2595 frontend/views.py:2678
+#, fuzzy
+#| msgid "Unable to save the document right now. Please try again."
+msgid "Unable to load documents right now."
+msgstr "Unable to save the document right now. Please try again."
+
+#: frontend/views.py:2599
+msgid ""
+"No knowledge documents yet. Upload files or connect an integration to "
+"populate content."
+msgstr ""
+
+#: frontend/views.py:2610
+msgid ""
+"Connect a source to keep external docs and spreadsheets updated "
+"automatically."
+msgstr ""
+
+#: frontend/views.py:2617
+msgid "Group documents into collections to control agent access."
+msgstr ""
+
+#: frontend/views.py:2618 frontend/views.py:2675
+#, fuzzy
+#| msgid "Select a document…"
+msgid "Select a document"
+msgstr "Select a document…"
+
+#: frontend/views.py:2619
+msgid ""
+"Choose a document to preview summary, classification, and sync details here."
+msgstr ""
 
 #: frontend/views.py:2671
+#, fuzzy
+#| msgid "Select a document to see its ingested output."
+msgid "Upload a document to see ingestion artifacts here."
+msgstr "Select a document to see its ingested output."
+
+#: frontend/views.py:2673
+msgid "Link a business profile to inspect documents."
+msgstr ""
+
+#: frontend/views.py:2676
+#, fuzzy
+#| msgid "Select a document to see its ingested output."
+msgid "Pick a document to inspect how it was ingested and chunked."
+msgstr "Select a document to see its ingested output."
+
+#: frontend/views.py:2689
+msgid "Link a business profile before uploading knowledge."
+msgstr ""
+
+#: frontend/views.py:2698
 msgid "Select a valid knowledge type."
 msgstr "Select a valid knowledge type."
 
-#: frontend/views.py:2706
+#: frontend/views.py:2733
 msgid "Add a URL to capture this resource."
 msgstr "Add a URL to capture this resource."
 
-#: frontend/views.py:2725
+#: frontend/views.py:2752
 msgid "Unsupported knowledge type selected."
 msgstr "Unsupported knowledge type selected."
 
-#: frontend/views.py:2737
+#: frontend/views.py:2764
 msgid "Unable to save the document right now. Please try again."
 msgstr "Unable to save the document right now. Please try again."
 
-#: frontend/views.py:2751
+#: frontend/views.py:2778 frontend/views.py:2794
 #, python-format
 msgid "\"%(name)s\" added to your knowledge base."
 msgstr "\"%(name)s\" added to your knowledge base."
 
-#: frontend/views.py:2753
+#: frontend/views.py:2780 frontend/views.py:2799
 #, python-format
 msgid "%(count)s files added to your knowledge base."
 msgstr "%(count)s files added to your knowledge base."
 
-msgid "PocketAI OAuth"
+#: frontend/views.py:2809
+msgid "Link a business profile before exporting knowledge."
+msgstr ""
+
+#: frontend/views.py:2851
+msgid "Link a business profile before connecting integrations."
+msgstr ""
+
+#: frontend/views.py:2875 frontend/views.py:2877
+#, fuzzy
+#| msgid "Unable to start chat session"
+msgid "Unable to start Google authorization."
+msgstr "Unable to start chat session"
+
+#: frontend/views.py:2884
+msgid "Google returned an invalid authorization payload."
+msgstr ""
+
+#: frontend/views.py:2889
+msgid "Missing authorization URL from Google."
+msgstr ""
+
+#: frontend/views.py:2899
+#, fuzzy
+#| msgid "Connect your support channels to start streaming conversations here."
+msgid "Connect your customer channels to start measuring performance."
+msgstr "Connect your support channels to start streaming conversations here."
+
+#: frontend/views.py:2917
+#, python-format
+msgid "You have %(count)s open cases."
+msgstr ""
+
+#: frontend/views.py:2919
+msgid "All cases resolved. Great job!"
+msgstr ""
+
+#: frontend/views.py:2938 frontend/views.py:3003
+msgid "chat"
+msgstr ""
+
+#: frontend/views.py:2944
+#, fuzzy
+#| msgid "Unable to save the document right now. Please try again."
+msgid "Unable to load cases right now. Please try again shortly."
+msgstr "Unable to save the document right now. Please try again."
+
+#: frontend/views.py:2954
+msgid ""
+"No cases yet. Connect Pocket AI to your support channels to see live traffic."
+msgstr ""
+
+#: frontend/views.py:2967 frontend/views.py:2975
+#, fuzzy
+#| msgid "Chat portal not found"
+msgid "Case not found"
+msgstr "Chat portal not found"
+
+#: frontend/views.py:3009
+#, fuzzy
+#| msgid "PocketAI OAuth"
+msgid "Pocket AI"
 msgstr "PocketAI OAuth"
 
-msgid "You can close this window."
-msgstr "You can close this window."
-
-msgid "Welcome back"
-msgstr "Welcome back"
-
-msgid "Sign in to continue orchestrating your AI customer experience."
-msgstr "Sign in to continue orchestrating your AI customer experience."
-
-msgid "Email address"
-msgstr "Email address"
-
-msgid "Need to create an account?"
-msgstr "Need to create an account?"
-
-msgid "Start your onboarding"
-msgstr "Start your onboarding"
-
-msgid "Last updated:"
-msgstr "Last updated:"
-
-msgid "On this page"
-msgstr "On this page"
-
-msgid "New Customer"
-msgstr "New Customer"
-
-msgid "Import customers"
-msgstr "Import customers"
-
-msgid "Manage your customer relationships, activity, and notes in one hub."
-msgstr "Manage your customer relationships, activity, and notes in one hub."
-
-msgid "Metrics will surface once customer activity starts flowing in."
-msgstr "Metrics will surface once customer activity starts flowing in."
-
-msgid "Conversations"
-msgstr "Conversations"
-
-msgid "Satisfaction"
-msgstr "Satisfaction"
-
-msgid "Close customer details"
-msgstr "Close customer details"
-
-msgid "Nothing to show yet."
-msgstr "Nothing to show yet."
-
-msgid "No recent contact"
-msgstr "No recent contact"
-
-msgid "Overview"
-msgstr "Overview"
-
-msgid "Total cases"
-msgstr "Total cases"
-
-msgid "First seen"
-msgstr "First seen"
-
-msgid "Primary contact"
-msgstr "Primary contact"
-
-msgid "Additional contacts"
-msgstr "Additional contacts"
-
-msgid "Tags"
-msgstr "Tags"
-
-msgid "No extra contact methods."
-msgstr "No extra contact methods."
-
-msgid "No tags assigned."
-msgstr "No tags assigned."
-
-msgid "Resolved cases"
-msgstr "Resolved cases"
-
-msgid "No closed cases."
-msgstr "No closed cases."
-
-msgid "No notes yet."
-msgstr "No notes yet."
-
-msgid "No description."
-msgstr "No description."
-
-msgid "Failed to load customer"
-msgstr "Failed to load customer"
-
-msgid "Monitor pipeline momentum, accelerate hot opportunities, and keep SLAs on track."
-msgstr "Monitor pipeline momentum, accelerate hot opportunities, and keep SLAs on track."
-
-msgid "New Lead"
-msgstr "New Lead"
-
-msgid "Lead"
-msgstr "Lead"
-
-msgid "Stage"
-msgstr "Stage"
-
-msgid "Owner"
-msgstr "Owner"
-
-msgid "Source"
-msgstr "Source"
-
-msgid "Last touch"
-msgstr "Last touch"
-
-msgid "Score"
-msgstr "Score"
-
-msgid "No tags"
-msgstr "No tags"
-
-msgid "View details"
-msgstr "View details"
-
-msgid "Pipeline breakdown"
-msgstr "Pipeline breakdown"
-
-msgid "Sync CRM stages to visualise full pipeline metrics and conversion rates."
-msgstr "Sync CRM stages to visualise full pipeline metrics and conversion rates."
-
-msgid "Triage customer issues, track escalations, and keep resolution moving."
-msgstr "Triage customer issues, track escalations, and keep resolution moving."
-
-msgid "New Case"
-msgstr "New Case"
-
-msgid "Import Cases"
-msgstr "Import Cases"
-
-msgid "Urgent cases"
-msgstr "Urgent cases"
-
-msgid "Avg. time open"
-msgstr "Avg. time open"
-
-msgid "Search cases"
-msgstr "Search cases"
-
-msgid "All Cases"
-msgstr "All Cases"
-
-msgid "All types"
-msgstr "All types"
-
-msgid "All time"
-msgstr "All time"
-
-msgid "Columns"
-msgstr "Columns"
-
-msgid "Case ID"
-msgstr "Case ID"
-
-msgid "Priority"
-msgstr "Priority"
-
-msgid "Type"
-msgstr "Type"
-
-msgid "Case Title"
-msgstr "Case Title"
-
-msgid "Description"
-msgstr "Description"
-
-msgid "Channel"
-msgstr "Channel"
-
-msgid "Started"
-msgstr "Started"
-
-msgid "Transcript"
-msgstr "Transcript"
-
-msgid "View transcript"
-msgstr "View transcript"
-
-msgid "Select a case"
-msgstr "Select a case"
-
-msgid "Close case details"
-msgstr "Close case details"
-
-msgid "Actions taken"
-msgstr "Actions taken"
-
-msgid "Suggested next steps"
-msgstr "Suggested next steps"
-
-msgid "Case details unavailable"
-msgstr "Case details unavailable"
-
-msgid "Loading case details"
-msgstr "Loading case details"
-
-msgid "No summary provided."
-msgstr "No summary provided."
-
-msgid "No AI diagnosis yet."
+#: frontend/views.py:3022
+msgid "System"
+msgstr ""
+
+#: frontend/views.py:3023
+msgid "SYS"
+msgstr ""
+
+#: frontend/views.py:3078
+#, fuzzy
+#| msgid "No AI diagnosis yet."
+msgid "No diagnosis provided."
 msgstr "No AI diagnosis yet."
 
-msgid "No resolution actions captured."
-msgstr "No resolution actions captured."
-
-msgid "No suggestions available."
-msgstr "No suggestions available."
-
-msgid "No history yet."
-msgstr "No history yet."
-
-msgid "Participant"
-msgstr "Participant"
-
-msgid "No conversation messages yet."
-msgstr "No conversation messages yet."
-
-msgid "No notes on this case."
-msgstr "No notes on this case."
-
-msgid "No documents attached."
-msgstr "No documents attached."
-
-msgid "Back to cases"
-msgstr "Back to cases"
-
-msgid "Conversation transcript"
-msgstr "Conversation transcript"
-
-msgid "This case has not been linked to a conversation yet."
-msgstr "This case has not been linked to a conversation yet."
-
-msgid "Sources"
-msgstr "Sources"
-
-msgid "Case summary"
-msgstr "Case summary"
-
-msgid "Lifecycle & assignment details"
-msgstr "Lifecycle & assignment details"
-
-msgid "Opened"
-msgstr "Opened"
-
-msgid "Closed"
-msgstr "Closed"
-
-msgid "No follow-up actions captured."
-msgstr "No follow-up actions captured."
-
-msgid "No data extractions captured."
-msgstr "No data extractions captured."
-
-msgid "Create, configure, and monitor conversational agents for every channel."
-msgstr "Create, configure, and monitor conversational agents for every channel."
-
-msgid "Create agent"
-msgstr "Create agent"
-
-msgid "Metrics will surface once you start deploying agents."
-msgstr "Metrics will surface once you start deploying agents."
-
-msgid "Search agents..."
-msgstr "Search agents..."
-
-msgid "Upload documents, connect integrations, and organize collections for retrieval."
-msgstr "Upload documents, connect integrations, and organize collections for retrieval."
-
-msgid "Visualizer"
-msgstr "Visualizer"
-
-msgid "Dump JSON"
-msgstr "Dump JSON"
-
-msgid "Connect Google Drive"
-msgstr "Connect Google Drive"
-
-msgid "Documents"
-msgstr "Documents"
-
-msgid "Collections"
-msgstr "Collections"
-
-msgid "Data Guardrails"
-msgstr "Data Guardrails"
-
-msgid "Actions"
-msgstr "Actions"
-
-msgid "Sort by activity"
-msgstr "Sort by activity"
-
-msgid "New collection"
-msgstr "New collection"
-
-msgid "Add content"
-msgstr "Add content"
-
-msgid "Drop files here or upload to add knowledge"
-msgstr "Drop files here or upload to add knowledge"
-
-msgid "Supports PDF, DOCX, CSV, XLSX, and TXT. We auto-detect format."
-msgstr "Supports PDF, DOCX, CSV, XLSX, and TXT. We auto-detect format."
-
-msgid "Paste text"
-msgstr "Paste text"
-
-msgid "Add link"
-msgstr "Add link"
-
-msgid "Upload files"
-msgstr "Upload files"
-
-msgid "Uploading…"
-msgstr "Uploading…"
-
-msgid "Rename"
-msgstr "Rename"
-
-msgid "Update title"
-msgstr "Update title"
-
-msgid "Title (optional)"
-msgstr "Title (optional)"
-
-msgid "External link"
-msgstr "External link"
-
-msgid "Save to knowledge"
-msgstr "Save to knowledge"
-
-msgid "Document library"
-msgstr "Document library"
-
-msgid "Knowledge Visualizer"
-msgstr "Knowledge Visualizer"
-
-msgid "Back to Knowledge"
-msgstr "Back to Knowledge"
-
-msgid "Document selector"
-msgstr "Document selector"
-
-msgid "Choose an upload to inspect its ingestion output."
-msgstr "Choose an upload to inspect its ingestion output."
-
-msgid "total"
-msgstr "total"
-
-msgid "Select a document…"
-msgstr "Select a document…"
-
-msgid "Prev"
-msgstr "Prev"
-
-msgid "Select a document to see its ingested output."
-msgstr "Select a document to see its ingested output."
-
-msgid "Pipeline"
-msgstr "Pipeline"
-
-msgid "Connect first-party native integrations. Your credentials are encrypted and never shared."
-msgstr "Connect first-party native integrations. Your credentials are encrypted and never shared."
-
-msgid "Loading connected integrations..."
-msgstr "Loading connected integrations..."
-
-msgid "Available"
-msgstr "Available"
-
-msgid "Loading available integrations..."
-msgstr "Loading available integrations..."
-
-msgid "Looking for third-party MCP connectors?"
-msgstr "Looking for third-party MCP connectors?"
-
-msgid "MCP Connector page"
-msgstr "MCP Connector page"
-
-msgid "Manage integration tools"
-msgstr "Manage integration tools"
-
-msgid "Manage Tools"
-msgstr "Manage Tools"
-
-msgid "Loading tools..."
-msgstr "Loading tools..."
-
-msgid "Enable All"
-msgstr "Enable All"
-
-msgid "Read Only"
-msgstr "Read Only"
-
-msgid "Save Changes"
-msgstr "Save Changes"
-
-msgid "Refreshing"
-msgstr "Refreshing"
-
-msgid "Updated just now"
-msgstr "Updated just now"
-
-msgid "Refresh failed"
-msgstr "Refresh failed"
-
-msgid "Failed to load integrations:"
-msgstr "Failed to load integrations:"
-
-msgid "Tool management is not available for this integration."
-msgstr "Tool management is not available for this integration."
-
-msgid "Disconnect this integration?"
-msgstr "Disconnect this integration?"
-
-msgid "Integration disconnected successfully."
-msgstr "Integration disconnected successfully."
-
-msgid "Disconnect failed:"
-msgstr "Disconnect failed:"
-
-msgid "Unknown error"
-msgstr "Unknown error"
-
-msgid "No tools available for this integration."
+#: frontend/views.py:3089
+#, fuzzy
+#| msgid "No tools available for this integration."
+msgid "No transcript available for this case yet."
 msgstr "No tools available for this integration."
 
-msgid "Review tools exposed to the LLM and set approval behavior for connected integrations."
-msgstr "Review tools exposed to the LLM and set approval behavior for connected integrations."
-
-msgid "LLM Tool Exposure"
-msgstr "LLM Tool Exposure"
-
-msgid "Loading controls…"
-msgstr "Loading controls…"
-
-msgid "No tools match this filter."
-msgstr "No tools match this filter."
-
-msgid "Always confirm"
-msgstr "Always confirm"
-
-msgid "Unsaved change"
-msgstr "Unsaved change"
-
-msgid "Failed to load controls."
-msgstr "Failed to load controls."
-
-msgid "Tool controls updated."
-msgstr "Tool controls updated."
-
-msgid "Failed to save controls."
-msgstr "Failed to save controls."
-
-msgid "MCP Connector (BETA)"
-msgstr "MCP Connector (BETA)"
-
-msgid "Connect MCP servers, toggle them on/off, and control which agents can use them."
-msgstr "Connect MCP servers, toggle them on/off, and control which agents can use them."
-
-msgid "Browse marketplace"
-msgstr "Browse marketplace"
-
-msgid "Add MCP server"
-msgstr "Add MCP server"
-
-msgid "Industry Tools"
-msgstr "Industry Tools"
-
-msgid "All MCPs"
-msgstr "All MCPs"
-
-msgid "Recommended for"
-msgstr "Recommended for"
-
-msgid "your industry"
-msgstr "your industry"
-
-msgid "Tools commonly used by businesses in your industry. Click to add."
-msgstr "Tools commonly used by businesses in your industry. Click to add."
-
-msgid "Common Tools"
-msgstr "Common Tools"
-
-msgid "Universal tools used across all industries."
-msgstr "Universal tools used across all industries."
-
-msgid "All Available MCPs"
-msgstr "All Available MCPs"
-
-msgid "Browse all MCP integrations. Filter by category or search."
-msgstr "Browse all MCP integrations. Filter by category or search."
-
-msgid "Search MCPs..."
-msgstr "Search MCPs..."
-
-msgid "Your Connected MCPs"
-msgstr "Your Connected MCPs"
-
-msgid "Enable/disable connections, test connectivity, and manage agent opt-outs."
-msgstr "Enable/disable connections, test connectivity, and manage agent opt-outs."
-
-msgid "Loading MCP connections…"
-msgstr "Loading MCP connections…"
-
-msgid "SSE/HTTP remote MCP servers only."
-msgstr "SSE/HTTP remote MCP servers only."
-
-msgid "Auth"
-msgstr "Auth"
-
-msgid "No auth"
-msgstr "No auth"
-
-msgid "Custom header"
-msgstr "Custom header"
-
-msgid "Tool Approval"
-msgstr "Tool Approval"
-
-msgid "Auto-approve all"
-msgstr "Auto-approve all"
-
-msgid "Approve writes only"
-msgstr "Approve writes only"
-
-msgid "Approve all operations"
-msgstr "Approve all operations"
-
-msgid "Enabled"
-msgstr "Enabled"
-
-msgid "Header name"
-msgstr "Header name"
-
-msgid "Header value"
-msgstr "Header value"
-
-msgid "Test connection"
-msgstr "Test connection"
-
-msgid "Agent access"
-msgstr "Agent access"
-
-msgid "Opt out specific agents while keeping others enabled."
-msgstr "Opt out specific agents while keeping others enabled."
-
-msgid "Done"
-msgstr "Done"
-
-msgid "Tool approvals"
-msgstr "Tool approvals"
-
-msgid "Set per-tool approvals and operation type for this MCP connection."
-msgstr "Set per-tool approvals and operation type for this MCP connection."
-
-msgid "Voice Calling Providers"
-msgstr "Voice Calling Providers"
-
-msgid "Configure tenant-owned transport providers and monitor platform-managed voice services."
-msgstr "Configure tenant-owned transport providers and monitor platform-managed voice services."
-
-msgid "How this works"
-msgstr "How this works"
-
-msgid "Each workspace stores its own encrypted transport credentials (Twilio/Telnyx)."
-msgstr "Each workspace stores its own encrypted transport credentials (Twilio/Telnyx)."
-
-msgid "Pick exactly one active outbound transport provider when multiple are configured."
-msgstr "Pick exactly one active outbound transport provider when multiple are configured."
-
-msgid "Deepgram and ElevenLabs are managed centrally by the platform."
-msgstr "Deepgram and ElevenLabs are managed centrally by the platform."
-
-msgid "Use “Test” after setup to validate credentials before live calls."
-msgstr "Use “Test” after setup to validate credentials before live calls."
-
-msgid "Loading providers…"
-msgstr "Loading providers…"
-
-msgid "Configure provider"
-msgstr "Configure provider"
-
-msgid "Store encrypted tenant credentials."
-msgstr "Store encrypted tenant credentials."
-
-msgid "Enable this provider for this workspace"
-msgstr "Enable this provider for this workspace"
-
-msgid "Set as active outbound transport provider"
-msgstr "Set as active outbound transport provider"
-
-msgid "AI Powered"
-msgstr "AI Powered"
-
-msgid "Customer Service"
-msgstr "Customer Service"
-
-msgid "Start Free Trial"
-msgstr "Start Free Trial"
-
-msgid "Watch Demo"
-msgstr "Watch Demo"
-
-msgid "Faster Response"
-msgstr "Faster Response"
-
-msgid "Happy Customers"
-msgstr "Happy Customers"
-
-msgid "Online"
-msgstr "Online"
-
-msgid "This is a demo - try the real widget below! →"
-msgstr "This is a demo - try the real widget below! →"
-
-msgid "Everything You Need for"
-msgstr "Everything You Need for"
-
-msgid "Perfect Support"
-msgstr "Perfect Support"
-
-msgid "Customers who"
-msgstr "Customers who"
-
-msgid "build differently"
-msgstr "build differently"
-
-msgid "Trusted by"
-msgstr "Trusted by"
-
-msgid "Flexible pricing"
-msgstr "Flexible pricing"
-
-msgid "Choose what fits "
-msgstr "Choose what fits "
-
-msgid "your motion"
-msgstr "your motion"
-
-msgid "Wage based"
-msgstr "Wage based"
-
-msgid "Packages"
-msgstr "Packages"
-
-msgid "One-time setup (self-hosted)"
-msgstr "One-time setup (self-hosted)"
-
-msgid "Frequently asked"
-msgstr "Frequently asked"
-
-msgid "questions"
-msgstr "questions"
-
-msgid "Create your"
-msgstr "Create your"
-
-msgid "Your clients, served better."
-msgstr "Your clients, served better."
-
-msgid "OR"
-msgstr "OR"
-
-msgid "Continue with Google"
-msgstr "Continue with Google"
-
-msgid "Create Account"
-msgstr "Create Account"
-
-msgid "Creating..."
-msgstr "Creating..."
-
-msgid "First name"
-msgstr "First name"
-
-msgid "First name is required"
-msgstr "First name is required"
-
-msgid "Please enter a valid email"
-msgstr "Please enter a valid email"
-
-msgid "Password must be at least 8 characters"
-msgstr "Password must be at least 8 characters"
-
-msgid "Confirm password"
-msgstr "Confirm password"
-
-msgid "Passwords do not match"
-msgstr "Passwords do not match"
-
-msgid "Already have an account?"
-msgstr "Already have an account?"
-
-msgid "Log in"
-msgstr "Log in"
-
-msgid "Business Profile"
-msgstr "Business Profile"
-
-msgid "Step 2 · Business profile"
-msgstr "Step 2 · Business profile"
-
-msgid "Help us understand your business"
-msgstr "Help us understand your business"
-
-msgid "Business name"
-msgstr "Business name"
-
-msgid "Business name is required"
-msgstr "Business name is required"
-
-msgid "Website"
-msgstr "Website"
-
-msgid "(optional)"
-msgstr "(optional)"
-
-msgid "Back"
-msgstr "Back"
-
-msgid "Next"
-msgstr "Next"
-
-msgid "Saving..."
-msgstr "Saving..."
-
-msgid "Add"
-msgstr "Add"
-
-msgid "Agent"
-msgstr "Agent"
-
-msgid "Set up your agent basics"
-msgstr "Set up your agent basics"
-
-msgid "Agent name"
-msgstr "Agent name"
-
-msgid "Please enter an agent name"
-msgstr "Please enter an agent name"
-
-msgid "Role"
-msgstr "Role"
-
-msgid "Select a role"
-msgstr "Select a role"
-
-msgid "Please select a role"
-msgstr "Please select a role"
-
-msgid "Tone"
-msgstr "Tone"
-
-msgid "Select tone"
-msgstr "Select tone"
-
-msgid "Please choose a tone"
-msgstr "Please choose a tone"
-
-msgid "Traits"
-msgstr "Traits"
-
-msgid "Pick as many as you like"
-msgstr "Pick as many as you like"
-
-msgid "Escalation rule"
-msgstr "Escalation rule"
-
-msgid "Choose escalation rule"
-msgstr "Choose escalation rule"
-
-msgid "Please choose when to escalate"
-msgstr "Please choose when to escalate"
-
-msgid "Uploads"
-msgstr "Uploads"
-
-msgid "Select at least one material above to start adding links."
-msgstr "Select at least one material above to start adding links."
-
-msgid "Attach"
-msgstr "Attach"
-
-msgid "added"
-msgstr "added"
-
-msgid "Select at least one material to continue"
-msgstr "Select at least one material to continue"
-
-msgid "Add at least one link for each selected source"
-msgstr "Add at least one link for each selected source"
-
-msgid "Upload later"
-msgstr "Upload later"
-
-msgid "Finish"
-msgstr "Finish"
-
-msgid "Finishing…"
-msgstr "Finishing…"
-
-msgid "Customer Support Agent"
-msgstr "Customer Support Agent"
-
-msgid "Support Specialist"
-msgstr "Support Specialist"
-
-msgid "Customer Success Representative"
-msgstr "Customer Success Representative"
-
-msgid "Sales Support Agent"
-msgstr "Sales Support Agent"
-
-msgid "Front Desk Representative"
-msgstr "Front Desk Representative"
-
-msgid "Account Manager"
-msgstr "Account Manager"
-
-msgid "Helpdesk Agent"
-msgstr "Helpdesk Agent"
-
-msgid "Friendly"
-msgstr "Friendly"
-
-msgid "Professional"
-msgstr "Professional"
-
-msgid "Casual"
-msgstr "Casual"
-
-msgid "Formal"
-msgstr "Formal"
-
-msgid "Empathetic"
-msgstr "Empathetic"
-
-msgid "Playful"
-msgstr "Playful"
-
-msgid "Concise"
-msgstr "Concise"
-
-msgid "Detailed"
-msgstr "Detailed"
-
-msgid "Curious"
-msgstr "Curious"
-
-msgid "Patient"
-msgstr "Patient"
-
-msgid "Proactive"
-msgstr "Proactive"
-
-msgid "Direct"
-msgstr "Direct"
-
-msgid "Creative"
-msgstr "Creative"
-
-msgid "Never"
-msgstr "Never"
-
-msgid "On fallback"
-msgstr "On fallback"
-
-msgid "On negative sentiment"
-msgstr "On negative sentiment"
-
-msgid "On high value"
-msgstr "On high value"
-
-msgid "Always"
-msgstr "Always"
-
-msgid "Vision"
-msgstr "Vision"
-
-msgid "Mission"
-msgstr "Mission"
-
-msgid "FAQs"
-msgstr "FAQs"
-
-msgid "Knowledge Base"
-msgstr "Knowledge Base"
-
-msgid "SOPs"
-msgstr "SOPs"
-
-msgid "T&C"
-msgstr "T&C"
-
-msgid "Products & Services"
-msgstr "Products & Services"
+#: pocketai/settings.py:2034
+msgid "Arabic"
+msgstr "Arabic"
+
+#, fuzzy
+#~| msgid "Satisfaction"
+#~ msgid "Syndication"
+#~ msgstr "Satisfaction"
+
+#, fuzzy
+#~| msgid "—"
+#~ msgid "…"
+#~ msgstr "—"
+
+#, fuzzy
+#~| msgid "Please enter a valid email"
+#~ msgid "Enter a valid value."
+#~ msgstr "Please enter a valid email"
+
+#, fuzzy
+#~| msgid "Please enter a valid email"
+#~ msgid "Enter a valid domain name."
+#~ msgstr "Please enter a valid email"
+
+#, fuzzy
+#~| msgid "Please enter a valid email"
+#~ msgid "Enter a valid email address."
+#~ msgstr "Please enter a valid email"
+
+#, fuzzy
+#~| msgid "Extractions"
+#~ msgid "Duration"
+#~ msgstr "Extractions"
+
+#, fuzzy
+#~| msgid "File Upload"
+#~ msgid "File path"
+#~ msgstr "File Upload"
+
+#, fuzzy
+#~| msgid "Integrations"
+#~ msgid "Integer"
+#~ msgstr "Integrations"
+
+#, fuzzy
+#~| msgid "Email address"
+#~ msgid "IPv4 address"
+#~ msgstr "Email address"
+
+#, fuzzy
+#~| msgid "Email address"
+#~ msgid "IP address"
+#~ msgstr "Email address"
+
+#, fuzzy
+#~| msgid "First name is required"
+#~ msgid "This field is required."
+#~ msgstr "First name is required"
+
+#, fuzzy
+#~| msgid "Please enter a valid email"
+#~ msgid "Enter a valid date."
+#~ msgstr "Please enter a valid email"
+
+#, fuzzy
+#~| msgid "Please enter a valid email"
+#~ msgid "Enter a valid time."
+#~ msgstr "Please enter a valid email"
+
+#, fuzzy
+#~| msgid "Please enter a valid email"
+#~ msgid "Enter a valid date/time."
+#~ msgstr "Please enter a valid email"
+
+#, fuzzy
+#~| msgid "Please enter a valid email"
+#~ msgid "Enter a valid duration."
+#~ msgstr "Please enter a valid email"
+
+#, fuzzy
+#~| msgid "Changelog"
+#~ msgid "Change"
+#~ msgstr "Changelog"
+
+#, fuzzy
+#~| msgid "Unknown error"
+#~ msgid "Unknown"
+#~ msgstr "Unknown error"
+
+#, fuzzy
+#~| msgid "Mission"
+#~ msgid "Mon"
+#~ msgstr "Mission"
+
+#, fuzzy
+#~| msgid "Status"
+#~ msgid "Sat"
+#~ msgstr "Status"
+
+#, fuzzy
+#~| msgid "Manual Entry"
+#~ msgid "January"
+#~ msgstr "Manual Entry"
+
+#, fuzzy
+#~| msgid "Company"
+#~ msgid "may"
+#~ msgstr "Company"
+
+#, fuzzy
+#~| msgid "Contact"
+#~ msgid "oct"
+#~ msgstr "Contact"
+
+#, fuzzy
+#~| msgid "Manual Entry"
+#~ msgctxt "alt. month"
+#~ msgid "January"
+#~ msgstr "Manual Entry"
+
+#, fuzzy
+#~| msgid "API Documentation"
+#~ msgid "Django Documentation"
+#~ msgstr "API Documentation"
+
+#, fuzzy
+#~| msgid "Community"
+#~ msgid "Django Community"
+#~ msgstr "Community"
+
+#, fuzzy
+#~| msgid "Columns"
+#~ msgid "Column"
+#~ msgstr "Columns"

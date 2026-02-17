@@ -57,7 +57,7 @@
             <svg class="rtl-search-icon absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.35-4.35m0 0A7.5 7.5 0 1 0 6.5 6.5a7.5 7.5 0 0 0 10.15 10.15Z" />
             </svg>
-            <input type="search" class="rtl-search-input h-10 w-full rounded-md border border-border/60 bg-muted/70 pl-9 pr-3 text-sm focus-visible:border-border focus-visible:outline-none focus-visible:ring-0" placeholder="{{ leads_filters.search_placeholder|default:'Search lead, company, or tag' }}" autocomplete="off" data-search-ready="true">
+            <input type="search" class="rtl-search-input h-10 w-full rounded-md border border-border/60 bg-muted/70 pl-9 pr-3 text-sm focus-visible:border-border focus-visible:outline-none focus-visible:ring-0" placeholder="{% if leads_filters.search_placeholder %}{{ leads_filters.search_placeholder }}{% else %}{% trans 'Search lead, company, or tag' %}{% endif %}" autocomplete="off" data-search-ready="true">
           </div>
         </div>
         <div class="flex flex-wrap items-center gap-2">
@@ -66,7 +66,7 @@
               <path stroke-linecap="round" stroke-linejoin="round" d="M3 7.5A2.25 2.25 0 0 1 5.25 5h13.5A2.25 2.25 0 0 1 21 7.5v9A2.25 2.25 0 0 1 18.75 18.75H5.25A2.25 2.25 0 0 1 3 16.5v-9Z" />
               <path stroke-linecap="round" stroke-linejoin="round" d="M3 9h18" />
             </svg>
-            <span>{{ leads_filters.stage_label|default:"All stages" }}</span>
+            <span>{% if leads_filters.stage_label %}{{ leads_filters.stage_label }}{% else %}{% trans "All stages" %}{% endif %}</span>
             <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20" stroke-width="1.5" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" d="m6 8 4 4 4-4" />
             </svg>
@@ -75,7 +75,7 @@
             <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-11a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V4Z" />
             </svg>
-            <span>{{ leads_filters.range_label|default:"Last 14 days" }}</span>
+            <span>{% if leads_filters.range_label %}{{ leads_filters.range_label }}{% else %}{% trans "Last 14 days" %}{% endif %}</span>
             <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20" stroke-width="1.5" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" d="m6 8 4 4 4-4" />
             </svg>
@@ -84,7 +84,7 @@
             <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.25h13.5M4.5 9h15M7.5 12h9m-5.25 3h1.5M12 20.25a8.25 8.25 0 0 0 0-16.5" />
             </svg>
-            <span>{{ leads_filters.owner_label|default:"All owners" }}</span>
+            <span>{% if leads_filters.owner_label %}{{ leads_filters.owner_label }}{% else %}{% trans "All owners" %}{% endif %}</span>
             <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20" stroke-width="1.5" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" d="m6 8 4 4 4-4" />
             </svg>

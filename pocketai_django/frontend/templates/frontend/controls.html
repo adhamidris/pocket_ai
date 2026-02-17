@@ -279,6 +279,12 @@
     toolExposedToRuntime: "{% trans 'Tool exposed to the LLM runtime.' %}",
     integration: "{% trans 'Integration' %}",
     internalTool: "{% trans 'Internal tool' %}",
+    core: "{% trans 'Core' %}",
+    native: "{% trans 'Native' %}",
+    mcpGateway: "{% trans 'MCP gateway' %}",
+    mcp: "{% trans 'MCP' %}",
+    type: "{% trans 'Type' %}",
+    approval: "{% trans 'Approval' %}",
     exposed: "{% trans 'Exposed' %}",
     auto: "{% trans 'Auto' %}",
     alwaysConfirm: "{% trans 'Always confirm' %}",
@@ -288,6 +294,7 @@
     noEditableChanges: "{% trans 'No editable changes to save.' %}",
     toolControlsUpdated: "{% trans 'Tool controls updated.' %}",
     failedToSaveControls: "{% trans 'Failed to save controls.' %}",
+    error: "{% trans 'Error' %}",
   };
 
   function escapeHtml(value) {
@@ -376,10 +383,10 @@
       return String(item.connectionName || "").trim();
     }
     const rawType = String((item && item.integrationType) || "").trim().toLowerCase();
-    if (!rawType || rawType === "internal") return "Core";
-    if (rawType === "integration") return "Native";
-    if (rawType === "mcp_gateway") return "MCP gateway";
-    if (rawType === "mcp_connection") return "MCP";
+    if (!rawType || rawType === "internal") return I18N.core;
+    if (rawType === "integration") return I18N.native;
+    if (rawType === "mcp_gateway") return I18N.mcpGateway;
+    if (rawType === "mcp_connection") return I18N.mcp;
     return rawType.replace(/_/g, " ").toUpperCase();
   }
 
@@ -449,7 +456,7 @@
       return `
         <div class="ctrl-row" data-controls-row="${escapeHtml(item.id)}">
           <div>
-            <div class="ctrl-cell-label">Tool</div>
+            <div class="ctrl-cell-label">${escapeHtml(I18N.tool)}</div>
             <div class="ctrl-title">${escapeHtml(item.label || item.toolName || I18N.tool)}</div>
             <div class="ctrl-desc">${escapeHtml(item.description || I18N.toolExposedToRuntime)}</div>
             <div class="ctrl-meta">
@@ -459,15 +466,15 @@
             </div>
           </div>
           <div>
-            <div class="ctrl-cell-label">Type</div>
+            <div class="ctrl-cell-label">${escapeHtml(I18N.type)}</div>
             <div class="text-sm text-foreground">${escapeHtml(item.sourceType === "integration" ? I18N.integration : I18N.internalTool)}</div>
           </div>
           <div>
-            <div class="ctrl-cell-label">Exposed</div>
+            <div class="ctrl-cell-label">${escapeHtml(I18N.exposed)}</div>
             <span class="ctrl-chip integration">${escapeHtml(I18N.exposed)}</span>
           </div>
           <div>
-            <div class="ctrl-cell-label">Approval</div>
+            <div class="ctrl-cell-label">${escapeHtml(I18N.approval)}</div>
             <div class="ctrl-approval-toggle ${editable ? "" : "is-disabled"}" data-active-mode="${mode}">
               <button
                 type="button"
@@ -553,7 +560,7 @@
     } catch (err) {
       loadError = err;
       if (listEl) {
-        listEl.innerHTML = '<div class="p-6 text-sm text-destructive">' + escapeHtml(I18N.failedToLoadControlsPrefix) + " " + escapeHtml(err.message || "Error") + "</div>";
+        listEl.innerHTML = '<div class="p-6 text-sm text-destructive">' + escapeHtml(I18N.failedToLoadControlsPrefix) + " " + escapeHtml(err.message || I18N.error) + "</div>";
       }
       showFlash(err.message || I18N.failedToLoadControls, "error");
       if (isManual) {

@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: pocketai-web\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-02-16 18:34+0000\n"
+"POT-Creation-Date: 2026-02-17 13:36+0000\n"
 "PO-Revision-Date: 2026-02-16 18:34+0000\n"
 "Last-Translator: Pocket AI Team\n"
 "Language-Team: Arabic\n"
@@ -17,6 +17,7 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=6; plural=n==0 ? 0 : n==1 ? 1 : n==2 ? 2 : n%100>=3 "
 "&& n%100<=10 ? 3 : n%100>=11 && n%100<=99 ? 4 : 5;\n"
+
 #: apps/accounts/views.py:103
 msgid "Email and password are required."
 msgstr "البريد الإلكتروني وكلمة المرور مطلوبان."
@@ -29,58 +30,73 @@ msgstr "البريد الإلكتروني أو كلمة المرور غير صح
 msgid "This account is inactive. Contact support for help."
 msgstr "هذا الحساب غير نشط. تواصل مع الدعم للمساعدة."
 
-#: frontend/context_processors.py:45 frontend/context_processors.py:97
+#: apps/api/email_oauth.py:76 apps/api/integration_oauth.py:76
+#: apps/api/oauth.py:120
+msgid "PocketAI OAuth"
+msgstr "تفويض PocketAI"
+
+#: apps/api/email_oauth.py:77 apps/api/integration_oauth.py:77
+#: apps/api/oauth.py:121
+msgid "You can close this window."
+msgstr "يمكنك إغلاق هذه النافذة."
+
+#: frontend/context_processors.py:46 frontend/context_processors.py:106
 msgid "Features"
 msgstr "المزايا"
 
-#: frontend/context_processors.py:46 frontend/context_processors.py:98
+#: frontend/context_processors.py:47 frontend/context_processors.py:107
 msgid "Pricing"
 msgstr "الأسعار"
 
-#: frontend/context_processors.py:47
+#: frontend/context_processors.py:48
 msgid "About"
 msgstr "نبذة"
 
-#: frontend/context_processors.py:48 frontend/context_processors.py:108
+#: frontend/context_processors.py:49 frontend/context_processors.py:117
 msgid "Contact"
 msgstr "تواصل معنا"
 
-#: frontend/context_processors.py:56
+#: frontend/context_processors.py:57
 #: frontend/templates/frontend/components/dashboard/sidebar.html:94
 msgid "Dashboard"
 msgstr "لوحة التحكم"
 
-#: frontend/context_processors.py:61
+#: frontend/context_processors.py:62
 #, python-format
 msgid "Hi, %(name)s"
 msgstr "مرحبًا، %(name)s"
 
-#: frontend/context_processors.py:66
+#: frontend/context_processors.py:67
 #: frontend/templates/frontend/components/dashboard/sidebar.html:353
 msgid "Log out"
 msgstr "تسجيل الخروج"
 
-#: frontend/context_processors.py:75
+#: frontend/context_processors.py:76 frontend/templates/frontend/login.html:4
+#: frontend/templates/frontend/login.html:61
 msgid "Sign In"
 msgstr "تسجيل الدخول"
 
-#: frontend/context_processors.py:80
+#: frontend/context_processors.py:81
 msgid "Register"
 msgstr "إنشاء حساب"
 
-#: frontend/context_processors.py:81
+#: frontend/context_processors.py:82
 msgid "Get Started"
 msgstr "ابدأ الآن"
 
-#: frontend/context_processors.py:86
+#: frontend/context_processors.py:91 pocketai/settings.py:2031
+msgid "English"
+msgstr "الإنجليزية"
+
+#: frontend/context_processors.py:95
 msgid "AI Customer Service Platform"
 msgstr "منصة خدمة عملاء بالذكاء الاصطناعي"
 
-#: frontend/context_processors.py:90
+#: frontend/context_processors.py:99 frontend/views.py:453
 msgid "AI Support"
 msgstr "دعم الذكاء الاصطناعي"
 
-#: frontend/context_processors.py:92
+#: frontend/context_processors.py:101
 msgid ""
 "Transforming customer service with intelligent AI solutions. Deliver "
 "exceptional support experiences that delight your customers and grow your "
@@ -89,138 +105,731 @@ msgstr ""
 "نحوّل خدمة العملاء بحلول ذكاء اصطناعي ذكية. قدّم تجارب دعم استثنائية تُسعد "
 "عملاءك وتُنمّي أعمالك."
 
-#: frontend/context_processors.py:96
+#: frontend/context_processors.py:105
 msgid "Product"
 msgstr "المنتج"
 
-#: frontend/context_processors.py:99
+#: frontend/context_processors.py:108
 msgid "API Documentation"
 msgstr "توثيق واجهة البرمجة"
 
-#: frontend/context_processors.py:100
+#: frontend/context_processors.py:109
 #: frontend/templates/frontend/components/dashboard/sidebar.html:183
 #: frontend/templates/frontend/components/dashboard/sidebar.html:188
+#: frontend/templates/frontend/integrations.html:4
+#: frontend/templates/frontend/integrations.html:13
+#: frontend/templates/frontend/knowledge.html:112 frontend/views.py:2529
 msgid "Integrations"
 msgstr "التكاملات"
 
-#: frontend/context_processors.py:101
+#: frontend/context_processors.py:110
 msgid "Security"
 msgstr "الأمان"
 
-#: frontend/context_processors.py:103
+#: frontend/context_processors.py:112
+#: frontend/templates/frontend/leads.html:175
 msgid "Company"
 msgstr "الشركة"
 
-#: frontend/context_processors.py:104
+#: frontend/context_processors.py:113
 msgid "About Us"
 msgstr "من نحن"
 
-#: frontend/context_processors.py:105
+#: frontend/context_processors.py:114
 msgid "Careers"
 msgstr "الوظائف"
 
-#: frontend/context_processors.py:106
+#: frontend/context_processors.py:115
 msgid "Press"
 msgstr "الأخبار الصحفية"
 
-#: frontend/context_processors.py:107
+#: frontend/context_processors.py:116
 msgid "Blog"
 msgstr "المدونة"
 
-#: frontend/context_processors.py:110
+#: frontend/context_processors.py:119
+#: frontend/templates/frontend/knowledge.html:504
+#: frontend/templates/frontend/knowledge.html:591
 msgid "Resources"
 msgstr "الموارد"
 
-#: frontend/context_processors.py:111
+#: frontend/context_processors.py:120
 msgid "Help Center"
 msgstr "مركز المساعدة"
 
-#: frontend/context_processors.py:112
+#: frontend/context_processors.py:121
 msgid "Community"
 msgstr "المجتمع"
 
-#: frontend/context_processors.py:113
+#: frontend/context_processors.py:122
 msgid "Guides"
 msgstr "الأدلة"
 
-#: frontend/context_processors.py:114
+#: frontend/context_processors.py:123
+#: frontend/templates/frontend/cases.html:155
+#: frontend/templates/frontend/knowledge.html:283
 msgid "Status"
 msgstr "الحالة"
 
-#: frontend/context_processors.py:115
+#: frontend/context_processors.py:124
 msgid "Changelog"
 msgstr "سجل التغييرات"
 
-#: frontend/context_processors.py:117
+#: frontend/context_processors.py:126
 msgid "Legal"
 msgstr "الشؤون القانونية"
 
-#: frontend/context_processors.py:118 frontend/context_processors.py:133
+#: frontend/context_processors.py:127 frontend/context_processors.py:142
 msgid "Privacy Policy"
 msgstr "سياسة الخصوصية"
 
-#: frontend/context_processors.py:119 frontend/context_processors.py:134
+#: frontend/context_processors.py:128 frontend/context_processors.py:143
 msgid "Terms of Service"
 msgstr "شروط الخدمة"
 
-#: frontend/context_processors.py:120
+#: frontend/context_processors.py:129
 msgid "GDPR"
 msgstr "اللائحة العامة لحماية البيانات"
 
-#: frontend/context_processors.py:121
+#: frontend/context_processors.py:130
 msgid "Compliance"
 msgstr "الامتثال"
 
-#: frontend/context_processors.py:122
+#: frontend/context_processors.py:131
 msgid "Cookies"
 msgstr "ملفات تعريف الارتباط"
 
-#: frontend/context_processors.py:126
+#: frontend/context_processors.py:135
 msgid "Twitter"
 msgstr "تويتر"
 
-#: frontend/context_processors.py:127
+#: frontend/context_processors.py:136
 msgid "LinkedIn"
 msgstr "لينكدإن"
 
-#: frontend/context_processors.py:128
+#: frontend/context_processors.py:137
 msgid "GitHub"
 msgstr "GitHub"
 
-#: frontend/context_processors.py:129
+#: frontend/context_processors.py:138
+#: frontend/templates/frontend/customers.html:134 frontend/views.py:1262
 msgid "Email"
 msgstr "البريد الإلكتروني"
 
-#: frontend/context_processors.py:132
+#: frontend/context_processors.py:141
 msgid "© 2024 AI Support. All rights reserved."
 msgstr "© 2024 دعم الذكاء الاصطناعي. جميع الحقوق محفوظة."
 
-#: frontend/context_processors.py:135
+#: frontend/context_processors.py:144
 msgid "Cookie Policy"
 msgstr "سياسة ملفات تعريف الارتباط"
 
-#: frontend/context_processors.py:139
+#: frontend/context_processors.py:148
 #: frontend/templates/frontend/components/dashboard/sidebar.html:304
 msgid "Language"
 msgstr "اللغة"
 
-#: frontend/context_processors.py:141 pocketai/settings.py:2027
-msgid "English"
-msgstr "الإنجليزية"
-
-#: frontend/context_processors.py:142 pocketai/settings.py:2028
-msgid "Arabic"
-msgstr "العربية"
-
-#: frontend/context_processors.py:146
+#: frontend/context_processors.py:152
 #: frontend/templates/frontend/components/dashboard/sidebar.html:328
 msgid "Light mode"
 msgstr "الوضع الفاتح"
 
-#: frontend/context_processors.py:147
+#: frontend/context_processors.py:153
 #: frontend/templates/frontend/components/dashboard/sidebar.html:329
 msgid "Dark mode"
 msgstr "الوضع الداكن"
+
+#: frontend/templates/frontend/agents.html:4
+#: frontend/templates/frontend/agents.html:13
+#: frontend/templates/frontend/components/dashboard/sidebar.html:162
+#: frontend/templates/frontend/components/dashboard/sidebar.html:168
+msgid "Agents"
+msgstr "الوكلاء"
+
+#: frontend/templates/frontend/agents.html:14
+msgid "Create, configure, and monitor conversational agents for every channel."
+msgstr "أنشئ واضبط وراقب وكلاء المحادثة لكل قناة."
+
+#: frontend/templates/frontend/agents.html:25
+msgid "Create agent"
+msgstr "إنشاء وكيل"
+
+#: frontend/templates/frontend/agents.html:44
+msgid "Metrics will surface once you start deploying agents."
+msgstr "ستظهر المقاييس عند بدء نشر الوكلاء."
+
+#: frontend/templates/frontend/agents.html:59
+msgid "Search agents..."
+msgstr "ابحث عن الوكلاء..."
+
+#: frontend/templates/frontend/agents.html:77 frontend/views.py:2034
+#, fuzzy
+#| msgid "All Cases"
+msgid "All statuses"
+msgstr "كل الحالات"
+
+#: frontend/templates/frontend/agents.html:89
+#: frontend/templates/frontend/customers.html:118
+#, python-format
+msgid "Page size: %(limit)s"
+msgstr "حجم الصفحة: %(limit)s"
+
+#: frontend/templates/frontend/agents.html:148
+#: frontend/templates/frontend/agents.html:173
+#, fuzzy
+#| msgid "Create agent"
+msgid "Unnamed agent"
+msgstr "وكيل بدون اسم"
+
+#: frontend/templates/frontend/agents.html:152
+#: frontend/templates/frontend/agents.html:188 frontend/views.py:1855
+#: frontend/views.py:1863
+msgid "Draft"
+msgstr "مسودة"
+
+#: frontend/templates/frontend/agents.html:153
+#: frontend/templates/frontend/agents.html:175 frontend/views.py:2051
+#, fuzzy
+#| msgid "Sales Support Agent"
+msgid "Support Agent"
+msgstr "وكيل دعم المبيعات"
+
+#: frontend/templates/frontend/agents.html:197
+#: frontend/templates/frontend/components/dashboard/sidebar.html:173
+#: frontend/templates/frontend/components/dashboard/sidebar.html:178
+#: frontend/templates/frontend/knowledge.html:4
+#: frontend/templates/frontend/knowledge.html:58 frontend/views.py:428
+#: frontend/views.py:1364 frontend/views.py:1983
+msgid "Knowledge"
+msgstr "المعرفة"
+
+#: frontend/templates/frontend/agents.html:200
+#, fuzzy
+#| msgid "Mission"
+msgid "Missing"
+msgstr "الرسالة"
+
+#: frontend/templates/frontend/agents.html:202
+#, fuzzy
+#| msgid "Select tone"
+msgid "Selected"
+msgstr "اختر النبرة"
+
+#: frontend/templates/frontend/agents.html:205
+#, fuzzy
+#| msgid "All MCPs"
+msgid "All docs"
+msgstr "كل موصلات MCP"
+
+#: frontend/templates/frontend/agents.html:211
+#, fuzzy
+#| msgid "No documents attached."
+msgid "No docs attached"
+msgstr "لا توجد مستندات مرفقة."
+
+#: frontend/templates/frontend/agents.html:213
+#, fuzzy, python-format
+#| msgid "Disconnect failed:"
+msgid "%(count)s failed"
+msgstr "فشل الفصل:"
+
+#: frontend/templates/frontend/agents.html:215
+#, python-format
+msgid "%(count)s processing"
+msgstr ""
+
+#: frontend/templates/frontend/agents.html:217
+msgid "Up to date"
+msgstr ""
+
+#: frontend/templates/frontend/agents.html:222
+msgid "Tools"
+msgstr ""
+
+#: frontend/templates/frontend/agents.html:225
+#, fuzzy
+#| msgid "Enabled"
+msgid "enabled"
+msgstr "مفعّل"
+
+#: frontend/templates/frontend/agents.html:229
+#, python-format
+msgid " +%(count)s more"
+msgstr ""
+
+#: frontend/templates/frontend/agents.html:231
+msgid "No tools enabled"
+msgstr ""
+
+#: frontend/templates/frontend/agents.html:240
+msgid "Chat link ready"
+msgstr ""
+
+#: frontend/templates/frontend/agents.html:242
+msgid "Not published"
+msgstr ""
+
+#: frontend/templates/frontend/agents.html:246
+#, fuzzy
+#| msgid "Escalation monitor"
+msgid "Escalation on"
+msgstr "مراقبة التصعيد"
+
+#: frontend/templates/frontend/agents.html:256
+msgid "Copy link"
+msgstr ""
+
+#: frontend/templates/frontend/agents.html:259
+#: frontend/templates/frontend/cases.html:640
+#, fuzzy
+#| msgid "Opened"
+msgid "Open"
+msgstr "مفتوحة"
+
+#: frontend/templates/frontend/case_detail.html:4
+#: frontend/templates/frontend/case_detail.html:13
+#, python-format
+msgid "Case %(number)s"
+msgstr ""
+
+#: frontend/templates/frontend/case_detail.html:22
+#, fuzzy, python-format
+#| msgid "Last updated:"
+msgid "Updated %(updated)s"
+msgstr "آخر تحديث:"
+
+#: frontend/templates/frontend/case_detail.html:29
+msgid "Back to cases"
+msgstr "العودة إلى الحالات."
+
+#: frontend/templates/frontend/case_detail.html:37
+msgid "Conversation transcript"
+msgstr "تفريغ المحادثة"
+
+#: frontend/templates/frontend/case_detail.html:40
+#, python-format
+msgid "%(channel)s • %(status)s • Started %(started)s"
+msgstr ""
+
+#: frontend/templates/frontend/case_detail.html:43
+msgid "This case has not been linked to a conversation yet."
+msgstr "لم يتم ربط هذه الحالة بمحادثة بعد."
+
+#: frontend/templates/frontend/case_detail.html:48
+#, python-format
+msgid "Session %(token)s"
+msgstr ""
+
+#: frontend/templates/frontend/case_detail.html:76
+msgid "Sources"
+msgstr "المصادر"
+
+#: frontend/templates/frontend/case_detail.html:106
+msgid "Case summary"
+msgstr "ملخص الحالة"
+
+#: frontend/templates/frontend/case_detail.html:107
+msgid "Lifecycle & assignment details"
+msgstr "تفاصيل دورة الحياة والإسناد."
+
+#: frontend/templates/frontend/case_detail.html:111
+msgid "Opened"
+msgstr "مفتوحة"
+
+#: frontend/templates/frontend/case_detail.html:115
+#: frontend/templates/frontend/knowledge.html:284
+#, fuzzy
+#| msgid "Update title"
+msgid "Updated"
+msgstr "آخر تحديث"
+
+#: frontend/templates/frontend/case_detail.html:119
+msgid "Closed"
+msgstr "مغلقة"
+
+#: frontend/templates/frontend/case_detail.html:123
+#: frontend/templates/frontend/dashboard.html:341 frontend/views.py:1324
+#: frontend/views.py:1871
+msgid "Agent"
+msgstr "الوكيل"
+
+#: frontend/templates/frontend/case_detail.html:127
+#: frontend/templates/frontend/cases.html:156
+#: frontend/templates/frontend/cases.html:403
+#: frontend/templates/frontend/cases.html:627
+#: frontend/templates/frontend/customers.html:133
+#: frontend/templates/frontend/customers.html:328
+#: frontend/templates/frontend/customers.html:528 frontend/views.py:1741
+#: frontend/views.py:2987 frontend/views.py:2990 frontend/views.py:2993
+msgid "Customer"
+msgstr "عميل"
+
+#: frontend/templates/frontend/case_detail.html:134
+#: frontend/templates/frontend/cases.html:465
+#, fuzzy
+#| msgid "No AI diagnosis yet."
+msgid "AI diagnosis"
+msgstr "لا يوجد تشخيص بالذكاء الاصطناعي بعد."
+
+#: frontend/templates/frontend/case_detail.html:141
+#: frontend/templates/frontend/cases.html:469
+msgid "Actions taken"
+msgstr "الإجراءات المتخذة"
+
+#: frontend/templates/frontend/case_detail.html:146
+#: frontend/templates/frontend/cases.html:475
+msgid "Suggested next steps"
+msgstr "الخطوات التالية المقترحة"
+
+#: frontend/templates/frontend/case_detail.html:154
+msgid "No follow-up actions captured."
+msgstr "لم يتم تسجيل أي إجراءات متابعة."
+
+#: frontend/templates/frontend/case_detail.html:160 frontend/views.py:425
+msgid "Extractions"
+msgstr "الاستخراجات"
+
+#: frontend/templates/frontend/case_detail.html:176
+msgid "No data extractions captured."
+msgstr "لا توجد بيانات مستخرجة مسجلة."
+
+#: frontend/templates/frontend/cases.html:4
+#: frontend/templates/frontend/cases.html:15
+#: frontend/templates/frontend/components/dashboard/sidebar.html:127
+#: frontend/templates/frontend/components/dashboard/sidebar.html:133
+#: frontend/templates/frontend/customers.html:355 frontend/views.py:1984
+msgid "Cases"
+msgstr "الحالات"
+
+#: frontend/templates/frontend/cases.html:17
+#, python-format
+msgid "%(count)s results"
+msgstr ""
+
+#: frontend/templates/frontend/cases.html:20
+msgid "Triage customer issues, track escalations, and keep resolution moving."
+msgstr "فرز مشكلات العملاء وتتبع التصعيدات ومواصلة مسار الحل."
+
+#: frontend/templates/frontend/cases.html:27
+msgid "New Case"
+msgstr "حالة جديدة"
+
+#: frontend/templates/frontend/cases.html:35
+msgid "Import Cases"
+msgstr "استيراد الحالات"
+
+#: frontend/templates/frontend/cases.html:46
+#: frontend/templates/frontend/customers.html:381
+#: frontend/templates/frontend/customers.html:430 frontend/views.py:1726
+#: frontend/views.py:1780
+msgid "Open cases"
+msgstr "الحالات المفتوحة"
+
+#: frontend/templates/frontend/cases.html:48
+msgid "Target < 15"
+msgstr ""
+
+#: frontend/templates/frontend/cases.html:53
+msgid "Urgent cases"
+msgstr "الحالات العاجلة"
+
+#: frontend/templates/frontend/cases.html:55
+msgid "All clear"
+msgstr ""
+
+#: frontend/templates/frontend/cases.html:60
+msgid "Avg. time open"
+msgstr "متوسط زمن الفتح"
+
+#: frontend/templates/frontend/cases.html:62
+msgid "Goal < 12h"
+msgstr ""
+
+#: frontend/templates/frontend/cases.html:67
+msgid "Connect your data sources to populate metrics."
+msgstr ""
+
+#: frontend/templates/frontend/cases.html:78
+#: frontend/templates/frontend/customers.html:73 frontend/views.py:1787
+msgid "Search name, email, text…"
+msgstr "ابحث بالاسم أو البريد الإلكتروني أو النص…"
+
+#: frontend/templates/frontend/cases.html:80
+msgid "Search cases"
+msgstr "البحث في الحالات"
+
+#: frontend/templates/frontend/cases.html:95
+msgid "All Cases"
+msgstr "كل الحالات"
+
+#: frontend/templates/frontend/cases.html:104
+msgid "All types"
+msgstr "كل الأنواع"
+
+#: frontend/templates/frontend/cases.html:122
+msgid "All time"
+msgstr "كل الفترات"
+
+#: frontend/templates/frontend/cases.html:133
+msgid "Columns"
+msgstr "الأعمدة"
+
+#: frontend/templates/frontend/cases.html:150
+msgid "Case ID"
+msgstr "معرّف الحالة"
+
+#: frontend/templates/frontend/cases.html:151
+msgid "Priority"
+msgstr "الأولوية"
+
+#: frontend/templates/frontend/cases.html:152
+#: frontend/templates/frontend/controls.html:75
+#: frontend/templates/frontend/controls.html:286
+#: frontend/templates/frontend/knowledge.html:282
+msgid "Type"
+msgstr "النوع"
+
+#: frontend/templates/frontend/cases.html:153
+msgid "Case Title"
+msgstr "عنوان الحالة"
+
+#: frontend/templates/frontend/cases.html:154
+#: frontend/templates/frontend/cases.html:461
+msgid "Description"
+msgstr "الوصف"
+
+#: frontend/templates/frontend/cases.html:157
+#: frontend/templates/frontend/dashboard.html:233
+msgid "Channel"
+msgstr "القناة"
+
+#: frontend/templates/frontend/cases.html:158
+#: frontend/templates/frontend/cases.html:625
+msgid "Started"
+msgstr "بدأت"
+
+#: frontend/templates/frontend/cases.html:159
+msgid "Transcript"
+msgstr "التفريغ"
+
+#: frontend/templates/frontend/cases.html:256
+msgid "View transcript"
+msgstr "عرض التفريغ"
+
+#: frontend/templates/frontend/cases.html:285
+#, python-format
+msgid "Showing %(showing)s of %(total)s cases"
+msgstr ""
+
+#: frontend/templates/frontend/cases.html:294
+#: frontend/templates/frontend/customers.html:241
+#: frontend/templates/frontend/knowledge.html:404
+#: frontend/templates/frontend/leads.html:253
+#, fuzzy
+#| msgid "Prev"
+msgid "Previous"
+msgstr "السابق"
+
+#: frontend/templates/frontend/cases.html:302
+#: frontend/templates/frontend/customers.html:249
+#: frontend/templates/frontend/knowledge.html:407
+#: frontend/templates/frontend/knowledge_visualizer.html:109
+#: frontend/templates/frontend/leads.html:256 frontend/views.py:1317
+#: frontend/views.py:1359
+msgid "Next"
+msgstr "التالي"
+
+#: frontend/templates/frontend/cases.html:339
+#: frontend/templates/frontend/cases.html:354
+#: frontend/templates/frontend/cases.html:619
+msgid "Select a case"
+msgstr "اختر حالة"
+
+#: frontend/templates/frontend/cases.html:344
+msgid "Close case details"
+msgstr "إغلاق تفاصيل الحالة"
+
+#: frontend/templates/frontend/cases.html:355
+msgid "Choose a case from the list to review AI insights and activity."
+msgstr ""
+
+#: frontend/templates/frontend/cases.html:358
+#: frontend/templates/frontend/customers.html:303
+msgid "Nothing to show yet."
+msgstr "لا يوجد ما يمكن عرضه بعد."
+
+#: frontend/templates/frontend/cases.html:384
+#: frontend/templates/frontend/cases.html:643
+#, fuzzy
+#| msgid "Unable to save the document right now. Please try again."
+msgid "Unable to load case details. Please try again."
+msgstr "يتعذر حفظ المستند الآن. يرجى المحاولة مرة أخرى."
+
+#: frontend/templates/frontend/cases.html:390
+#: frontend/templates/frontend/cases.html:623
+#, fuzzy
+#| msgid "Cases"
+msgid "Case"
+msgstr "الحالات"
+
+#: frontend/templates/frontend/cases.html:392
+#, fuzzy
+#| msgid "Case Title"
+msgid "Case title"
+msgstr "عنوان الحالة"
+
+#: frontend/templates/frontend/cases.html:420
+#: frontend/templates/frontend/customers.html:334
+#: frontend/templates/frontend/customers.html:346
+msgid "Overview"
+msgstr "نظرة عامة"
+
+#: frontend/templates/frontend/cases.html:430
+#: frontend/templates/frontend/cases.html:492
+#: frontend/templates/frontend/knowledge.html:109
+msgid "Documents"
+msgstr "المستندات"
+
+#: frontend/templates/frontend/cases.html:440
+msgid "History"
+msgstr ""
+
+#: frontend/templates/frontend/cases.html:450
+#: frontend/templates/frontend/cases.html:508
+msgid "Messages"
+msgstr ""
+
+#: frontend/templates/frontend/cases.html:458
+#, fuzzy
+#| msgid "Case summary"
+msgid "Summary"
+msgstr "ملخص الحالة"
+
+#: frontend/templates/frontend/cases.html:462
+#: frontend/templates/frontend/cases.html:628
+msgid "No summary provided."
+msgstr "لا يوجد ملخص."
+
+#: frontend/templates/frontend/cases.html:466
+#: frontend/templates/frontend/cases.html:629
+msgid "No AI diagnosis yet."
+msgstr "لا يوجد تشخيص بالذكاء الاصطناعي بعد."
+
+#: frontend/templates/frontend/cases.html:470
+#: frontend/templates/frontend/cases.html:630
+msgid "No resolution actions captured."
+msgstr "لم يتم تسجيل إجراءات الحل."
+
+#: frontend/templates/frontend/cases.html:478
+#: frontend/templates/frontend/cases.html:631
+msgid "No suggestions available."
+msgstr "لا توجد اقتراحات متاحة."
+
+#: frontend/templates/frontend/cases.html:483
+#: frontend/templates/frontend/customers.html:373
+#: frontend/templates/frontend/customers.html:456
+msgid "Notes"
+msgstr ""
+
+#: frontend/templates/frontend/cases.html:486
+#: frontend/templates/frontend/cases.html:638
+msgid "No notes on this case."
+msgstr "لا توجد ملاحظات على هذه الحالة."
+
+#: frontend/templates/frontend/cases.html:495
+#: frontend/templates/frontend/cases.html:641
+msgid "No documents attached."
+msgstr "لا توجد مستندات مرفقة."
+
+#: frontend/templates/frontend/cases.html:500
+#: frontend/templates/frontend/cases.html:632
+#: frontend/templates/frontend/customers.html:364
+#: frontend/templates/frontend/customers.html:448
+msgid "Activity"
+msgstr ""
+
+#: frontend/templates/frontend/cases.html:503
+#: frontend/templates/frontend/cases.html:634
+msgid "No history yet."
+msgstr "لا يوجد سجل بعد."
+
+#: frontend/templates/frontend/cases.html:511
+#: frontend/templates/frontend/cases.html:636
+msgid "No conversation messages yet."
+msgstr "لا توجد رسائل محادثة بعد."
+
+#: frontend/templates/frontend/cases.html:518
+msgid "Assign owner"
+msgstr ""
+
+#: frontend/templates/frontend/cases.html:519
+msgid "Mark resolved"
+msgstr ""
+
+#: frontend/templates/frontend/cases.html:620
+msgid "Loading case details"
+msgstr "جارٍ تحميل تفاصيل الحالة"
+
+#: frontend/templates/frontend/cases.html:621
+msgid "Case details unavailable"
+msgstr "تفاصيل الحالة غير متاحة"
+
+#: frontend/templates/frontend/cases.html:622
+#: frontend/templates/frontend/customers.html:527 frontend/views.py:1749
+#: frontend/views.py:1850 frontend/views.py:1852 frontend/views.py:2160
+#: frontend/views.py:2174 frontend/views.py:2481 frontend/views.py:2483
+#: frontend/views.py:2508 frontend/views.py:2509 frontend/views.py:2510
+#: frontend/views.py:2935 frontend/views.py:2988 frontend/views.py:2991
+#: frontend/views.py:2994 frontend/views.py:3072
+msgid "—"
+msgstr "—"
+
+#: frontend/templates/frontend/cases.html:624
+#, fuzzy
+#| msgid "Urgent cases"
+msgid "Untitled case"
+msgstr "الحالات العاجلة"
+
+#: frontend/templates/frontend/cases.html:626
+#, fuzzy
+#| msgid "Case details unavailable"
+msgid "Start time unavailable"
+msgstr "تفاصيل الحالة غير متاحة"
+
+#: frontend/templates/frontend/cases.html:633
+msgid "system"
+msgstr ""
+
+#: frontend/templates/frontend/cases.html:635
+msgid "Participant"
+msgstr "مشارك"
+
+#: frontend/templates/frontend/cases.html:637
+#, fuzzy
+#| msgid "Agent"
+msgid "agent"
+msgstr "الوكيل"
+
+#: frontend/templates/frontend/cases.html:639
+#: frontend/templates/frontend/knowledge_visualizer.html:83
+#: frontend/templates/frontend/knowledge_visualizer.html:141
+#: frontend/views.py:2206 frontend/views.py:2467 frontend/views.py:2651
+#, fuzzy
+#| msgid "Documents"
+msgid "Document"
+msgstr "المستندات"
+
+#: frontend/templates/frontend/cases.html:642
+#: frontend/templates/frontend/integrations.html:561
+#, fuzzy
+#| msgid "Failed to load customer"
+msgid "Failed to load"
+msgstr "تعذر تحميل العميل"
+
+#: frontend/templates/frontend/cases.html:824
+#: frontend/templates/frontend/customers.html:529 frontend/views.py:1744
+msgid "CU"
+msgstr "CU"
 
 #: frontend/templates/frontend/components/dashboard/sidebar.html:103
 #: frontend/templates/frontend/components/dashboard/sidebar.html:104
@@ -236,34 +845,24 @@ msgstr "توسيع الشريط الجانبي"
 msgid "Home"
 msgstr "الرئيسية"
 
-#: frontend/templates/frontend/components/dashboard/sidebar.html:127
-#: frontend/templates/frontend/components/dashboard/sidebar.html:133
-msgid "Cases"
-msgstr "الحالات"
-
 #: frontend/templates/frontend/components/dashboard/sidebar.html:138
 #: frontend/templates/frontend/components/dashboard/sidebar.html:144
+#: frontend/templates/frontend/leads.html:4
+#: frontend/templates/frontend/leads.html:13 frontend/views.py:1986
 msgid "Leads"
 msgstr "العملاء المحتملون"
 
 #: frontend/templates/frontend/components/dashboard/sidebar.html:149
 #: frontend/templates/frontend/components/dashboard/sidebar.html:157
+#: frontend/templates/frontend/customers.html:4
+#: frontend/templates/frontend/customers.html:13 frontend/views.py:1985
 msgid "Customers"
 msgstr "العملاء"
 
-#: frontend/templates/frontend/components/dashboard/sidebar.html:162
-#: frontend/templates/frontend/components/dashboard/sidebar.html:168
-msgid "Agents"
-msgstr "الوكلاء"
-
-#: frontend/templates/frontend/components/dashboard/sidebar.html:173
-#: frontend/templates/frontend/components/dashboard/sidebar.html:178
-#: frontend/views.py:426
-msgid "Knowledge"
-msgstr "المعرفة"
-
 #: frontend/templates/frontend/components/dashboard/sidebar.html:193
 #: frontend/templates/frontend/components/dashboard/sidebar.html:198
+#: frontend/templates/frontend/controls.html:4
+#: frontend/templates/frontend/controls.html:13
 msgid "Controls"
 msgstr "الضوابط"
 
@@ -272,20 +871,24 @@ msgid "MCP Connector (Beta)"
 msgstr "موصل MCP (تجريبي)"
 
 #: frontend/templates/frontend/components/dashboard/sidebar.html:211
+#: frontend/templates/frontend/mcp.html:14
 msgid "MCP Connector"
 msgstr "موصل MCP"
 
 #: frontend/templates/frontend/components/dashboard/sidebar.html:212
+#: frontend/templates/frontend/mcp.html:15
 msgid "Beta"
 msgstr "تجريبي"
 
 #: frontend/templates/frontend/components/dashboard/sidebar.html:218
 #: frontend/templates/frontend/components/dashboard/sidebar.html:223
+#: frontend/templates/frontend/voice.html:5
 msgid "Voice Calling"
 msgstr "المكالمات الصوتية"
 
 #: frontend/templates/frontend/components/dashboard/sidebar.html:232
 #: frontend/templates/frontend/components/dashboard/sidebar.html:279
+#: frontend/views.py:1247
 msgid "Account"
 msgstr "الحساب"
 
@@ -310,6 +913,7 @@ msgid "Soon"
 msgstr "قريبًا"
 
 #: frontend/templates/frontend/components/dashboard/sidebar.html:315
+#: frontend/templates/frontend/dashboard.html:52
 #, python-format
 msgid "Language: %(label)s"
 msgstr "اللغة: %(label)s"
@@ -317,6 +921,328 @@ msgstr "اللغة: %(label)s"
 #: frontend/templates/frontend/components/dashboard/sidebar.html:341
 msgid "Theme"
 msgstr "السمة"
+
+#: frontend/templates/frontend/controls.html:14
+msgid ""
+"Review tools exposed to the LLM and set approval behavior for connected "
+"integrations."
+msgstr ""
+"راجع الأدوات المكشوفة لنموذج اللغة واضبط سلوك الموافقة للتكاملات المتصلة."
+
+#: frontend/templates/frontend/controls.html:28
+#: frontend/templates/frontend/controls.html:275
+#: frontend/templates/frontend/integrations.html:28
+#: frontend/templates/frontend/integrations.html:557
+#: frontend/templates/frontend/mcp.html:54
+#: frontend/templates/frontend/voice.html:127
+#, fuzzy
+#| msgid "Refreshing"
+msgid "Refresh"
+msgstr "تحديث"
+
+#: frontend/templates/frontend/controls.html:36
+#: frontend/templates/frontend/controls.html:276
+#: frontend/templates/frontend/mcp.html:274
+#, fuzzy
+#| msgid "Save Changes"
+msgid "Save changes"
+msgstr "حفظ التغييرات"
+
+#: frontend/templates/frontend/controls.html:46
+msgid "LLM Tool Exposure"
+msgstr "إتاحة أدوات نموذج اللغة"
+
+#: frontend/templates/frontend/controls.html:47
+msgid ""
+"`Auto approve` executes directly. `Always confirm` requires approval before "
+"every execution."
+msgstr ""
+
+#: frontend/templates/frontend/controls.html:60
+#: frontend/templates/frontend/dashboard.html:171
+#: frontend/templates/frontend/mcp.html:101 frontend/views.py:2069
+msgid "All"
+msgstr "الكل"
+
+#: frontend/templates/frontend/controls.html:61
+#: frontend/templates/frontend/controls.html:280
+#: frontend/templates/frontend/integrations.html:555
+#, fuzzy
+#| msgid "Integrations"
+msgid "Integration"
+msgstr "التكاملات"
+
+#: frontend/templates/frontend/controls.html:62
+#, fuzzy
+#| msgid "Integrations"
+msgid "Internal"
+msgstr "التكاملات"
+
+#: frontend/templates/frontend/controls.html:67
+msgid "Search tool, description, or connection"
+msgstr ""
+
+#: frontend/templates/frontend/controls.html:74
+#: frontend/templates/frontend/controls.html:278
+msgid "Tool"
+msgstr ""
+
+#: frontend/templates/frontend/controls.html:76
+#: frontend/templates/frontend/controls.html:288
+#, fuzzy
+#| msgid "Closed"
+msgid "Exposed"
+msgstr "مغلقة"
+
+#: frontend/templates/frontend/controls.html:77
+#: frontend/templates/frontend/controls.html:287
+#, fuzzy
+#| msgid "Tool Approval"
+msgid "Approval"
+msgstr "الموافقة"
+
+#: frontend/templates/frontend/controls.html:80
+msgid "Loading controls…"
+msgstr "جارٍ تحميل عناصر التحكم…"
+
+#: frontend/templates/frontend/controls.html:272
+#: frontend/templates/frontend/integrations.html:558
+msgid "Refreshing"
+msgstr "جارٍ التحديث"
+
+#: frontend/templates/frontend/controls.html:273
+#: frontend/templates/frontend/integrations.html:559
+msgid "Updated just now"
+msgstr "تم التحديث الآن"
+
+#: frontend/templates/frontend/controls.html:274
+#: frontend/templates/frontend/integrations.html:560
+msgid "Refresh failed"
+msgstr "فشل التحديث"
+
+#: frontend/templates/frontend/controls.html:277
+msgid "No tools match this filter."
+msgstr "لا توجد أدوات تطابق هذا الفلتر."
+
+#: frontend/templates/frontend/controls.html:279
+msgid "Tool exposed to the LLM runtime."
+msgstr ""
+
+#: frontend/templates/frontend/controls.html:281
+#, fuzzy
+#| msgid "Integrations"
+msgid "Internal tool"
+msgstr "التكاملات"
+
+#: frontend/templates/frontend/controls.html:282
+msgid "Core"
+msgstr "أساسي"
+
+#: frontend/templates/frontend/controls.html:283
+#, fuzzy
+#| msgid "Creative"
+msgid "Native"
+msgstr "أصلي"
+
+#: frontend/templates/frontend/controls.html:284
+msgid "MCP gateway"
+msgstr "بوابة MCP"
+
+#: frontend/templates/frontend/controls.html:285
+msgid "MCP"
+msgstr "MCP"
+
+#: frontend/templates/frontend/controls.html:289
+msgid "Auto"
+msgstr "تلقائي"
+
+#: frontend/templates/frontend/controls.html:290
+msgid "Always confirm"
+msgstr "يتطلب موافقة دائمًا"
+
+#: frontend/templates/frontend/controls.html:291
+msgid "Unsaved change"
+msgstr "تغيير غير محفوظ"
+
+#: frontend/templates/frontend/controls.html:292
+#, fuzzy
+#| msgid "Failed to load controls."
+msgid "Failed to load controls:"
+msgstr "تعذر تحميل عناصر التحكم."
+
+#: frontend/templates/frontend/controls.html:293
+msgid "Failed to load controls."
+msgstr "تعذر تحميل عناصر التحكم."
+
+#: frontend/templates/frontend/controls.html:294
+msgid "No editable changes to save."
+msgstr ""
+
+#: frontend/templates/frontend/controls.html:295
+msgid "Tool controls updated."
+msgstr "تم تحديث عناصر التحكم الخاصة بالأدوات."
+
+#: frontend/templates/frontend/controls.html:296
+msgid "Failed to save controls."
+msgstr "فشل حفظ عناصر التحكم."
+
+#: frontend/templates/frontend/controls.html:297
+#: frontend/templates/frontend/voice.html:201
+msgid "Error"
+msgstr "خطأ"
+
+#: frontend/templates/frontend/customers.html:14
+msgid "Manage your customer relationships, activity, and notes in one hub."
+msgstr "أدر علاقات العملاء والنشاط والملاحظات في مركز واحد."
+
+#: frontend/templates/frontend/customers.html:26
+msgid "New Customer"
+msgstr "عميل جديد"
+
+#: frontend/templates/frontend/customers.html:36
+msgid "Import customers"
+msgstr "استيراد العملاء"
+
+#: frontend/templates/frontend/customers.html:58
+msgid "Metrics will surface once customer activity starts flowing in."
+msgstr "ستظهر المقاييس عند بدء تدفق نشاط العملاء."
+
+#: frontend/templates/frontend/customers.html:91 frontend/views.py:1788
+msgid "All lifecycle stages"
+msgstr "كل مراحل دورة الحياة"
+
+#: frontend/templates/frontend/customers.html:106 frontend/views.py:1789
+#, fuzzy
+#| msgid "All time"
+msgid "Any time"
+msgstr "أي وقت"
+
+#: frontend/templates/frontend/customers.html:135
+msgid "Conversations"
+msgstr "المحادثات"
+
+#: frontend/templates/frontend/customers.html:136
+msgid "Satisfaction"
+msgstr "الرضا"
+
+#: frontend/templates/frontend/customers.html:137
+#: frontend/templates/frontend/customers.html:531
+#, fuzzy
+#| msgid "Primary contact"
+msgid "Last contact"
+msgstr "جهة الاتصال الأساسية"
+
+#: frontend/templates/frontend/customers.html:232
+#, python-format
+msgid "Showing %(showing)s of %(total)s customers"
+msgstr ""
+
+#: frontend/templates/frontend/customers.html:283
+#: frontend/templates/frontend/customers.html:524
+#, fuzzy
+#| msgid "Select a case"
+msgid "Select a customer"
+msgstr "اختر حالة"
+
+#: frontend/templates/frontend/customers.html:288
+msgid "Close customer details"
+msgstr "إغلاق تفاصيل العميل"
+
+#: frontend/templates/frontend/customers.html:318
+#: frontend/templates/frontend/customers.html:541
+#, fuzzy
+#| msgid "Unable to save the document right now. Please try again."
+msgid "Unable to load customer details. Please try again."
+msgstr "يتعذر حفظ المستند الآن. يرجى المحاولة مرة أخرى."
+
+#: frontend/templates/frontend/customers.html:331
+#: frontend/templates/frontend/customers.html:530
+msgid "No recent contact"
+msgstr "لا يوجد تواصل حديث"
+
+#: frontend/templates/frontend/customers.html:385
+msgid "Total cases"
+msgstr "إجمالي الحالات"
+
+#: frontend/templates/frontend/customers.html:389
+msgid "First seen"
+msgstr "أول ظهور"
+
+#: frontend/templates/frontend/customers.html:394
+msgid "Primary contact"
+msgstr "جهة الاتصال الأساسية"
+
+#: frontend/templates/frontend/customers.html:412
+msgid "Additional contacts"
+msgstr "جهات اتصال إضافية"
+
+#: frontend/templates/frontend/customers.html:415
+#: frontend/templates/frontend/customers.html:533
+msgid "No extra contact methods."
+msgstr "لا توجد وسائل تواصل إضافية."
+
+#: frontend/templates/frontend/customers.html:420
+msgid "Tags"
+msgstr "الوسوم"
+
+#: frontend/templates/frontend/customers.html:423
+#: frontend/templates/frontend/customers.html:534
+msgid "No tags assigned."
+msgstr "لا توجد وسوم."
+
+#: frontend/templates/frontend/customers.html:433
+#: frontend/templates/frontend/customers.html:535
+#, fuzzy
+#| msgid "No closed cases."
+msgid "No open cases."
+msgstr "لا توجد حالات مغلقة."
+
+#: frontend/templates/frontend/customers.html:438
+msgid "Resolved cases"
+msgstr "الحالات المحلولة"
+
+#: frontend/templates/frontend/customers.html:441
+#: frontend/templates/frontend/customers.html:536
+msgid "No closed cases."
+msgstr "لا توجد حالات مغلقة."
+
+#: frontend/templates/frontend/customers.html:450
+#: frontend/templates/frontend/customers.html:538
+#, fuzzy
+#| msgid "No recent contact"
+msgid "No recent activity."
+msgstr "لا يوجد تواصل حديث"
+
+#: frontend/templates/frontend/customers.html:458
+#: frontend/templates/frontend/customers.html:539
+msgid "No notes yet."
+msgstr "لا توجد ملاحظات بعد."
+
+#: frontend/templates/frontend/customers.html:525
+#, fuzzy
+#| msgid "Loading case details"
+msgid "Loading customer details"
+msgstr "جارٍ تحميل تفاصيل الحالة"
+
+#: frontend/templates/frontend/customers.html:526
+#, fuzzy
+#| msgid "Case details unavailable"
+msgid "Customer details unavailable"
+msgstr "تفاصيل الحالة غير متاحة"
+
+#: frontend/templates/frontend/customers.html:532
+#, fuzzy
+#| msgid "No summary provided."
+msgid "No address provided."
+msgstr "لا يوجد ملخص."
+
+#: frontend/templates/frontend/customers.html:537
+msgid "No description."
+msgstr "لا يوجد وصف."
+
+#: frontend/templates/frontend/customers.html:540
+msgid "Failed to load customer"
+msgstr "تعذر تحميل العميل"
 
 #: frontend/templates/frontend/dashboard.html:4
 msgid "Dashboard | Pocket AI"
@@ -338,1142 +1264,2480 @@ msgstr "تتبّع الأتمتة والوكلاء وإشارات العملاء
 msgid "Notifications"
 msgstr "الإشعارات"
 
+#: frontend/templates/frontend/dashboard.html:64
+msgid "Toggle theme"
+msgstr ""
+
 #: frontend/templates/frontend/dashboard.html:90
 msgid "Escalation monitor"
 msgstr "مراقبة التصعيد"
 
-#: frontend/templates/frontend/dashboard.html:96
+#: frontend/templates/frontend/dashboard.html:95 frontend/views.py:1702
+msgid "No escalations yet — monitoring continuously."
+msgstr "لا توجد تصعيدات بعد — تتم المراقبة بشكل مستمر."
+
+#: frontend/templates/frontend/dashboard.html:102
 msgid "Review now"
 msgstr "راجع الآن"
 
-#: frontend/templates/frontend/dashboard.html:118
+#: frontend/templates/frontend/dashboard.html:124
 msgid "Metric loading placeholder"
 msgstr "عنصر نائب لتحميل المقاييس"
 
-#: frontend/templates/frontend/dashboard.html:149
+#: frontend/templates/frontend/dashboard.html:132
+#: frontend/templates/frontend/dashboard.html:296
+msgid "Metric"
+msgstr ""
+
+#: frontend/templates/frontend/dashboard.html:138
+msgid "Awaiting data."
+msgstr ""
+
+#: frontend/templates/frontend/dashboard.html:148 frontend/views.py:1701
+msgid "Metrics will appear once you start receiving conversations."
+msgstr "ستظهر المقاييس بمجرد بدء وصول المحادثات."
+
+#: frontend/templates/frontend/dashboard.html:161
 msgid "Conversation radar"
 msgstr "رادار المحادثات"
 
-#: frontend/templates/frontend/dashboard.html:151
+#: frontend/templates/frontend/dashboard.html:163
 msgid "Live"
 msgstr "مباشر"
 
-#: frontend/templates/frontend/dashboard.html:154
+#: frontend/templates/frontend/dashboard.html:166
 msgid "Unified feed across AI automations and human specialists."
 msgstr "موجز موحد عبر أتمتة الذكاء الاصطناعي والمتخصصين البشريين."
 
-#: frontend/templates/frontend/dashboard.html:157
+#: frontend/templates/frontend/dashboard.html:169
 msgid "Conversation filters"
 msgstr "مرشحات المحادثات"
 
-#: frontend/templates/frontend/dashboard.html:159
-msgid "All"
-msgstr "الكل"
+#: frontend/templates/frontend/dashboard.html:174
+msgid "AI"
+msgstr ""
 
-#: frontend/templates/frontend/dashboard.html:165
+#: frontend/templates/frontend/dashboard.html:177
 msgid "Human"
 msgstr "بشري"
+
+#: frontend/templates/frontend/dashboard.html:202
+msgid "Recent"
+msgstr ""
+
+#: frontend/templates/frontend/dashboard.html:205
+#, fuzzy, python-format
+#| msgid "Tool controls updated."
+msgid "%(count)s updates"
+msgstr "تم تحديث عناصر التحكم الخاصة بالأدوات."
+
+#: frontend/templates/frontend/dashboard.html:226
+#, fuzzy
+#| msgid "Conversations"
+msgid "Conversation"
+msgstr "المحادثات"
+
+#: frontend/templates/frontend/dashboard.html:229
+#, fuzzy
+#| msgid "Agent"
+msgid "Urgent"
+msgstr "الوكيل"
+
+#: frontend/templates/frontend/dashboard.html:237
+#, fuzzy
+#| msgid "No summary provided."
+msgid "No summary available."
+msgstr "لا يوجد ملخص."
+
+#: frontend/templates/frontend/dashboard.html:246
+msgid "View"
+msgstr ""
+
+#: frontend/templates/frontend/dashboard.html:263 frontend/views.py:1710
+msgid "Connect your support channels to start streaming conversations here."
+msgstr "اربط قنوات الدعم لديك لبدء تدفق المحادثات هنا."
+
+#: frontend/templates/frontend/dashboard.html:273
+msgid "AI pulse"
+msgstr "نبض الذكاء الاصطناعي"
+
+#: frontend/templates/frontend/dashboard.html:306 frontend/views.py:1713
+msgid "Metrics will appear once cases begin flowing in."
+msgstr "ستظهر المقاييس بمجرد بدء تدفق الحالات."
+
+#: frontend/templates/frontend/dashboard.html:316
+#, fuzzy
+#| msgid "Agent name"
+msgid "Agent snapshot"
+msgstr "لمحة الوكلاء"
+
+#: frontend/templates/frontend/dashboard.html:342
+msgid "Role pending"
+msgstr ""
+
+#: frontend/templates/frontend/dashboard.html:355 frontend/views.py:1715
+msgid "Invite your team to see performance insights here."
+msgstr "ادعُ فريقك لرؤية مؤشرات الأداء هنا."
+
+#: frontend/templates/frontend/integrations.html:14
+msgid ""
+"Connect first-party native integrations. Your credentials are encrypted and "
+"never shared."
+msgstr ""
+"اربط التكاملات الأصلية المباشرة. بيانات اعتمادك مشفرة ولا تتم مشاركتها."
+
+#: frontend/templates/frontend/integrations.html:37
+#: frontend/templates/frontend/integrations.html:563
+#: frontend/templates/frontend/mcp.html:44
+#: frontend/templates/frontend/voice.html:199
+#, fuzzy
+#| msgid "Your Connected MCPs"
+msgid "Connected"
+msgstr "متصل"
+
+#: frontend/templates/frontend/integrations.html:39
+msgid "Loading connected integrations..."
+msgstr "جارٍ تحميل التكاملات المتصلة..."
+
+#: frontend/templates/frontend/integrations.html:45
+msgid "Available"
+msgstr "المتاحة"
+
+#: frontend/templates/frontend/integrations.html:47
+msgid "Loading available integrations..."
+msgstr "جارٍ تحميل التكاملات المتاحة..."
+
+#: frontend/templates/frontend/integrations.html:60
+msgid "Looking for third-party MCP connectors?"
+msgstr "هل تبحث عن موصلات MCP لطرف ثالث؟"
+
+#: frontend/templates/frontend/integrations.html:62
+msgid "Notion, Trello, Salesforce, and more are available on the"
+msgstr ""
+
+#: frontend/templates/frontend/integrations.html:63
+msgid "MCP Connector page"
+msgstr "صفحة موصل MCP"
+
+#: frontend/templates/frontend/integrations.html:485
+msgid "Manage integration tools"
+msgstr "إدارة أدوات التكامل"
+
+#: frontend/templates/frontend/integrations.html:488
+#: frontend/templates/frontend/integrations.html:567
+msgid "Manage Tools"
+msgstr "إدارة الأدوات"
+
+#: frontend/templates/frontend/integrations.html:489
+#: frontend/templates/frontend/integrations.html:496
+#: frontend/templates/frontend/integrations.html:578
+msgid "Loading tools..."
+msgstr "جارٍ تحميل الأدوات..."
+
+#: frontend/templates/frontend/integrations.html:492
+#: frontend/templates/frontend/mcp.html:146
+#: frontend/templates/frontend/mcp.html:238
+#: frontend/templates/frontend/mcp.html:262
+#: frontend/templates/frontend/voice.html:161
+#, fuzzy
+#| msgid "Closed"
+msgid "Close"
+msgstr "مغلقة"
+
+#: frontend/templates/frontend/integrations.html:501
+msgid "Enable All"
+msgstr "تفعيل الكل"
+
+#: frontend/templates/frontend/integrations.html:504
+msgid "Read Only"
+msgstr "قراءة فقط"
+
+#: frontend/templates/frontend/integrations.html:509
+#: frontend/templates/frontend/knowledge.html:230
+#: frontend/templates/frontend/knowledge.html:248
+#: frontend/templates/frontend/mcp.html:220
+#: frontend/templates/frontend/mcp.html:273
+#: frontend/templates/frontend/voice.html:183
+#, fuzzy
+#| msgid "Compliance"
+msgid "Cancel"
+msgstr "الامتثال"
+
+#: frontend/templates/frontend/integrations.html:512
+msgid "Save Changes"
+msgstr "حفظ التغييرات"
+
+#: frontend/templates/frontend/integrations.html:546
+#, fuzzy
+#| msgid "Email"
+msgid "Gmail"
+msgstr "Gmail"
+
+#: frontend/templates/frontend/integrations.html:547
+msgid "Outlook / Microsoft 365"
+msgstr "Outlook / Microsoft 365"
+
+#: frontend/templates/frontend/integrations.html:548
+#, fuzzy
+#| msgid "Google Play"
+msgid "Google Calendar"
+msgstr "Google Calendar"
+
+#: frontend/templates/frontend/integrations.html:549
+#, fuzzy
+#| msgid "Connect Google Drive"
+msgid "Google Drive"
+msgstr "Google Drive"
+
+#: frontend/templates/frontend/integrations.html:550
+msgid "OneDrive"
+msgstr "OneDrive"
+
+#: frontend/templates/frontend/integrations.html:551
+msgid "Slack"
+msgstr "Slack"
+
+#: frontend/templates/frontend/integrations.html:552
+msgid "HubSpot"
+msgstr "HubSpot"
+
+#: frontend/templates/frontend/integrations.html:556
+#, fuzzy
+#| msgid "Manage integration tools"
+msgid "Native integration"
+msgstr "تكامل أصلي"
+
+#: frontend/templates/frontend/integrations.html:562
+msgid "Failed to load integrations:"
+msgstr "تعذر تحميل التكاملات:"
+
+#: frontend/templates/frontend/integrations.html:564
+#, fuzzy
+#| msgid "MCP Connector"
+msgid "Connect"
+msgstr "اتصال"
+
+#: frontend/templates/frontend/integrations.html:565
+#, fuzzy
+#| msgid "Store encrypted tenant credentials."
+msgid "Native integration with encrypted credentials."
+msgstr "تكامل أصلي ببيانات اعتماد مشفرة."
+
+#: frontend/templates/frontend/integrations.html:566
+#, fuzzy
+#| msgid "Enabled"
+msgid "tools enabled"
+msgstr "مفعّل"
+
+#: frontend/templates/frontend/integrations.html:568
+#: frontend/templates/frontend/voice.html:212
+#, fuzzy
+#| msgid "Disconnect failed:"
+msgid "Disconnect"
+msgstr "فشل الفصل:"
+
+#: frontend/templates/frontend/integrations.html:569
+msgid "Tool management is not available for this integration."
+msgstr "إدارة الأدوات غير متاحة لهذا التكامل."
+
+#: frontend/templates/frontend/integrations.html:570
+msgid "Disconnect this integration?"
+msgstr "هل تريد فصل هذا التكامل؟"
+
+#: frontend/templates/frontend/integrations.html:571
+msgid "Unsupported email integration type."
+msgstr ""
+
+#: frontend/templates/frontend/integrations.html:572
+#, fuzzy
+#| msgid "Manage integration tools"
+msgid "Missing integration type."
+msgstr "إدارة أدوات التكامل"
+
+#: frontend/templates/frontend/integrations.html:573
+#: frontend/templates/frontend/integrations.html:585
+#, fuzzy
+#| msgid "Unsupported knowledge type selected."
+msgid "Unsupported integration type."
+msgstr "تم اختيار نوع معرفة غير مدعوم."
+
+#: frontend/templates/frontend/integrations.html:574
+#, fuzzy
+#| msgid "Failed to load integrations:"
+msgid "Failed to disconnect integration."
+msgstr "تعذر تحميل التكاملات:"
+
+#: frontend/templates/frontend/integrations.html:575
+msgid "Integration disconnected successfully."
+msgstr "تم فصل التكامل بنجاح."
+
+#: frontend/templates/frontend/integrations.html:576
+msgid "Disconnect failed:"
+msgstr "فشل الفصل:"
+
+#: frontend/templates/frontend/integrations.html:577
+msgid "Unknown error"
+msgstr "خطأ غير معروف"
+
+#: frontend/templates/frontend/integrations.html:579
+#, fuzzy
+#| msgid "Loading controls…"
+msgid "Loading tools…"
+msgstr "جارٍ تحميل الأدوات…"
+
+#: frontend/templates/frontend/integrations.html:580
+msgid "No tools available for this integration."
+msgstr "لا توجد أدوات متاحة لهذا التكامل."
+
+#: frontend/templates/frontend/integrations.html:581
+#, fuzzy
+#| msgid "No suggestions available."
+msgid "No tools available."
+msgstr "لا توجد اقتراحات متاحة."
+
+#: frontend/templates/frontend/integrations.html:582
+#, fuzzy
+#| msgid "Manage integration tools"
+msgid "Native integration tool."
+msgstr "أداة تكامل أصلية."
+
+#: frontend/templates/frontend/integrations.html:583
+msgid ""
+"tools enabled. Disabled tools are hidden from the AI for this integration."
+msgstr ""
+
+#: frontend/templates/frontend/integrations.html:584
+#, fuzzy
+#| msgid "Integration disconnected successfully."
+msgid "All integrations are connected."
+msgstr "جميع التكاملات متصلة."
+
+#: frontend/templates/frontend/integrations.html:586
+#, fuzzy
+#| msgid "Failed to load controls."
+msgid "Failed to load tools."
+msgstr "تعذّر تحميل الأدوات."
+
+#: frontend/templates/frontend/integrations.html:587
+#, fuzzy
+#| msgid "Failed to load controls."
+msgid "Unable to load tool settings."
+msgstr "تعذّر تحميل إعدادات الأدوات."
+
+#: frontend/templates/frontend/integrations.html:588
+msgid "Missing provider key."
+msgstr ""
+
+#: frontend/templates/frontend/integrations.html:589
+#, fuzzy
+#| msgid "Failed to save controls."
+msgid "Failed to update tools."
+msgstr "فشل حفظ عناصر التحكم."
+
+#: frontend/templates/frontend/integrations.html:590
+#, fuzzy
+#| msgid "Tool controls updated."
+msgid "Tool settings updated."
+msgstr "تم تحديث إعدادات الأدوات."
+
+#: frontend/templates/frontend/integrations.html:591
+#, fuzzy
+#| msgid "Tool controls updated."
+msgid "Tool settings update failed:"
+msgstr "فشل تحديث إعدادات الأدوات:"
+
+#: frontend/templates/frontend/integrations.html:592
+#, fuzzy
+#| msgid "Integration disconnected successfully."
+msgid "connected successfully."
+msgstr "تم الاتصال بنجاح."
+
+#: frontend/templates/frontend/integrations.html:593
+#, fuzzy
+#| msgid "Disconnect failed:"
+msgid "Connection failed:"
+msgstr "فشل الاتصال:"
+
+#: frontend/templates/frontend/integrations.html:594
+msgid ""
+"Search, read, and send emails via Gmail. Native integration with draft "
+"approval for safe sending."
+msgstr "ابحث واقرأ وأرسل رسائل البريد عبر Gmail. تكامل أصلي مع اعتماد المسودات للإرسال الآمن."
+
+#: frontend/templates/frontend/integrations.html:595
+msgid ""
+"Search, read, and send emails via Microsoft Graph. Native integration with "
+"draft approval for safe sending."
+msgstr "ابحث واقرأ وأرسل رسائل البريد عبر Microsoft Graph. تكامل أصلي مع اعتماد المسودات للإرسال الآمن."
+
+#: frontend/templates/frontend/integrations.html:596
+msgid ""
+"List, create, and manage calendar events. Native integration with encrypted "
+"credentials."
+msgstr "اعرض وأنشئ وأدر أحداث التقويم. تكامل أصلي ببيانات اعتماد مشفرة."
+
+#: frontend/templates/frontend/integrations.html:597
+msgid ""
+"Search, list, and read files in Google Drive. Native integration with "
+"encrypted credentials."
+msgstr "ابحث واعرض واقرأ الملفات في Google Drive. تكامل أصلي ببيانات اعتماد مشفرة."
+
+#: frontend/templates/frontend/integrations.html:598
+msgid ""
+"Search, list, and read files in OneDrive. Native integration with encrypted "
+"credentials."
+msgstr "ابحث واعرض واقرأ الملفات في OneDrive. تكامل أصلي ببيانات اعتماد مشفرة."
+
+#: frontend/templates/frontend/integrations.html:599
+msgid ""
+"Send messages, read channels, and search across your Slack workspace. Native "
+"integration with encrypted credentials."
+msgstr "أرسل الرسائل واقرأ القنوات وابحث عبر مساحة عمل Slack الخاصة بك. تكامل أصلي ببيانات اعتماد مشفرة."
+
+#: frontend/templates/frontend/integrations.html:600
+msgid ""
+"Search contacts, manage deals, and access CRM data. Native integration with "
+"encrypted credentials."
+msgstr "ابحث عن جهات الاتصال وأدر الصفقات ووصول إلى بيانات CRM. تكامل أصلي ببيانات اعتماد مشفرة."
+
+#: frontend/templates/frontend/knowledge.html:59
+msgid ""
+"Upload documents, connect integrations, and organize collections for "
+"retrieval."
+msgstr "ارفع المستندات واربط التكاملات ونظّم المجموعات للاسترجاع."
+
+#: frontend/templates/frontend/knowledge.html:69
+msgid "Visualizer"
+msgstr "العارض"
+
+#: frontend/templates/frontend/knowledge.html:79
+msgid "Dump JSON"
+msgstr "تفريغ JSON"
+
+#: frontend/templates/frontend/knowledge.html:87
+#: frontend/templates/frontend/knowledge.html:435
+msgid "Connect Google Drive"
+msgstr "ربط Google Drive"
+
+#: frontend/templates/frontend/knowledge.html:115
+#: frontend/templates/frontend/knowledge.html:127
+#: frontend/templates/frontend/knowledge.html:650
+msgid "Collections"
+msgstr "المجموعات"
+
+#: frontend/templates/frontend/knowledge.html:118
+msgid "Data Guardrails"
+msgstr "ضوابط البيانات"
+
+#: frontend/templates/frontend/knowledge.html:138
+msgid "Actions"
+msgstr "الإجراءات"
+
+#: frontend/templates/frontend/knowledge.html:142
+msgid "Sort by activity"
+msgstr "ترتيب حسب النشاط"
+
+#: frontend/templates/frontend/knowledge.html:145
+msgid "New collection"
+msgstr "مجموعة جديدة"
+
+#: frontend/templates/frontend/knowledge.html:157
+msgid "Add content"
+msgstr "إضافة محتوى"
+
+#: frontend/templates/frontend/knowledge.html:179
+msgid "Drop files here or upload to add knowledge"
+msgstr "أسقط الملفات هنا أو ارفعها لإضافة المعرفة."
+
+#: frontend/templates/frontend/knowledge.html:180
+msgid "Supports PDF, DOCX, CSV, XLSX, and TXT. We auto-detect format."
+msgstr "يدعم PDF وDOCX وCSV وXLSX وTXT. نكتشف التنسيق تلقائيًا."
+
+#: frontend/templates/frontend/knowledge.html:186
+msgid "Paste text"
+msgstr "لصق نص"
+
+#: frontend/templates/frontend/knowledge.html:192
+msgid "Add link"
+msgstr "إضافة رابط"
+
+#: frontend/templates/frontend/knowledge.html:201
+msgid "Upload files"
+msgstr "رفع ملفات"
+
+#: frontend/templates/frontend/knowledge.html:207
+msgid "Uploading…"
+msgstr "جارٍ الرفع…"
+
+#: frontend/templates/frontend/knowledge.html:210
+msgid "Rename"
+msgstr "إعادة تسمية"
+
+#: frontend/templates/frontend/knowledge.html:223
+msgid "Update title"
+msgstr "تحديث العنوان"
+
+#: frontend/templates/frontend/knowledge.html:227
+#: frontend/templates/frontend/mcp.html:223
+#: frontend/templates/frontend/voice.html:186
+msgid "Save"
+msgstr ""
+
+#: frontend/templates/frontend/knowledge.html:236
+msgid "Title (optional)"
+msgstr "العنوان (اختياري)"
+
+#: frontend/templates/frontend/knowledge.html:237
+#, fuzzy
+#| msgid "Create Account"
+msgid "e.g. Corporate account FAQ"
+msgstr "إنشاء حساب"
+
+#: frontend/templates/frontend/knowledge.html:240 frontend/views.py:2428
+msgid "Manual entry"
+msgstr "إدخال يدوي"
+
+#: frontend/templates/frontend/knowledge.html:241
+msgid "Paste a short SOP or message template…"
+msgstr ""
+
+#: frontend/templates/frontend/knowledge.html:244
+msgid "External link"
+msgstr "رابط خارجي"
+
+#: frontend/templates/frontend/knowledge.html:245
+msgid "https://example.com/handbook"
+msgstr ""
+
+#: frontend/templates/frontend/knowledge.html:249
+msgid "Save to knowledge"
+msgstr "حفظ في المعرفة"
+
+#: frontend/templates/frontend/knowledge.html:261
+msgid "Document library"
+msgstr "مكتبة المستندات"
+
+#: frontend/templates/frontend/knowledge.html:267
+#, fuzzy
+#| msgid "Select a document…"
+msgid "Search documents…"
+msgstr "اختر مستندًا…"
+
+#: frontend/templates/frontend/knowledge.html:280
+#: frontend/templates/frontend/mcp.html:163
+msgid "Name"
+msgstr "الاسم"
+
+#: frontend/templates/frontend/knowledge.html:281
+#, fuzzy
+#| msgid "Notifications"
+msgid "Classification"
+msgstr "التصنيف"
+
+#: frontend/templates/frontend/knowledge.html:400
+#, python-format
+msgid "Showing %(showing)s of %(total)s documents"
+msgstr "عرض %(showing)s من أصل %(total)s مستندات"
+
+#: frontend/templates/frontend/knowledge.html:424
+msgid "Keep external knowledge in sync"
+msgstr "حافظ على مزامنة المعرفة الخارجية"
+
+#: frontend/templates/frontend/knowledge.html:426
+msgid ""
+"Connect Google Drive to keep spreadsheets, SOPs, and trackers updated "
+"automatically."
+msgstr "اربط Google Drive للحفاظ على تحديث الجداول وملفات الإجراءات وأدلة التشغيل تلقائيًا."
+
+#: frontend/templates/frontend/knowledge.html:441
+#, fuzzy
+#| msgid "Active customers"
+msgid "Active sources"
+msgstr "العملاء النشطون"
+
+#: frontend/templates/frontend/knowledge.html:443
+msgid "Connected or syncing"
+msgstr "متصل أو قيد المزامنة"
+
+#: frontend/templates/frontend/knowledge.html:446
+#: frontend/templates/frontend/knowledge.html:471
+msgid "Needs attention"
+msgstr "يحتاج إلى انتباه"
+
+#: frontend/templates/frontend/knowledge.html:448
+msgid "Reconnect or fix errors"
+msgstr "أعد الاتصال أو أصلح الأخطاء"
+
+#: frontend/templates/frontend/knowledge.html:451
+msgid "Syncing now"
+msgstr "تجري المزامنة الآن"
+
+#: frontend/templates/frontend/knowledge.html:453
+msgid "In progress"
+msgstr "قيد التنفيذ"
+
+#: frontend/templates/frontend/knowledge.html:458
+#, fuzzy
+#| msgid "Loading connected integrations..."
+msgid "Link a business profile to connect integrations."
+msgstr "جارٍ تحميل التكاملات المتصلة..."
+
+#: frontend/templates/frontend/knowledge.html:492
+#: frontend/templates/frontend/knowledge.html:579
+#, fuzzy
+#| msgid "Last touch"
+msgid "Last sync"
+msgstr "آخر مزامنة"
+
+#: frontend/templates/frontend/knowledge.html:496
+#: frontend/templates/frontend/knowledge.html:583
+#, fuzzy
+#| msgid "Next"
+msgid "Next sync"
+msgstr "المزامنة التالية"
+
+#: frontend/templates/frontend/knowledge.html:500
+#: frontend/templates/frontend/knowledge.html:587
+msgid "Auto-sync"
+msgstr "مزامنة تلقائية"
+
+#: frontend/templates/frontend/knowledge.html:510
+#: frontend/templates/frontend/knowledge.html:597
+#, python-format
+msgid "Last sync ingested %(rows)s rows."
+msgstr ""
+
+#: frontend/templates/frontend/knowledge.html:524
+#: frontend/templates/frontend/knowledge.html:611
+msgid "No resources selected yet. Choose what to sync to start ingesting."
+msgstr "لم يتم اختيار أي موارد بعد. اختر ما تريد مزامنته لبدء الاستيعاب."
+
+#: frontend/templates/frontend/knowledge.html:541
+#: frontend/templates/frontend/knowledge.html:628
+#, fuzzy
+#| msgid "Manage Cookies"
+msgid "Manage sheets"
+msgstr "إدارة الجداول"
+
+#: frontend/templates/frontend/knowledge.html:544
+#: frontend/templates/frontend/knowledge.html:631
+msgid "Syncs run on schedule or from the modal."
+msgstr "تعمل المزامنة حسب الجدول أو من النافذة المنبثقة."
+
+#: frontend/templates/frontend/knowledge.html:558
+#, fuzzy
+#| msgid "Resources"
+msgid "Connected sources"
+msgstr "المصادر المتصلة"
+
+#: frontend/templates/frontend/knowledge_visualizer.html:4
+#: frontend/templates/frontend/knowledge_visualizer.html:51
+msgid "Knowledge Visualizer"
+msgstr "عارض المعرفة"
+
+#: frontend/templates/frontend/knowledge_visualizer.html:52
+msgid ""
+"Inspect what the ingestion pipeline produces: blocks, tables, chunks, and "
+"issues."
+msgstr ""
+
+#: frontend/templates/frontend/knowledge_visualizer.html:59
+msgid "Back to Knowledge"
+msgstr "العودة إلى المعرفة"
+
+#: frontend/templates/frontend/knowledge_visualizer.html:74
+msgid "Document selector"
+msgstr "محدد المستند"
+
+#: frontend/templates/frontend/knowledge_visualizer.html:75
+msgid "Choose an upload to inspect its ingestion output."
+msgstr "اختر عملية رفع لفحص مخرجات المعالجة."
+
+#: frontend/templates/frontend/knowledge_visualizer.html:78
+msgid "total"
+msgstr "الإجمالي"
+
+#: frontend/templates/frontend/knowledge_visualizer.html:88
+msgid "Select a document…"
+msgstr "اختر مستندًا…"
+
+#: frontend/templates/frontend/knowledge_visualizer.html:106
+msgid "Prev"
+msgstr "السابق"
+
+#: frontend/templates/frontend/knowledge_visualizer.html:117
+msgid "Select a document to see its ingested output."
+msgstr "اختر مستندًا لرؤية مخرجات معالجته."
+
+#: frontend/templates/frontend/knowledge_visualizer.html:140
+msgid "Pipeline"
+msgstr "مسار المعالجة"
+
+#: frontend/templates/frontend/leads.html:14
+msgid ""
+"Monitor pipeline momentum, accelerate hot opportunities, and keep SLAs on "
+"track."
+msgstr ""
+"راقب زخم المسار وسرّع الفرص الساخنة وحافظ على الالتزام باتفاقيات مستوى الخدمة."
+
+#: frontend/templates/frontend/leads.html:21
+msgid "New Lead"
+msgstr "عميل محتمل جديد"
+
+#: frontend/templates/frontend/leads.html:29
+#, fuzzy
+#| msgid "Import Cases"
+msgid "Import"
+msgstr "استيراد الحالات"
+
+#: frontend/templates/frontend/leads.html:60 frontend/views.py:2085
+msgid "Search lead, company, or tag"
+msgstr "ابحث عن عميل محتمل أو شركة أو وسم"
+
+#: frontend/templates/frontend/leads.html:69 frontend/views.py:2086
+#, fuzzy
+#| msgid "All Cases"
+msgid "All stages"
+msgstr "كل المراحل"
+
+#: frontend/templates/frontend/leads.html:78 frontend/views.py:2088
+msgid "Last 14 days"
+msgstr "آخر 14 يومًا"
+
+#: frontend/templates/frontend/leads.html:87 frontend/views.py:2087
+#, fuzzy
+#| msgid "All Cases"
+msgid "All owners"
+msgstr "كل المالكين"
+
+#: frontend/templates/frontend/leads.html:166
+msgid "Check your connection or refresh to try again."
+msgstr ""
+
+#: frontend/templates/frontend/leads.html:174
+msgid "Lead"
+msgstr "عميل محتمل"
+
+#: frontend/templates/frontend/leads.html:176
+msgid "Stage"
+msgstr "المرحلة"
+
+#: frontend/templates/frontend/leads.html:177
+msgid "Owner"
+msgstr "المالك"
+
+#: frontend/templates/frontend/leads.html:178
+msgid "Source"
+msgstr "المصدر"
+
+#: frontend/templates/frontend/leads.html:179
+msgid "Last touch"
+msgstr "آخر تواصل"
+
+#: frontend/templates/frontend/leads.html:180
+msgid "Score"
+msgstr "التقييم"
+
+#: frontend/templates/frontend/leads.html:228
+msgid "No tags"
+msgstr "لا توجد وسوم"
+
+#: frontend/templates/frontend/leads.html:234
+msgid "View details"
+msgstr "عرض التفاصيل"
+
+#: frontend/templates/frontend/leads.html:246
+msgid ""
+"Import a CSV, connect HubSpot, or add leads manually to jumpstart your "
+"pipeline."
+msgstr ""
+
+#: frontend/templates/frontend/leads.html:250
+#, python-format
+msgid "Showing %(showing)s of %(total)s leads"
+msgstr ""
+
+#: frontend/templates/frontend/leads.html:279
+msgid "Pipeline breakdown"
+msgstr "تفصيل مسار المبيعات"
+
+#: frontend/templates/frontend/leads.html:289
+msgid ""
+"Sync CRM stages to visualise full pipeline metrics and conversion rates."
+msgstr ""
+"زامن مراحل إدارة علاقات العملاء لعرض مقاييس المسار ومعدلات التحويل بالكامل."
+
+#: frontend/templates/frontend/legal/page.html:14
+msgid "Last updated:"
+msgstr "آخر تحديث:"
+
+#: frontend/templates/frontend/legal/page.html:45
+msgid "On this page"
+msgstr "في هذه الصفحة"
+
+#: frontend/templates/frontend/login.html:15
+msgid "Welcome back"
+msgstr "أهلًا بعودتك"
+
+#: frontend/templates/frontend/login.html:16
+msgid "Sign in to continue orchestrating your AI customer experience."
+msgstr "سجّل الدخول لمواصلة إدارة تجربة العملاء بالذكاء الاصطناعي."
+
+#: frontend/templates/frontend/login.html:33
+msgid "Email address"
+msgstr "عنوان البريد الإلكتروني"
+
+#: frontend/templates/frontend/login.html:42
+msgid "you@company.com"
+msgstr ""
+
+#: frontend/templates/frontend/login.html:46 frontend/views.py:1267
+msgid "Password"
+msgstr ""
+
+#: frontend/templates/frontend/login.html:54
+msgid "••••••••"
+msgstr ""
+
+#: frontend/templates/frontend/login.html:65
+msgid "Need to create an account?"
+msgstr "هل تحتاج إلى إنشاء حساب؟"
+
+#: frontend/templates/frontend/login.html:67
+msgid "Start your onboarding"
+msgstr "ابدأ الإعداد"
+
+#: frontend/templates/frontend/mcp.html:4
+msgid "MCP Connector (BETA)"
+msgstr "موصل MCP (تجريبي)"
+
+#: frontend/templates/frontend/mcp.html:17
+msgid ""
+"Connect MCP servers, toggle them on/off, and control which agents can use "
+"them."
+msgstr ""
+"اربط خوادم MCP وشغّلها أو أوقفها وتحكم في الوكلاء الذين يمكنهم استخدامها."
+
+#: frontend/templates/frontend/mcp.html:25
+msgid "Browse marketplace"
+msgstr "تصفح السوق"
+
+#: frontend/templates/frontend/mcp.html:35
+#: frontend/templates/frontend/mcp.html:143
+msgid "Add MCP server"
+msgstr "إضافة خادم MCP"
+
+#: frontend/templates/frontend/mcp.html:42
+msgid "Industry Tools"
+msgstr "أدوات المجال"
+
+#: frontend/templates/frontend/mcp.html:43
+msgid "All MCPs"
+msgstr "كل موصلات MCP"
+
+#: frontend/templates/frontend/mcp.html:66
+msgid "Recommended for"
+msgstr "موصى به لـ"
+
+#: frontend/templates/frontend/mcp.html:66
+msgid "your industry"
+msgstr "مجالك"
+
+#: frontend/templates/frontend/mcp.html:67
+msgid "Tools commonly used by businesses in your industry. Click to add."
+msgstr "أدوات شائعة الاستخدام لدى الشركات في مجالك. انقر للإضافة."
+
+#: frontend/templates/frontend/mcp.html:77
+msgid "Common Tools"
+msgstr "أدوات شائعة"
+
+#: frontend/templates/frontend/mcp.html:78
+msgid "Universal tools used across all industries."
+msgstr "أدوات عامة مستخدمة عبر جميع المجالات."
+
+#: frontend/templates/frontend/mcp.html:91
+msgid "All Available MCPs"
+msgstr "كل موصلات MCP المتاحة"
+
+#: frontend/templates/frontend/mcp.html:92
+msgid "Browse all MCP integrations. Filter by category or search."
+msgstr "تصفح كل تكاملات MCP. صفِّ حسب الفئة أو ابحث."
+
+#: frontend/templates/frontend/mcp.html:95
+msgid "Search MCPs..."
+msgstr "ابحث في موصلات MCP..."
+
+#: frontend/templates/frontend/mcp.html:111
+msgid "Your Connected MCPs"
+msgstr "موصلات MCP المتصلة لديك"
+
+#: frontend/templates/frontend/mcp.html:112
+msgid ""
+"Enable/disable connections, test connectivity, and manage agent opt-outs."
+msgstr "فعّل أو عطّل الاتصالات واختبر الاتصال وأدر استثناءات الوكلاء."
+
+#: frontend/templates/frontend/mcp.html:119
+msgid "Loading MCP connections…"
+msgstr "جارٍ تحميل اتصالات MCP…"
+
+#: frontend/templates/frontend/mcp.html:144
+msgid "SSE/HTTP remote MCP servers only."
+msgstr "خوادم MCP بعيدة عبر SSE/HTTP فقط."
+
+#: frontend/templates/frontend/mcp.html:158
+msgid "Server URL pre-configured. Just add your credentials below."
+msgstr ""
+
+#: frontend/templates/frontend/mcp.html:164
+msgid "e.g. GitHub Tools"
+msgstr ""
+
+#: frontend/templates/frontend/mcp.html:167
+msgid "Server URL"
+msgstr ""
+
+#: frontend/templates/frontend/mcp.html:168
+msgid "https://your-domain.com/mcp"
+msgstr ""
+
+#: frontend/templates/frontend/mcp.html:169
+msgid "Use the MCP endpoint (Streamable HTTP) or legacy SSE endpoint."
+msgstr ""
+
+#: frontend/templates/frontend/mcp.html:177
+msgid "Auth"
+msgstr "المصادقة"
+
+#: frontend/templates/frontend/mcp.html:179
+msgid "No auth"
+msgstr "بدون مصادقة"
+
+#: frontend/templates/frontend/mcp.html:180
+#: frontend/templates/frontend/mcp.html:200
+msgid "Bearer token"
+msgstr ""
+
+#: frontend/templates/frontend/mcp.html:181
+msgid "Custom header"
+msgstr "ترويسة مخصصة"
+
+#: frontend/templates/frontend/mcp.html:185
+msgid "Tool Approval"
+msgstr "موافقة الأداة"
+
+#: frontend/templates/frontend/mcp.html:187
+msgid "Auto-approve all"
+msgstr "موافقة تلقائية على الكل"
+
+#: frontend/templates/frontend/mcp.html:188
+msgid "Approve writes only"
+msgstr "الموافقة على الكتابة فقط"
+
+#: frontend/templates/frontend/mcp.html:189
+msgid "Approve all operations"
+msgstr "الموافقة على كل العمليات"
+
+#: frontend/templates/frontend/mcp.html:195
+msgid "Enabled"
+msgstr "مفعّل"
+
+#: frontend/templates/frontend/mcp.html:201
+#, fuzzy
+#| msgid "Paste text"
+msgid "Paste token"
+msgstr "لصق نص"
+
+#: frontend/templates/frontend/mcp.html:208
+msgid "Header name"
+msgstr "اسم الترويسة"
+
+#: frontend/templates/frontend/mcp.html:209
+msgid "e.g. X-API-Key"
+msgstr ""
+
+#: frontend/templates/frontend/mcp.html:212
+msgid "Header value"
+msgstr "قيمة الترويسة"
+
+#: frontend/templates/frontend/mcp.html:213
+#, fuzzy
+#| msgid "Header value"
+msgid "Secret value"
+msgstr "قيمة الترويسة"
+
+#: frontend/templates/frontend/mcp.html:222
+msgid "Test connection"
+msgstr "اختبار الاتصال"
+
+#: frontend/templates/frontend/mcp.html:235
+msgid "Agent access"
+msgstr "وصول الوكيل"
+
+#: frontend/templates/frontend/mcp.html:236
+msgid "Opt out specific agents while keeping others enabled."
+msgstr "استبعد وكلاء محددين مع إبقاء الآخرين مفعّلين."
+
+#: frontend/templates/frontend/mcp.html:248 frontend/views.py:1320
+msgid "Done"
+msgstr "تم"
+
+#: frontend/templates/frontend/mcp.html:259
+msgid "Tool approvals"
+msgstr "موافقات الأدوات"
+
+#: frontend/templates/frontend/mcp.html:260
+msgid "Set per-tool approvals and operation type for this MCP connection."
+msgstr "اضبط الموافقة لكل أداة ونوع العملية لهذا اتصال MCP."
 
 #: frontend/templates/frontend/partials/footer.html:55
 msgid "Manage Cookies"
 msgstr "إدارة ملفات تعريف الارتباط"
 
-#: frontend/views.py:81
+#: frontend/templates/frontend/voice.html:116
+msgid "Voice Calling Providers"
+msgstr "مزودو المكالمات الصوتية"
+
+#: frontend/templates/frontend/voice.html:118
+msgid ""
+"Configure tenant-owned transport providers and monitor platform-managed "
+"voice services."
+msgstr "اضبط مزودي النقل المملوكين للعميل وراقب خدمات الصوت المُدارة من المنصة."
+
+#: frontend/templates/frontend/voice.html:133
+msgid "How this works"
+msgstr "آلية العمل"
+
+#: frontend/templates/frontend/voice.html:135
+msgid ""
+"Each workspace stores its own encrypted transport credentials (Twilio/"
+"Telnyx)."
+msgstr ""
+"كل مساحة عمل تخزن بيانات اعتماد النقل المشفرة الخاصة بها (Twilio/Telnyx)."
+
+#: frontend/templates/frontend/voice.html:136
+msgid ""
+"Pick exactly one active outbound transport provider when multiple are "
+"configured."
+msgstr "اختر مزود نقل صادر نشط واحد فقط عند إعداد أكثر من مزود."
+
+#: frontend/templates/frontend/voice.html:137
+msgid "Deepgram and ElevenLabs are managed centrally by the platform."
+msgstr "يتم إدارة Deepgram وElevenLabs مركزيًا من المنصة."
+
+#: frontend/templates/frontend/voice.html:138
+msgid "Use “Test” after setup to validate credentials before live calls."
+msgstr ""
+"استخدم زر الاختبار بعد الإعداد للتحقق من بيانات الاعتماد قبل المكالمات الحية."
+
+#: frontend/templates/frontend/voice.html:146
+msgid "Loading providers…"
+msgstr "جارٍ تحميل المزوّدين…"
+
+#: frontend/templates/frontend/voice.html:158
+msgid "Configure provider"
+msgstr "تهيئة المزوّد"
+
+#: frontend/templates/frontend/voice.html:159
+#: frontend/templates/frontend/voice.html:221
+msgid "Store encrypted tenant credentials."
+msgstr "احفظ بيانات اعتماد العميل المشفرة."
+
+#: frontend/templates/frontend/voice.html:173
+msgid "Enable this provider for this workspace"
+msgstr "تفعيل هذا المزوّد لهذه المساحة."
+
+#: frontend/templates/frontend/voice.html:177
+msgid "Set as active outbound transport provider"
+msgstr "تعيين كمزوّد نقل صادر نشط."
+
+#: frontend/templates/frontend/voice.html:185
+#: frontend/templates/frontend/voice.html:211
+msgid "Test"
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:198
+#, fuzzy
+#| msgid "Refresh failed"
+msgid "Request failed."
+msgstr "فشل التحديث"
+
+#: frontend/templates/frontend/voice.html:200 frontend/views.py:1859
+#, fuzzy
+#| msgid "Enabled"
+msgid "Disabled"
+msgstr "معطّل"
+
+#: frontend/templates/frontend/voice.html:202
+#, fuzzy
+#| msgid "Configure provider"
+msgid "Not Configured"
+msgstr "تهيئة المزوّد"
+
+#: frontend/templates/frontend/voice.html:203
+#, fuzzy
+#| msgid "No summary provided."
+msgid "No providers found."
+msgstr "لا يوجد ملخص."
+
+#: frontend/templates/frontend/voice.html:204
+#, fuzzy
+#| msgid "Trusted by"
+msgid "Tested"
+msgstr "موثوق من قبل"
+
+#: frontend/templates/frontend/voice.html:205
+#, fuzzy
+#| msgid "No notes yet."
+msgid "Not tested yet"
+msgstr "لا توجد ملاحظات بعد."
+
+#: frontend/templates/frontend/voice.html:206
+msgid "Tenant setup"
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:207
+msgid "Platform managed"
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:208
+#, fuzzy
+#| msgid "View transcript"
+msgid "Active transport"
+msgstr "عرض التفريغ"
+
+#: frontend/templates/frontend/voice.html:209
+msgid "Set Active"
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:210
+#: frontend/templates/frontend/voice.html:219
+#, fuzzy
+#| msgid "Configure provider"
+msgid "Configure"
+msgstr "تهيئة المزوّد"
+
+#: frontend/templates/frontend/voice.html:213
+msgid "Managed by platform and shared across all workspaces."
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:214
+msgid "Link a business profile to configure voice providers."
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:215
+#, fuzzy
+#| msgid "Loading providers…"
+msgid "Loading voice provider status…"
+msgstr "جارٍ تحميل المزوّدين…"
+
+#: frontend/templates/frontend/voice.html:216
+#, fuzzy
+#| msgid "Failed to load controls."
+msgid "Failed to load voice providers."
+msgstr "تعذر تحميل عناصر التحكم."
+
+#: frontend/templates/frontend/voice.html:217
+msgid "is managed by the platform and cannot be edited here."
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:218
+#, fuzzy
+#| msgid "Configure provider"
+msgid "This provider"
+msgstr "تهيئة المزوّد"
+
+#: frontend/templates/frontend/voice.html:220
+#, fuzzy
+#| msgid "Configure provider"
+msgid "provider"
+msgstr "تهيئة المزوّد"
+
+#: frontend/templates/frontend/voice.html:222
+#, fuzzy
+#| msgid "App Store"
+msgid "Stored:"
+msgstr "App Store"
+
+#: frontend/templates/frontend/voice.html:223
+msgid "Leave blank to keep existing value."
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:224
+msgid "saved."
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:225
+#, fuzzy
+#| msgid "Failed to save controls."
+msgid "Failed to save provider."
+msgstr "فشل حفظ عناصر التحكم."
+
+#: frontend/templates/frontend/voice.html:226
+msgid "Provider test succeeded."
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:227
+#, fuzzy
+#| msgid "Refresh failed"
+msgid "Provider test failed."
+msgstr "فشل التحديث"
+
+#: frontend/templates/frontend/voice.html:228
+msgid "Provider disconnected."
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:229
+#, fuzzy
+#| msgid "Failed to load controls."
+msgid "Failed to disconnect provider."
+msgstr "تعذر تحميل عناصر التحكم."
+
+#: frontend/templates/frontend/voice.html:230
+#, fuzzy
+#| msgid "Set as active outbound transport provider"
+msgid "Active transport provider updated."
+msgstr "تعيين كمزوّد نقل صادر نشط."
+
+#: frontend/templates/frontend/voice.html:231
+#, fuzzy
+#| msgid "Failed to save controls."
+msgid "Failed to set active provider."
+msgstr "فشل حفظ عناصر التحكم."
+
+#: frontend/templates/frontend/voice.html:232
+msgid "Live speech-to-text for caller audio."
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:233
+#: frontend/templates/frontend/voice.html:234
+msgid "Call transport, webhooks, and recording callbacks."
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:235
+msgid "Low-latency text-to-speech voice responses."
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:236
+#, fuzzy
+#| msgid "Account"
+msgid "Account SID"
+msgstr "الحساب"
+
+#: frontend/templates/frontend/voice.html:237
+msgid "Auth Token"
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:238
+msgid "Webhook Base URL"
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:239
+msgid "From Number (E.164)"
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:240
+msgid "API Key"
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:241
+msgid "Application SID"
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:242
+msgid "ACxxxxxxxxxxxx"
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:243
+msgid "Twilio auth token"
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:244
+msgid "https://your-domain.com"
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:245
+msgid "+15551234567"
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:246
+msgid "KEYxxxxxxxxxxxx"
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:247
+msgid "xxxxxxxxxxxx"
+msgstr ""
+
+#: frontend/templates/frontend/voice.html:248
+msgid "Appxxxxxxxxxxxx"
+msgstr ""
+
+#: frontend/views.py:83
 msgid "File Upload"
 msgstr "رفع ملف"
 
-#: frontend/views.py:82
+#: frontend/views.py:84
 msgid "External Link"
 msgstr "رابط خارجي"
 
-#: frontend/views.py:83
+#: frontend/views.py:85
 msgid "Manual Entry"
 msgstr "إدخال يدوي"
 
-#: frontend/views.py:88
+#: frontend/views.py:90
 msgid "Sync Google Sheets automatically to keep SOPs and trackers up to date."
 msgstr "زامن Google Sheets تلقائيًا للحفاظ على تحديث إجراءات العمل والمتتبعات."
 
-#: frontend/views.py:90
+#: frontend/views.py:92
 msgid "Mirror Notion pages into the knowledge base."
 msgstr "اعكس صفحات Notion إلى قاعدة المعرفة."
 
-#: frontend/views.py:91
+#: frontend/views.py:93
 msgid "Import help-center articles from Zendesk Guide."
 msgstr "استورد مقالات مركز المساعدة من Zendesk Guide."
 
-#: frontend/views.py:92
+#: frontend/views.py:94
 msgid "Bring HubSpot knowledge articles into Pocket AI."
 msgstr "اجلب مقالات المعرفة من HubSpot إلى Pocket AI."
 
-#: frontend/views.py:93
+#: frontend/views.py:95
 msgid "Capture curated Slack posts as living documentation."
 msgstr "التقط منشورات Slack المنتقاة كتوثيق حي."
 
-#: frontend/views.py:94
+#: frontend/views.py:96
 msgid "Sync wiki spaces from Confluence."
 msgstr "زامن مساحات الويكي من Confluence."
 
-#: frontend/views.py:95
+#: frontend/views.py:97
 msgid "Custom connector managed by your team."
 msgstr "موصل مخصص يديره فريقك."
 
-#: frontend/views.py:129
+#: frontend/views.py:131
 msgid "Chat portal not found"
 msgstr "لم يتم العثور على بوابة الدردشة"
 
-#: frontend/views.py:131
+#: frontend/views.py:133
 msgid "Unable to start chat session"
 msgstr "تعذر بدء جلسة الدردشة"
 
-#: frontend/views.py:135
+#: frontend/views.py:137
 msgid "Invalid bootstrap payload"
 msgstr "بيانات التهيئة غير صالحة"
 
-#: frontend/views.py:170
+#: frontend/views.py:172
 msgid "Manual"
 msgstr "يدوي"
 
-#: frontend/views.py:180
+#: frontend/views.py:182
 msgid "Keep this data source in sync with Pocket AI."
 msgstr "حافظ على مزامنة مصدر البيانات هذا مع Pocket AI."
 
-#: frontend/views.py:196
+#: frontend/views.py:198
 msgid "Connection needs attention. Reconnect to resume syncing."
 msgstr "يتطلب الاتصال اهتمامًا. أعد الربط لاستئناف المزامنة."
 
-#: frontend/views.py:198
+#: frontend/views.py:200
 msgid "Sync failed. Review credentials and try again."
 msgstr "فشلت المزامنة. راجع بيانات الاعتماد وحاول مرة أخرى."
 
-#: frontend/views.py:244
+#: frontend/views.py:246
 msgid "Try the mobile app"
 msgstr "جرّب تطبيق الجوال"
 
-#: frontend/views.py:247
+#: frontend/views.py:249 frontend/views.py:470
 msgid "Google Play"
 msgstr "متجر Google Play"
 
-#: frontend/views.py:252
+#: frontend/views.py:254 frontend/views.py:477
 msgid "App Store"
 msgstr "App Store"
 
-#: frontend/views.py:403
+#: frontend/views.py:405
 msgid "Knowledge snippet"
 msgstr "مقتطف من المعرفة"
 
-#: frontend/views.py:419
+#: frontend/views.py:421
 msgid "LLM strategy"
 msgstr "استراتيجية نموذج اللغة"
 
-#: frontend/views.py:421
+#: frontend/views.py:423
 msgid "Planned actions"
 msgstr "الإجراءات المخططة"
 
-#: frontend/views.py:423
-msgid "Extractions"
-msgstr "الاستخراجات"
+#: frontend/views.py:435
+msgid "AI Powered"
+msgstr "مدعوم بالذكاء الاصطناعي"
 
-#: frontend/views.py:1696
-msgid "Metrics will appear once you start receiving conversations."
-msgstr "ستظهر المقاييس بمجرد بدء استلام المحادثات."
+#: frontend/views.py:436
+msgid "Customer Service"
+msgstr "خدمة العملاء"
 
-#: frontend/views.py:1697
-msgid "No escalations yet — monitoring continuously."
-msgstr "لا توجد تصعيدات بعد — تتم المراقبة بشكل مستمر."
+#: frontend/views.py:438
+msgid ""
+"Deliver instant, intelligent support 24/7 with our AI-powered platform. "
+"Reduce response times by 90% and delight your customers."
+msgstr ""
 
-#: frontend/views.py:1705
-msgid "Connect your support channels to start streaming conversations here."
-msgstr "اربط قنوات الدعم لبدء تدفق المحادثات هنا."
+#: frontend/views.py:441
+msgid "Start Free Trial"
+msgstr "ابدأ التجربة المجانية"
 
-#: frontend/views.py:1708
-msgid "Metrics will appear once cases begin flowing in."
-msgstr "ستظهر المقاييس بمجرد بدء تدفق الحالات."
+#: frontend/views.py:442
+msgid "Watch Demo"
+msgstr "شاهد العرض التوضيحي"
 
-#: frontend/views.py:1710
-msgid "Invite your team to see performance insights here."
-msgstr "ادعُ فريقك لرؤية مؤشرات الأداء هنا."
+#: frontend/views.py:446
+msgid "Faster Response"
+msgstr "استجابة أسرع"
 
-#: frontend/views.py:1719
+#: frontend/views.py:460
+msgid "Happy Customers"
+msgstr "عملاء سعداء"
+
+#: frontend/views.py:469
+msgid "GET IT ON"
+msgstr ""
+
+#: frontend/views.py:476
+msgid "Download on the"
+msgstr ""
+
+#: frontend/views.py:484
+msgid "Online"
+msgstr "متصل"
+
+#: frontend/views.py:485
+msgid "This is a demo - try the real widget below! →"
+msgstr "هذا عرض توضيحي - جرّب الأداة الحقيقية بالأسفل! →"
+
+#: frontend/views.py:547
+msgid "Everything You Need for"
+msgstr "كل ما تحتاجه من أجل"
+
+#: frontend/views.py:548
+msgid "Perfect Support"
+msgstr "دعم مثالي"
+
+#: frontend/views.py:651
+msgid "Customers who"
+msgstr "عملاء"
+
+#: frontend/views.py:652
+msgid "build differently"
+msgstr "يبنون بشكل مختلف"
+
+#: frontend/views.py:653
+msgid ""
+"Real teams, real results. Built with speed, reliability, and brand in mind."
+msgstr ""
+
+#: frontend/views.py:669
+msgid "Trusted by"
+msgstr "موثوق من قبل"
+
+#: frontend/views.py:694
+msgid "Flexible pricing"
+msgstr "تسعير مرن"
+
+#: frontend/views.py:695
+msgid "Choose what fits "
+msgstr "اختر ما يناسب"
+
+#: frontend/views.py:696
+msgid "your motion"
+msgstr "وتيرتك"
+
+#: frontend/views.py:698
+msgid "Wage based"
+msgstr "بنظام الرصيد المسبق"
+
+#: frontend/views.py:699
+msgid "Packages"
+msgstr "الباقات"
+
+#: frontend/views.py:700
+msgid "One-time setup (self-hosted)"
+msgstr "إعداد لمرة واحدة (استضافة ذاتية)"
+
+#: frontend/views.py:812
+msgid "Frequently asked"
+msgstr "الأسئلة"
+
+#: frontend/views.py:813
+msgid "questions"
+msgstr "الشائعة"
+
+#: frontend/views.py:1153
+msgid "Customer Support Agent"
+msgstr "وكيل دعم العملاء"
+
+#: frontend/views.py:1154
+msgid "Support Specialist"
+msgstr "أخصائي دعم"
+
+#: frontend/views.py:1155
+msgid "Customer Success Representative"
+msgstr "ممثل نجاح العملاء"
+
+#: frontend/views.py:1156
+msgid "Sales Support Agent"
+msgstr "وكيل دعم المبيعات"
+
+#: frontend/views.py:1157
+msgid "Front Desk Representative"
+msgstr "ممثل الاستقبال"
+
+#: frontend/views.py:1158
+msgid "Account Manager"
+msgstr "مدير حساب"
+
+#: frontend/views.py:1159
+msgid "Helpdesk Agent"
+msgstr "وكيل مكتب المساعدة"
+
+#: frontend/views.py:1163
+msgid "Friendly"
+msgstr "ودود"
+
+#: frontend/views.py:1164
+msgid "Professional"
+msgstr "مهني"
+
+#: frontend/views.py:1165
+msgid "Casual"
+msgstr "غير رسمي"
+
+#: frontend/views.py:1166
+msgid "Formal"
+msgstr "رسمي"
+
+#: frontend/views.py:1167
+msgid "Empathetic"
+msgstr "متعاطف"
+
+#: frontend/views.py:1168
+msgid "Playful"
+msgstr "مرح"
+
+#: frontend/views.py:1172
+msgid "Concise"
+msgstr "موجز"
+
+#: frontend/views.py:1173
+msgid "Detailed"
+msgstr "مفصل"
+
+#: frontend/views.py:1174
+msgid "Curious"
+msgstr "فضولي"
+
+#: frontend/views.py:1175
+msgid "Patient"
+msgstr "صبور"
+
+#: frontend/views.py:1176
+msgid "Proactive"
+msgstr "استباقي"
+
+#: frontend/views.py:1177
+msgid "Direct"
+msgstr "مباشر"
+
+#: frontend/views.py:1178
+msgid "Creative"
+msgstr "مبدع"
+
+#: frontend/views.py:1182
+msgid "Never"
+msgstr "أبدًا"
+
+#: frontend/views.py:1183
+msgid "On fallback"
+msgstr "عند الرجوع الاحتياطي"
+
+#: frontend/views.py:1184
+msgid "On negative sentiment"
+msgstr "عند المشاعر السلبية"
+
+#: frontend/views.py:1185
+msgid "On high value"
+msgstr "عند القيمة العالية"
+
+#: frontend/views.py:1186
+msgid "Always"
+msgstr "دائمًا"
+
+#: frontend/views.py:1189
+msgid "Products & Services"
+msgstr "المنتجات والخدمات"
+
+#: frontend/views.py:1193
+msgid "Vision"
+msgstr "الرؤية"
+
+#: frontend/views.py:1200
+msgid "Mission"
+msgstr "الرسالة"
+
+#: frontend/views.py:1207
+#, python-format
+msgid "%(entity)s Catalog"
+msgstr ""
+
+#: frontend/views.py:1214
+msgid "FAQs"
+msgstr "الأسئلة الشائعة"
+
+#: frontend/views.py:1221
+msgid "Knowledge Base"
+msgstr "قاعدة المعرفة"
+
+#: frontend/views.py:1228
+msgid "SOPs"
+msgstr "إجراءات التشغيل القياسية"
+
+#: frontend/views.py:1235
+msgid "T&C"
+msgstr "الشروط والأحكام"
+
+#: frontend/views.py:1246
+msgid "Create your"
+msgstr "أنشئ"
+
+#: frontend/views.py:1248
+msgid "Your clients, served better."
+msgstr "خدمة أفضل لعملائك."
+
+#: frontend/views.py:1250
+msgid "OR"
+msgstr "أو"
+
+#: frontend/views.py:1251
+msgid "Continue with Google"
+msgstr "المتابعة عبر Google"
+
+#: frontend/views.py:1252
+msgid "Create Account"
+msgstr "إنشاء حساب"
+
+#: frontend/views.py:1253
+msgid "Creating..."
+msgstr "جارٍ الإنشاء..."
+
+#: frontend/views.py:1257
+msgid "First name"
+msgstr "الاسم الأول"
+
+#: frontend/views.py:1259
+msgid "First name is required"
+msgstr "الاسم الأول مطلوب."
+
+#: frontend/views.py:1264
+msgid "Please enter a valid email"
+msgstr "يرجى إدخال بريد إلكتروني صالح."
+
+#: frontend/views.py:1269
+msgid "Password must be at least 8 characters"
+msgstr "يجب أن تكون كلمة المرور 8 أحرف على الأقل."
+
+#: frontend/views.py:1272
+msgid "Confirm password"
+msgstr "تأكيد كلمة المرور"
+
+#: frontend/views.py:1274
+msgid "Passwords do not match"
+msgstr "كلمتا المرور غير متطابقتين."
+
+#: frontend/views.py:1277
+msgid "Already have an account?"
+msgstr "لديك حساب بالفعل؟"
+
+#: frontend/views.py:1278
+msgid "Log in"
+msgstr "تسجيل الدخول"
+
+#: frontend/views.py:1280
+msgid "Business Profile"
+msgstr "الملف التجاري"
+
+#: frontend/views.py:1281 frontend/views.py:1325
+msgid "Setup"
+msgstr ""
+
+#: frontend/views.py:1282
+msgid "Step 2 · Business profile"
+msgstr "الخطوة 2 · الملف التجاري"
+
+#: frontend/views.py:1283
+msgid "Help us understand your business"
+msgstr "ساعدنا على فهم نشاطك."
+
+#: frontend/views.py:1286
+msgid "Business name"
+msgstr "اسم النشاط التجاري"
+
+#: frontend/views.py:1288
+msgid "Business name is required"
+msgstr "اسم النشاط التجاري مطلوب."
+
+#: frontend/views.py:1306
+msgid "Country"
+msgstr ""
+
+#: frontend/views.py:1310
+msgid "Website"
+msgstr "الموقع الإلكتروني"
+
+#: frontend/views.py:1311
+msgid "(optional)"
+msgstr "(اختياري)"
+
+#: frontend/views.py:1316 frontend/views.py:1358 frontend/views.py:1385
+msgid "Back"
+msgstr "رجوع"
+
+#: frontend/views.py:1318 frontend/views.py:1360
+msgid "Saving..."
+msgstr "جارٍ الحفظ..."
+
+#: frontend/views.py:1319
+msgid "Add"
+msgstr "إضافة"
+
+#: frontend/views.py:1326
+msgid "Set up your agent basics"
+msgstr "إعداد أساسيات الوكيل."
+
+#: frontend/views.py:1329
+msgid "Agent name"
+msgstr "اسم الوكيل"
+
+#: frontend/views.py:1331
+msgid "Please enter an agent name"
+msgstr "يرجى إدخال اسم للوكيل."
+
+#: frontend/views.py:1334
+msgid "Role"
+msgstr "الدور"
+
+#: frontend/views.py:1335
+msgid "Select a role"
+msgstr "اختر دورًا"
+
+#: frontend/views.py:1336
+msgid "Please select a role"
+msgstr "يرجى اختيار دور."
+
+#: frontend/views.py:1340
+msgid "Tone"
+msgstr "النبرة"
+
+#: frontend/views.py:1341
+msgid "Select tone"
+msgstr "اختر النبرة"
+
+#: frontend/views.py:1342
+msgid "Please choose a tone"
+msgstr "يرجى اختيار نبرة."
+
+#: frontend/views.py:1346
+msgid "Traits"
+msgstr "السمات"
+
+#: frontend/views.py:1347
+msgid "Pick as many as you like"
+msgstr "اختر ما تشاء من السمات."
+
+#: frontend/views.py:1351
+msgid "Escalation rule"
+msgstr "قاعدة التصعيد"
+
+#: frontend/views.py:1352
+msgid "Choose escalation rule"
+msgstr "اختر قاعدة التصعيد."
+
+#: frontend/views.py:1353
+msgid "Please choose when to escalate"
+msgstr "يرجى اختيار وقت التصعيد."
+
+#: frontend/views.py:1365
+msgid "Uploads"
+msgstr "عمليات الرفع"
+
+#: frontend/views.py:1366
+msgid ""
+"Add links to your key docs so your agent gets smart fast. You can skip this "
+"and do it later."
+msgstr ""
+
+#: frontend/views.py:1368
+msgid "Which materials do you want to attach?"
+msgstr ""
+
+#: frontend/views.py:1369
+msgid ""
+"Select the knowledge sources you want to add now. You can always come back "
+"later."
+msgstr ""
+
+#: frontend/views.py:1372
+msgid "Select at least one material above to start adding links."
+msgstr "اختر مصدرًا واحدًا على الأقل أعلاه لبدء إضافة الروابط."
+
+#: frontend/views.py:1373
+msgid "Attach"
+msgstr "إرفاق"
+
+#: frontend/views.py:1375
+msgid "added"
+msgstr "تمت إضافته"
+
+#: frontend/views.py:1377
+msgid "Enter a valid URL (https://example.com)"
+msgstr ""
+
+#: frontend/views.py:1378
+msgid "This link is already attached"
+msgstr ""
+
+#: frontend/views.py:1379
+msgid "Select at least one material to continue"
+msgstr "اختر مصدرًا واحدًا على الأقل للمتابعة."
+
+#: frontend/views.py:1380
+msgid "Add at least one link for each selected source"
+msgstr "أضف رابطًا واحدًا على الأقل لكل مصدر محدد."
+
+#: frontend/views.py:1381
+msgid "We couldn't save your uploads. Try again."
+msgstr ""
+
+#: frontend/views.py:1382
+msgid "Complete the earlier steps before finishing registration."
+msgstr ""
+
+#: frontend/views.py:1386
+msgid "Upload later"
+msgstr "الرفع لاحقًا"
+
+#: frontend/views.py:1387
+msgid "Finish"
+msgstr "إنهاء"
+
+#: frontend/views.py:1388
+msgid "Finishing…"
+msgstr "جارٍ الإنهاء…"
+
+#: frontend/views.py:1724 frontend/views.py:1778
 msgid "New customers"
 msgstr "عملاء جدد"
 
-#: frontend/views.py:1719
+#: frontend/views.py:1724
 msgid "No data to measure yet"
 msgstr "لا توجد بيانات للقياس بعد"
 
-#: frontend/views.py:1720
+#: frontend/views.py:1725 frontend/views.py:1779
 msgid "Active customers"
 msgstr "العملاء النشطون"
 
-#: frontend/views.py:1720
+#: frontend/views.py:1725
 msgid "No customers yet"
 msgstr "لا يوجد عملاء بعد"
 
-#: frontend/views.py:1721
-msgid "Open cases"
-msgstr "الحالات المفتوحة"
-
-#: frontend/views.py:1721
+#: frontend/views.py:1726
 msgid "Create cases to populate data"
 msgstr "أنشئ حالات لعرض البيانات"
 
-#: frontend/views.py:1736
-msgid "Customer"
-msgstr "عميل"
+#: frontend/views.py:1778
+msgid "Last 30 days"
+msgstr ""
 
-#: frontend/views.py:1739
-msgid "CU"
-msgstr "CU"
+#: frontend/views.py:1779
+#, fuzzy
+#| msgid "Frequently asked"
+msgid "Currently engaged"
+msgstr "الأسئلة"
 
-#: frontend/views.py:1744
-msgid "—"
-msgstr "—"
+#: frontend/views.py:1780
+msgid "Customer cases awaiting action"
+msgstr ""
 
-#: frontend/views.py:2318 frontend/views.py:2691
+#: frontend/views.py:1797
+msgid "No customers added yet. Import customers or add one."
+msgstr "لم تتم إضافة عملاء بعد. استورد العملاء أو أضف عميلًا."
+
+#: frontend/views.py:1802
+#, fuzzy
+#| msgid "No customers yet"
+msgid "No customer selected"
+msgstr "لا يوجد عملاء بعد"
+
+#: frontend/views.py:1803
+#, fuzzy
+#| msgid "Manage your customer relationships, activity, and notes in one hub."
+msgid ""
+"Choose a customer from the table to inspect profiles, activity, and notes."
+msgstr "أدر علاقات العملاء والنشاط والملاحظات في مركز واحد."
+
+#: frontend/views.py:1812 frontend/views.py:2012
+#, fuzzy
+#| msgid "Create agent"
+msgid "Active agents"
+msgstr "إنشاء وكيل"
+
+#: frontend/views.py:1812
+msgid "No agents deployed yet"
+msgstr ""
+
+#: frontend/views.py:1813 frontend/views.py:2017
+#, fuzzy
+#| msgid "Satisfaction"
+msgid "Avg. satisfaction"
+msgstr "الرضا"
+
+#: frontend/views.py:1813
+msgid "Scores will populate once conversations start"
+msgstr ""
+
+#: frontend/views.py:1814 frontend/views.py:2022
+msgid "Automation coverage"
+msgstr ""
+
+#: frontend/views.py:1814
+msgid "Connect channels to calculate coverage"
+msgstr ""
+
+#: frontend/views.py:1856
+#, fuzzy
+#| msgid "Review now"
+msgid "Review"
+msgstr "قيد المراجعة"
+
+#: frontend/views.py:1857
+#, fuzzy
+#| msgid "Proactive"
+msgid "Active"
+msgstr "نشط"
+
+#: frontend/views.py:1858
+msgid "Paused"
+msgstr "موقوف مؤقتًا"
+
+#: frontend/views.py:1987
+msgid "Appointments"
+msgstr ""
+
+#: frontend/views.py:1988
+#, fuzzy
+#| msgid "Escalation rule"
+msgid "Escalation"
+msgstr "قاعدة التصعيد"
+
+#: frontend/views.py:2014
+#, python-format
+msgid "%(count)s total"
+msgstr ""
+
+#: frontend/views.py:2019
+msgid "Scores populate once conversations sync"
+msgstr ""
+
+#: frontend/views.py:2024
+msgid "Cases handled by AI"
+msgstr ""
+
+#: frontend/views.py:2033
+msgid "Search name, ID, role…"
+msgstr ""
+
+#: frontend/views.py:2037
+msgid "Link a business profile to create agents."
+msgstr ""
+
+#: frontend/views.py:2040
+#, fuzzy
+#| msgid "Failed to load controls."
+msgid "Unable to load agents right now."
+msgstr "تعذر تحميل عناصر التحكم."
+
+#: frontend/views.py:2043
+msgid "No agents created yet. Launch your first AI teammate to get started."
+msgstr ""
+
+#: frontend/views.py:2048
+#, fuzzy
+#| msgid "Document selector"
+msgid "No agent selected"
+msgstr "محدد المستند"
+
+#: frontend/views.py:2049
+msgid "Choose an agent from the cards to preview configuration and analytics."
+msgstr ""
+
+#: frontend/views.py:2052
+msgid "Sales Associate"
+msgstr ""
+
+#: frontend/views.py:2053
+msgid "Technical Specialist"
+msgstr ""
+
+#: frontend/views.py:2054
+#, fuzzy
+#| msgid "Customer Service"
+msgid "Customer Success"
+msgstr "خدمة العملاء"
+
+#: frontend/views.py:2064
+#, fuzzy
+#| msgid "Opened"
+msgid "Open leads"
+msgstr "مفتوحة"
+
+#: frontend/views.py:2064
+msgid "Up 0% vs last week"
+msgstr ""
+
+#: frontend/views.py:2065
+msgid "Hot leads"
+msgstr ""
+
+#: frontend/views.py:2065
+msgid "Ready for outreach"
+msgstr ""
+
+#: frontend/views.py:2066
+msgid "Avg. response SLA"
+msgstr ""
+
+#: frontend/views.py:2066
+msgid "< 3h target"
+msgstr ""
+
+#: frontend/views.py:2070
+msgid "Hot"
+msgstr ""
+
+#: frontend/views.py:2071
+msgid "Warm"
+msgstr ""
+
+#: frontend/views.py:2072
+msgid "Cold"
+msgstr ""
+
+#: frontend/views.py:2075
+msgid "New"
+msgstr ""
+
+#: frontend/views.py:2075 frontend/views.py:2076 frontend/views.py:2077
+#: frontend/views.py:2078 frontend/views.py:2079
+#, fuzzy
+#| msgid "Leads"
+msgid "0 leads"
+msgstr "العملاء المحتملون"
+
+#: frontend/views.py:2076
+msgid "Qualified"
+msgstr ""
+
+#: frontend/views.py:2077
+msgid "Engaged"
+msgstr ""
+
+#: frontend/views.py:2078
+#, fuzzy
+#| msgid "Notifications"
+msgid "Negotiation"
+msgstr "الإشعارات"
+
+#: frontend/views.py:2079
+#, fuzzy
+#| msgid "Closed"
+msgid "Closed Won"
+msgstr "مغلقة"
+
+#: frontend/views.py:2098
+#, fuzzy
+#| msgid "No tools match this filter."
+msgid "No leads match this view yet."
+msgstr "لا توجد عملاء محتملون يطابقون هذا العرض حتى الآن."
+
+#: frontend/views.py:2103
+#, fuzzy
+#| msgid "Select a role"
+msgid "Select a lead"
+msgstr "اختر دورًا"
+
+#: frontend/views.py:2104
+msgid "Choose a lead to review stage, owner activity, and history."
+msgstr ""
+
+#: frontend/views.py:2208 frontend/views.py:2469
+msgid "General"
+msgstr ""
+
+#: frontend/views.py:2335 frontend/views.py:2718
 msgid "Select a file to upload."
 msgstr "اختر ملفًا للرفع."
 
-#: frontend/views.py:2377
+#: frontend/views.py:2394
 msgid "External Resource"
 msgstr "مورد خارجي"
 
-#: frontend/views.py:2410
+#: frontend/views.py:2427
 msgid "Add content to store a manual snippet."
 msgstr "أضف محتوى لحفظ مقتطف يدوي."
 
-#: frontend/views.py:2411
-msgid "Manual entry"
-msgstr "إدخال يدوي"
+#: frontend/views.py:2506
+msgid "Private"
+msgstr ""
+
+#: frontend/views.py:2519
+#, fuzzy
+#| msgid "Documents"
+msgid "Documents indexed"
+msgstr "المستندات"
+
+#: frontend/views.py:2522
+msgid "Up-to-date count of synced files."
+msgstr ""
+
+#: frontend/views.py:2524
+#, fuzzy
+#| msgid "%(count)s files added to your knowledge base."
+msgid "Upload your first files to populate the knowledge base."
+msgstr "تمت إضافة %(count)s ملفات إلى قاعدة معرفتك."
+
+#: frontend/views.py:2531
+#, fuzzy
+#| msgid "Connect Google Drive"
+msgid "Connect Google Drive, Zendesk, or custom APIs."
+msgstr "ربط Google Drive"
+
+#: frontend/views.py:2535
+msgid "Coverage"
+msgstr ""
+
+#: frontend/views.py:2537
+msgid "Coverage metrics appear once agents use knowledge."
+msgstr ""
+
+#: frontend/views.py:2541
+msgid "Sync health"
+msgstr ""
+
+#: frontend/views.py:2543
+msgid "Status updates will display after first sync."
+msgstr ""
+
+#: frontend/views.py:2589
+msgid "Search documents, tags, sources…"
+msgstr ""
+
+#: frontend/views.py:2590
+#, fuzzy
+#| msgid "Collections"
+msgid "All collections"
+msgstr "المجموعات"
+
+#: frontend/views.py:2592
+msgid "Link a business profile to start indexing knowledge."
+msgstr ""
+
+#: frontend/views.py:2595 frontend/views.py:2678
+#, fuzzy
+#| msgid "Unable to save the document right now. Please try again."
+msgid "Unable to load documents right now."
+msgstr "يتعذر حفظ المستند الآن. يرجى المحاولة مرة أخرى."
+
+#: frontend/views.py:2599
+msgid ""
+"No knowledge documents yet. Upload files or connect an integration to "
+"populate content."
+msgstr ""
+
+#: frontend/views.py:2610
+msgid ""
+"Connect a source to keep external docs and spreadsheets updated "
+"automatically."
+msgstr ""
+
+#: frontend/views.py:2617
+msgid "Group documents into collections to control agent access."
+msgstr ""
+
+#: frontend/views.py:2618 frontend/views.py:2675
+#, fuzzy
+#| msgid "Select a document…"
+msgid "Select a document"
+msgstr "اختر مستندًا…"
+
+#: frontend/views.py:2619
+msgid ""
+"Choose a document to preview summary, classification, and sync details here."
+msgstr ""
 
 #: frontend/views.py:2671
+#, fuzzy
+#| msgid "Select a document to see its ingested output."
+msgid "Upload a document to see ingestion artifacts here."
+msgstr "اختر مستندًا لرؤية مخرجات معالجته."
+
+#: frontend/views.py:2673
+msgid "Link a business profile to inspect documents."
+msgstr ""
+
+#: frontend/views.py:2676
+#, fuzzy
+#| msgid "Select a document to see its ingested output."
+msgid "Pick a document to inspect how it was ingested and chunked."
+msgstr "اختر مستندًا لرؤية مخرجات معالجته."
+
+#: frontend/views.py:2689
+msgid "Link a business profile before uploading knowledge."
+msgstr ""
+
+#: frontend/views.py:2698
 msgid "Select a valid knowledge type."
 msgstr "اختر نوع معرفة صالحًا."
 
-#: frontend/views.py:2706
+#: frontend/views.py:2733
 msgid "Add a URL to capture this resource."
 msgstr "أضف رابط URL لالتقاط هذا المورد."
 
-#: frontend/views.py:2725
+#: frontend/views.py:2752
 msgid "Unsupported knowledge type selected."
 msgstr "تم اختيار نوع معرفة غير مدعوم."
 
-#: frontend/views.py:2737
+#: frontend/views.py:2764
 msgid "Unable to save the document right now. Please try again."
 msgstr "يتعذر حفظ المستند الآن. يرجى المحاولة مرة أخرى."
 
-#: frontend/views.py:2751
+#: frontend/views.py:2778 frontend/views.py:2794
 #, python-format
 msgid "\"%(name)s\" added to your knowledge base."
 msgstr "تمت إضافة \"%(name)s\" إلى قاعدة معرفتك."
 
-#: frontend/views.py:2753
+#: frontend/views.py:2780 frontend/views.py:2799
 #, python-format
 msgid "%(count)s files added to your knowledge base."
 msgstr "تمت إضافة %(count)s ملفات إلى قاعدة معرفتك."
 
-msgid "PocketAI OAuth"
+#: frontend/views.py:2809
+msgid "Link a business profile before exporting knowledge."
+msgstr ""
+
+#: frontend/views.py:2851
+msgid "Link a business profile before connecting integrations."
+msgstr ""
+
+#: frontend/views.py:2875 frontend/views.py:2877
+#, fuzzy
+#| msgid "Unable to start chat session"
+msgid "Unable to start Google authorization."
+msgstr "تعذر بدء جلسة الدردشة"
+
+#: frontend/views.py:2884
+msgid "Google returned an invalid authorization payload."
+msgstr ""
+
+#: frontend/views.py:2889
+msgid "Missing authorization URL from Google."
+msgstr ""
+
+#: frontend/views.py:2899
+#, fuzzy
+#| msgid "Connect your support channels to start streaming conversations here."
+msgid "Connect your customer channels to start measuring performance."
+msgstr "اربط قنوات الدعم لبدء تدفق المحادثات هنا."
+
+#: frontend/views.py:2917
+#, python-format
+msgid "You have %(count)s open cases."
+msgstr ""
+
+#: frontend/views.py:2919
+msgid "All cases resolved. Great job!"
+msgstr ""
+
+#: frontend/views.py:2938 frontend/views.py:3003
+msgid "chat"
+msgstr ""
+
+#: frontend/views.py:2944
+#, fuzzy
+#| msgid "Unable to save the document right now. Please try again."
+msgid "Unable to load cases right now. Please try again shortly."
+msgstr "يتعذر حفظ المستند الآن. يرجى المحاولة مرة أخرى."
+
+#: frontend/views.py:2954
+msgid ""
+"No cases yet. Connect Pocket AI to your support channels to see live traffic."
+msgstr "لا توجد حالات بعد. اربط Pocket AI بقنوات الدعم لديك لرؤية الحركة المباشرة."
+
+#: frontend/views.py:2967 frontend/views.py:2975
+#, fuzzy
+#| msgid "Chat portal not found"
+msgid "Case not found"
+msgstr "لم يتم العثور على بوابة الدردشة"
+
+#: frontend/views.py:3009
+#, fuzzy
+#| msgid "PocketAI OAuth"
+msgid "Pocket AI"
 msgstr "تفويض PocketAI"
 
-msgid "You can close this window."
-msgstr "يمكنك إغلاق هذه النافذة."
-
-msgid "Welcome back"
-msgstr "أهلًا بعودتك"
-
-msgid "Sign in to continue orchestrating your AI customer experience."
-msgstr "سجّل الدخول لمواصلة إدارة تجربة العملاء بالذكاء الاصطناعي."
-
-msgid "Email address"
-msgstr "عنوان البريد الإلكتروني"
-
-msgid "Need to create an account?"
-msgstr "هل تحتاج إلى إنشاء حساب؟"
-
-msgid "Start your onboarding"
-msgstr "ابدأ الإعداد"
-
-msgid "Last updated:"
-msgstr "آخر تحديث:"
-
-msgid "On this page"
-msgstr "في هذه الصفحة"
-
-msgid "New Customer"
-msgstr "عميل جديد"
-
-msgid "Import customers"
-msgstr "استيراد العملاء"
-
-msgid "Manage your customer relationships, activity, and notes in one hub."
-msgstr "أدر علاقات العملاء والنشاط والملاحظات في مركز واحد."
-
-msgid "Metrics will surface once customer activity starts flowing in."
-msgstr "ستظهر المقاييس عند بدء تدفق نشاط العملاء."
-
-msgid "Conversations"
-msgstr "المحادثات"
-
-msgid "Satisfaction"
-msgstr "الرضا"
-
-msgid "Close customer details"
-msgstr "إغلاق تفاصيل العميل"
-
-msgid "Nothing to show yet."
-msgstr "لا يوجد ما يمكن عرضه بعد."
-
-msgid "No recent contact"
-msgstr "لا يوجد تواصل حديث"
-
-msgid "Overview"
-msgstr "نظرة عامة"
-
-msgid "Total cases"
-msgstr "إجمالي الحالات"
-
-msgid "First seen"
-msgstr "أول ظهور"
-
-msgid "Primary contact"
-msgstr "جهة الاتصال الأساسية"
-
-msgid "Additional contacts"
-msgstr "جهات اتصال إضافية"
-
-msgid "Tags"
-msgstr "الوسوم"
-
-msgid "No extra contact methods."
-msgstr "لا توجد وسائل تواصل إضافية."
-
-msgid "No tags assigned."
-msgstr "لا توجد وسوم."
-
-msgid "Resolved cases"
-msgstr "الحالات المحلولة"
-
-msgid "No closed cases."
-msgstr "لا توجد حالات مغلقة."
-
-msgid "No notes yet."
-msgstr "لا توجد ملاحظات بعد."
-
-msgid "No description."
-msgstr "لا يوجد وصف."
-
-msgid "Failed to load customer"
-msgstr "تعذر تحميل العميل"
-
-msgid "Monitor pipeline momentum, accelerate hot opportunities, and keep SLAs on track."
-msgstr "راقب زخم المسار وسرّع الفرص الساخنة وحافظ على الالتزام باتفاقيات مستوى الخدمة."
-
-msgid "New Lead"
-msgstr "عميل محتمل جديد"
-
-msgid "Lead"
-msgstr "عميل محتمل"
-
-msgid "Stage"
-msgstr "المرحلة"
-
-msgid "Owner"
-msgstr "المالك"
-
-msgid "Source"
-msgstr "المصدر"
-
-msgid "Last touch"
-msgstr "آخر تواصل"
-
-msgid "Score"
-msgstr "التقييم"
-
-msgid "No tags"
-msgstr "لا توجد وسوم"
-
-msgid "View details"
-msgstr "عرض التفاصيل"
-
-msgid "Pipeline breakdown"
-msgstr "تفصيل مسار المبيعات"
-
-msgid "Sync CRM stages to visualise full pipeline metrics and conversion rates."
-msgstr "زامن مراحل إدارة علاقات العملاء لعرض مقاييس المسار ومعدلات التحويل بالكامل."
-
-msgid "Triage customer issues, track escalations, and keep resolution moving."
-msgstr "فرز مشكلات العملاء وتتبع التصعيدات ومواصلة مسار الحل."
-
-msgid "New Case"
-msgstr "حالة جديدة"
-
-msgid "Import Cases"
-msgstr "استيراد الحالات"
-
-msgid "Urgent cases"
-msgstr "الحالات العاجلة"
-
-msgid "Avg. time open"
-msgstr "متوسط زمن الفتح"
-
-msgid "Search cases"
-msgstr "البحث في الحالات"
-
-msgid "All Cases"
-msgstr "كل الحالات"
-
-msgid "All types"
-msgstr "كل الأنواع"
-
-msgid "All time"
-msgstr "كل الفترات"
-
-msgid "Columns"
-msgstr "الأعمدة"
-
-msgid "Case ID"
-msgstr "معرّف الحالة"
-
-msgid "Priority"
-msgstr "الأولوية"
-
-msgid "Type"
-msgstr "النوع"
-
-msgid "Case Title"
-msgstr "عنوان الحالة"
-
-msgid "Description"
-msgstr "الوصف"
-
-msgid "Channel"
-msgstr "القناة"
-
-msgid "Started"
-msgstr "بدأت"
-
-msgid "Transcript"
-msgstr "التفريغ"
-
-msgid "View transcript"
-msgstr "عرض التفريغ"
-
-msgid "Select a case"
-msgstr "اختر حالة"
-
-msgid "Close case details"
-msgstr "إغلاق تفاصيل الحالة"
-
-msgid "Actions taken"
-msgstr "الإجراءات المتخذة"
-
-msgid "Suggested next steps"
-msgstr "الخطوات التالية المقترحة"
-
-msgid "Case details unavailable"
-msgstr "تفاصيل الحالة غير متاحة"
-
-msgid "Loading case details"
-msgstr "جارٍ تحميل تفاصيل الحالة"
-
-msgid "No summary provided."
-msgstr "لا يوجد ملخص."
-
-msgid "No AI diagnosis yet."
+#: frontend/views.py:3022
+msgid "System"
+msgstr ""
+
+#: frontend/views.py:3023
+msgid "SYS"
+msgstr ""
+
+#: frontend/views.py:3078
+#, fuzzy
+#| msgid "No AI diagnosis yet."
+msgid "No diagnosis provided."
 msgstr "لا يوجد تشخيص بالذكاء الاصطناعي بعد."
 
-msgid "No resolution actions captured."
-msgstr "لم يتم تسجيل إجراءات الحل."
-
-msgid "No suggestions available."
-msgstr "لا توجد اقتراحات متاحة."
-
-msgid "No history yet."
-msgstr "لا يوجد سجل بعد."
-
-msgid "Participant"
-msgstr "مشارك"
-
-msgid "No conversation messages yet."
-msgstr "لا توجد رسائل محادثة بعد."
-
-msgid "No notes on this case."
-msgstr "لا توجد ملاحظات على هذه الحالة."
-
-msgid "No documents attached."
-msgstr "لا توجد مستندات مرفقة."
-
-msgid "Back to cases"
-msgstr "العودة إلى الحالات."
-
-msgid "Conversation transcript"
-msgstr "تفريغ المحادثة"
-
-msgid "This case has not been linked to a conversation yet."
-msgstr "لم يتم ربط هذه الحالة بمحادثة بعد."
-
-msgid "Sources"
-msgstr "المصادر"
-
-msgid "Case summary"
-msgstr "ملخص الحالة"
-
-msgid "Lifecycle & assignment details"
-msgstr "تفاصيل دورة الحياة والإسناد."
-
-msgid "Opened"
-msgstr "مفتوحة"
-
-msgid "Closed"
-msgstr "مغلقة"
-
-msgid "No follow-up actions captured."
-msgstr "لم يتم تسجيل أي إجراءات متابعة."
-
-msgid "No data extractions captured."
-msgstr "لا توجد بيانات مستخرجة مسجلة."
-
-msgid "Create, configure, and monitor conversational agents for every channel."
-msgstr "أنشئ واضبط وراقب وكلاء المحادثة لكل قناة."
-
-msgid "Create agent"
-msgstr "إنشاء وكيل"
-
-msgid "Metrics will surface once you start deploying agents."
-msgstr "ستظهر المقاييس عند بدء نشر الوكلاء."
-
-msgid "Search agents..."
-msgstr "ابحث عن الوكلاء..."
-
-msgid "Upload documents, connect integrations, and organize collections for retrieval."
-msgstr "ارفع المستندات واربط التكاملات ونظّم المجموعات للاسترجاع."
-
-msgid "Visualizer"
-msgstr "العارض"
-
-msgid "Dump JSON"
-msgstr "تفريغ JSON"
-
-msgid "Connect Google Drive"
-msgstr "ربط Google Drive"
-
-msgid "Documents"
-msgstr "المستندات"
-
-msgid "Collections"
-msgstr "المجموعات"
-
-msgid "Data Guardrails"
-msgstr "ضوابط البيانات"
-
-msgid "Actions"
-msgstr "الإجراءات"
-
-msgid "Sort by activity"
-msgstr "ترتيب حسب النشاط"
-
-msgid "New collection"
-msgstr "مجموعة جديدة"
-
-msgid "Add content"
-msgstr "إضافة محتوى"
-
-msgid "Drop files here or upload to add knowledge"
-msgstr "أسقط الملفات هنا أو ارفعها لإضافة المعرفة."
-
-msgid "Supports PDF, DOCX, CSV, XLSX, and TXT. We auto-detect format."
-msgstr "يدعم PDF وDOCX وCSV وXLSX وTXT. نكتشف التنسيق تلقائيًا."
-
-msgid "Paste text"
-msgstr "لصق نص"
-
-msgid "Add link"
-msgstr "إضافة رابط"
-
-msgid "Upload files"
-msgstr "رفع ملفات"
-
-msgid "Uploading…"
-msgstr "جارٍ الرفع…"
-
-msgid "Rename"
-msgstr "إعادة تسمية"
-
-msgid "Update title"
-msgstr "تحديث العنوان"
-
-msgid "Title (optional)"
-msgstr "العنوان (اختياري)"
-
-msgid "External link"
-msgstr "رابط خارجي"
-
-msgid "Save to knowledge"
-msgstr "حفظ في المعرفة"
-
-msgid "Document library"
-msgstr "مكتبة المستندات"
-
-msgid "Knowledge Visualizer"
-msgstr "عارض المعرفة"
-
-msgid "Back to Knowledge"
-msgstr "العودة إلى المعرفة"
-
-msgid "Document selector"
-msgstr "محدد المستند"
-
-msgid "Choose an upload to inspect its ingestion output."
-msgstr "اختر عملية رفع لفحص مخرجات المعالجة."
-
-msgid "total"
-msgstr "الإجمالي"
-
-msgid "Select a document…"
-msgstr "اختر مستندًا…"
-
-msgid "Prev"
-msgstr "السابق"
-
-msgid "Select a document to see its ingested output."
-msgstr "اختر مستندًا لرؤية مخرجات معالجته."
-
-msgid "Pipeline"
-msgstr "مسار المعالجة"
-
-msgid "Connect first-party native integrations. Your credentials are encrypted and never shared."
-msgstr "اربط التكاملات الأصلية المباشرة. بيانات اعتمادك مشفرة ولا تتم مشاركتها."
-
-msgid "Loading connected integrations..."
-msgstr "جارٍ تحميل التكاملات المتصلة..."
-
-msgid "Available"
-msgstr "المتاحة"
-
-msgid "Loading available integrations..."
-msgstr "جارٍ تحميل التكاملات المتاحة..."
-
-msgid "Looking for third-party MCP connectors?"
-msgstr "هل تبحث عن موصلات MCP لطرف ثالث؟"
-
-msgid "MCP Connector page"
-msgstr "صفحة موصل MCP"
-
-msgid "Manage integration tools"
-msgstr "إدارة أدوات التكامل"
-
-msgid "Manage Tools"
-msgstr "إدارة الأدوات"
-
-msgid "Loading tools..."
-msgstr "جارٍ تحميل الأدوات..."
-
-msgid "Enable All"
-msgstr "تفعيل الكل"
-
-msgid "Read Only"
-msgstr "قراءة فقط"
-
-msgid "Save Changes"
-msgstr "حفظ التغييرات"
-
-msgid "Refreshing"
-msgstr "جارٍ التحديث"
-
-msgid "Updated just now"
-msgstr "تم التحديث الآن"
-
-msgid "Refresh failed"
-msgstr "فشل التحديث"
-
-msgid "Failed to load integrations:"
-msgstr "تعذر تحميل التكاملات:"
-
-msgid "Tool management is not available for this integration."
-msgstr "إدارة الأدوات غير متاحة لهذا التكامل."
-
-msgid "Disconnect this integration?"
-msgstr "هل تريد فصل هذا التكامل؟"
-
-msgid "Integration disconnected successfully."
-msgstr "تم فصل التكامل بنجاح."
-
-msgid "Disconnect failed:"
-msgstr "فشل الفصل:"
-
-msgid "Unknown error"
-msgstr "خطأ غير معروف"
-
-msgid "No tools available for this integration."
+#: frontend/views.py:3089
+#, fuzzy
+#| msgid "No tools available for this integration."
+msgid "No transcript available for this case yet."
 msgstr "لا توجد أدوات متاحة لهذا التكامل."
 
-msgid "Review tools exposed to the LLM and set approval behavior for connected integrations."
-msgstr "راجع الأدوات المكشوفة لنموذج اللغة واضبط سلوك الموافقة للتكاملات المتصلة."
-
-msgid "LLM Tool Exposure"
-msgstr "إتاحة أدوات نموذج اللغة"
-
-msgid "Loading controls…"
-msgstr "جارٍ تحميل عناصر التحكم…"
-
-msgid "No tools match this filter."
-msgstr "لا توجد أدوات تطابق هذا الفلتر."
-
-msgid "Always confirm"
-msgstr "يتطلب موافقة دائمًا"
-
-msgid "Unsaved change"
-msgstr "تغيير غير محفوظ"
-
-msgid "Failed to load controls."
-msgstr "تعذر تحميل عناصر التحكم."
-
-msgid "Tool controls updated."
-msgstr "تم تحديث عناصر التحكم الخاصة بالأدوات."
-
-msgid "Failed to save controls."
-msgstr "فشل حفظ عناصر التحكم."
-
-msgid "MCP Connector (BETA)"
-msgstr "موصل MCP (تجريبي)"
-
-msgid "Connect MCP servers, toggle them on/off, and control which agents can use them."
-msgstr "اربط خوادم MCP وشغّلها أو أوقفها وتحكم في الوكلاء الذين يمكنهم استخدامها."
-
-msgid "Browse marketplace"
-msgstr "تصفح السوق"
-
-msgid "Add MCP server"
-msgstr "إضافة خادم MCP"
-
-msgid "Industry Tools"
-msgstr "أدوات المجال"
-
-msgid "All MCPs"
-msgstr "كل موصلات MCP"
-
-msgid "Recommended for"
-msgstr "موصى به لـ"
-
-msgid "your industry"
-msgstr "مجالك"
-
-msgid "Tools commonly used by businesses in your industry. Click to add."
-msgstr "أدوات شائعة الاستخدام لدى الشركات في مجالك. انقر للإضافة."
-
-msgid "Common Tools"
-msgstr "أدوات شائعة"
-
-msgid "Universal tools used across all industries."
-msgstr "أدوات عامة مستخدمة عبر جميع المجالات."
-
-msgid "All Available MCPs"
-msgstr "كل موصلات MCP المتاحة"
-
-msgid "Browse all MCP integrations. Filter by category or search."
-msgstr "تصفح كل تكاملات MCP. صفِّ حسب الفئة أو ابحث."
-
-msgid "Search MCPs..."
-msgstr "ابحث في موصلات MCP..."
-
-msgid "Your Connected MCPs"
-msgstr "موصلات MCP المتصلة لديك"
-
-msgid "Enable/disable connections, test connectivity, and manage agent opt-outs."
-msgstr "فعّل أو عطّل الاتصالات واختبر الاتصال وأدر استثناءات الوكلاء."
-
-msgid "Loading MCP connections…"
-msgstr "جارٍ تحميل اتصالات MCP…"
-
-msgid "SSE/HTTP remote MCP servers only."
-msgstr "خوادم MCP بعيدة عبر SSE/HTTP فقط."
-
-msgid "Auth"
-msgstr "المصادقة"
-
-msgid "No auth"
-msgstr "بدون مصادقة"
-
-msgid "Custom header"
-msgstr "ترويسة مخصصة"
-
-msgid "Tool Approval"
-msgstr "موافقة الأداة"
-
-msgid "Auto-approve all"
-msgstr "موافقة تلقائية على الكل"
-
-msgid "Approve writes only"
-msgstr "الموافقة على الكتابة فقط"
-
-msgid "Approve all operations"
-msgstr "الموافقة على كل العمليات"
-
-msgid "Enabled"
-msgstr "مفعّل"
-
-msgid "Header name"
-msgstr "اسم الترويسة"
-
-msgid "Header value"
-msgstr "قيمة الترويسة"
-
-msgid "Test connection"
-msgstr "اختبار الاتصال"
-
-msgid "Agent access"
-msgstr "وصول الوكيل"
-
-msgid "Opt out specific agents while keeping others enabled."
-msgstr "استبعد وكلاء محددين مع إبقاء الآخرين مفعّلين."
-
-msgid "Done"
-msgstr "تم"
-
-msgid "Tool approvals"
-msgstr "موافقات الأدوات"
-
-msgid "Set per-tool approvals and operation type for this MCP connection."
-msgstr "اضبط الموافقة لكل أداة ونوع العملية لهذا اتصال MCP."
-
-msgid "Voice Calling Providers"
-msgstr "مزودو المكالمات الصوتية"
-
-msgid "Configure tenant-owned transport providers and monitor platform-managed voice services."
-msgstr "اضبط مزودي النقل المملوكين للعميل وراقب خدمات الصوت المُدارة من المنصة."
-
-msgid "How this works"
-msgstr "آلية العمل"
-
-msgid "Each workspace stores its own encrypted transport credentials (Twilio/Telnyx)."
-msgstr "كل مساحة عمل تخزن بيانات اعتماد النقل المشفرة الخاصة بها (Twilio/Telnyx)."
-
-msgid "Pick exactly one active outbound transport provider when multiple are configured."
-msgstr "اختر مزود نقل صادر نشط واحد فقط عند إعداد أكثر من مزود."
-
-msgid "Deepgram and ElevenLabs are managed centrally by the platform."
-msgstr "يتم إدارة Deepgram وElevenLabs مركزيًا من المنصة."
-
-msgid "Use “Test” after setup to validate credentials before live calls."
-msgstr "استخدم زر الاختبار بعد الإعداد للتحقق من بيانات الاعتماد قبل المكالمات الحية."
-
-msgid "Loading providers…"
-msgstr "جارٍ تحميل المزوّدين…"
-
-msgid "Configure provider"
-msgstr "تهيئة المزوّد"
-
-msgid "Store encrypted tenant credentials."
-msgstr "احفظ بيانات اعتماد العميل المشفرة."
-
-msgid "Enable this provider for this workspace"
-msgstr "تفعيل هذا المزوّد لهذه المساحة."
-
-msgid "Set as active outbound transport provider"
-msgstr "تعيين كمزوّد نقل صادر نشط."
-
-msgid "AI Powered"
-msgstr "مدعوم بالذكاء الاصطناعي"
-
-msgid "Customer Service"
-msgstr "خدمة العملاء"
-
-msgid "Start Free Trial"
-msgstr "ابدأ التجربة المجانية"
-
-msgid "Watch Demo"
-msgstr "شاهد العرض التوضيحي"
-
-msgid "Faster Response"
-msgstr "استجابة أسرع"
-
-msgid "Happy Customers"
-msgstr "عملاء سعداء"
-
-msgid "Online"
-msgstr "متصل"
-
-msgid "This is a demo - try the real widget below! →"
-msgstr "هذا عرض توضيحي - جرّب الأداة الحقيقية بالأسفل! →"
-
-msgid "Everything You Need for"
-msgstr "كل ما تحتاجه من أجل"
-
-msgid "Perfect Support"
-msgstr "دعم مثالي"
-
-msgid "Customers who"
-msgstr "عملاء"
-
-msgid "build differently"
-msgstr "يبنون بشكل مختلف"
-
-msgid "Trusted by"
-msgstr "موثوق من قبل"
-
-msgid "Flexible pricing"
-msgstr "تسعير مرن"
-
-msgid "Choose what fits "
-msgstr "اختر ما يناسب"
-
-msgid "your motion"
-msgstr "وتيرتك"
-
-msgid "Wage based"
-msgstr "بنظام الرصيد المسبق"
-
-msgid "Packages"
-msgstr "الباقات"
-
-msgid "One-time setup (self-hosted)"
-msgstr "إعداد لمرة واحدة (استضافة ذاتية)"
-
-msgid "Frequently asked"
-msgstr "الأسئلة"
-
-msgid "questions"
-msgstr "الشائعة"
-
-msgid "Create your"
-msgstr "أنشئ"
-
-msgid "Your clients, served better."
-msgstr "خدمة أفضل لعملائك."
-
-msgid "OR"
-msgstr "أو"
-
-msgid "Continue with Google"
-msgstr "المتابعة عبر Google"
-
-msgid "Create Account"
-msgstr "إنشاء حساب"
-
-msgid "Creating..."
-msgstr "جارٍ الإنشاء..."
-
-msgid "First name"
-msgstr "الاسم الأول"
-
-msgid "First name is required"
-msgstr "الاسم الأول مطلوب."
-
-msgid "Please enter a valid email"
-msgstr "يرجى إدخال بريد إلكتروني صالح."
-
-msgid "Password must be at least 8 characters"
-msgstr "يجب أن تكون كلمة المرور 8 أحرف على الأقل."
-
-msgid "Confirm password"
-msgstr "تأكيد كلمة المرور"
-
-msgid "Passwords do not match"
-msgstr "كلمتا المرور غير متطابقتين."
-
-msgid "Already have an account?"
-msgstr "لديك حساب بالفعل؟"
-
-msgid "Log in"
-msgstr "تسجيل الدخول"
-
-msgid "Business Profile"
-msgstr "الملف التجاري"
-
-msgid "Step 2 · Business profile"
-msgstr "الخطوة 2 · الملف التجاري"
-
-msgid "Help us understand your business"
-msgstr "ساعدنا على فهم نشاطك."
-
-msgid "Business name"
-msgstr "اسم النشاط التجاري"
-
-msgid "Business name is required"
-msgstr "اسم النشاط التجاري مطلوب."
-
-msgid "Website"
-msgstr "الموقع الإلكتروني"
-
-msgid "(optional)"
-msgstr "(اختياري)"
-
-msgid "Back"
-msgstr "رجوع"
-
-msgid "Next"
-msgstr "التالي"
-
-msgid "Saving..."
-msgstr "جارٍ الحفظ..."
-
-msgid "Add"
-msgstr "إضافة"
-
-msgid "Agent"
-msgstr "الوكيل"
-
-msgid "Set up your agent basics"
-msgstr "إعداد أساسيات الوكيل."
-
-msgid "Agent name"
-msgstr "اسم الوكيل"
-
-msgid "Please enter an agent name"
-msgstr "يرجى إدخال اسم للوكيل."
-
-msgid "Role"
-msgstr "الدور"
-
-msgid "Select a role"
-msgstr "اختر دورًا"
-
-msgid "Please select a role"
-msgstr "يرجى اختيار دور."
-
-msgid "Tone"
-msgstr "النبرة"
-
-msgid "Select tone"
-msgstr "اختر النبرة"
-
-msgid "Please choose a tone"
-msgstr "يرجى اختيار نبرة."
-
-msgid "Traits"
-msgstr "السمات"
-
-msgid "Pick as many as you like"
-msgstr "اختر ما تشاء من السمات."
-
-msgid "Escalation rule"
-msgstr "قاعدة التصعيد"
-
-msgid "Choose escalation rule"
-msgstr "اختر قاعدة التصعيد."
-
-msgid "Please choose when to escalate"
-msgstr "يرجى اختيار وقت التصعيد."
-
-msgid "Uploads"
-msgstr "عمليات الرفع"
-
-msgid "Select at least one material above to start adding links."
-msgstr "اختر مصدرًا واحدًا على الأقل أعلاه لبدء إضافة الروابط."
-
-msgid "Attach"
-msgstr "إرفاق"
-
-msgid "added"
-msgstr "تمت إضافته"
-
-msgid "Select at least one material to continue"
-msgstr "اختر مصدرًا واحدًا على الأقل للمتابعة."
-
-msgid "Add at least one link for each selected source"
-msgstr "أضف رابطًا واحدًا على الأقل لكل مصدر محدد."
-
-msgid "Upload later"
-msgstr "الرفع لاحقًا"
-
-msgid "Finish"
-msgstr "إنهاء"
-
-msgid "Finishing…"
-msgstr "جارٍ الإنهاء…"
-
-msgid "Customer Support Agent"
-msgstr "وكيل دعم العملاء"
-
-msgid "Support Specialist"
-msgstr "أخصائي دعم"
-
-msgid "Customer Success Representative"
-msgstr "ممثل نجاح العملاء"
-
-msgid "Sales Support Agent"
-msgstr "وكيل دعم المبيعات"
-
-msgid "Front Desk Representative"
-msgstr "ممثل الاستقبال"
-
-msgid "Account Manager"
-msgstr "مدير حساب"
-
-msgid "Helpdesk Agent"
-msgstr "وكيل مكتب المساعدة"
-
-msgid "Friendly"
-msgstr "ودود"
-
-msgid "Professional"
-msgstr "مهني"
-
-msgid "Casual"
-msgstr "غير رسمي"
-
-msgid "Formal"
-msgstr "رسمي"
-
-msgid "Empathetic"
-msgstr "متعاطف"
-
-msgid "Playful"
-msgstr "مرح"
-
-msgid "Concise"
-msgstr "موجز"
-
-msgid "Detailed"
-msgstr "مفصل"
-
-msgid "Curious"
-msgstr "فضولي"
-
-msgid "Patient"
-msgstr "صبور"
-
-msgid "Proactive"
-msgstr "استباقي"
-
-msgid "Direct"
-msgstr "مباشر"
-
-msgid "Creative"
-msgstr "مبدع"
-
-msgid "Never"
-msgstr "أبدًا"
-
-msgid "On fallback"
-msgstr "عند الرجوع الاحتياطي"
-
-msgid "On negative sentiment"
-msgstr "عند المشاعر السلبية"
-
-msgid "On high value"
-msgstr "عند القيمة العالية"
-
-msgid "Always"
-msgstr "دائمًا"
-
-msgid "Vision"
-msgstr "الرؤية"
-
-msgid "Mission"
-msgstr "الرسالة"
-
-msgid "FAQs"
-msgstr "الأسئلة الشائعة"
-
-msgid "Knowledge Base"
-msgstr "قاعدة المعرفة"
-
-msgid "SOPs"
-msgstr "إجراءات التشغيل القياسية"
-
-msgid "T&C"
-msgstr "الشروط والأحكام"
-
-msgid "Products & Services"
-msgstr "المنتجات والخدمات"
+#: pocketai/settings.py:2034
+msgid "Arabic"
+msgstr "العربية"
+
+#, fuzzy
+#~| msgid "Satisfaction"
+#~ msgid "Syndication"
+#~ msgstr "الرضا"
+
+#, fuzzy
+#~| msgid "—"
+#~ msgid "…"
+#~ msgstr "—"
+
+#, fuzzy
+#~| msgid "Please enter a valid email"
+#~ msgid "Enter a valid value."
+#~ msgstr "يرجى إدخال بريد إلكتروني صالح."
+
+#, fuzzy
+#~| msgid "Please enter a valid email"
+#~ msgid "Enter a valid domain name."
+#~ msgstr "يرجى إدخال بريد إلكتروني صالح."
+
+#, fuzzy
+#~| msgid "Please enter a valid email"
+#~ msgid "Enter a valid email address."
+#~ msgstr "يرجى إدخال بريد إلكتروني صالح."
+
+#, fuzzy
+#~| msgid "Extractions"
+#~ msgid "Duration"
+#~ msgstr "الاستخراجات"
+
+#, fuzzy
+#~| msgid "File Upload"
+#~ msgid "File path"
+#~ msgstr "رفع ملف"
+
+#, fuzzy
+#~| msgid "Integrations"
+#~ msgid "Integer"
+#~ msgstr "التكاملات"
+
+#, fuzzy
+#~| msgid "Email address"
+#~ msgid "IPv4 address"
+#~ msgstr "عنوان البريد الإلكتروني"
+
+#, fuzzy
+#~| msgid "Email address"
+#~ msgid "IP address"
+#~ msgstr "عنوان البريد الإلكتروني"
+
+#, fuzzy
+#~| msgid "First name is required"
+#~ msgid "This field is required."
+#~ msgstr "الاسم الأول مطلوب."
+
+#, fuzzy
+#~| msgid "Please enter a valid email"
+#~ msgid "Enter a valid date."
+#~ msgstr "يرجى إدخال بريد إلكتروني صالح."
+
+#, fuzzy
+#~| msgid "Please enter a valid email"
+#~ msgid "Enter a valid time."
+#~ msgstr "يرجى إدخال بريد إلكتروني صالح."
+
+#, fuzzy
+#~| msgid "Please enter a valid email"
+#~ msgid "Enter a valid date/time."
+#~ msgstr "يرجى إدخال بريد إلكتروني صالح."
+
+#, fuzzy
+#~| msgid "Please enter a valid email"
+#~ msgid "Enter a valid duration."
+#~ msgstr "يرجى إدخال بريد إلكتروني صالح."
+
+#, fuzzy
+#~| msgid "Changelog"
+#~ msgid "Change"
+#~ msgstr "سجل التغييرات"
+
+#, fuzzy
+#~| msgid "Unknown error"
+#~ msgid "Unknown"
+#~ msgstr "خطأ غير معروف"
+
+#, fuzzy
+#~| msgid "Mission"
+#~ msgid "Mon"
+#~ msgstr "الرسالة"
+
+#, fuzzy
+#~| msgid "Status"
+#~ msgid "Sat"
+#~ msgstr "الحالة"
+
+#, fuzzy
+#~| msgid "Manual Entry"
+#~ msgid "January"
+#~ msgstr "إدخال يدوي"
+
+#, fuzzy
+#~| msgid "Company"
+#~ msgid "may"
+#~ msgstr "الشركة"
+
+#, fuzzy
+#~| msgid "Contact"
+#~ msgid "oct"
+#~ msgstr "تواصل معنا"
+
+#, fuzzy
+#~| msgid "Manual Entry"
+#~ msgctxt "alt. month"
+#~ msgid "January"
+#~ msgstr "إدخال يدوي"
+
+#, fuzzy
+#~| msgid "API Documentation"
+#~ msgid "Django Documentation"
+#~ msgstr "توثيق واجهة البرمجة"
+
+#, fuzzy
+#~| msgid "Community"
+#~ msgid "Django Community"
+#~ msgstr "المجتمع"
+
+#, fuzzy
+#~| msgid "Columns"
+#~ msgid "Column"
+#~ msgstr "الأعمدة"

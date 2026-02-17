@@ -1850,6 +1850,18 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
                 tone_label = display_tone_label(item.tone) or _("—")
                 updated_at = item.updated_at
                 updated_label = updated_at.strftime("%b %d, %Y %H:%M") if updated_at else _("—")
+                status_code = (item.status or "").lower()
+                status_label_map = {
+                    "draft": _("Draft"),
+                    "review": _("Review"),
+                    "active": _("Active"),
+                    "paused": _("Paused"),
+                    "disabled": _("Disabled"),
+                }
+                status_label = status_label_map.get(
+                    status_code,
+                    status_code.replace("_", " ").title() if status_code else _("Draft"),
+                )
                 shareable_path = ""
                 if item.public_slug:
                     shareable_path = f"/{business_slug}/{item.public_slug}".replace("//", "/")
@@ -1864,8 +1876,8 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
                         "role_code": item.role or "",
                         "tone_label": tone_label,
                         "tone_code": item.tone or "",
-                        "status": (item.status or "").replace("_", " ").title() or _("Draft"),
-                        "status_code": item.status or "",
+                        "status": status_label,
+                        "status_code": status_code,
                         "conversations": item.conversations or 0,
                         "satisfaction": None,
                         "aht": _format_duration(item.average_handle_seconds),

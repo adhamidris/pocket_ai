@@ -543,16 +543,17 @@
 
   // Native integration types we support
   const NATIVE_TYPES = {
-    gmail: { label: "Gmail", type: "email_oauth", provider: "google_email", provider_key: "google", logo: "/static/img/mcp/gmail.svg" },
-    outlook: { label: "Outlook / Microsoft 365", type: "email_oauth", provider: "microsoft_email", provider_key: "microsoft", logo: "/static/img/mcp/microsoftoutlook.svg" },
-    google_calendar: { label: "Google Calendar", type: "integration_oauth", integration_type: "google_calendar", logo: "/static/img/mcp/googlecalendar.svg" },
-    google_drive: { label: "Google Drive", type: "integration_oauth", integration_type: "google_drive", logo: "/static/img/mcp/googledrive.svg" },
-    onedrive: { label: "OneDrive", type: "integration_oauth", integration_type: "onedrive", logo: "/static/img/mcp/microsoftonedrive.svg" },
-    slack: { label: "Slack", type: "integration_oauth", integration_type: "slack", logo: "/static/img/mcp/slack.svg" },
-    hubspot: { label: "HubSpot", type: "integration_oauth", integration_type: "hubspot", logo: "/static/img/mcp/hubspot.svg" },
+    gmail: { label: "{% trans 'Gmail' %}", type: "email_oauth", provider: "google_email", provider_key: "google", logo: "/static/img/mcp/gmail.svg" },
+    outlook: { label: "{% trans 'Outlook / Microsoft 365' %}", type: "email_oauth", provider: "microsoft_email", provider_key: "microsoft", logo: "/static/img/mcp/microsoftoutlook.svg" },
+    google_calendar: { label: "{% trans 'Google Calendar' %}", type: "integration_oauth", integration_type: "google_calendar", logo: "/static/img/mcp/googlecalendar.svg" },
+    google_drive: { label: "{% trans 'Google Drive' %}", type: "integration_oauth", integration_type: "google_drive", logo: "/static/img/mcp/googledrive.svg" },
+    onedrive: { label: "{% trans 'OneDrive' %}", type: "integration_oauth", integration_type: "onedrive", logo: "/static/img/mcp/microsoftonedrive.svg" },
+    slack: { label: "{% trans 'Slack' %}", type: "integration_oauth", integration_type: "slack", logo: "/static/img/mcp/slack.svg" },
+    hubspot: { label: "{% trans 'HubSpot' %}", type: "integration_oauth", integration_type: "hubspot", logo: "/static/img/mcp/hubspot.svg" },
   };
   const I18N = {
     integration: "{% trans 'Integration' %}",
+    nativeIntegration: "{% trans 'Native integration' %}",
     refresh: "{% trans 'Refresh' %}",
     refreshing: "{% trans 'Refreshing' %}",
     updatedJustNow: "{% trans 'Updated just now' %}",
@@ -560,6 +561,7 @@
     failedToLoad: "{% trans 'Failed to load' %}",
     failedToLoadIntegrationsPrefix: "{% trans 'Failed to load integrations:' %}",
     connected: "{% trans 'Connected' %}",
+    connect: "{% trans 'Connect' %}",
     nativeIntegrationEncrypted: "{% trans 'Native integration with encrypted credentials.' %}",
     toolsEnabled: "{% trans 'tools enabled' %}",
     manageTools: "{% trans 'Manage Tools' %}",
@@ -574,10 +576,28 @@
     disconnectFailedPrefix: "{% trans 'Disconnect failed:' %}",
     unknownError: "{% trans 'Unknown error' %}",
     loadingTools: "{% trans 'Loading tools...' %}",
+    loadingToolsEllipsis: "{% trans 'Loading tools…' %}",
     noToolsAvailableForIntegration: "{% trans 'No tools available for this integration.' %}",
     noToolsAvailable: "{% trans 'No tools available.' %}",
     toolDescriptionFallback: "{% trans 'Native integration tool.' %}",
     disabledToolsHiddenHint: "{% trans 'tools enabled. Disabled tools are hidden from the AI for this integration.' %}",
+    allIntegrationsConnected: "{% trans 'All integrations are connected.' %}",
+    unsupportedIntegrationTypeError: "{% trans 'Unsupported integration type.' %}",
+    failedToLoadTools: "{% trans 'Failed to load tools.' %}",
+    unableToLoadToolSettings: "{% trans 'Unable to load tool settings.' %}",
+    missingProviderKey: "{% trans 'Missing provider key.' %}",
+    failedToUpdateTools: "{% trans 'Failed to update tools.' %}",
+    toolSettingsUpdated: "{% trans 'Tool settings updated.' %}",
+    toolSettingsUpdateFailedPrefix: "{% trans 'Tool settings update failed:' %}",
+    connectedSuccessfully: "{% trans 'connected successfully.' %}",
+    connectionFailedPrefix: "{% trans 'Connection failed:' %}",
+    connectorDescriptionGmail: "{% trans 'Search, read, and send emails via Gmail. Native integration with draft approval for safe sending.' %}",
+    connectorDescriptionOutlook: "{% trans 'Search, read, and send emails via Microsoft Graph. Native integration with draft approval for safe sending.' %}",
+    connectorDescriptionGoogleCalendar: "{% trans 'List, create, and manage calendar events. Native integration with encrypted credentials.' %}",
+    connectorDescriptionGoogleDrive: "{% trans 'Search, list, and read files in Google Drive. Native integration with encrypted credentials.' %}",
+    connectorDescriptionOneDrive: "{% trans 'Search, list, and read files in OneDrive. Native integration with encrypted credentials.' %}",
+    connectorDescriptionSlack: "{% trans 'Send messages, read channels, and search across your Slack workspace. Native integration with encrypted credentials.' %}",
+    connectorDescriptionHubSpot: "{% trans 'Search contacts, manage deals, and access CRM data. Native integration with encrypted credentials.' %}",
   };
 
   function flash(msg, type) {
@@ -600,6 +620,20 @@
   function getCookie(name) {
     const match = document.cookie.match(new RegExp("(^| )" + name + "=([^;]+)"));
     return match ? decodeURIComponent(match[2]) : "";
+  }
+
+  function getConnectorDescription(item) {
+    const key = String(item && item.key ? item.key : "").toLowerCase();
+    const localizedByKey = {
+      gmail: I18N.connectorDescriptionGmail,
+      outlook: I18N.connectorDescriptionOutlook,
+      google_calendar: I18N.connectorDescriptionGoogleCalendar,
+      google_drive: I18N.connectorDescriptionGoogleDrive,
+      onedrive: I18N.connectorDescriptionOneDrive,
+      slack: I18N.connectorDescriptionSlack,
+      hubspot: I18N.connectorDescriptionHubSpot,
+    };
+    return localizedByKey[key] || (item && item.catEntry && item.catEntry.description ? item.catEntry.description : I18N.nativeIntegrationEncrypted);
   }
 
   function renderIntegrationLogo(item) {
@@ -737,7 +771,7 @@
             <div class="integr-card-sub">${escapeHtml(item.identifier || I18N.connected)}</div>
           </div>
         </div>
-        <div class="integr-card-info">${escapeHtml(item.catEntry ? item.catEntry.description : I18N.nativeIntegrationEncrypted)}</div>
+        <div class="integr-card-info">${escapeHtml(getConnectorDescription(item))}</div>
         <div class="integr-card-actions integr-card-actions-connected">
           <span class="integr-card-tools-count">
             ${item.accountData && Number(item.accountData.totalToolCount || 0) > 0
@@ -893,9 +927,9 @@
     activeToolsConnectionType = connectionType;
     activeToolsIntegrationType = integrationType;
     activeToolsProviderKey = providerKey;
-    toolsTitleEl.textContent = `${label} · Manage Tools`;
-    toolsSubtitleEl.textContent = "Loading tools...";
-    toolsBodyEl.innerHTML = '<div class="integr-tools-placeholder">Loading tools...</div>';
+    toolsTitleEl.textContent = `${label} · ${I18N.manageTools}`;
+    toolsSubtitleEl.textContent = I18N.loadingToolsEllipsis;
+    toolsBodyEl.innerHTML = '<div class="integr-tools-placeholder">' + escapeHtml(I18N.loadingToolsEllipsis) + "</div>";
     toolsModalEl.classList.add("is-open");
     toolsModalEl.setAttribute("aria-hidden", "false");
 
@@ -906,7 +940,7 @@
       } else if (connectionType === "integration_oauth") {
         url = API_BASE + "/integrations/oauth/tools/" + encodeURIComponent(integrationType) + "/?business_id=" + encodeURIComponent(BUSINESS_ID);
       } else {
-        throw new Error("Unsupported integration type.");
+        throw new Error(I18N.unsupportedIntegrationTypeError);
       }
       const resp = await fetch(
         url,
@@ -918,12 +952,12 @@
       );
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        throw new Error(data.message || data.error || "Failed to load tools.");
+        throw new Error(data.message || data.error || I18N.failedToLoadTools);
       }
       renderToolsRows(Array.isArray(data.tools) ? data.tools : []);
     } catch (e) {
-      toolsBodyEl.innerHTML = `<div class="integr-tools-error">${escapeHtml(e.message || "Failed to load tools.")}</div>`;
-      toolsSubtitleEl.textContent = "Unable to load tool settings.";
+      toolsBodyEl.innerHTML = `<div class="integr-tools-error">${escapeHtml(e.message || I18N.failedToLoadTools)}</div>`;
+      toolsSubtitleEl.textContent = I18N.unableToLoadToolSettings;
     }
   }
 
@@ -967,16 +1001,16 @@
         let url = "";
         if (activeToolsConnectionType === "email_oauth") {
           if (!activeToolsProviderKey) {
-            throw new Error("Missing provider key.");
+            throw new Error(I18N.missingProviderKey);
           }
           url = API_BASE + "/email/oauth/tools/" + encodeURIComponent(activeToolsProviderKey) + "/";
         } else if (activeToolsConnectionType === "integration_oauth") {
           if (!activeToolsIntegrationType) {
-            throw new Error("Missing integration type.");
+            throw new Error(I18N.missingIntegrationType);
           }
           url = API_BASE + "/integrations/oauth/tools/" + encodeURIComponent(activeToolsIntegrationType) + "/";
         } else {
-          throw new Error("Unsupported integration type.");
+          throw new Error(I18N.unsupportedIntegrationTypeError);
         }
         const resp = await fetch(
           url,
@@ -992,13 +1026,13 @@
         );
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) {
-          throw new Error(data.message || data.error || "Failed to update tools.");
+          throw new Error(data.message || data.error || I18N.failedToUpdateTools);
         }
         renderToolsRows(Array.isArray(data.tools) ? data.tools : []);
-        flash("Tool settings updated.", "success");
+        flash(I18N.toolSettingsUpdated, "success");
         fetchConnections();
       } catch (e) {
-        flash("Tool settings update failed: " + (e.message || "Unknown error"), "error");
+        flash(I18N.toolSettingsUpdateFailedPrefix + " " + (e.message || I18N.unknownError), "error");
       } finally {
         toolsSaveBtn.disabled = false;
       }
@@ -1007,7 +1041,7 @@
 
   function renderAvailable(items) {
     if (!items.length) {
-      availableGrid.innerHTML = '<div class="rounded-lg border border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground col-span-full">All integrations are connected.</div>';
+      availableGrid.innerHTML = '<div class="rounded-lg border border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground col-span-full">' + escapeHtml(I18N.allIntegrationsConnected) + "</div>";
       return;
     }
     availableGrid.innerHTML = items.map(item => `
@@ -1018,10 +1052,10 @@
           </div>
           <div class="integr-card-meta">
             <div class="integr-card-title">${escapeHtml(item.label)}</div>
-            <div class="integr-card-sub">Native integration</div>
+            <div class="integr-card-sub">${escapeHtml(I18N.nativeIntegration)}</div>
           </div>
         </div>
-        <div class="integr-card-info">${escapeHtml(item.catEntry ? item.catEntry.description : "Native integration with encrypted credentials.")}</div>
+        <div class="integr-card-info">${escapeHtml(getConnectorDescription(item))}</div>
         <div class="integr-card-actions integr-card-actions-available">
           <button
             type="button"
@@ -1031,7 +1065,7 @@
             data-connect-integration-type="${escapeHtml(item.integration_type || '')}"
             data-connect-provider="${escapeHtml(item.provider || '')}"
           >
-            Connect
+            ${escapeHtml(I18N.connect)}
           </button>
         </div>
       </div>
@@ -1066,11 +1100,11 @@
           if (!d || typeof d !== "object") return;
           if (d.type === "email_oauth_success" || d.type === "integration_oauth_success") {
             window.removeEventListener("message", onMessage);
-            flash((d.email || d.identifier || key) + " connected successfully.", "success");
+            flash((d.email || d.identifier || key) + " " + I18N.connectedSuccessfully, "success");
             fetchConnections();
           } else if (d.type === "email_oauth_error" || d.type === "integration_oauth_error") {
             window.removeEventListener("message", onMessage);
-            flash("Connection failed: " + (d.error || "unknown error"), "error");
+            flash(I18N.connectionFailedPrefix + " " + (d.error || I18N.unknownError), "error");
           }
         }
         window.addEventListener("message", onMessage);

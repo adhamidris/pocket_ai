@@ -70,7 +70,7 @@
               type="search"
               name="customer-search"
               class="rtl-search-input pl-9 w-full h-10 rounded-md border border-border/60 bg-muted/70 text-sm focus-visible:ring-0 focus-visible:border-border transition-colors"
-              placeholder="{{ customers_filters.search_placeholder|default:'Search name, email, text…' }}"
+              placeholder="{% if customers_filters.search_placeholder %}{{ customers_filters.search_placeholder }}{% else %}{% trans 'Search name, email, text…' %}{% endif %}"
               autocomplete="off"
               data-search-ready="true"
             />
@@ -88,7 +88,7 @@
               <path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z" />
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 14c-4.418 0-8 2.015-8 4.5V21h16v-2.5c0-2.485-3.582-4.5-8-4.5Z" />
             </svg>
-            <span data-dropdown-label="lifecycle">{{ customers_filters.lifecycle_label|default:"All lifecycle stages" }}</span>
+            <span data-dropdown-label="lifecycle">{% if customers_filters.lifecycle_label %}{{ customers_filters.lifecycle_label }}{% else %}{% trans "All lifecycle stages" %}{% endif %}</span>
             <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20" aria-hidden="true">
               <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m6 8 4 4 4-4" />
             </svg>
@@ -103,7 +103,7 @@
             <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-11a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V4Z" />
             </svg>
-            <span data-dropdown-label="date">{{ customers_filters.date_label|default:"Any time" }}</span>
+            <span data-dropdown-label="date">{% if customers_filters.date_label %}{{ customers_filters.date_label }}{% else %}{% trans "Any time" %}{% endif %}</span>
             <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20" aria-hidden="true">
               <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m6 8 4 4 4-4" />
             </svg>

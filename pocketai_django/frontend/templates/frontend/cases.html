@@ -45,26 +45,26 @@
             <div class="p-5 space-y-2">
               <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">{% trans "Open cases" %}</span>
               <div class="text-3xl font-semibold tracking-tight text-foreground">{{ cases_metrics.open|default:"—" }}</div>
-              <div class="text-xs font-medium text-muted-foreground">Target &lt; 15</div>
+              <div class="text-xs font-medium text-muted-foreground">{% trans "Target < 15" %}</div>
             </div>
           </div>
           <div class="rounded-lg bg-card/70 backdrop-blur shadow-sm transition-all duration-300">
             <div class="p-5 space-y-2">
               <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">{% trans "Urgent cases" %}</span>
               <div class="text-3xl font-semibold tracking-tight text-foreground">{{ cases_metrics.urgent|default:"—" }}</div>
-              <div class="text-xs font-medium text-muted-foreground">{{ cases_metrics.urgent_delta|default:"All clear" }}</div>
+              <div class="text-xs font-medium text-muted-foreground">{% if cases_metrics.urgent_delta %}{{ cases_metrics.urgent_delta }}{% else %}{% trans "All clear" %}{% endif %}</div>
             </div>
           </div>
           <div class="rounded-lg bg-card/70 backdrop-blur shadow-sm transition-all duration-300">
             <div class="p-5 space-y-2">
               <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">{% trans "Avg. time open" %}</span>
               <div class="text-3xl font-semibold tracking-tight text-foreground">{{ cases_metrics.avg_open|default:"—" }}</div>
-              <div class="text-xs font-medium text-muted-foreground">Goal &lt; 12h</div>
+              <div class="text-xs font-medium text-muted-foreground">{% trans "Goal < 12h" %}</div>
             </div>
           </div>
         </div>
 
-        <div class="text-sm text-muted-foreground">{{ cases_metrics_message|default:"Connect your data sources to populate metrics." }}</div>
+        <div class="text-sm text-muted-foreground">{% if cases_metrics_message %}{{ cases_metrics_message }}{% else %}{% trans "Connect your data sources to populate metrics." %}{% endif %}</div>
 
         <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div class="flex flex-col gap-3 md:flex-row md:items-center md:flex-wrap">
@@ -349,10 +349,10 @@
     </button>
     <div class="flex h-full flex-col">
       <div class="flex-1 overflow-y-auto" data-case-scroll>
-        <div class="space-y-6 px-6 py-10" data-case-empty>
+          <div class="space-y-6 px-6 py-10" data-case-empty>
           <div class="space-y-2">
             <h2 class="text-xl font-semibold text-foreground">{% trans "Select a case" %}</h2>
-            <p class="text-sm text-muted-foreground">Choose a case from the list to review AI insights and activity.</p>
+            <p class="text-sm text-muted-foreground">{% trans "Choose a case from the list to review AI insights and activity." %}</p>
           </div>
           <div class="rounded-xl border border-dashed border-border/60 bg-muted/40 px-4 py-6 text-center text-sm text-muted-foreground">
             {% trans "Nothing to show yet." %}
@@ -387,9 +387,9 @@
         <div class="hidden h-full flex-col" data-case-content>
           <div class="px-4 py-3 border-b border-border/60 bg-card/80 backdrop-blur">
             <div class="flex flex-col gap-1 pr-12">
-              <span class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground" data-case-number>Case</span>
+              <span class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground" data-case-number>{% trans "Case" %}</span>
               <div class="flex flex-wrap items-center gap-2 text-sm">
-                <span class="font-semibold text-base sm:text-lg text-foreground" data-case-title>Case title</span>
+                <span class="font-semibold text-base sm:text-lg text-foreground" data-case-title>{% trans "Case title" %}</span>
                 <span class="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold capitalize" data-case-priority-badge>—</span>
                 <span class="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold capitalize" data-case-status-badge>—</span>
                 <span class="ml-auto text-xs text-muted-foreground" data-case-started></span>
@@ -417,7 +417,7 @@
                   role="tab"
                   aria-selected="true"
                 >
-                  Overview
+                  {% trans "Overview" %}
                 </button>
                 <button
                   type="button"
@@ -427,7 +427,7 @@
                   role="tab"
                   aria-selected="false"
                 >
-                  Documents
+                  {% trans "Documents" %}
                 </button>
                 <button
                   type="button"
@@ -437,7 +437,7 @@
                   role="tab"
                   aria-selected="false"
                 >
-                  History
+                  {% trans "History" %}
                 </button>
                 <button
                   type="button"
@@ -447,7 +447,7 @@
                   role="tab"
                   aria-selected="false"
                 >
-                  Messages
+                  {% trans "Messages" %}
                 </button>
               </div>
             </div>
@@ -455,19 +455,19 @@
               <div class="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-4" data-case-scroll>
                 <div class="space-y-4" data-case-tab-panel="overview">
                   <section class="space-y-3">
-                    <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Summary</div>
+                    <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{% trans "Summary" %}</div>
                     <div class="rounded-xl border border-border/60 bg-card/95 px-4 py-4 space-y-3">
                       <div>
                         <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground/80">{% trans "Description" %}</div>
-                        <p class="mt-1 text-sm leading-relaxed text-foreground" data-case-description>No summary provided.</p>
+                        <p class="mt-1 text-sm leading-relaxed text-foreground" data-case-description>{% trans "No summary provided." %}</p>
                       </div>
                       <div>
-                        <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground/80">AI diagnosis</div>
-                        <p class="mt-1 text-sm leading-relaxed text-foreground" data-case-diagnosis>No AI diagnosis yet.</p>
+                        <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground/80">{% trans "AI diagnosis" %}</div>
+                        <p class="mt-1 text-sm leading-relaxed text-foreground" data-case-diagnosis>{% trans "No AI diagnosis yet." %}</p>
                       </div>
                       <div>
                         <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground/80">{% trans "Actions taken" %}</div>
-                        <p class="mt-1 text-sm leading-relaxed text-foreground" data-case-actions>No resolution actions captured.</p>
+                        <p class="mt-1 text-sm leading-relaxed text-foreground" data-case-actions>{% trans "No resolution actions captured." %}</p>
                       </div>
                     </div>
                   </section>
@@ -475,48 +475,48 @@
                     <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{% trans "Suggested next steps" %}</div>
                     <div class="rounded-xl border border-border/60 bg-muted/60 px-4 py-3">
                       <ul class="space-y-2 text-sm text-foreground" data-case-suggestions>
-                        <li class="text-muted-foreground">No suggestions available.</li>
+                        <li class="text-muted-foreground">{% trans "No suggestions available." %}</li>
                       </ul>
                     </div>
                   </section>
                   <section class="space-y-3">
-                    <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Notes</div>
+                    <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{% trans "Notes" %}</div>
                     <div class="rounded-xl border border-border/60 bg-card/95 px-4 py-3">
                       <ul class="space-y-3 text-sm" data-case-notes>
-                        <li class="text-muted-foreground">No notes on this case.</li>
+                        <li class="text-muted-foreground">{% trans "No notes on this case." %}</li>
                       </ul>
                     </div>
                   </section>
                 </div>
                 <div class="space-y-3 hidden" data-case-tab-panel="documents">
-                  <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Documents</div>
+                  <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{% trans "Documents" %}</div>
                   <div class="rounded-xl border border-border/60 bg-card/95 px-4 py-3">
                     <ul class="space-y-3" data-case-documents>
-                      <li class="text-sm text-muted-foreground">No documents attached.</li>
+                      <li class="text-sm text-muted-foreground">{% trans "No documents attached." %}</li>
                     </ul>
                   </div>
                 </div>
                 <div class="space-y-3 hidden" data-case-tab-panel="history">
-                  <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Activity</div>
+                  <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{% trans "Activity" %}</div>
                   <div class="rounded-xl border border-border/60 bg-card/95 px-4 py-3">
                     <ul class="space-y-3" data-case-history>
-                      <li class="text-sm text-muted-foreground">No history yet.</li>
+                      <li class="text-sm text-muted-foreground">{% trans "No history yet." %}</li>
                     </ul>
                   </div>
                 </div>
                 <div class="space-y-3 hidden" data-case-tab-panel="messages">
-                  <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Messages</div>
+                  <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{% trans "Messages" %}</div>
                   <div class="rounded-xl border border-border/60 bg-card/95 px-4 py-3">
                     <ul class="space-y-3" data-case-messages>
-                      <li class="text-sm text-muted-foreground">No conversation messages yet.</li>
+                      <li class="text-sm text-muted-foreground">{% trans "No conversation messages yet." %}</li>
                     </ul>
                   </div>
                 </div>
               </div>
             </div>
             <footer class="mt-auto flex flex-col gap-2 border-t border-border/60 px-4 py-4">
-              <button type="button" class="w-full rounded-lg border border-border/70 bg-muted/80 px-4 py-2 text-sm font-medium text-foreground transition hover:bg-muted/70">Assign owner</button>
-              <button type="button" class="w-full rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90">Mark resolved</button>
+              <button type="button" class="w-full rounded-lg border border-border/70 bg-muted/80 px-4 py-2 text-sm font-medium text-foreground transition hover:bg-muted/70">{% trans "Assign owner" %}</button>
+              <button type="button" class="w-full rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90">{% trans "Mark resolved" %}</button>
             </footer>
           </div>
         </div>

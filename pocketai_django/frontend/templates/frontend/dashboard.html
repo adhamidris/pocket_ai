@@ -49,7 +49,7 @@
                           type="submit"
                           class="rounded-full px-2 py-1 transition-colors {% if ACTIVE_LANGUAGE == option.code %}bg-accent/70 text-foreground{% else %}text-muted-foreground hover:text-foreground{% endif %}"
                           {% if ACTIVE_LANGUAGE == option.code %}aria-current="true"{% endif %}
-                          aria-label="Language: {{ option.label }}"
+                          aria-label="{% blocktrans with label=option.label %}Language: {{ label }}{% endblocktrans %}"
                         >
                           {{ option.code|upper }}
                         </button>
@@ -61,7 +61,7 @@
                   type="button"
                   class="h-9 w-9 inline-flex items-center justify-center rounded-full border border-border/60 hover:bg-accent/40 transition-colors"
                   data-theme-toggle
-                  aria-label="Toggle theme"
+                  aria-label="{% trans 'Toggle theme' %}"
                 >
                   <span data-theme-icon-wrap>
                     <svg class="h-4 w-4" data-theme-icon="moon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
@@ -88,7 +88,13 @@
                 </svg>
                 <div class="space-y-1">
                   <div class="text-xs font-semibold uppercase tracking-[0.14em] text-amber-600">{% trans "Escalation monitor" %}</div>
-                  <div class="text-sm font-semibold text-foreground">{{ dashboard_alert_message|default:"No escalations yet — monitoring continuously." }}</div>
+                  <div class="text-sm font-semibold text-foreground">
+                    {% if dashboard_alert_message %}
+                      {{ dashboard_alert_message }}
+                    {% else %}
+                      {% trans "No escalations yet — monitoring continuously." %}
+                    {% endif %}
+                  </div>
                 </div>
               </div>
               <div class="flex items-center gap-2 md:ml-6">
@@ -122,19 +128,25 @@
             {% for metric in dashboard_metrics %}
               <div class="rounded-lg bg-card/70 backdrop-blur shadow-sm transition-all duration-300">
                 <div class="p-5 space-y-3">
-                  <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">{{ metric.label|default:"Metric" }}</span>
+                  <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">
+                    {% if metric.label %}{{ metric.label }}{% else %}{% trans "Metric" %}{% endif %}
+                  </span>
                   <div class="text-3xl font-semibold tracking-tight text-foreground">
                     {{ metric.value|default:"—" }}
                   </div>
                   <div class="text-xs font-medium text-muted-foreground">
-                    {{ metric.delta|default:"Awaiting data." }}
+                    {% if metric.delta %}{{ metric.delta }}{% else %}{% trans "Awaiting data." %}{% endif %}
                   </div>
                 </div>
               </div>
             {% endfor %}
           {% else %}
             <div class="md:col-span-3 rounded-xl border border-dashed border-border/60 bg-card/50 p-6 text-center text-sm text-muted-foreground">
-              {{ dashboard_metrics_empty_message|default:"Metrics will appear once you start receiving conversations." }}
+              {% if dashboard_metrics_empty_message %}
+                {{ dashboard_metrics_empty_message }}
+              {% else %}
+                {% trans "Metrics will appear once you start receiving conversations." %}
+              {% endif %}
             </div>
           {% endif %}
         </div>
@@ -159,7 +171,7 @@
                         {% trans "All" %} <span class="ml-1 text-[10px] text-muted-foreground/80">{{ dashboard_conversation_counts.all|default:0 }}</span>
                       </button>
                       <button type="button" class="px-3 py-1 rounded-full text-muted-foreground hover:text-foreground">
-                        AI <span class="ml-1 text-[10px] text-muted-foreground/80">{{ dashboard_conversation_counts.ai|default:0 }}</span>
+                        {% trans "AI" %} <span class="ml-1 text-[10px] text-muted-foreground/80">{{ dashboard_conversation_counts.ai|default:0 }}</span>
                       </button>
                       <button type="button" class="px-3 py-1 rounded-full text-muted-foreground hover:text-foreground">
                         {% trans "Human" %} <span class="ml-1 text-[10px] text-muted-foreground/80">{{ dashboard_conversation_counts.human|default:0 }}</span>
@@ -187,9 +199,11 @@
                   {% for group in dashboard_conversation_groups %}
                     <div class="space-y-3">
                       <div class="flex items-center gap-2 text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
-                        <span>{{ group.label|default:"Recent" }}</span>
+                        <span>{% if group.label %}{{ group.label }}{% else %}{% trans "Recent" %}{% endif %}</span>
                         <span class="text-muted-foreground/60">·</span>
-                        <span class="rounded-full bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground/90">{{ group.entries|length|default:0 }} updates</span>
+                        <span class="rounded-full bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground/90">
+                          {% blocktrans with count=group.entries|length|default:0 %}{{ count }} updates{% endblocktrans %}
+                        </span>
                       </div>
                       <div class="space-y-3">
                         {% for item in group.entries %}
@@ -208,17 +222,19 @@
                             </div>
                             <div class="flex-1 min-w-0 space-y-1">
                               <div class="flex flex-wrap items-center gap-2">
-                                <div class="text-sm font-medium truncate text-foreground">{{ item.title|default:"Conversation" }}</div>
+                                <div class="text-sm font-medium truncate text-foreground">
+                                  {% if item.title %}{{ item.title }}{% else %}{% trans "Conversation" %}{% endif %}
+                                </div>
                                 {% if item.priority == "urgent" %}
-                                  <span class="inline-flex h-5 items-center rounded-full border border-rose-500/30 bg-rose-500/10 px-2 text-[9px] font-semibold uppercase tracking-wide text-rose-400">Urgent</span>
+                                  <span class="inline-flex h-5 items-center rounded-full border border-rose-500/30 bg-rose-500/10 px-2 text-[9px] font-semibold uppercase tracking-wide text-rose-400">{% trans "Urgent" %}</span>
                                 {% endif %}
                                 {% with item.channel_badge_class|default:"text-muted-foreground" as badge_class %}
                                   <span class="inline-flex h-5 items-center gap-1 rounded-full border border-border/60 bg-background px-2 text-[10px] {{ badge_class }}">
-                                    {{ item.channel_label|default:item.channel|default:"Channel" }}
+                                    {% if item.channel_label %}{{ item.channel_label }}{% elif item.channel %}{{ item.channel }}{% else %}{% trans "Channel" %}{% endif %}
                                   </span>
                                 {% endwith %}
                               </div>
-                              <div class="text-xs text-muted-foreground truncate">{{ item.summary|default:"No summary available." }}</div>
+                              <div class="text-xs text-muted-foreground truncate">{% if item.summary %}{{ item.summary }}{% else %}{% trans "No summary available." %}{% endif %}</div>
                             </div>
                             <div class="flex items-center gap-3 text-[11px] text-muted-foreground whitespace-nowrap">
                               <span>{{ item.timestamp|default:"—" }}</span>
@@ -227,7 +243,7 @@
                                   <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z" stroke-linecap="round" stroke-linejoin="round" />
                                   <circle cx="12" cy="12" r="3" stroke-linecap="round" stroke-linejoin="round" />
                                 </svg>
-                                View
+                                {% trans "View" %}
                               </button>
                             </div>
                           </div>
@@ -241,7 +257,11 @@
                 </div>
               {% else %}
                 <div class="py-10 text-sm text-muted-foreground text-center">
-                  {{ dashboard_conversations_empty_message|default:"Connect your support channels to start streaming conversations here." }}
+                  {% if dashboard_conversations_empty_message %}
+                    {{ dashboard_conversations_empty_message }}
+                  {% else %}
+                    {% trans "Connect your support channels to start streaming conversations here." %}
+                  {% endif %}
                 </div>
               {% endif %}
             </div>
@@ -250,7 +270,7 @@
           <div class="col-span-12 lg:col-span-4 space-y-4">
             <div class="border border-border/40 bg-card/70 backdrop-blur-md rounded-xl">
               <div class="p-5 space-y-4">
-                <div class="text-base font-semibold">AI pulse</div>
+                <div class="text-base font-semibold">{% trans "AI pulse" %}</div>
                 <div class="space-y-3">
                   {% if dashboard_loading %}
                     {% for _ in "123" %}
@@ -273,14 +293,18 @@
                         </span>
                         <div class="flex-1 min-w-0">
                           <div class="text-sm font-medium text-foreground">{{ item.value|default:"—" }}</div>
-                          <div class="text-xs text-muted-foreground truncate">{{ item.label|default:"Metric" }}</div>
+                          <div class="text-xs text-muted-foreground truncate">{% if item.label %}{{ item.label }}{% else %}{% trans "Metric" %}{% endif %}</div>
                         </div>
                         <div class="text-xs text-primary font-medium whitespace-nowrap">{{ item.delta|default:"—" }}</div>
                       </div>
                     {% endfor %}
                   {% else %}
                     <div class="rounded-lg border border-dashed border-border/60 p-4 text-xs text-muted-foreground text-center">
-                      {{ dashboard_ai_pulse_empty_message|default:"Metrics will appear once cases begin flowing in." }}
+                      {% if dashboard_ai_pulse_empty_message %}
+                        {{ dashboard_ai_pulse_empty_message }}
+                      {% else %}
+                        {% trans "Metrics will appear once cases begin flowing in." %}
+                      {% endif %}
                     </div>
                   {% endif %}
                 </div>
@@ -289,7 +313,7 @@
 
             <div class="border border-border/40 bg-card/70 backdrop-blur-md rounded-xl">
               <div class="p-5 space-y-4">
-                <div class="text-base font-semibold">Agent snapshot</div>
+                <div class="text-base font-semibold">{% trans "Agent snapshot" %}</div>
                 <div class="space-y-3">
                   {% if dashboard_loading %}
                     {% for _ in "123" %}
@@ -314,8 +338,8 @@
                             {% endwith %}
                           </span>
                           <div>
-                            <div class="text-sm font-medium text-foreground">{{ agent.name|default:"Agent" }}</div>
-                            <div class="text-xs text-muted-foreground">{{ agent.role|default:"Role pending" }}</div>
+                            <div class="text-sm font-medium text-foreground">{% if agent.name %}{{ agent.name }}{% else %}{% trans "Agent" %}{% endif %}</div>
+                            <div class="text-xs text-muted-foreground">{% if agent.role %}{{ agent.role }}{% else %}{% trans "Role pending" %}{% endif %}</div>
                           </div>
                         </div>
                         <span class="inline-flex items-center rounded-full border border-border/60 px-3 py-1 text-xs text-muted-foreground">
@@ -325,7 +349,11 @@
                     {% endfor %}
                   {% else %}
                     <div class="rounded-lg border border-dashed border-border/60 p-4 text-xs text-muted-foreground text-center">
-                      {{ dashboard_agent_snapshot_empty_message|default:"Invite your team to see performance insights here." }}
+                      {% if dashboard_agent_snapshot_empty_message %}
+                        {{ dashboard_agent_snapshot_empty_message }}
+                      {% else %}
+                        {% trans "Invite your team to see performance insights here." %}
+                      {% endif %}
                     </div>
                   {% endif %}
                 </div>

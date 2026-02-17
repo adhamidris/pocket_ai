@@ -229,21 +229,38 @@
       failedToDisconnectProvider: "{% trans 'Failed to disconnect provider.' %}",
       activeProviderUpdated: "{% trans 'Active transport provider updated.' %}",
       failedToSetActiveProvider: "{% trans 'Failed to set active provider.' %}",
+      descriptionDeepgram: "{% trans 'Live speech-to-text for caller audio.' %}",
+      descriptionTwilio: "{% trans 'Call transport, webhooks, and recording callbacks.' %}",
+      descriptionTelnyx: "{% trans 'Call transport, webhooks, and recording callbacks.' %}",
+      descriptionElevenlabs: "{% trans 'Low-latency text-to-speech voice responses.' %}",
+      accountSid: "{% trans 'Account SID' %}",
+      authToken: "{% trans 'Auth Token' %}",
+      webhookBaseUrl: "{% trans 'Webhook Base URL' %}",
+      fromNumberE164: "{% trans 'From Number (E.164)' %}",
+      apiKey: "{% trans 'API Key' %}",
+      applicationSid: "{% trans 'Application SID' %}",
+      placeholderTwilioSid: "{% trans 'ACxxxxxxxxxxxx' %}",
+      placeholderTwilioAuthToken: "{% trans 'Twilio auth token' %}",
+      placeholderWebhookUrl: "{% trans 'https://your-domain.com' %}",
+      placeholderPhone: "{% trans '+15551234567' %}",
+      placeholderApiKey: "{% trans 'KEYxxxxxxxxxxxx' %}",
+      placeholderAccountSidShort: "{% trans 'xxxxxxxxxxxx' %}",
+      placeholderApplicationSid: "{% trans 'Appxxxxxxxxxxxx' %}",
     };
 
     var PROVIDER_FIELDS = {
       twilio: [
-        { key: "account_sid", label: "Account SID", type: "text", placeholder: "ACxxxxxxxxxxxx", secret: false },
-        { key: "auth_token", label: "Auth Token", type: "password", placeholder: "Twilio auth token", secret: true },
-        { key: "webhook_base_url", label: "Webhook Base URL", type: "url", placeholder: "https://your-domain.com", secret: false },
-        { key: "from_number", label: "From Number (E.164)", type: "text", placeholder: "+15551234567", secret: false }
+        { key: "account_sid", label: I18N.accountSid, type: "text", placeholder: I18N.placeholderTwilioSid, secret: false },
+        { key: "auth_token", label: I18N.authToken, type: "password", placeholder: I18N.placeholderTwilioAuthToken, secret: true },
+        { key: "webhook_base_url", label: I18N.webhookBaseUrl, type: "url", placeholder: I18N.placeholderWebhookUrl, secret: false },
+        { key: "from_number", label: I18N.fromNumberE164, type: "text", placeholder: I18N.placeholderPhone, secret: false }
       ],
       telnyx: [
-        { key: "api_key", label: "API Key", type: "password", placeholder: "KEYxxxxxxxxxxxx", secret: true },
-        { key: "account_sid", label: "Account SID", type: "text", placeholder: "xxxxxxxxxxxx", secret: false },
-        { key: "application_sid", label: "Application SID", type: "text", placeholder: "Appxxxxxxxxxxxx", secret: false },
-        { key: "webhook_base_url", label: "Webhook Base URL", type: "url", placeholder: "https://your-domain.com", secret: false },
-        { key: "from_number", label: "From Number (E.164)", type: "text", placeholder: "+15551234567", secret: false }
+        { key: "api_key", label: I18N.apiKey, type: "password", placeholder: I18N.placeholderApiKey, secret: true },
+        { key: "account_sid", label: I18N.accountSid, type: "text", placeholder: I18N.placeholderAccountSidShort, secret: false },
+        { key: "application_sid", label: I18N.applicationSid, type: "text", placeholder: I18N.placeholderApplicationSid, secret: false },
+        { key: "webhook_base_url", label: I18N.webhookBaseUrl, type: "url", placeholder: I18N.placeholderWebhookUrl, secret: false },
+        { key: "from_number", label: I18N.fromNumberE164, type: "text", placeholder: I18N.placeholderPhone, secret: false }
       ]
     };
 
@@ -321,6 +338,17 @@
       return "voice-status-not-configured";
     }
 
+    function getProviderDescription(item) {
+      var key = String((item && item.provider) || "").toLowerCase();
+      var map = {
+        deepgram: I18N.descriptionDeepgram,
+        twilio: I18N.descriptionTwilio,
+        telnyx: I18N.descriptionTelnyx,
+        elevenlabs: I18N.descriptionElevenlabs
+      };
+      return map[key] || String((item && item.description) || "");
+    }
+
     function renderProviders() {
       var gridEl = document.querySelector("[data-voice-grid]");
       if (!gridEl) return;
@@ -361,7 +389,7 @@
           "      </div>" +
           "    </div>" +
           "  </div>" +
-          '  <p class="mcp-card-desc">' + escapeHtml(item.description || "") + "</p>" +
+          '  <p class="mcp-card-desc">' + escapeHtml(getProviderDescription(item)) + "</p>" +
           '  <div class="px-5 pb-2 text-[11px] text-muted-foreground">' + escapeHtml(tested) + "</div>" +
           (lastError ? ('<div class="mx-5 mb-2 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] text-rose-700">' + escapeHtml(lastError) + "</div>") : "") +
           '  <div class="mcp-card-actions voice-provider-actions">' +
@@ -433,7 +461,7 @@
       if (!els.root || !els.content || !els.fields) return;
 
       els.title.textContent = I18N.configurePrefix + " " + (provider.label || provider.provider || I18N.provider);
-      els.subtitle.textContent = provider.description || I18N.storeEncryptedCredentials;
+      els.subtitle.textContent = getProviderDescription(provider) || I18N.storeEncryptedCredentials;
       els.enabled.checked = !!provider.enabled;
       if (els.active) els.active.checked = !!provider.isActiveTransport;
       setModalError("");

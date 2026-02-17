@@ -74,7 +74,7 @@
               <path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z" />
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 14c-4.418 0-8 2.015-8 4.5V21h16v-2.5c0-2.485-3.582-4.5-8-4.5Z" />
             </svg>
-            <span data-dropdown-label="agent-status">{{ agents_filters.status_label|default:"All statuses" }}</span>
+            <span data-dropdown-label="agent-status">{% if agents_filters.status_label %}{{ agents_filters.status_label }}{% else %}{% trans "All statuses" %}{% endif %}</span>
             <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20" aria-hidden="true">
               <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m6 8 4 4 4-4" />
             </svg>
@@ -145,12 +145,12 @@
 	                  aria-expanded="false"
                   data-agent-row
                   data-agent-uuid="{{ agent.uuid }}"
-                  data-agent-name="{{ agent.name|default:'Unnamed agent'|escape }}"
+                  data-agent-name="{% if agent.name %}{{ agent.name|escape }}{% else %}{% trans 'Unnamed agent' %}{% endif %}"
                   data-agent-initials="{{ agent.initials|default:'AI'|escape }}"
                   data-agent-identifier="{{ agent.identifier|default:'AG-0000' }}"
                   data-agent-status="{{ agent.status_code|default:''|lower }}"
-                  data-agent-status-label="{{ agent.status|default:'Draft'|escape }}"
-                  data-agent-role="{{ agent.primary_role|default:'Support Agent'|escape }}"
+                  data-agent-status-label="{% if agent.status %}{{ agent.status|escape }}{% else %}{% trans 'Draft' %}{% endif %}"
+                  data-agent-role="{% if agent.primary_role %}{{ agent.primary_role|escape }}{% else %}{% trans 'Support Agent' %}{% endif %}"
                   data-agent-tone="{{ agent.tone_label|default:'—'|escape }}"
                   data-agent-tone-code="{{ agent.tone_code|default:''|lower }}"
                   data-agent-roles="{{ agent.roles|join:', ' }}"
@@ -170,11 +170,11 @@
 	                        {{ agent.initials|default:"AI" }}
 	                      </span>
 	                      <div class="min-w-0">
-	                        <div class="truncate text-base font-semibold text-foreground">{{ agent.name|default:"Unnamed agent" }}</div>
+	                        <div class="truncate text-base font-semibold text-foreground">{% if agent.name %}{{ agent.name }}{% else %}{% trans "Unnamed agent" %}{% endif %}</div>
 	                        <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-	                          <span class="truncate">{{ agent.primary_role|default:"Support Agent" }}</span>
-	                          <span aria-hidden="true">•</span>
-	                          <span class="truncate">ID: {{ agent.identifier|default:"AG-0000" }}</span>
+                          <span class="truncate">{% if agent.primary_role %}{{ agent.primary_role }}{% else %}{% trans "Support Agent" %}{% endif %}</span>
+                          <span aria-hidden="true">•</span>
+                          <span class="truncate">ID: {{ agent.identifier|default:"AG-0000" }}</span>
 	                          {% if agent.tone_label and agent.tone_label != '—' %}
 	                            <span aria-hidden="true">•</span>
 	                            <span class="truncate">{{ agent.tone_label }}</span>
@@ -185,7 +185,7 @@
 	                    <div class="shrink-0 text-right">
 	                      {% with status_code=agent.status_code|default:""|lower %}
 	                        <div class="text-xs font-semibold capitalize {% if status_code == 'active' %}text-emerald-600{% elif status_code == 'review' %}text-amber-600{% elif status_code == 'draft' %}text-slate-500{% else %}text-slate-500{% endif %}">
-	                          {{ agent.status|default:"Draft" }}
+	                          {% if agent.status %}{{ agent.status }}{% else %}{% trans "Draft" %}{% endif %}
 	                        </div>
 	                      {% endwith %}
 	                      <div class="mt-1 text-[11px] text-muted-foreground">{{ agent.updated|default:"—" }}</div>
@@ -194,41 +194,41 @@
 
 	                  <div class="mt-4 grid grid-cols-2 gap-3">
 	                    <div class="rounded-lg border border-border/60 bg-muted/30 px-3 py-2">
-	                      <div class="text-[11px] font-medium text-muted-foreground">Knowledge</div>
+	                      <div class="text-[11px] font-medium text-muted-foreground">{% trans "Knowledge" %}</div>
 	                      <div class="mt-1 text-sm font-semibold leading-tight">
 	                        {% if agent.knowledge_mode == 'missing' %}
-	                          <span class="text-rose-600">Missing</span>
+	                          <span class="text-rose-600">{% trans "Missing" %}</span>
 	                        {% elif agent.knowledge_mode == 'select' %}
-	                          <span class="text-foreground">Selected</span>
+	                          <span class="text-foreground">{% trans "Selected" %}</span>
 	                          <span class="font-medium text-muted-foreground">({{ agent.knowledge_total|default:0 }})</span>
 	                        {% else %}
-	                          <span class="text-foreground">All docs</span>
+	                          <span class="text-foreground">{% trans "All docs" %}</span>
 	                          <span class="font-medium text-muted-foreground">({{ agent.knowledge_total|default:0 }})</span>
 	                        {% endif %}
 	                      </div>
 	                      <div class="mt-1 text-[11px]">
 	                        {% if agent.knowledge_mode == 'missing' %}
-	                          <span class="text-muted-foreground">No docs attached</span>
+	                          <span class="text-muted-foreground">{% trans "No docs attached" %}</span>
 	                        {% elif agent.knowledge_failed %}
-	                          <span class="text-rose-600">{{ agent.knowledge_failed }} failed</span>
+	                          <span class="text-rose-600">{% blocktrans with count=agent.knowledge_failed %}{{ count }} failed{% endblocktrans %}</span>
 	                        {% elif agent.knowledge_processing %}
-	                          <span class="text-amber-600">{{ agent.knowledge_processing }} processing</span>
+	                          <span class="text-amber-600">{% blocktrans with count=agent.knowledge_processing %}{{ count }} processing{% endblocktrans %}</span>
 	                        {% else %}
-	                          <span class="text-muted-foreground">Up to date</span>
+	                          <span class="text-muted-foreground">{% trans "Up to date" %}</span>
 	                        {% endif %}
 	                      </div>
 	                    </div>
 	                    <div class="rounded-lg border border-border/60 bg-muted/30 px-3 py-2 min-w-0">
-	                      <div class="text-[11px] font-medium text-muted-foreground">Tools</div>
+	                      <div class="text-[11px] font-medium text-muted-foreground">{% trans "Tools" %}</div>
 	                      <div class="mt-1 text-sm font-semibold text-foreground leading-tight">
 	                        {{ agent.capabilities_enabled|default:0 }}/{{ agent.capabilities_total|default:0 }}
-	                        <span class="text-xs font-medium text-muted-foreground">enabled</span>
+	                        <span class="text-xs font-medium text-muted-foreground">{% trans "enabled" %}</span>
 	                      </div>
 	                      <div class="mt-1 truncate text-[11px] text-muted-foreground">
 	                        {% if agent.capabilities_highlights %}
-	                          {{ agent.capabilities_highlights|join:", " }}{% if agent.capabilities_more %} +{{ agent.capabilities_more }} more{% endif %}
+	                          {{ agent.capabilities_highlights|join:", " }}{% if agent.capabilities_more %}{% blocktrans with count=agent.capabilities_more %} +{{ count }} more{% endblocktrans %}{% endif %}
 	                        {% else %}
-	                          No tools enabled
+	                          {% trans "No tools enabled" %}
 	                        {% endif %}
 	                      </div>
 	                    </div>
@@ -237,13 +237,13 @@
 	                  <div class="mt-4 flex items-center justify-between gap-3 border-t border-border/60 pt-3 text-xs">
 	                    <div class="flex flex-wrap items-center gap-2 text-muted-foreground">
 	                      {% if agent.shareable_path %}
-	                        <span class="font-medium text-foreground">Chat link ready</span>
+	                        <span class="font-medium text-foreground">{% trans "Chat link ready" %}</span>
 	                      {% else %}
-	                        <span>Not published</span>
+	                        <span>{% trans "Not published" %}</span>
 	                      {% endif %}
 	                      {% if agent.escalation_enabled %}
 	                        <span aria-hidden="true">•</span>
-	                        <span>Escalation on</span>
+	                        <span>{% trans "Escalation on" %}</span>
 	                      {% endif %}
 	                    </div>
 	                    <div class="flex items-center gap-2">
@@ -253,10 +253,10 @@
 	                          class="inline-flex items-center justify-center rounded-md border border-input bg-background px-2.5 py-1.5 text-[11px] font-semibold text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
 	                          data-agent-copy-link
 	                        >
-	                          Copy link
+	                          {% trans "Copy link" %}
 	                        </button>
 	                      {% endif %}
-	                      <span class="text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">Open</span>
+	                      <span class="text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">{% trans "Open" %}</span>
 	                      <svg class="h-4 w-4 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
 	                        <path stroke-linecap="round" stroke-linejoin="round" d="m9 18 6-6-6-6" />
 	                      </svg>
