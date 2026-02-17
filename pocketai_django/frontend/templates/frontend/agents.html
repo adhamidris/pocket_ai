@@ -174,7 +174,7 @@
 	                        <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
                           <span class="truncate">{% if agent.primary_role %}{{ agent.primary_role }}{% else %}{% trans "Support Agent" %}{% endif %}</span>
                           <span aria-hidden="true">•</span>
-                          <span class="truncate">ID: {{ agent.identifier|default:"AG-0000" }}</span>
+                          <span class="truncate">{% trans "ID" %}: {{ agent.identifier|default:"AG-0000" }}</span>
 	                          {% if agent.tone_label and agent.tone_label != '—' %}
 	                            <span aria-hidden="true">•</span>
 	                            <span class="truncate">{{ agent.tone_label }}</span>

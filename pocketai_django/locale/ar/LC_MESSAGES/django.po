@@ -268,8 +268,6 @@ msgid "Search agents..."
 msgstr "ابحث عن الوكلاء..."
 
 #: frontend/templates/frontend/agents.html:77 frontend/views.py:2217
-#, fuzzy
-#| msgid "All Cases"
 msgid "All statuses"
 msgstr "كل الحالات"
 
@@ -281,10 +279,8 @@ msgstr "حجم الصفحة: %(limit)s"
 
 #: frontend/templates/frontend/agents.html:148
 #: frontend/templates/frontend/agents.html:173
-#, fuzzy
-#| msgid "Create agent"
 msgid "Unnamed agent"
-msgstr "وكيل بدون اسم"
+msgstr "وكيل بلا اسم"
 
 #: frontend/templates/frontend/agents.html:152
 #: frontend/templates/frontend/agents.html:188 frontend/views.py:2038
@@ -292,12 +288,14 @@ msgstr "وكيل بدون اسم"
 msgid "Draft"
 msgstr "مسودة"
 
+#: frontend/templates/frontend/agents.html:177
+msgid "ID"
+msgstr "المعرّف"
+
 #: frontend/templates/frontend/agents.html:153
 #: frontend/templates/frontend/agents.html:175 frontend/views.py:2234
-#, fuzzy
-#| msgid "Sales Support Agent"
 msgid "Support Agent"
-msgstr "وكيل دعم المبيعات"
+msgstr "وكيل دعم"
 
 #: frontend/templates/frontend/agents.html:197
 #: frontend/templates/frontend/components/dashboard/sidebar.html:173
@@ -309,87 +307,72 @@ msgid "Knowledge"
 msgstr "المعرفة"
 
 #: frontend/templates/frontend/agents.html:200
-#, fuzzy
-#| msgid "Mission"
 msgid "Missing"
-msgstr "الرسالة"
+msgstr "مفقود"
 
 #: frontend/templates/frontend/agents.html:202
-#, fuzzy
-#| msgid "Select tone"
 msgid "Selected"
-msgstr "اختر النبرة"
+msgstr "محدّد"
 
 #: frontend/templates/frontend/agents.html:205
-#, fuzzy
-#| msgid "All MCPs"
 msgid "All docs"
-msgstr "كل موصلات MCP"
+msgstr "كل المستندات"
 
 #: frontend/templates/frontend/agents.html:211
-#, fuzzy
-#| msgid "No documents attached."
 msgid "No docs attached"
-msgstr "لا توجد مستندات مرفقة."
+msgstr "لا توجد مستندات مرفقة"
 
 #: frontend/templates/frontend/agents.html:213
-#, fuzzy, python-format
-#| msgid "Disconnect failed:"
+#, python-format
 msgid "%(count)s failed"
-msgstr "فشل الفصل:"
+msgstr "%(count)s فشل"
 
 #: frontend/templates/frontend/agents.html:215
 #, python-format
 msgid "%(count)s processing"
-msgstr ""
+msgstr "%(count)s قيد المعالجة"
 
 #: frontend/templates/frontend/agents.html:217
 msgid "Up to date"
-msgstr ""
+msgstr "محدّث"
 
 #: frontend/templates/frontend/agents.html:222
 msgid "Tools"
-msgstr ""
+msgstr "الأدوات"
 
 #: frontend/templates/frontend/agents.html:225
-#, fuzzy
-#| msgid "Enabled"
 msgid "enabled"
 msgstr "مفعّل"
 
 #: frontend/templates/frontend/agents.html:229
 #, python-format
 msgid " +%(count)s more"
-msgstr ""
+msgstr " +%(count)s إضافية"
 
 #: frontend/templates/frontend/agents.html:231
 msgid "No tools enabled"
-msgstr ""
+msgstr "لا توجد أدوات مفعّلة"
 
 #: frontend/templates/frontend/agents.html:240
 msgid "Chat link ready"
-msgstr ""
+msgstr "رابط الدردشة جاهز"
 
 #: frontend/templates/frontend/agents.html:242
 msgid "Not published"
-msgstr ""
+msgstr "غير منشور"
 
 #: frontend/templates/frontend/agents.html:246
-#, fuzzy
-#| msgid "Escalation monitor"
 msgid "Escalation on"
-msgstr "مراقبة التصعيد"
+msgstr "التصعيد مفعّل"
 
 #: frontend/templates/frontend/agents.html:256
 msgid "Copy link"
-msgstr ""
+msgstr "نسخ الرابط"
 
 #: frontend/templates/frontend/agents.html:259
 #: frontend/templates/frontend/cases.html:640
-#, fuzzy
-#| msgid "Opened"
 msgid "Open"
-msgstr "مفتوحة"
+msgstr "فتح"
 
 #: frontend/templates/frontend/case_detail.html:4
 #: frontend/templates/frontend/case_detail.html:13
@@ -3905,42 +3888,34 @@ msgid ""
 msgstr "أدر علاقات العملاء والنشاط والملاحظات في مركز واحد."
 
 #: frontend/views.py:1995 frontend/views.py:2195
-#, fuzzy
-#| msgid "Create agent"
 msgid "Active agents"
-msgstr "إنشاء وكيل"
+msgstr "الوكلاء النشطون"
 
 #: frontend/views.py:1995
 msgid "No agents deployed yet"
-msgstr ""
+msgstr "لا يوجد وكلاء منشورون بعد"
 
 #: frontend/views.py:1996 frontend/views.py:2200
-#, fuzzy
-#| msgid "Satisfaction"
 msgid "Avg. satisfaction"
-msgstr "الرضا"
+msgstr "متوسط الرضا"
 
 #: frontend/views.py:1996
 msgid "Scores will populate once conversations start"
-msgstr ""
+msgstr "ستظهر الدرجات بمجرد بدء المحادثات"
 
 #: frontend/views.py:1997 frontend/views.py:2205
 msgid "Automation coverage"
-msgstr ""
+msgstr "تغطية الأتمتة"
 
 #: frontend/views.py:1997
 msgid "Connect channels to calculate coverage"
-msgstr ""
+msgstr "اربط القنوات لحساب التغطية"
 
 #: frontend/views.py:2039
-#, fuzzy
-#| msgid "Review now"
 msgid "Review"
 msgstr "قيد المراجعة"
 
 #: frontend/views.py:2040
-#, fuzzy
-#| msgid "Proactive"
 msgid "Active"
 msgstr "نشط"
 
@@ -3950,68 +3925,60 @@ msgstr "موقوف مؤقتًا"
 
 #: frontend/views.py:2170
 msgid "Appointments"
-msgstr ""
+msgstr "المواعيد"
 
 #: frontend/views.py:2171
-#, fuzzy
-#| msgid "Escalation rule"
 msgid "Escalation"
-msgstr "قاعدة التصعيد"
+msgstr "التصعيد"
 
 #: frontend/views.py:2197
 #, python-format
 msgid "%(count)s total"
-msgstr ""
+msgstr "%(count)s إجماليًا"
 
 #: frontend/views.py:2202
 msgid "Scores populate once conversations sync"
-msgstr ""
+msgstr "تظهر الدرجات بعد مزامنة المحادثات"
 
 #: frontend/views.py:2207
 msgid "Cases handled by AI"
-msgstr ""
+msgstr "الحالات التي يعالجها الذكاء الاصطناعي"
 
 #: frontend/views.py:2216
 msgid "Search name, ID, role…"
-msgstr ""
+msgstr "ابحث بالاسم أو المعرّف أو الدور…"
 
 #: frontend/views.py:2220
 msgid "Link a business profile to create agents."
-msgstr ""
+msgstr "اربط ملف نشاط تجاري لإنشاء الوكلاء."
 
 #: frontend/views.py:2223
-#, fuzzy
-#| msgid "Failed to load controls."
 msgid "Unable to load agents right now."
-msgstr "تعذر تحميل عناصر التحكم."
+msgstr "تعذّر تحميل الوكلاء الآن."
 
 #: frontend/views.py:2226
 msgid "No agents created yet. Launch your first AI teammate to get started."
-msgstr ""
+msgstr "لم يتم إنشاء وكلاء بعد. أطلق أول زميل ذكاء اصطناعي للبدء."
 
 #: frontend/views.py:2231
-#, fuzzy
-#| msgid "Document selector"
 msgid "No agent selected"
-msgstr "محدد المستند"
+msgstr "لم يتم تحديد وكيل"
 
 #: frontend/views.py:2232
 msgid "Choose an agent from the cards to preview configuration and analytics."
-msgstr ""
+msgstr "اختر وكيلاً من البطاقات لمعاينة الإعدادات والتحليلات."
 
 #: frontend/views.py:2235
 msgid "Sales Associate"
-msgstr ""
+msgstr "مندوب مبيعات"
 
 #: frontend/views.py:2236
 msgid "Technical Specialist"
-msgstr ""
+msgstr "أخصائي تقني"
 
 #: frontend/views.py:2237
-#, fuzzy
-#| msgid "Customer Service"
 msgid "Customer Success"
-msgstr "خدمة العملاء"
+msgstr "نجاح العملاء"
 
 #: frontend/views.py:2247
 #, fuzzy

@@ -7,6 +7,7 @@ from typing import Sequence
 
 from django.db.models import Avg, Count, ExpressionWrapper, F, Max, Prefetch, Q
 from django.db.models import DurationField as DjangoDurationField
+from django.utils.translation import gettext as _
 
 from apps.accounts.models import (
     AgentProfile,
@@ -117,15 +118,15 @@ class AgentDetail:
 
 
 def display_role_label(role: str | None) -> str:
-    if not role:
-        return "Support Agent"
-    return ROLE_LABELS.get(role.lower(), "Support Agent")
+    label = ROLE_LABELS.get((role or "").lower(), ROLE_LABELS["support"])
+    return _(label)
 
 
 def display_tone_label(tone: str | None) -> str | None:
     if not tone:
         return None
-    return TONE_LABELS.get(tone.lower(), tone.title())
+    label = TONE_LABELS.get(tone.lower(), tone.title())
+    return _(label)
 
 
 def agent_identifier(agent_id: uuid.UUID) -> str:
