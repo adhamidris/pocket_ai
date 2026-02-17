@@ -600,10 +600,19 @@
           {% for option in agents_modal_roles %}
             <button
               type="button"
-              class="rounded-lg border border-border/60 bg-muted/40 px-3 py-2 text-left text-sm hover:border-primary/60 hover:text-primary transition-colors"
+              class="rounded-lg border border-border/60 bg-muted/40 px-3 py-2 text-start text-sm hover:border-primary/60 hover:text-primary transition-colors"
               data-create-agent-role="{{ option }}"
             >
-              {{ option }}
+              {% if LANGUAGE_BIDI %}
+                {% if option == "Support Agent" %}وكيل دعم
+                {% elif option == "Sales Associate" %}مندوب مبيعات
+                {% elif option == "Technical Specialist" %}اختصاصي تقني
+                {% elif option == "Customer Success" %}نجاح العملاء
+                {% else %}{{ option }}
+                {% endif %}
+              {% else %}
+                {{ option }}
+              {% endif %}
             </button>
           {% endfor %}
         </div>
