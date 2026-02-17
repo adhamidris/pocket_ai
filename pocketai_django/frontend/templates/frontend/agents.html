@@ -290,12 +290,14 @@
   tabindex="-1"
 >
   <div class="relative flex h-full w-full flex-col">
-    <div id="agent-panel-heading" class="sr-only" data-agent-aria-title>Select an agent</div>
+    <div id="agent-panel-heading" class="sr-only" data-agent-aria-title>
+      {% if LANGUAGE_BIDI %}اختر وكيلاً{% else %}Select an agent{% endif %}
+    </div>
     <button
       type="button"
       class="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-background/80 text-muted-foreground transition hover:bg-background"
       data-agent-close
-      aria-label="Close agent detail"
+      aria-label="{% if LANGUAGE_BIDI %}إغلاق تفاصيل الوكيل{% else %}Close agent detail{% endif %}"
     >
       <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
         <path stroke-linecap="round" stroke-linejoin="round" d="m8 8 8 8m0-8-8 8" />
@@ -310,9 +312,19 @@
                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 7v10m5-5H7" />
               </svg>
             </div>
-            <h2 class="text-base font-semibold text-foreground">{{ agents_panel_empty_title|default:"No agent selected" }}</h2>
+            <h2 class="text-base font-semibold text-foreground">
+              {% if agents_panel_empty_title %}
+                {{ agents_panel_empty_title }}
+              {% else %}
+                {% if LANGUAGE_BIDI %}لم يتم اختيار وكيل{% else %}No agent selected{% endif %}
+              {% endif %}
+            </h2>
             <p class="text-sm text-muted-foreground">
-              {{ agents_panel_empty_message|default:"Choose an agent from the cards to preview configuration and analytics." }}
+              {% if agents_panel_empty_message %}
+                {{ agents_panel_empty_message }}
+              {% else %}
+                {% if LANGUAGE_BIDI %}اختر وكيلاً من البطاقات لمعاينة الإعدادات والتحليلات.{% else %}Choose an agent from the cards to preview configuration and analytics.{% endif %}
+              {% endif %}
             </p>
           </div>
         </div>
@@ -330,14 +342,14 @@
         </div>
         <div class="hidden space-y-4 px-6 py-10" data-agent-error>
           <div class="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive" data-agent-error-message>
-            Unable to load agent details. Please try again.
+            {% if LANGUAGE_BIDI %}تعذر تحميل تفاصيل الوكيل. يرجى المحاولة مرة أخرى.{% else %}Unable to load agent details. Please try again.{% endif %}
           </div>
           <button
             type="button"
             class="inline-flex items-center justify-center rounded-md border border-border/60 bg-background px-4 py-2 text-sm font-medium text-foreground shadow-sm hover:border-primary/40"
             data-agent-retry
           >
-            Retry
+            {% if LANGUAGE_BIDI %}إعادة المحاولة{% else %}Retry{% endif %}
           </button>
         </div>
 	        <div class="hidden space-y-6 pb-16" data-agent-content>
@@ -345,28 +357,28 @@
 	            <div class="flex items-start gap-3">
 	              <span class="inline-flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary font-semibold uppercase" data-agent-initials>AI</span>
 	              <div class="flex-1 min-w-0">
-	                <div class="text-lg font-semibold text-foreground leading-tight" data-agent-name>Agent name</div>
+	                <div class="text-lg font-semibold text-foreground leading-tight" data-agent-name>{% if LANGUAGE_BIDI %}اسم الوكيل{% else %}Agent name{% endif %}</div>
 	                <div class="mt-1 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
 	                  <span data-agent-identifier>ID</span>
 	                  <span aria-hidden="true">•</span>
-	                  <span data-agent-role>Support Agent</span>
+	                  <span data-agent-role>{% if LANGUAGE_BIDI %}وكيل دعم{% else %}Support Agent{% endif %}</span>
 	                  <span aria-hidden="true">•</span>
-	                  <span data-agent-tone>Friendly tone</span>
+	                  <span data-agent-tone>{% if LANGUAGE_BIDI %}نبرة ودّية{% else %}Friendly tone{% endif %}</span>
 	                </div>
 	              </div>
 	              <span class="text-xs text-muted-foreground" data-agent-last-active>—</span>
 	            </div>
 	            <div class="mt-3 flex flex-wrap items-center gap-2">
-	              <span class="text-[11px] font-semibold capitalize text-muted-foreground" data-agent-status-badge>Draft</span>
-	              <span class="text-xs text-muted-foreground" data-agent-updated>Updated —</span>
+	              <span class="text-[11px] font-semibold capitalize text-muted-foreground" data-agent-status-badge>{% if LANGUAGE_BIDI %}مسودة{% else %}Draft{% endif %}</span>
+	              <span class="text-xs text-muted-foreground" data-agent-updated>{% if LANGUAGE_BIDI %}آخر تحديث —{% else %}Updated —{% endif %}</span>
 	            </div>
 	          </section>
 
-	          <section class="px-6 pt-6" aria-label="Agent detail tabs">
+	          <section class="px-6 pt-6" aria-label="{% if LANGUAGE_BIDI %}تبويبات تفاصيل الوكيل{% else %}Agent detail tabs{% endif %}">
 	            <div
 	              class="grid grid-cols-3 gap-1 rounded-lg border border-border/60 bg-muted/40 p-1"
 	              role="tablist"
-	              aria-label="Agent detail sections"
+	              aria-label="{% if LANGUAGE_BIDI %}أقسام تفاصيل الوكيل{% else %}Agent detail sections{% endif %}"
 	              data-agent-tabs
 	            >
 	              <button
@@ -378,7 +390,7 @@
 	                aria-controls="agent-tabpanel-overview"
 	                data-agent-tab="overview"
 	              >
-	                Overview
+	                {% if LANGUAGE_BIDI %}نظرة عامة{% else %}Overview{% endif %}
 	              </button>
 	              <button
 	                type="button"
@@ -390,7 +402,7 @@
 	                tabindex="-1"
 	                data-agent-tab="automation"
 	              >
-	                Automation controls
+	                {% if LANGUAGE_BIDI %}ضوابط الأتمتة{% else %}Automation controls{% endif %}
 	              </button>
 	              <button
 	                type="button"
@@ -402,7 +414,7 @@
 	                tabindex="-1"
 	                data-agent-tab="knowledge"
 	              >
-	                Knowledge Access
+	                {% if LANGUAGE_BIDI %}الوصول إلى المعرفة{% else %}Knowledge Access{% endif %}
 	              </button>
 	            </div>
 	          </section>
@@ -415,26 +427,26 @@
 	            data-agent-tab-panel="overview"
 	          >
 	            <div class="rounded-xl bg-card/95 p-4 space-y-4 shadow-sm">
-	              <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Performance</div>
+	              <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{% if LANGUAGE_BIDI %}الأداء{% else %}Performance{% endif %}</div>
 	              <dl class="grid grid-cols-2 gap-4 text-sm sm:grid-cols-3">
 	                <div>
-                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">Conversations</dt>
+                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">{% if LANGUAGE_BIDI %}المحادثات{% else %}Conversations{% endif %}</dt>
                   <dd class="text-base font-semibold text-foreground" data-agent-metric-total>—</dd>
                 </div>
                 <div>
-                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">Open cases</dt>
+                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">{% if LANGUAGE_BIDI %}الحالات المفتوحة{% else %}Open cases{% endif %}</dt>
                   <dd class="text-base font-semibold text-foreground" data-agent-metric-open>—</dd>
                 </div>
                 <div>
-                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">Closed cases</dt>
+                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">{% if LANGUAGE_BIDI %}الحالات المغلقة{% else %}Closed cases{% endif %}</dt>
                   <dd class="text-base font-semibold text-foreground" data-agent-metric-closed>—</dd>
                 </div>
                 <div>
-                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">Escalations</dt>
+                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">{% if LANGUAGE_BIDI %}التصعيدات{% else %}Escalations{% endif %}</dt>
                   <dd class="text-base font-semibold text-foreground" data-agent-metric-escalations>—</dd>
                 </div>
                 <div>
-                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">Avg. handle time</dt>
+                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">{% if LANGUAGE_BIDI %}متوسط زمن المعالجة{% else %}Avg. handle time{% endif %}</dt>
                   <dd class="text-base font-semibold text-foreground" data-agent-metric-aht>—</dd>
                 </div>
               </dl>
@@ -442,8 +454,8 @@
 
             <div class="rounded-xl border border-dashed border-border/60 bg-muted/20 p-4 space-y-3">
               <div class="flex items-center justify-between gap-2">
-                <div class="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">Shareable link</div>
-                <span class="text-[10px] uppercase tracking-wide text-muted-foreground" data-agent-shareable-state>Not published</span>
+                <div class="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">{% if LANGUAGE_BIDI %}رابط قابل للمشاركة{% else %}Shareable link{% endif %}</div>
+                <span class="text-[10px] uppercase tracking-wide text-muted-foreground" data-agent-shareable-state>{% if LANGUAGE_BIDI %}غير منشور{% else %}Not published{% endif %}</span>
               </div>
               <div class="text-sm font-mono text-foreground break-words" data-agent-shareable>—</div>
               <div class="flex gap-3 text-xs font-medium text-primary">
@@ -454,14 +466,14 @@
                   rel="noreferrer"
                   data-agent-shareable-open
                 >
-                  Open
+                  {% if LANGUAGE_BIDI %}فتح{% else %}Open{% endif %}
                   <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H18m0 0v4.5M18 6l-7.5 7.5" />
                     <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6" />
                   </svg>
                 </a>
                 <button type="button" class="inline-flex items-center gap-1 hover:underline" data-agent-shareable-copy>
-                  Copy
+                  {% if LANGUAGE_BIDI %}نسخ{% else %}Copy{% endif %}
                   <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M8 8h10v12H8z" />
                     <path stroke-linecap="round" stroke-linejoin="round" d="M16 4H6v12" />
@@ -471,25 +483,25 @@
             </div>
 
             <div class="rounded-xl border border-border/60 bg-card/95 p-4 space-y-3 shadow-sm">
-              <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Traits & tone</div>
+              <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{% if LANGUAGE_BIDI %}السمات والنبرة{% else %}Traits & tone{% endif %}</div>
               <div class="flex flex-wrap gap-2" data-agent-traits>
-                <span class="text-xs text-muted-foreground">No traits configured.</span>
+                <span class="text-xs text-muted-foreground">{% if LANGUAGE_BIDI %}لا توجد سمات مُعدّة.{% else %}No traits configured.{% endif %}</span>
               </div>
             </div>
 
             <div class="rounded-xl border border-border/60 bg-card/95 p-4 space-y-4 shadow-sm">
-              <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">KPIs</div>
+              <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{% if LANGUAGE_BIDI %}مؤشرات الأداء{% else %}KPIs{% endif %}</div>
               <div class="space-y-2">
                 <div>
-                  <div class="text-[10px] uppercase tracking-wide text-muted-foreground">Core KPIs</div>
+                  <div class="text-[10px] uppercase tracking-wide text-muted-foreground">{% if LANGUAGE_BIDI %}المؤشرات الأساسية{% else %}Core KPIs{% endif %}</div>
                   <div class="mt-1 flex flex-wrap gap-2" data-agent-kpis>
-                    <span class="text-xs text-muted-foreground">No KPIs selected.</span>
+                    <span class="text-xs text-muted-foreground">{% if LANGUAGE_BIDI %}لم يتم اختيار مؤشرات أداء.{% else %}No KPIs selected.{% endif %}</span>
                   </div>
                 </div>
                 <div>
-                  <div class="text-[10px] uppercase tracking-wide text-muted-foreground">Custom KPIs</div>
+                  <div class="text-[10px] uppercase tracking-wide text-muted-foreground">{% if LANGUAGE_BIDI %}مؤشرات أداء مخصصة{% else %}Custom KPIs{% endif %}</div>
                   <div class="mt-1 flex flex-wrap gap-2" data-agent-custom-kpis>
-                    <span class="text-xs text-muted-foreground">No custom KPIs defined.</span>
+                    <span class="text-xs text-muted-foreground">{% if LANGUAGE_BIDI %}لا توجد مؤشرات أداء مخصصة.{% else %}No custom KPIs defined.{% endif %}</span>
                   </div>
                 </div>
                 <div class="text-[10px] uppercase tracking-wide text-muted-foreground" data-agent-kpi-weighting>
@@ -499,8 +511,8 @@
             </div>
 
             <div class="rounded-xl border border-border/60 bg-card/95 p-4 space-y-3 shadow-sm">
-	              <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Escalation rule</div>
-	              <p class="text-sm text-foreground" data-agent-escalation>None configured.</p>
+	              <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{% if LANGUAGE_BIDI %}قاعدة التصعيد{% else %}Escalation rule{% endif %}</div>
+	              <p class="text-sm text-foreground" data-agent-escalation>{% if LANGUAGE_BIDI %}لم يتم الإعداد.{% else %}None configured.{% endif %}</p>
 	            </div>
 	          </section>
 
@@ -515,13 +527,13 @@
 	            <div class="rounded-xl border border-border/60 bg-card/95 p-4 space-y-3 shadow-sm" data-agent-action-container>
 	              <div class="flex items-center justify-between gap-3">
 	                <div>
-	                  <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Automation controls</div>
-	                  <p class="text-xs text-muted-foreground">Toggle orchestrator actions this agent is allowed to run.</p>
+	                  <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{% if LANGUAGE_BIDI %}ضوابط الأتمتة{% else %}Automation controls{% endif %}</div>
+	                  <p class="text-xs text-muted-foreground">{% if LANGUAGE_BIDI %}بدّل إجراءات المنسّق المسموح لهذا الوكيل بتشغيلها.{% else %}Toggle orchestrator actions this agent is allowed to run.{% endif %}</p>
 	                </div>
-	                <span class="text-xs text-muted-foreground" data-agent-action-state>Idle</span>
+	                <span class="text-xs text-muted-foreground" data-agent-action-state>{% if LANGUAGE_BIDI %}خامل{% else %}Idle{% endif %}</span>
 	              </div>
 	              <div class="space-y-3" data-agent-action-list>
-	                <p class="text-xs text-muted-foreground">Select an agent to load action permissions.</p>
+	                <p class="text-xs text-muted-foreground">{% if LANGUAGE_BIDI %}اختر وكيلاً لتحميل صلاحيات الإجراءات.{% else %}Select an agent to load action permissions.{% endif %}</p>
 	              </div>
 	            </div>
 	          </section>
@@ -537,48 +549,19 @@
 		            <div class="rounded-xl border border-border/60 bg-card/95 p-4 space-y-4 shadow-sm">
 		              <div class="flex items-start justify-between gap-3">
 		                <div class="space-y-1">
-		                  <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Knowledge Access</div>
-		                  <p class="text-xs text-muted-foreground" data-agent-knowledge-mode>Uses all business knowledge sources.</p>
+		                  <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{% if LANGUAGE_BIDI %}الوصول إلى المعرفة{% else %}Knowledge Access{% endif %}</div>
+		                  <p class="text-xs text-muted-foreground" data-agent-knowledge-mode>{% if LANGUAGE_BIDI %}يستخدم جميع مصادر معرفة النشاط.{% else %}Uses all business knowledge sources.{% endif %}</p>
 		                </div>
-		                <button
-		                  type="button"
-		                  class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-semibold text-foreground transition hover:border-primary/40 hover:text-primary disabled:opacity-50 disabled:cursor-not-allowed"
-		                  data-agent-knowledge-access-save
-		                  disabled
-		                  aria-disabled="true"
-		                >
-		                  Save
-		                </button>
 		              </div>
 
-		              <div class="rounded-lg border border-border/60 bg-muted/30 p-3 space-y-3">
-		                <div class="inline-flex rounded-lg border border-border/60 bg-muted/50 p-1 text-xs font-semibold uppercase tracking-wide" data-agent-knowledge-scope>
-		                  <button type="button" class="rounded-md px-3 py-1.5 transition-colors bg-primary text-primary-foreground shadow-sm" data-agent-knowledge-scope-option="all" aria-pressed="true">
-		                    All
-		                  </button>
-		                  <button type="button" class="rounded-md px-3 py-1.5 transition-colors text-muted-foreground hover:text-primary" data-agent-knowledge-scope-option="collections" aria-pressed="false">
-		                    Collections
-		                  </button>
-		                </div>
-		                <p class="text-[11px] text-muted-foreground" data-agent-knowledge-scope-hint>
-		                  Limit retrieval to selected collections for better accuracy.
-		                </p>
-		                <div class="space-y-2" data-agent-knowledge-collections-list></div>
-		                <p class="hidden text-[11px] text-muted-foreground" data-agent-knowledge-collections-empty></p>
-		                <p class="hidden text-[11px] text-muted-foreground" data-agent-knowledge-collections-status></p>
-		              </div>
-
-		              <div class="rounded-lg border border-border/60 bg-muted/30 p-3 space-y-2">
-		                <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Explicit documents</div>
-		                <ul class="divide-y divide-border/60 rounded-lg border border-border/60" data-agent-knowledge-list>
-		                  <li class="px-3 py-2 text-sm text-muted-foreground">No knowledge items attached.</li>
-		                </ul>
-		                <p class="text-[11px] text-muted-foreground">
-		                  Tip: For single-document access, add it to a collection and assign the collection above.
-		                </p>
-		              </div>
-		            </div>
-		          </section>
+			              <div class="rounded-lg border border-border/60 bg-muted/30 p-3 space-y-2">
+			                <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{% if LANGUAGE_BIDI %}مستندات محددة{% else %}Explicit documents{% endif %}</div>
+			                <ul class="divide-y divide-border/60 rounded-lg border border-border/60" data-agent-knowledge-list>
+			                  <li class="px-3 py-2 text-sm text-muted-foreground">{% if LANGUAGE_BIDI %}لا توجد عناصر معرفة مرفقة.{% else %}No knowledge items attached.{% endif %}</li>
+			                </ul>
+			              </div>
+			            </div>
+			          </section>
 	        </div>
 	      </div>
 	    </div>
@@ -590,10 +573,10 @@
   <div class="w-full max-w-lg rounded-2xl border border-border/70 bg-card shadow-lg shadow-black/10">
     <div class="px-6 py-4 border-b border-border/70 flex items-start justify-between">
       <div>
-        <div class="text-base font-semibold text-foreground">Create agent</div>
-        <p class="text-xs text-muted-foreground mt-1">Kick off the agent builder to configure persona, tone, and capabilities.</p>
+        <div class="text-base font-semibold text-foreground">{% if LANGUAGE_BIDI %}إنشاء وكيل{% else %}Create agent{% endif %}</div>
+        <p class="text-xs text-muted-foreground mt-1">{% if LANGUAGE_BIDI %}ابدأ إعداد الوكيل لتحديد الشخصية والنبرة والقدرات.{% else %}Kick off the agent builder to configure persona, tone, and capabilities.{% endif %}</p>
       </div>
-      <button type="button" class="inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-muted/70 transition-colors" data-dialog-close>
+      <button type="button" class="inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-muted/70 transition-colors" data-dialog-close aria-label="{% if LANGUAGE_BIDI %}إغلاق نافذة إنشاء الوكيل{% else %}Close create agent dialog{% endif %}">
         <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
         </svg>
@@ -601,18 +584,18 @@
     </div>
     <div class="px-6 py-5 space-y-4 text-sm text-muted-foreground">
       <div class="space-y-2">
-        <label class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">Agent name</label>
+        <label class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">{% if LANGUAGE_BIDI %}اسم الوكيل{% else %}Agent name{% endif %}</label>
         <input
           type="text"
           class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-          placeholder="e.g. Salah"
+          placeholder="{% if LANGUAGE_BIDI %}مثال: صلاح{% else %}e.g. Salah{% endif %}"
           data-create-agent-input="name"
           autocomplete="off"
         >
         <p class="hidden text-xs text-destructive" data-create-agent-error="name"></p>
       </div>
       <div class="space-y-2">
-        <label class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">Primary role</label>
+        <label class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">{% if LANGUAGE_BIDI %}الدور الأساسي{% else %}Primary role{% endif %}</label>
         <div class="grid grid-cols-2 gap-2">
           {% for option in agents_modal_roles %}
             <button
@@ -626,19 +609,19 @@
         </div>
       </div>
       <div class="rounded-lg border border-border/60 bg-muted/20 p-4 text-xs leading-relaxed text-muted-foreground">
-        This will (re)create the workspace’s primary agent profile and restore the public portal route.
+        {% if LANGUAGE_BIDI %}سيتم (إعادة) إنشاء ملف الوكيل الأساسي لمساحة العمل واستعادة مسار البوابة العامة.{% else %}This will (re)create the workspace’s primary agent profile and restore the public portal route.{% endif %}
       </div>
       <p class="hidden text-xs text-destructive" data-create-agent-error="request"></p>
     </div>
     <div class="px-6 py-4 border-t border-border/70 flex items-center justify-end gap-2">
-      <button type="button" class="inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-muted-foreground" data-dialog-close>Cancel</button>
+      <button type="button" class="inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-muted-foreground" data-dialog-close>{% if LANGUAGE_BIDI %}إلغاء{% else %}Cancel{% endif %}</button>
       <button
         type="button"
         class="inline-flex items-center justify-center rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-medium opacity-60 cursor-not-allowed"
         data-create-agent-submit
         disabled
       >
-        Create agent
+        {% if LANGUAGE_BIDI %}إنشاء وكيل{% else %}Create agent{% endif %}
       </button>
     </div>
   </div>
@@ -681,22 +664,13 @@
     var fieldMetricAht = panel.querySelector("[data-agent-metric-aht]");
     var fieldTraits = panel.querySelector("[data-agent-traits]");
     var fieldKpis = panel.querySelector("[data-agent-kpis]");
-    var fieldCustomKpis = panel.querySelector("[data-agent-custom-kpis]");
-    var fieldKpiWeighting = panel.querySelector("[data-agent-kpi-weighting]");
-	    var fieldEscalation = panel.querySelector("[data-agent-escalation]");
-	    var fieldKnowledgeMode = panel.querySelector("[data-agent-knowledge-mode]");
-	    var fieldKnowledgeList = panel.querySelector("[data-agent-knowledge-list]");
-	    var knowledgeAccessSave = panel.querySelector("[data-agent-knowledge-access-save]");
-	    var knowledgeScopeRoot = panel.querySelector("[data-agent-knowledge-scope]");
-	    var knowledgeScopeButtons = knowledgeScopeRoot
-	      ? Array.prototype.slice.call(knowledgeScopeRoot.querySelectorAll("[data-agent-knowledge-scope-option]") || [])
-	      : [];
-	    var knowledgeScopeHint = panel.querySelector("[data-agent-knowledge-scope-hint]");
-	    var knowledgeCollectionsList = panel.querySelector("[data-agent-knowledge-collections-list]");
-	    var knowledgeCollectionsEmpty = panel.querySelector("[data-agent-knowledge-collections-empty]");
-	    var knowledgeCollectionsStatus = panel.querySelector("[data-agent-knowledge-collections-status]");
-	    var shareableField = panel.querySelector("[data-agent-shareable]");
-    var shareableState = panel.querySelector("[data-agent-shareable-state]");
+	    var fieldCustomKpis = panel.querySelector("[data-agent-custom-kpis]");
+	    var fieldKpiWeighting = panel.querySelector("[data-agent-kpi-weighting]");
+		    var fieldEscalation = panel.querySelector("[data-agent-escalation]");
+		    var fieldKnowledgeMode = panel.querySelector("[data-agent-knowledge-mode]");
+		    var fieldKnowledgeList = panel.querySelector("[data-agent-knowledge-list]");
+		    var shareableField = panel.querySelector("[data-agent-shareable]");
+	    var shareableState = panel.querySelector("[data-agent-shareable-state]");
 	    var shareableOpen = panel.querySelector("[data-agent-shareable-open]");
 	    var shareableCopy = panel.querySelector("[data-agent-shareable-copy]");
 	    var actionList = panel.querySelector("[data-agent-action-list]");
@@ -713,26 +687,67 @@
 	    var inFlight = null;
 	    var isPanelOpen = false;
 	    var currentAgentTitle = "";
-	    var shareableLinkValue = "";
-	    var actionFetchController = null;
-	    var currentActionAgentId = null;
-		    var actionFlashTimer = null;
-		    var currentTab = "overview";
-		    var knowledgeAccessAgentId = null;
-		    var knowledgeAccessMode = "all";
-		    var knowledgeAccessBaselineMode = "all";
-		    var knowledgeHasExplicitDocs = false;
-		    var knowledgeCollectionsCatalog = [];
-		    var knowledgeCollectionsLoading = false;
-		    var knowledgeCollectionsLoaded = false;
-		    var knowledgeCollectionsSelection = new Set();
-		    var knowledgeCollectionsBaseline = new Set();
-		    var knowledgeCollectionsDirty = false;
-		    var knowledgeCollectionsSaving = false;
-	    var knowledgeCollectionsStatusTimer = null;
+		    var shareableLinkValue = "";
+		    var actionFetchController = null;
+		    var currentActionAgentId = null;
+	    var actionFlashTimer = null;
+	    var currentTab = "overview";
 
-		    var tabActiveClasses = ["bg-background", "text-foreground", "shadow-sm"];
-		    var tabInactiveClasses = ["text-muted-foreground", "hover:text-foreground", "hover:bg-background/60"];
+	    var tabActiveClasses = ["bg-background", "text-foreground", "shadow-sm"];
+	    var tabInactiveClasses = ["text-muted-foreground", "hover:text-foreground", "hover:bg-background/60"];
+	    var I18N = {
+	      createNameMin: "{% if LANGUAGE_BIDI %}يجب أن يتكون اسم الوكيل من حرفين على الأقل.{% else %}Agent name must be at least 2 characters.{% endif %}",
+	      noBusinessSelected: "{% if LANGUAGE_BIDI %}لا يوجد نشاط محدد. حدّث الصفحة ثم حاول مرة أخرى.{% else %}No business selected. Refresh the page and try again.{% endif %}",
+	      creatingAgent: "{% if LANGUAGE_BIDI %}جارٍ الإنشاء…{% else %}Creating…{% endif %}",
+	      createAgent: "{% if LANGUAGE_BIDI %}إنشاء وكيل{% else %}Create agent{% endif %}",
+	      createAgentSaveFailed: "{% if LANGUAGE_BIDI %}تعذّر حفظ الوكيل. حاول مرة أخرى.{% else %}We couldn't save your agent. Try again.{% endif %}",
+	      createAgentUnavailable: "{% if LANGUAGE_BIDI %}يتعذّر إنشاء الوكيل حالياً.{% else %}Unable to create agent right now.{% endif %}",
+	      draft: "{% if LANGUAGE_BIDI %}مسودة{% else %}Draft{% endif %}",
+	      agent: "{% if LANGUAGE_BIDI %}وكيل{% else %}Agent{% endif %}",
+	      supportAgent: "{% if LANGUAGE_BIDI %}وكيل دعم{% else %}Support Agent{% endif %}",
+	      selectAgent: "{% if LANGUAGE_BIDI %}اختر وكيلاً{% else %}Select an agent{% endif %}",
+	      loadingAgentDetails: "{% if LANGUAGE_BIDI %}جارٍ تحميل تفاصيل الوكيل{% else %}Loading agent details{% endif %}",
+	      loadingPrefix: "{% if LANGUAGE_BIDI %}جارٍ تحميل {% else %}Loading {% endif %}",
+	      agentDetailsUnavailable: "{% if LANGUAGE_BIDI %}تفاصيل الوكيل غير متاحة{% else %}Agent details unavailable{% endif %}",
+	      agentDetails: "{% if LANGUAGE_BIDI %}تفاصيل الوكيل{% else %}Agent details{% endif %}",
+	      noKnowledgeItems: "{% if LANGUAGE_BIDI %}لا توجد عناصر معرفة مرفقة.{% else %}No knowledge items attached.{% endif %}",
+	      knowledgeItem: "{% if LANGUAGE_BIDI %}عنصر معرفة{% else %}Knowledge item{% endif %}",
+	      unknown: "{% if LANGUAGE_BIDI %}غير معروف{% else %}unknown{% endif %}",
+	      source: "{% if LANGUAGE_BIDI %}المصدر{% else %}source{% endif %}",
+	      updatedPrefix: "{% if LANGUAGE_BIDI %}آخر تحديث {% else %}Updated {% endif %}",
+	      live: "{% if LANGUAGE_BIDI %}نشط{% else %}Live{% endif %}",
+	      notPublished: "{% if LANGUAGE_BIDI %}غير منشور{% else %}Not published{% endif %}",
+	      selectAgentForActions: "{% if LANGUAGE_BIDI %}اختر وكيلاً لتحميل صلاحيات الإجراءات.{% else %}Select an agent to load action permissions.{% endif %}",
+	      syncing: "{% if LANGUAGE_BIDI %}جارٍ المزامنة…{% else %}Syncing…{% endif %}",
+	      failed: "{% if LANGUAGE_BIDI %}فشل{% else %}Failed{% endif %}",
+	      idle: "{% if LANGUAGE_BIDI %}خامل{% else %}Idle{% endif %}",
+	      enabled: "{% if LANGUAGE_BIDI %}مفعّل{% else %}Enabled{% endif %}",
+	      disabled: "{% if LANGUAGE_BIDI %}معطّل{% else %}Disabled{% endif %}",
+	      noToggleableActions: "{% if LANGUAGE_BIDI %}لا توجد إجراءات قابلة للتبديل.{% else %}No toggleable actions registered.{% endif %}",
+	      actionToggle: "{% if LANGUAGE_BIDI %}مفتاح إجراء{% else %}Action toggle{% endif %}",
+	      updating: "{% if LANGUAGE_BIDI %}جارٍ التحديث…{% else %}Updating…{% endif %}",
+	      failedToUpdateAction: "{% if LANGUAGE_BIDI %}تعذّر تحديث الإجراء{% else %}Failed to update action{% endif %}",
+	      actionEnabledSuffix: "{% if LANGUAGE_BIDI %}تم التفعيل{% else %}enabled{% endif %}",
+	      actionDisabledSuffix: "{% if LANGUAGE_BIDI %}تم التعطيل{% else %}disabled{% endif %}",
+	      unableToUpdateAction: "{% if LANGUAGE_BIDI %}تعذّر تحديث الإجراء.{% else %}Unable to update action.{% endif %}",
+	      failedToLoadActionPermissions: "{% if LANGUAGE_BIDI %}تعذّر تحميل صلاحيات الإجراءات{% else %}Failed to load action permissions{% endif %}",
+	      unableToLoadActionPermissions: "{% if LANGUAGE_BIDI %}تعذّر تحميل صلاحيات الإجراءات.{% else %}Unable to load action permissions.{% endif %}",
+	      lastActivePrefix: "{% if LANGUAGE_BIDI %}آخر نشاط {% else %}Last active {% endif %}",
+	      noRecentActivity: "{% if LANGUAGE_BIDI %}لا يوجد نشاط حديث{% else %}No recent activity{% endif %}",
+	      noTraits: "{% if LANGUAGE_BIDI %}لا توجد سمات مُعدّة.{% else %}No traits configured.{% endif %}",
+	      noKpis: "{% if LANGUAGE_BIDI %}لم يتم اختيار مؤشرات أداء.{% else %}No KPIs selected.{% endif %}",
+	      noCustomKpis: "{% if LANGUAGE_BIDI %}لا توجد مؤشرات أداء مخصصة.{% else %}No custom KPIs defined.{% endif %}",
+	      customKpiWeightingEnabled: "{% if LANGUAGE_BIDI %}تم تفعيل أوزان مؤشرات الأداء المخصصة{% else %}Custom KPI weighting enabled{% endif %}",
+	      defaultKpiWeighting: "{% if LANGUAGE_BIDI %}يتم استخدام أوزان مؤشرات الأداء الافتراضية{% else %}Using default KPI weighting{% endif %}",
+	      noneConfigured: "{% if LANGUAGE_BIDI %}لم يتم الإعداد.{% else %}None configured.{% endif %}",
+	      usesAllBusinessKnowledge: "{% if LANGUAGE_BIDI %}يستخدم جميع مصادر معرفة النشاط.{% else %}Uses all business knowledge sources.{% endif %}",
+	      loadingActionPermissions: "{% if LANGUAGE_BIDI %}جارٍ تحميل صلاحيات الإجراءات…{% else %}Loading action permissions…{% endif %}",
+	      failedToLoadAgentDetail: "{% if LANGUAGE_BIDI %}تعذّر تحميل تفاصيل الوكيل{% else %}Failed to load agent detail{% endif %}",
+	      invalidPayload: "{% if LANGUAGE_BIDI %}بيانات غير صالحة{% else %}Invalid payload{% endif %}",
+	      unableToLoadAgentDetails: "{% if LANGUAGE_BIDI %}تعذر تحميل تفاصيل الوكيل. يرجى المحاولة مرة أخرى.{% else %}Unable to load agent details. Please try again.{% endif %}",
+	      copyLink: "{% if LANGUAGE_BIDI %}نسخ الرابط{% else %}Copy link{% endif %}",
+	      copied: "{% if LANGUAGE_BIDI %}تم النسخ{% else %}Copied{% endif %}",
+	    };
 
       // ------------------------------------------------------------
       // Minimal dialog wiring (create agent)
@@ -814,7 +829,7 @@
       function validateCreateForm() {
         var nameValue = createNameInput ? (createNameInput.value || "").trim() : "";
         if (nameValue.length < 2) {
-          setCreateError("name", "Agent name must be at least 2 characters.");
+          setCreateError("name", I18N.createNameMin);
           return false;
         }
         setCreateError("name", "");
@@ -852,7 +867,7 @@
 
       function submitCreateAgent() {
         if (!businessId) {
-          setCreateError("request", "No business selected. Refresh the page and try again.");
+          setCreateError("request", I18N.noBusinessSelected);
           return;
         }
         if (!createSubmitButton || !createNameInput) {
@@ -865,7 +880,7 @@
 
         createSubmitButton.disabled = true;
         createSubmitButton.classList.add("opacity-60", "cursor-not-allowed");
-        createSubmitButton.textContent = "Creating…";
+        createSubmitButton.textContent = I18N.creatingAgent;
 
         fetch("/api/register/businesses/" + encodeURIComponent(businessId) + "/agent/", {
           method: "PUT",
@@ -893,7 +908,7 @@
                 return null;
               })
               .then(function (data) {
-                var message = (data && data.message) || "We couldn't save your agent. Try again.";
+                var message = (data && data.message) || I18N.createAgentSaveFailed;
                 throw new Error(message);
               });
           })
@@ -901,12 +916,12 @@
             window.location.reload();
           })
           .catch(function (error) {
-            setCreateError("request", (error && error.message) || "Unable to create agent right now.");
+            setCreateError("request", (error && error.message) || I18N.createAgentUnavailable);
           })
           .finally(function () {
             createSubmitButton.disabled = false;
             updateCreateSubmitState();
-            createSubmitButton.textContent = "Create agent";
+            createSubmitButton.textContent = I18N.createAgent;
           });
       }
 
@@ -1121,234 +1136,10 @@
       var normalized = (code || label || "").toString().toLowerCase();
       var baseClass = "text-[11px] font-semibold capitalize";
       target.className = baseClass + " " + (statusClassMap[normalized] || "text-muted-foreground");
-      target.textContent = label || "Draft";
+      target.textContent = label || I18N.draft;
     }
 
-    function clearKnowledgeCollectionsStatusTimer() {
-      if (!knowledgeCollectionsStatusTimer) {
-        return;
-      }
-      window.clearTimeout(knowledgeCollectionsStatusTimer);
-      knowledgeCollectionsStatusTimer = null;
-    }
-
-    function setKnowledgeCollectionsStatus(message, tone, autoHideMs) {
-      if (!knowledgeCollectionsStatus) return;
-      clearKnowledgeCollectionsStatusTimer();
-      if (!message) {
-        knowledgeCollectionsStatus.textContent = "";
-        knowledgeCollectionsStatus.classList.add("hidden");
-        knowledgeCollectionsStatus.classList.remove("text-emerald-600", "text-rose-600", "text-muted-foreground");
-        return;
-      }
-      knowledgeCollectionsStatus.textContent = message;
-      knowledgeCollectionsStatus.classList.remove(
-        "hidden",
-        "text-emerald-600",
-        "text-rose-600",
-        "text-muted-foreground"
-      );
-      if (tone === "success") {
-        knowledgeCollectionsStatus.classList.add("text-emerald-600");
-      } else if (tone === "error") {
-        knowledgeCollectionsStatus.classList.add("text-rose-600");
-      } else {
-        knowledgeCollectionsStatus.classList.add("text-muted-foreground");
-      }
-      if (autoHideMs) {
-        knowledgeCollectionsStatusTimer = window.setTimeout(function () {
-          setKnowledgeCollectionsStatus("");
-        }, autoHideMs);
-      }
-    }
-
-    function knowledgeSelectionsEqual(a, b) {
-      if (a.size !== b.size) {
-        return false;
-      }
-      for (var value of a) {
-        if (!b.has(value)) {
-          return false;
-        }
-      }
-      return true;
-    }
-
-    function markKnowledgeAccessDirty() {
-      var selectionChanged = !knowledgeSelectionsEqual(knowledgeCollectionsSelection, knowledgeCollectionsBaseline);
-      var modeChanged = knowledgeAccessMode !== knowledgeAccessBaselineMode;
-      knowledgeCollectionsDirty = selectionChanged || modeChanged;
-      updateKnowledgeAccessSaveState();
-    }
-
-    function updateKnowledgeAccessSaveState() {
-      if (!knowledgeAccessSave) return;
-      var wouldBlockAll =
-        knowledgeAccessMode === "collections" &&
-        knowledgeCollectionsSelection.size === 0 &&
-        !knowledgeHasExplicitDocs;
-      var canSave =
-        !knowledgeCollectionsSaving && knowledgeCollectionsDirty && knowledgeAccessAgentId && !wouldBlockAll;
-      knowledgeAccessSave.disabled = !canSave;
-      if (canSave) {
-        knowledgeAccessSave.removeAttribute("aria-disabled");
-      } else {
-        knowledgeAccessSave.setAttribute("aria-disabled", "true");
-      }
-    }
-
-    function applyKnowledgeScopeButtonState() {
-      if (!knowledgeScopeButtons.length) return;
-      knowledgeScopeButtons.forEach(function (button) {
-        var key = (button.dataset.agentKnowledgeScopeOption || "").toString().trim().toLowerCase();
-        var isActive = (knowledgeAccessMode === "collections" ? "collections" : "all") === key;
-        button.setAttribute("aria-pressed", isActive ? "true" : "false");
-        if (isActive) {
-          button.classList.add("bg-primary", "text-primary-foreground", "shadow-sm");
-          button.classList.remove("text-muted-foreground");
-        } else {
-          button.classList.remove("bg-primary", "text-primary-foreground", "shadow-sm");
-          button.classList.add("text-muted-foreground");
-        }
-      });
-      if (knowledgeScopeHint) {
-        knowledgeScopeHint.textContent =
-          knowledgeAccessMode === "collections"
-            ? "Only documents in selected collections can be retrieved."
-            : "The agent can retrieve any business knowledge (recommended while testing).";
-      }
-    }
-
-    function renderKnowledgeCollectionsOptions() {
-      if (!knowledgeCollectionsList) return;
-      knowledgeCollectionsList.innerHTML = "";
-
-      if (knowledgeCollectionsLoading) {
-        if (knowledgeCollectionsEmpty) {
-          knowledgeCollectionsEmpty.textContent = "Loading collections…";
-          knowledgeCollectionsEmpty.classList.remove("hidden");
-        }
-        return;
-      }
-
-      if (!knowledgeCollectionsLoaded) {
-        if (knowledgeCollectionsEmpty) {
-          knowledgeCollectionsEmpty.textContent = "Loading collections…";
-          knowledgeCollectionsEmpty.classList.remove("hidden");
-        }
-        return;
-      }
-
-      if (!knowledgeCollectionsCatalog.length) {
-        if (knowledgeCollectionsEmpty) {
-          knowledgeCollectionsEmpty.textContent =
-            "No collections yet. Create one in Knowledge → Collections.";
-          knowledgeCollectionsEmpty.classList.remove("hidden");
-        }
-        return;
-      }
-
-      if (knowledgeCollectionsEmpty) {
-        knowledgeCollectionsEmpty.textContent = "";
-        knowledgeCollectionsEmpty.classList.add("hidden");
-      }
-
-      knowledgeCollectionsCatalog.forEach(function (collection) {
-        if (!collection || !collection.id) return;
-        var label = document.createElement("label");
-        label.className = "flex items-start gap-2 text-sm";
-        var input = document.createElement("input");
-        input.type = "checkbox";
-        input.className = "mt-1 h-4 w-4 rounded border-input text-primary focus:ring-primary";
-        input.value = collection.id;
-        input.disabled = knowledgeAccessMode !== "collections" || !knowledgeAccessAgentId;
-        input.checked = knowledgeCollectionsSelection.has(collection.id);
-        input.addEventListener("change", function () {
-          if (input.checked) {
-            knowledgeCollectionsSelection.add(collection.id);
-          } else {
-            knowledgeCollectionsSelection.delete(collection.id);
-          }
-          markKnowledgeAccessDirty();
-        });
-        var textWrap = document.createElement("span");
-        var name = document.createElement("span");
-        name.className = "font-semibold text-foreground";
-        name.textContent = collection.name;
-        var meta = document.createElement("span");
-        meta.className = "block text-xs text-muted-foreground";
-        meta.textContent = collection.visibilityLabel || "Private";
-        textWrap.appendChild(name);
-        textWrap.appendChild(meta);
-        label.appendChild(input);
-        label.appendChild(textWrap);
-        knowledgeCollectionsList.appendChild(label);
-      });
-    }
-
-    function ensureCollectionsLoaded() {
-      if (knowledgeCollectionsLoaded || knowledgeCollectionsLoading) {
-        renderKnowledgeCollectionsOptions();
-        return;
-      }
-      knowledgeCollectionsLoading = true;
-      renderKnowledgeCollectionsOptions();
-      fetch("/api/knowledge/collections/", {
-        method: "GET",
-        headers: { Accept: "application/json" },
-        credentials: "same-origin",
-      })
-        .then(function (response) {
-          if (!response.ok) {
-            throw new Error("Failed to load collections");
-          }
-          return response.json();
-        })
-        .then(function (payload) {
-          var items = payload && Array.isArray(payload.items) ? payload.items : [];
-          knowledgeCollectionsCatalog = items
-            .map(function (item) {
-              if (!item || !item.id) return null;
-              return {
-                id: String(item.id),
-                name: String(item.name || ""),
-                visibility: String(item.visibility || "private"),
-                visibilityLabel: String(item.visibilityLabel || "Private"),
-              };
-            })
-            .filter(function (item) {
-              return item && item.id && item.name;
-            })
-            .sort(function (a, b) {
-              return a.name.localeCompare(b.name);
-            });
-          knowledgeCollectionsLoaded = true;
-          knowledgeCollectionsLoading = false;
-          renderKnowledgeCollectionsOptions();
-          applyKnowledgeScopeButtonState();
-          markKnowledgeAccessDirty();
-        })
-        .catch(function (error) {
-          console.error("Failed to load collections catalog", error);
-          knowledgeCollectionsCatalog = [];
-          knowledgeCollectionsLoaded = true;
-          knowledgeCollectionsLoading = false;
-          if (knowledgeCollectionsEmpty) {
-            knowledgeCollectionsEmpty.textContent = "Unable to load collections.";
-            knowledgeCollectionsEmpty.classList.remove("hidden");
-          }
-        });
-    }
-
-    function setKnowledgeAccessMode(nextMode) {
-      var normalized = (nextMode || "").toString().trim().toLowerCase();
-      knowledgeAccessMode = normalized === "collections" ? "collections" : "all";
-      applyKnowledgeScopeButtonState();
-      renderKnowledgeCollectionsOptions();
-      markKnowledgeAccessDirty();
-    }
-
-    function setPanelState(state) {
+	    function setPanelState(state) {
       panel.dataset.state = state;
       if (emptyState) emptyState.classList.toggle("hidden", state !== "empty");
       if (loadingState) loadingState.classList.toggle("hidden", state !== "loading");
@@ -1356,13 +1147,13 @@
       if (contentState) contentState.classList.toggle("hidden", state !== "content");
       if (fieldAriaTitle) {
         if (state === "empty") {
-          fieldAriaTitle.textContent = "Select an agent";
+          fieldAriaTitle.textContent = I18N.selectAgent;
         } else if (state === "loading") {
-          fieldAriaTitle.textContent = currentAgentTitle ? "Loading " + currentAgentTitle : "Loading agent details";
+          fieldAriaTitle.textContent = currentAgentTitle ? I18N.loadingPrefix + currentAgentTitle : I18N.loadingAgentDetails;
         } else if (state === "error") {
-          fieldAriaTitle.textContent = "Agent details unavailable";
+          fieldAriaTitle.textContent = I18N.agentDetailsUnavailable;
         } else if (state === "content") {
-          fieldAriaTitle.textContent = currentAgentTitle || "Agent details";
+          fieldAriaTitle.textContent = currentAgentTitle || I18N.agentDetails;
         }
       }
     }
@@ -1477,7 +1268,7 @@
       if (!items || !items.length) {
         var empty = document.createElement("li");
         empty.className = "px-3 py-2 text-sm text-muted-foreground";
-        empty.textContent = "No knowledge items attached.";
+        empty.textContent = I18N.noKnowledgeItems;
         target.appendChild(empty);
         return;
       }
@@ -1488,17 +1279,17 @@
         header.className = "flex items-center justify-between gap-2";
         var name = document.createElement("span");
         name.className = "text-sm font-semibold text-foreground";
-        name.textContent = doc.name || "Knowledge item";
+        name.textContent = doc.name || I18N.knowledgeItem;
         var badge = document.createElement("span");
         badge.className =
           "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium capitalize text-muted-foreground";
-        badge.textContent = (doc.status || "unknown").replace(/_/g, " ");
+        badge.textContent = (doc.status || I18N.unknown).replace(/_/g, " ");
         header.appendChild(name);
         header.appendChild(badge);
         var meta = document.createElement("div");
         meta.className = "text-xs text-muted-foreground";
-        var source = (doc.sourceType || "source").replace(/_/g, " ");
-        var timestamp = doc.lastSyncedAt ? " • Updated " + formatDateTime(doc.lastSyncedAt) : "";
+        var source = (doc.sourceType || I18N.source).replace(/_/g, " ");
+        var timestamp = doc.lastSyncedAt ? " • " + I18N.updatedPrefix + formatDateTime(doc.lastSyncedAt) : "";
         meta.textContent = source + timestamp;
         li.appendChild(header);
         li.appendChild(meta);
@@ -1510,10 +1301,10 @@
       shareableLinkValue = path || "";
       var hasLink = Boolean(shareableLinkValue);
       if (shareableField) {
-        shareableField.textContent = hasLink ? shareableLinkValue : "Not published";
+        shareableField.textContent = hasLink ? shareableLinkValue : I18N.notPublished;
       }
       if (shareableState) {
-        shareableState.textContent = hasLink ? "Live" : "Not published";
+        shareableState.textContent = hasLink ? I18N.live : I18N.notPublished;
       }
       if (shareableOpen) {
         if (hasLink) {
@@ -1549,7 +1340,7 @@
       actionList.innerHTML = "";
       var placeholder = document.createElement("p");
       placeholder.className = "text-xs text-muted-foreground";
-      placeholder.textContent = message || "Select an agent to load action permissions.";
+      placeholder.textContent = message || I18N.selectAgentForActions;
       actionList.appendChild(placeholder);
     }
 
@@ -1560,13 +1351,13 @@
       var label = text;
       if (!label) {
         if (state === "loading") {
-          label = "Syncing…";
+          label = I18N.syncing;
         } else if (state === "error") {
-          label = "Failed";
+          label = I18N.failed;
         } else if (state === "ready") {
-          label = "Live";
+          label = I18N.live;
         } else {
-          label = "Idle";
+          label = I18N.idle;
         }
       }
       actionStateLabel.textContent = label;
@@ -1594,11 +1385,11 @@
         "inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-semibold border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40";
       if (enabled) {
         target.className = base + " border-emerald-500 bg-emerald-500/90 text-white shadow-sm";
-        target.textContent = "Enabled";
+        target.textContent = I18N.enabled;
         target.dataset.state = "on";
       } else {
         target.className = base + " border-border/70 bg-background text-muted-foreground";
-        target.textContent = "Disabled";
+        target.textContent = I18N.disabled;
         target.dataset.state = "off";
       }
     }
@@ -1611,7 +1402,7 @@
       if (!actions || !actions.length) {
         var empty = document.createElement("p");
         empty.className = "text-xs text-muted-foreground";
-        empty.textContent = "No toggleable actions registered.";
+        empty.textContent = I18N.noToggleableActions;
         actionList.appendChild(empty);
         return;
       }
@@ -1624,7 +1415,7 @@
         title.textContent = action.label || action.key;
         var description = document.createElement("p");
         description.className = "text-xs text-muted-foreground";
-        description.textContent = action.description || "Action toggle";
+        description.textContent = action.description || I18N.actionToggle;
         info.appendChild(title);
         info.appendChild(description);
         var toggle = document.createElement("button");
@@ -1651,7 +1442,7 @@
         return;
       }
       control.disabled = true;
-      setActionStateLabel("loading", "Updating…");
+      setActionStateLabel("loading", I18N.updating);
       fetch("/api/agents/" + encodeURIComponent(agentId) + "/actions/", {
         method: "PUT",
         headers: {
@@ -1664,7 +1455,7 @@
       })
         .then(function (response) {
           if (!response.ok) {
-            throw new Error("Failed to update action");
+            throw new Error(I18N.failedToUpdateAction);
           }
           return response.json();
         })
@@ -1672,11 +1463,11 @@
           var updated = payload && payload.action ? payload.action.enabled : enabled;
           applyToggleState(control, !!updated);
           var label = (payload && payload.action && payload.action.label) || actionKey;
-          flashActionMessage(label + (updated ? " enabled" : " disabled"), false);
+          flashActionMessage(label + " " + (updated ? I18N.actionEnabledSuffix : I18N.actionDisabledSuffix), false);
         })
         .catch(function (error) {
           console.error("Failed to update action permission", error);
-          flashActionMessage("Unable to update action.", true);
+          flashActionMessage(I18N.unableToUpdateAction, true);
         })
         .finally(function () {
           control.disabled = false;
@@ -1707,7 +1498,7 @@
       })
         .then(function (response) {
           if (!response.ok) {
-            throw new Error("Failed to load action permissions");
+            throw new Error(I18N.failedToLoadActionPermissions);
           }
           return response.json();
         })
@@ -1726,7 +1517,7 @@
             return;
           }
           console.error("Failed to load action permissions", error);
-          resetActionArea("Unable to load action permissions.");
+          resetActionArea(I18N.unableToLoadActionPermissions);
           setActionStateLabel("error");
         })
         .finally(function () {
@@ -1757,23 +1548,23 @@
     function prefillSummaryFromRow(row) {
       if (!row) return;
       var dataset = row.dataset || {};
-      currentAgentTitle = dataset.agentName || "Agent";
+      currentAgentTitle = dataset.agentName || I18N.agent;
       if (fieldName) fieldName.textContent = currentAgentTitle;
       if (fieldIdentifier) fieldIdentifier.textContent = dataset.agentIdentifier || "";
-      if (fieldRole) fieldRole.textContent = dataset.agentRole || "Support Agent";
+      if (fieldRole) fieldRole.textContent = dataset.agentRole || I18N.supportAgent;
       if (fieldTone) fieldTone.textContent = dataset.agentTone || "—";
       if (fieldInitials) fieldInitials.textContent = dataset.agentInitials || getInitials(currentAgentTitle);
       if (fieldUpdated) {
         var updated = dataset.agentUpdatedIso ? formatDateTime(dataset.agentUpdatedIso) : dataset.agentUpdated || "";
-        fieldUpdated.textContent = updated ? "Updated " + updated : "";
+        fieldUpdated.textContent = updated ? I18N.updatedPrefix + updated : "";
       }
       if (fieldLastActive) {
         var lastActive = dataset.agentLastActive ? formatDateTime(dataset.agentLastActive) : "";
-        fieldLastActive.textContent = lastActive ? "Last active " + lastActive : "No recent activity";
+        fieldLastActive.textContent = lastActive ? I18N.lastActivePrefix + lastActive : I18N.noRecentActivity;
       }
       applyStatusBadge(
         fieldStatusBadge,
-        dataset.agentStatusLabel || dataset.agentStatus || "Draft",
+        dataset.agentStatusLabel || dataset.agentStatus || I18N.draft,
         dataset.agentStatus || ""
       );
       if (fieldMetricTotal) fieldMetricTotal.textContent = formatNumber(dataset.agentConversations);
@@ -1786,22 +1577,22 @@
 
     function populatePanel(agent, rowDataset) {
       rowDataset = rowDataset || {};
-      currentAgentTitle = agent.name || rowDataset.agentName || "Agent";
+      currentAgentTitle = agent.name || rowDataset.agentName || I18N.agent;
       if (fieldName) fieldName.textContent = currentAgentTitle;
       if (fieldIdentifier) fieldIdentifier.textContent = agent.identifier || rowDataset.agentIdentifier || "";
-      if (fieldRole) fieldRole.textContent = agent.roleLabel || rowDataset.agentRole || "Support Agent";
+      if (fieldRole) fieldRole.textContent = agent.roleLabel || rowDataset.agentRole || I18N.supportAgent;
       if (fieldTone) fieldTone.textContent = agent.toneLabel || rowDataset.agentTone || "—";
       if (fieldInitials) {
         fieldInitials.textContent = getInitials(agent.name || rowDataset.agentName, rowDataset.agentInitials);
       }
       applyStatusBadge(
         fieldStatusBadge,
-        agent.statusLabel || rowDataset.agentStatusLabel || agent.status || rowDataset.agentStatus || "Draft",
+        agent.statusLabel || rowDataset.agentStatusLabel || agent.status || rowDataset.agentStatus || I18N.draft,
         agent.status || rowDataset.agentStatus || ""
       );
       if (fieldUpdated) {
         var updatedValue = agent.updatedAt || rowDataset.agentUpdatedIso || rowDataset.agentUpdated;
-        fieldUpdated.textContent = updatedValue ? "Updated " + formatDateTime(updatedValue) : "";
+        fieldUpdated.textContent = updatedValue ? I18N.updatedPrefix + formatDateTime(updatedValue) : "";
       }
       var stats = agent.stats || {};
       if (fieldMetricTotal) fieldMetricTotal.textContent = formatNumber(stats.casesTotal, rowDataset.agentConversations);
@@ -1816,58 +1607,29 @@
       }
       if (fieldLastActive) {
         var lastActive = stats.lastActiveAt || rowDataset.agentLastActive;
-        fieldLastActive.textContent = lastActive ? "Last active " + formatDateTime(lastActive) : "No recent activity";
+        fieldLastActive.textContent = lastActive ? I18N.lastActivePrefix + formatDateTime(lastActive) : I18N.noRecentActivity;
       }
-      populateChips(fieldTraits, agent.traits, "No traits configured.");
-      populateChips(fieldKpis, agent.kpis, "No KPIs selected.");
-      populateChips(fieldCustomKpis, agent.customKpis, "No custom KPIs defined.");
+      populateChips(fieldTraits, agent.traits, I18N.noTraits);
+      populateChips(fieldKpis, agent.kpis, I18N.noKpis);
+      populateChips(fieldCustomKpis, agent.customKpis, I18N.noCustomKpis);
       if (fieldKpiWeighting) {
         fieldKpiWeighting.textContent = agent.allowCustomKpiWeighting
-          ? "Custom KPI weighting enabled"
-          : "Using default KPI weighting";
+          ? I18N.customKpiWeightingEnabled
+          : I18N.defaultKpiWeighting;
       }
-	      if (fieldEscalation) {
-	        fieldEscalation.textContent = agent.escalationRule || "None configured.";
-	      }
+      if (fieldEscalation) {
+        fieldEscalation.textContent = agent.escalationRule || I18N.noneConfigured;
+      }
 	      if (fieldKnowledgeMode) {
-	        var mode = agent.knowledge && agent.knowledge.mode;
-	        var modeDisplay = "Uses all business knowledge sources.";
-	        if (mode === "select") {
-	          modeDisplay = "Uses selected knowledge sources.";
+	        fieldKnowledgeMode.textContent = I18N.usesAllBusinessKnowledge;
 	      }
-	      fieldKnowledgeMode.textContent = modeDisplay;
-	    }
-	    populateKnowledge(fieldKnowledgeList, agent.knowledge && agent.knowledge.documents);
-	    knowledgeAccessAgentId = agent.id || rowDataset.agentUuid || null;
-	    knowledgeHasExplicitDocs =
-	      agent.knowledge && Array.isArray(agent.knowledge.documents) && agent.knowledge.documents.length > 0;
-	    var selectedCollections =
-	      agent.knowledge && Array.isArray(agent.knowledge.collections) ? agent.knowledge.collections : [];
-	    var selectedCollectionIds = selectedCollections
-	      .map(function (entry) {
-	        return entry && entry.id ? String(entry.id) : "";
-	      })
-	      .filter(Boolean);
-	    knowledgeCollectionsSelection = new Set(selectedCollectionIds);
-	    knowledgeCollectionsBaseline = new Set(selectedCollectionIds);
-	    knowledgeAccessBaselineMode = agent.knowledge && agent.knowledge.mode === "select" ? "collections" : "all";
-	    knowledgeAccessMode = knowledgeAccessBaselineMode;
-	    applyKnowledgeScopeButtonState();
-	    ensureCollectionsLoaded();
-	    renderKnowledgeCollectionsOptions();
-	    setKnowledgeCollectionsStatus(
-	      knowledgeAccessMode === "collections" && knowledgeCollectionsSelection.size === 0 && !knowledgeHasExplicitDocs
-	        ? "Select at least one collection to enable retrieval."
-	        : "",
-	      "info"
-	    );
-	    markKnowledgeAccessDirty();
-	    updateShareable(agent.shareablePath || rowDataset.agentShareable || "");
-	    loadAgentActions(agent.id || rowDataset.agentUuid || null);
-	    if (fieldAriaTitle) {
-	      fieldAriaTitle.textContent = currentAgentTitle;
-	    }
-  }
+	      populateKnowledge(fieldKnowledgeList, agent.knowledge && agent.knowledge.documents);
+	      updateShareable(agent.shareablePath || rowDataset.agentShareable || "");
+	      loadAgentActions(agent.id || rowDataset.agentUuid || null);
+	      if (fieldAriaTitle) {
+	        fieldAriaTitle.textContent = currentAgentTitle;
+	      }
+    }
 
     function handleRowActivation(row, options) {
       if (!row) return;
@@ -1881,7 +1643,7 @@
       }
       selectRow(row);
       prefillSummaryFromRow(row);
-      resetActionArea("Loading action permissions…");
+      resetActionArea(I18N.loadingActionPermissions);
       setActionStateLabel("loading");
       if (inFlight && typeof inFlight.abort === "function") {
         inFlight.abort();
@@ -1901,7 +1663,7 @@
       })
         .then(function (response) {
           if (!response.ok) {
-            throw new Error("Failed to load agent detail");
+            throw new Error(I18N.failedToLoadAgentDetail);
           }
           return response.json();
         })
@@ -1910,7 +1672,7 @@
             return;
           }
           if (!payload || !payload.agent) {
-            throw new Error("Invalid payload");
+            throw new Error(I18N.invalidPayload);
           }
           populatePanel(payload.agent, row.dataset);
           setPanelState("content");
@@ -1924,7 +1686,7 @@
           }
           console.error("Failed to load agent detail", error);
           if (errorMessage) {
-            errorMessage.textContent = "Unable to load agent details. Please try again.";
+            errorMessage.textContent = I18N.unableToLoadAgentDetails;
           }
           setPanelState("error");
         })
@@ -1958,91 +1720,9 @@
       }
 	    });
 
-	    if (knowledgeScopeButtons.length) {
-	      knowledgeScopeButtons.forEach(function (button) {
-	        button.addEventListener("click", function () {
-	          setKnowledgeAccessMode(button.dataset.agentKnowledgeScopeOption);
-	        });
-	      });
-	    }
-
-	    if (knowledgeAccessSave) {
-	      knowledgeAccessSave.addEventListener("click", function () {
-	        if (knowledgeAccessSave.disabled || knowledgeCollectionsSaving || !knowledgeAccessAgentId) {
-	          return;
-	        }
-	        knowledgeCollectionsSaving = true;
-	        updateKnowledgeAccessSaveState();
-	        knowledgeAccessSave.textContent = "Saving…";
-	        setKnowledgeCollectionsStatus("Saving knowledge access…", "info");
-
-	        var url =
-	          "/api/agents/" + encodeURIComponent(knowledgeAccessAgentId) + "/knowledge-access/";
-	        var body = { mode: knowledgeAccessMode === "collections" ? "select" : "all" };
-	        if (knowledgeAccessMode === "collections") {
-	          body.collectionIds = Array.from(knowledgeCollectionsSelection);
-	        }
-	        fetch(url, {
-	          method: "PUT",
-	          headers: {
-	            "Content-Type": "application/json",
-	            Accept: "application/json",
-	            "X-Requested-With": "XMLHttpRequest",
-	            "X-CSRFToken": getCsrfToken(),
-	          },
-	          credentials: "same-origin",
-	          body: JSON.stringify(body),
-	        })
-	          .then(function (response) {
-	            if (!response.ok) {
-	              return response.json().then(function (data) {
-	                var message = (data && (data.message || data.error)) || "Unable to save knowledge access.";
-	                throw new Error(message);
-	              });
-	            }
-	            return response.json();
-	          })
-	          .then(function (payload) {
-	            var access = payload && payload.knowledgeAccess ? payload.knowledgeAccess : {};
-	            var savedMode = access.mode === "select" ? "collections" : "all";
-	            var savedCollectionIds = Array.isArray(access.collectionIds)
-	              ? access.collectionIds.map(function (value) {
-	                  return String(value);
-	                })
-	              : [];
-	            knowledgeAccessBaselineMode = savedMode;
-	            knowledgeAccessMode = savedMode;
-	            knowledgeCollectionsBaseline = new Set(savedCollectionIds);
-	            knowledgeCollectionsSelection = new Set(savedCollectionIds);
-	            if (savedMode === "all") {
-	              knowledgeHasExplicitDocs = false;
-	              populateKnowledge(fieldKnowledgeList, []);
-	            }
-	            applyKnowledgeScopeButtonState();
-	            renderKnowledgeCollectionsOptions();
-	            markKnowledgeAccessDirty();
-	            setKnowledgeCollectionsStatus("Knowledge access saved.", "success", 2500);
-	            if (fieldKnowledgeMode) {
-	              fieldKnowledgeMode.textContent =
-	                savedMode === "collections"
-	                  ? "Uses selected knowledge sources."
-	                  : "Uses all business knowledge sources.";
-	            }
-	          })
-	          .catch(function (error) {
-	            setKnowledgeCollectionsStatus(error.message || "Unable to save knowledge access.", "error");
-	          })
-	          .finally(function () {
-	            knowledgeCollectionsSaving = false;
-	            knowledgeAccessSave.textContent = "Save";
-	            updateKnowledgeAccessSaveState();
-	          });
-	      });
-	    }
-
-	    if (overlay) {
-	      overlay.addEventListener("click", function () {
-	        closePanel();
+		    if (overlay) {
+		      overlay.addEventListener("click", function () {
+		        closePanel();
       });
     }
     if (closeTrigger) {
@@ -2109,9 +1789,9 @@
 	        }
 	        var shareable = card.getAttribute("data-agent-shareable") || "";
 	        copyShareableLink(shareable);
-	        var original = trigger.getAttribute("data-original-label") || trigger.textContent.trim() || "Copy link";
+	        var original = trigger.getAttribute("data-original-label") || trigger.textContent.trim() || I18N.copyLink;
 	        trigger.setAttribute("data-original-label", original);
-	        trigger.textContent = "Copied";
+	        trigger.textContent = I18N.copied;
 	        window.setTimeout(function () {
 	          trigger.textContent = original;
 	        }, 1100);
