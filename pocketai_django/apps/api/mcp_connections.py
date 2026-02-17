@@ -15,7 +15,7 @@ from django.conf import settings
 from django.http import HttpRequest, JsonResponse
 from django.db.models import OuterRef, Subquery
 from django.utils import timezone
-from django.utils.translation import gettext as _
+from django.utils.translation import gettext as _, get_language
 from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.http import require_http_methods
 
@@ -2112,6 +2112,69 @@ def _controls_tool_label(tool_name: str) -> str:
 
 def _controls_tool_description(tool_name: str, description: str, *, source_type: str = "internal") -> str:
     tool_key = str(tool_name or "").strip().lower()
+    language_code = str(get_language() or "").strip().lower()
+    if language_code.startswith("ar"):
+        arabic_overrides = {
+            "continue_agent_run": "استأنف تشغيلًا خلفيًا قائمًا (وكيلًا فرعيًا) برسالة متابعة. استخدمه لإرسال تعليمات إضافية بدل إنشاء تشغيل جديد.",
+            "create_agent_request": "أرسل طلبًا منظّمًا من وكيل إلى وكيل آخر (صندوق وكيل-إلى-وكيل) مع مراجع واضحة بدل نسخ محتوى خام.",
+            "create_agent_run": "أنشئ تشغيلًا خلفيًا (وكيلًا فرعيًا) مرتبطًا بهذه المحادثة للمهام الطويلة أو متعددة الخطوات.",
+            "list_agent_runs": "اعرض قائمة التشغيلات الخلفية الخاصة بالمحادثة مع حالتها الحالية.",
+            "get_agent_run": "اجلب الحالة التفصيلية ونتيجة تشغيل خلفي معيّن.",
+            "initiate_phone_call": "ابدأ مكالمة هاتفية صادرة واحدة عبر مزوّد المكالمات المهيّأ.",
+            "search_knowledge": "ابحث في قاعدة المعرفة باستخدام استعلام بلغة طبيعية.",
+            "read_knowledge": "اقرأ المقاطع المرجعية الناتجة من البحث في المعرفة مع حدود آمنة للحجم.",
+            "search_conversation_files": "ابحث داخل ملفات المحادثة المرفوعة (مثل PDF) عن المقاطع ذات الصلة.",
+            "read_conversation_file": "اقرأ مقاطع محددة من ملف مرفوع داخل المحادثة.",
+            "read_document": "اقرأ محتوى مستند معرفي بحسب الصفحات أو المقاطع المطلوبة.",
+            "get_document_structure": "اجلب بنية المستند كاملة بما يشمل الجداول والعناوين وأسماء العناصر.",
+            "query_dataset": "استعلم عن مجموعات البيانات المهيكلة (CSV/XLSX/JSONL) بعمليات ترشيح وفرز وتجميع.",
+            "list_tables": "اعرض الجداول/المجموعات القابلة للاستعلام للحصول على المعرّفات قبل تنفيذ الاستعلامات.",
+            "read_table": "اقرأ صفوفًا من جدول محدد داخل مستند معرفي مع إمكان التصفية والترقيم.",
+            "retrieve_earlier_context": "استرجع سياقًا أقدم من تاريخ المحادثة عند الحاجة للرجوع للمحتوى السابق.",
+            "request_user_input": "اطلب من المستخدم إدخالًا مباشرًا عند الحاجة لتوضيح أو قرار.",
+            "portal_emit_blocks": "حدّث واجهة البوابة بكتل محتوى منظّمة بشكل تدريجي.",
+            "pdf_generate": "أنشئ ملف PDF جديدًا من النص أو المحتوى المرسل.",
+            "pdf_merge": "ادمج عدة ملفات PDF في ملف واحد.",
+            "pdf_extract_pages": "استخرج صفحات محددة من ملف PDF.",
+            "pdf_extract_text": "استخرج النص من ملف PDF (مع خيار تحديد صفحات).",
+            "mcp_search_tools": "ابحث في أدوات MCP الخارجية المتاحة واعرض أفضل الخيارات المناسبة.",
+            "mcp_call_tool": "نفّذ أداة MCP خارجية عبر `tool_id` مع المعاملات المطلوبة.",
+            "calendar_list_events": "اعرض الأحداث القادمة من تقويم Google المتصل.",
+            "calendar_get_event": "اجلب تفاصيل حدث محدد من تقويم Google.",
+            "calendar_create_event": "أنشئ حدثًا جديدًا في تقويم Google المتصل.",
+            "calendar_update_event": "حدّث حدثًا موجودًا في تقويم Google.",
+            "drive_search_files": "ابحث عن الملفات في Google Drive المتصل.",
+            "drive_get_file": "اقرأ محتوى/بيانات ملف محدد من Google Drive.",
+            "drive_list_files": "اعرض ملفات مجلد Google Drive (أو الجذر عند عدم تحديد مجلد).",
+            "onedrive_search_files": "ابحث عن الملفات في OneDrive المتصل.",
+            "onedrive_get_file": "اقرأ محتوى/بيانات ملف محدد من OneDrive.",
+            "onedrive_list_files": "اعرض ملفات مجلد OneDrive (أو الجذر عند عدم تحديد مجلد).",
+            "slack_list_channels": "اعرض قنوات Slack المتاحة في مساحة العمل المتصلة.",
+            "slack_read_channel": "اقرأ الرسائل الحديثة من قناة Slack محددة.",
+            "slack_send_message": "أرسل رسالة إلى قناة Slack.",
+            "slack_search_messages": "ابحث في رسائل Slack ضمن مساحة العمل المتصلة.",
+            "hubspot_search_contacts": "ابحث عن جهات الاتصال في HubSpot المتصل.",
+            "hubspot_get_contact": "اجلب تفاصيل جهة اتصال محددة من HubSpot.",
+            "hubspot_create_contact": "أنشئ جهة اتصال جديدة في HubSpot.",
+            "hubspot_search_deals": "ابحث عن الصفقات في HubSpot المتصل.",
+            "email_search": "ابحث في صندوق البريد المتصل (Google/Microsoft).",
+            "email_get_message": "اجلب رسالة بريد إلكتروني محددة بحسب المعرّف.",
+            "email_get_thread": "اجلب سلسلة بريد إلكتروني كاملة بحسب المعرّف.",
+            "email_create_draft": "أنشئ مسودة بريد إلكتروني في الحساب المتصل.",
+            "email_send_draft": "أرسل مسودة بريد إلكتروني موجودة (حسب سياسة الموافقات).",
+            "create_case": "أنشئ حالة عميل منظمة تتضمن التشخيص والإجراءات المقترحة.",
+            "update_case_status": "حدّث حالة دورة حياة الحالة المرتبطة.",
+            "update_case_details": "حدّث عنوان/وصف/أولوية حالة قائمة عند ظهور معلومات جديدة.",
+            "add_case_history": "أضف سجل متابعة للحالة لتوثيق التقدم أو التوضيحات.",
+            "flag_escalation": "صعّد المحادثة للمتابعة البشرية مع سبب وتفاصيل واضحة.",
+            "create_customer": "أنشئ أو طابق ملف عميل عند توفر معرّفات موثوقة.",
+            "update_customer": "حدّث ملف عميل قائم بعد تأكيد التغييرات.",
+            "create_lead": "أنشئ عميلًا محتملًا تم اكتشافه أثناء المحادثة.",
+            "create_appointment": "أنشئ أو اطلب موعدًا للعميل وفق الوقت المفضل.",
+        }
+        if tool_key in arabic_overrides:
+            return arabic_overrides[tool_key]
+
     localized_overrides = {
         "continue_agent_run": _(
             "Continue an existing background run (sub-agent) with a follow-up message. "
