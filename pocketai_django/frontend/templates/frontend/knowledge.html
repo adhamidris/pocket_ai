@@ -377,7 +377,7 @@
                           <button
                             type="button"
                             class="p-1.5 rounded-md hover:bg-muted transition-colors"
-                            aria-label="Open document detail"
+                            aria-label="{% trans 'Open document detail' %}"
                             data-document-trigger
                           >
                             <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
@@ -668,7 +668,7 @@
                   type="button"
                   class="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full border border-border/60 bg-background/70 text-muted-foreground transition hover:bg-background hover:text-foreground"
                   data-collection-edit-open
-                  aria-label="Edit collection"
+                  aria-label="{% trans 'Edit collection' %}"
                 >
                   <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
                     <path stroke-linecap="round" stroke-linejoin="round" d="m16.862 3.487 3.651 3.651m-2.121-1.53L8.25 15.75l-4.5 1.125 1.125-4.5L15.75 4.875a2.121 2.121 0 0 1 3.0 0Z" />
@@ -677,26 +677,32 @@
                 <div class="space-y-1">
                   <div class="flex items-center gap-2">
                     <div class="text-sm font-semibold text-foreground" data-collection-title>{{ collection.name }}</div>
-                    <span class="inline-flex items-center rounded-full border border-border/60 bg-muted/50 px-2 py-0.5 text-[11px] font-medium text-muted-foreground" data-collection-badge>{{ collection.visibility_label|default:"Private" }}</span>
+                    <span class="inline-flex items-center rounded-full border border-border/60 bg-muted/50 px-2 py-0.5 text-[11px] font-medium text-muted-foreground" data-collection-badge>
+                      {% if collection.visibility_label %}
+                        {{ collection.visibility_label }}
+                      {% else %}
+                        {% trans "Private" %}
+                      {% endif %}
+                    </span>
                   </div>
                   <p class="text-xs text-muted-foreground leading-relaxed" data-collection-description>{{ collection.description }}</p>
                 </div>
                 <div class="mt-3 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
                   <div class="rounded-md border border-border/60 bg-muted/40 px-3 py-2">
                     <div class="text-sm font-medium text-foreground" data-collection-documents>{{ collection.documents|default:0 }}</div>
-                    <div>Documents</div>
+	                    <div>{% trans "Documents" %}</div>
                   </div>
                   <div class="rounded-md border border-border/60 bg-muted/40 px-3 py-2">
                     <div class="text-sm font-medium text-foreground">{{ collection.owner|default:"—" }}</div>
-                    <div>Owner</div>
+	                    <div>{% trans "Owner" %}</div>
                   </div>
                   <div class="rounded-md border border-border/60 bg-muted/40 px-3 py-2">
                     <div class="text-sm font-medium text-foreground">{{ collection.focus|default:"—" }}</div>
-                    <div>Focus</div>
+	                    <div>{% trans "Focus" %}</div>
                   </div>
                   <div class="rounded-md border border-border/60 bg-muted/40 px-3 py-2">
                     <div class="text-sm font-medium text-foreground" data-collection-updated>{{ collection.updated_at|default:"—" }}</div>
-                    <div>Last update</div>
+	                    <div>{% trans "Last update" %}</div>
                   </div>
                 </div>
               </div>
@@ -711,49 +717,49 @@
               <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 19.5h15a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5h-15A1.5 1.5 0 0 0 3 6v12a1.5 1.5 0 0 0 1.5 1.5Z" />
             </svg>
             <div class="space-y-1">
-              <div class="text-xs text-foreground">Data Guardrails</div>
-              <p class="text-[11px] text-muted-foreground normal-case">Control identifier requirements for knowledge retrieval. Admin-only; end-users stay guided by prompts.</p>
+	              <div class="text-xs text-foreground">{% trans "Data Guardrails" %}</div>
+	              <p class="text-[11px] text-muted-foreground normal-case">{% trans "Control identifier requirements for knowledge retrieval. Admin-only; end-users stay guided by prompts." %}</p>
             </div>
           </div>
 
           {% if guardrails.enabled %}
             <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               <div class="rounded-xl border border-border/60 bg-card/80 p-4 space-y-2">
-                <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Match policy</div>
-                <div class="text-lg font-semibold text-foreground">
-                  {% if guardrails.match_policy == "and" %}
-                    Require all identifiers
-                  {% else %}
-                    Require any identifier
-                  {% endif %}
-                </div>
-                <p class="text-xs text-muted-foreground">Applies to all uploads with active mappings.</p>
-              </div>
-              <div class="rounded-xl border border-border/60 bg-card/80 p-4 space-y-2">
-                <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Identifiers</div>
-                <div class="text-lg font-semibold text-foreground">{{ guardrails.registry_count }}</div>
-                <p class="text-xs text-muted-foreground">Active + proposed keys for this business.</p>
-              </div>
-              <div class="rounded-xl border border-border/60 bg-card/80 p-4 space-y-2">
-                <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Uploads covered</div>
-                <div class="text-lg font-semibold text-foreground">{{ guardrails.upload_count }}</div>
-                <p class="text-xs text-muted-foreground">Recent uploads with column mappings.</p>
-              </div>
-              <div class="rounded-xl border border-border/60 bg-card/80 p-4 space-y-2">
-                <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Recent decisions</div>
-                <div class="text-lg font-semibold text-foreground">{{ guardrails.events.summary.total }}</div>
-                <p class="text-xs text-muted-foreground">
-                  OK: {{ guardrails.events.summary.ok }} · Required: {{ guardrails.events.summary.required }}
-                </p>
-              </div>
-            </div>
+	                <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{% trans "Match policy" %}</div>
+	                <div class="text-lg font-semibold text-foreground">
+	                  {% if guardrails.match_policy == "and" %}
+	                    {% trans "Require all identifiers" %}
+	                  {% else %}
+	                    {% trans "Require any identifier" %}
+	                  {% endif %}
+	                </div>
+	                <p class="text-xs text-muted-foreground">{% trans "Applies to all uploads with active mappings." %}</p>
+	              </div>
+	              <div class="rounded-xl border border-border/60 bg-card/80 p-4 space-y-2">
+	                <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{% trans "Identifiers" %}</div>
+	                <div class="text-lg font-semibold text-foreground">{{ guardrails.registry_count }}</div>
+	                <p class="text-xs text-muted-foreground">{% trans "Active + proposed keys for this business." %}</p>
+	              </div>
+	              <div class="rounded-xl border border-border/60 bg-card/80 p-4 space-y-2">
+	                <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{% trans "Uploads covered" %}</div>
+	                <div class="text-lg font-semibold text-foreground">{{ guardrails.upload_count }}</div>
+	                <p class="text-xs text-muted-foreground">{% trans "Recent uploads with column mappings." %}</p>
+	              </div>
+	              <div class="rounded-xl border border-border/60 bg-card/80 p-4 space-y-2">
+	                <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{% trans "Recent decisions" %}</div>
+	                <div class="text-lg font-semibold text-foreground">{{ guardrails.events.summary.total }}</div>
+	                <p class="text-xs text-muted-foreground">
+	                  {% blocktrans with ok=guardrails.events.summary.ok required=guardrails.events.summary.required %}OK: {{ ok }} · Required: {{ required }}{% endblocktrans %}
+	                </p>
+	              </div>
+	            </div>
 
             <div class="grid gap-4 lg:grid-cols-3">
               <div class="rounded-xl border border-border/60 bg-card/80 p-4 space-y-3 lg:col-span-2">
               <div class="flex items-start justify-between gap-3">
                 <div>
-                  <div class="text-sm font-semibold text-foreground">Match policy</div>
-                  <p class="text-xs text-muted-foreground">Choose whether uploads require all identifiers (AND) or any (OR).</p>
+	                  <div class="text-sm font-semibold text-foreground">{% trans "Match policy" %}</div>
+	                  <p class="text-xs text-muted-foreground">{% trans "Choose whether uploads require all identifiers (AND) or any (OR)." %}</p>
                 </div>
               </div>
               <form class="space-y-3" data-guardrail-form="match-policy" data-endpoint="{% url 'api:identifier-registry' guardrails.business_id %}">
@@ -766,32 +772,32 @@
                       AND
                     </button>
                   </div>
-                  <p class="text-[11px] text-muted-foreground">Buttons submit via API in the next step; CSRF token included for POST wiring.</p>
+	                  <p class="text-[11px] text-muted-foreground">{% trans "Buttons submit via API in the next step; CSRF token included for POST wiring." %}</p>
                 </form>
               </div>
 
               <div class="rounded-xl border border-border/60 bg-card/80 p-4 space-y-3">
                 <div>
-                  <div class="text-sm font-semibold text-foreground">Detection toggles</div>
-                  <p class="text-xs text-muted-foreground">Auto-detect headers during uploads and auto-promote matches.</p>
+	                  <div class="text-sm font-semibold text-foreground">{% trans "Detection toggles" %}</div>
+	                  <p class="text-xs text-muted-foreground">{% trans "Auto-detect headers during uploads and auto-promote matches." %}</p>
                 </div>
                 <form class="space-y-2" data-guardrail-form="detection-toggles" data-endpoint="{% url 'api:identifier-registry' guardrails.business_id %}">
                   {% csrf_token %}
                   <label class="flex items-start gap-2 text-sm">
                     <input type="checkbox" name="auto_detect" class="mt-1 h-4 w-4 rounded border-input text-primary focus:ring-primary" {% if guardrails.auto_detect %}checked{% endif %}>
                     <span>
-                      <span class="font-semibold text-foreground">Auto-detect headers</span>
-                      <span class="block text-xs text-muted-foreground">Propose identifier mappings from CSV or sheet headers.</span>
+	                      <span class="font-semibold text-foreground">{% trans "Auto-detect headers" %}</span>
+	                      <span class="block text-xs text-muted-foreground">{% trans "Propose identifier mappings from CSV or sheet headers." %}</span>
                     </span>
                   </label>
                   <label class="flex items-start gap-2 text-sm">
                     <input type="checkbox" name="auto_promote" class="mt-1 h-4 w-4 rounded border-input text-primary focus:ring-primary" {% if guardrails.auto_promote %}checked{% endif %}>
                     <span>
-                      <span class="font-semibold text-foreground">Auto-promote matches</span>
-                      <span class="block text-xs text-muted-foreground">Activate high-confidence identifiers automatically.</span>
+	                      <span class="font-semibold text-foreground">{% trans "Auto-promote matches" %}</span>
+	                      <span class="block text-xs text-muted-foreground">{% trans "Activate high-confidence identifiers automatically." %}</span>
                     </span>
                   </label>
-                  <p class="text-[11px] text-muted-foreground">Controls are applied when proposing from headers below.</p>
+	                  <p class="text-[11px] text-muted-foreground">{% trans "Controls are applied when proposing from headers below." %}</p>
                 </form>
               </div>
             </div>
@@ -799,27 +805,27 @@
             <div class="rounded-xl border border-border/60 bg-card/80 p-4 space-y-3">
               <div class="flex items-start justify-between gap-3">
                 <div>
-                  <div class="text-sm font-semibold text-foreground">Recent guardrail decisions</div>
-                  <p class="text-xs text-muted-foreground">Latest identifier checks across tools. Filter to focus on denials.</p>
+	                  <div class="text-sm font-semibold text-foreground">{% trans "Recent guardrail decisions" %}</div>
+	                  <p class="text-xs text-muted-foreground">{% trans "Latest identifier checks across tools. Filter to focus on denials." %}</p>
                 </div>
               </div>
               {% if guardrails.events.items %}
                 <div class="flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  <span class="rounded-md border border-border/60 bg-muted/40 px-2 py-1">Total {{ guardrails.events.summary.total }}</span>
-                  <span class="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-emerald-800">OK {{ guardrails.events.summary.ok }}</span>
-                  <span class="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-amber-800">Required {{ guardrails.events.summary.required }}</span>
+	                  <span class="rounded-md border border-border/60 bg-muted/40 px-2 py-1">{% blocktrans with total=guardrails.events.summary.total %}Total {{ total }}{% endblocktrans %}</span>
+	                  <span class="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-emerald-800">{% blocktrans with ok=guardrails.events.summary.ok %}OK {{ ok }}{% endblocktrans %}</span>
+	                  <span class="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-amber-800">{% blocktrans with required=guardrails.events.summary.required %}Required {{ required }}{% endblocktrans %}</span>
                 </div>
                 <div class="overflow-x-auto rounded-lg border border-border/60">
                   <table class="rtl-table min-w-full divide-y divide-border/60 text-sm">
                     <thead class="bg-muted/50 text-[11px] uppercase tracking-wide text-muted-foreground">
                       <tr>
-                        <th scope="col" class="px-3 py-2 text-left">Tool</th>
-                        <th scope="col" class="px-3 py-2 text-left">Upload</th>
-                        <th scope="col" class="px-3 py-2 text-left">Required</th>
-                        <th scope="col" class="px-3 py-2 text-left">Provided</th>
-                        <th scope="col" class="px-3 py-2 text-left">Policy</th>
-                        <th scope="col" class="px-3 py-2 text-left">Status</th>
-                        <th scope="col" class="px-3 py-2 text-left">When</th>
+	                        <th scope="col" class="px-3 py-2 text-left">{% trans "Tool" %}</th>
+	                        <th scope="col" class="px-3 py-2 text-left">{% trans "Upload" %}</th>
+	                        <th scope="col" class="px-3 py-2 text-left">{% trans "Required" %}</th>
+	                        <th scope="col" class="px-3 py-2 text-left">{% trans "Provided" %}</th>
+	                        <th scope="col" class="px-3 py-2 text-left">{% trans "Policy" %}</th>
+	                        <th scope="col" class="px-3 py-2 text-left">{% trans "Status" %}</th>
+	                        <th scope="col" class="px-3 py-2 text-left">{% trans "When" %}</th>
                       </tr>
                     </thead>
                     <tbody class="divide-y divide-border/60 bg-card/60">
@@ -851,7 +857,7 @@
                 </div>
               {% else %}
                 <div class="rounded-lg border border-dashed border-border/60 bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
-                  No guardrail events yet. Recent checks will appear here once retrieval runs.
+	                  {% trans "No guardrail events yet. Recent checks will appear here once retrieval runs." %}
                 </div>
               {% endif %}
             </div>
@@ -859,8 +865,8 @@
             <div class="rounded-xl border border-border/60 bg-card/80 p-4 space-y-4">
               <div class="flex items-start justify-between gap-3">
                 <div>
-                  <div class="text-sm font-semibold text-foreground">Identifier registry</div>
-                  <p class="text-xs text-muted-foreground">Approve schemas and map columns to enforce identifier checks.</p>
+	                  <div class="text-sm font-semibold text-foreground">{% trans "Identifier registry" %}</div>
+	                  <p class="text-xs text-muted-foreground">{% trans "Approve schemas and map columns to enforce identifier checks." %}</p>
                 </div>
               </div>
 
@@ -883,11 +889,11 @@
                                 <svg class="h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                                   <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v6m0 0 3-3m-3 3-3-3m9 1.5a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
                                 </svg>
-                                Required
+	                                {% trans "Required" %}
                               </span>
                             {% endif %}
                           </div>
-                          <div class="text-xs text-muted-foreground">Key: {{ identifier.key }}</div>
+	                          <div class="text-xs text-muted-foreground">{% trans "Key:" %} {{ identifier.key }}</div>
                           {% if identifier.description %}
                             <p class="text-xs text-muted-foreground leading-relaxed">{{ identifier.description }}</p>
                           {% endif %}
@@ -900,7 +906,7 @@
                                 <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                                   <path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" />
                                 </svg>
-                                {% if identifier.status == "proposed" %}Approve{% else %}Activate mappings{% endif %}
+	                                {% if identifier.status == "proposed" %}{% trans "Approve" %}{% else %}{% trans "Activate mappings" %}{% endif %}
                               </button>
                             </form>
                           {% endif %}
@@ -911,7 +917,7 @@
                                 <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                                   <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
                                 </svg>
-                                Reject
+	                                {% trans "Reject" %}
                               </button>
                             </form>
                           {% endif %}
@@ -919,11 +925,11 @@
                       </div>
 
                       <div class="space-y-2">
-                        <div class="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Column mappings</div>
+	                        <div class="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{% trans "Column mappings" %}</div>
                         {% if identifier.columns %}
                           <div class="flex flex-wrap gap-2 text-xs">
                             {% for col in identifier.columns %}
-                              <span class="inline-flex items-center gap-2 rounded-md border border-border/60 bg-background px-2.5 py-1" title="{% if col.metadata.diagnostics %}Diagnostics available{% endif %}">
+	                              <span class="inline-flex items-center gap-2 rounded-md border border-border/60 bg-background px-2.5 py-1" title="{% if col.metadata.diagnostics %}{% trans 'Diagnostics available' %}{% endif %}">
                                 <span class="font-semibold text-foreground">{{ col.column_name }}</span>
                                 {% if col.upload_id %}
                                   <span class="text-muted-foreground">·</span>
@@ -931,12 +937,12 @@
                                     {% if col.upload_label %}
                                       {{ col.upload_label }}
                                     {% else %}
-                                      Upload {{ col.upload_id|slice:":8" }}
+	                                      {% trans "Upload" %} {{ col.upload_id|slice:":8" }}
                                     {% endif %}
                                   </span>
                                 {% endif %}
                                 {% if col.confidence %}
-                                  <span class="inline-flex items-center gap-1 rounded-full border border-border/50 bg-muted/40 px-2 py-0.5 text-[10px] font-semibold text-foreground" title="Confidence">
+	                                  <span class="inline-flex items-center gap-1 rounded-full border border-border/50 bg-muted/40 px-2 py-0.5 text-[10px] font-semibold text-foreground" title="{% trans 'Confidence' %}">
                                     <svg class="h-3 w-3 text-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
                                       <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6l4 2" />
                                     </svg>
@@ -944,7 +950,7 @@
                                   </span>
                                 {% endif %}
                                 {% if col.metadata.detection_source %}
-                                  <span class="inline-flex items-center rounded-full border border-border/60 bg-muted/30 px-2 py-0.5 text-[10px] font-semibold text-muted-foreground" title="Detected from {{ col.metadata.detection_source }}">
+	                                  <span class="inline-flex items-center rounded-full border border-border/60 bg-muted/30 px-2 py-0.5 text-[10px] font-semibold text-muted-foreground" title="{% trans 'Detected from' %} {{ col.metadata.detection_source }}">
                                     {{ col.metadata.detection_source }}
                                   </span>
                                 {% endif %}
@@ -952,7 +958,7 @@
                                   {% with diag_id="diag_"|add:col.id %}
                                     {{ col.metadata.diagnostics|json_script:diag_id }}
                                     <button type="button" class="inline-flex items-center gap-1 rounded-full border border-border/50 bg-muted/30 px-2 py-0.5 text-[10px] font-semibold text-primary" data-diagnostics-toggle data-diagnostics="{{ diag_id }}">
-                                      Details
+	                                      {% trans "Details" %}
                                     </button>
                                   {% endwith %}
                                 {% endif %}
@@ -963,31 +969,31 @@
                             {% endfor %}
                           </div>
                         {% else %}
-                          <div class="text-xs text-muted-foreground">No mappings yet.</div>
+	                          <div class="text-xs text-muted-foreground">{% trans "No mappings yet." %}</div>
                         {% endif %}
                       </div>
 
                       <form class="grid gap-3 md:grid-cols-3 md:items-end" data-guardrail-form="add-mapping" data-endpoint="{% url 'api:identifier-registry-columns' guardrails.business_id identifier.id %}">
                         {% csrf_token %}
                         <label class="space-y-1 text-sm md:col-span-1">
-                          <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Upload</span>
+	                          <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{% trans "Upload" %}</span>
                           <select name="upload_id" class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                            <option value="">Select upload</option>
+	                            <option value="">{% trans "Select upload" %}</option>
                             {% for upload in guardrails.uploads %}
                               <option value="{{ upload.id }}">{{ upload.display_name }} ({{ upload.status }})</option>
                             {% endfor %}
                           </select>
                         </label>
                         <label class="space-y-1 text-sm">
-                          <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Column name</span>
-                          <input type="text" name="column_name" placeholder="e.g. Email" class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" required />
+	                          <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{% trans "Column name" %}</span>
+	                          <input type="text" name="column_name" placeholder="{% trans 'e.g. Email' %}" class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" required />
                         </label>
                         <label class="space-y-1 text-sm">
-                          <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Status</span>
+	                          <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{% trans "Status" %}</span>
                           <select name="status" class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                            <option value="active">Active</option>
-                            <option value="proposed">Proposed</option>
-                            <option value="disabled">Disabled</option>
+	                            <option value="active">{% trans "Active" %}</option>
+	                            <option value="proposed">{% trans "Proposed" %}</option>
+	                            <option value="disabled">{% trans "Disabled" %}</option>
                           </select>
                         </label>
                         <div class="md:col-span-3 flex items-center justify-end">
@@ -995,7 +1001,7 @@
                             <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                               <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
                             </svg>
-                            Add mapping
+	                            {% trans "Add mapping" %}
                           </button>
                         </div>
                       </form>
@@ -1004,7 +1010,7 @@
                 </div>
               {% else %}
                 <div class="rounded-lg border border-dashed border-border/60 bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
-                  No identifiers yet. Use “Propose from headers” in the next step to seed suggestions.
+	                  {% trans "No identifiers yet. Use “Propose from headers” in the next step to seed suggestions." %}
                 </div>
               {% endif %}
             </div>
@@ -1012,15 +1018,15 @@
             <div class="rounded-xl border border-border/60 bg-card/80 p-4 space-y-4">
               <div class="flex items-start justify-between gap-3">
                 <div>
-                  <div class="text-sm font-semibold text-foreground">Propose from headers</div>
-                  <p class="text-xs text-muted-foreground">Send upload headers to auto-create identifier schemas and mappings.</p>
+	                  <div class="text-sm font-semibold text-foreground">{% trans "Propose from headers" %}</div>
+	                  <p class="text-xs text-muted-foreground">{% trans "Send upload headers to auto-create identifier schemas and mappings." %}</p>
                 </div>
                 <div class="flex flex-wrap gap-2">
                   <button type="button" class="inline-flex items-center gap-1 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-semibold text-foreground hover:border-primary/40 hover:text-primary" data-guardrail-bulk="approve-high">
-                    Approve high-confidence
+	                    {% trans "Approve high-confidence" %}
                   </button>
                   <button type="button" class="inline-flex items-center gap-1 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:border-border hover:text-foreground" data-guardrail-bulk="reject-all">
-                    Reject all
+	                    {% trans "Reject all" %}
                   </button>
                 </div>
               </div>
@@ -1033,33 +1039,33 @@
                       <div class="flex items-start justify-between gap-3">
                         <div>
                           <div class="text-sm font-semibold text-foreground">{{ upload.display_name }}</div>
-                          <p class="text-xs text-muted-foreground">Status: {{ upload.status }}{% if upload.last_ingested_at %} · Last ingested {{ upload.last_ingested_at }}{% endif %}</p>
+	                          <p class="text-xs text-muted-foreground">{% trans "Status:" %} {{ upload.status }}{% if upload.last_ingested_at %} · {% trans "Last ingested" %} {{ upload.last_ingested_at }}{% endif %}</p>
                         </div>
                         <div class="flex flex-col items-end gap-2 text-xs font-semibold">
                           <label class="inline-flex items-center gap-2">
                             <input type="checkbox" name="auto_promote" class="h-4 w-4 rounded border-input text-primary focus:ring-primary" {% if guardrails.auto_promote %}checked{% endif %}>
-                            <span class="text-foreground">Auto-promote</span>
+	                            <span class="text-foreground">{% trans "Auto-promote" %}</span>
                           </label>
                           <label class="inline-flex items-center gap-2">
                             <input type="checkbox" name="model_assist" class="h-4 w-4 rounded border-input text-primary focus:ring-primary">
-                            <span class="text-foreground">Model assist (semantic)</span>
+	                            <span class="text-foreground">{% trans "Model assist (semantic)" %}</span>
                           </label>
                         </div>
                       </div>
                       <label class="block space-y-1 text-sm">
-                        <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Headers</span>
-                        <textarea name="headers" rows="2" placeholder="Email, Phone, Customer ID" class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"></textarea>
-                        <p class="text-[11px] text-muted-foreground">Optional: paste comma or newline separated headers. Leave blank to auto-try common identifiers (email, phone, customer_id, external_id).</p>
+	                        <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{% trans "Headers" %}</span>
+	                        <textarea name="headers" rows="2" placeholder="{% trans 'Email, Phone, Customer ID' %}" class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"></textarea>
+	                        <p class="text-[11px] text-muted-foreground">{% trans "Optional: paste comma or newline separated headers. Leave blank to auto-try common identifiers (email, phone, customer_id, external_id)." %}</p>
                       </label>
                       <div class="flex flex-wrap items-center justify-end gap-2">
                         <span class="inline-flex items-center gap-2 rounded-md border border-border/60 bg-background px-2 py-1 text-[11px] font-semibold">
-                          Match policy: {{ guardrails.match_policy|upper }}
+	                          {% trans "Match policy:" %} {{ guardrails.match_policy|upper }}
                         </span>
                         <button type="submit" class="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm hover:bg-primary/90">
                           <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
                           </svg>
-                          Propose identifiers
+	                          {% trans "Propose identifiers" %}
                         </button>
                       </div>
                     </form>
@@ -1067,7 +1073,7 @@
                 </div>
               {% else %}
                 <div class="rounded-lg border border-dashed border-border/60 bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
-                  No uploads yet. Add knowledge to start proposing identifiers.
+	                  {% trans "No uploads yet. Add knowledge to start proposing identifiers." %}
                 </div>
               {% endif %}
             </div>
@@ -1075,35 +1081,35 @@
             <div class="rounded-xl border border-border/60 bg-card/80 p-4 space-y-4">
               <div class="flex items-start justify-between gap-3">
                 <div>
-                  <div class="text-sm font-semibold text-foreground">Run identifier check</div>
-                  <p class="text-xs text-muted-foreground">Test gating for a specific upload with synthetic identifiers. Use key:value pairs (e.g., email: user@example.com).</p>
+	                  <div class="text-sm font-semibold text-foreground">{% trans "Run identifier check" %}</div>
+	                  <p class="text-xs text-muted-foreground">{% trans "Test gating for a specific upload with synthetic identifiers. Use key:value pairs (e.g., email: user@example.com)." %}</p>
                 </div>
               </div>
               {% if guardrails.uploads %}
                 <form class="grid gap-4 md:grid-cols-2 lg:grid-cols-3" data-guardrail-form="eval" data-endpoint="{% url 'api:identifier-eval' guardrails.business_id %}">
                   {% csrf_token %}
                   <label class="space-y-1 text-sm">
-                    <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Upload</span>
+	                    <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{% trans "Upload" %}</span>
                     <select name="upload_id" class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" required>
-                      <option value="">Select upload</option>
+	                      <option value="">{% trans "Select upload" %}</option>
                       {% for upload in guardrails.uploads %}
                         <option value="{{ upload.id }}">{{ upload.display_name }} ({{ upload.status }})</option>
                       {% endfor %}
                     </select>
                   </label>
                   <label class="space-y-1 text-sm lg:col-span-2">
-                    <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Identifiers (key:value per line)</span>
-                    <textarea name="identifiers" rows="3" placeholder="email: user@example.com&#10;customer_id: 12345" class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"></textarea>
+	                    <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{% trans "Identifiers (key:value per line)" %}</span>
+	                    <textarea name="identifiers" rows="3" placeholder="{% trans 'email: user@example.com' %}&#10;{% trans 'customer_id: 12345' %}" class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"></textarea>
                   </label>
                   <div class="md:col-span-2 lg:col-span-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                    <span>Expected result compares against configured match policy ({{ guardrails.match_policy|upper }}).</span>
+	                    <span>{% blocktrans with policy=guardrails.match_policy|upper %}Expected result compares against configured match policy ({{ policy }}).{% endblocktrans %}</span>
                     <div class="inline-flex items-center gap-2">
-                      <span class="rounded-md border border-border/60 bg-muted/40 px-2 py-1 text-[11px] font-semibold" data-eval-result>Not run</span>
+	                      <span class="rounded-md border border-border/60 bg-muted/40 px-2 py-1 text-[11px] font-semibold" data-eval-result>{% trans "Not run" %}</span>
                       <button type="submit" class="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm hover:bg-primary/90">
                         <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                           <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5 15.75 12 8.25 19.5" />
                         </svg>
-                        Run check
+	                        {% trans "Run check" %}
                       </button>
                     </div>
                   </div>
@@ -1111,13 +1117,13 @@
                 </form>
               {% else %}
                 <div class="rounded-lg border border-dashed border-border/60 bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
-                  No uploads yet. Add knowledge to run eval checks.
+	                  {% trans "No uploads yet. Add knowledge to run eval checks." %}
                 </div>
               {% endif %}
             </div>
           {% else %}
             <div class="rounded-xl border border-dashed border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">
-              Link a business profile to configure identifier guardrails.
+	              {% trans "Link a business profile to configure identifier guardrails." %}
             </div>
           {% endif %}
         </div>
@@ -1133,18 +1139,18 @@
       <div class="w-full max-w-5xl rounded-2xl border border-border/60 bg-background shadow-2xl flex flex-col max-h-[90vh]" data-sheets-dialog role="dialog" aria-modal="true">
         <div class="flex-none flex flex-col gap-3 border-b border-border/40 px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
           <div class="space-y-2">
-            <p class="text-xs font-semibold uppercase tracking-wide text-primary">Google Sheets</p>
-            <h2 class="text-xl font-semibold text-foreground" data-sheets-title>Manage sheets</h2>
-            <p class="text-sm text-muted-foreground">
-              Choose which spreadsheets and tabs to sync. Only selected sheets with saved privacy settings will be ingested.
-            </p>
+	            <p class="text-xs font-semibold uppercase tracking-wide text-primary">{% trans "Google Sheets" %}</p>
+	            <h2 class="text-xl font-semibold text-foreground" data-sheets-title>{% trans "Manage sheets" %}</h2>
+	            <p class="text-sm text-muted-foreground">
+	              {% trans "Choose which spreadsheets and tabs to sync. Only selected sheets with saved privacy settings will be ingested." %}
+	            </p>
           </div>
           <button
             type="button"
             class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-semibold text-muted-foreground transition hover:text-foreground"
             data-sheets-close
           >
-            Close
+	            {% trans "Close" %}
             <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
             </svg>
@@ -1154,14 +1160,14 @@
           <div class="flex flex-col gap-4 h-full min-h-0">
             <form class="w-full flex-none flex items-center gap-2" data-sheets-search-form>
               <label class="relative flex-1 block">
-                <span class="sr-only">Search sheets</span>
+	                <span class="sr-only">{% trans "Search sheets" %}</span>
                 <svg class="rtl-search-icon-tight absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                   <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
                 </svg>
                 <input
                   type="search"
                   class="rtl-search-input-tight h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
-                  placeholder="Search by file name"
+	                  placeholder="{% trans 'Search by file name' %}"
                   data-sheets-search
                 >
               </label>
@@ -1169,13 +1175,13 @@
                 type="submit"
                 class="inline-flex h-9 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow transition hover:bg-primary/90"
               >
-                Search
+	                {% trans "Search" %}
               </button>
               <button
                 type="button"
                 class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-input bg-background text-foreground transition hover:bg-accent hover:text-accent-foreground"
                 data-sheets-refresh
-                aria-label="Refresh list"
+	                aria-label="{% trans 'Refresh list' %}"
               >
                 <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
@@ -1185,35 +1191,35 @@
             <p class="hidden text-sm flex-none" data-sheets-status></p>
             <div class="flex-1 space-y-3 overflow-y-auto pr-2 no-scrollbar" data-sheets-list>
               <div class="rounded-md border border-dashed border-border/60 bg-muted/30 px-3 py-4 text-sm text-muted-foreground" data-sheets-empty>
-                Use “Manage sheets” on an integration to load spreadsheets from Google Drive.
+	                {% trans "Use “Manage sheets” on an integration to load spreadsheets from Google Drive." %}
               </div>
             </div>
           </div>
           <div class="overflow-y-auto space-y-6 pr-1 no-scrollbar">
             <div class="space-y-4">
-              <h3 class="text-sm font-medium text-foreground">Settings</h3>
+	              <h3 class="text-sm font-medium text-foreground">{% trans "Settings" %}</h3>
               <div class="space-y-3">
                 <label class="block space-y-1.5">
-                  <span class="text-xs font-medium text-muted-foreground">Default visibility</span>
+	                  <span class="text-xs font-medium text-muted-foreground">{% trans "Default visibility" %}</span>
                   <select
                     class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
                     data-sheets-default-visibility
                   >
-                    <option value="private">Private (owner only)</option>
-                    <option value="internal">Internal (agents & admins)</option>
-                    <option value="shared">Shared (everyone with knowledge access)</option>
+	                    <option value="private">{% trans "Private (owner only)" %}</option>
+	                    <option value="internal">{% trans "Internal (agents & admins)" %}</option>
+	                    <option value="shared">{% trans "Shared (everyone with knowledge access)" %}</option>
                   </select>
                 </label>
                 <label class="block space-y-1.5">
-                  <span class="text-xs font-medium text-muted-foreground">Sync frequency</span>
+	                  <span class="text-xs font-medium text-muted-foreground">{% trans "Sync frequency" %}</span>
                   <select
                     class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
                     data-sheets-default-frequency
                   >
-                    <option value="manual">Manual</option>
-                    <option value="hourly">Hourly</option>
-                    <option value="daily">Daily</option>
-                    <option value="weekly">Weekly</option>
+	                    <option value="manual">{% trans "Manual" %}</option>
+	                    <option value="hourly">{% trans "Hourly" %}</option>
+	                    <option value="daily">{% trans "Daily" %}</option>
+	                    <option value="weekly">{% trans "Weekly" %}</option>
                   </select>
                 </label>
               </div>
@@ -1221,7 +1227,7 @@
 
             <div class="rounded-lg border border-border/60 bg-muted/20 p-3">
               <div class="flex items-center justify-between text-sm">
-                <span class="text-muted-foreground">Selected sheets</span>
+	                <span class="text-muted-foreground">{% trans "Selected sheets" %}</span>
                 <strong class="font-semibold text-foreground" data-sheets-selected-count>0</strong>
               </div>
             </div>
@@ -1232,21 +1238,21 @@
                 class="w-full inline-flex justify-center items-center rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-sm transition-all hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
                 data-sheets-save
               >
-                Save selection
+	                {% trans "Save selection" %}
               </button>
               <button
                 type="button"
                 class="w-full inline-flex justify-center items-center rounded-md border border-input bg-background px-4 py-2 text-sm font-semibold text-foreground shadow-sm transition-all hover:bg-accent hover:text-accent-foreground disabled:opacity-50 disabled:cursor-not-allowed"
                 data-sheets-sync
               >
-                Sync now
+	                {% trans "Sync now" %}
               </button>
               <button
                 type="button"
                 class="w-full inline-flex justify-center items-center rounded-md px-4 py-2 text-sm font-medium text-muted-foreground transition-all hover:text-foreground"
                 data-sheets-close
               >
-                Cancel
+	                {% trans "Cancel" %}
               </button>
             </div>
           </div>
@@ -1262,10 +1268,10 @@
     <div class="w-full max-w-lg rounded-2xl border border-border/60 bg-background shadow-2xl flex flex-col" data-collection-dialog role="dialog" aria-modal="true" aria-labelledby="collection-dialog-title">
       <div class="px-6 py-5 border-b border-border/60 flex items-start justify-between gap-4">
         <div class="space-y-1">
-	          <h2 class="text-xl font-semibold text-foreground" id="collection-dialog-title" data-collection-modal-title>New collection</h2>
-          <p class="text-sm text-muted-foreground">Group documents into collections to control agent access.</p>
+		          <h2 class="text-xl font-semibold text-foreground" id="collection-dialog-title" data-collection-modal-title>{% trans "New collection" %}</h2>
+	          <p class="text-sm text-muted-foreground">{% trans "Group documents into collections to control agent access." %}</p>
         </div>
-        <button type="button" class="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-background/80 text-muted-foreground transition hover:bg-background" data-collection-close aria-label="Close">
+	        <button type="button" class="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-background/80 text-muted-foreground transition hover:bg-background" data-collection-close aria-label="{% trans 'Close' %}">
           <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" d="m8 8 8 8m0-8-8 8" />
           </svg>
@@ -1274,24 +1280,24 @@
       <form class="px-6 py-5 space-y-4" data-collection-form>
         {% csrf_token %}
         <div class="space-y-2">
-          <label class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80" for="collection-name">Name</label>
-          <input id="collection-name" type="text" class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" maxlength="160" placeholder="e.g. Pricing & Fees" data-collection-name required>
+	          <label class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80" for="collection-name">{% trans "Name" %}</label>
+	          <input id="collection-name" type="text" class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" maxlength="160" placeholder="{% trans 'e.g. Pricing & Fees' %}" data-collection-name required>
         </div>
         <div class="space-y-2">
-          <label class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80" for="collection-description">Description</label>
-          <textarea id="collection-description" class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm min-h-[84px]" placeholder="What belongs in this collection?" data-collection-description></textarea>
+	          <label class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80" for="collection-description">{% trans "Description" %}</label>
+	          <textarea id="collection-description" class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm min-h-[84px]" placeholder="{% trans 'What belongs in this collection?' %}" data-collection-description></textarea>
         </div>
         <div class="grid gap-3 sm:grid-cols-2">
           <div class="space-y-2">
-            <label class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80" for="collection-visibility">Visibility</label>
+	            <label class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80" for="collection-visibility">{% trans "Visibility" %}</label>
             <select id="collection-visibility" class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" data-collection-visibility>
-              <option value="private">Private</option>
-              <option value="agents">Agents Only</option>
-              <option value="business">Entire Business</option>
+	              <option value="private">{% trans "Private" %}</option>
+	              <option value="agents">{% trans "Agents Only" %}</option>
+	              <option value="business">{% trans "Entire Business" %}</option>
             </select>
           </div>
           <div class="rounded-lg border border-dashed border-border/60 bg-muted/20 p-3 text-xs text-muted-foreground leading-relaxed">
-            Private collections are only used when explicitly assigned to an agent.
+	            {% trans "Private collections are only used when explicitly assigned to an agent." %}
           </div>
         </div>
         <p class="hidden text-sm text-muted-foreground" data-collection-status></p>
@@ -1301,13 +1307,13 @@
 	            class="mr-auto hidden inline-flex items-center justify-center rounded-md border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm font-semibold text-destructive hover:bg-destructive/15 transition-colors"
 	            data-collection-delete
 	          >
-	            Delete
+		            {% trans "Delete" %}
 	          </button>
 	          <button type="button" class="inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors" data-collection-cancel>
-	            Cancel
+		            {% trans "Cancel" %}
 	          </button>
 	          <button type="submit" class="inline-flex items-center justify-center rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-semibold shadow-sm transition hover:bg-primary/90" data-collection-submit>
-	            Create collection
+		            {% trans "Create collection" %}
 	          </button>
 	        </div>
       </form>
@@ -1333,12 +1339,12 @@
   style="transform: translateX(100%);"
 >
   <div class="relative flex h-full w-full flex-col">
-    <div id="document-panel-heading" class="sr-only" data-document-aria-title>Select a document</div>
+	    <div id="document-panel-heading" class="sr-only" data-document-aria-title>{% trans "Select a document" %}</div>
     <button
       type="button"
       class="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-background/80 text-muted-foreground transition hover:bg-background"
       data-document-close
-      aria-label="Close document detail"
+	      aria-label="{% trans 'Close document detail' %}"
     >
       <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
         <path stroke-linecap="round" stroke-linejoin="round" d="m8 8 8 8m0-8-8 8" />
@@ -1353,9 +1359,19 @@
                 <path stroke-linecap="round" stroke-linejoin="round" d="M3 7.5 12 12l9-4.5M3 12l9 4.5 9-4.5M3 16.5 12 21l9-4.5" />
               </svg>
             </div>
-            <h2 class="text-base font-semibold text-foreground">{{ knowledge_panel_empty_title|default:"Select a document" }}</h2>
+            <h2 class="text-base font-semibold text-foreground">
+              {% if knowledge_panel_empty_title %}
+                {{ knowledge_panel_empty_title }}
+              {% else %}
+                {% trans "Select a document" %}
+              {% endif %}
+            </h2>
             <p class="text-sm text-muted-foreground">
-              {{ knowledge_panel_empty_message|default:"Choose a document to preview summary, classification, and sync details here." }}
+              {% if knowledge_panel_empty_message %}
+                {{ knowledge_panel_empty_message }}
+              {% else %}
+                {% trans "Choose a document to preview summary, classification, and sync details here." %}
+              {% endif %}
             </p>
           </div>
         </div>
@@ -1373,31 +1389,31 @@
         </div>
         <div class="hidden space-y-4 px-6 py-10" data-document-error>
           <div class="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive" data-document-error-message>
-            Unable to load document details. Please try again.
+	            {% trans "Unable to load document details. Please try again." %}
           </div>
           <button
             type="button"
             class="inline-flex items-center justify-center rounded-md border border-border/60 bg-background px-4 py-2 text-sm font-medium text-foreground shadow-sm hover:border-primary/40"
             data-document-retry
           >
-            Retry
+	            {% trans "Retry" %}
           </button>
         </div>
         <div class="hidden space-y-6 pb-16" data-document-content>
           <section class="border-b border-border/70 bg-card/90 px-6 pt-10 pb-6">
             <div class="flex items-start gap-3">
               <div class="flex-1 min-w-0">
-                <div class="text-lg font-semibold text-foreground leading-tight" data-document-name>Document name</div>
+	                <div class="text-lg font-semibold text-foreground leading-tight" data-document-name>{% trans "Document name" %}</div>
                 <div class="text-xs text-muted-foreground" data-document-identifier>KN-0000</div>
               </div>
-              <span class="text-[11px] font-semibold capitalize text-muted-foreground" data-document-status-badge>Draft</span>
+	              <span class="text-[11px] font-semibold capitalize text-muted-foreground" data-document-status-badge>{% trans "Draft" %}</span>
             </div>
             <div class="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <span data-document-source-label>Upload</span>
+	              <span data-document-source-label>{% trans "Upload" %}</span>
               <span aria-hidden="true">•</span>
-              <span data-document-updated>Updated —</span>
+	              <span data-document-updated>{% trans "Updated —" %}</span>
               <span aria-hidden="true">•</span>
-              <span data-document-last-synced>Last synced —</span>
+	              <span data-document-last-synced>{% trans "Last synced —" %}</span>
             </div>
             {% if knowledge_business_id %}
               <div class="mt-4 flex flex-wrap items-center gap-3">
@@ -1408,7 +1424,7 @@
                   disabled
                   aria-disabled="true"
                 >
-                  Delete document
+	                  {% trans "Delete document" %}
                 </button>
               </div>
               <div class="hidden rounded-md border border-border/60 bg-muted/40 px-3 py-2 text-xs text-muted-foreground" data-document-delete-notice></div>
@@ -1418,27 +1434,27 @@
           <section class="px-6">
             <div class="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
               <div class="rounded-lg border border-border/50 bg-card/95 p-3">
-                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">Size</div>
+	                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">{% trans "Size" %}</div>
                 <div class="text-base font-semibold text-foreground" data-document-size>—</div>
               </div>
               <div class="rounded-lg border border-border/50 bg-card/95 p-3">
-                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">Tokens</div>
+	                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">{% trans "Tokens" %}</div>
                 <div class="text-base font-semibold text-foreground" data-document-tokens>—</div>
               </div>
               <div class="rounded-lg border border-border/50 bg-card/95 p-3">
-                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">Language</div>
+	                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">{% trans "Language" %}</div>
                 <div class="text-base font-semibold text-foreground" data-document-language>—</div>
               </div>
               <div class="rounded-lg border border-border/50 bg-card/95 p-3">
-                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">Category</div>
+	                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">{% trans "Category" %}</div>
                 <div class="text-base font-semibold text-foreground" data-document-category>—</div>
               </div>
               <div class="rounded-lg border border-border/50 bg-card/95 p-3">
-                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">Sensitivity</div>
+	                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">{% trans "Sensitivity" %}</div>
                 <div class="text-base font-semibold text-foreground" data-document-sensitive>—</div>
               </div>
               <div class="rounded-lg border border-border/50 bg-card/95 p-3">
-                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">Integration</div>
+	                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">{% trans "Integration" %}</div>
                 <div class="text-base font-semibold text-foreground" data-document-integration>—</div>
               </div>
             </div>
@@ -1447,12 +1463,12 @@
           <section class="space-y-4 px-6">
             <div>
               <div class="flex items-center gap-2">
-                <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Summary</div>
-                <span class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/80">Auto summary</span>
+	                <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{% trans "Summary" %}</div>
+	                <span class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/80">{% trans "Auto summary" %}</span>
               </div>
               <div class="mt-2 space-y-2">
                 <div class="summary-frame is-clamped text-sm leading-relaxed text-foreground" data-document-summary-wrap>
-                  <div class="summary-body space-y-2" data-document-summary>No summary available.</div>
+	                  <div class="summary-body space-y-2" data-document-summary>{% trans "No summary available." %}</div>
                 </div>
                 <button
                   type="button"
@@ -1460,7 +1476,7 @@
                   data-document-summary-toggle
                   aria-expanded="false"
                 >
-                  Show more
+	                  {% trans "Show more" %}
                 </button>
               </div>
             </div>
@@ -1469,8 +1485,8 @@
           <section class="space-y-3 px-6">
             <div class="flex items-start justify-between gap-3">
               <div>
-                <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Collections</div>
-                <p class="text-xs text-muted-foreground">Use collections to control which agents can retrieve this document.</p>
+	                <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{% trans "Collections" %}</div>
+	                <p class="text-xs text-muted-foreground">{% trans "Use collections to control which agents can retrieve this document." %}</p>
               </div>
               <div class="flex items-center gap-2">
                 <button
@@ -1478,7 +1494,7 @@
                   class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-semibold text-muted-foreground transition hover:border-primary/40 hover:text-primary"
                   data-document-collections-new
                 >
-                  New
+	                  {% trans "New" %}
                 </button>
                 <button
                   type="button"
@@ -1487,7 +1503,7 @@
                   disabled
                   aria-disabled="true"
                 >
-                  Save
+	                  {% trans "Save" %}
                 </button>
               </div>
             </div>
@@ -1501,8 +1517,8 @@
           <section class="space-y-3 px-6">
             <div class="flex items-start justify-between gap-3">
               <div>
-                <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Guardrails</div>
-                <p class="text-xs text-muted-foreground">Require identifiers before this document is used in answers.</p>
+	                <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{% trans "Guardrails" %}</div>
+	                <p class="text-xs text-muted-foreground">{% trans "Require identifiers before this document is used in answers." %}</p>
               </div>
               <button
                 type="button"
@@ -1511,7 +1527,7 @@
                 disabled
                 aria-disabled="true"
               >
-                Save
+	                {% trans "Save" %}
               </button>
             </div>
             <div class="rounded-lg border border-border/60 bg-muted/30 p-3 space-y-2">
@@ -1615,15 +1631,164 @@
     var uploadRenameSave = uploadForm ? uploadForm.querySelector("[data-upload-rename-save]") : null;
     var uploadRenameCancel = uploadForm ? uploadForm.querySelector("[data-upload-rename-cancel]") : null;
     var uploadEnabled = Boolean(uploadForm);
-    var uploadInFlight = false;
-    var uploadStatusTimer = null;
-    var uploadStatusHideTimer = null;
-    var lastUploadedDocumentId = "";
-    var lastUploadedDocumentName = "";
-    var defaultUploadType = uploadTypeInput ? uploadTypeInput.value : "file";
-    if (uploadDropzone && uploadDropzone.dataset.uploadEnabled === "false") {
-      uploadEnabled = false;
-    }
+	    var uploadInFlight = false;
+	    var uploadStatusTimer = null;
+	    var uploadStatusHideTimer = null;
+	    var lastUploadedDocumentId = "";
+	    var lastUploadedDocumentName = "";
+	    var defaultUploadType = uploadTypeInput ? uploadTypeInput.value : "file";
+	    var I18N = {
+	      filesWord: "{% trans 'files' %}",
+	      document: "{% trans 'Document' %}",
+	      general: "{% trans 'General' %}",
+	      fileUpload: "{% trans 'File Upload' %}",
+	      processing: "{% trans 'Processing' %}",
+	      draft: "{% trans 'Draft' %}",
+	      openDocumentDetail: "{% trans 'Open document detail' %}",
+	      showing: "{% trans 'Showing' %}",
+	      of: "{% trans 'of' %}",
+	      documentsWord: "{% trans 'documents' %}",
+	      uploading: "{% trans 'Uploading…' %}",
+	      uploaded: "{% trans 'Uploaded' %}",
+	      uploadFailed: "{% trans 'Upload failed' %}",
+	      uploadingToKnowledgeBase: "{% trans 'Uploading to your knowledge base…' %}",
+	      queuedForIngestion: "{% trans 'Queued for ingestion.' %}",
+	      unableUploadFileNow: "{% trans 'Unable to upload this file right now.' %}",
+	      networkErrorTryAgain: "{% trans 'Network error. Please try again.' %}",
+	      uploadingFiles: "{% trans 'Uploading files…' %}",
+	      uploadingFile: "{% trans 'Uploading file…' %}",
+	      savingNote: "{% trans 'Saving note…' %}",
+	      savingYourNote: "{% trans 'Saving your note…' %}",
+	      savingLink: "{% trans 'Saving link…' %}",
+	      savingYourLink: "{% trans 'Saving your link…' %}",
+	      titleCannotBeEmpty: "{% trans 'Title cannot be empty.' %}",
+	      unableUpdateTitle: "{% trans 'Unable to update title.' %}",
+	      titleUpdated: "{% trans 'Title updated.' %}",
+	      unableSaveChangesNow: "{% trans 'Unable to save changes right now.' %}",
+	      unableUpdateMatchPolicy: "{% trans 'Unable to update match policy.' %}",
+	      unableApproveIdentifier: "{% trans 'Unable to approve identifier.' %}",
+	      unableRejectIdentifier: "{% trans 'Unable to reject identifier.' %}",
+	      uploadIdMissing: "{% trans 'Upload id missing.' %}",
+	      unableProposeIdentifiers: "{% trans 'Unable to propose identifiers.' %}",
+	      diagnosticsUnavailable: "{% trans 'Diagnostics unavailable.' %}",
+	      selectUploadAndColumn: "{% trans 'Select an upload and column name before adding a mapping.' %}",
+	      unableAddMapping: "{% trans 'Unable to add mapping.' %}",
+	      selectUploadToEvaluate: "{% trans 'Select an upload to evaluate.' %}",
+	      addIdentifiersFormat: "{% trans 'Add identifiers in key:value format, e.g., email: user@example.com' %}",
+	      missingKeyValueLines: "{% trans 'These lines are missing a key:value pair:' %}",
+	      running: "{% trans 'Running…' %}",
+	      unableRunEval: "{% trans 'Unable to run eval.' %}",
+	      pass: "{% trans 'Pass' %}",
+	      requiresIdentifiers: "{% trans 'Requires identifiers' %}",
+	      none: "{% trans 'None' %}",
+	      na: "{% trans 'N/A' %}",
+	      status: "{% trans 'Status' %}",
+	      required: "{% trans 'Required' %}",
+	      provided: "{% trans 'Provided' %}",
+	      policy: "{% trans 'Policy' %}",
+	      unknown: "{% trans 'Unknown' %}",
+	      error: "{% trans 'Error' %}",
+	      loadingCollections: "{% trans 'Loading collections...' %}",
+	      loadingGuardrails: "{% trans 'Loading guardrails...' %}",
+	      selectDocument: "{% trans 'Select a document' %}",
+	      loadingDocument: "{% trans 'Loading document' %}",
+	      documentUnavailable: "{% trans 'Document unavailable' %}",
+	      documentDetail: "{% trans 'Document detail' %}",
+	      failedToLoadDetail: "{% trans 'Failed to load detail' %}",
+	      unableLoadDocDetails: "{% trans 'Unable to load document details. Please try again.' %}",
+	      unknownSource: "{% trans 'Unknown source' %}",
+	      updatedPrefix: "{% trans 'Updated' %}",
+	      lastSyncedPrefix: "{% trans 'Last synced' %}",
+	      loadingSummary: "{% trans 'Loading summary...' %}",
+	      noSummaryAvailable: "{% trans 'No summary available.' %}",
+	      showMore: "{% trans 'Show more' %}",
+	      showLess: "{% trans 'Show less' %}",
+	      sensitive: "{% trans 'Sensitive' %}",
+	      standard: "{% trans 'Standard' %}",
+	      noActiveIdentifiersYet: "{% trans 'No active identifiers yet. Add them in' %}",
+	      dataGuardrails: "{% trans 'Data Guardrails' %}",
+	      noCollectionsYet: "{% trans 'No collections yet. Create one in' %}",
+	      collectionsTab: "{% trans 'Collections' %}",
+	      privateLabel: "{% trans 'Private' %}",
+	      collection: "{% trans 'Collection' %}",
+	      documentsLabel: "{% trans 'Documents' %}",
+	      ownerLabel: "{% trans 'Owner' %}",
+	      focusLabel: "{% trans 'Focus' %}",
+	      lastUpdateLabel: "{% trans 'Last update' %}",
+	      saving: "{% trans 'Saving...' %}",
+	      savingCollections: "{% trans 'Saving collections...' %}",
+	      collectionsSaved: "{% trans 'Collections saved.' %}",
+	      unableSaveCollections: "{% trans 'Unable to save collections.' %}",
+	      savingGuardrails: "{% trans 'Saving guardrails...' %}",
+	      guardrailsSaved: "{% trans 'Guardrails saved.' %}",
+	      unableSaveGuardrails: "{% trans 'Unable to save guardrails.' %}",
+	      deleteDocumentConfirm: "{% trans 'Delete this document? This cannot be undone.' %}",
+	      deleting: "{% trans 'Deleting…' %}",
+	      failedToDelete: "{% trans 'Failed to delete' %}",
+	      unableDeleteDocument: "{% trans 'Unable to delete this document. Please try again.' %}",
+	      noSpreadsheetsFound: "{% trans 'No spreadsheets found. Try refreshing or adjust your search.' %}",
+	      sheetLabel: "{% trans 'Sheet:' %}",
+	      visibility: "{% trans 'Visibility' %}",
+	      privateOwnerOnly: "{% trans 'Private (owner only)' %}",
+	      internalAgentsAdmins: "{% trans 'Internal (agents & admins)' %}",
+	      sharedEveryone: "{% trans 'Shared (everyone)' %}",
+	      syncFrequency: "{% trans 'Sync frequency' %}",
+	      manual: "{% trans 'Manual' %}",
+	      hourly: "{% trans 'Hourly' %}",
+	      daily: "{% trans 'Daily' %}",
+	      weekly: "{% trans 'Weekly' %}",
+	      sharedColumns: "{% trans 'Shared columns' %}",
+	      internalOnlyColumns: "{% trans 'Internal only columns' %}",
+	      excludeColumns: "{% trans 'Exclude columns' %}",
+	      untitledSpreadsheet: "{% trans 'Untitled spreadsheet' %}",
+	      sheetDefault: "{% trans 'Sheet' %}",
+	      rowsWord: "{% trans 'rows' %}",
+	      columnsWord: "{% trans 'columns' %}",
+	      ownerPrefix: "{% trans 'Owner:' %}",
+	      lastSyncPrefixShort: "{% trans 'Last sync:' %}",
+	      exampleNameEmail: "{% trans 'e.g. name, email' %}",
+	      exampleSsnInternalId: "{% trans 'e.g. ssn, internal_id' %}",
+	      examplePasswordHash: "{% trans 'e.g. password_hash' %}",
+	      loadingSheetsFromDrive: "{% trans 'Loading sheets from Google Drive…' %}",
+	      unableLoadGoogleResources: "{% trans 'Unable to load Google resources.' %}",
+	      unableLoadSheetsFromDrive: "{% trans 'Unable to load sheets from Google Drive.' %}",
+	      unableLoadSheets: "{% trans 'Unable to load sheets' %}",
+	      pleaseCheckConnection: "{% trans 'Please check your connection and try again.' %}",
+	      retry: "{% trans 'Retry' %}",
+	      savingSheetSelection: "{% trans 'Saving sheet selection…' %}",
+	      unableSaveSheetConfiguration: "{% trans 'Unable to save sheet configuration.' %}",
+	      savedSheetConfiguration: "{% trans 'Saved sheet configuration. Refreshing resources…' %}",
+	      syncEndpointUnavailable: "{% trans 'Sync endpoint not available for this integration.' %}",
+	      startingSync: "{% trans 'Starting sync…' %}",
+	      unableStartSync: "{% trans 'Unable to start sync.' %}",
+	      syncTriggered: "{% trans 'Sync triggered.' %}",
+	      rowsIngested: "{% trans 'Rows ingested:' %}",
+	      manageSheets: "{% trans 'Manage sheets' %}",
+	      googleDrive: "{% trans 'Google Drive' %}",
+	      newCollection: "{% trans 'New collection' %}",
+	      editCollection: "{% trans 'Edit collection' %}",
+	      createCollection: "{% trans 'Create collection' %}",
+	      deleteDocument: "{% trans 'Delete document' %}",
+	      save: "{% trans 'Save' %}",
+	      saveChanges: "{% trans 'Save changes' %}",
+	      deleteCollectionConfirm: "{% trans 'Delete this collection? Documents will remain, but agent scoping and links will be removed.' %}",
+	      deletingCollection: "{% trans 'Deleting collection…' %}",
+	      unableDeleteCollection: "{% trans 'Unable to delete collection.' %}",
+	      collectionDeleted: "{% trans 'Collection deleted.' %}",
+	      linkBusinessBeforeCollections: "{% trans 'Link a business profile before creating collections.' %}",
+	      collectionNameRequired: "{% trans 'Collection name is required.' %}",
+	      creatingCollection: "{% trans 'Creating collection…' %}",
+	      savingChangesInfo: "{% trans 'Saving changes…' %}",
+	      unableUpdateCollection: "{% trans 'Unable to update collection.' %}",
+	      unableCreateCollection: "{% trans 'Unable to create collection.' %}",
+	      invalidCollectionResponse: "{% trans 'Invalid collection response.' %}",
+	      collectionUpdated: "{% trans 'Collection updated.' %}",
+	      collectionCreated: "{% trans 'Collection created.' %}",
+	      editCollectionAria: "{% trans 'Edit collection' %}",
+	    };
+	    if (uploadDropzone && uploadDropzone.dataset.uploadEnabled === "false") {
+	      uploadEnabled = false;
+	    }
 
     function clearUploadStatusTimer() {
       if (uploadStatusTimer) {
@@ -1686,13 +1851,13 @@
       return trimmed.replace(/\.[^/.]+$/, "").trim();
     }
 
-    function uploadFileLabel(files) {
-      if (!Array.isArray(files) || !files.length) return "";
-      if (files.length === 1) {
-        return files[0] && files[0].name ? files[0].name : "";
-      }
-      return files.length + " files";
-    }
+	    function uploadFileLabel(files) {
+	      if (!Array.isArray(files) || !files.length) return "";
+	      if (files.length === 1) {
+	        return files[0] && files[0].name ? files[0].name : "";
+	      }
+	      return files.length + " " + I18N.filesWord;
+	    }
 
     function applyStatusVariant(variant) {
       if (!uploadStatus || !uploadProgressBar) return;
@@ -1736,10 +1901,10 @@
         return;
       }
       showUploadStatus();
-      if (uploadStatusLabel) {
-        var label = options.label || (state === "success" ? "Uploaded" : state === "error" ? "Upload failed" : "Uploading…");
-        uploadStatusLabel.textContent = label;
-      }
+	      if (uploadStatusLabel) {
+	        var label = options.label || (state === "success" ? I18N.uploaded : state === "error" ? I18N.uploadFailed : I18N.uploading);
+	        uploadStatusLabel.textContent = label;
+	      }
       if (uploadStatusFile) {
         uploadStatusFile.textContent = options.fileName ? "• " + options.fileName : "";
       }
@@ -1926,16 +2091,16 @@
       row.setAttribute("tabindex", "0");
       row.setAttribute("aria-expanded", "false");
 
-      row.dataset.documentId = documentData.id || "";
-      row.dataset.documentName = documentData.name || "Document";
-      row.dataset.documentIdentifier = documentData.identifier || "";
-      row.dataset.documentStatus = documentData.status_code || "";
-      row.dataset.documentStatusLabel = documentData.status_label || "";
-      row.dataset.documentSource = documentData.source_label || documentData.type_badge || "";
+	      row.dataset.documentId = documentData.id || "";
+	      row.dataset.documentName = documentData.name || I18N.document;
+	      row.dataset.documentIdentifier = documentData.identifier || "";
+	      row.dataset.documentStatus = documentData.status_code || "";
+	      row.dataset.documentStatusLabel = documentData.status_label || "";
+	      row.dataset.documentSource = documentData.source_label || documentData.type_badge || "";
       row.dataset.documentType = documentData.source_type || "";
       row.dataset.documentUpdated = documentData.updated || "";
       row.dataset.documentUpdatedIso = documentData.updated_iso || "";
-      row.dataset.documentSize = documentData.size_display || "—";
+	      row.dataset.documentSize = documentData.size_display || "—";
       row.dataset.documentLanguage = documentData.language || "";
       row.dataset.documentCategory = documentData.category || "";
       row.dataset.documentTokens = String(documentData.token_count || 0);
@@ -1950,7 +2115,7 @@
       nameWrap.className = "flex flex-col";
       var nameText = document.createElement("span");
       nameText.className = "font-medium leading-tight text-foreground";
-      nameText.textContent = documentData.name || "Document";
+	      nameText.textContent = documentData.name || I18N.document;
       var identifierText = document.createElement("span");
       identifierText.className = "text-xs text-muted-foreground";
       identifierText.textContent = documentData.identifier || "";
@@ -1962,7 +2127,7 @@
       classificationCell.className = "py-4";
       var classificationText = document.createElement("div");
       classificationText.className = "text-sm text-muted-foreground";
-      classificationText.textContent = documentData.classification || "General";
+	      classificationText.textContent = documentData.classification || I18N.general;
       classificationCell.appendChild(classificationText);
 
       var typeCell = document.createElement("td");
@@ -1970,7 +2135,7 @@
       var typeBadge = document.createElement("span");
       typeBadge.className =
         "inline-flex items-center rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground";
-      typeBadge.textContent = documentData.type_badge || documentData.source_label || "File Upload";
+	      typeBadge.textContent = documentData.type_badge || documentData.source_label || I18N.fileUpload;
       typeCell.appendChild(typeBadge);
 
       var statusCell = document.createElement("td");
@@ -1978,7 +2143,7 @@
       var statusBadge = document.createElement("span");
       statusBadge.className =
         "text-[11px] font-semibold capitalize " + (documentData.status_badge_class || "text-slate-500");
-      statusBadge.textContent = documentData.status_label || "Processing";
+	      statusBadge.textContent = documentData.status_label || I18N.processing;
       statusCell.appendChild(statusBadge);
 
       var updatedCell = document.createElement("td");
@@ -1997,7 +2162,7 @@
       var triggerButton = document.createElement("button");
       triggerButton.type = "button";
       triggerButton.className = "p-1.5 rounded-md hover:bg-muted transition-colors";
-      triggerButton.setAttribute("aria-label", "Open document detail");
+	      triggerButton.setAttribute("aria-label", I18N.openDocumentDetail);
       triggerButton.setAttribute("data-document-trigger", "");
       triggerButton.innerHTML =
         '<svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v.008M12 12v.008m0 6.984v.008" /></svg>';
@@ -2029,8 +2194,8 @@
         var total = totalCount != null ? totalCount : parseInt(countNode.dataset.documentsTotal || "0", 10) + 1;
         countNode.dataset.documentsShowing = String(showing);
         countNode.dataset.documentsTotal = String(total);
-        countNode.textContent = "Showing " + showing + " of " + total + " documents";
-      }
+	        countNode.textContent = I18N.showing + " " + showing + " " + I18N.of + " " + total + " " + I18N.documentsWord;
+	      }
 
       return row;
     }
@@ -2042,12 +2207,12 @@
       resetRenameState();
       uploadInFlight = true;
       setUploadBusy(true);
-      setUploadStatus("uploading", {
-        label: options.label || "Uploading…",
-        fileName: options.fileName || "",
-        percent: options.trackProgress ? 0 : null,
-        message: options.message || "Uploading to your knowledge base…",
-      });
+	      setUploadStatus("uploading", {
+	        label: options.label || I18N.uploading,
+	        fileName: options.fileName || "",
+	        percent: options.trackProgress ? 0 : null,
+	        message: options.message || I18N.uploadingToKnowledgeBase,
+	      });
 
       var formData = new FormData(uploadForm);
       var xhr = new XMLHttpRequest();
@@ -2080,11 +2245,11 @@
           } else if (payload.document) {
             uploadedDocuments = [payload.document];
           }
-          setUploadStatus("success", {
-            label: uploadedDocuments.length > 1 ? "Uploaded " + uploadedDocuments.length + " files" : "Uploaded",
-            fileName: options.fileName || "",
-            message: payload.message || "Queued for ingestion.",
-          });
+	          setUploadStatus("success", {
+	            label: uploadedDocuments.length > 1 ? I18N.uploaded + " " + uploadedDocuments.length + " " + I18N.filesWord : I18N.uploaded,
+	            fileName: options.fileName || "",
+	            message: payload.message || I18N.queuedForIngestion,
+	          });
           uploadedDocuments.forEach(function (documentData) {
             insertDocumentRow(documentData, payload.documents_total);
           });
@@ -2108,8 +2273,8 @@
           }, 8000);
           return;
         }
-        var message = (payload && payload.message) || "Unable to upload this file right now.";
-        setUploadStatus("error", { label: "Upload failed", fileName: options.fileName || "", message: message });
+	        var message = (payload && payload.message) || I18N.unableUploadFileNow;
+	        setUploadStatus("error", { label: I18N.uploadFailed, fileName: options.fileName || "", message: message });
         uploadStatusTimer = setTimeout(function () {
           setUploadStatus("");
         }, 6500);
@@ -2117,7 +2282,7 @@
       xhr.onerror = function () {
         uploadInFlight = false;
         setUploadBusy(false);
-        setUploadStatus("error", { label: "Upload failed", message: "Network error. Please try again." });
+	        setUploadStatus("error", { label: I18N.uploadFailed, message: I18N.networkErrorTryAgain });
         uploadStatusTimer = setTimeout(function () {
           setUploadStatus("");
         }, 6500);
@@ -2141,12 +2306,12 @@
           uploadDisplayName.value = "";
         }
       }
-      startUpload({
-        fileName: fileName,
-        trackProgress: true,
-        message: selectedFiles.length > 1 ? "Uploading " + selectedFiles.length + " files…" : "Uploading file…",
-      });
-    }
+	      startUpload({
+	        fileName: fileName,
+	        trackProgress: true,
+	        message: selectedFiles.length > 1 ? I18N.uploading + " " + selectedFiles.length + " " + I18N.filesWord + "…" : I18N.uploadingFile,
+	      });
+	    }
 
     function showRenameForm() {
       if (!uploadRenameForm || !uploadRenameInput || !lastUploadedDocumentId) return;
@@ -2174,12 +2339,12 @@
     function renameUploadedDocument() {
       if (!lastUploadedDocumentId || !uploadRenameInput) return;
       var nextName = (uploadRenameInput.value || "").trim();
-      if (!nextName) {
-        if (uploadStatusMessage) {
-          uploadStatusMessage.textContent = "Title cannot be empty.";
-        }
-        return;
-      }
+	      if (!nextName) {
+	        if (uploadStatusMessage) {
+	          uploadStatusMessage.textContent = I18N.titleCannotBeEmpty;
+	        }
+	        return;
+	      }
       if (uploadRenameSave) {
         uploadRenameSave.setAttribute("disabled", "disabled");
       }
@@ -2198,29 +2363,29 @@
         credentials: "same-origin",
       })
         .then(function (response) {
-          return response.json().then(function (payload) {
-            if (!response.ok) {
-              throw new Error(payload.message || payload.error || "Unable to update title.");
-            }
-            return payload;
-          });
-        })
-        .then(function () {
+	          return response.json().then(function (payload) {
+	            if (!response.ok) {
+	              throw new Error(payload.message || payload.error || I18N.unableUpdateTitle);
+	            }
+	            return payload;
+	          });
+	        })
+	        .then(function () {
           lastUploadedDocumentName = nextName;
           updateDocumentRowName(lastUploadedDocumentId, nextName);
-          if (uploadStatusMessage) {
-            uploadStatusMessage.textContent = "Title updated.";
-          }
+	          if (uploadStatusMessage) {
+	            uploadStatusMessage.textContent = I18N.titleUpdated;
+	          }
           hideRenameForm();
           uploadStatusTimer = setTimeout(function () {
             setUploadStatus("");
           }, 4000);
         })
-        .catch(function (error) {
-          if (uploadStatusMessage) {
-            uploadStatusMessage.textContent = error.message || "Unable to update title.";
-          }
-        })
+	        .catch(function (error) {
+	          if (uploadStatusMessage) {
+	            uploadStatusMessage.textContent = error.message || I18N.unableUpdateTitle;
+	          }
+	        })
         .finally(function () {
           if (uploadRenameSave) {
             uploadRenameSave.removeAttribute("disabled");
@@ -2245,14 +2410,14 @@
           return;
         }
         var mode = uploadTypeInput ? uploadTypeInput.value : defaultUploadType;
-        if (mode === "text") {
-          startUpload({ label: "Saving note…", message: "Saving your note…", trackProgress: false });
-          return;
-        }
-        if (mode === "link") {
-          startUpload({ label: "Saving link…", message: "Saving your link…", trackProgress: false });
-          return;
-        }
+	        if (mode === "text") {
+	          startUpload({ label: I18N.savingNote, message: I18N.savingYourNote, trackProgress: false });
+	          return;
+	        }
+	        if (mode === "link") {
+	          startUpload({ label: I18N.savingLink, message: I18N.savingYourLink, trackProgress: false });
+	          return;
+	        }
         submitFileUpload();
       });
     }
@@ -2389,11 +2554,11 @@
           },
           body: JSON.stringify(payload || {}),
         });
-        if (!response.ok) {
-          let message = "Unable to save changes right now.";
+	        if (!response.ok) {
+	          let message = I18N.unableSaveChangesNow;
           try {
             const data = await response.json();
-            message = data.message || data.error || message;
+	            message = data.message || data.error || message;
           } catch (_err) {
             // ignore parse errors
           }
@@ -2411,12 +2576,12 @@
             const endpoint = matchPolicyForm.dataset.endpoint;
             if (!policy || !endpoint) return;
             buttons.forEach((btn) => btn.setAttribute("disabled", "disabled"));
-            try {
-              await submitGuardrail(endpoint, { match_policy: policy });
-              window.location.reload();
-            } catch (err) {
-              alert(err.message || "Unable to update match policy.");
-            } finally {
+	            try {
+	              await submitGuardrail(endpoint, { match_policy: policy });
+	              window.location.reload();
+	            } catch (err) {
+	              alert(err.message || I18N.unableUpdateMatchPolicy);
+	            } finally {
               buttons.forEach((btn) => btn.removeAttribute("disabled"));
             }
           });
@@ -2431,12 +2596,12 @@
           if (!endpoint) return;
           const button = form.querySelector("button[type='submit']");
           if (button) button.setAttribute("disabled", "disabled");
-          try {
-            await submitGuardrail(endpoint, {});
-            window.location.reload();
-          } catch (err) {
-            alert(err.message || "Unable to approve identifier.");
-          } finally {
+	          try {
+	            await submitGuardrail(endpoint, {});
+	            window.location.reload();
+	          } catch (err) {
+	            alert(err.message || I18N.unableApproveIdentifier);
+	          } finally {
             if (button) button.removeAttribute("disabled");
           }
         });
@@ -2450,12 +2615,12 @@
           if (!endpoint) return;
           const button = form.querySelector("button[type='submit']");
           if (button) button.setAttribute("disabled", "disabled");
-          try {
-            await submitGuardrail(endpoint, {});
-            window.location.reload();
-          } catch (err) {
-            alert(err.message || "Unable to reject identifier.");
-          } finally {
+	          try {
+	            await submitGuardrail(endpoint, {});
+	            window.location.reload();
+	          } catch (err) {
+	            alert(err.message || I18N.unableRejectIdentifier);
+	          } finally {
             if (button) button.removeAttribute("disabled");
           }
         });
@@ -2477,23 +2642,23 @@
             .split(/[\n,]/)
             .map((h) => h.trim())
             .filter(Boolean);
-          if (!uploadId) {
-            alert("Upload id missing.");
-            return;
-          }
+	          if (!uploadId) {
+	            alert(I18N.uploadIdMissing);
+	            return;
+	          }
           const button = form.querySelector("button[type='submit']");
           if (button) button.setAttribute("disabled", "disabled");
           try {
-            await submitGuardrail(endpoint, {
+	            await submitGuardrail(endpoint, {
               upload_id: uploadId,
               headers: headers,
               auto_promote: autoPromoteField ? autoPromoteField.checked : false,
               model_assist: modelAssistField ? modelAssistField.checked : false,
             });
-            window.location.reload();
-          } catch (err) {
-            alert(err.message || "Unable to propose identifiers.");
-          } finally {
+	            window.location.reload();
+	          } catch (err) {
+	            alert(err.message || I18N.unableProposeIdentifiers);
+	          } finally {
             if (button) button.removeAttribute("disabled");
           }
         });
@@ -2525,13 +2690,13 @@
           const scriptEl = document.getElementById(diagScriptId);
           if (!scriptEl || !scriptEl.textContent) return;
           try {
-            const data = JSON.parse(scriptEl.textContent);
-            alert(JSON.stringify(data, null, 2));
-          } catch (_err) {
-            alert("Diagnostics unavailable.");
-          }
-        });
-      });
+	            const data = JSON.parse(scriptEl.textContent);
+	            alert(JSON.stringify(data, null, 2));
+	          } catch (_err) {
+	            alert(I18N.diagnosticsUnavailable);
+	          }
+	        });
+	      });
 
       const mappingForms = guardrailsRoot.querySelectorAll("form[data-guardrail-form='add-mapping']");
       mappingForms.forEach((form) => {
@@ -2544,15 +2709,15 @@
           const statusField = form.querySelector("select[name='status']");
           const upload = uploadField ? uploadField.value : "";
           const columnName = columnField ? columnField.value.trim() : "";
-          const status = statusField ? statusField.value : "proposed";
-          if (!upload || !columnName) {
-            alert("Select an upload and column name before adding a mapping.");
-            return;
-          }
+	          const status = statusField ? statusField.value : "proposed";
+	          if (!upload || !columnName) {
+	            alert(I18N.selectUploadAndColumn);
+	            return;
+	          }
           const button = form.querySelector("button[type='submit']");
           if (button) button.setAttribute("disabled", "disabled");
           try {
-            await submitGuardrail(endpoint, {
+	            await submitGuardrail(endpoint, {
               columns: [
                 {
                   upload_id: upload,
@@ -2561,10 +2726,10 @@
                 },
               ],
             });
-            window.location.reload();
-          } catch (err) {
-            alert(err.message || "Unable to add mapping.");
-          } finally {
+	            window.location.reload();
+	          } catch (err) {
+	            alert(err.message || I18N.unableAddMapping);
+	          } finally {
             if (button) button.removeAttribute("disabled");
           }
         });
@@ -2582,10 +2747,10 @@
           const identifiersField = evalForm.querySelector("textarea[name='identifiers']");
           const uploadId = uploadField ? uploadField.value : "";
           const rawIdentifiers = identifiersField ? identifiersField.value || "" : "";
-          if (!uploadId) {
-            alert("Select an upload to evaluate.");
-            return;
-          }
+	          if (!uploadId) {
+	            alert(I18N.selectUploadToEvaluate);
+	            return;
+	          }
           const identifiers = {};
           const invalidLines = [];
           const inferred = [];
@@ -2612,20 +2777,20 @@
               }
               invalidLines.push(line);
             });
-          if (Object.keys(identifiers).length === 0) {
-            alert("Add identifiers in key:value format, e.g., email: user@example.com");
-            return;
-          }
-          if (invalidLines.length) {
-            alert("These lines are missing a key:value pair:\n" + invalidLines.join("\n"));
-            return;
-          }
+	          if (Object.keys(identifiers).length === 0) {
+	            alert(I18N.addIdentifiersFormat);
+	            return;
+	          }
+	          if (invalidLines.length) {
+	            alert(I18N.missingKeyValueLines + "\n" + invalidLines.join("\n"));
+	            return;
+	          }
           const button = evalForm.querySelector("button[type='submit']");
           if (button) button.setAttribute("disabled", "disabled");
-          if (resultBadge) {
-            resultBadge.textContent = "Running…";
-            resultBadge.className = "rounded-md border border-border/60 bg-muted/40 px-2 py-1 text-[11px] font-semibold";
-          }
+	          if (resultBadge) {
+	            resultBadge.textContent = I18N.running;
+	            resultBadge.className = "rounded-md border border-border/60 bg-muted/40 px-2 py-1 text-[11px] font-semibold";
+	          }
           if (details) {
             details.classList.add("hidden");
             details.textContent = "";
@@ -2643,40 +2808,40 @@
               }),
             });
             const data = await response.json();
-            if (!response.ok) {
-              throw new Error(data.message || data.error || "Unable to run eval.");
-            }
-            const passed = Boolean(data.passed);
-            if (resultBadge) {
-              resultBadge.textContent = passed ? "Pass" : "Requires identifiers";
+	            if (!response.ok) {
+	              throw new Error(data.message || data.error || I18N.unableRunEval);
+	            }
+	            const passed = Boolean(data.passed);
+	            if (resultBadge) {
+	              resultBadge.textContent = passed ? I18N.pass : I18N.requiresIdentifiers;
               resultBadge.className = passed
                 ? "rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-800"
                 : "rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-800";
             }
-            if (details) {
-              const requiredKeys = (data.required_keys || []).join(", ") || "None";
-              const providedKeys = (data.provided_keys || []).join(", ") || "None";
-              const policy = (data.match_policy || "").toUpperCase() || "N/A";
-              const inferredNote = inferred.length ? " · " + inferred.join(" · ") : "";
-              details.textContent =
-                "Status: " +
-                (data.status || "unknown") +
-                " · Required: " +
-                requiredKeys +
-                " · Provided: " +
-                providedKeys +
-                " · Policy: " +
-                policy +
-                inferredNote;
-              details.classList.remove("hidden");
-            }
-          } catch (err) {
-            alert(err.message || "Unable to run eval.");
-            if (resultBadge) {
-              resultBadge.textContent = "Error";
-              resultBadge.className = "rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-800";
-            }
-          } finally {
+	            if (details) {
+	              const requiredKeys = (data.required_keys || []).join(", ") || I18N.none;
+	              const providedKeys = (data.provided_keys || []).join(", ") || I18N.none;
+	              const policy = (data.match_policy || "").toUpperCase() || I18N.na;
+	              const inferredNote = inferred.length ? " · " + inferred.join(" · ") : "";
+	              details.textContent =
+	                I18N.status + ": " +
+	                (data.status || I18N.unknown) +
+	                " · " + I18N.required + ": " +
+	                requiredKeys +
+	                " · " + I18N.provided + ": " +
+	                providedKeys +
+	                " · " + I18N.policy + ": " +
+	                policy +
+	                inferredNote;
+	              details.classList.remove("hidden");
+	            }
+	          } catch (err) {
+	            alert(err.message || I18N.unableRunEval);
+	            if (resultBadge) {
+	              resultBadge.textContent = I18N.error;
+	              resultBadge.className = "rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-800";
+	            }
+	          } finally {
             if (button) button.removeAttribute("disabled");
           }
         });
@@ -2729,9 +2894,11 @@
     var body = document.body;
 	    var deleteButton = panel.querySelector("[data-document-delete]");
 	    var deleteNotice = panel.querySelector("[data-document-delete-notice]");
-	    var deleteButtonLabel = deleteButton ? (deleteButton.textContent || "Delete document").trim() || "Delete document" : "Delete document";
-	    var guardrailsSaveLabel = guardrailsSave ? (guardrailsSave.textContent || "Save").trim() || "Save" : "Save";
-	    var collectionsSaveLabel = collectionsSave ? (collectionsSave.textContent || "Save").trim() || "Save" : "Save";
+	    var deleteButtonLabel = deleteButton
+	      ? (deleteButton.textContent || I18N.deleteDocument).trim() || I18N.deleteDocument
+	      : I18N.deleteDocument;
+	    var guardrailsSaveLabel = guardrailsSave ? (guardrailsSave.textContent || I18N.save).trim() || I18N.save : I18N.save;
+	    var collectionsSaveLabel = collectionsSave ? (collectionsSave.textContent || I18N.save).trim() || I18N.save : I18N.save;
 
     function clearDeleteNotice() {
       if (!deleteNotice) return;
@@ -2830,7 +2997,7 @@
 	                name: String(entry.name || ""),
 	                slug: String(entry.slug || ""),
 	                visibility: String(entry.visibility || "private"),
-	                visibilityLabel: String(entry.visibility_label || entry.visibilityLabel || "Private"),
+	                visibilityLabel: String(entry.visibility_label || entry.visibilityLabel || I18N.privateLabel),
 	              };
 	            })
 	            .filter(function (entry) {
@@ -2889,7 +3056,7 @@
     }
 
     function formatBoolean(flag) {
-      return flag ? "Sensitive" : "Standard";
+      return flag ? I18N.sensitive : I18N.standard;
     }
 
     function applyStatusBadge(target, label, code) {
@@ -2899,7 +3066,7 @@
       var normalized = (code || label || "").toString().toLowerCase();
       target.className =
         "text-[11px] font-semibold capitalize " + (statusClassMap[normalized] || "text-slate-500");
-      target.textContent = label || "Draft";
+      target.textContent = label || I18N.draft;
     }
 
     function normalizeSummaryText(value) {
@@ -2926,7 +3093,7 @@
         }
       }
       if (summaryToggle) {
-        summaryToggle.textContent = expanded ? "Show less" : "Show more";
+        summaryToggle.textContent = expanded ? I18N.showLess : I18N.showMore;
         summaryToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
       }
     }
@@ -2951,7 +3118,7 @@
       var normalized = normalizeSummaryText(text);
       fieldSummary.innerHTML = "";
       if (!normalized) {
-        fieldSummary.textContent = "No summary available.";
+        fieldSummary.textContent = I18N.noSummaryAvailable;
         if (summaryToggle) summaryToggle.classList.add("hidden");
         if (summaryWrap) summaryWrap.classList.remove("has-overflow");
         return;
@@ -3093,7 +3260,11 @@
       guardrailInputs = {};
       if (!guardrailOptions.length) {
         if (guardrailsEmpty) {
-          guardrailsEmpty.innerHTML = 'No active identifiers yet. Add them in <a href="?tab=guardrails" class="text-primary hover:underline">Data Guardrails</a>.';
+          guardrailsEmpty.innerHTML =
+            I18N.noActiveIdentifiersYet +
+            ' <a href="?tab=guardrails" class="text-primary hover:underline">' +
+            I18N.dataGuardrails +
+            "</a>.";
           guardrailsEmpty.classList.remove("hidden");
         }
         if (guardrailsSave) {
@@ -3214,7 +3385,11 @@
 	      collectionsList.innerHTML = "";
 	      if (!collectionsCatalog.length) {
 	        if (collectionsEmpty) {
-	          collectionsEmpty.innerHTML = 'No collections yet. Create one in <a href="?tab=collections" class="text-primary hover:underline">Collections</a>.';
+	          collectionsEmpty.innerHTML =
+	            I18N.noCollectionsYet +
+	            ' <a href="?tab=collections" class="text-primary hover:underline">' +
+	            I18N.collectionsTab +
+	            "</a>.";
 	          collectionsEmpty.classList.remove("hidden");
 	        }
 	        updateDocumentCollectionsSaveState();
@@ -3251,7 +3426,7 @@
 	        name.textContent = collection.name;
 	        var meta = document.createElement("span");
 	        meta.className = "block text-xs text-muted-foreground";
-	        meta.textContent = collection.visibilityLabel || "Private";
+	        meta.textContent = collection.visibilityLabel || I18N.privateLabel;
 	        textWrap.appendChild(name);
 	        textWrap.appendChild(meta);
 	        label.appendChild(input);
@@ -3300,7 +3475,7 @@
 	      if (collectionsSave) {
 	        collectionsSave.textContent = collectionsSaveLabel;
 	      }
-	      setDocumentCollectionsStatus("Loading collections...", "info");
+	      setDocumentCollectionsStatus(I18N.loadingCollections, "info");
 	      renderDocumentCollectionsOptions();
 	      updateDocumentCollectionsSaveState();
 	    }
@@ -3332,7 +3507,7 @@
       });
       setGuardrailInputsEnabled(false);
       if (guardrailOptions.length) {
-        setGuardrailStatus("Loading guardrails...", "info");
+        setGuardrailStatus(I18N.loadingGuardrails, "info");
       } else {
         setGuardrailStatus("");
       }
@@ -3416,13 +3591,15 @@
       if (contentState) contentState.classList.toggle("hidden", state !== "content");
       if (fieldAriaTitle) {
         if (state === "empty") {
-          fieldAriaTitle.textContent = "Select a document";
+          fieldAriaTitle.textContent = I18N.selectDocument;
         } else if (state === "loading") {
-          fieldAriaTitle.textContent = currentDocumentTitle ? "Loading " + currentDocumentTitle : "Loading document";
+          fieldAriaTitle.textContent = currentDocumentTitle
+            ? I18N.loadingDocument + " " + currentDocumentTitle
+            : I18N.loadingDocument;
         } else if (state === "error") {
-          fieldAriaTitle.textContent = "Document unavailable";
+          fieldAriaTitle.textContent = I18N.documentUnavailable;
         } else if (state === "content") {
-          fieldAriaTitle.textContent = currentDocumentTitle || "Document detail";
+          fieldAriaTitle.textContent = currentDocumentTitle || I18N.documentDetail;
         }
       }
     }
@@ -3467,7 +3644,7 @@
       })
         .then(function (response) {
           if (!response.ok) {
-            throw new Error("Failed to load detail");
+            throw new Error(I18N.failedToLoadDetail);
           }
           return response.json();
         })
@@ -3490,7 +3667,7 @@
           console.error("Failed to load document detail", error);
           if (!options.silent) {
             if (errorMessage) {
-              errorMessage.textContent = "Unable to load document details. Please try again.";
+              errorMessage.textContent = I18N.unableLoadDocDetails;
             }
             setPanelState("error");
           }
@@ -3570,18 +3747,18 @@
 	    function prefillFromRow(row) {
 	      var dataset = row.dataset || {};
       setDeleteButtonState(dataset.documentId || "");
-      currentDocumentTitle = dataset.documentName || "Document";
+      currentDocumentTitle = dataset.documentName || I18N.document;
       if (fieldName) fieldName.textContent = currentDocumentTitle;
       if (fieldIdentifier) fieldIdentifier.textContent = dataset.documentIdentifier || "";
-      applyStatusBadge(fieldStatusBadge, dataset.documentStatusLabel || "Draft", dataset.documentStatus || "");
-      if (fieldSource) fieldSource.textContent = dataset.documentSource || "Unknown source";
+      applyStatusBadge(fieldStatusBadge, dataset.documentStatusLabel || I18N.draft, dataset.documentStatus || "");
+      if (fieldSource) fieldSource.textContent = dataset.documentSource || I18N.unknownSource;
       if (fieldUpdated) {
         var updatedValue = dataset.documentUpdatedIso || dataset.documentUpdated || "";
-        fieldUpdated.textContent = updatedValue ? "Updated " + formatDate(updatedValue) : "Updated —";
+        fieldUpdated.textContent = updatedValue ? I18N.updatedPrefix + " " + formatDate(updatedValue) : I18N.updatedPrefix + " —";
       }
       if (fieldLastSynced) {
         var syncedValue = dataset.documentLastSynced || "";
-        fieldLastSynced.textContent = syncedValue ? "Last synced " + formatDate(syncedValue) : "Last synced —";
+        fieldLastSynced.textContent = syncedValue ? I18N.lastSyncedPrefix + " " + formatDate(syncedValue) : I18N.lastSyncedPrefix + " —";
       }
       if (fieldSize) fieldSize.textContent = dataset.documentSize || "—";
       if (fieldTokens) fieldTokens.textContent = dataset.documentTokens || "—";
@@ -3589,7 +3766,7 @@
       if (fieldCategory) fieldCategory.textContent = dataset.documentCategory || "—";
       if (fieldSensitive) fieldSensitive.textContent = formatBoolean(dataset.documentSensitive === "true");
       if (fieldIntegration) fieldIntegration.textContent = dataset.documentIntegration || "—";
-	      renderSummary("Loading summary...");
+	      renderSummary(I18N.loadingSummary);
 	      setDocumentCollectionsPending(dataset.documentId || "");
 	      setGuardrailPending(dataset.documentId || "");
 	    }
@@ -3597,7 +3774,7 @@
 	    function populatePanel(detail, dataset) {
       dataset = dataset || {};
       var summary = (detail && detail.summary) || {};
-      currentDocumentTitle = summary.name || dataset.documentName || "Document";
+      currentDocumentTitle = summary.name || dataset.documentName || I18N.document;
       if (fieldName) fieldName.textContent = currentDocumentTitle;
       if (fieldIdentifier) {
         if (summary.id) {
@@ -3608,17 +3785,17 @@
       }
       applyStatusBadge(
         fieldStatusBadge,
-        summary.statusLabel || dataset.documentStatusLabel || "Draft",
+        summary.statusLabel || dataset.documentStatusLabel || I18N.draft,
         summary.status || dataset.documentStatus || ""
       );
-      if (fieldSource) fieldSource.textContent = summary.sourceLabel || dataset.documentSource || "Unknown source";
+      if (fieldSource) fieldSource.textContent = summary.sourceLabel || dataset.documentSource || I18N.unknownSource;
       if (fieldUpdated) {
         var updated = summary.updatedAt || dataset.documentUpdatedIso || dataset.documentUpdated || "";
-        fieldUpdated.textContent = updated ? "Updated " + formatDate(updated) : "Updated —";
+        fieldUpdated.textContent = updated ? I18N.updatedPrefix + " " + formatDate(updated) : I18N.updatedPrefix + " —";
       }
       if (fieldLastSynced) {
         var synced = summary.lastSyncedAt || dataset.documentLastSynced || "";
-        fieldLastSynced.textContent = synced ? "Last synced " + formatDate(synced) : "Last synced —";
+        fieldLastSynced.textContent = synced ? I18N.lastSyncedPrefix + " " + formatDate(synced) : I18N.lastSyncedPrefix + " —";
       }
       if (fieldSize) {
         if (summary.sizeBytes != null) {
@@ -3632,7 +3809,7 @@
       if (fieldCategory) fieldCategory.textContent = summary.category || dataset.documentCategory || "—";
       if (fieldSensitive) fieldSensitive.textContent = formatBoolean(summary.isSensitive || dataset.documentSensitive === "true");
       if (fieldIntegration) fieldIntegration.textContent = summary.integrationName || dataset.documentIntegration || "—";
-      renderSummary(detail.summaryText || "No summary available.");
+      renderSummary(detail.summaryText || I18N.noSummaryAvailable);
 	      var requiredIdentifiers = [];
 	      if (detail && detail.guardrails && Array.isArray(detail.guardrails.requiredIdentifiers)) {
 	        requiredIdentifiers = detail.guardrails.requiredIdentifiers;
@@ -3916,7 +4093,7 @@
         if (!sheetsState.available.length) {
           var empty = document.createElement("div");
           empty.className = "rounded-md border border-dashed border-border/60 bg-muted/30 px-3 py-4 text-sm text-muted-foreground";
-          empty.textContent = "No spreadsheets found. Try refreshing or adjust your search.";
+          empty.textContent = I18N.noSpreadsheetsFound;
           sheetsList.appendChild(empty);
           updateSelectedSummary();
           return;
@@ -3941,7 +4118,7 @@
             '      <div class="shrink-0 text-[10px] text-muted-foreground" data-resource-meta></div>',
             "    </div>",
             '    <div class="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">',
-            '      <span class="truncate">Sheet: <span class="text-foreground/80" data-sheet-name></span></span>',
+            '      <span class="truncate">' + I18N.sheetLabel + ' <span class="text-foreground/80" data-sheet-name></span></span>',
             '      <span class="text-border">•</span>',
             '      <span class="truncate text-[10px]" data-resource-info></span>',
             "    </div>",
@@ -3950,35 +4127,35 @@
             '<div class="mx-3 mb-3 border-t border-border/40 pt-3 hidden" data-privacy-panel>',
             '  <div class="grid gap-3 sm:grid-cols-2">',
             '    <label class="space-y-1">',
-            '      <span class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Visibility</span>',
+            '      <span class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">' + I18N.visibility + '</span>',
             '      <select class="w-full rounded-md border border-input bg-background px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary" data-resource-visibility>',
-            '        <option value="private">Private (owner only)</option>',
-            '        <option value="internal">Internal (agents & admins)</option>',
-            '        <option value="shared">Shared (everyone)</option>',
+            '        <option value="private">' + I18N.privateOwnerOnly + '</option>',
+            '        <option value="internal">' + I18N.internalAgentsAdmins + '</option>',
+            '        <option value="shared">' + I18N.sharedEveryone + '</option>',
             "      </select>",
             "    </label>",
             '    <label class="space-y-1">',
-            '      <span class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Sync frequency</span>',
+            '      <span class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">' + I18N.syncFrequency + '</span>',
             '      <select class="w-full rounded-md border border-input bg-background px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary" data-resource-frequency>',
-            '        <option value="manual">Manual</option>',
-            '        <option value="hourly">Hourly</option>',
-            '        <option value="daily">Daily</option>',
-            '        <option value="weekly">Weekly</option>',
+            '        <option value="manual">' + I18N.manual + '</option>',
+            '        <option value="hourly">' + I18N.hourly + '</option>',
+            '        <option value="daily">' + I18N.daily + '</option>',
+            '        <option value="weekly">' + I18N.weekly + '</option>',
             "      </select>",
             "    </label>",
             "  </div>",
             '  <div class="space-y-2 mt-3">',
             '    <label class="block space-y-1">',
-            '      <span class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Shared columns</span>',
-            '      <input type="text" class="w-full rounded-md border border-input bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/70 focus:outline-none focus:ring-2 focus:ring-primary" placeholder="e.g. name, email" data-privacy-input="shared">',
+            '      <span class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">' + I18N.sharedColumns + '</span>',
+            '      <input type="text" class="w-full rounded-md border border-input bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/70 focus:outline-none focus:ring-2 focus:ring-primary" placeholder="' + I18N.exampleNameEmail + '" data-privacy-input="shared">',
             "    </label>",
             '    <label class="block space-y-1">',
-            '      <span class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Internal only columns</span>',
-            '      <input type="text" class="w-full rounded-md border border-input bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/70 focus:outline-none focus:ring-2 focus:ring-primary" placeholder="e.g. ssn, internal_id" data-privacy-input="internal">',
+            '      <span class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">' + I18N.internalOnlyColumns + '</span>',
+            '      <input type="text" class="w-full rounded-md border border-input bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/70 focus:outline-none focus:ring-2 focus:ring-primary" placeholder="' + I18N.exampleSsnInternalId + '" data-privacy-input="internal">',
             "    </label>",
             '    <label class="block space-y-1">',
-            '      <span class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Exclude columns</span>',
-            '      <input type="text" class="w-full rounded-md border border-input bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/70 focus:outline-none focus:ring-2 focus:ring-primary" placeholder="e.g. password_hash" data-privacy-input="excluded">',
+            '      <span class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">' + I18N.excludeColumns + '</span>',
+            '      <input type="text" class="w-full rounded-md border border-input bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/70 focus:outline-none focus:ring-2 focus:ring-primary" placeholder="' + I18N.examplePasswordHash + '" data-privacy-input="excluded">',
             "    </label>",
             "  </div>",
             "</div>",
@@ -3987,21 +4164,21 @@
           var sheetNameEl = card.querySelector("[data-sheet-name]");
           var metaEl = card.querySelector("[data-resource-meta]");
           var infoEl = card.querySelector("[data-resource-info]");
-          if (fileNameEl) fileNameEl.textContent = resource.driveFileName || "Untitled spreadsheet";
-          if (sheetNameEl) sheetNameEl.textContent = resource.sheetName || "Sheet";
+          if (fileNameEl) fileNameEl.textContent = resource.driveFileName || I18N.untitledSpreadsheet;
+          if (sheetNameEl) sheetNameEl.textContent = resource.sheetName || I18N.sheetDefault;
           if (metaEl) {
             var parts = [];
-            if (resource.rowCount) parts.push(resource.rowCount + " rows");
-            if (resource.columnCount) parts.push(resource.columnCount + " columns");
+            if (resource.rowCount) parts.push(resource.rowCount + " " + I18N.rowsWord);
+            if (resource.columnCount) parts.push(resource.columnCount + " " + I18N.columnsWord);
             metaEl.textContent = parts.join(" · ");
           }
           if (infoEl) {
             var infoBits = [];
             if (resource.owner) {
-              infoBits.push("Owner: " + resource.owner);
+              infoBits.push(I18N.ownerPrefix + " " + resource.owner);
             }
             if (resource.lastSyncStatus) {
-              infoBits.push("Last sync: " + resource.lastSyncStatus);
+              infoBits.push(I18N.lastSyncPrefixShort + " " + resource.lastSyncStatus);
             }
             infoEl.textContent = infoBits.join(" · ");
           }
@@ -4044,7 +4221,7 @@
           '    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>' +
           '    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4Z"></path>' +
           "  </svg>" +
-          '  <span class="text-xs">Loading sheets from Google Drive…</span>' +
+          '  <span class="text-xs">' + I18N.loadingSheetsFromDrive + "</span>" +
           "</div>";
         var url = new URL(sheetsState.sheetsUrl, window.location.origin);
         url.searchParams.set("business_id", sheetsState.businessId || "");
@@ -4064,7 +4241,7 @@
                   return {};
                 })
                 .then(function (payload) {
-                  throw new Error(payload.message || "Unable to load Google resources.");
+                  throw new Error(payload.message || I18N.unableLoadGoogleResources);
                 });
             }
             return response.json();
@@ -4095,7 +4272,7 @@
           })
           .catch(function (error) {
             console.error("Failed to load Google sheets", error);
-            setSheetsStatus(error.message || "Unable to load sheets from Google Drive.", "error");
+            setSheetsStatus(error.message || I18N.unableLoadSheetsFromDrive, "error");
             sheetsList.innerHTML =
               '<div class="flex flex-col items-center justify-center py-12 text-muted-foreground space-y-3">' +
               '  <div class="rounded-full bg-rose-50 p-3 text-rose-600 dark:bg-rose-900/20 dark:text-rose-400">' +
@@ -4104,11 +4281,11 @@
               "    </svg>" +
               "  </div>" +
               '  <div class="text-center space-y-1">' +
-              '    <p class="text-sm font-medium text-foreground">Unable to load sheets</p>' +
-              '    <p class="text-xs">Please check your connection and try again.</p>' +
+              '    <p class="text-sm font-medium text-foreground">' + I18N.unableLoadSheets + "</p>" +
+              '    <p class="text-xs">' + I18N.pleaseCheckConnection + "</p>" +
               "  </div>" +
               '  <button type="button" class="mt-2 inline-flex items-center gap-2 rounded-md border border-input bg-background px-4 py-2 text-xs font-semibold text-foreground shadow-sm hover:bg-accent hover:text-accent-foreground" onclick="document.querySelector(\'[data-sheets-refresh]\').click()">' +
-              "    Retry" +
+              "    " + I18N.retry +
               "  </button>" +
               "</div>";
           });
@@ -4152,7 +4329,7 @@
           return;
         }
         setSheetsBusy(true);
-        setSheetsStatus("Saving sheet selection…", "info");
+        setSheetsStatus(I18N.savingSheetSelection, "info");
         return fetch(sheetsState.sheetsUrl, {
           method: "POST",
           headers: {
@@ -4171,18 +4348,18 @@
                   return {};
                 })
                 .then(function (payload) {
-                  throw new Error(payload.message || "Unable to save sheet configuration.");
+                  throw new Error(payload.message || I18N.unableSaveSheetConfiguration);
                 });
             }
             return response.json();
           })
           .then(function () {
-            setSheetsStatus("Saved sheet configuration. Refreshing resources…", "success");
+            setSheetsStatus(I18N.savedSheetConfiguration, "success");
             return fetchResources(searchInput ? searchInput.value : "");
           })
           .catch(function (error) {
             console.error("Failed to save sheet configuration", error);
-            setSheetsStatus(error.message || "Unable to save sheet configuration.", "error");
+            setSheetsStatus(error.message || I18N.unableSaveSheetConfiguration, "error");
           })
           .finally(function () {
             setSheetsBusy(false);
@@ -4191,11 +4368,11 @@
 
       function triggerSync() {
         if (!sheetsState.syncUrl) {
-          setSheetsStatus("Sync endpoint not available for this integration.", "error");
+          setSheetsStatus(I18N.syncEndpointUnavailable, "error");
           return;
         }
         setSheetsBusy(true);
-        setSheetsStatus("Starting sync…", "info");
+        setSheetsStatus(I18N.startingSync, "info");
         fetch(sheetsState.syncUrl, {
           method: "POST",
           headers: {
@@ -4217,22 +4394,22 @@
                   return {};
                 })
                 .then(function (payload) {
-                  throw new Error(payload.message || "Unable to start sync.");
+                  throw new Error(payload.message || I18N.unableStartSync);
                 });
             }
             return response.json();
           })
           .then(function (payload) {
-            var summary = payload && payload.message ? payload.message : "Sync triggered.";
+            var summary = payload && payload.message ? payload.message : I18N.syncTriggered;
             if (payload && typeof payload.rowsIngested === "number") {
-              summary += " Rows ingested: " + payload.rowsIngested;
+              summary += " " + I18N.rowsIngested + " " + payload.rowsIngested;
             }
             setSheetsStatus(summary, payload && payload.status === "error" ? "error" : "success");
             fetchResources(searchInput ? searchInput.value : "");
           })
           .catch(function (error) {
             console.error("Sync failed", error);
-            setSheetsStatus(error.message || "Unable to start sync.", "error");
+            setSheetsStatus(error.message || I18N.unableStartSync, "error");
           })
           .finally(function () {
             setSheetsBusy(false);
@@ -4251,12 +4428,12 @@
 
       function openSheetsModal(dataset) {
         sheetsState.integrationId = dataset.integrationId || "";
-        sheetsState.integrationName = dataset.integrationName || "Google Drive";
+        sheetsState.integrationName = dataset.integrationName || I18N.googleDrive;
         sheetsState.businessId = dataset.businessId || "";
         sheetsState.sheetsUrl = dataset.sheetsUrl || "";
         sheetsState.syncUrl = dataset.syncUrl || "";
         if (modalTitle) {
-          modalTitle.textContent = "Manage sheets · " + sheetsState.integrationName;
+          modalTitle.textContent = I18N.manageSheets + " · " + sheetsState.integrationName;
         }
         setSheetsModalVisible(true);
         fetchResources(searchInput ? searchInput.value : "");
@@ -4321,7 +4498,9 @@
 		      var collectionStatus = collectionModal.querySelector("[data-collection-status]");
 		      var collectionSubmit = collectionModal.querySelector("[data-collection-submit]");
 		      var collectionDelete = collectionModal.querySelector("[data-collection-delete]");
-		      var collectionSubmitLabel = collectionSubmit ? (collectionSubmit.textContent || "Create collection").trim() : "Create collection";
+		      var collectionSubmitLabel = collectionSubmit
+		        ? (collectionSubmit.textContent || I18N.createCollection).trim()
+		        : I18N.createCollection;
 		      var collectionCreateButtons = Array.prototype.slice.call(document.querySelectorAll("[data-collection-create-open]") || []);
 		      var collectionsGrid = document.querySelector("[data-collections-grid]");
 		      var collectionsEmptyState = document.querySelector("[data-collections-empty]");
@@ -4373,7 +4552,7 @@
 		          collectionForm.reset();
 		        }
 		        if (collectionTitle) {
-		          collectionTitle.textContent = "New collection";
+		          collectionTitle.textContent = I18N.newCollection;
 		        }
 		        if (collectionDelete) {
 		          collectionDelete.classList.add("hidden");
@@ -4397,7 +4576,7 @@
 		        }
 		        var isEdit = collectionModalContext.mode === "edit" && collectionModalContext.collectionId;
 		        if (collectionTitle) {
-		          collectionTitle.textContent = isEdit ? "Edit collection" : "New collection";
+		          collectionTitle.textContent = isEdit ? I18N.editCollection : I18N.newCollection;
 		        }
 		        if (collectionNameField) {
 		          collectionNameField.value = String(context.name || "");
@@ -4412,7 +4591,7 @@
 		          collectionDelete.classList.toggle("hidden", !isEdit);
 		        }
 		        if (collectionSubmit) {
-		          collectionSubmit.textContent = isEdit ? "Save changes" : collectionSubmitLabel;
+		          collectionSubmit.textContent = isEdit ? I18N.saveChanges : collectionSubmitLabel;
 		        }
 		        setCollectionModalVisible(true);
 		      }
@@ -4439,7 +4618,7 @@
 		        editButton.className =
 		          "absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full border border-border/60 bg-background/70 text-muted-foreground transition hover:bg-background hover:text-foreground";
 		        editButton.setAttribute("data-collection-edit-open", "");
-		        editButton.setAttribute("aria-label", "Edit collection");
+		        editButton.setAttribute("aria-label", I18N.editCollectionAria);
 		        editButton.innerHTML =
 		          '<svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">' +
 		          '<path stroke-linecap="round" stroke-linejoin="round" d="m16.862 3.487 3.651 3.651m-2.121-1.53L8.25 15.75l-4.5 1.125 1.125-4.5L15.75 4.875a2.121 2.121 0 0 1 3.0 0Z" />' +
@@ -4453,12 +4632,12 @@
 		        var name = document.createElement("div");
 		        name.className = "text-sm font-semibold text-foreground";
 		        name.setAttribute("data-collection-title", "");
-		        name.textContent = collection.name || "Collection";
+		        name.textContent = collection.name || I18N.collection;
 		        var badge = document.createElement("span");
 		        badge.className =
 		          "inline-flex items-center rounded-full border border-border/60 bg-muted/50 px-2 py-0.5 text-[11px] font-medium text-muted-foreground";
 		        badge.setAttribute("data-collection-badge", "");
-		        badge.textContent = collection.visibilityLabel || "Private";
+		        badge.textContent = collection.visibilityLabel || I18N.privateLabel;
 		        nameRow.appendChild(name);
 		        nameRow.appendChild(badge);
 		        var description = document.createElement("p");
@@ -4488,10 +4667,12 @@
 	          return wrap;
 	        }
 
-	        stats.appendChild(statCell(String(collection.documents || 0), "Documents", "data-collection-documents"));
-	        stats.appendChild(statCell("—", "Owner"));
-	        stats.appendChild(statCell("—", "Focus"));
-	        stats.appendChild(statCell(collection.updatedAt ? formatDate(collection.updatedAt) : "—", "Last update", "data-collection-updated"));
+	        stats.appendChild(statCell(String(collection.documents || 0), I18N.documentsLabel, "data-collection-documents"));
+	        stats.appendChild(statCell("—", I18N.ownerLabel));
+	        stats.appendChild(statCell("—", I18N.focusLabel));
+	        stats.appendChild(
+	          statCell(collection.updatedAt ? formatDate(collection.updatedAt) : "—", I18N.lastUpdateLabel, "data-collection-updated")
+	        );
 	        card.appendChild(stats);
 
 	        collectionsGrid.appendChild(card);
@@ -4516,7 +4697,7 @@
 		            name: record.name,
 		            slug: record.slug || "",
 		            visibility: record.visibility || "private",
-		            visibilityLabel: record.visibilityLabel || "Private",
+		            visibilityLabel: record.visibilityLabel || I18N.privateLabel,
 		            description: record.description || "",
 		          });
 		        }
@@ -4590,10 +4771,10 @@
 		          if (!collectionId || !knowledgeBusinessId) {
 		            return;
 		          }
-		          if (!window.confirm("Delete this collection? Documents will remain, but agent scoping and links will be removed.")) {
+		          if (!window.confirm(I18N.deleteCollectionConfirm)) {
 		            return;
 		          }
-		          setCollectionStatus("Deleting collection…", "info");
+		          setCollectionStatus(I18N.deletingCollection, "info");
 		          var deleteUrl = "/api/knowledge/collections/" + encodeURIComponent(collectionId) + "/";
 		          if (knowledgeBusinessId) {
 		            deleteUrl += "?business_id=" + encodeURIComponent(knowledgeBusinessId);
@@ -4613,7 +4794,7 @@
 		              }
 		              if (!response.ok) {
 		                return response.json().then(function (data) {
-		                  var message = (data && (data.message || data.error)) || "Unable to delete collection.";
+		                  var message = (data && (data.message || data.error)) || I18N.unableDeleteCollection;
 		                  throw new Error(message);
 		                });
 		              }
@@ -4638,13 +4819,13 @@
 		              if (collectionsEmptyState && (!collectionsGrid || collectionsGrid.classList.contains("hidden"))) {
 		                collectionsEmptyState.classList.remove("hidden");
 		              }
-		              setCollectionStatus("Collection deleted.", "success");
+		              setCollectionStatus(I18N.collectionDeleted, "success");
 		              window.setTimeout(function () {
 		                closeCollectionModal();
 		              }, 250);
 		            })
 		            .catch(function (error) {
-		              setCollectionStatus(error.message || "Unable to delete collection.", "error");
+		              setCollectionStatus(error.message || I18N.unableDeleteCollection, "error");
 		            });
 		        });
 		      }
@@ -4656,12 +4837,12 @@
 	            return;
 	          }
 	          if (!knowledgeBusinessId) {
-	            setCollectionStatus("Link a business profile before creating collections.", "error");
+	            setCollectionStatus(I18N.linkBusinessBeforeCollections, "error");
 	            return;
 	          }
 	          var name = collectionNameField ? (collectionNameField.value || "").trim() : "";
 	          if (!name) {
-	            setCollectionStatus("Collection name is required.", "error");
+	            setCollectionStatus(I18N.collectionNameRequired, "error");
 	            return;
 	          }
 		          var description = collectionDescriptionField ? (collectionDescriptionField.value || "").trim() : "";
@@ -4672,10 +4853,10 @@
 		            collectionModalContext.collectionId;
 		          collectionCreating = true;
 		          if (collectionSubmit) {
-		            collectionSubmit.textContent = isEdit ? "Saving…" : "Creating…";
+		            collectionSubmit.textContent = isEdit ? I18N.saving : I18N.creatingCollection;
 		            collectionSubmit.disabled = true;
 		          }
-		          setCollectionStatus(isEdit ? "Saving changes…" : "Creating collection…", "info");
+		          setCollectionStatus(isEdit ? I18N.savingChangesInfo : I18N.creatingCollection, "info");
 		          var requestUrl = isEdit
 		            ? "/api/knowledge/collections/" + encodeURIComponent(collectionModalContext.collectionId) + "/"
 		            : "/api/knowledge/collections/";
@@ -4700,7 +4881,7 @@
 		                return response.json().then(function (data) {
 		                  var message =
 		                    (data && (data.message || data.error)) ||
-		                    (isEdit ? "Unable to update collection." : "Unable to create collection.");
+		                    (isEdit ? I18N.unableUpdateCollection : I18N.unableCreateCollection);
 		                  throw new Error(message);
 		                });
 		              }
@@ -4709,7 +4890,7 @@
 		            .then(function (payload) {
 		              var collection = payload && payload.collection ? payload.collection : null;
 		              if (!collection || !collection.id) {
-		                throw new Error("Invalid collection response.");
+		                throw new Error(I18N.invalidCollectionResponse);
 		              }
 		              upsertCollectionCatalog(collection);
 		              renderDocumentCollectionsOptions();
@@ -4721,9 +4902,9 @@
 		                existingCard.dataset.collectionVisibility = collection.visibility || "private";
 		                existingCard.dataset.collectionDescription = collection.description || "";
 		                var titleNode = existingCard.querySelector("[data-collection-title]");
-		                if (titleNode) titleNode.textContent = collection.name || "Collection";
+		                if (titleNode) titleNode.textContent = collection.name || I18N.collection;
 		                var badgeNode = existingCard.querySelector("[data-collection-badge]");
-		                if (badgeNode) badgeNode.textContent = collection.visibilityLabel || "Private";
+		                if (badgeNode) badgeNode.textContent = collection.visibilityLabel || I18N.privateLabel;
 		                var descNode = existingCard.querySelector("[data-collection-description]");
 		                if (descNode) descNode.textContent = collection.description || "";
 		                var docsNode = existingCard.querySelector("[data-collection-documents]");
@@ -4754,14 +4935,14 @@
 	                markDocumentCollectionsDirty();
 		                renderDocumentCollectionsOptions();
 		              }
-		              setCollectionStatus(isEdit ? "Collection updated." : "Collection created.", "success");
+		              setCollectionStatus(isEdit ? I18N.collectionUpdated : I18N.collectionCreated, "success");
 		              window.setTimeout(function () {
 		                closeCollectionModal();
 		              }, 400);
 		            })
 		            .catch(function (error) {
 		              setCollectionStatus(
-		                error.message || (isEdit ? "Unable to update collection." : "Unable to create collection."),
+		                error.message || (isEdit ? I18N.unableUpdateCollection : I18N.unableCreateCollection),
 		                "error"
 		              );
 		            })
@@ -4769,7 +4950,7 @@
 		              collectionCreating = false;
 		              if (collectionSubmit) {
 		                collectionSubmit.textContent =
-		                  isEdit ? "Save changes" : collectionSubmitLabel;
+		                  isEdit ? I18N.saveChanges : collectionSubmitLabel;
 		                collectionSubmit.disabled = false;
 		              }
 		            });
@@ -4813,8 +4994,8 @@
 	        }
 	        documentCollectionsSaving = true;
 	        updateDocumentCollectionsSaveState();
-	        collectionsSave.textContent = "Saving...";
-	        setDocumentCollectionsStatus("Saving collections...", "info");
+	        collectionsSave.textContent = I18N.saving;
+	        setDocumentCollectionsStatus(I18N.savingCollections, "info");
 	        var saveUrl = "/api/knowledge/documents/" + encodeURIComponent(documentCollectionsDocumentId) + "/";
 	        if (knowledgeBusinessId) {
 	          saveUrl += "?business_id=" + encodeURIComponent(knowledgeBusinessId);
@@ -4836,7 +5017,7 @@
 	          .then(function (response) {
 	            if (!response.ok) {
 	              return response.json().then(function (data) {
-	                var message = (data && (data.message || data.error)) || "Unable to save collections.";
+	                var message = (data && (data.message || data.error)) || I18N.unableSaveCollections;
 	                throw new Error(message);
 	              });
 	            }
@@ -4846,10 +5027,10 @@
 	            var updated = Array.isArray(data && data.collections) ? data.collections : [];
 	            setDocumentCollectionsSelection(updated);
 	            updateCachedCollections(documentCollectionsDocumentId, updated);
-	            setDocumentCollectionsStatus("Collections saved.", "success", 3000);
+	            setDocumentCollectionsStatus(I18N.collectionsSaved, "success", 3000);
 	          })
 	          .catch(function (error) {
-	            setDocumentCollectionsStatus(error.message || "Unable to save collections.", "error");
+	            setDocumentCollectionsStatus(error.message || I18N.unableSaveCollections, "error");
 	          })
 	          .finally(function () {
 	            documentCollectionsSaving = false;
@@ -4867,10 +5048,10 @@
         if (!guardrailDocumentId || !knowledgeBusinessId) {
           return;
         }
-        guardrailSaving = true;
-        updateGuardrailSaveState();
-        guardrailsSave.textContent = "Saving...";
-        setGuardrailStatus("Saving guardrails...", "info");
+	        guardrailSaving = true;
+	        updateGuardrailSaveState();
+	        guardrailsSave.textContent = I18N.saving;
+	        setGuardrailStatus(I18N.savingGuardrails, "info");
         var saveUrl = "/api/knowledge/documents/" + encodeURIComponent(guardrailDocumentId) + "/";
         if (knowledgeBusinessId) {
           saveUrl += "?business_id=" + encodeURIComponent(knowledgeBusinessId);
@@ -4894,7 +5075,7 @@
           .then(function (response) {
             if (!response.ok) {
               return response.json().then(function (data) {
-                var message = (data && (data.message || data.error)) || "Unable to save guardrails.";
+                var message = (data && (data.message || data.error)) || I18N.unableSaveGuardrails;
                 throw new Error(message);
               });
             }
@@ -4907,10 +5088,10 @@
             }
             setGuardrailSelection(required);
             updateCachedGuardrails(guardrailDocumentId, required);
-            setGuardrailStatus("Guardrails saved.", "success", 3000);
+            setGuardrailStatus(I18N.guardrailsSaved, "success", 3000);
           })
           .catch(function (error) {
-            setGuardrailStatus(error.message || "Unable to save guardrails.", "error");
+            setGuardrailStatus(error.message || I18N.unableSaveGuardrails, "error");
           })
           .finally(function () {
             guardrailSaving = false;
@@ -4928,13 +5109,13 @@
         if (!documentId || !knowledgeBusinessId || deleteButton.disabled) {
           return;
         }
-        if (!window.confirm("Delete this document? This cannot be undone.")) {
+        if (!window.confirm(I18N.deleteDocumentConfirm)) {
           return;
         }
         clearDeleteNotice();
         deleteButton.disabled = true;
         deleteButton.setAttribute("aria-disabled", "true");
-        deleteButton.textContent = "Deleting…";
+        deleteButton.textContent = I18N.deleting;
         var targetId = documentId;
         var deleteUrl = "/api/knowledge/documents/" + encodeURIComponent(targetId) + "/";
         if (knowledgeBusinessId) {
@@ -4951,7 +5132,7 @@
         })
           .then(function (response) {
             if (!response.ok) {
-              throw new Error("Failed to delete");
+              throw new Error(I18N.failedToDelete);
             }
             var rowToRemove = null;
             if (activeRow && activeRow.getAttribute("data-document-id") === targetId) {
@@ -4966,7 +5147,7 @@
           })
           .catch(function (error) {
             console.error("Failed to delete document", error);
-            showDeleteNotice("Unable to delete this document. Please try again.");
+            showDeleteNotice(I18N.unableDeleteDocument);
             setDeleteButtonState(targetId);
           });
       });
