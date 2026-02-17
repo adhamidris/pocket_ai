@@ -3079,7 +3079,6 @@ def dashboard_cases(request: HttpRequest) -> HttpResponse:
     user_name = _current_user_name(request)
     cases: List[Dict[str, object]] = []
     metrics = {"open": None, "urgent": None, "urgent_delta": None, "avg_open": None}
-    metrics_message = _("Connect your customer channels to start measuring performance.")
     total = 0
 
     business = None
@@ -3096,11 +3095,6 @@ def dashboard_cases(request: HttpRequest) -> HttpResponse:
                 "urgent_delta": result.metrics.urgent_delta_hint,
                 "avg_open": result.metrics.average_open_hours,
             }
-            metrics_message = (
-                _("You have %(count)s open cases.") % {"count": result.metrics.open_total}
-                if result.metrics.open_total
-                else _("All cases resolved. Great job!")
-            )
             for item in result.items:
                 cases.append(
                     {
@@ -3124,13 +3118,12 @@ def dashboard_cases(request: HttpRequest) -> HttpResponse:
                     }
                 )
         except Exception:
-            metrics_message = _("Unable to load cases right now. Please try again shortly.")
+            pass
 
     context = {
         "user_name": user_name,
         "cases_total": total if total else len(cases),
         "cases_metrics": metrics,
-        "cases_metrics_message": metrics_message,
         "skeleton_rows": range(6),
         "cases_loading": False,
         "cases": cases,
