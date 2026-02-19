@@ -44,6 +44,228 @@ class QueryNormalizerTests(SimpleTestCase):
         self.assertIn("michael-page", traits.alias_candidates)
 
 
+class KnowledgeSearchServiceAutoDecisionContractTests(SimpleTestCase):
+    def test_contract_defaults_to_undecided_without_route(self) -> None:
+        contract = KnowledgeSearchService._derive_auto_decision_contract(
+            route_diagnostics=None,
+            requires_clarification=False,
+        )
+        self.assertEqual(contract["table_score"], 0.0)
+        self.assertEqual(contract["text_score"], 0.0)
+        self.assertEqual(contract["margin"], 0.0)
+        self.assertEqual(contract["decision"], "undecided")
+        self.assertFalse(contract["needs_clarification"])
+
+    def test_contract_marks_clarification_when_required(self) -> None:
+        contract = KnowledgeSearchService._derive_auto_decision_contract(
+            route_diagnostics={"index_route": "text_first", "index_route_table_hits": 1, "index_route_text_hits": 3},
+            requires_clarification=True,
+        )
+        self.assertEqual(contract["decision"], "clarification")
+        self.assertTrue(contract["needs_clarification"])
+        self.assertEqual(contract["table_score"], 1.0)
+        self.assertEqual(contract["text_score"], 3.0)
+        self.assertEqual(contract["margin"], 2.0)
+
+    def test_contract_uses_route_hit_counts_for_decision(self) -> None:
+        contract = KnowledgeSearchService._derive_auto_decision_contract(
+            route_diagnostics={"index_route": "table_specific_first", "index_route_table_hits": 4, "index_route_text_hits": 1},
+            requires_clarification=False,
+        )
+        self.assertEqual(contract["decision"], "table")
+        self.assertFalse(contract["needs_clarification"])
+        self.assertEqual(contract["table_score"], 4.0)
+        self.assertEqual(contract["text_score"], 1.0)
+        self.assertEqual(contract["margin"], 3.0)
+
+    def test_contract_marks_low_margin_scored_paths_as_blended(self) -> None:
+        contract = KnowledgeSearchService._derive_auto_decision_contract(
+            route_diagnostics={"index_route": "table_primary_filtered", "index_route_table_hits": 2, "index_route_text_hits": 2},
+            scoring_diagnostics={"auto_table_score": 0.61, "auto_text_score": 0.58, "auto_score_margin": 0.03},
+            requires_clarification=False,
+        )
+        self.assertEqual(contract["decision"], "blended")
+        self.assertFalse(contract["needs_clarification"])
+        self.assertEqual(contract["margin"], 0.03)
+
+    def test_contract_prefers_scoring_diagnostics_when_available(self) -> None:
+        contract = KnowledgeSearchService._derive_auto_decision_contract(
+            route_diagnostics={"index_route": "table_specific_first", "index_route_table_hits": 4, "index_route_text_hits": 1},
+            scoring_diagnostics={"auto_table_score": 0.21, "auto_text_score": 0.78, "auto_score_margin": 0.57},
+            requires_clarification=False,
+        )
+        self.assertEqual(contract["decision"], "text")
+        self.assertFalse(contract["needs_clarification"])
+        self.assertEqual(contract["table_score"], 0.21)
+        self.assertEqual(contract["text_score"], 0.78)
+        self.assertEqual(contract["margin"], 0.57)
+
+
+class KnowledgeSearchServiceAutoScoringTests(SimpleTestCase):
+    @staticmethod
+    def _make_chunk(*, index_type: str, content: str, metadata: dict[str, object] | None = None):
+        chunk = mock.Mock()
+        payload = {"index_type": index_type}
+        if index_type == "table":
+            payload["is_table_chunk"] = True
+        if metadata:
+            payload.update(metadata)
+        chunk.metadata = payload
+        chunk.content = content
+        return chunk
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_dual_path_scoring_prefers_table_when_specific_signals_are_strong(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        table_hit = ChunkResult(
+            chunk=self._make_chunk(index_type="table", content="Gold card annual fee 199", metadata={"table_chunk_role": "row"}),
+            source_stage="unit",
+            rerank_score=0.68,
+            lexical_score=0.52,
+            diagnostics={
+                "header_match": True,
+                "specific_match": True,
+                "specific_match_strong": True,
+                "specific_match_ratio": 1.0,
+            },
+        )
+        text_hit = ChunkResult(
+            chunk=self._make_chunk(index_type="text", content="General card overview and narrative context"),
+            source_stage="unit",
+            rerank_score=0.61,
+            lexical_score=0.32,
+        )
+
+        scores = service._score_auto_mode_candidates(
+            [table_hit, text_hit],
+            query_tokens=("gold", "card", "fee"),
+            specific_tokens=("gold", "fee"),
+        )
+
+        self.assertEqual(scores["auto_score_version"], "v2")
+        self.assertGreater(scores["auto_table_score"], scores["auto_text_score"])
+        self.assertGreaterEqual(scores["auto_table_signal_strong_hits"], 1)
+        self.assertGreaterEqual(scores["auto_table_signal_specific_hits"], 1)
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_dual_path_scoring_prefers_text_when_semantic_signal_is_stronger(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        table_hit = ChunkResult(
+            chunk=self._make_chunk(index_type="table", content="misc table row", metadata={"table_chunk_role": "parent"}),
+            source_stage="unit",
+            rerank_score=0.2,
+            lexical_score=0.1,
+        )
+        text_hit = ChunkResult(
+            chunk=self._make_chunk(
+                index_type="text",
+                content="Gold card benefits include airport lounge access, concierge support, and travel insurance coverage.",
+            ),
+            source_stage="unit",
+            rerank_score=0.86,
+            lexical_score=0.74,
+        )
+
+        scores = service._score_auto_mode_candidates(
+            [table_hit, text_hit],
+            query_tokens=("gold", "card", "benefits", "insurance"),
+            specific_tokens=(),
+        )
+
+        self.assertGreater(scores["auto_text_score"], scores["auto_table_score"])
+        self.assertGreater(scores["auto_text_semantic_overlap_avg"], 0.0)
+        self.assertEqual(scores["auto_score_text_hits"], 1)
+
+
+class KnowledgeSearchServiceAutoArbitrationTests(SimpleTestCase):
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_arbitration_selects_table_when_margin_is_clear(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        arbitration = service._arbitrate_auto_mode(
+            scoring_diagnostics={
+                "auto_table_score": 0.79,
+                "auto_text_score": 0.34,
+                "auto_score_table_hits": 3,
+                "auto_score_text_hits": 2,
+            },
+            table_intent_hint=False,
+        )
+        self.assertEqual(arbitration["auto_arbitration_decision"], "table")
+        self.assertFalse(arbitration["auto_arbitration_needs_clarification"])
+        self.assertTrue(arbitration["auto_arbitration_table_intent"])
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_arbitration_selects_text_when_margin_is_clear(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        arbitration = service._arbitrate_auto_mode(
+            scoring_diagnostics={
+                "auto_table_score": 0.22,
+                "auto_text_score": 0.71,
+                "auto_score_table_hits": 2,
+                "auto_score_text_hits": 3,
+            },
+            table_intent_hint=True,
+        )
+        self.assertEqual(arbitration["auto_arbitration_decision"], "text")
+        self.assertFalse(arbitration["auto_arbitration_needs_clarification"])
+        self.assertFalse(arbitration["auto_arbitration_table_intent"])
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_arbitration_marks_ambiguous_scores_for_clarification(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        arbitration = service._arbitrate_auto_mode(
+            scoring_diagnostics={
+                "auto_table_score": 0.61,
+                "auto_text_score": 0.57,
+                "auto_score_table_hits": 3,
+                "auto_score_text_hits": 3,
+            },
+            table_intent_hint=True,
+        )
+        self.assertEqual(arbitration["auto_arbitration_decision"], "clarification")
+        self.assertTrue(arbitration["auto_arbitration_needs_clarification"])
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_dynamic_ambiguity_question_uses_table_and_text_evidence_labels(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        table_chunk = mock.Mock()
+        table_chunk.metadata = {
+            "index_type": "table",
+            "is_table_chunk": True,
+            "table_title": "Card fees",
+            "row_label": "Gold card",
+        }
+        table_chunk.content = "[Table] Card fees\nplan: Gold card\nannual fee: 199"
+        text_chunk = mock.Mock()
+        text_chunk.metadata = {"index_type": "text", "section_heading": "Benefits"}
+        text_chunk.content = "Gold card benefits include airport lounge access and cashback rewards."
+        table_hit = ChunkResult(
+            chunk=table_chunk,
+            source_stage="unit",
+            rerank_score=0.72,
+            lexical_score=0.61,
+            diagnostics={
+                "specific_match_tokens": ("gold", "fee"),
+                "header_match_tokens": ("annual", "fee"),
+            },
+        )
+        text_hit = ChunkResult(
+            chunk=text_chunk,
+            source_stage="unit",
+            rerank_score=0.7,
+            lexical_score=0.64,
+        )
+        question, table_label, text_label = service._build_auto_ambiguity_clarification_question(
+            hits=(table_hit, text_hit),
+            query_tokens=("gold", "fee", "benefits"),
+        )
+        self.assertIn("table evidence around", question.lower())
+        self.assertIn("text evidence around", question.lower())
+        self.assertIn("both?", question.lower())
+        self.assertEqual(table_label, "gold fee")
+        self.assertIn("gold card benefits", text_label.lower())
+
+
 class KnowledgeSearchServiceAliasTests(TestCase):
     def setUp(self) -> None:
         super().setUp()
@@ -318,7 +540,7 @@ class KnowledgeSearchServiceTableTests(TestCase):
         self.assertTrue(result.snippets)
         self.assertIn(
             result.diagnostics.get("index_route"),
-            {"table_specific_fallback_table", "table_specific_balanced_fallback"},
+            {"table_primary_unfiltered", "table_primary_filtered", "table_primary_strong"},
         )
 
     @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
@@ -791,7 +1013,187 @@ class KnowledgeSearchServiceClarificationTests(TestCase):
             result.diagnostics.get("intent_clarification_question"),
             "Do you want one specific record or a full list?",
         )
+        auto_contract = result.diagnostics.get("auto_decision_contract") or {}
+        self.assertEqual(auto_contract.get("decision"), "clarification")
+        self.assertTrue(auto_contract.get("needs_clarification"))
+        self.assertEqual(auto_contract.get("table_score"), 0.0)
+        self.assertEqual(auto_contract.get("text_score"), 0.0)
+        self.assertEqual(auto_contract.get("margin"), 0.0)
         chunk_hits.assert_not_called()
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_ambiguous_auto_scores_return_needs_clarification_before_route(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        classification = QueryClassification(
+            intent=QueryIntent.SPECIFIC_LOOKUP,
+            confidence=0.83,
+            reasoning="clear intent",
+            retrieval_hints={},
+            requires_clarification=False,
+            clarification_question="",
+        )
+        table_context = {
+            "has_intent": True,
+            "comprehensive_intent": False,
+            "query_classification": classification,
+            "intent_fallback_attempted": False,
+            "intent_fallback_applied": False,
+            "matched_columns": {"fee"},
+            "matched_columns_query": {"fee"},
+            "matched_columns_tokens": {"fee"},
+            "matched_columns_specific": {"fee"},
+            "matched_row_labels": set(),
+            "matched_keywords": set(),
+            "numeric_intent": False,
+            "available_columns": {"fee"},
+            "semantic_columns": set(),
+            "matched_column_count": 1,
+            "query_tokens": {"gold", "fee"},
+            "specific_tokens": {"gold", "fee"},
+            "table_dominant": True,
+            "table_upload_ratio": 0.7,
+            "table_count": 2,
+            "table_uploads": 1,
+            "allow_generic": True,
+            "tenant_lexicon_entity_terms_count": 0,
+            "tenant_lexicon_attribute_terms_count": 0,
+        }
+        with (
+            mock.patch.object(service, "_table_query_context", return_value=table_context),
+            mock.patch.object(service, "_business_has_tables", return_value=True),
+            mock.patch.object(service, "search_by_alias", return_value=AliasSearchResult(tuple(), {})),
+            mock.patch.object(service, "_chunk_hits", return_value=tuple()),
+            mock.patch.object(
+                service,
+                "_score_auto_mode_candidates",
+                return_value={
+                    "auto_score_version": "v2",
+                    "auto_score_sample_size": 2,
+                    "auto_score_table_hits": 2,
+                    "auto_score_text_hits": 2,
+                    "auto_table_score": 0.64,
+                    "auto_text_score": 0.59,
+                    "auto_score_margin": 0.05,
+                },
+            ),
+            mock.patch.object(service, "_route_chunk_hits") as route_chunk_hits,
+        ):
+            result = service.search(
+                business_profile=self.business,
+                query="gold card details",
+            )
+
+        self.assertEqual(result.status, "needs_clarification")
+        self.assertFalse(result.snippets)
+        self.assertEqual(result.diagnostics.get("path"), "clarification")
+        self.assertEqual(result.diagnostics.get("reason"), "auto_source_ambiguity")
+        self.assertTrue(result.diagnostics.get("intent_requires_clarification"))
+        self.assertIn(
+            "table-only",
+            str(result.diagnostics.get("intent_clarification_question") or "").lower(),
+        )
+        auto_contract = result.diagnostics.get("auto_decision_contract") or {}
+        self.assertEqual(auto_contract.get("decision"), "clarification")
+        self.assertTrue(auto_contract.get("needs_clarification"))
+        route_chunk_hits.assert_not_called()
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_ambiguous_auto_scores_emit_dynamic_evidence_labels(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        classification = QueryClassification(
+            intent=QueryIntent.SPECIFIC_LOOKUP,
+            confidence=0.83,
+            reasoning="clear intent",
+            retrieval_hints={},
+            requires_clarification=False,
+            clarification_question="",
+        )
+        table_context = {
+            "has_intent": True,
+            "comprehensive_intent": False,
+            "query_classification": classification,
+            "intent_fallback_attempted": False,
+            "intent_fallback_applied": False,
+            "matched_columns": {"fee"},
+            "matched_columns_query": {"fee"},
+            "matched_columns_tokens": {"fee"},
+            "matched_columns_specific": {"fee"},
+            "matched_row_labels": set(),
+            "matched_keywords": set(),
+            "numeric_intent": False,
+            "available_columns": {"fee"},
+            "semantic_columns": set(),
+            "matched_column_count": 1,
+            "query_tokens": {"gold", "fee", "benefits"},
+            "specific_tokens": {"gold", "fee"},
+            "table_dominant": True,
+            "table_upload_ratio": 0.7,
+            "table_count": 2,
+            "table_uploads": 1,
+            "allow_generic": True,
+            "tenant_lexicon_entity_terms_count": 0,
+            "tenant_lexicon_attribute_terms_count": 0,
+        }
+        table_chunk = mock.Mock()
+        table_chunk.metadata = {
+            "index_type": "table",
+            "is_table_chunk": True,
+            "table_title": "Card fees",
+            "row_label": "Gold card",
+        }
+        table_chunk.content = "[Table] Card fees\nplan: Gold card\nannual fee: 199"
+        text_chunk = mock.Mock()
+        text_chunk.metadata = {"index_type": "text", "section_heading": "Benefits"}
+        text_chunk.content = "Gold card benefits include airport lounge access and cashback rewards."
+        chunk_hits = (
+            ChunkResult(
+                chunk=table_chunk,
+                source_stage="unit",
+                rerank_score=0.74,
+                lexical_score=0.62,
+                diagnostics={"specific_match_tokens": ("gold", "fee")},
+            ),
+            ChunkResult(
+                chunk=text_chunk,
+                source_stage="unit",
+                rerank_score=0.71,
+                lexical_score=0.65,
+            ),
+        )
+        with (
+            mock.patch.object(service, "_table_query_context", return_value=table_context),
+            mock.patch.object(service, "_business_has_tables", return_value=True),
+            mock.patch.object(service, "search_by_alias", return_value=AliasSearchResult(tuple(), {})),
+            mock.patch.object(service, "_chunk_hits", return_value=chunk_hits),
+            mock.patch.object(
+                service,
+                "_score_auto_mode_candidates",
+                return_value={
+                    "auto_score_version": "v2",
+                    "auto_score_sample_size": 2,
+                    "auto_score_table_hits": 2,
+                    "auto_score_text_hits": 2,
+                    "auto_table_score": 0.66,
+                    "auto_text_score": 0.6,
+                    "auto_score_margin": 0.06,
+                },
+            ),
+            mock.patch.object(service, "_route_chunk_hits") as route_chunk_hits,
+        ):
+            result = service.search(
+                business_profile=self.business,
+                query="gold card details and benefits",
+            )
+
+        self.assertEqual(result.status, "needs_clarification")
+        self.assertIn("gold", str(result.diagnostics.get("intent_clarification_question") or "").lower())
+        self.assertIn("benefits", str(result.diagnostics.get("intent_clarification_question") or "").lower())
+        self.assertEqual(result.diagnostics.get("auto_arbitration_table_evidence_label"), "gold")
+        self.assertIn(
+            "gold card benefits",
+            str(result.diagnostics.get("auto_arbitration_text_evidence_label") or "").lower(),
+        )
+        route_chunk_hits.assert_not_called()
 
 
 class KnowledgeSearchServicePhaseSixValidationTests(TestCase):

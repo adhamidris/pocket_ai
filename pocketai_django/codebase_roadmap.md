@@ -186,6 +186,10 @@ Runtime contract notes (verified from code):
 - `KnowledgeSearchService` reads `RAG_NON_QUERYABLE_TABLE_FORMATS` at init and applies it via `_filter_queryable_table_uploads`.
 - `read_knowledge` can auto-fallback from table preview to text read for document uploads when table result is `not_found` with zero evaluated rows and no strong table signal.
 - Row expansion in `KnowledgeSearchService._expand_table_rows` prefers shard-local row chunks when a matched table summary chunk includes `table_row_shard_index`.
+- `KnowledgeSearchService.search` now emits `diagnostics.auto_decision_contract` with Point #3 contract keys (`table_score`, `text_score`, `margin`, `decision`, `needs_clarification`); Phase-2 scoring (`auto_score_version=v2`) computes table/text scores from current candidates, and Phase-3 arbitration (`auto_arbitration_version=v1`) applies margin-based source selection plus `needs_clarification` on strong ambiguous table/text evidence.
+- Ambiguous auto-arbitration clarification is now evidence-aware: `intent_clarification_question` is generated from current table/text hits and diagnostics expose `auto_arbitration_table_evidence_label` / `auto_arbitration_text_evidence_label` when available.
+- `_route_chunk_hits` now follows a single authoritative source path (`table_primary*` vs `text_primary`) with table-specific refinement only; legacy cross-mode fallback route branches were merged to align with auto arbitration decisions.
+- CI now includes explicit blocking gates for auto-routing contract tests (decision contract, table/text clear-winner arbitration, ambiguous clarification path, and mixed-evidence clarification wording) in `.github/workflows/deploy.yml`.
 
 ---
 

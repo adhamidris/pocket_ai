@@ -124,6 +124,24 @@ jobs:
             apps.rag.tests.test_knowledge_search_service \
             apps.knowledge.tests.test_lexicon_learning_phase_three \
             --noinput
+
+      - name: Run RAG auto-routing contract gates
+        working-directory: ./pocketai_django
+        env:
+          DJANGO_SETTINGS_MODULE: pocketai.settings
+          DJANGO_SECRET_KEY: test-secret-key-for-ci
+          POSTGRES_DB: pocketai_test
+          POSTGRES_USER: pocketai
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_HOST: localhost
+          REDIS_URL: redis://localhost:6379/0
+        run: |
+          python manage.py test \
+            apps.rag.tests.test_knowledge_search_service.KnowledgeSearchServiceAutoDecisionContractTests \
+            apps.rag.tests.test_knowledge_search_service.KnowledgeSearchServiceAutoArbitrationTests \
+            apps.rag.tests.test_knowledge_search_service.KnowledgeSearchServiceClarificationTests.test_ambiguous_auto_scores_return_needs_clarification_before_route \
+            apps.rag.tests.test_knowledge_search_service.KnowledgeSearchServiceClarificationTests.test_ambiguous_auto_scores_emit_dynamic_evidence_labels \
+            --noinput
       
       - name: Run Django tests
         working-directory: ./pocketai_django

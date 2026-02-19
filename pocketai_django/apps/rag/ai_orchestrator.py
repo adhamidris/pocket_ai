@@ -868,6 +868,16 @@ class KnowledgeSearchService:
             self.intent_clarification_threshold = 0.45
         if self.intent_clarification_threshold > self.intent_llm_fallback_threshold:
             self.intent_clarification_threshold = self.intent_llm_fallback_threshold
+        self.auto_mode_margin_threshold = float(
+            getattr(settings, "RAG_AUTO_MODE_MARGIN_THRESHOLD", 0.12)
+        )
+        if not (0.0 <= self.auto_mode_margin_threshold <= 1.0):
+            self.auto_mode_margin_threshold = 0.12
+        self.auto_mode_min_score = float(
+            getattr(settings, "RAG_AUTO_MODE_MIN_SCORE", 0.35)
+        )
+        if not (0.0 <= self.auto_mode_min_score <= 1.0):
+            self.auto_mode_min_score = 0.35
         logger.info("🎯 Strategy router initialized with intent-aware retrieval strategies")
 
     def _business_override(self, business_profile, key: str, default: int | float) -> int | float:
@@ -1288,6 +1298,9 @@ class KnowledgeSearchService:
                 diagnostics=dict(alias_result.diagnostics or {}),
                 short_circuit=False,
             )
+        auto_decision_contract = self._derive_auto_decision_contract(
+            requires_clarification=bool(classification.requires_clarification) if classification else False,
+        )
         diagnostics: dict[str, object] = {
             "original_query": traits.original,
             "normalized_query": traits.normalized,
@@ -1334,6 +1347,7 @@ class KnowledgeSearchService:
             "alias_short_circuit_blocked": alias_blocked,
             "table_reason": None,
             "chunk_candidate_count": 0,
+            "auto_decision_contract": auto_decision_contract,
         }
         if alias_result.diagnostics:
             diagnostics.update(dict(alias_result.diagnostics))
@@ -1715,12 +1729,70 @@ class KnowledgeSearchService:
                         "request": diagnostics.get("request_id"),
                     },
                 )
+        auto_score_diag = self._score_auto_mode_candidates(
+            chunk_hits,
+            query_tokens=traits.tokens,
+            specific_tokens=tuple(table_context.get("specific_tokens") or ()),
+        )
+        diagnostics.update(auto_score_diag)
+        auto_arbitration_diag = self._arbitrate_auto_mode(
+            scoring_diagnostics=diagnostics,
+            table_intent_hint=table_intent,
+        )
+        diagnostics.update(auto_arbitration_diag)
+        table_intent = bool(auto_arbitration_diag.get("auto_arbitration_table_intent", table_intent))
+
+        if bool(auto_arbitration_diag.get("auto_arbitration_needs_clarification")) and not traits.is_identifier_like:
+            clarification_question, table_evidence_label, text_evidence_label = (
+                self._build_auto_ambiguity_clarification_question(
+                    hits=chunk_hits,
+                    query_tokens=traits.tokens,
+                )
+            )
+            diagnostics["path"] = "clarification"
+            diagnostics["reason"] = "auto_source_ambiguity"
+            diagnostics["intent_requires_clarification"] = True
+            diagnostics["intent_clarification_question"] = clarification_question
+            diagnostics["auto_arbitration_table_evidence_label"] = table_evidence_label
+            diagnostics["auto_arbitration_text_evidence_label"] = text_evidence_label
+            diagnostics["snippet_count"] = 0
+            diagnostics["total_duration_ms"] = self._duration_ms(overall_start)
+            diagnostics["auto_decision_contract"] = self._derive_auto_decision_contract(
+                scoring_diagnostics=diagnostics,
+                requires_clarification=True,
+            )
+            result_obj = KnowledgeSearchResult(
+                snippets=tuple(),
+                status="needs_clarification",
+                diagnostics=diagnostics,
+            )
+            self._result_cache_set(cache_key, result_obj, limit=limit)
+            self._session_cache_set(session_cache, cache_key, result_obj, limit=limit)
+            self._record_retrieval_event(
+                business_profile=business_profile,
+                traits=traits,
+                alias_result=alias_result,
+                result=result_obj,
+                feature_state=feature_state,
+            )
+            self._log_search_summary(
+                business_profile=business_profile,
+                request_id=request_id,
+                result=result_obj,
+            )
+            return result_obj
+
         chunk_hits, _context_hits, route_diag = self._route_chunk_hits(
             chunk_hits,
             table_intent=table_intent,
             table_context=table_context,
         )
         diagnostics.update(route_diag)
+        diagnostics["auto_decision_contract"] = self._derive_auto_decision_contract(
+            route_diagnostics=route_diag,
+            scoring_diagnostics=diagnostics,
+            requires_clarification=bool(classification.requires_clarification) if classification else False,
+        )
         diagnostics["chunk_candidate_count"] = len(chunk_hits)
         table_snippets: tuple[KnowledgeSnippet, ...] = tuple()
         table_reason: str | None = None
@@ -8052,6 +8124,396 @@ class KnowledgeSearchService:
             take_text = not take_text
         return tuple(merged)
 
+    @staticmethod
+    def _safe_float(value: object, *, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return float(default)
+
+    @staticmethod
+    def _clamp_unit(value: float) -> float:
+        return max(0.0, min(1.0, float(value)))
+
+    @classmethod
+    def _aggregate_auto_scores(cls, scores: Sequence[float]) -> float:
+        if not scores:
+            return 0.0
+        ordered = sorted((max(0.0, float(score)) for score in scores), reverse=True)
+        weights = (1.0, 0.75, 0.55, 0.4, 0.3)
+        limited = ordered[: len(weights)]
+        weighted_sum = sum(value * weights[idx] for idx, value in enumerate(limited))
+        weight_total = sum(weights[: len(limited)]) or 1.0
+        coverage = min(1.0, len(ordered) / 3.0)
+        # Reward multiple strong corroborating hits without letting long tails dominate.
+        return (weighted_sum / weight_total) * (0.75 + 0.25 * coverage)
+
+    def _score_auto_mode_candidates(
+        self,
+        hits: Sequence[ChunkResult],
+        *,
+        query_tokens: Sequence[str] | None = None,
+        specific_tokens: Sequence[str] | None = None,
+    ) -> dict[str, object]:
+        if not hits:
+            return {
+                "auto_score_version": "v2",
+                "auto_score_sample_size": 0,
+                "auto_score_table_hits": 0,
+                "auto_score_text_hits": 0,
+                "auto_table_score": 0.0,
+                "auto_text_score": 0.0,
+                "auto_score_margin": 0.0,
+                "auto_table_signal_header_hits": 0,
+                "auto_table_signal_specific_hits": 0,
+                "auto_table_signal_strong_hits": 0,
+                "auto_text_semantic_overlap_avg": 0.0,
+            }
+
+        normalized_query_tokens = tuple(
+            str(token).strip().lower()
+            for token in (query_tokens or ())
+            if str(token).strip()
+        )
+        query_token_set = set(normalized_query_tokens)
+        specific_token_set = {
+            str(token).strip().lower()
+            for token in (specific_tokens or ())
+            if str(token).strip()
+        }
+        sample = tuple(hits[: max(1, int(self.table_chunk_sample_limit))])
+
+        table_scores: list[float] = []
+        text_scores: list[float] = []
+        table_header_hits = 0
+        table_specific_hits = 0
+        table_strong_hits = 0
+        text_semantic_scores: list[float] = []
+
+        for hit in sample:
+            chunk = hit.chunk
+            metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+            content = str(chunk.content or "")
+
+            rerank = self._clamp_unit(self._safe_float(hit.rerank_score))
+            lexical = self._clamp_unit(self._safe_float(hit.lexical_score))
+            alias = self._clamp_unit(self._safe_float(hit.alias_confidence))
+            recency = self._clamp_unit(self._safe_float(hit.recency_score))
+            vector_distance = hit.vector_distance
+            vector_signal = 0.0
+            if isinstance(vector_distance, (int, float)):
+                vector_signal = self._clamp_unit(1.0 - float(vector_distance))
+            if lexical <= 0.0 and normalized_query_tokens:
+                lexical = self._clamp_unit(self._lexical_score_text(content, normalized_query_tokens))
+
+            # Base relevance from existing ranking signals.
+            base = max(
+                rerank,
+                (0.45 * lexical) + (0.2 * alias) + (0.2 * recency) + (0.15 * vector_signal),
+            )
+
+            index_type = self._chunk_index_type(chunk)
+            if index_type == "table":
+                match_info = hit.diagnostics if isinstance(hit.diagnostics, dict) else {}
+                if not {"header_match", "specific_match", "specific_match_strong"} & set(match_info.keys()):
+                    if query_token_set or specific_token_set:
+                        computed = self._table_chunk_match_info(
+                            chunk,
+                            query_tokens=query_token_set,
+                            specific_tokens=specific_token_set,
+                        )
+                        if isinstance(hit.diagnostics, dict):
+                            hit.diagnostics.update(computed)
+                        match_info = computed
+
+                header_match = bool(match_info.get("header_match"))
+                specific_match = bool(match_info.get("specific_match"))
+                strong_match = bool(match_info.get("specific_match_strong"))
+                ratio = self._clamp_unit(self._safe_float(match_info.get("specific_match_ratio")))
+                role = str(metadata.get("table_chunk_role") or "").strip().lower()
+                is_preview = bool(metadata.get("is_table_preview"))
+
+                table_boost = 0.0
+                if header_match:
+                    table_boost += 0.18
+                    table_header_hits += 1
+                if specific_match:
+                    table_boost += 0.24
+                    table_specific_hits += 1
+                if strong_match:
+                    table_boost += 0.3
+                    table_strong_hits += 1
+                table_boost += 0.15 * ratio
+                if role == "row":
+                    table_boost += 0.08
+                if is_preview:
+                    table_boost -= 0.05
+                table_scores.append(max(0.0, base + table_boost))
+            else:
+                semantic_overlap = self._clamp_unit(self._lexical_score_text(content, normalized_query_tokens))
+                density = self._clamp_unit(min(1.0, len(content) / 600.0))
+                text_boost = (0.28 * semantic_overlap) + (0.08 * density)
+                text_scores.append(max(0.0, base + text_boost))
+                text_semantic_scores.append(semantic_overlap)
+
+        table_score = round(self._aggregate_auto_scores(table_scores), 6)
+        text_score = round(self._aggregate_auto_scores(text_scores), 6)
+        margin = round(abs(table_score - text_score), 6)
+        text_semantic_avg = round(sum(text_semantic_scores) / len(text_semantic_scores), 6) if text_semantic_scores else 0.0
+
+        return {
+            "auto_score_version": "v2",
+            "auto_score_sample_size": len(sample),
+            "auto_score_table_hits": len(table_scores),
+            "auto_score_text_hits": len(text_scores),
+            "auto_table_score": table_score,
+            "auto_text_score": text_score,
+            "auto_score_margin": margin,
+            "auto_table_signal_header_hits": table_header_hits,
+            "auto_table_signal_specific_hits": table_specific_hits,
+            "auto_table_signal_strong_hits": table_strong_hits,
+            "auto_text_semantic_overlap_avg": text_semantic_avg,
+        }
+
+    @staticmethod
+    def _clean_auto_evidence_label(value: object, *, max_chars: int = 72) -> str:
+        text = re.sub(r"\s+", " ", str(value or "")).strip(" \n\r\t-:|,.;")
+        if not text:
+            return ""
+        if len(text) > max_chars:
+            text = text[:max_chars].rstrip()
+        return text
+
+    def _auto_result_strength(self, hit: ChunkResult) -> float:
+        values = [
+            self._safe_float(hit.rerank_score),
+            self._safe_float(hit.lexical_score),
+            self._safe_float(hit.alias_confidence),
+            self._safe_float(hit.recency_score),
+        ]
+        if isinstance(hit.vector_distance, (int, float)):
+            values.append(1.0 - float(hit.vector_distance))
+        return max(values) if values else 0.0
+
+    def _table_auto_evidence_label(self, hit: ChunkResult, *, query_tokens: Sequence[str]) -> str:
+        metadata = hit.chunk.metadata if isinstance(hit.chunk.metadata, dict) else {}
+        diagnostics = hit.diagnostics if isinstance(hit.diagnostics, dict) else {}
+
+        specific_tokens_raw = diagnostics.get("specific_match_tokens")
+        header_tokens_raw = diagnostics.get("header_match_tokens")
+        token_pool: list[str] = []
+        for source in (specific_tokens_raw, header_tokens_raw):
+            if isinstance(source, (list, tuple)):
+                token_pool.extend(str(item).strip().lower() for item in source if str(item).strip())
+        if token_pool:
+            preferred: list[str] = []
+            token_set = set(token_pool)
+            for token in query_tokens:
+                lowered = str(token).strip().lower()
+                if lowered and lowered in token_set and lowered not in preferred:
+                    preferred.append(lowered)
+            if not preferred:
+                preferred = [token for token in token_pool if token]
+            label = " ".join(preferred[:3])
+            cleaned = self._clean_auto_evidence_label(label)
+            if cleaned:
+                return cleaned
+
+        for key in ("row_label", "table_title", "section_heading", "sheet_name"):
+            cleaned = self._clean_auto_evidence_label(metadata.get(key))
+            if cleaned:
+                return cleaned
+
+        content = str(hit.chunk.content or "")
+        if content:
+            for raw_line in content.splitlines():
+                line = self._clean_auto_evidence_label(raw_line)
+                if not line:
+                    continue
+                if line.startswith("["):
+                    continue
+                if ":" in line:
+                    left = self._clean_auto_evidence_label(line.split(":", 1)[0])
+                    if left:
+                        return left
+                return line
+        return "table records"
+
+    def _text_auto_evidence_label(self, hit: ChunkResult, *, query_tokens: Sequence[str]) -> str:
+        metadata = hit.chunk.metadata if isinstance(hit.chunk.metadata, dict) else {}
+        content = str(hit.chunk.content or "")
+        lowered = content.lower()
+        normalized_query_tokens = [str(token).strip().lower() for token in query_tokens if str(token).strip()]
+
+        for token in normalized_query_tokens:
+            idx = lowered.find(token)
+            if idx < 0:
+                continue
+            start = max(0, idx - 28)
+            end = min(len(content), idx + len(token) + 38)
+            excerpt = self._clean_auto_evidence_label(content[start:end])
+            if excerpt:
+                return excerpt
+
+        for key in ("section_heading", "entity_name", "display_name", "title"):
+            cleaned = self._clean_auto_evidence_label(metadata.get(key))
+            if cleaned:
+                return cleaned
+
+        if content:
+            for raw_line in content.splitlines():
+                line = self._clean_auto_evidence_label(raw_line)
+                if line:
+                    return line
+        return "document text"
+
+    def _build_auto_ambiguity_clarification_question(
+        self,
+        *,
+        hits: Sequence[ChunkResult],
+        query_tokens: Sequence[str],
+    ) -> tuple[str, str, str]:
+        table_hits = [hit for hit in hits if self._chunk_index_type(hit.chunk) == "table"]
+        text_hits = [hit for hit in hits if self._chunk_index_type(hit.chunk) != "table"]
+
+        table_label = ""
+        text_label = ""
+        if table_hits:
+            best_table = max(table_hits, key=self._auto_result_strength)
+            table_label = self._table_auto_evidence_label(best_table, query_tokens=query_tokens)
+        if text_hits:
+            best_text = max(text_hits, key=self._auto_result_strength)
+            text_label = self._text_auto_evidence_label(best_text, query_tokens=query_tokens)
+
+        if table_label and text_label:
+            question = (
+                f'I found table evidence around "{table_label}" and text evidence around "{text_label}". '
+                "Do you want table-only, text-only, or both?"
+            )
+            return question, table_label, text_label
+
+        question = (
+            "I found relevant evidence in both table data and document text. "
+            "Do you want table-only, text-only, or both?"
+        )
+        return question, table_label, text_label
+
+    def _arbitrate_auto_mode(
+        self,
+        *,
+        scoring_diagnostics: Mapping[str, object] | None = None,
+        table_intent_hint: bool = False,
+    ) -> dict[str, object]:
+        scoring = scoring_diagnostics or {}
+        table_score = self._clamp_unit(self._safe_float(scoring.get("auto_table_score")))
+        text_score = self._clamp_unit(self._safe_float(scoring.get("auto_text_score")))
+        margin = abs(table_score - text_score)
+
+        table_hits = max(0, int(self._safe_float(scoring.get("auto_score_table_hits"))))
+        text_hits = max(0, int(self._safe_float(scoring.get("auto_score_text_hits"))))
+
+        both_present = table_hits > 0 and text_hits > 0
+        table_strong = table_score >= self.auto_mode_min_score
+        text_strong = text_score >= self.auto_mode_min_score
+        ambiguous = bool(
+            both_present
+            and table_strong
+            and text_strong
+            and margin < self.auto_mode_margin_threshold
+        )
+
+        if ambiguous:
+            decision = "clarification"
+            resolved_table_intent = bool(table_intent_hint)
+            reason = "score_margin_ambiguous"
+            needs_clarification = True
+        elif table_score > text_score and margin >= self.auto_mode_margin_threshold:
+            decision = "table"
+            resolved_table_intent = True
+            reason = "score_margin_table"
+            needs_clarification = False
+        elif text_score > table_score and margin >= self.auto_mode_margin_threshold:
+            decision = "text"
+            resolved_table_intent = False
+            reason = "score_margin_text"
+            needs_clarification = False
+        else:
+            # Keep current behavior when scores are weak/insufficient.
+            decision = "table_hint" if table_intent_hint else "text_hint"
+            resolved_table_intent = bool(table_intent_hint)
+            reason = "insufficient_signal_fallback_to_hint"
+            needs_clarification = False
+
+        return {
+            "auto_arbitration_version": "v1",
+            "auto_arbitration_margin_threshold": round(self.auto_mode_margin_threshold, 6),
+            "auto_arbitration_min_score": round(self.auto_mode_min_score, 6),
+            "auto_arbitration_decision": decision,
+            "auto_arbitration_reason": reason,
+            "auto_arbitration_needs_clarification": needs_clarification,
+            "auto_arbitration_table_intent": resolved_table_intent,
+        }
+
+    @staticmethod
+    def _derive_auto_decision_contract(
+        *,
+        route_diagnostics: Mapping[str, object] | None = None,
+        scoring_diagnostics: Mapping[str, object] | None = None,
+        requires_clarification: bool = False,
+    ) -> dict[str, object]:
+        route_data = route_diagnostics or {}
+        scoring_data = scoring_diagnostics or {}
+
+        try:
+            table_hits = max(0, int(route_data.get("index_route_table_hits") or 0))
+        except (TypeError, ValueError):
+            table_hits = 0
+        try:
+            text_hits = max(0, int(route_data.get("index_route_text_hits") or 0))
+        except (TypeError, ValueError):
+            text_hits = 0
+
+        scored_table = scoring_data.get("auto_table_score")
+        scored_text = scoring_data.get("auto_text_score")
+        table_score = float(scored_table) if isinstance(scored_table, (int, float)) else float(table_hits)
+        text_score = float(scored_text) if isinstance(scored_text, (int, float)) else float(text_hits)
+        if isinstance(scoring_data.get("auto_score_margin"), (int, float)):
+            margin = round(float(scoring_data["auto_score_margin"]), 6)
+        else:
+            margin = round(abs(table_score - text_score), 6)
+        route = str(route_data.get("index_route") or "").strip().lower()
+        has_route = bool(route)
+        used_scoring = isinstance(scored_table, (int, float)) or isinstance(scored_text, (int, float))
+
+        if requires_clarification:
+            decision = "clarification"
+        elif used_scoring and margin <= 0.05 and table_score > 0.0 and text_score > 0.0:
+            decision = "blended"
+        elif used_scoring and table_score > text_score:
+            decision = "table"
+        elif used_scoring and text_score > table_score:
+            decision = "text"
+        elif not has_route:
+            decision = "undecided"
+        elif table_score > text_score:
+            decision = "table"
+        elif text_score > table_score:
+            decision = "text"
+        elif route.startswith("table"):
+            decision = "table"
+        elif route.startswith("text"):
+            decision = "text"
+        else:
+            decision = "undecided"
+
+        return {
+            "table_score": table_score,
+            "text_score": text_score,
+            "margin": margin,
+            "decision": decision,
+            "needs_clarification": bool(requires_clarification),
+        }
+
     def _route_chunk_hits(
         self,
         hits: Sequence[ChunkResult],
@@ -8070,73 +8532,94 @@ class KnowledgeSearchService:
             else:
                 text_hits.append(hit)
         specific_tokens = set((table_context or {}).get("specific_tokens") or ())
-        if table_intent and specific_tokens and table_hits:
-            query_tokens = set((table_context or {}).get("query_tokens") or ())
-            filtered_table_hits: list[ChunkResult] = []
-            strong_table_hits: list[ChunkResult] = []
-            for hit in table_hits:
-                match_info = self._table_chunk_match_info(
-                    hit.chunk,
-                    query_tokens=query_tokens,
-                    specific_tokens=specific_tokens,
+
+        # Authoritative source routing:
+        # - table_intent => stay on table-primary path (with deterministic table refinement only)
+        # - not table_intent => stay on text-primary path
+        # Cross-mode fallback is handled by auto arbitration earlier in the pipeline.
+        if table_intent:
+            if not table_hits:
+                return (
+                    tuple(hits),
+                    tuple(),
+                    {
+                        "index_route": "table_fallback_all",
+                        "index_route_table_hits": len(table_hits),
+                        "index_route_text_hits": len(text_hits),
+                    },
                 )
-                hit.diagnostics.update(match_info)
-                if match_info.get("specific_match"):
-                    filtered_table_hits.append(hit)
-                if match_info.get("specific_match_strong"):
-                    strong_table_hits.append(hit)
-            if strong_table_hits:
-                removed = len(table_hits) - len(strong_table_hits)
-                table_hits = strong_table_hits
-                route = "table_specific"
-                diagnostics = {
-                    "index_route": route,
-                    "index_route_table_hits": len(table_hits),
-                    "index_route_text_hits": len(text_hits),
-                    "table_specific_filtered": removed,
-                    "table_specific_strong_hits": len(strong_table_hits),
-                    "table_specific_weak_hits": len(filtered_table_hits) - len(strong_table_hits),
-                }
-                return tuple(table_hits), tuple(text_hits), diagnostics
-            filtered = len(table_hits)
-            weak_hits = len(filtered_table_hits)
-            if text_hits:
-                route = "table_specific_fallback_text"
-                diagnostics = {
-                    "index_route": route,
-                    "index_route_table_hits": 0,
-                    "index_route_text_hits": len(text_hits),
-                    "table_specific_filtered": filtered,
-                    "table_specific_weak_hits": weak_hits,
-                }
-                return tuple(text_hits), tuple(), diagnostics
-            # No direct specific-table match. Fall back to a balanced route so
-            # table-heavy corpora cannot starve text evidence when table rows miss.
-            route = "table_specific_balanced_fallback"
-            fallback_table_hits = filtered_table_hits or table_hits
-            primary = self._interleave_chunk_hits(text_hits, fallback_table_hits)
+
+            route = "table_primary"
+            primary_hits: Sequence[ChunkResult] = table_hits
+            filtered_count = 0
+            weak_count = 0
+            strong_count = 0
+
+            if specific_tokens:
+                query_tokens = set((table_context or {}).get("query_tokens") or ())
+                filtered_table_hits: list[ChunkResult] = []
+                strong_table_hits: list[ChunkResult] = []
+                for hit in table_hits:
+                    match_info = self._table_chunk_match_info(
+                        hit.chunk,
+                        query_tokens=query_tokens,
+                        specific_tokens=specific_tokens,
+                    )
+                    hit.diagnostics.update(match_info)
+                    if match_info.get("specific_match"):
+                        filtered_table_hits.append(hit)
+                    if match_info.get("specific_match_strong"):
+                        strong_table_hits.append(hit)
+
+                filtered_count = len(table_hits) - len(filtered_table_hits)
+                strong_count = len(strong_table_hits)
+                weak_count = max(0, len(filtered_table_hits) - len(strong_table_hits))
+
+                if strong_table_hits:
+                    primary_hits = strong_table_hits
+                    route = "table_primary_strong"
+                elif filtered_table_hits:
+                    primary_hits = filtered_table_hits
+                    route = "table_primary_filtered"
+                else:
+                    primary_hits = table_hits
+                    route = "table_primary_unfiltered"
+
             diagnostics = {
                 "index_route": route,
-                "index_route_table_hits": len(fallback_table_hits),
+                "index_route_table_hits": len(table_hits),
                 "index_route_text_hits": len(text_hits),
-                "table_specific_filtered": filtered,
-                "table_specific_weak_hits": weak_hits,
             }
-            return tuple(primary), tuple(), diagnostics
-        if table_intent:
-            primary = table_hits or list(hits)
-            context = text_hits if table_hits else []
-            route = "table_specific_first" if table_hits else "table_fallback_all"
-        else:
-            primary = text_hits or list(hits)
-            context = []
-            route = "text_first" if text_hits else "text_fallback_all"
-        diagnostics = {
-            "index_route": route,
-            "index_route_table_hits": len(table_hits),
-            "index_route_text_hits": len(text_hits),
-        }
-        return tuple(primary), tuple(context), diagnostics
+            if specific_tokens:
+                diagnostics.update(
+                    {
+                        "table_specific_filtered": filtered_count,
+                        "table_specific_strong_hits": strong_count,
+                        "table_specific_weak_hits": weak_count,
+                    }
+                )
+            return tuple(primary_hits), tuple(text_hits), diagnostics
+
+        if text_hits:
+            return (
+                tuple(text_hits),
+                tuple(table_hits),
+                {
+                    "index_route": "text_primary",
+                    "index_route_table_hits": len(table_hits),
+                    "index_route_text_hits": len(text_hits),
+                },
+            )
+
+        return (
+            tuple(hits),
+            tuple(),
+            {
+                "index_route": "text_fallback_all",
+                "index_route_table_hits": len(table_hits),
+                "index_route_text_hits": len(text_hits),
+            },
+        )
 
     def _table_parent_hits(
         self,
