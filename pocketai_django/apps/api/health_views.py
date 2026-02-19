@@ -7,6 +7,8 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET
 import time
 
+from core.cache_resilience import circuit_status
+
 
 @never_cache
 @require_GET
@@ -47,6 +49,16 @@ def health_check(request):
             checks['checks']['cache'] = 'warning: cache read/write failed'
     except Exception as e:
         checks['checks']['cache'] = f'warning: {str(e)}'
+
+    try:
+        redis_status = circuit_status()
+        if redis_status.using_redis_cache:
+            checks['checks']['cache_circuit'] = 'open' if redis_status.is_open else 'closed'
+            if redis_status.is_open:
+                checks['checks']['cache'] = 'warning: redis circuit open'
+    except Exception:
+        # Health endpoint should never fail because of diagnostics wiring.
+        pass
     
     # Return appropriate status code
     status_code = 200 if checks['status'] == 'healthy' else 503

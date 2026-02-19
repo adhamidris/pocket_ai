@@ -7,7 +7,13 @@ This repo is a multi-tenant B2B SaaS. Your job is to ship production-ready chang
 - `codebase_roadmap.md` — read this before touching any existing engine or path. It maps every runtime flow, background worker, core module, and external dependency in the system.
 
 ## Django and .venv location
-- `/pocketai_django/` && `source .venv/bin/activate`
+- Repo app root: `/pocketai_django/`
+- Virtualenv: `/pocketai_django/.venv/`
+- **Interpreter rule (mandatory):** never use bare `python`, `pip`, or `pytest` in commands.
+- Always run commands with explicit venv binaries:
+  - `.venv/bin/python ...`
+  - `.venv/bin/pip ...`
+  - `.venv/bin/python -m pytest ...`
 
 ## Environment configuration — read before debugging or building
 
@@ -210,15 +216,22 @@ Locale files live at:
 
 ## Running tests
 
-The project uses **pytest** with Django integration. Before marking any task as done, run the relevant tests to confirm nothing is broken.
+Canonical test runner for this repo is Django's test runner (`manage.py test`). CI uses this path and treats failures as blocking.
 
 ```sh
 cd pocketai_django
-source .venv/bin/activate
-pytest                          # run all tests
-pytest apps/rag/                # run tests for a specific app
-pytest -k "test_name"           # run a specific test by name
+.venv/bin/python manage.py test --noinput                                  # run all tests
+.venv/bin/python manage.py test apps.rag --noinput                         # run one app
+.venv/bin/python manage.py test apps.mcp.tests.test_mcp_tools --noinput    # run one module
 ```
+
+If you need pytest locally, invoke it via the same interpreter:
+
+```sh
+.venv/bin/python -m pytest
+```
+
+Do not rely on shell activation persistence between commands; many agent/tool shells are non-interactive and will fall back to system Python unless `.venv/bin/...` is explicit.
 
 When adding a new feature or fixing a bug, check whether a test file already exists for that module before writing new tests. If tests exist, run them before and after your change. If the feature has no tests and the scope of your task allows it, add at least one test covering the core behavior.
 

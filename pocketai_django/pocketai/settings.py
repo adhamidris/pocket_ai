@@ -403,6 +403,30 @@ if redis_url:
         "TIMEOUT": 300,
     }
 
+# Redis circuit breaker for strict cache operations in critical paths.
+# REDIS_CIRCUIT_BREAKER_ENABLED: Enable per-process short-circuiting after repeated Redis failures.
+REDIS_CIRCUIT_BREAKER_ENABLED = os.getenv("REDIS_CIRCUIT_BREAKER_ENABLED", "true").lower() in {"1", "true", "yes"}
+try:
+    # REDIS_CIRCUIT_BREAKER_FAILURE_THRESHOLD: Consecutive failures before opening the circuit.
+    REDIS_CIRCUIT_BREAKER_FAILURE_THRESHOLD = int(os.getenv("REDIS_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "3") or 3)
+except (TypeError, ValueError):
+    REDIS_CIRCUIT_BREAKER_FAILURE_THRESHOLD = 3
+REDIS_CIRCUIT_BREAKER_FAILURE_THRESHOLD = max(1, REDIS_CIRCUIT_BREAKER_FAILURE_THRESHOLD)
+try:
+    # REDIS_CIRCUIT_BREAKER_RECOVERY_SECONDS: Open-circuit cooloff before retrying Redis.
+    REDIS_CIRCUIT_BREAKER_RECOVERY_SECONDS = float(os.getenv("REDIS_CIRCUIT_BREAKER_RECOVERY_SECONDS", "30") or 30)
+except (TypeError, ValueError):
+    REDIS_CIRCUIT_BREAKER_RECOVERY_SECONDS = 30.0
+REDIS_CIRCUIT_BREAKER_RECOVERY_SECONDS = max(1.0, REDIS_CIRCUIT_BREAKER_RECOVERY_SECONDS)
+try:
+    # REDIS_CIRCUIT_BREAKER_LOG_COOLDOWN_SECONDS: Minimum spacing between repeated circuit warning logs.
+    REDIS_CIRCUIT_BREAKER_LOG_COOLDOWN_SECONDS = float(
+        os.getenv("REDIS_CIRCUIT_BREAKER_LOG_COOLDOWN_SECONDS", "10") or 10
+    )
+except (TypeError, ValueError):
+    REDIS_CIRCUIT_BREAKER_LOG_COOLDOWN_SECONDS = 10.0
+REDIS_CIRCUIT_BREAKER_LOG_COOLDOWN_SECONDS = max(1.0, REDIS_CIRCUIT_BREAKER_LOG_COOLDOWN_SECONDS)
+
 # EMBED_PROVIDER: Embedding backend ("local" for FastEmbed, or "openai").
 EMBED_PROVIDER = os.getenv("EMBED_PROVIDER", "local")
 # Default to a multilingual FastEmbed model so Arabic/mixed-language tenants work out of the box.

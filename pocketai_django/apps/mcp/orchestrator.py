@@ -98,6 +98,7 @@ from .sanitizer import (
 )
 from django.core.cache import cache
 
+from core.cache_resilience import CacheUnavailableError, reserve_counter
 from core.tenancy import tenant_context
 
 from .types import (
@@ -9712,20 +9713,21 @@ class McpOrchestratorService:
         def _reserve(count: int) -> None:
             if count <= 0:
                 return
-            current = cache.get(cache_key)
-            if current is None:
-                if count > limit:
-                    raise CharacterBudgetExceeded(
-                        f"Per-minute character budget exceeded (requested {count}, max {limit})."
-                    )
-                cache.set(cache_key, count, timeout=window)
-                return
-            new_total = int(current) + count
+            try:
+                new_total = reserve_counter(
+                    key=cache_key,
+                    window_seconds=window,
+                    amount=int(count),
+                    operation="char_budget_per_minute",
+                )
+            except CacheUnavailableError as exc:
+                raise CharacterBudgetExceeded(
+                    "Per-minute character budget is temporarily unavailable. Please retry in a moment."
+                ) from exc
             if new_total > limit:
                 raise CharacterBudgetExceeded(
                     f"Per-minute character budget exceeded (requested {new_total}, max {limit})."
                 )
-            cache.set(cache_key, new_total, timeout=window)
 
         return _reserve
 

@@ -5,11 +5,11 @@ import logging
 from typing import Any, Mapping
 
 from django.conf import settings
-from django.core.cache import cache
 
 from apps.accounts.models import BusinessProfile
 from apps.knowledge.models import KnowledgeUpload
 from apps.mcp.types import ToolRateLimitExceeded
+from core.cache_resilience import CacheUnavailableError, reserve_counter
 
 
 logger = logging.getLogger(__name__)
@@ -231,22 +231,27 @@ def enforce_tool_rate_limit(
         key += f":{upload.id}"
 
     try:
-        current = cache.get(key)
-        if current is None:
-            cache.set(key, 1, timeout=window_seconds)
-            return
-        try:
-            new_total = cache.incr(key)
-        except Exception:
-            new_total = int(current) + 1
-            cache.set(key, new_total, timeout=window_seconds)
-        if int(new_total) > calls_per_minute:
-            raise ToolRateLimitExceeded(
-                f"Rate limit exceeded for {tool}. Try again in a moment or narrow the request."
-            )
+        new_total = reserve_counter(
+            key=key,
+            window_seconds=window_seconds,
+            amount=1,
+            operation=f"tool_rate_limit:{tool}",
+        )
+    except CacheUnavailableError:
+        logger.error(
+            "tabular.rate_limit.unavailable tool=%s business=%s",
+            tool,
+            business_profile.id,
+        )
+        raise ToolRateLimitExceeded("Rate limiting is temporarily unavailable. Please retry in a moment.")
     except ToolRateLimitExceeded:
         raise
     except Exception:
-        # Rate limiting must never break the request flow.
+        # Fail closed on unexpected limiter failures to avoid uncontrolled fanout under degraded cache state.
         logger.exception("tabular.rate_limit.failed tool=%s business=%s", tool, business_profile.id)
-        return
+        raise ToolRateLimitExceeded("Rate limiting is temporarily unavailable. Please retry in a moment.")
+
+    if int(new_total) > calls_per_minute:
+        raise ToolRateLimitExceeded(
+            f"Rate limit exceeded for {tool}. Try again in a moment or narrow the request."
+        )

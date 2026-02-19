@@ -19,6 +19,23 @@ python manage.py migrate
 python manage.py runserver 127.0.0.1:3000
 ```
 
+## Running tests
+
+Use Django's test runner (same as CI):
+
+```sh
+cd pocketai_django
+source .venv/bin/activate
+python manage.py test --noinput
+```
+
+Targeted runs:
+
+```sh
+python manage.py test apps.rag --noinput
+python manage.py test apps.mcp.tests.test_mcp_tools --noinput
+```
+
 ## Local dev processes (Portal + Ingestion + Sub-agents + Voice Calls)
 
 Run these in separate terminals (with `cd pocketai_django` and `.venv` activated):
@@ -88,4 +105,13 @@ ngrok start --all
 
 - Environment variables are loaded from the repository root `.env` via `pocketai/env.py`.
 - MCP chat provider uses `MCP_PROVIDER`; non‑MCP flows (voice/post‑call) use `LLM_PROVIDER` if set (otherwise auto‑pick based on available keys).
+- Redis hardening flags for critical cache paths:
+  - `REDIS_CIRCUIT_BREAKER_ENABLED`
+  - `REDIS_CIRCUIT_BREAKER_FAILURE_THRESHOLD`
+  - `REDIS_CIRCUIT_BREAKER_RECOVERY_SECONDS`
+  - `REDIS_CIRCUIT_BREAKER_LOG_COOLDOWN_SECONDS`
+- Quick outage drill (staging):
+  1. stop Redis
+  2. hit `GET /api/health/` and confirm `cache_circuit` becomes `open`
+  3. call portal verification endpoints and confirm they return `verification_unavailable` (HTTP `503`) instead of silent/misleading cache misses
 - Do not commit virtualenvs or runtime artifacts (`.venv/`, `var/`).

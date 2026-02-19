@@ -23,6 +23,13 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 from core.otel import otel_context, otel_trace
+from core.cache_resilience import (
+    CacheUnavailableError,
+    delete_state_key,
+    load_json_state,
+    reserve_cooldown_key,
+    store_json_state,
+)
 
 from pocketai.language import normalize_language_code
 
@@ -1860,9 +1867,25 @@ def portal_verification_start(request: HttpRequest) -> JsonResponse:
     max_attempts = max(3, min(max_attempts, 10))
 
     cooldown_key = f"portal:verify:cooldown:{conversation.id}:{method}"
-    if cache.get(cooldown_key):
+    try:
+        reserved_cooldown = reserve_cooldown_key(
+            key=cooldown_key,
+            ttl_seconds=cooldown_seconds,
+            operation="portal_verification_start.cooldown",
+        )
+    except CacheUnavailableError:
+        logger.error(
+            "portal.verification.cache_unavailable stage=start.cooldown conversation=%s method=%s",
+            conversation.id,
+            method,
+        )
+        return _json_error(
+            "verification_unavailable",
+            "Verification is temporarily unavailable. Please retry in a moment.",
+            status=503,
+        )
+    if not reserved_cooldown:
         return _json_error("rate_limited", "Please wait a moment before requesting another code.", status=429)
-    cache.set(cooldown_key, True, timeout=cooldown_seconds)
 
     challenge_id = uuid.uuid4()
     code = f"{secrets.randbelow(1_000_000):06d}"
@@ -1876,7 +1899,31 @@ def portal_verification_start(request: HttpRequest) -> JsonResponse:
         "expires_at": expires_at.isoformat(),
     }
     cache_key = f"portal:verify:challenge:{conversation.id}:{challenge_id}"
-    cache.set(cache_key, record, timeout=ttl_seconds)
+    try:
+        store_json_state(
+            key=cache_key,
+            payload=record,
+            ttl_seconds=ttl_seconds,
+            operation="portal_verification_start.challenge",
+        )
+    except CacheUnavailableError:
+        logger.error(
+            "portal.verification.cache_unavailable stage=start.challenge conversation=%s method=%s",
+            conversation.id,
+            method,
+        )
+        try:
+            delete_state_key(
+                key=cooldown_key,
+                operation="portal_verification_start.cooldown_rollback",
+            )
+        except CacheUnavailableError:
+            pass
+        return _json_error(
+            "verification_unavailable",
+            "Verification is temporarily unavailable. Please retry in a moment.",
+            status=503,
+        )
 
     # NOTE: For local/dev we can return the code to simplify end-to-end testing.
     return_code = bool(getattr(settings, "PORTAL_VERIFICATION_DEBUG_RETURN_CODE", False) or getattr(settings, "DEBUG", False))
@@ -1917,7 +1964,21 @@ def portal_verification_confirm(request: HttpRequest) -> JsonResponse:
         return _json_error("not_found", str(exc), status=404)
 
     cache_key = f"portal:verify:challenge:{conversation.id}:{challenge_id}"
-    record = cache.get(cache_key)
+    try:
+        record = load_json_state(
+            key=cache_key,
+            operation="portal_verification_confirm.challenge",
+        )
+    except CacheUnavailableError:
+        logger.error(
+            "portal.verification.cache_unavailable stage=confirm.load conversation=%s",
+            conversation.id,
+        )
+        return _json_error(
+            "verification_unavailable",
+            "Verification is temporarily unavailable. Please retry in a moment.",
+            status=503,
+        )
     if not isinstance(record, Mapping):
         return _json_error("verification_expired", "Verification challenge expired. Request a new code.", status=410)
 
@@ -1931,13 +1992,19 @@ def portal_verification_confirm(request: HttpRequest) -> JsonResponse:
     if expires_at and timezone.is_naive(expires_at):
         expires_at = timezone.make_aware(expires_at, timezone.get_current_timezone())
     if expires_at and expires_at < timezone.now():
-        cache.delete(cache_key)
+        try:
+            delete_state_key(key=cache_key, operation="portal_verification_confirm.expired_delete")
+        except CacheUnavailableError:
+            pass
         return _json_error("verification_expired", "Verification challenge expired. Request a new code.", status=410)
 
     attempts = int(record.get("attempts") or 0)
     max_attempts = int(record.get("max_attempts") or 5)
     if attempts >= max_attempts:
-        cache.delete(cache_key)
+        try:
+            delete_state_key(key=cache_key, operation="portal_verification_confirm.max_attempts_delete")
+        except CacheUnavailableError:
+            pass
         return _json_error("too_many_attempts", "Too many attempts. Request a new code.", status=429)
 
     expected = str(record.get("code_sha256") or "")
@@ -1949,7 +2016,23 @@ def portal_verification_confirm(request: HttpRequest) -> JsonResponse:
         ttl_remaining = 60
         if expires_at:
             ttl_remaining = max(1, int((expires_at - timezone.now()).total_seconds()))
-        cache.set(cache_key, record_out, timeout=ttl_remaining)
+        try:
+            store_json_state(
+                key=cache_key,
+                payload=record_out,
+                ttl_seconds=ttl_remaining,
+                operation="portal_verification_confirm.attempt_update",
+            )
+        except CacheUnavailableError:
+            logger.error(
+                "portal.verification.cache_unavailable stage=confirm.attempt_update conversation=%s",
+                conversation.id,
+            )
+            return _json_error(
+                "verification_unavailable",
+                "Verification is temporarily unavailable. Please retry in a moment.",
+                status=503,
+            )
         return _json_error(
             "invalid_code",
             "Invalid code. Please try again.",
@@ -1966,7 +2049,15 @@ def portal_verification_confirm(request: HttpRequest) -> JsonResponse:
     }
     conversation.metadata = meta
     conversation.save(update_fields=["metadata", "last_activity_at"])
-    cache.delete(cache_key)
+    try:
+        delete_state_key(key=cache_key, operation="portal_verification_confirm.success_delete")
+    except CacheUnavailableError:
+        # Verification already succeeded and was persisted on the conversation;
+        # deleting the transient challenge key is best-effort.
+        logger.warning(
+            "portal.verification.cache_unavailable stage=confirm.success_delete conversation=%s",
+            conversation.id,
+        )
 
     session = service.get_session_state(session_token=session_token, conversation=conversation)
     return JsonResponse(

@@ -78,6 +78,19 @@ jobs:
           REDIS_URL: redis://localhost:6379/0
         run: |
           python manage.py check
+
+      - name: Check migration drift
+        working-directory: ./pocketai_django
+        env:
+          DJANGO_SETTINGS_MODULE: pocketai.settings
+          DJANGO_SECRET_KEY: test-secret-key-for-ci
+          POSTGRES_DB: pocketai_test
+          POSTGRES_USER: pocketai
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_HOST: localhost
+          REDIS_URL: redis://localhost:6379/0
+        run: |
+          python manage.py makemigrations --check --dry-run
       
       - name: Run database migrations
         working-directory: ./pocketai_django
@@ -103,7 +116,7 @@ jobs:
           POSTGRES_HOST: localhost
           REDIS_URL: redis://localhost:6379/0
         run: |
-          python manage.py test --noinput || echo "No tests found"
+          python manage.py test --noinput
       
       - name: Run deployment checks
         working-directory: ./pocketai_django
@@ -118,7 +131,7 @@ jobs:
           DJANGO_DEBUG: false
           ALLOWED_HOSTS: example.com
         run: |
-          python manage.py check --deploy --fail-level WARNING || true
+          python manage.py check --deploy --fail-level ERROR
 
   # ==============================================================================
   # Job 2: Build & Push Docker Image
