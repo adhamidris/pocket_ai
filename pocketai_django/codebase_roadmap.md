@@ -62,10 +62,17 @@ HTTP POST /api/...  (file upload)
 Background worker (long-lived process):
   management command: process_knowledge_ingestion --watch
   → apps/knowledge/knowledge_ingestion.py        # KnowledgeIngestionService.process_next_job()
-      ├─ Extraction: PDF (PyMuPDF) / DOCX / XLSX (openpyxl) / CSV / HTML
+      ├─ Extraction:
+      │    • PDF layout text via PyMuPDF PageRenderer
+      │    • PDF table candidates from pdfplumber (flag), Azure Document Intelligence (flag), geometry reconstruction, and heuristic detector
+      │    • DOCX table candidates from `document.tables` (merged-cell spans + header detection) plus paragraph rendering for supplemental context
+      │    • XLSX (openpyxl) / CSV / HTML
+      │    • Table candidate selection + optional VLM repair + table post-processing
+      │    • Large-table indexing keeps full rows by default (bounded by hard safety cap) and uses row-sharded summary chunks for primary retrieval
       ├─ apps/knowledge/table_normalization.py   # Table structure normalization
       ├─ apps/knowledge/table_scope_engine.py    # Row-level scope detection
       ├─ apps/knowledge/column_role_inference.py # Column type classification
+      ├─ apps/knowledge/lexicon_learning.py      # Tenant lexicon auto-learning from ingestion artifacts
       ├─ apps/knowledge/dataset_key_index.py     # Bloom filter index for identifier lookup
       ├─ apps/rag/embeddings.py                  # Vector embedding (FastEmbed or OpenAI)
       ├─ pgvector (PostgreSQL)                   # Vector storage
@@ -151,6 +158,8 @@ Entry point: `apps/rag/ai_orchestrator.py` → `KnowledgeSearchService`
 KnowledgeSearchService.search(query, business, agent)
   → apps/rag/query_classifier.py          # QueryClassifier — intent classification
   │    Intents: ENUMERATE / SPECIFIC_LOOKUP / COMPARE / AGGREGATE / EXPLORATORY
+  → apps/rag/tenant_lexicon.py            # TenantLexiconService — tenant vocabulary/synonym snapshots
+  → apps/rag/intent_fallback.py           # LLM fallback classifier for low-confidence table intent + clarification routing
   → apps/rag/retrieval_strategies.py      # StrategyRouter — retrieval hints per intent
   → apps/rag/query_rewriter.py            # Optional query rewriting for better vectors
   → Alias lookup (PostgreSQL trigram similarity)
@@ -171,6 +180,12 @@ KnowledgeSearchService.search(query, business, agent)
   → apps/rag/rag_logging.py              # Structured retrieval logging
   → apps/rag/quality_monitor.py           # Quality signal tracking
 ```
+
+Runtime contract notes (verified from code):
+- `RAG_NON_QUERYABLE_TABLE_FORMATS` defaults to empty (`[]`) in `pocketai/settings.py`, so table-aware retrieval is queryable for all formats unless explicitly restricted by env config.
+- `KnowledgeSearchService` reads `RAG_NON_QUERYABLE_TABLE_FORMATS` at init and applies it via `_filter_queryable_table_uploads`.
+- `read_knowledge` can auto-fallback from table preview to text read for document uploads when table result is `not_found` with zero evaluated rows and no strong table signal.
+- Row expansion in `KnowledgeSearchService._expand_table_rows` prefers shard-local row chunks when a matched table summary chunk includes `table_row_shard_index`.
 
 ---
 
@@ -204,6 +219,8 @@ All background workers use a **PostgreSQL-backed polling queue** (2s poll interv
 | `KnowledgeUpload` | knowledge | Uploaded document or URL |
 | `KnowledgeChunk` | knowledge | Indexed chunk (text or table) with vector |
 | `KnowledgeAlias` | knowledge | Named aliases for identifier-based lookup |
+| `KnowledgeLexiconTerm` | knowledge | Tenant-scoped canonical entity/attribute vocabulary |
+| `KnowledgeLexiconSynonym` | knowledge | Tenant-scoped synonym/alias forms for lexicon terms |
 | `KnowledgeIngestionJob` | knowledge | Background ingestion queue record |
 | `McpConnection` | mcp | Remote MCP server connection config |
 | `EmailAccount` | integrations | Connected email account (Gmail / Outlook) |

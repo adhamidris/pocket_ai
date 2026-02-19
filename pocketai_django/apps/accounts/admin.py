@@ -32,6 +32,8 @@ from apps.knowledge.models import (
     KnowledgeEntity,
     KnowledgeFeedbackCase,
     KnowledgeIngestionJob,
+    KnowledgeLexiconSynonym,
+    KnowledgeLexiconTerm,
     KnowledgeUpload,
     RAGEvaluationRun,
 )
@@ -662,6 +664,12 @@ class KnowledgeAliasInline(admin.TabularInline):
     readonly_fields = ("alias_raw", "alias_normalized", "source", "created_at", "updated_at")
 
 
+class KnowledgeLexiconSynonymInline(admin.TabularInline):
+    model = KnowledgeLexiconSynonym
+    extra = 0
+    readonly_fields = ("synonym_normalized", "created_at", "updated_at")
+
+
 @admin.register(KnowledgeEntity)
 class KnowledgeEntityAdmin(admin.ModelAdmin):
     list_display = ("id", "entity_name", "entity_type", "business_profile", "upload", "updated_at")
@@ -677,6 +685,41 @@ class KnowledgeAliasAdmin(admin.ModelAdmin):
     list_filter = ("source", "business_profile")
     search_fields = ("alias_raw", "alias_normalized", "entity__entity_name", "business_profile__name")
     ordering = ("-updated_at",)
+
+
+@admin.register(KnowledgeLexiconTerm)
+class KnowledgeLexiconTermAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "canonical_text",
+        "term_type",
+        "language_code",
+        "business_profile",
+        "confidence_score",
+        "is_active",
+        "updated_at",
+    )
+    list_filter = ("term_type", "language_code", "is_active", "business_profile")
+    search_fields = ("canonical_text", "canonical_normalized", "business_profile__name")
+    ordering = ("term_type", "canonical_normalized")
+    inlines = (KnowledgeLexiconSynonymInline,)
+
+
+@admin.register(KnowledgeLexiconSynonym)
+class KnowledgeLexiconSynonymAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "synonym_text",
+        "language_code",
+        "term",
+        "business_profile",
+        "confidence_score",
+        "is_active",
+        "updated_at",
+    )
+    list_filter = ("language_code", "is_active", "business_profile")
+    search_fields = ("synonym_text", "synonym_normalized", "term__canonical_text", "business_profile__name")
+    ordering = ("term", "synonym_normalized")
 
 
 @admin.register(KnowledgeIngestionJob)

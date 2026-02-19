@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from django.test import SimpleTestCase
 
+from apps.rag import query_classifier as query_classifier_module
 from apps.rag.query_classifier import (
     QueryClassifier,
     QueryClassification,
@@ -364,6 +365,17 @@ class TestEntityExtraction(SimpleTestCase):
         self.assertIn("fees", result.attributes)
         self.assertIn("annual", result.attributes)
 
+    def test_extract_generic_entity_type_from_plural_phrase(self):
+        """Entity type extraction should work for non-banking phrases."""
+        result = self.classifier.classify("list all maintenance requests")
+        self.assertEqual(result.entity_type, "maintenance request")
+
+    def test_extract_generic_attributes_without_domain_dictionary(self):
+        """Attribute extraction should work via query structure, not fixed domain vocab."""
+        result = self.classifier.classify("list all support tickets and their resolution time")
+        self.assertIn("resolution", result.attributes)
+        self.assertIn("time", result.attributes)
+
 
 class TestClassificationConfidence(SimpleTestCase):
     """Test confidence scores."""
@@ -422,3 +434,114 @@ class TestSnippetMultiplier(SimpleTestCase):
         classifier = QueryClassifier(known_entity_names=['Gold'])
         result = classifier.classify("Gold card fees")
         self.assertEqual(result.get_snippet_multiplier(), 1.0)
+
+
+class TestTenantLexiconAwareClassification(SimpleTestCase):
+    def test_lexicon_terms_enrich_entity_and_attribute_extraction(self):
+        classifier = QueryClassifier()
+        result = classifier.classify(
+            "list all service requests and their resolution time",
+            context={
+                "tenant_entity_terms": ["service request", "incident ticket"],
+                "tenant_attribute_terms": ["resolution time", "priority score"],
+            },
+        )
+
+        self.assertEqual(result.intent, QueryIntent.ENUMERATE)
+        self.assertIn("service request", [item.lower() for item in result.entity_names])
+        self.assertIn("resolution time", result.attributes)
+
+    def test_context_sensitive_cache_does_not_leak_terms(self):
+        classifier = QueryClassifier()
+        query = "what is sla target"
+        first = classifier.classify(
+            query,
+            context={"tenant_attribute_terms": ["sla target"]},
+        )
+        second = classifier.classify(
+            query,
+            context={"tenant_attribute_terms": []},
+        )
+
+        self.assertIn("sla target", first.attributes)
+        self.assertNotIn("sla target", second.attributes)
+
+
+class TestMultilingualClassification(SimpleTestCase):
+    def setUp(self):
+        self.classifier = QueryClassifier()
+
+    def test_arabic_enumerate_query(self):
+        result = self.classifier.classify("اعرض كل الطلبات المفتوحة")
+        self.assertEqual(result.intent, QueryIntent.ENUMERATE)
+        self.assertEqual(result.scope, "all")
+
+    def test_arabic_compare_query(self):
+        result = self.classifier.classify("قارن بين الخطة الأساسية والخطة المتقدمة")
+        self.assertEqual(result.intent, QueryIntent.COMPARE)
+
+    def test_arabic_aggregate_query(self):
+        result = self.classifier.classify("ما إجمالي الطلبات هذا الشهر")
+        self.assertEqual(result.intent, QueryIntent.AGGREGATE)
+
+    def test_arabic_lexicon_phrase_match(self):
+        result = self.classifier.classify(
+            "ما اجمالي المبيعات؟",
+            context={
+                "tenant_attribute_terms": ["إِجْمالِيّ المُبيـعات"],
+            },
+        )
+        self.assertIn("اجمالي المبيعات", result.attributes)
+
+
+class TestTenantIsolationClassificationCache(SimpleTestCase):
+    def setUp(self):
+        query_classifier_module._classification_cache.clear()
+        self.classifier = QueryClassifier()
+
+    def test_cache_partitions_by_tenant_id_even_when_query_matches(self):
+        query = "status update"
+        self.classifier.classify(query, context={"tenant_id": "tenant-a"})
+        self.classifier.classify(query, context={"tenant_id": "tenant-b"})
+
+        self.assertEqual(len(query_classifier_module._classification_cache), 2)
+
+
+class TestPhaseSixMultiIndustryCoverage(SimpleTestCase):
+    def setUp(self):
+        self.classifier = QueryClassifier()
+
+    def test_retail_enumerate_with_lexicon_terms(self):
+        result = self.classifier.classify(
+            "list all purchase orders and their delivery status",
+            context={
+                "tenant_id": "retail-tenant",
+                "tenant_entity_terms": ["purchase order", "shipment"],
+                "tenant_attribute_terms": ["delivery status", "vendor name"],
+            },
+        )
+        self.assertEqual(result.intent, QueryIntent.ENUMERATE)
+        self.assertIn("purchase order", [item.lower() for item in result.entity_names])
+        self.assertIn("delivery status", result.attributes)
+
+    def test_healthcare_compare_intent(self):
+        result = self.classifier.classify(
+            "compare outpatient vs inpatient wait time",
+            context={"tenant_id": "health-tenant"},
+        )
+        self.assertEqual(result.intent, QueryIntent.COMPARE)
+
+    def test_arabic_aggregate_with_diacritic_variant_attribute(self):
+        result = self.classifier.classify(
+            "ما اجمالي المبيعات حسب الفرع",
+            context={
+                "tenant_id": "ops-tenant-ar",
+                "tenant_attribute_terms": ["إِجْمالِيّ المُبيـعات"],
+            },
+        )
+        self.assertEqual(result.intent, QueryIntent.AGGREGATE)
+        self.assertIn("اجمالي المبيعات", result.attributes)
+
+    def test_mixed_arabic_english_compare(self):
+        result = self.classifier.classify("قارن basic vs premium الباقة")
+        self.assertEqual(result.intent, QueryIntent.COMPARE)

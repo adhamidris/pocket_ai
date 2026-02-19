@@ -104,6 +104,26 @@ jobs:
           REDIS_URL: redis://localhost:6379/0
         run: |
           python manage.py migrate --noinput
+
+      - name: Run RAG phase validation suite
+        working-directory: ./pocketai_django
+        env:
+          DJANGO_SETTINGS_MODULE: pocketai.settings
+          DJANGO_SECRET_KEY: test-secret-key-for-ci
+          POSTGRES_DB: pocketai_test
+          POSTGRES_USER: pocketai
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_HOST: localhost
+          REDIS_URL: redis://localhost:6379/0
+        run: |
+          python manage.py test \
+            apps.rag.tests.test_query_classifier \
+            apps.rag.tests.test_query_rewriter \
+            apps.rag.tests.test_tenant_lexicon \
+            apps.rag.tests.test_intent_fallback \
+            apps.rag.tests.test_knowledge_search_service \
+            apps.knowledge.tests.test_lexicon_learning_phase_three \
+            --noinput
       
       - name: Run Django tests
         working-directory: ./pocketai_django

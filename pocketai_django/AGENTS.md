@@ -25,6 +25,9 @@ When proposing a plan or implementation, if it involves a component that is like
 
 ## Planning preferences (owner guidance)
 - Prefer **long-term, correct refactors** over quick workarounds.
+- Default to **full-closure solutions** for known gaps. Do not optimize for "fastest" by default.
+- Only propose or implement temporary patches / stopgaps if the owner explicitly asks for a temporary path.
+- When multiple options exist, recommend the durable production path first and label any quick alternative as "temporary" with explicit revisit cost.
 - Avoid “guardrails spaghetti” (try → fail → fallback loops). If you add a guardrail for safety, pair it with (or clearly propose) the **root-cause fix**.
 - Don’t rush implementations. If requirements are unclear, **interview/clarify first**, then propose a solid plan that covers edge cases.
 - Think “production-first”: avoid designs that only work because of dev quirks (e.g., `LocMemCache`, single-process assumptions).

@@ -5,7 +5,7 @@ from typing import Any
 
 from django.conf import settings
 from django.contrib.postgres.indexes import GinIndex
-from django.core.validators import MinValueValidator
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.utils import timezone
 from django.utils.text import slugify
@@ -408,6 +408,146 @@ class KnowledgeAlias(models.Model):
     def __str__(self) -> str:
         return self.alias_raw
 
+
+
+class KnowledgeLexiconTerm(models.Model):
+    """
+    Tenant-scoped canonical lexicon terms used by intent/routing.
+
+    This table stores normalized, language-tagged terms for generic categories
+    such as entities and attributes. Synonyms are tracked in
+    ``KnowledgeLexiconSynonym`` to keep canonical terms stable.
+    """
+
+    class TermType(models.TextChoices):
+        ENTITY = "entity", "Entity"
+        ATTRIBUTE = "attribute", "Attribute"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        BusinessProfile,
+        related_name="knowledge_lexicon_terms",
+        on_delete=models.CASCADE,
+    )
+    term_type = models.CharField(
+        max_length=24,
+        choices=TermType.choices,
+        default=TermType.ENTITY,
+    )
+    canonical_text = models.CharField(max_length=255)
+    canonical_normalized = models.CharField(max_length=255)
+    language_code = models.CharField(
+        max_length=16,
+        default="und",
+        help_text="BCP-47 language tag (e.g. en, ar, en-us). 'und' = undetermined.",
+    )
+    confidence_score = models.FloatField(
+        default=0.7,
+        validators=[MinValueValidator(0.0), MaxValueValidator(1.0)],
+    )
+    source = models.CharField(max_length=40, blank=True, default="manual")
+    is_active = models.BooleanField(default=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "accounts_knowledge_lexicon_term"
+        ordering = ("term_type", "canonical_normalized")
+        indexes = [
+            models.Index(fields=["business_profile", "term_type"], name="kn_lex_term_type_idx"),
+            models.Index(
+                fields=["business_profile", "term_type", "language_code"],
+                name="kn_lex_term_lang_idx",
+            ),
+            models.Index(
+                fields=["business_profile", "is_active", "updated_at"],
+                name="kn_lex_term_active_idx",
+            ),
+            GinIndex(
+                fields=["canonical_normalized"],
+                name="kn_lex_term_norm_trgm",
+                opclasses=["gin_trgm_ops"],
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["business_profile", "term_type", "language_code", "canonical_normalized"],
+                name="knowledge_lexicon_term_unique",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.term_type}:{self.canonical_text}"
+
+
+class KnowledgeLexiconSynonym(models.Model):
+    """
+    Tenant-scoped synonym/alias forms tied to a canonical lexicon term.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        BusinessProfile,
+        related_name="knowledge_lexicon_synonyms",
+        on_delete=models.CASCADE,
+    )
+    term = models.ForeignKey(
+        KnowledgeLexiconTerm,
+        related_name="synonyms",
+        on_delete=models.CASCADE,
+    )
+    synonym_text = models.CharField(max_length=255)
+    synonym_normalized = models.CharField(max_length=255)
+    language_code = models.CharField(
+        max_length=16,
+        default="und",
+        help_text="BCP-47 language tag (e.g. en, ar, en-us).",
+    )
+    confidence_score = models.FloatField(
+        default=0.7,
+        validators=[MinValueValidator(0.0), MaxValueValidator(1.0)],
+    )
+    source = models.CharField(max_length=40, blank=True, default="manual")
+    is_active = models.BooleanField(default=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "accounts_knowledge_lexicon_synonym"
+        ordering = ("term_id", "synonym_normalized")
+        indexes = [
+            models.Index(
+                fields=["business_profile", "synonym_normalized"],
+                name="kn_lex_syn_norm_idx",
+            ),
+            models.Index(
+                fields=["business_profile", "is_active", "updated_at"],
+                name="kn_lex_syn_active_idx",
+            ),
+            GinIndex(
+                fields=["synonym_normalized"],
+                name="kn_lex_syn_norm_trgm",
+                opclasses=["gin_trgm_ops"],
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["term", "language_code", "synonym_normalized"],
+                name="knowledge_lexicon_synonym_unique",
+            )
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.term_id and not self.business_profile_id and getattr(self, "term", None):
+            self.business_profile = self.term.business_profile
+        elif self.term_id and self.business_profile_id and self.term.business_profile_id != self.business_profile_id:
+            raise ValueError("KnowledgeLexiconSynonym must use the same business_profile as its canonical term.")
+        super().save(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return f"{self.synonym_text} -> {self.term_id}"
 
 
 class KnowledgeUploadPage(models.Model):

@@ -66,6 +66,8 @@ from apps.rag.quality_monitor import QualityMonitor
 from apps.rag.rag_logging import rag_log
 from apps.rag.table_semantics import normalize_column_name
 from apps.rag.query_classifier import QueryClassifier, QueryClassification, QueryIntent
+from apps.rag.intent_fallback import IntentFallbackService
+from apps.rag.tenant_lexicon import TenantLexiconService
 from apps.rag.retrieval_strategies import StrategyRouter, RetrievalContext, RetrievalHints
 from apps.conversations.response_blocks import normalize_response_blocks
 from core.metrics import latency_monitor
@@ -561,16 +563,17 @@ KNOWLEDGE_READ_STATE_PREVIEW = "preview"
 KNOWLEDGE_READ_STATE_FULL = "full"
 RECENT_SNIPPET_TURN_WINDOW = 4
 LEDGER_LOG_LIMIT = 8
+# Global topic buckets must stay domain-agnostic for multi-tenant use.
 TOPIC_KEYWORD_MAP: dict[str, tuple[str, ...]] = {
-    "fees": ("fee", "fees", "charge", "charges", "pricing", "annual fee", "monthly fee", "maintenance fee"),
-    "limits": ("limit", "limits", "cap", "caps", "maximum", "max", "ceiling", "spend limit", "withdrawal limit"),
-    "benefits": ("benefit", "benefits", "perk", "perks", "reward", "rewards", "cashback", "cash back", "points", "miles"),
+    "pricing": ("fee", "fees", "charge", "charges", "price", "prices", "cost", "costs", "pricing", "quote", "quotes"),
+    "limits": ("limit", "limits", "cap", "caps", "maximum", "max", "ceiling", "quota", "threshold"),
+    "benefits": ("benefit", "benefits", "perk", "perks", "feature", "features", "advantage", "advantages"),
     "eligibility": ("eligibility", "eligible", "qualify", "qualification", "qualifications", "requirement", "requirements", "criteria"),
-    "documents": ("document", "documents", "paperwork", "proof", "statement", "statements", "id", "identification"),
+    "documents": ("document", "documents", "paperwork", "proof", "attachment", "attachments", "id", "identification"),
     "timeline": ("timeline", "processing time", "turnaround", "how long", "timeframe", "sla"),
     "support": ("support", "contact", "phone", "email", "help desk", "representative"),
-    "apr": ("apr", "interest", "interest rate", "rate", "percentage"),
-    "restrictions": ("restriction", "restrictions", "blackout", "exclusion", "not covered"),
+    "metrics": ("metric", "metrics", "rate", "rates", "percentage", "percent", "ratio", "score", "scores"),
+    "restrictions": ("restriction", "restrictions", "blackout", "exclusion", "not covered", "blocked"),
 }
 
 
@@ -850,6 +853,21 @@ class KnowledgeSearchService:
         
         # Strategy router for intent-aware retrieval (Phase 3)
         self.strategy_router = StrategyRouter(self)
+        self.tenant_lexicon_service = TenantLexiconService()
+        self.intent_fallback_service = IntentFallbackService()
+        self._tenant_lexicon_tables_ready_cache: bool | None = None
+        self.intent_llm_fallback_threshold = float(
+            getattr(settings, "RAG_INTENT_LLM_FALLBACK_THRESHOLD", 0.62)
+        )
+        if not (0.0 <= self.intent_llm_fallback_threshold <= 1.0):
+            self.intent_llm_fallback_threshold = 0.62
+        self.intent_clarification_threshold = float(
+            getattr(settings, "RAG_INTENT_CLARIFICATION_THRESHOLD", 0.45)
+        )
+        if not (0.0 <= self.intent_clarification_threshold <= 1.0):
+            self.intent_clarification_threshold = 0.45
+        if self.intent_clarification_threshold > self.intent_llm_fallback_threshold:
+            self.intent_clarification_threshold = self.intent_llm_fallback_threshold
         logger.info("🎯 Strategy router initialized with intent-aware retrieval strategies")
 
     def _business_override(self, business_profile, key: str, default: int | float) -> int | float:
@@ -864,6 +882,23 @@ class KnowledgeSearchService:
             except (TypeError, ValueError):
                 return default
         return default
+
+    def _tenant_lexicon_tables_ready(self) -> bool:
+        cached = self._tenant_lexicon_tables_ready_cache
+        if cached is not None:
+            return cached
+        try:
+            table_names = set(connection.introspection.table_names())
+        except Exception:
+            self._tenant_lexicon_tables_ready_cache = False
+            return False
+        required = {
+            "accounts_knowledge_lexicon_term",
+            "accounts_knowledge_lexicon_synonym",
+        }
+        ready = required.issubset(table_names)
+        self._tenant_lexicon_tables_ready_cache = ready
+        return ready
 
     def _snippet_limit_for_business(self, business_profile, requested: int | None = None) -> int:
         base = requested or self.search_snippet_limit
@@ -1179,7 +1214,7 @@ class KnowledgeSearchService:
         # Execute retrieval strategy based on classified intent (Phase 3)
         classification = table_context.get("query_classification")
         strategy_result = None
-        if classification:
+        if classification and not classification.requires_clarification:
             retrieval_context = RetrievalContext(
                 business_profile=business_profile,
                 query=query,
@@ -1204,6 +1239,17 @@ class KnowledgeSearchService:
                     "confidence": round(classification.confidence, 2),
                     "effective_limit": strategy_result.effective_limit,
                     "hints": strategy_result.hints.to_dict(),
+                },
+                indent=1,
+                context={"business": business_profile.id if business_profile else None},
+            )
+        elif classification and classification.requires_clarification:
+            _rag_log(
+                "strategy.skipped_clarification",
+                {
+                    "intent": classification.intent.value,
+                    "confidence": round(classification.confidence, 2),
+                    "question": classification.clarification_question,
                 },
                 indent=1,
                 context={"business": business_profile.id if business_profile else None},
@@ -1273,6 +1319,18 @@ class KnowledgeSearchService:
             "tabular_table_uploads": table_context.get("table_uploads"),
             "tabular_allow_generic": bool(table_context.get("allow_generic")),
             "tabular_comprehensive_intent": bool(table_context.get("comprehensive_intent")),
+            "intent_name": classification.intent.value if classification else None,
+            "intent_confidence": round(classification.confidence, 3) if classification else None,
+            "intent_source": classification.source if classification else None,
+            "intent_fallback_used": bool(classification.fallback_used) if classification else False,
+            "intent_fallback_attempted": bool(table_context.get("intent_fallback_attempted")),
+            "intent_fallback_applied": bool(table_context.get("intent_fallback_applied")),
+            "intent_requires_clarification": bool(classification.requires_clarification) if classification else False,
+            "intent_clarification_question": (
+                classification.clarification_question if classification else ""
+            ),
+            "tenant_lexicon_entity_terms_count": int(table_context.get("tenant_lexicon_entity_terms_count") or 0),
+            "tenant_lexicon_attribute_terms_count": int(table_context.get("tenant_lexicon_attribute_terms_count") or 0),
             "alias_short_circuit_blocked": alias_blocked,
             "table_reason": None,
             "chunk_candidate_count": 0,
@@ -1300,6 +1358,43 @@ class KnowledgeSearchService:
             diagnostics["strategy_diversify_tables"] = strategy_result.hints.diversify_tables
             diagnostics["strategy_comprehensive"] = strategy_result.hints.comprehensive_intent
             diagnostics["strategy_applied_limit"] = limit
+
+        if classification and classification.requires_clarification and not traits.is_identifier_like:
+            diagnostics["path"] = "clarification"
+            diagnostics["reason"] = "low_intent_confidence"
+            diagnostics["snippet_count"] = 0
+            diagnostics["total_duration_ms"] = self._duration_ms(overall_start)
+            clarification_cache_key = self._result_cache_key(
+                business_profile=business_profile,
+                traits=traits,
+                limit=limit,
+                alias_result=alias_result,
+                table_context=table_context,
+                feature_state=feature_state,
+                identifier_filter=identifier_filter,
+                allowed_upload_ids=allowed_upload_ids,
+                allowed_explicit_upload_ids=allowed_explicit_upload_ids,
+            )
+            result_obj = KnowledgeSearchResult(
+                snippets=tuple(),
+                status="needs_clarification",
+                diagnostics=diagnostics,
+            )
+            self._result_cache_set(clarification_cache_key, result_obj, limit=limit)
+            self._session_cache_set(session_cache, clarification_cache_key, result_obj, limit=limit)
+            self._record_retrieval_event(
+                business_profile=business_profile,
+                traits=traits,
+                alias_result=alias_result,
+                result=result_obj,
+                feature_state=feature_state,
+            )
+            self._log_search_summary(
+                business_profile=business_profile,
+                request_id=request_id,
+                result=result_obj,
+            )
+            return result_obj
         
         cache_key = self._result_cache_key(
             business_profile=business_profile,
@@ -2980,6 +3075,14 @@ class KnowledgeSearchService:
         alias_stage = ""
         if alias_result and alias_result.diagnostics:
             alias_stage = str(alias_result.diagnostics.get("stage") or "")
+        classification = table_context.get("query_classification")
+        intent_name = "none"
+        intent_source = "none"
+        intent_clarification = "0"
+        if isinstance(classification, QueryClassification):
+            intent_name = classification.intent.value
+            intent_source = str(classification.source or "heuristic")
+            intent_clarification = "1" if classification.requires_clarification else "0"
         normalized_query = (traits.normalized or traits.original or "").strip().lower()
         scope_token = self._upload_scope_token(
             allowed_upload_ids,
@@ -3002,6 +3105,9 @@ class KnowledgeSearchService:
                 str(limit),
                 "table" if table_context.get("has_intent") else "chunk",
                 "comprehensive" if table_context.get("comprehensive_intent") else "specific",
+                f"intent:{intent_name}",
+                f"intent_source:{intent_source}",
+                f"intent_clarify:{intent_clarification}",
                 "hybrid" if feature_state.hybrid_search else "lexical_only",
                 "alias_on" if feature_state.alias_lookup else "alias_off",
                 "alias_short" if alias_result and alias_result.short_circuit else "alias_none",
@@ -4959,6 +5065,22 @@ class KnowledgeSearchService:
         NEW (P0 #3): Checks Redis cache first to avoid 0.5-2s DB scan penalty.
         Falls back to DB computation if cache miss, then caches result.
         """
+        def _lexicon_values(snapshot: Mapping[str, object], key: str, *, limit: int = 300) -> tuple[str, ...]:
+            values = snapshot.get(key) if isinstance(snapshot, Mapping) else None
+            if not isinstance(values, (list, tuple, set)):
+                return tuple()
+            normalized: list[str] = []
+            seen: set[str] = set()
+            for value in values:
+                token = str(value or "").strip().lower()
+                if not token or token in seen:
+                    continue
+                seen.add(token)
+                normalized.append(token)
+                if len(normalized) >= limit:
+                    break
+            return tuple(normalized)
+
         from apps.rag.table_profile_cache import get_table_profile_cache, set_table_profile_cache
         
         query_text = (traits.normalized or traits.original or "").lower()
@@ -5071,14 +5193,79 @@ class KnowledgeSearchService:
         #   - AGGREGATE intent: "total fees", "how many cards"
         #   - EXPLORATORY intent: open-ended queries
         #
+        tenant_lexicon_snapshot: Mapping[str, object] = {}
+        if self._tenant_lexicon_tables_ready():
+            try:
+                tenant_lexicon_snapshot = self.tenant_lexicon_service.get_snapshot(
+                    business_profile=business_profile,
+                    use_cache=True,
+                )
+            except Exception as exc:  # pragma: no cover - cache/db failures should not block search
+                logger.warning(
+                    "tenant_lexicon.snapshot_failed business=%s error=%s",
+                    business_profile.id if business_profile else None,
+                    str(exc)[:240],
+                )
+                tenant_lexicon_snapshot = {}
+        tenant_entity_terms = _lexicon_values(tenant_lexicon_snapshot, "entity_terms")
+        tenant_attribute_terms = _lexicon_values(tenant_lexicon_snapshot, "attribute_terms", limit=500)
+
         query_classifier = QueryClassifier(known_entity_names=list(row_label_tokens)[:100])
         classification = query_classifier.classify(
             traits.original or traits.normalized or query_text,
             context={
+                "tenant_id": str(getattr(business_profile, "id", "") or ""),
                 "document_entities": list(row_label_tokens)[:100],
                 "table_schemas": list(columns)[:50],
+                "tenant_entity_terms": tenant_entity_terms,
+                "tenant_attribute_terms": tenant_attribute_terms,
             }
         )
+
+        fallback_attempted = False
+        fallback_applied = False
+        should_try_llm_fallback = bool(
+            has_intent
+            and classification.intent == QueryIntent.EXPLORATORY
+            and classification.confidence < self.intent_llm_fallback_threshold
+        )
+        if should_try_llm_fallback:
+            fallback_attempted = True
+            fallback = self.intent_fallback_service.classify(
+                query=traits.original or traits.normalized or query_text,
+                heuristic=classification,
+                tenant_entity_terms=tenant_entity_terms,
+                tenant_attribute_terms=tenant_attribute_terms,
+                table_columns=tuple(sorted(columns))[:80],
+                row_label_terms=tuple(sorted(row_label_tokens))[:80],
+            )
+            if fallback:
+                classification = fallback
+                fallback_applied = True
+        classification.fallback_used = bool(classification.fallback_used or fallback_applied)
+
+        should_require_clarification = bool(
+            has_intent
+            and classification.intent == QueryIntent.EXPLORATORY
+            and classification.confidence < self.intent_clarification_threshold
+        )
+        if should_require_clarification:
+            classification.requires_clarification = True
+            if classification.intent == QueryIntent.COMPARE and len(classification.entity_names) < 2:
+                question = "Which two items should I compare? Please share both names or IDs."
+            elif classification.intent == QueryIntent.AGGREGATE and not classification.attributes:
+                question = "Which metric should I calculate (for example total count, total amount, or average value)?"
+            elif classification.intent == QueryIntent.SPECIFIC_LOOKUP and not classification.entity_names:
+                question = "Do you want one specific record or all matching records? Share a name or ID if specific."
+            else:
+                question = (
+                    "Please clarify what to retrieve: a specific record (with name/ID), "
+                    "a comparison, or a full list."
+                )
+            classification.clarification_question = question
+        else:
+            classification.requires_clarification = False
+            classification.clarification_question = ""
         
         # comprehensive_intent is True for ENUMERATE and AGGREGATE intents
         # These require full table coverage, not just the top-matching rows
@@ -5097,6 +5284,10 @@ class KnowledgeSearchService:
                 "classifier_intent": classification.intent.value,
                 "classifier_confidence": round(classification.confidence, 2),
                 "classifier_reasoning": classification.reasoning,
+                "classifier_source": classification.source,
+                "classifier_fallback_attempted": fallback_attempted,
+                "classifier_fallback_applied": fallback_applied,
+                "classifier_requires_clarification": classification.requires_clarification,
                 "comprehensive_intent_result": comprehensive_intent,
                 # Legacy detection (for comparison during transition)
                 "legacy_comprehensive_tokens": list(legacy_comprehensive_tokens),
@@ -5113,13 +5304,21 @@ class KnowledgeSearchService:
             table_profile.get("dominant")
             and classification.intent in generic_intents
             and classification.confidence >= 0.45
+            and not classification.requires_clarification
         )
-        if matched_row_labels:
+        if matched_row_labels and not classification.requires_clarification:
             allow_generic = True
         return {
             "has_intent": has_intent,
             "comprehensive_intent": comprehensive_intent,
             "query_classification": classification,  # New: full classification object
+            "intent_source": classification.source,
+            "intent_fallback_attempted": fallback_attempted,
+            "intent_fallback_applied": fallback_applied,
+            "requires_clarification": classification.requires_clarification,
+            "clarification_question": classification.clarification_question,
+            "tenant_lexicon_entity_terms_count": len(tenant_entity_terms),
+            "tenant_lexicon_attribute_terms_count": len(tenant_attribute_terms),
             "matched_columns": matched_columns,
             "matched_columns_query": matched_columns_query,
             "matched_columns_tokens": matched_columns_tokens,
@@ -8084,17 +8283,46 @@ class KnowledgeSearchService:
             context={"business": business_profile.id if business_profile else None},
         )
         
-        # Fetch row chunks for discovered tables (answer extraction)
+        # Fetch row chunks for discovered tables (answer extraction).
+        # Prefer shard-local rows when the selected summary chunk is shard-scoped.
+        row_chunks: list[KnowledgeUploadChunk] = []
+        table_shard_hints: dict[str, int] = {}
+        for table_id in table_ids:
+            parent_hit = best_parent_by_table.get(table_id)
+            parent_meta = parent_hit.chunk.metadata if parent_hit and isinstance(parent_hit.chunk.metadata, dict) else {}
+            if not isinstance(parent_meta, dict):
+                continue
+            raw_hint = parent_meta.get("table_row_shard_index")
+            try:
+                if raw_hint is not None:
+                    table_shard_hints[table_id] = int(raw_hint)
+            except (TypeError, ValueError):
+                continue
+
         try:
-            row_chunks = list(
-                KnowledgeUploadChunk.objects.filter(
-                    upload__business_profile=business_profile,
-                    metadata__table_id__in=list(table_ids),
-                    metadata__table_chunk_role="row",
+            for table_id in sorted(table_ids):
+                per_table_qs = (
+                    KnowledgeUploadChunk.objects.filter(
+                        upload__business_profile=business_profile,
+                        metadata__table_id=table_id,
+                        metadata__table_chunk_role="row",
+                    )
+                    .select_related("upload")
+                    .order_by("chunk_index")
                 )
-                .select_related("upload")
-                .order_by("chunk_index")[: max_rows * len(table_ids)]
-            )
+                selected_rows: list[KnowledgeUploadChunk] = []
+                shard_hint = table_shard_hints.get(table_id)
+                if shard_hint is not None:
+                    selected_rows.extend(list(per_table_qs.filter(metadata__table_row_shard_index=shard_hint)[:max_rows]))
+                    if len(selected_rows) < max_rows:
+                        selected_ids = [row.id for row in selected_rows]
+                        supplemental_qs = per_table_qs
+                        if selected_ids:
+                            supplemental_qs = supplemental_qs.exclude(id__in=selected_ids)
+                        selected_rows.extend(list(supplemental_qs[: max_rows - len(selected_rows)]))
+                else:
+                    selected_rows.extend(list(per_table_qs[:max_rows]))
+                row_chunks.extend(selected_rows)
         except Exception as exc:
             # CRITICAL: Query failed
             logger.error(
@@ -8148,6 +8376,9 @@ class KnowledgeSearchService:
             row_meta = chunk.metadata if isinstance(chunk.metadata, dict) else {}
             row_table_id = str(row_meta.get("table_id") or "").strip()
             parent_hit = best_parent_by_table.get(row_table_id) if row_table_id else None
+            parent_meta = parent_hit.chunk.metadata if parent_hit and isinstance(parent_hit.chunk.metadata, dict) else {}
+            parent_shard = parent_meta.get("table_row_shard_index") if isinstance(parent_meta, dict) else None
+            row_shard = row_meta.get("table_row_shard_index") if isinstance(row_meta, dict) else None
 
             lexical_score = 0.0
             if normalized_query_tokens:
@@ -8163,6 +8394,10 @@ class KnowledgeSearchService:
                 row_diagnostics["expanded_from_chunk_id"] = str(parent_hit.chunk_id)
                 row_diagnostics["expanded_from_stage"] = str(parent_hit.source_stage)
             row_diagnostics["expanded_table_id"] = row_table_id
+            if parent_shard is not None:
+                row_diagnostics["expanded_parent_shard"] = parent_shard
+            if row_shard is not None:
+                row_diagnostics["expanded_row_shard"] = row_shard
 
             # Expanded rows should earn their own relevance score.
             # Scale inherited weight by lexical overlap fraction (0.0–1.0)
@@ -8191,6 +8426,7 @@ class KnowledgeSearchService:
             "table.row_expansion.result",
             {
                 "discovered_tables": len(table_ids),
+                "tables_with_shard_hints": len(table_shard_hints),
                 "row_chunks_found": row_chunk_count,
                 "expanded_rows": len(expanded),
                 "duplicates_skipped": duplicate_count,

@@ -60,6 +60,7 @@ from apps.knowledge.models import (
     KnowledgeEntity,
     KnowledgeAlias,
 )
+from apps.knowledge.lexicon_learning import TenantLexiconAutoLearningService
 from apps.knowledge.documents import DocumentScrapeError, scrape_document_source
 from apps.knowledge.dataset_cards import build_dataset_card_segment_payload
 from apps.knowledge.dataset_key_index import (
@@ -3660,6 +3661,10 @@ class KnowledgeIngestionService:
         self.ingest_job_max_attempts = max(1, int(getattr(settings, "INGEST_JOB_MAX_ATTEMPTS", 3)))
         self.embed_job_max_attempts = max(1, int(getattr(settings, "INGEST_EMBED_JOB_MAX_ATTEMPTS", 5)))
         self.requeue_stale_jobs = bool(getattr(settings, "INGEST_JOB_REQUEUE_STALE_ENABLED", True))
+        self.tenant_lexicon_auto_learning_enabled = bool(
+            getattr(settings, "RAG_TENANT_LEXICON_AUTO_LEARN_ENABLED", True)
+        )
+        self._tenant_lexicon_auto_learning_service: TenantLexiconAutoLearningService | None = None
 
     # ------------------------------------------------------------------
     # Job coordination
@@ -4710,6 +4715,15 @@ class KnowledgeIngestionService:
             )
             azure_tables, azure_issues, azure_meta = azure_extractor.extract_tables(absolute)
 
+        docx_tables: list[TablePayload] = []
+        docx_issues: list[IssuePayload] = []
+        docx_meta: dict[str, Any] = {}
+        if format_hint == "docx":
+            docx_tables, docx_issues, docx_meta = self._extract_docx_table_candidates(
+                absolute,
+                filename=file_detail.filename,
+            )
+
         heuristic_tables, table_issues = self.table_detector.detect_tables(layout_result.pages)
         filtered_heuristics, suppress_issues = self._suppress_list_like_heuristics(heuristic_tables)
         if len(filtered_heuristics) != len(heuristic_tables):
@@ -4723,6 +4737,8 @@ class KnowledgeIngestionService:
         candidates.update(pdfplumber_candidates)
         if azure_tables:
             candidates["azure:layout"] = azure_tables
+        if docx_tables:
+            candidates["docx:table_xml"] = docx_tables
         if geometry_tables:
             candidates["geometry"] = geometry_tables
         if filtered_heuristics:
@@ -4730,7 +4746,15 @@ class KnowledgeIngestionService:
 
         table_runtime_flags = self._table_runtime_flags(upload)
         selected_extractor, tables, selection_meta = self._select_table_candidates(candidates)
-        issues = layout_result.issues + table_issues + geom_issues + suppress_issues + pdfplumber_issues + azure_issues
+        issues = (
+            layout_result.issues
+            + table_issues
+            + geom_issues
+            + suppress_issues
+            + pdfplumber_issues
+            + azure_issues
+            + docx_issues
+        )
 
         repair_meta: dict[str, Any] = {}
         if tables:
@@ -4875,6 +4899,18 @@ class KnowledgeIngestionService:
             if table_text_overlap_filter_meta:
                 extraction_meta["table_text_overlap_filter"] = table_text_overlap_filter_meta
             metadata["table_extraction"] = extraction_meta
+        elif format_hint == "docx":
+            extraction_meta = {
+                "selected_extractor": selected_extractor,
+                "candidate_counts": {key: len(val) for key, val in candidates.items()},
+                "candidate_scores": selection_meta.get("scores", {}),
+                "selection_mode": "candidate_scorer_v2",
+            }
+            if docx_meta:
+                extraction_meta["docx"] = docx_meta
+            if postprocess_meta:
+                extraction_meta["table_postprocess"] = postprocess_meta
+            metadata["table_extraction"] = extraction_meta
         return ExtractionResult(
             text=text,
             format_hint=format_hint or "binary",
@@ -4884,6 +4920,305 @@ class KnowledgeIngestionService:
             issues=issues,
             entities=table_entities,
         )
+
+    def _extract_docx_table_candidates(
+        self,
+        path: Path,
+        *,
+        filename: str = "",
+    ) -> tuple[list[TablePayload], list[IssuePayload], dict[str, Any]]:
+        """
+        Parse DOCX tables directly from `document.tables` and emit structured TablePayloads.
+
+        This is the primary DOCX table path. Paragraph extraction remains supplemental.
+        """
+        if DocxDocument is None:
+            return [], [
+                IssuePayload(
+                    code="docx_tables_missing_dependency",
+                    severity=KnowledgeIssueSeverity.WARNING.value,
+                    description="python-docx is unavailable; DOCX table extraction skipped.",
+                    page_number=1,
+                )
+            ], {"enabled": False, "reason": "python_docx_missing"}
+
+        try:
+            document = DocxDocument(str(path))
+        except Exception as exc:
+            return [], [
+                IssuePayload(
+                    code="docx_tables_parse_failed",
+                    severity=KnowledgeIssueSeverity.ERROR.value,
+                    description=f"DOCX table extraction failed: {exc}",
+                    page_number=1,
+                )
+            ], {"enabled": False, "reason": "parse_failed"}
+
+        heading_map = self._docx_table_heading_map(document)
+        tables: list[TablePayload] = []
+        issues: list[IssuePayload] = []
+        merged_regions_total = 0
+        header_rows_total = 0
+
+        for order_index, table in enumerate(document.tables, start=1):
+            key_grid, text_by_key, span_by_key = self._docx_table_grid(table)
+            row_count = len(key_grid)
+            col_count = max((len(row) for row in key_grid), default=0)
+            if row_count <= 0 or col_count <= 0:
+                issues.append(
+                    IssuePayload(
+                        code="docx_table_empty",
+                        severity=KnowledgeIssueSeverity.INFO.value,
+                        description=f"DOCX table {order_index} had no readable cells.",
+                        page_number=1,
+                        table_order_index=order_index,
+                    )
+                )
+                continue
+
+            header_rows = self._docx_detect_header_rows(key_grid, text_by_key)
+            header_row_set = set(header_rows)
+            if header_rows:
+                header_rows_total += len(header_rows)
+
+            column_schema: list[str] = []
+            for col_idx in range(col_count):
+                labels: list[str] = []
+                seen_labels: set[str] = set()
+                for row_idx in header_rows:
+                    key = key_grid[row_idx][col_idx] if col_idx < len(key_grid[row_idx]) else None
+                    if key is None:
+                        continue
+                    label = self._sanitize_text(text_by_key.get(key, "")).strip()
+                    if not label:
+                        continue
+                    dedupe_key = re.sub(r"\s+", " ", label).strip().lower()
+                    if dedupe_key in seen_labels:
+                        continue
+                    seen_labels.add(dedupe_key)
+                    labels.append(label)
+                merged_label = " | ".join(labels).strip()
+                column_schema.append(self.table_detector._normalize_header_cell(merged_label, col_idx))
+
+            if not any(column_schema):
+                column_schema = [f"column_{idx + 1}" for idx in range(col_count)]
+
+            table_rows: list[TableRowPayload] = []
+            merged_regions = 0
+            for row_idx, row_keys in enumerate(key_grid):
+                row_cells: list[TableCellPayload] = []
+                row_values: list[str] = []
+                for col_idx in range(col_count):
+                    key = row_keys[col_idx] if col_idx < len(row_keys) else None
+                    raw_text = self._sanitize_text(text_by_key.get(key, "") if key is not None else "").strip()
+                    row_values.append(raw_text)
+                    cell_metadata: dict[str, Any] = {}
+                    if key is not None:
+                        span = span_by_key.get(key) or {}
+                        row_span = int(span.get("row_span") or 1)
+                        col_span = int(span.get("column_span") or 1)
+                        if row_span > 1 or col_span > 1:
+                            is_anchor = (
+                                row_idx == int(span.get("row_start") or 0)
+                                and col_idx == int(span.get("col_start") or 0)
+                            )
+                            cell_metadata["row_span"] = row_span
+                            cell_metadata["column_span"] = col_span
+                            cell_metadata["merged_anchor"] = is_anchor
+                            if is_anchor:
+                                merged_regions += 1
+                            else:
+                                cell_metadata["merged_from"] = {
+                                    "row_index": int(span.get("row_start") or 0),
+                                    "column_index": int(span.get("col_start") or 0),
+                                }
+
+                    row_cells.append(
+                        TableCellPayload(
+                            row_index=row_idx,
+                            column_index=col_idx,
+                            column_key=column_schema[col_idx] if col_idx < len(column_schema) else f"column_{col_idx + 1}",
+                            raw_text=raw_text,
+                            normalized_value=self.table_detector._normalize_cell_value(raw_text),
+                            metadata=cell_metadata,
+                        )
+                    )
+
+                row_metadata: dict[str, Any] = {"row_type": "header" if row_idx in header_row_set else "data"}
+                if row_idx in header_row_set:
+                    row_metadata["header_source"] = "docx_detected"
+                    row_metadata["header_level"] = header_rows.index(row_idx) + 1
+                table_rows.append(
+                    TableRowPayload(
+                        row_index=row_idx,
+                        page_number=1,
+                        raw_text="\t".join(row_values),
+                        metadata=row_metadata,
+                        cells=row_cells,
+                    )
+                )
+
+            merged_regions_total += merged_regions
+            section_heading = self._sanitize_text(heading_map.get(order_index, "")).strip()
+            title = section_heading or f"Table {order_index}"
+            table_metadata: dict[str, Any] = {
+                "detected_via": "docx:table_xml",
+                "extractor": "docx_table_parser",
+                "table_index": order_index,
+                "row_count": row_count,
+                "column_count": col_count,
+                "header_rows": list(header_rows),
+                "merged_regions": merged_regions,
+                "structure_confidence": 0.95,
+            }
+            if filename:
+                table_metadata["filename"] = filename
+            if section_heading:
+                table_metadata["section_heading"] = section_heading
+            style_name = self._sanitize_text(getattr(getattr(table, "style", None), "name", "")).strip()
+            if style_name:
+                table_metadata["style_name"] = style_name
+
+            tables.append(
+                TablePayload(
+                    order_index=order_index,
+                    title=title,
+                    section_heading=section_heading,
+                    page_number=1,
+                    column_schema=column_schema,
+                    data_dictionary={},
+                    metadata=table_metadata,
+                    rows=table_rows,
+                )
+            )
+
+        meta: dict[str, Any] = {
+            "enabled": True,
+            "table_count": len(tables),
+            "header_rows_detected": header_rows_total,
+            "merged_regions": merged_regions_total,
+        }
+        return tables, issues, meta
+
+    def _docx_table_heading_map(self, document: Any) -> dict[int, str]:
+        body = getattr(getattr(document, "element", None), "body", None)
+        if body is None:
+            return {}
+        try:
+            from docx.text.paragraph import Paragraph as DocxParagraphClass  # type: ignore
+        except Exception:
+            return {}
+
+        current_heading = ""
+        heading_map: dict[int, str] = {}
+        table_index = 0
+        for child in body.iterchildren():
+            child_tag = str(getattr(child, "tag", "") or "")
+            if child_tag.endswith("}p"):
+                paragraph = DocxParagraphClass(child, document)
+                text = self._sanitize_text(getattr(paragraph, "text", "")).strip()
+                if text and PageRenderer._looks_like_heading(text):
+                    current_heading = text
+                continue
+            if child_tag.endswith("}tbl"):
+                table_index += 1
+                if current_heading:
+                    heading_map[table_index] = current_heading
+        return heading_map
+
+    @staticmethod
+    def _docx_table_grid(
+        table: Any,
+    ) -> tuple[list[list[int | None]], dict[int, str], dict[int, dict[str, int]]]:
+        rows = [list(getattr(row, "cells", []) or []) for row in getattr(table, "rows", [])]
+        if not rows:
+            return [], {}, {}
+        column_count = max((len(cells) for cells in rows), default=0)
+        if column_count <= 0:
+            return [], {}, {}
+
+        key_grid: list[list[int | None]] = []
+        text_by_key: dict[int, str] = {}
+        positions_by_key: dict[int, list[tuple[int, int]]] = {}
+
+        for row_idx, row_cells in enumerate(rows):
+            row_keys: list[int | None] = []
+            for col_idx in range(column_count):
+                if col_idx >= len(row_cells):
+                    row_keys.append(None)
+                    continue
+                cell = row_cells[col_idx]
+                tc = getattr(cell, "_tc", None)
+                key = id(tc) if tc is not None else id(cell)
+                row_keys.append(key)
+                positions_by_key.setdefault(key, []).append((row_idx, col_idx))
+                if key not in text_by_key:
+                    text_by_key[key] = KnowledgeIngestionService._sanitize_text(getattr(cell, "text", "")).strip()
+            key_grid.append(row_keys)
+
+        span_by_key: dict[int, dict[str, int]] = {}
+        for key, positions in positions_by_key.items():
+            row_start = min(pos[0] for pos in positions)
+            row_end = max(pos[0] for pos in positions)
+            col_start = min(pos[1] for pos in positions)
+            col_end = max(pos[1] for pos in positions)
+            span_by_key[key] = {
+                "row_start": row_start,
+                "row_end": row_end,
+                "col_start": col_start,
+                "col_end": col_end,
+                "row_span": (row_end - row_start) + 1,
+                "column_span": (col_end - col_start) + 1,
+            }
+        return key_grid, text_by_key, span_by_key
+
+    @staticmethod
+    def _docx_detect_header_rows(
+        key_grid: Sequence[Sequence[int | None]],
+        text_by_key: Mapping[int, str],
+    ) -> list[int]:
+        row_count = len(key_grid)
+        if row_count <= 1:
+            return []
+
+        def _row_features(row_keys: Sequence[int | None]) -> dict[str, float]:
+            values = [
+                str(text_by_key.get(key, "")).strip()
+                for key in row_keys
+                if key is not None and str(text_by_key.get(key, "")).strip()
+            ]
+            if not values:
+                return {"non_empty": 0.0, "alpha_ratio": 0.0, "numeric_ratio": 0.0}
+            alpha_count = sum(1 for value in values if re.search(r"[A-Za-z\u0600-\u06FF]", value))
+            numeric_count = sum(1 for value in values if _column_numeric_signal(value))
+            total = max(1, len(values))
+            return {
+                "non_empty": float(len(values)),
+                "alpha_ratio": float(alpha_count) / total,
+                "numeric_ratio": float(numeric_count) / total,
+            }
+
+        probe_rows = min(3, row_count)
+        header_rows: list[int] = []
+        for row_idx in range(probe_rows):
+            stats = _row_features(key_grid[row_idx])
+            if stats["non_empty"] <= 0:
+                if row_idx == 0:
+                    continue
+                break
+            looks_header = stats["alpha_ratio"] >= 0.5 and stats["numeric_ratio"] <= 0.5
+            if row_idx == 0:
+                if looks_header or stats["numeric_ratio"] < 0.8:
+                    header_rows.append(row_idx)
+                continue
+            if looks_header and header_rows:
+                header_rows.append(row_idx)
+                continue
+            break
+
+        if len(header_rows) >= row_count:
+            header_rows = header_rows[: max(1, row_count - 1)]
+        return header_rows
 
     @staticmethod
     def _normalize_bbox(raw_bbox: Mapping[str, Any] | None) -> dict[str, float] | None:
@@ -6685,6 +7020,17 @@ class KnowledgeIngestionService:
                     )
                 ingestion_metadata.pop("alias_count", None)
                 ingestion_metadata.pop("alias_patterns_used", None)
+            lexicon_auto_learning = self._auto_learn_tenant_lexicon(
+                upload=upload,
+                extraction=extraction,
+                structured_summary=structured_summary,
+                ingestion_metadata=ingestion_metadata,
+                entity_payloads=entity_payloads,
+            )
+            if lexicon_auto_learning:
+                ingestion_metadata["lexicon_auto_learning"] = lexicon_auto_learning
+            else:
+                ingestion_metadata.pop("lexicon_auto_learning", None)
             upload.summary = summary
             upload.token_count = words
             upload.chunk_count = chunk_count
@@ -6740,6 +7086,50 @@ class KnowledgeIngestionService:
                 )
             except Exception as exc:  # pragma: no cover - monitoring failures must not block ingestion
                 logger.warning("quality.ingestion.monitor_failed business=%s error=%s", upload.business_profile_id, exc)
+
+    def _auto_learn_tenant_lexicon(
+        self,
+        *,
+        upload: KnowledgeUpload,
+        extraction: ExtractionResult,
+        structured_summary: Mapping[str, Any] | None,
+        ingestion_metadata: Mapping[str, Any] | None,
+        entity_payloads: Sequence[Mapping[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        if not self.tenant_lexicon_auto_learning_enabled:
+            return {"enabled": False, "term_count": 0, "synonym_count": 0, "language_code": "und"}
+        if self._tenant_lexicon_auto_learning_service is None:
+            self._tenant_lexicon_auto_learning_service = TenantLexiconAutoLearningService()
+        try:
+            stats = self._tenant_lexicon_auto_learning_service.learn_from_ingestion(
+                upload=upload,
+                extraction=extraction,
+                structured_summary=structured_summary,
+                ingestion_metadata=ingestion_metadata,
+                entity_payloads=entity_payloads,
+            )
+            logger.info(
+                "lexicon.autolearn.summary upload=%s business=%s terms=%s synonyms=%s enabled=%s",
+                upload.id,
+                upload.business_profile_id,
+                stats.get("term_count", 0),
+                stats.get("synonym_count", 0),
+                stats.get("enabled", True),
+            )
+            return stats
+        except Exception as exc:  # pragma: no cover - ingestion must stay resilient
+            logger.warning(
+                "lexicon.autolearn.failed upload=%s business=%s error=%s",
+                upload.id,
+                upload.business_profile_id,
+                exc,
+            )
+            return {
+                "enabled": True,
+                "term_count": 0,
+                "synonym_count": 0,
+                "error": str(exc)[:240],
+            }
 
     def _schedule_azure_search_index_update(
         self,
@@ -7181,24 +7571,33 @@ class KnowledgeIngestionService:
                         table_segment_payloads.extend(row_payloads)
 
                         # Two-tier table retrieval: emit a single summary chunk
-                        # per table for primary search.  Row chunks (above) are
+                        # per row shard for primary search. Row chunks (above) are
                         # tagged search_tier="drill_down" and excluded from the
-                        # primary search index.
+                        # primary search index, then pulled via expansion.
                         if self.table_summary_enabled and row_payloads:
-                            row_labels = [
-                                p["metadata"].get("row_label", "")
-                                for p in row_payloads
-                                if p["metadata"].get("row_label")
-                            ]
-                            summary_payload = self._table_summary_chunk_payload(
+                            row_label_entries: list[dict[str, Any]] = []
+                            for payload in row_payloads:
+                                payload_meta = payload.get("metadata")
+                                if not isinstance(payload_meta, Mapping):
+                                    continue
+                                label = str(payload_meta.get("row_label") or "").strip()
+                                if not label:
+                                    continue
+                                row_label_entries.append(
+                                    {
+                                        "label": label,
+                                        "row_index": payload_meta.get("table_row_index"),
+                                        "shard_index": payload_meta.get("table_row_shard_index"),
+                                    }
+                                )
+                            summary_payloads = self._table_summary_chunk_payloads(
                                 table=t,
                                 column_map=column_map,
                                 base_metadata=base_metadata,
                                 total_data_rows=len(row_payloads),
-                                row_labels=row_labels,
+                                row_label_entries=row_label_entries,
                             )
-                            if summary_payload:
-                                table_segment_payloads.append(summary_payload)
+                            table_segment_payloads.extend(summary_payloads)
                     else:
                         cols = [entry[0] for entry in column_map]
                         tsv_lines: list[str] = []
@@ -12967,6 +13366,11 @@ class KnowledgeIngestionService:
     ) -> tuple[int, str, str]:
         """
         Decide how many rows to keep for a given table based on tiering thresholds.
+
+        Runtime contract:
+        - Default path keeps all rows (up to hard safety cap) and relies on read-time
+          pagination/continuation for bounded responses.
+        - Explicit tenant/upload `table_limits.max_rows` remains an intentional cap.
         Returns (row_cap, tier, strategy).
         """
         base_cap = max(1, int(config.get("max_rows", 1)))
@@ -12976,13 +13380,14 @@ class KnowledgeIngestionService:
         override = config.get("max_rows_source") == "override"
         if row_count <= 0:
             return base_cap, "unknown", "default"
-        if not override and row_count <= large_limit:
-            tier = "small" if row_count <= small_limit else "medium"
-            return row_count, tier, "full"
-        tier = "large" if row_count > large_limit else "override"
-        effective_cap = min(base_cap, hard_cap)
-        strategy = "override" if override and tier != "large" else "capped"
-        return effective_cap, tier, strategy
+        tier = "small" if row_count <= small_limit else ("medium" if row_count <= large_limit else "large")
+        if row_count > hard_cap:
+            return hard_cap, tier, "hard_capped"
+        if override:
+            effective_cap = min(base_cap, hard_cap)
+            strategy = "override_full" if row_count <= effective_cap else "override_capped"
+            return effective_cap, tier, strategy
+        return row_count, tier, "full"
 
     @staticmethod
     def _integration_row_count(upload: KnowledgeUpload | None) -> int | None:
@@ -13770,6 +14175,7 @@ class KnowledgeIngestionService:
         payloads: list[dict[str, Any]] = []
         title = table.title or f"Table {table.order_index}"
         data_rows = 0
+        shard_size = max(1, int(max_rows or 1))
         table_rows = list(table.rows.all())
         table_data_dictionary = (
             getattr(table, "data_dictionary", {})
@@ -13816,8 +14222,6 @@ class KnowledgeIngestionService:
         for row in table_rows:
             if (row.metadata or {}).get("row_type") == "header":
                 continue
-            if max_rows and data_rows >= max_rows:
-                break
 
             # ── Section header rows: track label, skip as data ──
             row_model_meta = row.metadata if isinstance(row.metadata, Mapping) else {}
@@ -13896,6 +14300,8 @@ class KnowledgeIngestionService:
             if inferred_scope_columns:
                 preface.append(f"[Scope] {', '.join(inferred_scope_columns)}")
             text = "\n".join(preface + pairs)
+            shard_index = data_rows // shard_size
+            shard_offset = data_rows % shard_size
             row_meta = dict(base_metadata)
             row_meta.update(
                 {
@@ -13914,10 +14320,98 @@ class KnowledgeIngestionService:
                     "table_row_scope_confidence": scope_confidence,
                     "table_row_fee_value": fee_value,
                     "table_row_evidence_cell_ids": evidence_cell_ids,
+                    "table_row_shard_index": int(shard_index),
+                    "table_row_shard_size": int(shard_size),
+                    "table_row_shard_offset": int(shard_offset),
                 }
             )
             payloads.append({"text": text, "metadata": row_meta})
             data_rows += 1
+        return payloads
+
+    def _table_summary_chunk_payloads(
+        self,
+        *,
+        table: KnowledgeUploadTable,
+        column_map: Sequence[tuple[str, str, int]],
+        base_metadata: Mapping[str, Any],
+        total_data_rows: int,
+        row_label_entries: Sequence[Mapping[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Build one primary-search summary chunk per row shard."""
+        column_names = [entry[0] for entry in column_map]
+        if not column_names:
+            return []
+
+        title = table.title or f"Table {table.order_index}"
+        grouped_labels: dict[int, list[str]] = {}
+        grouped_row_indices: dict[int, list[int]] = {}
+        for entry in row_label_entries:
+            if not isinstance(entry, Mapping):
+                continue
+            try:
+                shard_index = int(entry.get("shard_index") or 0)
+            except (TypeError, ValueError):
+                shard_index = 0
+            label = self._sanitize_text(entry.get("label") or "").strip()
+            if label:
+                grouped_labels.setdefault(shard_index, []).append(label)
+            raw_row_index = entry.get("row_index")
+            try:
+                row_index = int(raw_row_index)
+            except (TypeError, ValueError):
+                row_index = None  # type: ignore[assignment]
+            if row_index is not None:
+                grouped_row_indices.setdefault(shard_index, []).append(row_index)
+
+        if not grouped_labels and not grouped_row_indices:
+            grouped_labels[0] = []
+
+        shard_ids = sorted(set(grouped_labels.keys()) | set(grouped_row_indices.keys()))
+        total_shards = max(1, len(shard_ids))
+        payloads: list[dict[str, Any]] = []
+        for position, shard_index in enumerate(shard_ids, start=1):
+            lines: list[str] = []
+            if table.section_heading:
+                lines.append(f"[Section] {table.section_heading}")
+            lines.append(f"[Table] {title}")
+            lines.append(f"[Columns] {' | '.join(column_names)}")
+            lines.append(f"[Rows] {total_data_rows} data rows")
+            lines.append(f"[Shard] {position}/{total_shards}")
+
+            row_indices = grouped_row_indices.get(shard_index) or []
+            if row_indices:
+                lines.append(f"[Row Range] {min(row_indices)} - {max(row_indices)}")
+                lines.append(f"[Rows In Shard] {len(row_indices)}")
+
+            shard_labels = grouped_labels.get(shard_index) or []
+            cap = self.table_summary_max_row_labels
+            if shard_labels:
+                sample = shard_labels[:cap]
+                label_text = ", ".join(sample)
+                if len(shard_labels) > cap:
+                    label_text += f", ... and {len(shard_labels) - cap} more"
+                lines.append(f"[Row Labels] {label_text}")
+
+            summary_meta = dict(base_metadata)
+            summary_meta.update(
+                {
+                    "content_source": "table_summary",
+                    "table_chunk_role": "summary",
+                    "is_table_preview": True,
+                    "search_tier": "primary",
+                    "table_total_rows": total_data_rows,
+                    "table_row_shard_index": int(shard_index),
+                    "table_shard_position": int(position),
+                    "table_shard_count": int(total_shards),
+                }
+            )
+            if row_indices:
+                summary_meta["table_row_shard_start_row"] = int(min(row_indices))
+                summary_meta["table_row_shard_end_row"] = int(max(row_indices))
+                summary_meta["table_row_shard_row_count"] = int(len(row_indices))
+
+            payloads.append({"text": "\n".join(lines), "metadata": summary_meta})
         return payloads
 
     def _table_summary_chunk_payload(
@@ -13929,48 +14423,20 @@ class KnowledgeIngestionService:
         total_data_rows: int,
         row_labels: Sequence[str],
     ) -> dict[str, Any] | None:
-        """Build a single summary chunk for a table.
+        """Backward-compatible wrapper for a single summary chunk.
 
-        The summary captures the table's schema, size, and a sample of
-        first-column values.  It is tagged ``search_tier = "primary"`` so
-        that it appears in normal search results while the individual row
-        chunks (``search_tier = "drill_down"``) are excluded.
+        New ingestion paths should use `_table_summary_chunk_payloads` for
+        row-sharded summaries.
         """
-        column_names = [entry[0] for entry in column_map]
-        if not column_names:
-            return None
-
-        title = table.title or f"Table {table.order_index}"
-
-        lines: list[str] = []
-        if table.section_heading:
-            lines.append(f"[Section] {table.section_heading}")
-        lines.append(f"[Table] {title}")
-        lines.append(f"[Columns] {' | '.join(column_names)}")
-        lines.append(f"[Rows] {total_data_rows} data rows")
-
-        # Include capped row labels so the embedding captures entity names.
-        cap = self.table_summary_max_row_labels
-        if row_labels:
-            sample = row_labels[:cap]
-            label_text = ", ".join(sample)
-            if len(row_labels) > cap:
-                label_text += f", ... and {len(row_labels) - cap} more"
-            lines.append(f"[Row Labels] {label_text}")
-
-        text = "\n".join(lines)
-
-        summary_meta = dict(base_metadata)
-        summary_meta.update(
-            {
-                "content_source": "table_summary",
-                "table_chunk_role": "summary",
-                "is_table_preview": True,
-                "search_tier": "primary",
-                "table_total_rows": total_data_rows,
-            }
+        entries = [{"label": label, "row_index": idx, "shard_index": 0} for idx, label in enumerate(row_labels)]
+        payloads = self._table_summary_chunk_payloads(
+            table=table,
+            column_map=column_map,
+            base_metadata=base_metadata,
+            total_data_rows=total_data_rows,
+            row_label_entries=entries,
         )
-        return {"text": text, "metadata": summary_meta}
+        return payloads[0] if payloads else None
 
     def _table_preview_text(
         self,

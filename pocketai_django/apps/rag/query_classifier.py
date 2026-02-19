@@ -5,22 +5,23 @@ This module provides intelligent query intent classification for RAG retrieval,
 replacing simple keyword matching with proper linguistic analysis.
 
 The classifier distinguishes between:
-- ENUMERATE: "list all credit cards", "show me every product"
-- SPECIFIC_LOOKUP: "Gold card fees", "what is the interest rate for Platinum"
-- COMPARE: "compare Gold vs Platinum", "difference between Classic and Premium"
-- AGGREGATE: "total fees", "average interest rate across all cards"
-- EXPLORATORY: "what credit cards do you have", "tell me about your cards"
+- ENUMERATE: "list all products", "show me every service"
+- SPECIFIC_LOOKUP: "Acme package details", "what is the premium tier price"
+- COMPARE: "compare basic vs premium", "difference between plan A and plan B"
+- AGGREGATE: "total cost", "average response time across all tickets"
+- EXPLORATORY: "what do you offer", "tell me about your services"
 
 This enables the retrieval layer to select appropriate strategies per intent.
 """
 
 from dataclasses import dataclass, field
 from enum import Enum
-from functools import lru_cache
 from typing import Optional
-import hashlib
 import re
 import logging
+import hashlib
+
+from apps.rag.tenant_lexicon import normalize_lexicon_text, tokenize_lexicon_text
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,10 @@ class QueryClassification:
     confidence: float = 0.0
     reasoning: str = ""
     retrieval_hints: dict = field(default_factory=dict)
+    source: str = "heuristic"
+    fallback_used: bool = False
+    requires_clarification: bool = False
+    clarification_question: str = ""
 
     def requires_full_coverage(self) -> bool:
         """Returns True if this query requires retrieving all matching items."""
@@ -117,11 +122,29 @@ class QueryClassifier:
     # Enumerate keywords - words that signal enumeration intent
     ENUMERATE_KEYWORDS = {
         'all', 'every', 'each', 'entire', 'complete', 'full',
-        'whole', 'everything', 'comprehensive'
+        'whole', 'everything', 'comprehensive',
+        'كل', 'جميع', 'كافه', 'كافة', 'الكل',
     }
 
     # List action verbs - verbs that often precede enumeration
-    LIST_VERBS = {'list', 'show', 'display', 'enumerate', 'give', 'tell'}
+    LIST_VERBS = {
+        'list', 'show', 'display', 'enumerate', 'give', 'tell',
+        'اعرض', 'عرض', 'هات', 'اعطني', 'اذكر',
+    }
+
+    ALL_SCOPE_TOKENS = {
+        "all",
+        "every",
+        "each",
+        "entire",
+        "full",
+        "whole",
+        "كل",
+        "جميع",
+        "كافة",
+        "كافه",
+        "الكل",
+    }
 
     # Comparison indicators
     COMPARE_PATTERNS = [
@@ -132,6 +155,10 @@ class QueryClassifier:
         r'\bcompared\s+to\b',
         r'\bbetter\s+than\b',
         r'\bworse\s+than\b',
+        r'\bقارن\b',
+        r'\bمقارنه\b',
+        r'\bمقارنة\b',
+        r'\bالفرق\s+بين\b',
     ]
 
     # Aggregation indicators
@@ -145,31 +172,154 @@ class QueryClassifier:
         r'\bmaximum\b',
         r'\bhighest\b',
         r'\blowest\b',
+        r'\bاجمالي\b',
+        r'\bإجمالي\b',
+        r'\bالمجموع\b',
+        r'\bمتوسط\b',
+        r'\bكم\b',
     ]
 
     # Specific lookup indicators - signals for SPECIFIC_LOOKUP
     SPECIFIC_PATTERNS = [
-        r'\bthe\s+\w+\s+(card|product|plan|account)\b',
-        r'\bfor\s+(the\s+)?\w+\s+(card|product)\b',
         r'\bwhat\s+is\s+the\s+\w+\b',
+        r'\bdetails?\s+for\s+(the\s+)?\w+\b',
+        r'\binfo(?:rmation)?\s+for\s+(the\s+)?\w+\b',
     ]
 
-    # Common entity types in financial/product domains
-    ENTITY_TYPES = {
-        'credit card': ['card', 'cards', 'credit card', 'credit cards'],
-        'product': ['product', 'products', 'item', 'items'],
-        'fee': ['fee', 'fees', 'charge', 'charges', 'cost', 'costs'],
-        'account': ['account', 'accounts'],
-        'plan': ['plan', 'plans', 'tier', 'tiers'],
+    # Domain-agnostic control words used to isolate entity/attribute candidates.
+    # These are structural query terms, not business-domain vocab.
+    CONTROL_TOKENS = {
+        "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
+        "how", "in", "is", "it", "its", "me", "of", "on", "or", "show",
+        "tell", "that", "the", "their", "them", "these", "those", "this",
+        "to", "what", "which", "who", "with", "you", "your", "about", "all",
+        "every", "each", "any", "some", "list", "display", "give", "enumerate",
+        "compare", "comparison", "versus", "vs", "between", "difference", "differ",
+        "total", "sum", "average", "count", "minimum", "maximum", "highest", "lowest",
+        "mean", "many", "more", "few", "several", "please",
+        "ما", "ماذا", "كيف", "من", "عن", "مع", "في", "على", "الى", "إلى",
+        "هذا", "هذه", "ذلك", "تلك", "كل", "جميع", "او", "أو", "و", "ثم",
+        "اعرض", "عرض", "قارن", "مقارنة", "اجمالي", "إجمالي", "المجموع",
+    }
+    ENTITY_BOUNDARY_TOKENS = {
+        "and", "or", "with", "without", "their", "its", "this", "that", "these",
+        "those", "for", "from", "to", "in", "on", "at", "by", "of", "about",
+        "regarding", "where", "when", "which", "who", "what", "how",
+        "عن", "مع", "في", "على", "الى", "إلى", "من", "او", "أو", "و", "ثم",
+        "التي", "الذي", "ما", "ماذا", "كيف",
+    }
+    ENTITY_NOISE_PREFIX_TOKENS = {
+        "the", "a", "an", "all", "every", "each", "any", "some",
+        "available", "current", "latest", "new", "existing", "active",
+        "ال", "كل", "جميع", "كافة", "هذا", "هذه", "ذلك", "تلك",
+    }
+    ENTITY_CAPTURE_ANCHORS = {
+        "all", "every", "each", "some", "many", "few", "several", "for", "about", "regarding",
+        "كل", "جميع", "كافة", "عن",
+    }
+    PLURAL_BLACKLIST = {
+        "this", "that", "thus", "is", "was", "does", "plus", "versus",
+    }
+    COMPARE_TOKENS = {
+        "vs",
+        "versus",
+        "compare",
+        "comparison",
+        "between",
+        "differ",
+        "difference",
+        "قارن",
+        "مقارنة",
+        "مقارنه",
+        "الفرق",
+    }
+    AGGREGATE_TOKENS = {
+        "total",
+        "sum",
+        "average",
+        "count",
+        "minimum",
+        "maximum",
+        "mean",
+        "اجمالي",
+        "إجمالي",
+        "المجموع",
+        "متوسط",
     }
 
-    # Common attributes being queried
-    ATTRIBUTES = {
-        'fee', 'fees', 'charge', 'charges', 'cost', 'costs', 'price', 'prices',
-        'rate', 'rates', 'interest', 'percentage', 'limit', 'limits',
-        'benefit', 'benefits', 'feature', 'features', 'requirement', 'requirements',
-        'annual', 'monthly', 'issuance', 'renewal', 'late', 'penalty'
-    }
+    @staticmethod
+    def _normalize_context_terms(values: object, *, max_items: int = 300) -> tuple[str, ...]:
+        if not isinstance(values, (list, tuple, set)):
+            return tuple()
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            token = normalize_lexicon_text(str(value or ""))
+            if not token:
+                continue
+            if token in seen:
+                continue
+            seen.add(token)
+            normalized.append(token)
+            if len(normalized) >= max_items:
+                break
+        return tuple(normalized)
+
+    @staticmethod
+    def _context_signature(context: dict) -> str:
+        if not context:
+            return ""
+        parts: list[str] = []
+        tenant_id = str(context.get("tenant_id") or "").strip().lower()
+        if tenant_id:
+            parts.append(f"tenant_id:{tenant_id}")
+        for key in ("document_entities", "table_schemas", "tenant_entity_terms", "tenant_attribute_terms"):
+            values = QueryClassifier._normalize_context_terms(context.get(key), max_items=200)
+            if not values:
+                continue
+            parts.append(f"{key}:{'|'.join(values)}")
+        if not parts:
+            return ""
+        digest = hashlib.sha1("||".join(parts).encode("utf-8")).hexdigest()[:16]
+        return digest
+
+    @staticmethod
+    def _phrase_in_query(phrase: str, query_lower: str) -> bool:
+        phrase_normalized = normalize_lexicon_text(str(phrase or ""))
+        query_normalized = normalize_lexicon_text(str(query_lower or ""))
+        if not phrase_normalized or not query_normalized:
+            return False
+
+        def _contains(candidate: str) -> bool:
+            escaped = re.escape(candidate)
+            if not escaped:
+                return False
+            pattern = rf"(?<!\w){escaped}(?!\w)"
+            return bool(re.search(pattern, query_normalized))
+
+        if _contains(phrase_normalized):
+            return True
+
+        # Lightweight singular/plural tolerance for lexicon phrase matching.
+        words = phrase_normalized.split()
+        if not words:
+            return False
+        last = words[-1]
+        variants: set[str] = set()
+        if len(last) > 2:
+            if last.endswith("ies"):
+                variants.add(last[:-3] + "y")
+            if last.endswith("s") and not last.endswith("ss"):
+                variants.add(last[:-1])
+            else:
+                variants.add(last + "s")
+            if not last.endswith("ies") and last.endswith("y") and len(last) > 3:
+                variants.add(last[:-1] + "ies")
+        for variant in variants:
+            probe = " ".join(words[:-1] + [variant]).strip()
+            if probe and _contains(probe):
+                return True
+        return False
 
     def __init__(self, known_entity_names: Optional[list[str]] = None):
         """
@@ -203,25 +353,46 @@ class QueryClassifier:
         Returns:
             QueryClassification with intent and metadata
         """
-        # Check cache for deterministic results on repeated queries
-        cache_key = query.strip().lower()
+        context = context or {}
+        tenant_entity_terms = self._normalize_context_terms(context.get("tenant_entity_terms"), max_items=300)
+        tenant_attribute_terms = self._normalize_context_terms(context.get("tenant_attribute_terms"), max_items=500)
+
+        # Check cache for deterministic results on repeated queries + relevant context.
+        context_sig = self._context_signature(context)
+        normalized_query = normalize_lexicon_text(query) or query.strip().lower()
+        cache_key = normalized_query
+        if context_sig:
+            cache_key = f"{cache_key}::{context_sig}"
         if cache_key in _classification_cache:
             cached = _classification_cache[cache_key]
             logger.debug(f"Query classification cache hit for '{query[:50]}...'")
             return cached
 
-        context = context or {}
-        query_lower = query.lower()
-        tokens = set(re.findall(r'\b\w+\b', query_lower))
+        query_lower = normalized_query
+        token_list = list(tokenize_lexicon_text(query_lower, max_tokens=256))
+        tokens = set(token_list)
 
         # Update known entities from context
         if context.get('document_entities'):
             self.known_entity_names.update(context['document_entities'])
+        if tenant_entity_terms:
+            self.known_entity_names.update(tenant_entity_terms)
 
-        # Extract entity type and attributes
-        entity_type = self._extract_entity_type(query_lower)
-        attributes = self._extract_attributes(tokens)
-        entity_names = self._extract_entity_names(query, tokens)
+        # Extract entity names first, then infer generic entity type/attributes.
+        entity_names = self._extract_entity_names(query, tenant_entity_terms=tenant_entity_terms)
+        entity_type = self._extract_entity_type(
+            token_list,
+            entity_names,
+            tenant_entity_terms=tenant_entity_terms,
+            query_lower=query_lower,
+        )
+        attributes = self._extract_attributes(
+            token_list,
+            entity_type,
+            entity_names,
+            tenant_attribute_terms=tenant_attribute_terms,
+            query_lower=query_lower,
+        )
 
         # Check for each intent type
         enumerate_score = self._score_enumerate(query_lower, tokens)
@@ -278,11 +449,12 @@ class QueryClassifier:
             intent=intent,
             entity_type=entity_type,
             entity_names=entity_names,
-            attributes=list(attributes),
+            attributes=attributes,
             scope=scope,
             confidence=confidence,
             reasoning=reasoning,
             retrieval_hints=retrieval_hints,
+            source="heuristic",
         )
 
         logger.info(
@@ -318,12 +490,11 @@ class QueryClassifier:
             score += 0.3 * len(enum_tokens)
 
         # Check for list verbs + "all/every"
-        if tokens & self.LIST_VERBS and tokens & {'all', 'every', 'each'}:
+        if tokens & self.LIST_VERBS and tokens & self.ALL_SCOPE_TOKENS:
             score += 0.4
 
-        # Plural entity types suggest enumeration ("cards" vs "card")
-        if any(word.endswith('s') and word[:-1] in ['card', 'product', 'fee', 'plan']
-               for word in tokens):
+        # Plural-noun queries are often enumeration-style ("products", "services").
+        if any(self._looks_like_plural_noun(word) for word in tokens):
             score += 0.1
 
         # "what are the" pattern
@@ -347,7 +518,7 @@ class QueryClassifier:
             score += 0.3
 
         # Comparison words
-        if tokens & {'vs', 'versus', 'compare', 'comparison', 'between', 'differ', 'difference'}:
+        if tokens & self.COMPARE_TOKENS:
             score += 0.2
 
         return min(score, 1.0)
@@ -363,7 +534,7 @@ class QueryClassifier:
                 break
 
         # Aggregation keywords
-        if tokens & {'total', 'sum', 'average', 'count', 'minimum', 'maximum', 'mean'}:
+        if tokens & self.AGGREGATE_TOKENS:
             score += 0.4
 
         # "how many" pattern
@@ -390,36 +561,172 @@ class QueryClassifier:
         if not (tokens & self.ENUMERATE_KEYWORDS):
             score += 0.2
 
-        # Definite article with singular noun
-        if re.search(r'\bthe\s+\w+\s+(card|product|fee|plan)\b', query_lower):
+        # Definite-article phrasing with an entity mention is typically specific.
+        if entity_names and re.search(r"\bthe\s+\w+\b", query_lower):
             score += 0.2
 
-        # Possessive patterns
-        if re.search(r"'s\s+(fee|rate|limit|benefit)", query_lower):
-            score += 0.2
+        # Possessive phrasing ("X's details") usually targets a specific item.
+        if re.search(r"'s\s+\w+", query_lower):
+            score += 0.15
 
         return min(score, 1.0)
 
-    def _extract_entity_type(self, query_lower: str) -> Optional[str]:
-        """Extract the entity type being queried."""
-        for entity_type, keywords in self.ENTITY_TYPES.items():
-            for keyword in keywords:
-                if keyword in query_lower:
-                    return entity_type
-        return None
+    @staticmethod
+    def _singularize(token: str) -> str:
+        if len(token) > 4 and token.endswith("ies"):
+            return f"{token[:-3]}y"
+        if len(token) > 3 and token.endswith("sses"):
+            return token[:-2]
+        if len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
+            return token[:-1]
+        return token
 
-    def _extract_attributes(self, tokens: set) -> set:
-        """Extract attributes being queried."""
-        return tokens & self.ATTRIBUTES
+    @classmethod
+    def _looks_like_plural_noun(cls, token: str) -> bool:
+        return (
+            len(token) > 3
+            and token.endswith("s")
+            and token not in cls.PLURAL_BLACKLIST
+            and not token.endswith("ss")
+        )
 
-    def _extract_entity_names(self, query: str, tokens: set) -> list[str]:
+    @staticmethod
+    def _dedupe_preserve(values: list[str]) -> list[str]:
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            item = value.strip()
+            if not item or item in seen:
+                continue
+            seen.add(item)
+            ordered.append(item)
+        return ordered
+
+    @staticmethod
+    def _tokenize_entity_name(name: str) -> list[str]:
+        return list(tokenize_lexicon_text(name, max_tokens=32))
+
+    def _collect_entity_phrase(self, tokens: list[str], start_idx: int) -> list[str]:
+        phrase: list[str] = []
+        for token in tokens[start_idx:]:
+            if token in self.ENTITY_BOUNDARY_TOKENS:
+                break
+            if len(token) < 2:
+                continue
+            phrase.append(token)
+            if len(phrase) >= 3:
+                break
+        while phrase and phrase[0] in self.ENTITY_NOISE_PREFIX_TOKENS:
+            phrase.pop(0)
+        if phrase:
+            phrase[-1] = self._singularize(phrase[-1])
+        return phrase
+
+    def _extract_entity_type(
+        self,
+        token_list: list[str],
+        entity_names: list[str],
+        *,
+        tenant_entity_terms: tuple[str, ...] = tuple(),
+        query_lower: str = "",
+    ) -> Optional[str]:
+        """Extract a generic entity type phrase without domain-specific dictionaries."""
+        if not token_list:
+            return None
+
+        entity_name_tokens: set[str] = set()
+        for name in entity_names:
+            entity_name_tokens.update(self._tokenize_entity_name(name))
+
+        candidates: list[list[str]] = []
+
+        for idx, token in enumerate(token_list):
+            if token in self.ENTITY_CAPTURE_ANCHORS:
+                phrase = self._collect_entity_phrase(token_list, idx + 1)
+                if phrase:
+                    candidates.append(phrase)
+
+        # Known-entity anchored candidate: first descriptor token after the entity name.
+        if entity_names:
+            for name in entity_names:
+                name_tokens = self._tokenize_entity_name(name)
+                if not name_tokens:
+                    continue
+                span = len(name_tokens)
+                for idx in range(0, len(token_list) - span + 1):
+                    if token_list[idx:idx + span] == name_tokens:
+                        phrase = self._collect_entity_phrase(token_list, idx + span)
+                        if phrase:
+                            candidates.append(phrase[:1])
+
+        normalized: list[str] = []
+        for parts in candidates:
+            filtered = [part for part in parts if part not in entity_name_tokens and part not in self.CONTROL_TOKENS]
+            if not filtered:
+                continue
+            normalized.append(" ".join(filtered))
+
+        if not normalized:
+            if tenant_entity_terms and query_lower:
+                for term in tenant_entity_terms:
+                    if self._phrase_in_query(term, query_lower):
+                        return term
+            return None
+
+        ordered = self._dedupe_preserve(normalized)
+        # Prefer shortest candidate to avoid leaking attribute terms into entity type.
+        ordered.sort(key=lambda value: (len(value.split()), len(value)))
+        return ordered[0]
+
+    def _extract_attributes(
+        self,
+        token_list: list[str],
+        entity_type: Optional[str],
+        entity_names: list[str],
+        *,
+        tenant_attribute_terms: tuple[str, ...] = tuple(),
+        query_lower: str = "",
+    ) -> list[str]:
+        """Extract attribute-like tokens using query structure (domain agnostic)."""
+        entity_tokens: set[str] = set()
+        if entity_type:
+            entity_tokens.update(re.findall(r"\b\w+\b", entity_type.lower()))
+        for name in entity_names:
+            entity_tokens.update(self._tokenize_entity_name(name))
+
+        attributes: list[str] = []
+        for token in token_list:
+            if len(token) < 3:
+                continue
+            if token in self.CONTROL_TOKENS:
+                continue
+            if token in entity_tokens:
+                continue
+            attributes.append(token)
+
+        if tenant_attribute_terms and query_lower:
+            for phrase in tenant_attribute_terms:
+                if phrase in entity_tokens:
+                    continue
+                if self._phrase_in_query(phrase, query_lower):
+                    attributes.insert(0, phrase)
+
+        return self._dedupe_preserve(attributes)
+
+    def _extract_entity_names(self, query: str, *, tenant_entity_terms: tuple[str, ...] = tuple()) -> list[str]:
         """Extract specific entity names from the query."""
         names = []
+        query_lower = normalize_lexicon_text(query)
 
         # Check against known entity names
         for name in self.known_entity_names:
-            if name.lower() in query.lower():
+            if self._phrase_in_query(name, query_lower):
                 names.append(name)
+
+        if tenant_entity_terms:
+            for term in tenant_entity_terms:
+                if self._phrase_in_query(term, query_lower):
+                    names.append(term)
 
         # Check for capitalized words that might be entity names
         # (excluding common words and query terms)

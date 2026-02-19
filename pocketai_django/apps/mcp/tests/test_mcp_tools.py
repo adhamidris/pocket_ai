@@ -24,6 +24,17 @@ from apps.mcp.types import ToolExecutionContext
 from core.tenancy import tenant_context
 
 
+class McpSearchHintTests(TestCase):
+    def test_clarification_status_prefers_diagnostics_question(self) -> None:
+        hint = tools._search_hint(
+            "needs_clarification",
+            None,
+            [],
+            {"intent_clarification_question": "Which record should I retrieve?"},
+        )
+        self.assertEqual(hint, "Which record should I retrieve?")
+
+
 class McpReadDocumentHandlerTests(TestCase):
     def setUp(self) -> None:
         super().setUp()

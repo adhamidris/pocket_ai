@@ -21,10 +21,12 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Mapping, Sequence
 
 from django.conf import settings
+
+from apps.rag.tenant_lexicon import TenantLexiconService, normalize_lexicon_text, tokenize_lexicon_text
 
 logger = logging.getLogger(__name__)
 
@@ -66,11 +68,31 @@ _STOPWORDS = {
     "with",
     "you",
     "your",
+    "ما",
+    "ماذا",
+    "كيف",
+    "من",
+    "في",
+    "على",
+    "عن",
+    "الى",
+    "إلى",
+    "او",
+    "أو",
+    "و",
+    "هذا",
+    "هذه",
+    "ذلك",
+    "تلك",
+    "كل",
+    "جميع",
 }
 
 
 def _tokenize(text: str) -> list[str]:
-    return [token for token in re.findall(r"[\w']+", (text or "").lower()) if token]
+    normalized = normalize_lexicon_text(text)
+    base = normalized if normalized else (text or "").lower()
+    return [token for token in tokenize_lexicon_text(base, max_tokens=256) if token]
 
 
 def _significant_tokens(text: str) -> set[str]:
@@ -98,6 +120,10 @@ class RewriteContext:
 
     # Entities extracted from previous turns
     extracted_entities: tuple[str, ...] = ()
+
+    # Tenant-scoped lexicon hints (Phase 4).
+    tenant_entity_terms: tuple[str, ...] = ()
+    tenant_attribute_terms: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -151,11 +177,16 @@ class ContextAwareQueryRewriter:
         r"^(another|other|more|different)\b",
         r"^(same|similar)\b",
         r"\b(as well|too|additionally)\b",
+        r"^(?:و\s+|ثم\s+)",
+        r"^(?:و)?ماذا\s+عن\b",
+        r"^(?:و)?وش\s+عن\b",
+        r"^(مثل|نفس|ايضا|أيضا)\b",
     ]
 
     # Pronouns that reference previous context
     PRONOUN_PATTERNS = [
         r"\b(it|its|they|them|their|this|that|these|those)\b",
+        r"\b(هذا|هذه|ذلك|تلك|هو|هي|هم|هن|له|لها|لهم)\b",
     ]
 
     # Minimum query length to consider for context injection
@@ -294,6 +325,12 @@ class ContextAwareQueryRewriter:
             elif prev_overlap == 1:
                 confidence += 0.15
 
+        lexicon_overlap = self._lexicon_overlap(query_significant, context)
+        if lexicon_overlap >= 2:
+            confidence += 0.2
+        elif lexicon_overlap == 1:
+            confidence += 0.1
+
         # Guardrail: avoid rewriting "new topic" short queries with no overlap or markers.
         # After a document is read, the system also applies document affinity search; we
         # keep rewriting conservative to prevent over-biasing unrelated queries.
@@ -301,19 +338,37 @@ class ContextAwareQueryRewriter:
             has_marker = any(pattern.search(query) for pattern in self._followup_patterns) or any(
                 pattern.search(query) for pattern in self._pronoun_patterns
             )
-            if not has_marker and title_overlap == 0 and prev_overlap == 0:
+            if not has_marker and title_overlap == 0 and prev_overlap == 0 and lexicon_overlap == 0:
                 confidence = min(confidence, self.min_confidence - 0.01)
 
         is_followup = confidence >= self.min_confidence
         return is_followup, min(confidence, 1.0)
+
+    @staticmethod
+    def _lexicon_overlap(query_significant: set[str], context: RewriteContext) -> int:
+        if not query_significant:
+            return 0
+
+        def _term_tokens(values: Sequence[str]) -> set[str]:
+            tokens: set[str] = set()
+            for value in values:
+                for token in _tokenize(str(value or "")):
+                    if len(token) >= 3 and token not in _STOPWORDS:
+                        tokens.add(token)
+            return tokens
+
+        lexicon_tokens = _term_tokens(context.tenant_entity_terms) | _term_tokens(context.tenant_attribute_terms)
+        if not lexicon_tokens:
+            return 0
+        return len(query_significant & lexicon_tokens)
 
     def _query_mentions_document(self, query: str, context: RewriteContext) -> bool:
         """Check if the query already mentions the primary document."""
         if not context.primary_document_title:
             return False
 
-        query_lower = query.lower()
-        title_lower = context.primary_document_title.lower()
+        query_lower = normalize_lexicon_text(query) or query.lower()
+        title_lower = normalize_lexicon_text(context.primary_document_title) or context.primary_document_title.lower()
 
         # Check for exact title match
         if title_lower in query_lower:
@@ -393,11 +448,32 @@ def build_rewrite_context_from_tool_context(tool_context, *, conversation=None) 
             if query:
                 previous_queries.append(str(query))
 
+    tenant_entity_terms: tuple[str, ...] = ()
+    tenant_attribute_terms: tuple[str, ...] = ()
+    business_profile = getattr(conversation, "business_profile", None) if conversation is not None else None
+    if business_profile is not None:
+        try:
+            snapshot = TenantLexiconService().get_snapshot(business_profile=business_profile, use_cache=True)
+            if isinstance(snapshot, Mapping):
+                entity_values = snapshot.get("entity_terms")
+                if isinstance(entity_values, (list, tuple, set)):
+                    tenant_entity_terms = tuple(str(value).strip() for value in entity_values if str(value).strip())[:200]
+                attribute_values = snapshot.get("attribute_terms")
+                if isinstance(attribute_values, (list, tuple, set)):
+                    tenant_attribute_terms = tuple(
+                        str(value).strip() for value in attribute_values if str(value).strip()
+                    )[:200]
+        except Exception:
+            tenant_entity_terms = ()
+            tenant_attribute_terms = ()
+
     return RewriteContext(
         primary_document_title=doc_context.get("primary_document_title"),
         primary_upload_id=doc_context.get("primary_upload_id"),
         referenced_documents=tuple(doc_context.get("referenced_upload_ids", [])),
         previous_queries=tuple(previous_queries),
+        tenant_entity_terms=tenant_entity_terms,
+        tenant_attribute_terms=tenant_attribute_terms,
     )
 
 

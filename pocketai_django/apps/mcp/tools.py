@@ -3786,11 +3786,16 @@ def _search_hint(
     snippets: Sequence[Mapping[str, object]],
     diagnostics: Mapping[str, object] | None,
 ) -> str | None:
+    diag = diagnostics or {}
+    if status == "needs_clarification":
+        question = str(diag.get("intent_clarification_question") or "").strip()
+        if question:
+            return question
+        return "Please clarify whether you want a specific item, a comparison, or a complete list."
     if status != "ok" or not snippets:
         if intent == "identifier":
             return "No confident match; ask for the exact identifier or a page/section name instead of guessing."
         return "No strong matches yet; ask the visitor for a clearer identifier, product name, or page reference."
-    diag = diagnostics or {}
     if intent == "table":
         return (
             "These results look tabular. Use query_dataset for native datasets/spreadsheets (CSV/XLSX/JSONL). "

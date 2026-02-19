@@ -1135,6 +1135,62 @@ class KnowledgeIngestionSpreadsheetTests(TestCase):
         self.assertFalse(KnowledgeUploadIssue.objects.filter(upload=upload).exists())
 
     @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    @override_settings(RAG_TABLE_CHILD_MAX_ROWS=2, RAG_TABLE_SUMMARY_MAX_ROW_LABELS=5)
+    def test_large_table_row_chunks_are_sharded_and_summary_is_emitted_per_shard(self, _build_embeddings):
+        upload = KnowledgeUpload.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            source_type=KnowledgeSourceType.FILE,
+            status=KnowledgeStatus.PENDING,
+            display_name="Shard CSV",
+        )
+        storage_path = Path("uploads/shard.csv")
+        target_path = Path(self._media_root) / storage_path
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_text(
+            "plan,price\nBasic,10\nPro,25\nGrowth,40\nScale,55\nEnterprise,99\n",
+            encoding="utf-8",
+        )
+        KnowledgeUploadFile.objects.create(
+            upload=upload,
+            filename="shard.csv",
+            storage_path=str(storage_path),
+            content_type="text/csv",
+            size_bytes=target_path.stat().st_size,
+        )
+
+        service = KnowledgeIngestionService(media_root=Path(self._media_root))
+        with tenant_context(self.business.id):
+            extraction = service._extract_upload(upload)
+            service._persist_extraction(upload, extraction)
+            service.reingest_from_persisted_artifacts(upload)
+
+        row_chunks = list(
+            KnowledgeUploadChunk.objects.filter(upload=upload, metadata__table_chunk_role="row").order_by("chunk_index")
+        )
+        self.assertEqual(len(row_chunks), 5)
+        shard_indices = {
+            int((chunk.metadata or {}).get("table_row_shard_index"))
+            for chunk in row_chunks
+            if (chunk.metadata or {}).get("table_row_shard_index") is not None
+        }
+        self.assertEqual(shard_indices, {0, 1, 2})
+
+        summary_chunks = list(
+            KnowledgeUploadChunk.objects.filter(upload=upload, metadata__table_chunk_role="summary").order_by("chunk_index")
+        )
+        self.assertEqual(len(summary_chunks), 3)
+        summary_shards = sorted(
+            int((chunk.metadata or {}).get("table_row_shard_index"))
+            for chunk in summary_chunks
+            if (chunk.metadata or {}).get("table_row_shard_index") is not None
+        )
+        self.assertEqual(summary_shards, [0, 1, 2])
+        self.assertTrue(
+            all((chunk.metadata or {}).get("table_shard_count") == 3 for chunk in summary_chunks)
+        )
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
     def test_reingest_from_persisted_artifacts_rebuilds_canonical_chunk_metadata(self, _build_embeddings):
         upload = KnowledgeUpload.objects.create(
             business_profile=self.business,
@@ -1225,9 +1281,9 @@ class KnowledgeIngestionSpreadsheetTests(TestCase):
         TABLE_MAX_ROWS_DEFAULT=3,
         RAG_TABLE_SMALL_ROW_LIMIT=2,
         RAG_TABLE_LARGE_ROW_LIMIT=4,
-        RAG_TABLE_MAX_HARD_CAP=5,
+        RAG_TABLE_MAX_HARD_CAP=100,
     )
-    def test_large_csv_truncation_emits_issue(self, _build_embeddings):
+    def test_large_csv_default_path_keeps_rows_with_pagination_contract(self, _build_embeddings):
         upload = KnowledgeUpload.objects.create(
             business_profile=self.business,
             user=self.user,
@@ -1253,18 +1309,58 @@ class KnowledgeIngestionSpreadsheetTests(TestCase):
         extraction = service._extract_upload(upload)
         service._persist_extraction(upload, extraction)
         upload.refresh_from_db()
-        self.assertEqual(KnowledgeUploadTableRow.objects.filter(table__upload=upload).count(), 3)
+        self.assertEqual(KnowledgeUploadTableRow.objects.filter(table__upload=upload).count(), 6)
         table_truncation = upload.ingestion_metadata.get("table_truncation") or {}
-        self.assertEqual(table_truncation.get("truncated_rows"), 3)
+        self.assertEqual(table_truncation.get("truncated_rows"), 0)
+        table_stats = upload.ingestion_metadata.get("table_stats") or {}
+        self.assertFalse(table_stats.get("partial_index"))
+        self.assertEqual(table_stats.get("row_cap"), 6)
+        self.assertEqual(table_stats.get("row_tier"), "large")
+        self.assertFalse(KnowledgeUploadIssue.objects.filter(upload=upload, issue_code="table_rows_truncated").exists())
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    @override_settings(
+        TABLE_MAX_ROWS_DEFAULT=3,
+        RAG_TABLE_SMALL_ROW_LIMIT=2,
+        RAG_TABLE_LARGE_ROW_LIMIT=4,
+        RAG_TABLE_MAX_HARD_CAP=5,
+    )
+    def test_large_csv_hard_cap_still_emits_truncation_issue(self, _build_embeddings):
+        upload = KnowledgeUpload.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            source_type=KnowledgeSourceType.FILE,
+            status=KnowledgeStatus.PENDING,
+            display_name="Large CSV hard cap",
+        )
+        storage_path = Path("uploads/large-hard-cap.csv")
+        target_path = Path(self._media_root) / storage_path
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        rows = ["plan,price"]
+        for idx in range(1, 7):
+            rows.append(f"Tier{idx},{idx * 10}")
+        target_path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+        KnowledgeUploadFile.objects.create(
+            upload=upload,
+            filename="large-hard-cap.csv",
+            storage_path=str(storage_path),
+            content_type="text/csv",
+            size_bytes=target_path.stat().st_size,
+        )
+
+        service = KnowledgeIngestionService(media_root=Path(self._media_root))
+        extraction = service._extract_upload(upload)
+        service._persist_extraction(upload, extraction)
+        upload.refresh_from_db()
+
+        self.assertEqual(KnowledgeUploadTableRow.objects.filter(table__upload=upload).count(), 5)
+        table_truncation = upload.ingestion_metadata.get("table_truncation") or {}
+        self.assertEqual(table_truncation.get("truncated_rows"), 1)
         table_stats = upload.ingestion_metadata.get("table_stats") or {}
         self.assertTrue(table_stats.get("partial_index"))
-        self.assertEqual(table_stats.get("row_cap"), 3)
-        self.assertTrue(
-            KnowledgeUploadIssue.objects.filter(upload=upload, issue_code="table_rows_truncated").exists()
-        )
+        self.assertEqual(table_stats.get("row_cap"), 5)
         self.assertEqual(table_stats.get("row_tier"), "large")
-        issues = KnowledgeUploadIssue.objects.filter(upload=upload, issue_code="table_rows_truncated")
-        self.assertTrue(issues.exists())
+        self.assertTrue(KnowledgeUploadIssue.objects.filter(upload=upload, issue_code="table_rows_truncated").exists())
 
     @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
     def test_xlsx_ingestion_creates_tables(self, _build_embeddings):

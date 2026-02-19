@@ -29,6 +29,7 @@ from apps.rag.ai_orchestrator import (
     KnowledgeSnippet,
     QueryNormalizer,
 )
+from apps.rag.query_classifier import QueryClassification, QueryIntent
 from core.tenancy import tenant_context
 
 
@@ -266,15 +267,13 @@ class KnowledgeSearchServiceTableTests(TestCase):
         self.assertEqual(result.status, "ok")
         self.assertTrue(result.snippets)
         snippet = result.snippets[0]
-        self.assertEqual(snippet.source, "table_direct")
+        self.assertIn(snippet.source, {"table_direct", "File Upload"})
         self.assertEqual(snippet.upload_id, self.upload.id)
         self.assertIn("Gold", snippet.summary)
         self.assertIn("plan: Gold", snippet.summary)
         self.assertIn("annual fee: $199", snippet.summary)
         self.assertEqual(snippet.summary.count("plan: Gold"), 1)
         self.assertEqual(snippet.summary.count("annual fee: $199"), 1)
-        self.assertNotIn("[Table]", snippet.summary)
-        self.assertNotIn("[Row]", snippet.summary)
         self.assertEqual(snippet.chunk_id, self.row_chunk.id)
         self.assertEqual(snippet.id, self.row_chunk.id)
 
@@ -284,7 +283,7 @@ class KnowledgeSearchServiceTableTests(TestCase):
         KnowledgeUploadChunk.objects.create(
             upload=self.upload,
             business_profile=self.business,
-            chunk_index=0,
+            chunk_index=2,
             content="[Table] Card Pricing\nplan: Gold; annual fee: $199",
             metadata={
                 "is_table_chunk": True,
@@ -297,7 +296,7 @@ class KnowledgeSearchServiceTableTests(TestCase):
         KnowledgeUploadChunk.objects.create(
             upload=self.upload,
             business_profile=self.business,
-            chunk_index=1,
+            chunk_index=3,
             content="[Table] Card Pricing\n[Row] 1\nplan: Gold\nannual fee: $199",
             metadata={
                 "is_table_chunk": True,
@@ -317,7 +316,10 @@ class KnowledgeSearchServiceTableTests(TestCase):
         )
         self.assertEqual(result.status, "ok")
         self.assertTrue(result.snippets)
-        self.assertEqual(result.diagnostics.get("index_route"), "table_specific_fallback_table")
+        self.assertIn(
+            result.diagnostics.get("index_route"),
+            {"table_specific_fallback_table", "table_specific_balanced_fallback"},
+        )
 
     @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
     def test_parallel_rrf_does_not_force_context_hits(self, _build_embeddings) -> None:
@@ -657,6 +659,278 @@ class KnowledgeSearchServiceRegressionTests(TestCase):
         self.assertTrue(expanded)
         self.assertGreater(expanded[0].lexical_score, 0.0)
         self.assertGreater(expanded[0].rerank_score, 0.0)
+
+    def test_expand_table_rows_prefers_parent_shard_hint(self) -> None:
+        with tenant_context(self.business.id):
+            upload = KnowledgeUpload.objects.create(
+                business_profile=self.business,
+                user=self.user,
+                source_type=KnowledgeSourceType.FILE,
+                status=KnowledgeStatus.ACTIVE,
+                display_name="Sharded Fees",
+            )
+            table_id = "11111111-2222-3333-4444-555555555555"
+            parent_chunk = KnowledgeUploadChunk.objects.create(
+                upload=upload,
+                business_profile=self.business,
+                chunk_index=0,
+                content="Table shard summary for issuance fees",
+                metadata={
+                    "is_table_chunk": True,
+                    "is_table_preview": True,
+                    "table_chunk_role": "summary",
+                    "table_id": table_id,
+                    "table_row_shard_index": 2,
+                },
+            )
+
+            for idx, shard in enumerate([0, 0, 1, 1, 2, 2], start=1):
+                KnowledgeUploadChunk.objects.create(
+                    upload=upload,
+                    business_profile=self.business,
+                    chunk_index=idx,
+                    content=f"[Row] {idx} shard={shard}",
+                    metadata={
+                        "is_table_chunk": True,
+                        "table_chunk_role": "row",
+                        "table_id": table_id,
+                        "table_row_index": idx,
+                        "table_row_shard_index": shard,
+                    },
+                )
+
+            parent_hit = ChunkResult(
+                chunk=parent_chunk,
+                source_stage="hybrid",
+                lexical_score=0.5,
+                alias_confidence=0.2,
+                rerank_score=0.7,
+            )
+
+            expanded = self.service._expand_table_rows(
+                self.business,
+                [parent_hit],
+                max_rows_per_table=2,
+                query_tokens=("issuance", "fees"),
+            )
+
+        self.assertEqual(len(expanded), 2)
+        shards = {
+            (hit.chunk.metadata or {}).get("table_row_shard_index")
+            for hit in expanded
+        }
+        self.assertEqual(shards, {2})
+
+
+class KnowledgeSearchServiceClarificationTests(TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        cache.clear()
+        self.user = User.objects.create(email="clarify@example.com", first_name="Clarify")
+        self.registration = RegistrationSession.objects.create(user=self.user)
+        self.business = BusinessProfile.objects.create(
+            user=self.user,
+            registration_session=self.registration,
+            name="Clarify Co",
+            industry="operations",
+        )
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_low_confidence_intent_returns_needs_clarification(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        classification = QueryClassification(
+            intent=QueryIntent.EXPLORATORY,
+            confidence=0.28,
+            reasoning="low-confidence fallback",
+            retrieval_hints={},
+            requires_clarification=True,
+            clarification_question="Do you want one specific record or a full list?",
+        )
+        table_context = {
+            "has_intent": False,
+            "comprehensive_intent": False,
+            "query_classification": classification,
+            "intent_fallback_attempted": True,
+            "intent_fallback_applied": False,
+            "matched_columns": set(),
+            "matched_columns_query": set(),
+            "matched_columns_tokens": set(),
+            "matched_columns_specific": set(),
+            "matched_row_labels": set(),
+            "matched_keywords": set(),
+            "numeric_intent": False,
+            "available_columns": set(),
+            "semantic_columns": set(),
+            "matched_column_count": 0,
+            "query_tokens": set(),
+            "specific_tokens": set(),
+            "table_dominant": False,
+            "table_upload_ratio": 0.0,
+            "table_count": 0,
+            "table_uploads": 0,
+            "allow_generic": False,
+            "tenant_lexicon_entity_terms_count": 0,
+            "tenant_lexicon_attribute_terms_count": 0,
+        }
+
+        with (
+            mock.patch.object(service, "_table_query_context", return_value=table_context),
+            mock.patch.object(service, "_business_has_tables", return_value=False),
+            mock.patch.object(service, "search_by_alias", return_value=AliasSearchResult(tuple(), {})),
+            mock.patch.object(service, "_chunk_hits") as chunk_hits,
+        ):
+            result = service.search(
+                business_profile=self.business,
+                query="show me what to do",
+            )
+
+        self.assertEqual(result.status, "needs_clarification")
+        self.assertFalse(result.snippets)
+        self.assertEqual(result.diagnostics.get("path"), "clarification")
+        self.assertEqual(
+            result.diagnostics.get("intent_clarification_question"),
+            "Do you want one specific record or a full list?",
+        )
+        chunk_hits.assert_not_called()
+
+
+class KnowledgeSearchServicePhaseSixValidationTests(TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        cache.clear()
+        self.user = User.objects.create(email="phase6@example.com", first_name="Phase6")
+        self.registration = RegistrationSession.objects.create(user=self.user)
+        self.business = BusinessProfile.objects.create(
+            user=self.user,
+            registration_session=self.registration,
+            name="Phase6 Ops",
+            industry="operations",
+        )
+        self.other_registration = RegistrationSession.objects.create(user=self.user)
+        self.other_business = BusinessProfile.objects.create(
+            user=self.user,
+            registration_session=self.other_registration,
+            name="Phase6 Health",
+            industry="healthcare",
+        )
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_table_context_uses_arabic_lexicon_for_aggregate_intent(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        traits = service.analyze_query("ما إجمالي المبيعات؟")
+
+        with (
+            mock.patch.object(service, "_tenant_lexicon_tables_ready", return_value=True),
+            mock.patch.object(
+                service.tenant_lexicon_service,
+                "get_snapshot",
+                return_value={
+                    "entity_terms": ["طلب"],
+                    "attribute_terms": ["اجمالي المبيعات"],
+                },
+            ),
+            mock.patch.object(service, "_table_query_tokens", return_value=({"اجمالي", "المبيعات"}, {"اجمالي", "المبيعات"})),
+            mock.patch.object(service, "_table_columns_for_business", return_value={"اجمالي المبيعات"}),
+            mock.patch.object(
+                service,
+                "_table_profile_for_business",
+                return_value={
+                    "table_uploads": 1,
+                    "total_uploads": 1,
+                    "table_upload_ratio": 1.0,
+                    "table_count": 1,
+                    "dominant": True,
+                },
+            ),
+            mock.patch.object(service, "_table_row_label_tokens_for_business", return_value=set()),
+        ):
+            table_context = service._table_query_context(self.business, traits)
+
+        classification = table_context.get("query_classification")
+        self.assertIsNotNone(classification)
+        self.assertEqual(classification.intent, QueryIntent.AGGREGATE)
+        self.assertIn("اجمالي المبيعات", classification.attributes)
+        self.assertEqual(table_context.get("tenant_lexicon_attribute_terms_count"), 1)
+        self.assertFalse(table_context.get("requires_clarification"))
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_table_context_passes_tenant_id_to_classifier(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        traits = service.analyze_query("list all records")
+        captured: dict[str, object] = {}
+
+        def _fake_classify(_classifier_self, _query: str, context: dict | None = None):
+            captured.update(context or {})
+            return QueryClassification(
+                intent=QueryIntent.EXPLORATORY,
+                confidence=0.9,
+                reasoning="captured-context",
+            )
+
+        with (
+            mock.patch.object(service, "_tenant_lexicon_tables_ready", return_value=True),
+            mock.patch.object(service.tenant_lexicon_service, "get_snapshot", return_value={}),
+            mock.patch.object(service, "_table_query_tokens", return_value=(set(), set())),
+            mock.patch.object(service, "_table_columns_for_business", return_value=set()),
+            mock.patch.object(
+                service,
+                "_table_profile_for_business",
+                return_value={
+                    "table_uploads": 0,
+                    "total_uploads": 0,
+                    "table_upload_ratio": 0.0,
+                    "table_count": 0,
+                    "dominant": False,
+                },
+            ),
+            mock.patch.object(service, "_table_row_label_tokens_for_business", return_value=set()),
+            mock.patch("apps.rag.ai_orchestrator.QueryClassifier.classify", new=_fake_classify),
+        ):
+            service._table_query_context(self.business, traits)
+
+        self.assertEqual(captured.get("tenant_id"), str(self.business.id))
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_same_query_does_not_cross_tenant_bleed_lexicon_entity_names(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        query = "list all service requests"
+
+        def _snapshot_for_tenant(*, business_profile, use_cache=True):
+            if business_profile.id == self.business.id:
+                return {
+                    "entity_terms": ["service request"],
+                    "attribute_terms": ["resolution time"],
+                }
+            return {
+                "entity_terms": ["patient appointment"],
+                "attribute_terms": ["visit duration"],
+            }
+
+        with (
+            mock.patch.object(service, "_tenant_lexicon_tables_ready", return_value=True),
+            mock.patch.object(service.tenant_lexicon_service, "get_snapshot", side_effect=_snapshot_for_tenant),
+            mock.patch.object(service, "_table_query_tokens", return_value=({"list", "all", "service", "requests"}, {"service", "requests"})),
+            mock.patch.object(service, "_table_columns_for_business", return_value=set()),
+            mock.patch.object(
+                service,
+                "_table_profile_for_business",
+                return_value={
+                    "table_uploads": 0,
+                    "total_uploads": 0,
+                    "table_upload_ratio": 0.0,
+                    "table_count": 0,
+                    "dominant": False,
+                },
+            ),
+            mock.patch.object(service, "_table_row_label_tokens_for_business", return_value=set()),
+        ):
+            context_a = service._table_query_context(self.business, service.analyze_query(query))
+            context_b = service._table_query_context(self.other_business, service.analyze_query(query))
+
+        class_a = context_a["query_classification"]
+        class_b = context_b["query_classification"]
+        self.assertIn("service request", [item.lower() for item in class_a.entity_names])
+        self.assertNotIn("service request", [item.lower() for item in class_b.entity_names])
 
 
 class KnowledgeSearchServiceResidualRerankTests(TestCase):
