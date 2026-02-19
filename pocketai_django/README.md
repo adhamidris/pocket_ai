@@ -5,8 +5,8 @@ This is the Django backend + web portal for PocketAI (Chat Portal, RAG, ingestio
 Status highlights:
 - MCP orchestrator only (legacy orchestration is deprecated).
 - Agentic read v2 is enabled via `MCP_AGENTIC_READ_V2_ENABLED=true` in the root `.env`.
-- Voice stack is **dev-only** right now (single Phase 1+ runtime path).
-- Platform is **beta**.
+- Voice stack is production-capable (Twilio + Telnyx, Deepgram STT, Deepgram/ElevenLabs TTS, post-call processing).
+- Platform is launching to production.
 
 ## Quickstart
 
@@ -35,6 +35,9 @@ Run these in separate terminals (with `cd pocketai_django` and `.venv` activated
 
 # Sub-agents background worker (Tasks panel)
 .venv/bin/python manage.py process_agent_runs --watch
+
+# Scheduled automations worker (cron-triggered agent tasks)
+.venv/bin/python manage.py process_agent_automations --watch
 
 # Voice calls: queue worker
 .venv/bin/python manage.py voice_call_worker --watch
@@ -72,6 +75,7 @@ ngrok start --all
 ## Docs
 
 - `AGENTS.md` — working agreement for AI coding agents (read first)
+- `codebase_roadmap.md` — runtime engine map: every request path, worker, module, and external dependency
 - `docs/product/` — business & SaaS docs (start with `docs/product/saas_brief.md` and `docs/product/technical.md`)
 - `docs/architecture/chat_portal_content_blocks.md` — chat portal content blocks contract
 - `docs/architecture/` — RAG/LLM flow docs

@@ -95,21 +95,10 @@ def _search_in(field_name: str, values: Sequence[str]) -> str:
     return f"search.in({field_name}, '{joined}', ',')"
 
 
-def _collection_any(values: Sequence[str]) -> str:
-    # Azure filter expression for a string collection field
-    parts = [f"collection_ids/any(c: c eq '{value}')" for value in values if value]
-    if not parts:
-        return ""
-    if len(parts) == 1:
-        return parts[0]
-    return "(" + " or ".join(parts) + ")"
-
-
 def build_scope_filter(
     *,
     business_id: uuid.UUID,
     allowed_upload_ids: Sequence[uuid.UUID] | None,
-    agent_collection_ids: Sequence[uuid.UUID] | None = None,
     agent_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
     upload_filter_threshold: int = 150,
 ) -> tuple[str, dict[str, object]]:
@@ -121,9 +110,8 @@ def build_scope_filter(
 
     diagnostics: dict[str, object] = {}
     base = f"business_id eq '{business_id}'"
-    agent_collection_str = [str(v) for v in (agent_collection_ids or ()) if v]
     agent_explicit_upload_str = [str(v) for v in (agent_explicit_upload_ids or ()) if v]
-    if allowed_upload_ids is None and not agent_collection_str and not agent_explicit_upload_str:
+    if allowed_upload_ids is None and not agent_explicit_upload_str:
         diagnostics["scope_mode"] = "all"
         return base, diagnostics
 
@@ -131,7 +119,6 @@ def build_scope_filter(
 
     diagnostics["scope_mode"] = "restricted"
     diagnostics["allowed_uploads"] = len(allowed_upload_str)
-    diagnostics["agent_collections"] = len(agent_collection_str)
     diagnostics["agent_explicit_uploads"] = len(agent_explicit_upload_str)
 
     if allowed_upload_ids is not None and not allowed_upload_str:
@@ -141,22 +128,11 @@ def build_scope_filter(
     if allowed_upload_ids is not None and len(allowed_upload_str) <= upload_filter_threshold:
         return f"{base} and {_search_in('upload_id', allowed_upload_str)}", diagnostics
 
-    # Large upload scope: avoid blowing up filter length by using collection scoping if available.
-    parts: list[str] = []
     if allowed_upload_ids is None and agent_explicit_upload_str:
         if len(agent_explicit_upload_str) <= upload_filter_threshold:
-            parts.append(_search_in("upload_id", agent_explicit_upload_str))
-        else:
-            diagnostics["explicit_uploads_filter_skipped"] = True
-    if agent_collection_str:
-        expr = _collection_any(agent_collection_str)
-        if expr:
-            parts.append(expr)
-
-    if parts:
-        diagnostics["scope_fallback"] = "collections_or_explicit"
-        union = parts[0] if len(parts) == 1 else "(" + " or ".join(parts) + ")"
-        return f"{base} and {union}", diagnostics
+            diagnostics["scope_fallback"] = "explicit"
+            return f"{base} and {_search_in('upload_id', agent_explicit_upload_str)}", diagnostics
+        diagnostics["explicit_uploads_filter_skipped"] = True
 
     diagnostics["scope_fallback"] = "unfiltered"
     diagnostics["scope_filter_skipped"] = True
@@ -216,15 +192,6 @@ def ensure_index(*, config: AzureAISearchConfig, embedding_dim: int) -> None:
         SimpleField(name="upload_id", type=SearchFieldDataType.String, filterable=True, sortable=False, facetable=False),
         SimpleField(name="chunk_id", type=SearchFieldDataType.String, filterable=True, sortable=False, facetable=False),
         SimpleField(name="chunk_index", type=SearchFieldDataType.Int32, filterable=True, sortable=True, facetable=False),
-        SearchField(
-            name="collection_ids",
-            type=SearchFieldDataType.Collection(SearchFieldDataType.String),
-            filterable=True,
-            sortable=False,
-            facetable=False,
-            searchable=False,
-            retrievable=True,
-        ),
         SearchableField(name="title", type=SearchFieldDataType.String, searchable=True, filterable=False, sortable=False, facetable=False, retrievable=True),
         SearchableField(name="content", type=SearchFieldDataType.String, searchable=True, filterable=False, sortable=False, facetable=False, retrievable=True),
         SearchField(
@@ -361,7 +328,6 @@ def upsert_upload_chunks(
     title: str,
     format_hint: str | None,
     updated_at: datetime | None,
-    collection_ids: Sequence[uuid.UUID],
     chunks: Sequence[Mapping[str, object]],
 ) -> None:
     """
@@ -370,7 +336,6 @@ def upsert_upload_chunks(
     `chunks` payload items must contain: chunk_id (uuid/str), chunk_index (int), content (str), embedding (list[float]|None), metadata (dict|None)
     """
 
-    collections = [str(value) for value in collection_ids if value]
     updated_iso = _serialize_datetime(updated_at)
     docs: list[dict[str, object]] = []
     for item in chunks:
@@ -397,7 +362,6 @@ def upsert_upload_chunks(
             "upload_id": str(upload_id),
             "chunk_id": chunk_id,
             "chunk_index": chunk_index,
-            "collection_ids": collections,
             "title": title[:256],
             "content": content,
             "format": str(format_hint or "").strip().lower()[:24],
@@ -410,28 +374,6 @@ def upsert_upload_chunks(
         docs.append(doc)
 
     _index_documents(config=config, documents=docs)
-
-
-def update_upload_collections(
-    *,
-    config: AzureAISearchConfig,
-    upload_id: uuid.UUID,
-    chunk_count: int,
-    collection_ids: Sequence[uuid.UUID],
-    updated_at: datetime | None = None,
-) -> None:
-    collections = [str(value) for value in collection_ids if value]
-    updated_iso = _serialize_datetime(updated_at) or _serialize_datetime(timezone.now())
-    docs = [
-        {
-            "id": _chunk_document_key(upload_id, idx),
-            "collection_ids": collections,
-            "updated_at": updated_iso,
-        }
-        for idx in range(max(0, int(chunk_count)))
-    ]
-    _merge_documents(config=config, documents=docs)
-
 
 def update_chunk_embeddings(
     *,

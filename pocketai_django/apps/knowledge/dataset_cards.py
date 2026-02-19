@@ -5,13 +5,8 @@ from typing import Any, Mapping, Sequence
 
 from django.conf import settings
 
-from apps.accounts.models import (
-    IdentifierColumnStatus,
-    IdentifierSchemaStatus,
-    KnowledgeVisibility,
-)
+from apps.accounts.models import KnowledgeVisibility
 from apps.knowledge.models import (
-    IdentifierColumnMapping,
     KnowledgeUpload,
     KnowledgeUploadChunk,
 )
@@ -59,14 +54,6 @@ def _normalize_embedding(vector: Sequence[float] | None) -> list[float] | None:
     return values
 
 
-def _mapping_is_required(mapping: IdentifierColumnMapping) -> bool:
-    override = getattr(mapping, "is_required", None)
-    if override is not None:
-        return bool(override)
-    identifier = getattr(mapping, "identifier", None)
-    return bool(getattr(identifier, "is_required", False))
-
-
 def build_dataset_card_segment_payload(
     *,
     upload: KnowledgeUpload,
@@ -102,29 +89,6 @@ def build_dataset_card_segment_payload(
     except (TypeError, ValueError):
         row_count_int = None
 
-    required_inputs: list[str] = []
-    key_identifiers: list[str] = []
-    try:
-        mappings = list(
-            IdentifierColumnMapping.objects.select_related("identifier").filter(
-                business_profile=upload.business_profile,
-                upload=upload,
-                status=IdentifierColumnStatus.ACTIVE,
-                identifier__status=IdentifierSchemaStatus.ACTIVE,
-            )
-        )
-    except Exception:  # pragma: no cover - defensive
-        mappings = []
-    for mapping in mappings:
-        identifier = getattr(mapping, "identifier", None)
-        key = str(getattr(identifier, "key", "") or "").strip()
-        if not key:
-            continue
-        if key not in key_identifiers:
-            key_identifiers.append(key)
-        if _mapping_is_required(mapping) and key not in required_inputs:
-            required_inputs.append(key)
-
     lines: list[str] = [
         "[Dataset Card]",
         f"Name: {_clip_text(display_name, 120)}",
@@ -136,11 +100,6 @@ def build_dataset_card_segment_payload(
         lines.append(f"format: {_clip_text(format_hint, 40)}")
     if row_count_int is not None and row_count_int >= 0:
         lines.append(f"rows: {row_count_int:,}")
-    if required_inputs:
-        lines.append(f"required_inputs: {_csv_list(required_inputs, limit_items=10, limit_chars=280)}")
-    if key_identifiers:
-        lines.append(f"key_identifiers: {_csv_list(key_identifiers, limit_items=12, limit_chars=320)}")
-
     suggested_keys = dataset.get("suggested_key_columns")
     key_columns: list[str] = []
     if isinstance(suggested_keys, list):
@@ -202,10 +161,7 @@ def build_dataset_card_segment_payload(
                 f"columns: {_csv_list([str(c) for c in columns], limit_items=max_columns, limit_chars=520)}"
             )
 
-    if required_inputs:
-        lines.append(f"usage: provide {_csv_list(required_inputs, limit_items=8, limit_chars=220)} before querying.")
-    else:
-        lines.append("usage: ask for a key identifier + column before querying large datasets.")
+    lines.append("usage: ask for a key identifier + column before querying large datasets.")
 
     text_full = "\n".join(line for line in lines if line).strip()
     if len(text_full) > max_chars:
@@ -220,8 +176,6 @@ def build_dataset_card_segment_payload(
             "is_table_chunk": False,
             "is_dataset_card": True,
             "dataset_mode": True,
-            "required_inputs": required_inputs,
-            "key_identifiers": key_identifiers,
             "visibility": getattr(upload, "visibility", KnowledgeVisibility.PRIVATE),
         },
     }

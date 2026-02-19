@@ -93,15 +93,12 @@ Troubleshooting
 ---------------
 - Messages missing:
   - Verify session token and conversation status.
-- Identifiers not captured:
-  - Check `_capture_customer_identifiers` in portal.py.
 - Response blocks empty:
   - Validate block structure against response_blocks.py limits.
 
 Observability
 -------------
 - Conversation state is in `Conversation.status` and `last_activity_at`.
-- Identifier capture recorded in `IdentifierEvent`.
 
 Related Docs
 ------------

@@ -486,13 +486,6 @@ class AgentProfile(models.Model):
         blank=True,
         help_text="Knowledge uploads this agent is permitted to use during conversations.",
     )
-    allowed_collections = models.ManyToManyField(
-        "knowledge.KnowledgeCollection",
-        through="knowledge.AgentCollectionAccess",
-        related_name="permitted_agents",
-        blank=True,
-        help_text="Knowledge collections this agent is permitted to use during conversations.",
-    )
     status = models.CharField(
         max_length=32,
         choices=(
@@ -739,12 +732,6 @@ def default_knowledge_integration_settings() -> dict[str, Any]:
     }
 
 
-class KnowledgeCollectionVisibility(models.TextChoices):
-    PRIVATE = "private", "Private"
-    AGENTS = "agents", "Agents Only"
-    BUSINESS = "business", "Entire Business"
-
-
 class KnowledgeIngestionJobType(models.TextChoices):
     INGEST = "ingest", "Initial Ingest"
     EMBED = "embed", "Embedding"
@@ -791,23 +778,6 @@ class KnowledgeIssueSeverity(models.TextChoices):
     INFO = "info", "Info"
     WARNING = "warning", "Warning"
     ERROR = "error", "Error"
-
-
-class IdentifierSchemaStatus(models.TextChoices):
-    PROPOSED = "proposed", "Proposed"
-    ACTIVE = "active", "Active"
-    DISABLED = "disabled", "Disabled"
-
-
-class IdentifierSchemaSource(models.TextChoices):
-    USER = "user", "User"
-    AI = "ai", "AI"
-
-
-class IdentifierColumnStatus(models.TextChoices):
-    PROPOSED = "proposed", "Proposed"
-    ACTIVE = "active", "Active"
-    DISABLED = "disabled", "Disabled"
 
 
 class IntegrationType(models.TextChoices):

@@ -34,7 +34,6 @@ from apps.conversations.models import (
     ConversationSender,
 )
 from apps.llm.ai_prompt_builder import PromptBuilder
-from apps.mcp.identifier_registry import IdentifierGuardrail
 from apps.mcp.sanitizer import sanitize_text
 from apps.accounts.agents import display_tone_label
 from apps.accounts.feature_flags import FeatureFlagService
@@ -985,7 +984,7 @@ def build_messages(
     with TRACER.start_as_current_span("prompt.mcp.build_messages") as span:
         # Single-system-message contract:
         # Build one system message that contains the constitution prompt plus any
-        # runtime context notes (identifier guardrails, memory/files notes, language).
+        # runtime context notes (memory/files notes, language).
         system_sections: list[str] = []
 
         agent = conversation.agent_profile
@@ -1007,10 +1006,6 @@ def build_messages(
             )
         else:
             system_sections.append("You are a helpful assistant.".strip())
-
-        guard_summary = _identifier_requirements_note(conversation)
-        if guard_summary:
-            system_sections.append(guard_summary.strip())
 
         memory_note = _conversation_memory_note(conversation)
         if memory_note:
@@ -1295,10 +1290,6 @@ def build_planner_messages(
     else:
         system_sections.append(PLANNER_CRM_RULES)
 
-    guard_summary = _identifier_requirements_note(conversation)
-    if guard_summary:
-        system_sections.append(guard_summary)
-
     system_sections.append(VERIFICATION_OUTPUT_HINT)
     system_sections.append(
         (
@@ -1310,8 +1301,8 @@ def build_planner_messages(
 
     system_sections.append(
         (
-            "Postflight guardrails: honor identifier gate status; do not request identifiers beyond the required set; "
-            "do not propose tools already executed this turn; never suggest another `search_knowledge` call (this user turn already used its single batch search); "
+            "Postflight rules: do not propose tools already executed this turn; "
+            "never suggest another `search_knowledge` call (this user turn already used its single batch search); "
             "respect coverage ledger readiness (no rereads for ready/full snippets). "
             "If no backend action is needed, return actions/extractions as empty arrays. Keep reply strictly JSON."
         )
@@ -1500,7 +1491,6 @@ def build_final_answer_messages(
     coverage_ledger: tuple[Mapping[str, object], ...] | None = None,
     tool_trace: tuple[Mapping[str, object], ...] | None = None,
     assistant_draft: Mapping[str, object] | None = None,
-    identifier_filters: tuple[Mapping[str, object], ...] | None = None,
 ) -> list[Mapping[str, object]]:
     """
     Construct the final-answer prompt used after tools have completed.
@@ -1530,7 +1520,7 @@ def build_final_answer_messages(
         f"You are now drafting the final customer-facing answer for {business_name}.",
         "Tools have already been executed this turn. Answer only from the provided reads/snippets—no outside knowledge and no document titles, IDs, or citations.",
         "Do not narrate internal steps or mention tools. Lead with the direct answer and keep replies concise. For multi-row structured output, prefer response_blocks (type=table/kv) instead of markdown tables.",
-        "If something is missing, state that first and request only the required identifier/page for the action. Do not ask clarifying questions for broad requests.",
+        "If something is missing, state that first and request only the missing information/page for the action. Do not ask clarifying questions for broad requests.",
         "Do not mention cases or leads. Offer human follow-up only if the visitor explicitly asks or has repeated/insisted, and request consent before stating that a follow-up will happen.",
         "Add short bullet next steps only when needed, otherwise end after the answer.",
         "Safety: share documented policy/process only; no personal advice or diagnostics for health/finance/legal topics.",
@@ -1541,10 +1531,6 @@ def build_final_answer_messages(
     user_sections: list[str] = [
         f"Latest user message:\n{user_message.strip()}",
     ]
-
-    guard_summary = _identifier_requirements_note(conversation)
-    if guard_summary:
-        user_sections.append(guard_summary)
 
     history = conversation.messages.order_by("-sent_at", "-created_at")[:4]
     history_lines: list[str] = []
@@ -1593,33 +1579,6 @@ def build_final_answer_messages(
         if tools_run:
             user_sections.append("Tools executed this turn:\n" + "; ".join(tools_run))
 
-    if identifier_filters:
-        filters: list[str] = []
-        gate_status_lines: list[str] = []
-        for item in identifier_filters[:4]:
-            required = item.get("required_keys") if isinstance(item, Mapping) else ()
-            policy = item.get("match_policy") if isinstance(item, Mapping) else None
-            status = item.get("status")
-            provided = item.get("provided_keys") if isinstance(item, Mapping) else ()
-            detail_parts: list[str] = []
-            if required:
-                detail_parts.append("required=" + ",".join(str(k) for k in required))
-            if policy:
-                detail_parts.append(f"policy={policy}")
-            if status:
-                detail_parts.append(f"status={status}")
-            if detail_parts:
-                filters.append(" | ".join(detail_parts))
-            if status and required is not None:
-                missing = sorted(set(required) - set(provided or []))
-                gate_status_lines.append(
-                    f"Identifier gate: status={status} required={','.join(required) or 'none'} provided={','.join(provided or []) or 'none'} missing={','.join(missing) or 'none'}"
-                )
-        if filters:
-            user_sections.append("Identifier filters applied:\n" + "; ".join(filters))
-        if gate_status_lines:
-            user_sections.append("Identifier gating detail:\n" + "; ".join(gate_status_lines))
-
     if assistant_draft:
         raw_draft = assistant_draft.get("content")
         draft_text = raw_draft if isinstance(raw_draft, str) else str(raw_draft or "")
@@ -1637,45 +1596,6 @@ def build_final_answer_messages(
             {"role": "system", "content": system_message},
             {"role": "user", "content": payload},
         ]
-
-
-def _identifier_requirements_note(conversation: Conversation) -> str | None:
-    try:
-        guard = IdentifierGuardrail.from_conversation(conversation)
-    except Exception:
-        return None
-    if not guard:
-        return None
-    snapshot = guard.requirements_snapshot()
-    required = snapshot.get("required") or ()
-    if not required:
-        return None
-    provided = snapshot.get("provided") or ()
-    missing = snapshot.get("missing") or ()
-    policy = snapshot.get("match_policy") or "or"
-    locked = snapshot.get("locked_identifier") or {}
-    missing_note = "Missing identifiers: " + (", ".join(missing) if missing else "none")
-    if not missing:
-        action_note = (
-            "All required identifiers are present. Proceed without re-asking for identifiers. Session is locked to the first identifier value; do not switch values for that key. Other identifiers (phone/order/ticket) may be provided and used if available."
-        )
-    else:
-        keys_text = ", ".join(missing or required)
-        action_note = (
-            "Ask for the missing required identifiers (no extras) when the visitor requests an action that requires them (e.g., look up/update ticket/account/plan). If the visitor is greeting or asking general FAQs, answer directly without asking for identifiers."
-        )
-    if locked.get("key") and locked.get("value"):
-        action_note += (
-            f"\nLocked identifier: {locked.get('key')}={locked.get('value')}. If the visitor provides a different value for this key, politely decline the switch and continue using the locked value only."
-        )
-    return (
-        "Identifier guardrails (system-only):\n"
-        f"Match policy: {policy.upper()}\n"
-        f"Required identifiers: {', '.join(required)}\n"
-        f"Provided identifiers: {', '.join(provided) or 'none'}\n"
-        f"{missing_note}\n"
-        f"{action_note}"
-    )
 
 
 def _strip_incomplete_tool_chains(entries: list[Mapping[str, object]]) -> list[Mapping[str, object]]:

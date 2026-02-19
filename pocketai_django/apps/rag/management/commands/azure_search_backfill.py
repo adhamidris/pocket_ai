@@ -93,7 +93,6 @@ class Command(BaseCommand):
         for upload in uploads:
             business_uuid = uuid.UUID(str(upload.business_profile_id))
             with tenant_context(business_uuid):
-                collection_ids = list(upload.collections.values_list("id", flat=True))
                 title = (upload.display_name or upload.source_name or upload.external_reference or str(upload.id)).strip()
                 format_hint = None
                 meta = upload.ingestion_metadata if isinstance(upload.ingestion_metadata, Mapping) else {}
@@ -103,7 +102,7 @@ class Command(BaseCommand):
                     format_hint = str(getattr(upload, "source_type", "") or "").strip() or None
 
                 chunk_count = int(getattr(upload, "chunk_count", 0) or 0)
-                self.stdout.write(f"Backfilling upload={upload.id} chunks={chunk_count} collections={len(collection_ids)}")
+                self.stdout.write(f"Backfilling upload={upload.id} chunks={chunk_count}")
                 start_one = time.perf_counter()
                 if options.get("wipe_existing") and chunk_count:
                     delete_upload(config=config, upload_id=upload.id, chunk_count=chunk_count)
@@ -138,7 +137,6 @@ class Command(BaseCommand):
                             title=title,
                             format_hint=format_hint,
                             updated_at=upload.updated_at,
-                            collection_ids=collection_ids,
                             chunks=batch,
                         )
                         indexed += len(batch)
@@ -151,7 +149,6 @@ class Command(BaseCommand):
                         title=title,
                         format_hint=format_hint,
                         updated_at=upload.updated_at,
-                        collection_ids=collection_ids,
                         chunks=batch,
                     )
                     indexed += len(batch)

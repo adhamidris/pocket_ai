@@ -27,8 +27,6 @@ from apps.integrations.models import (
     OAuthProvider,
 )
 from apps.knowledge.models import (
-    IdentifierColumnMapping,
-    IdentifierSchema,
     KnowledgeAlias,
     KnowledgeDriftSample,
     KnowledgeEntity,
@@ -679,32 +677,6 @@ class KnowledgeAliasAdmin(admin.ModelAdmin):
     list_filter = ("source", "business_profile")
     search_fields = ("alias_raw", "alias_normalized", "entity__entity_name", "business_profile__name")
     ordering = ("-updated_at",)
-
-
-class IdentifierColumnInline(admin.TabularInline):
-    model = IdentifierColumnMapping
-    extra = 0
-    fields = ("upload", "sheet_name", "column_name", "column_normalized", "status", "source", "confidence", "created_at", "updated_at")
-    readonly_fields = ("column_normalized", "created_at", "updated_at")
-
-
-@admin.register(IdentifierSchema)
-class IdentifierSchemaAdmin(admin.ModelAdmin):
-    list_display = ("key", "display_name", "business_profile", "status", "source", "is_required", "updated_at")
-    list_filter = ("status", "source", "business_profile")
-    search_fields = ("key", "display_name", "business_profile__name")
-    ordering = ("-updated_at",)
-    inlines = (IdentifierColumnInline,)
-    readonly_fields = ("created_at", "updated_at")
-
-
-@admin.register(IdentifierColumnMapping)
-class IdentifierColumnMappingAdmin(admin.ModelAdmin):
-    list_display = ("column_name", "identifier", "business_profile", "upload", "status", "source", "confidence", "updated_at")
-    list_filter = ("status", "source", "business_profile")
-    search_fields = ("column_name", "column_normalized", "identifier__key", "identifier__display_name", "upload__display_name", "upload__id")
-    ordering = ("-updated_at",)
-    readonly_fields = ("column_normalized", "created_at", "updated_at")
 
 
 @admin.register(KnowledgeIngestionJob)

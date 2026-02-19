@@ -14,7 +14,6 @@ from apps.accounts.models import (
     BusinessProfile,
 )
 from apps.knowledge.models import (
-    KnowledgeCollection,
     KnowledgeUpload,
 )
 from apps.cases.models import CasePriority, CaseStatus
@@ -95,14 +94,6 @@ class AgentKnowledgeItem:
 
 
 @dataclass(frozen=True)
-class AgentCollectionItem:
-    id: uuid.UUID
-    name: str
-    visibility: str
-    updated_at: datetime | None
-
-
-@dataclass(frozen=True)
 class AgentDetail:
     summary: AgentListItem
     shareable_path: str
@@ -113,7 +104,6 @@ class AgentDetail:
     allow_custom_kpi_weighting: bool
     knowledge_mode: str
     knowledge_documents: Sequence[AgentKnowledgeItem]
-    knowledge_collections: Sequence[AgentCollectionItem]
     stats: AgentStats
 
 
@@ -267,16 +257,6 @@ def get_agent_detail(
                     "last_ingested_at",
                     "last_synced_at",
                 ),
-            )
-            ,
-            Prefetch(
-                "allowed_collections",
-                queryset=KnowledgeCollection.objects.filter(business_profile=business_profile).only(
-                    "id",
-                    "name",
-                    "visibility",
-                    "updated_at",
-                ),
             ),
         )
         .annotate(
@@ -327,16 +307,6 @@ def get_agent_detail(
         for doc in agent.allowed_documents.all()
     )
 
-    collections = tuple(
-        AgentCollectionItem(
-            id=collection.id,
-            name=collection.name,
-            visibility=collection.visibility,
-            updated_at=collection.updated_at,
-        )
-        for collection in agent.allowed_collections.all()
-    )
-
     stats = AgentStats(
         total_cases=summary.conversations,
         open_cases=summary.open_cases,
@@ -354,8 +324,7 @@ def get_agent_detail(
         selected_kpis=tuple(agent.selected_kpis or []),
         custom_kpis=tuple(agent.custom_kpis or []),
         allow_custom_kpi_weighting=bool(agent.allow_custom_kpi_weighting),
-        knowledge_mode="select" if (documents or collections) else "all",
+        knowledge_mode="select" if documents else "all",
         knowledge_documents=documents,
-        knowledge_collections=collections,
         stats=stats,
     )

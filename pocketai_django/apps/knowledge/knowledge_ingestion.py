@@ -6781,7 +6781,6 @@ class KnowledgeIngestionService:
             error = ""
             try:
                 with tenant_context(business_id):
-                    collection_ids = list(upload.collections.values_list("id", flat=True))
                     title = (upload.display_name or upload.source_name or upload.external_reference or str(upload.id)).strip()
                     chunk_payloads = [
                         {
@@ -6802,7 +6801,6 @@ class KnowledgeIngestionService:
                     title=title,
                     format_hint=format_hint,
                     updated_at=now,
-                    collection_ids=collection_ids,
                     chunks=chunk_payloads,
                 )
             except Exception as exc:  # pragma: no cover - external dependency
@@ -10881,14 +10879,6 @@ class KnowledgeIngestionService:
         candidates.sort(key=lambda item: (item.get("score", 0), item.get("non_empty", 0)), reverse=True)
         return candidates[: max_candidates]
 
-    @staticmethod
-    def _identifier_mapping_is_required(mapping: Any) -> bool:
-        override = getattr(mapping, "is_required", None)
-        if override is not None:
-            return bool(override)
-        identifier = getattr(mapping, "identifier", None)
-        return bool(getattr(identifier, "is_required", False))
-
     def _dataset_key_index_columns(
         self,
         *,
@@ -10902,9 +10892,8 @@ class KnowledgeIngestionService:
         Decide which columns should receive a dataset key index (Bloom filter).
 
         Preference order:
-        1) Active IdentifierColumnMapping columns (tenant-defined).
-        2) Suggested key columns from sampling.
-        3) Fallback heuristics on column names.
+        1) Suggested key columns from sampling.
+        2) Fallback heuristics on column names.
         """
 
         max_columns = int(getattr(settings, "DATASET_KEY_INDEX_MAX_COLUMNS", 4) or 4)
@@ -10953,35 +10942,6 @@ class KnowledgeIngestionService:
                     **extra,
                 }
             )
-
-        try:
-            from apps.accounts.models import (
-                IdentifierColumnStatus,
-                IdentifierSchemaStatus,
-            )
-            from apps.knowledge.models import IdentifierColumnMapping
-
-            mapping_qs = IdentifierColumnMapping.objects.select_related("identifier").filter(
-                business_profile=upload.business_profile,
-                upload=upload,
-                status=IdentifierColumnStatus.ACTIVE,
-                identifier__status=IdentifierSchemaStatus.ACTIVE,
-            )
-            if sheet_name:
-                mapping_qs = mapping_qs.filter(sheet_name__iexact=str(sheet_name).strip())
-            for mapping in mapping_qs:
-                identifier = getattr(mapping, "identifier", None)
-                key = getattr(identifier, "key", None)
-                _add(
-                    column=str(getattr(mapping, "column_name", "") or "").strip(),
-                    source="identifier_mapping",
-                    identifier_key=str(key or "").strip() or None,
-                    identifier_required=self._identifier_mapping_is_required(mapping),
-                )
-                if len(chosen) >= max_columns:
-                    break
-        except Exception:  # pragma: no cover - optional for early deployments
-            pass
 
         if suggested_keys:
             for entry in suggested_keys:
@@ -11377,8 +11337,6 @@ class KnowledgeIngestionService:
                                     "column": entry.get("column"),
                                     "column_index": int(entry.get("column_index")),
                                     "source": entry.get("source"),
-                                    "identifier_key": entry.get("identifier_key"),
-                                    "identifier_required": entry.get("identifier_required"),
                                     "bloom": bloom,
                                     "value_count": 0,
                                 }
@@ -11439,8 +11397,6 @@ class KnowledgeIngestionService:
                         "bytes": int(written_bytes),
                         "values_indexed": int(info.get("value_count") or 0),
                         "source": info.get("source"),
-                        "identifier_key": info.get("identifier_key"),
-                        "identifier_required": info.get("identifier_required"),
                     }
                 )
 
@@ -11843,8 +11799,6 @@ class KnowledgeIngestionService:
                                     "column": entry.get("column"),
                                     "column_index": int(entry.get("column_index")),
                                     "source": entry.get("source"),
-                                    "identifier_key": entry.get("identifier_key"),
-                                    "identifier_required": entry.get("identifier_required"),
                                     "bloom": bloom,
                                     "value_count": 0,
                                 }
@@ -11905,8 +11859,6 @@ class KnowledgeIngestionService:
                             "bytes": int(written_bytes),
                             "values_indexed": int(info.get("value_count") or 0),
                             "source": info.get("source"),
-                            "identifier_key": info.get("identifier_key"),
-                            "identifier_required": info.get("identifier_required"),
                         }
                     )
             table, page_layout = self._build_dataset_preview_table(

@@ -1750,10 +1750,6 @@ msgstr "Connect Google Drive"
 msgid "Collections"
 msgstr "Collections"
 
-#: frontend/templates/frontend/knowledge.html:118
-msgid "Data Guardrails"
-msgstr "Data Guardrails"
-
 #: frontend/templates/frontend/knowledge.html:138
 msgid "Actions"
 msgstr "Actions"

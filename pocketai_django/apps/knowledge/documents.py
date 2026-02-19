@@ -24,7 +24,6 @@ from apps.accounts.models import (
     BusinessProfile,
 )
 from apps.knowledge.models import (
-    KnowledgeCollection,
     KnowledgeUpload,
     KnowledgeUploadChunk,
     KnowledgeUploadFile,
@@ -66,7 +65,6 @@ class DocumentListItem:
     source_type: str
     source_label: str
     tags: tuple[str, ...]
-    collections: tuple[str, ...]
     language: str
     category: str
     token_count: int
@@ -191,7 +189,6 @@ class DocumentIssue:
 @dataclass(frozen=True)
 class DocumentDetail:
     summary: DocumentListItem
-    collections: tuple["DocumentCollection", ...]
     description: str
     summary_text: str
     metadata: dict
@@ -205,14 +202,6 @@ class DocumentDetail:
     tables: tuple[DocumentStructuredTable, ...]
     issues: tuple[DocumentIssue, ...]
     chunks: tuple[DocumentChunk, ...]
-
-
-@dataclass(frozen=True)
-class DocumentCollection:
-    id: uuid.UUID
-    name: str
-    slug: str
-    visibility: str
 
 
 @dataclass(frozen=True)
@@ -242,7 +231,6 @@ def list_documents(
     *,
     business_profile: BusinessProfile,
     q_name: str | None = None,
-    collection_slug: str | None = None,
     status: str | None = None,
     source_type: str | None = None,
     limit: int = 50,
@@ -292,35 +280,20 @@ def list_documents(
                 Q(summary__icontains=search) |
                 Q(tags_text__icontains=search)
             )
-        if collection_slug:
-            base_qs = base_qs.filter(collections__slug=collection_slug.strip())
         if status:
             base_qs = base_qs.filter(status__iexact=status.strip())
         if source_type:
             base_qs = base_qs.filter(source_type__iexact=source_type.strip())
 
         total = base_qs.count()
-        collections_prefetch = Prefetch(
-            "collections",
-            queryset=KnowledgeCollection.objects.only("id", "name").order_by("name"),
-        )
         rows = (
             base_qs.select_related("integration")
-            .prefetch_related(collections_prefetch)
             .order_by("-updated_at")[offset : offset + limit]
         )
 
         items = []
         for upload in rows:
             tags = tuple(str(tag) for tag in (upload.tags or []))
-            collections_manager = getattr(upload, "collections", None)
-            if hasattr(collections_manager, "all"):
-                collection_iterable = collections_manager.all()
-            elif collections_manager is None:
-                collection_iterable = ()
-            else:
-                collection_iterable = collections_manager
-            collection_names = tuple(coll.name for coll in collection_iterable)
             items.append(
                 DocumentListItem(
                     id=upload.id,
@@ -330,7 +303,6 @@ def list_documents(
                     source_type=upload.source_type,
                     source_label=upload.get_source_type_display(),
                     tags=tags,
-                    collections=collection_names,
                     language=upload.language or "",
                     category=upload.category or "",
                     token_count=upload.token_count or 0,
@@ -401,10 +373,6 @@ def get_document_detail(*, business_profile: BusinessProfile, document_id: uuid.
                 "created_by_agent",
             )
             .prefetch_related(
-                Prefetch(
-                    "collections",
-                    queryset=KnowledgeCollection.objects.only("id", "name").order_by("name"),
-                ),
                 page_prefetch,
                 table_prefetch,
                 issue_prefetch,
@@ -423,7 +391,6 @@ def get_document_detail(*, business_profile: BusinessProfile, document_id: uuid.
             source_type=upload.source_type,
             source_label=upload.get_source_type_display(),
             tags=tuple(str(tag) for tag in (upload.tags or [])),
-            collections=tuple(coll.name for coll in upload.collections.all()),
             language=upload.language or "",
             category=upload.category or "",
             token_count=upload.token_count or 0,
@@ -580,19 +547,8 @@ def get_document_detail(*, business_profile: BusinessProfile, document_id: uuid.
                     )
                 )
 
-        collection_details = tuple(
-            DocumentCollection(
-                id=collection.id,
-                name=collection.name,
-                slug=collection.slug,
-                visibility=collection.visibility,
-            )
-            for collection in upload.collections.all()
-        )
-
         return DocumentDetail(
             summary=summary,
-            collections=collection_details,
             description=upload.description or "",
             summary_text=upload.summary or "",
             metadata=upload.metadata or {},

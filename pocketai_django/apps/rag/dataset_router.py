@@ -25,8 +25,6 @@ class DatasetKeyIndexHit:
     sheet_name: str | None
     sheet_index: int | None
     column: str
-    identifier_key: str | None
-    identifier_required: bool | None
     source: str | None
 
 
@@ -165,10 +163,6 @@ def find_datasets_for_identifier(
             if not bloom.maybe_contains(normalized):
                 continue
             column = str(entry.get("column") or "").strip() or "key"
-            identifier_key = str(entry.get("identifier_key") or "").strip() or None
-            identifier_required = entry.get("identifier_required")
-            if identifier_required is not None:
-                identifier_required = bool(identifier_required)
             sheet_name = str(entry.get("sheet_name") or "").strip() or None
             try:
                 sheet_index = int(entry.get("sheet_index")) if entry.get("sheet_index") is not None else None
@@ -181,8 +175,6 @@ def find_datasets_for_identifier(
                     sheet_name=sheet_name,
                     sheet_index=sheet_index,
                     column=column,
-                    identifier_key=identifier_key,
-                    identifier_required=identifier_required,
                     source=str(entry.get("source") or "").strip() or None,
                 )
             )
@@ -229,10 +221,6 @@ def match_upload_for_identifier(
         if not bloom.maybe_contains(normalized):
             continue
         column = str(entry.get("column") or "").strip() or "key"
-        identifier_key = str(entry.get("identifier_key") or "").strip() or None
-        identifier_required = entry.get("identifier_required")
-        if identifier_required is not None:
-            identifier_required = bool(identifier_required)
         sheet_name = str(entry.get("sheet_name") or "").strip() or None
         try:
             sheet_index = int(entry.get("sheet_index")) if entry.get("sheet_index") is not None else None
@@ -245,8 +233,6 @@ def match_upload_for_identifier(
                 sheet_name=sheet_name,
                 sheet_index=sheet_index,
                 column=column,
-                identifier_key=identifier_key,
-                identifier_required=identifier_required,
                 source=str(entry.get("source") or "").strip() or None,
             )
         )

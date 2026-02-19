@@ -35,7 +35,6 @@ from apps.accounts.models import (
 )
 from apps.knowledge.models import (
     KnowledgeAlias,
-    KnowledgeCollectionLink,
     KnowledgeUpload,
     KnowledgeUploadChunk,
     KnowledgeUploadIssue,
@@ -1061,7 +1060,6 @@ class KnowledgeSearchService:
         session_cache: MutableMapping[str, object] | None = None,
         identifier_filter: Mapping[str, str] | None = None,
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
-        allowed_collection_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
         session_context: Mapping[str, object] | None = None,
     ) -> KnowledgeSearchResult:
@@ -1092,7 +1090,6 @@ class KnowledgeSearchService:
                         session_cache=session_cache,
                         identifier_filter=identifier_filter,
                         allowed_upload_ids=allowed_upload_ids,
-                        allowed_collection_ids=allowed_collection_ids,
                         allowed_explicit_upload_ids=allowed_explicit_upload_ids,
                         session_context=session_context,
                     )
@@ -1159,7 +1156,6 @@ class KnowledgeSearchService:
         session_cache: MutableMapping[str, object] | None = None,
         identifier_filter: Mapping[str, str] | None = None,
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
-        allowed_collection_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
         session_context: Mapping[str, object] | None = None,
     ) -> KnowledgeSearchResult:
@@ -1176,7 +1172,6 @@ class KnowledgeSearchService:
             business_profile,
             traits,
             allowed_upload_ids=allowed_upload_ids,
-            allowed_collection_ids=allowed_collection_ids,
             allowed_explicit_upload_ids=allowed_explicit_upload_ids,
         )
         table_context_ms = int((time.perf_counter() - table_context_start) * 1000.0)
@@ -1196,7 +1191,6 @@ class KnowledgeSearchService:
                 session_cache=session_cache,
                 identifier_filter=identifier_filter,
                 allowed_upload_ids=allowed_upload_ids,
-                allowed_collection_ids=allowed_collection_ids,
                 allowed_explicit_upload_ids=allowed_explicit_upload_ids,
                 feature_state=feature_state,
                 request_id=uuid.uuid4(),
@@ -1224,7 +1218,6 @@ class KnowledgeSearchService:
             business_profile,
             cached_columns=table_context.get("available_columns"),
             allowed_upload_ids=allowed_upload_ids,
-            allowed_collection_ids=allowed_collection_ids,
             allowed_explicit_upload_ids=allowed_explicit_upload_ids,
         )
         table_presence_ms = int((time.perf_counter() - table_presence_start) * 1000.0)
@@ -1237,7 +1230,6 @@ class KnowledgeSearchService:
                     limit=self.alias_result_cap,
                     feature_state=feature_state,
                     allowed_upload_ids=allowed_upload_ids,
-                    allowed_collection_ids=allowed_collection_ids,
                     allowed_explicit_upload_ids=allowed_explicit_upload_ids,
                 )
                 if alias_span.is_recording():
@@ -1318,7 +1310,6 @@ class KnowledgeSearchService:
             feature_state=feature_state,
             identifier_filter=identifier_filter,
             allowed_upload_ids=allowed_upload_ids,
-            allowed_collection_ids=allowed_collection_ids,
             allowed_explicit_upload_ids=allowed_explicit_upload_ids,
         )
         cached_result = None
@@ -1460,7 +1451,6 @@ class KnowledgeSearchService:
             vector_ceiling=vector_ceiling,
             table_context=table_context,
             allowed_upload_ids=allowed_upload_ids,
-            allowed_collection_ids=allowed_collection_ids,
             allowed_explicit_upload_ids=allowed_explicit_upload_ids,
             session_context=session_context,
         )
@@ -1742,7 +1732,6 @@ class KnowledgeSearchService:
                 limit=limit,
                 matched_columns=table_context["matched_columns"],
                 allowed_upload_ids=allowed_upload_ids,
-                allowed_collection_ids=allowed_collection_ids,
                 allowed_explicit_upload_ids=allowed_explicit_upload_ids,
                 comprehensive_intent=comprehensive_flag,
             )
@@ -1927,7 +1916,6 @@ class KnowledgeSearchService:
                 business_profile=business_profile,
                 limit=limit,
                 allowed_upload_ids=allowed_upload_ids,
-                allowed_collection_ids=allowed_collection_ids,
                 allowed_explicit_upload_ids=allowed_explicit_upload_ids,
             )
         )
@@ -2087,7 +2075,6 @@ class KnowledgeSearchService:
         limit: int | None = None,
         feature_state: FeatureState | None = None,
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
-        allowed_collection_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
     ) -> AliasSearchResult:
         traits = traits or self.analyze_query(" ".join(aliases or ()), business_profile=business_profile)
@@ -2118,7 +2105,6 @@ class KnowledgeSearchService:
             aliases=normalized_aliases,
             limit=limit,
             allowed_upload_ids=allowed_upload_ids,
-            allowed_collection_ids=allowed_collection_ids,
             allowed_explicit_upload_ids=allowed_explicit_upload_ids,
         )
         diagnostics: dict[str, object] = {
@@ -2158,7 +2144,6 @@ class KnowledgeSearchService:
             limit=self.alias_fts_limit,
             threshold=alias_threshold,
             allowed_upload_ids=allowed_upload_ids,
-            allowed_collection_ids=allowed_collection_ids,
             allowed_explicit_upload_ids=allowed_explicit_upload_ids,
         )
         diagnostics["stage"] = "alias_fts"
@@ -2193,7 +2178,6 @@ class KnowledgeSearchService:
         feature_state: FeatureState | None = None,
         table_context: Mapping[str, object] | None = None,
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
-        allowed_collection_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
         session_context: Mapping[str, object] | None = None,
     ) -> HybridSearchResult:
@@ -2208,7 +2192,6 @@ class KnowledgeSearchService:
                 feature_state=feature_state,
                 table_context=table_context,
                 allowed_upload_ids=allowed_upload_ids,
-                allowed_collection_ids=allowed_collection_ids,
                 allowed_explicit_upload_ids=allowed_explicit_upload_ids,
                 session_context=session_context,
             )
@@ -2224,7 +2207,6 @@ class KnowledgeSearchService:
         feature_state: FeatureState | None = None,
         table_context: Mapping[str, object] | None = None,
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
-        allowed_collection_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
         session_context: Mapping[str, object] | None = None,
     ) -> HybridSearchResult:
@@ -2232,7 +2214,6 @@ class KnowledgeSearchService:
             base_qs = self._base_chunk_queryset(
                 business_profile,
                 allowed_upload_ids=allowed_upload_ids,
-                allowed_collection_ids=allowed_collection_ids,
                 allowed_explicit_upload_ids=allowed_explicit_upload_ids,
             )
             query_text = (query or "").strip() or traits.normalized or traits.original
@@ -2277,7 +2258,6 @@ class KnowledgeSearchService:
                         filter_expr, scope_diag = build_scope_filter(
                             business_id=business_profile.id,
                             allowed_upload_ids=allowed_upload_ids,
-                            agent_collection_ids=allowed_collection_ids,
                             agent_explicit_upload_ids=allowed_explicit_upload_ids,
                             upload_filter_threshold=config.upload_filter_threshold,
                         )
@@ -2329,7 +2309,6 @@ class KnowledgeSearchService:
                                 business_profile=business_profile,
                                 chunk_ids=ordered,
                                 allowed_upload_ids=allowed_upload_ids,
-                                allowed_collection_ids=allowed_collection_ids,
                                 allowed_explicit_upload_ids=allowed_explicit_upload_ids,
                             )
                             max_score = max(scores.values(), default=0.0)
@@ -2577,7 +2556,6 @@ class KnowledgeSearchService:
         vector_ceiling: float | None = None,
         table_context: Mapping[str, object] | None = None,
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
-        allowed_collection_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
         session_context: Mapping[str, object] | None = None,
     ) -> tuple[ChunkResult, ...]:
@@ -2598,7 +2576,6 @@ class KnowledgeSearchService:
             feature_state=feature_state,
             table_context=table_context,
             allowed_upload_ids=allowed_upload_ids,
-            allowed_collection_ids=allowed_collection_ids,
             allowed_explicit_upload_ids=allowed_explicit_upload_ids,
             session_context=session_context,
         )
@@ -2663,7 +2640,6 @@ class KnowledgeSearchService:
         aliases: Sequence[str],
         limit: int,
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
-        allowed_collection_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
     ) -> tuple[list[ChunkResult], dict[str, int]]:
         if not aliases:
@@ -2701,8 +2677,6 @@ class KnowledgeSearchService:
                     scope_clauses: list[Q] = []
                     if allowed_explicit_upload_ids:
                         scope_clauses.append(Q(entity__upload_id__in=allowed_explicit_upload_ids))
-                    if allowed_collection_ids:
-                        scope_clauses.append(Q(entity__upload__collections__id__in=allowed_collection_ids))
                     if scope_clauses:
                         clause = scope_clauses[0]
                         for extra in scope_clauses[1:]:
@@ -2719,7 +2693,6 @@ class KnowledgeSearchService:
                     business_profile=business_profile,
                     chunk_ids=chunk_ids,
                     allowed_upload_ids=allowed_upload_ids,
-                    allowed_collection_ids=allowed_collection_ids,
                     allowed_explicit_upload_ids=allowed_explicit_upload_ids,
                 )
                 payloads: dict[str, list[dict[str, str]]] = {}
@@ -2748,7 +2721,6 @@ class KnowledgeSearchService:
                 business_profile=business_profile,
                 chunk_ids=ordered_ids[:limit],
                 allowed_upload_ids=allowed_upload_ids,
-                allowed_collection_ids=allowed_collection_ids,
                 allowed_explicit_upload_ids=allowed_explicit_upload_ids,
             )
             hits: list[ChunkResult] = []
@@ -2778,7 +2750,6 @@ class KnowledgeSearchService:
         limit: int,
         threshold: float,
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
-        allowed_collection_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
     ) -> list[ChunkResult]:
         identifier_tokens = self._identifier_like_tokens(traits)
@@ -2795,8 +2766,6 @@ class KnowledgeSearchService:
                 scope_clauses: list[Q] = []
                 if allowed_explicit_upload_ids:
                     scope_clauses.append(Q(entity__upload_id__in=allowed_explicit_upload_ids))
-                if allowed_collection_ids:
-                    scope_clauses.append(Q(entity__upload__collections__id__in=allowed_collection_ids))
                 if scope_clauses:
                     clause = scope_clauses[0]
                     for extra in scope_clauses[1:]:
@@ -2818,7 +2787,6 @@ class KnowledgeSearchService:
                 business_profile=business_profile,
                 chunk_ids=chunk_ids,
                 allowed_upload_ids=allowed_upload_ids,
-                allowed_collection_ids=allowed_collection_ids,
                 allowed_explicit_upload_ids=allowed_explicit_upload_ids,
             )
             seen: set[uuid.UUID] = set()
@@ -2970,18 +2938,10 @@ class KnowledgeSearchService:
     def _upload_scope_token(
         allowed_upload_ids: Sequence[uuid.UUID] | None,
         *,
-        allowed_collection_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
     ) -> str:
-        """
-        Stable scope token used to key per-scope caches.
-
-        IMPORTANT: when `allowed_upload_ids` is None (meaning we didn't enumerate uploads),
-        this token must still capture collection/explicit agent restrictions to avoid
-        cross-scope cache bleed.
-        """
-
-        if allowed_upload_ids is None and not allowed_collection_ids and not allowed_explicit_upload_ids:
+        """Stable scope token used to key per-scope caches."""
+        if allowed_upload_ids is None and not allowed_explicit_upload_ids:
             return "all"
         if allowed_upload_ids is not None:
             if not allowed_upload_ids:
@@ -2990,18 +2950,12 @@ class KnowledgeSearchService:
             digest = hashlib.sha256("|".join(unique).encode("utf-8")).hexdigest()[:16]
             return f"u{len(unique)}:{digest}"
 
-        collection_ids = sorted({str(value) for value in (allowed_collection_ids or ()) if value})
         explicit_ids = sorted({str(value) for value in (allowed_explicit_upload_ids or ()) if value})
-        if not collection_ids and not explicit_ids:
+        if not explicit_ids:
             return "all"
-        fingerprint = "|".join(
-            [
-                "collections:" + ",".join(collection_ids),
-                "explicit:" + ",".join(explicit_ids),
-            ]
-        )
+        fingerprint = "explicit:" + ",".join(explicit_ids)
         digest = hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()[:16]
-        return f"c{len(collection_ids)}d{len(explicit_ids)}:{digest}"
+        return f"d{len(explicit_ids)}:{digest}"
 
     def _result_cache_key(
         self,
@@ -3014,7 +2968,6 @@ class KnowledgeSearchService:
         feature_state: FeatureState,
         identifier_filter: Mapping[str, str] | None = None,
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
-        allowed_collection_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
     ) -> str:
         version = self._get_result_cache_version(business_profile.id)
@@ -3030,7 +2983,6 @@ class KnowledgeSearchService:
         normalized_query = (traits.normalized or traits.original or "").strip().lower()
         scope_token = self._upload_scope_token(
             allowed_upload_ids,
-            allowed_collection_ids=allowed_collection_ids,
             allowed_explicit_upload_ids=allowed_explicit_upload_ids,
         )
         fingerprint = "|".join(
@@ -3156,7 +3108,6 @@ class KnowledgeSearchService:
         business_profile,
         chunk_ids: Sequence[uuid.UUID],
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
-        allowed_collection_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
     ) -> dict[uuid.UUID, KnowledgeUploadChunk]:
         if not chunk_ids:
@@ -3170,7 +3121,6 @@ class KnowledgeSearchService:
             qs,
             business_profile=business_profile,
             allowed_upload_ids=allowed_upload_ids,
-            allowed_collection_ids=allowed_collection_ids,
             allowed_explicit_upload_ids=allowed_explicit_upload_ids,
         )
         qs = apply_customer_visible_chunks(qs.select_related("upload"))
@@ -3181,7 +3131,6 @@ class KnowledgeSearchService:
         business_profile,
         *,
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
-        allowed_collection_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
     ):
         qs = KnowledgeUploadChunk.objects.filter(
@@ -3195,18 +3144,9 @@ class KnowledgeSearchService:
             qs,
             business_profile=business_profile,
             allowed_upload_ids=allowed_upload_ids,
-            allowed_collection_ids=allowed_collection_ids,
             allowed_explicit_upload_ids=allowed_explicit_upload_ids,
         )
         return apply_customer_visible_chunks(qs.select_related("upload"))
-
-    def _collection_upload_id_subquery(self, business_profile, collection_ids: Sequence[uuid.UUID]):
-        if not collection_ids:
-            return KnowledgeCollectionLink.objects.none().values("upload_id")
-        return KnowledgeCollectionLink.objects.filter(
-            collection__business_profile=business_profile,
-            collection_id__in=collection_ids,
-        ).values("upload_id")
 
     def _apply_chunk_scope(
         self,
@@ -3214,7 +3154,6 @@ class KnowledgeSearchService:
         *,
         business_profile,
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
-        allowed_collection_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
     ):
         if allowed_upload_ids is not None:
@@ -3225,8 +3164,6 @@ class KnowledgeSearchService:
         clauses: list[Q] = []
         if allowed_explicit_upload_ids:
             clauses.append(Q(upload_id__in=allowed_explicit_upload_ids))
-        if allowed_collection_ids:
-            clauses.append(Q(upload_id__in=self._collection_upload_id_subquery(business_profile, allowed_collection_ids)))
         if not clauses:
             return queryset
         combined = clauses[0]
@@ -4750,7 +4687,6 @@ class KnowledgeSearchService:
         traits: QueryTraits,
         *,
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
-        allowed_collection_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
     ) -> tuple[set[str], set[str]]:
         tokens = {token.lower() for token in traits.tokens if token}
@@ -4809,7 +4745,6 @@ class KnowledgeSearchService:
             self._table_generic_tokens_for_business(
                 business_profile,
                 allowed_upload_ids=allowed_upload_ids,
-                allowed_collection_ids=allowed_collection_ids,
                 allowed_explicit_upload_ids=allowed_explicit_upload_ids,
             )
         )
@@ -4876,7 +4811,6 @@ class KnowledgeSearchService:
         business_profile,
         *,
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
-        allowed_collection_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
     ) -> set[str]:
         business_id = getattr(business_profile, "id", None)
@@ -4886,7 +4820,6 @@ class KnowledgeSearchService:
             business_id,
             self._upload_scope_token(
                 allowed_upload_ids,
-                allowed_collection_ids=allowed_collection_ids,
                 allowed_explicit_upload_ids=allowed_explicit_upload_ids,
             ),
         )
@@ -4906,10 +4839,6 @@ class KnowledgeSearchService:
             clauses: list[Q] = []
             if allowed_explicit_upload_ids:
                 clauses.append(Q(upload_id__in=allowed_explicit_upload_ids))
-            if allowed_collection_ids:
-                clauses.append(
-                    Q(upload_id__in=self._collection_upload_id_subquery(business_profile, allowed_collection_ids))
-                )
             if clauses:
                 clause = clauses[0]
                 for extra in clauses[1:]:
@@ -5022,7 +4951,6 @@ class KnowledgeSearchService:
         traits: QueryTraits,
         *,
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
-        allowed_collection_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
     ) -> Mapping[str, object]:
         """
@@ -5038,7 +4966,6 @@ class KnowledgeSearchService:
             business_profile,
             traits,
             allowed_upload_ids=allowed_upload_ids,
-            allowed_collection_ids=allowed_collection_ids,
             allowed_explicit_upload_ids=allowed_explicit_upload_ids,
         )
         tokens = set(query_tokens)
@@ -5049,10 +4976,7 @@ class KnowledgeSearchService:
         cached_profile = None
         if business_id:
             try:
-                cached_profile = get_table_profile_cache(
-                    business_id,
-                    collection_ids=allowed_collection_ids if allowed_collection_ids else None,
-                )
+                cached_profile = get_table_profile_cache(business_id)
             except Exception as exc:
                 # Cache failure shouldn't break retrieval
                 logger.warning(
@@ -5090,19 +5014,16 @@ class KnowledgeSearchService:
             columns = self._table_columns_for_business(
                 business_profile,
                 allowed_upload_ids=allowed_upload_ids,
-                allowed_collection_ids=allowed_collection_ids,
                 allowed_explicit_upload_ids=allowed_explicit_upload_ids,
             )
             table_profile = self._table_profile_for_business(
                 business_profile,
                 allowed_upload_ids=allowed_upload_ids,
-                allowed_collection_ids=allowed_collection_ids,
                 allowed_explicit_upload_ids=allowed_explicit_upload_ids,
             )
             row_label_tokens = self._table_row_label_tokens_for_business(
                 business_profile,
                 allowed_upload_ids=allowed_upload_ids,
-                allowed_collection_ids=allowed_collection_ids,
                 allowed_explicit_upload_ids=allowed_explicit_upload_ids,
             )
             
@@ -5117,7 +5038,6 @@ class KnowledgeSearchService:
                     set_table_profile_cache(
                         business_id,
                         profile_to_cache,
-                        collection_ids=allowed_collection_ids if allowed_collection_ids else None,
                     )
                 except Exception as exc:
                     logger.warning(
@@ -5224,7 +5144,6 @@ class KnowledgeSearchService:
         business_profile,
         *,
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
-        allowed_collection_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
     ) -> set[str]:
         business_id = getattr(business_profile, "id", None)
@@ -5234,7 +5153,6 @@ class KnowledgeSearchService:
             business_id,
             self._upload_scope_token(
                 allowed_upload_ids,
-                allowed_collection_ids=allowed_collection_ids,
                 allowed_explicit_upload_ids=allowed_explicit_upload_ids,
             ),
         )
@@ -5256,8 +5174,6 @@ class KnowledgeSearchService:
             clauses: list[Q] = []
             if allowed_explicit_upload_ids:
                 clauses.append(Q(id__in=allowed_explicit_upload_ids))
-            if allowed_collection_ids:
-                clauses.append(Q(id__in=self._collection_upload_id_subquery(business_profile, allowed_collection_ids)))
             if clauses:
                 clause = clauses[0]
                 for extra in clauses[1:]:
@@ -5289,10 +5205,6 @@ class KnowledgeSearchService:
                 clauses = []
                 if allowed_explicit_upload_ids:
                     clauses.append(Q(upload_id__in=allowed_explicit_upload_ids))
-                if allowed_collection_ids:
-                    clauses.append(
-                        Q(upload_id__in=self._collection_upload_id_subquery(business_profile, allowed_collection_ids))
-                    )
                 if clauses:
                     clause = clauses[0]
                     for extra in clauses[1:]:
@@ -5319,7 +5231,6 @@ class KnowledgeSearchService:
         business_profile,
         *,
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
-        allowed_collection_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
     ) -> dict[str, object]:
         business_id = getattr(business_profile, "id", None)
@@ -5335,7 +5246,6 @@ class KnowledgeSearchService:
             business_id,
             self._upload_scope_token(
                 allowed_upload_ids,
-                allowed_collection_ids=allowed_collection_ids,
                 allowed_explicit_upload_ids=allowed_explicit_upload_ids,
             ),
         )
@@ -5366,8 +5276,6 @@ class KnowledgeSearchService:
             clauses: list[Q] = []
             if allowed_explicit_upload_ids:
                 clauses.append(Q(id__in=allowed_explicit_upload_ids))
-            if allowed_collection_ids:
-                clauses.append(Q(id__in=self._collection_upload_id_subquery(business_profile, allowed_collection_ids)))
             if clauses:
                 clause = clauses[0]
                 for extra in clauses[1:]:
@@ -5388,10 +5296,6 @@ class KnowledgeSearchService:
             clauses = []
             if allowed_explicit_upload_ids:
                 clauses.append(Q(upload_id__in=allowed_explicit_upload_ids))
-            if allowed_collection_ids:
-                clauses.append(
-                    Q(upload_id__in=self._collection_upload_id_subquery(business_profile, allowed_collection_ids))
-                )
             if clauses:
                 clause = clauses[0]
                 for extra in clauses[1:]:
@@ -5425,7 +5329,6 @@ class KnowledgeSearchService:
         business_profile,
         *,
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
-        allowed_collection_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
     ) -> set[str]:
         business_id = getattr(business_profile, "id", None)
@@ -5435,7 +5338,6 @@ class KnowledgeSearchService:
             business_id,
             self._upload_scope_token(
                 allowed_upload_ids,
-                allowed_collection_ids=allowed_collection_ids,
                 allowed_explicit_upload_ids=allowed_explicit_upload_ids,
             ),
         )
@@ -5456,8 +5358,6 @@ class KnowledgeSearchService:
             clauses: list[Q] = []
             if allowed_explicit_upload_ids:
                 clauses.append(Q(id__in=allowed_explicit_upload_ids))
-            if allowed_collection_ids:
-                clauses.append(Q(id__in=self._collection_upload_id_subquery(business_profile, allowed_collection_ids)))
             if clauses:
                 clause = clauses[0]
                 for extra in clauses[1:]:
@@ -5491,14 +5391,6 @@ class KnowledgeSearchService:
                 clauses = []
                 if allowed_explicit_upload_ids:
                     clauses.append(Q(table__upload_id__in=allowed_explicit_upload_ids))
-                if allowed_collection_ids:
-                    clauses.append(
-                        Q(
-                            table__upload_id__in=self._collection_upload_id_subquery(
-                                business_profile, allowed_collection_ids
-                            )
-                        )
-                    )
                 if clauses:
                     clause = clauses[0]
                     for extra in clauses[1:]:
@@ -5616,7 +5508,6 @@ class KnowledgeSearchService:
         cached_columns: set[str] | None = None,
         *,
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
-        allowed_collection_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
     ) -> bool:
         business_id = getattr(business_profile, "id", None)
@@ -5628,7 +5519,6 @@ class KnowledgeSearchService:
             business_id,
             self._upload_scope_token(
                 allowed_upload_ids,
-                allowed_collection_ids=allowed_collection_ids,
                 allowed_explicit_upload_ids=allowed_explicit_upload_ids,
             ),
         )
@@ -5651,10 +5541,6 @@ class KnowledgeSearchService:
             clauses: list[Q] = []
             if allowed_explicit_upload_ids:
                 clauses.append(Q(upload_id__in=allowed_explicit_upload_ids))
-            if allowed_collection_ids:
-                clauses.append(
-                    Q(upload_id__in=self._collection_upload_id_subquery(business_profile, allowed_collection_ids))
-                )
             if clauses:
                 clause = clauses[0]
                 for extra in clauses[1:]:
@@ -5705,7 +5591,6 @@ class KnowledgeSearchService:
         limit: int,
         matched_columns: set[str],
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
-        allowed_collection_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
         comprehensive_intent: bool = False,
     ) -> tuple[KnowledgeSnippet, ...]:
@@ -5788,10 +5673,6 @@ class KnowledgeSearchService:
             clauses: list[Q] = []
             if allowed_explicit_upload_ids:
                 clauses.append(Q(table__upload_id__in=allowed_explicit_upload_ids))
-            if allowed_collection_ids:
-                clauses.append(
-                    Q(table__upload_id__in=self._collection_upload_id_subquery(business_profile, allowed_collection_ids))
-                )
             if clauses:
                 clause = clauses[0]
                 for extra in clauses[1:]:
@@ -5858,14 +5739,6 @@ class KnowledgeSearchService:
                 clauses = []
                 if allowed_explicit_upload_ids:
                     clauses.append(Q(table__upload_id__in=allowed_explicit_upload_ids))
-                if allowed_collection_ids:
-                    clauses.append(
-                        Q(
-                            table__upload_id__in=self._collection_upload_id_subquery(
-                                business_profile, allowed_collection_ids
-                            )
-                        )
-                    )
                 if clauses:
                     clause = clauses[0]
                     for extra in clauses[1:]:
@@ -6181,7 +6054,6 @@ class KnowledgeSearchService:
         business_profile,
         limit: int,
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
-        allowed_collection_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
     ) -> Sequence[KnowledgeSnippet]:
         # Prefer top table rows as factual fallback; if none, fall back to recent uploads.
@@ -6197,10 +6069,6 @@ class KnowledgeSearchService:
             scope_clauses: list[Q] = []
             if allowed_explicit_upload_ids:
                 scope_clauses.append(Q(table__upload_id__in=allowed_explicit_upload_ids))
-            if allowed_collection_ids:
-                scope_clauses.append(
-                    Q(table__upload_id__in=self._collection_upload_id_subquery(business_profile, allowed_collection_ids))
-                )
             if scope_clauses:
                 clause = scope_clauses[0]
                 for extra in scope_clauses[1:]:
@@ -6290,8 +6158,6 @@ class KnowledgeSearchService:
                 clauses: list[Q] = []
                 if allowed_explicit_upload_ids:
                     clauses.append(Q(id__in=allowed_explicit_upload_ids))
-                if allowed_collection_ids:
-                    clauses.append(Q(id__in=self._collection_upload_id_subquery(business_profile, allowed_collection_ids)))
                 if clauses:
                     clause = clauses[0]
                     for extra in clauses[1:]:

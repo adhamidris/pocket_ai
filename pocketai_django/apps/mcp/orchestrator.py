@@ -109,7 +109,6 @@ from .types import (
     CharacterBudgetExceeded,
     ToolRateLimitExceeded,
 )
-from .identifier_registry import IdentifierGuardrail
 
 
 logger = logging.getLogger(__name__)
@@ -380,7 +379,6 @@ class McpOrchestratorService:
                 char_budget_per_minute=char_minute_limit,
                 minute_budget_reserver=minute_reserver,
             )
-            tool_context.identifier_gate = IdentifierGuardrail.from_conversation(conversation)
             with TRACER.start_as_current_span("portal.mcp.table_cache") as cache_span:
                 self._hydrate_table_result_cache(conversation, tool_context)
                 if cache_span.is_recording():
@@ -2023,7 +2021,7 @@ class McpOrchestratorService:
                             self._record_table_column_hint(arguments, tool_context, tool_result)
                             if cached_table_result is None and table_cache_key:
                                 status_value = str(tool_result.get("status") or "").strip().lower()
-                                if status_value not in {"identifier_required", "constraint_error", "error"}:
+                                if status_value not in {"constraint_error", "error"}:
                                     self._cache_table_result(tool_context, table_cache_key, tool_result)
                             # If the aggregate returned nothing, drop any cached column
                             # filters so a follow-up call without explicit columns can
@@ -2676,37 +2674,6 @@ class McpOrchestratorService:
                 "response_blocks": response_blocks,
             }
 
-        # If identifier gating blocked retrieval and nothing was read, respond deterministically.
-        identifier_filters = getattr(tool_context, "identifier_filters", []) or []
-        identifier_blocks = [f for f in identifier_filters if isinstance(f, Mapping) and f.get("status") == "identifier_required"]
-        if identifier_blocks and not getattr(tool_context, "knowledge_reads", []):
-            requirement = identifier_blocks[0]
-            required_keys = requirement.get("required_keys") or ()
-            match_policy = requirement.get("match_policy") or "or"
-            hint = requirement.get("hint")
-            requirement_text = self._identifier_requirement_message(required_keys, match_policy, hint)
-            _emit_tokens(requirement_text)
-            _mark_answer_started()
-            final_assistant_message = {
-                "role": "assistant",
-                "content": requirement_text,
-                "actions": [],
-                "extractions": [],
-                "placeholder_response": None,
-            }
-            _status_event("answer_finalized", "Answer ready")
-            _status_event("stream_complete", "")
-            self._log_turn_metrics(conversation, tool_context)
-            return {
-                "assistant_message": final_assistant_message,
-                "tool_context": tool_context,
-                "streamed_chunks": tuple(answer_streamed_chunks),
-                "clean_answer_text": requirement_text,
-                "dropped_sentences": tuple(),
-                "llm_strategy": "mcp_tools_stream_only",
-                "response_blocks": tuple(),
-            }
-
         single_pass_detected = bool(single_pass_candidate and (not tool_phase_assistant_message or not tool_phase_assistant_message.get("tool_calls")))
         if single_pass_detected:
             structured_log(
@@ -2933,16 +2900,6 @@ class McpOrchestratorService:
                 diagnostics["verification"] = dict(getattr(tool_context, "verification") or {})
             if getattr(tool_context, "table_aggregate_rows", None):
                 diagnostics["table_aggregate_rows"] = list(getattr(tool_context, "table_aggregate_rows"))
-            diagnostics["identifier_checks"] = list(getattr(tool_context, "identifier_checks", ()))
-            diagnostics["identifier_filters"] = list(getattr(tool_context, "identifier_filters", ()))
-            if getattr(tool_context, "identifier_hashes", None):
-                diagnostics["identifier_hashes"] = dict(getattr(tool_context, "identifier_hashes"))
-            gate = getattr(tool_context, "identifier_gate", None)
-            if gate:
-                try:
-                    diagnostics["identifier_gate"] = gate.snapshot()  # type: ignore[attr-defined]
-                except Exception:
-                    diagnostics["identifier_gate"] = None
             if trace_entries:
                 tool_metrics: dict[str, dict[str, float | int]] = {}
                 for entry in trace_entries:
@@ -3186,22 +3143,6 @@ class McpOrchestratorService:
                     block_source = candidate
                     break
         response_blocks = normalize_response_blocks(block_source)
-        if getattr(tool_context, "identifier_gate", None):
-            snapshot = None
-            try:
-                snapshot = tool_context.identifier_gate.snapshot()  # type: ignore[attr-defined]
-            except Exception:
-                snapshot = None
-            if snapshot:
-                diagnostics["identifier_gate"] = snapshot
-        identifier_checks = getattr(tool_context, "identifier_checks", None)
-        if identifier_checks:
-            diagnostics["identifier_checks"] = list(identifier_checks)
-        identifier_filters = getattr(tool_context, "identifier_filters", None)
-        if identifier_filters:
-            diagnostics["identifier_filters"] = list(identifier_filters)
-        if getattr(tool_context, "identifier_hashes", None):
-            diagnostics["identifier_hashes"] = dict(tool_context.identifier_hashes)
         ingestion_warnings = tuple(tool_context.ingestion_warnings)
         return AiOrchestratorPlan(
             response_text=response_text,
@@ -5511,14 +5452,8 @@ class McpOrchestratorService:
         # table_aggregate no longer returns snippet-shaped results; derive compact diagnostics from rows instead.
         if tool_name == "table_aggregate" and not table_aggregate_snippet_seen:
             status_value = str(tool_result.get("status") or "").strip().lower()
-            if status_value == "identifier_required":
-                # Keep identifier-gated turns deterministic (no synthetic reads).
-                status_value = ""
-                rows = None
-                document_id = ""
-            else:
-                document_id = str(tool_result.get("document_id") or "").strip()
-                rows = tool_result.get("rows") if isinstance(tool_result, Mapping) else None
+            document_id = str(tool_result.get("document_id") or "").strip()
+            rows = tool_result.get("rows") if isinstance(tool_result, Mapping) else None
             if document_id and status_value == "ok":
                 McpOrchestratorService._suppress_table_previews(context, upload_id=document_id)
                 McpOrchestratorService._mark_upload_as_satisfied(context, upload_id=document_id)
@@ -7829,7 +7764,7 @@ class McpOrchestratorService:
             return compact
 
         if normalized_name == "search_knowledge":
-            for key in ("query", "intent", "required_identifiers", "provided_identifiers", "match_policy"):
+            for key in ("query", "intent", "match_policy"):
                 if key not in payload:
                     continue
                 value = payload.get(key)
@@ -7840,22 +7775,6 @@ class McpOrchestratorService:
                 if isinstance(value, (list, tuple, set, dict)) and not value:
                     continue
                 compact[key] = value
-            identifier_gate = payload.get("identifier_gate")
-            if isinstance(identifier_gate, Mapping):
-                gate_out: dict[str, object] = {}
-                for key in ("status", "match_policy", "required_keys", "provided_keys"):
-                    if key not in identifier_gate:
-                        continue
-                    value = identifier_gate.get(key)
-                    if value is None:
-                        continue
-                    if isinstance(value, str) and not value.strip():
-                        continue
-                    if isinstance(value, (list, tuple, set, dict)) and not value:
-                        continue
-                    gate_out[key] = value
-                if gate_out:
-                    compact["identifier_gate"] = gate_out
             raw_results = payload.get("refs")
             if not isinstance(raw_results, list):
                 raw_results = payload.get("results")
@@ -8178,24 +8097,6 @@ class McpOrchestratorService:
 
             diagnostics_in = payload.get("diagnostics") if isinstance(payload.get("diagnostics"), Mapping) else {}
             diagnostics_out: dict[str, object] = {}
-            identifier_gate = diagnostics_in.get("identifier_gate") if isinstance(diagnostics_in.get("identifier_gate"), Mapping) else None
-            if identifier_gate:
-                gate_out: dict[str, object] = {}
-                for key in ("status", "match_policy", "required_keys", "provided_keys"):
-                    value = identifier_gate.get(key)
-                    if value is None:
-                        continue
-                    if isinstance(value, str) and not value.strip():
-                        continue
-                    if isinstance(value, (list, tuple, set, dict)) and not value:
-                        continue
-                    gate_out[key] = value
-                if gate_out:
-                    diagnostics_out["identifier_gate"] = gate_out
-            for key in ("required_identifiers", "provided_identifiers"):
-                value = diagnostics_in.get(key)
-                if isinstance(value, list) and value:
-                    diagnostics_out[key] = value[:12]
             requested_identifier = (
                 diagnostics_in.get("requested_identifier")
                 if isinstance(diagnostics_in.get("requested_identifier"), Mapping)
@@ -8666,7 +8567,6 @@ class McpOrchestratorService:
                 "results",
                 "action",
                 "payload",
-                "identifier_gate",
             }:
                 continue
             if len(compact) >= scalar_limit:
@@ -10290,20 +10190,6 @@ class McpOrchestratorService:
             "content": result.get("content") if isinstance(result.get("content"), list) else [],
             "remote": remote_meta,
         }
-
-    @staticmethod
-    def _identifier_requirement_message(required_keys: Iterable[str], match_policy: str, hint: str | None) -> str:
-        keys = [str(k).strip() for k in required_keys if str(k).strip()]
-        if not keys:
-            return hint or "I need a verified identifier to continue. Please share the identifier requested for this record."
-        keys_text = ", ".join(keys)
-        if match_policy == "and" and len(keys) > 1:
-            base = f"I need all of these identifiers to continue: {keys_text}."
-        else:
-            base = f"I need one of these identifiers to continue: {keys_text}."
-        if hint:
-            return f"{base} {hint}"
-        return base
 
     @staticmethod
     def _tool_name(tool_call: Mapping[str, object]) -> str:

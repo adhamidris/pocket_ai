@@ -5,7 +5,7 @@ Purpose
 -------
 This app exposes HTTP endpoints for the web portal and admin dashboard:
 chat streaming, registration, knowledge documents, integrations, cases,
-customers, and identifier registry workflows.
+customers.
 
 Directory Map
 -------------
@@ -15,9 +15,9 @@ Directory Map
   Streaming chat endpoints + orchestration dispatch.
 - views.py
   REST-style endpoints for agents, registrations, documents, integrations,
-  cases, customers, and identifier registry.
+  cases, and customers.
 - tests/
-  API tests for chat + identifier guardrails.
+  API tests for chat, knowledge, integrations, and portal runtime.
 
 Key Flows
 ---------
@@ -32,9 +32,6 @@ Key Flows
 
 4) Integrations
    /api/integrations/google/* -> OAuth + resource discovery + sync.
-
-5) Identifier registry
-   /api/businesses/<id>/identifiers/* -> schema + guardrails + eval runs.
 
 Configuration Touchpoints
 -------------------------
@@ -167,16 +164,6 @@ Cases + Customers
 - GET  `/api/cases/<case_id>/notes/` — case notes
 - GET  `/api/customers/<customer_id>/` — customer detail
 
-Identifiers (Governance)
-- GET  `/api/businesses/<business_id>/identifiers/` — registry
-- POST `/api/businesses/<business_id>/identifiers/propose/` — propose schema
-- POST `/api/businesses/<business_id>/identifiers/<schema_id>/approve/` — approve
-- POST `/api/businesses/<business_id>/identifiers/<schema_id>/reject/` — reject
-- GET  `/api/businesses/<business_id>/identifiers/<schema_id>/columns/` — columns
-- GET  `/api/businesses/<business_id>/identifier-guardrails/` — guardrails
-- POST `/api/businesses/<business_id>/identifier-eval/` — eval run
-- GET  `/api/businesses/<business_id>/identifier-events/` — events log
-
 Examples (By Endpoint)
 ----------------------
 Chat + Portal
@@ -290,25 +277,6 @@ curl -s "http://localhost:8000/api/cases/<case_id>/history/?business_id=<uuid>"
 curl -s "http://localhost:8000/api/cases/<case_id>/messages/?business_id=<uuid>"
 curl -s "http://localhost:8000/api/cases/<case_id>/notes/?business_id=<uuid>"
 curl -s "http://localhost:8000/api/customers/<customer_id>/?business_id=<uuid>"
-```
-
-Identifiers (Governance)
-```bash
-curl -s "http://localhost:8000/api/businesses/<business_id>/identifiers/"
-curl -s -X POST http://localhost:8000/api/businesses/<business_id>/identifiers/ \
-  -H "Content-Type: application/json" \
-  -d '{"key":"email","displayName":"Email","isRequired":true}'
-curl -s -X POST http://localhost:8000/api/businesses/<business_id>/identifiers/<schema_id>/approve/
-curl -s -X POST http://localhost:8000/api/businesses/<business_id>/identifiers/<schema_id>/reject/
-curl -s "http://localhost:8000/api/businesses/<business_id>/identifiers/<schema_id>/columns/"
-curl -s -X POST http://localhost:8000/api/businesses/<business_id>/identifiers/propose/ \
-  -H "Content-Type: application/json" \
-  -d '{"headers":["Order ID","Email"]}'
-curl -s "http://localhost:8000/api/businesses/<business_id>/identifier-guardrails/"
-curl -s -X POST http://localhost:8000/api/businesses/<business_id>/identifier-eval/ \
-  -H "Content-Type: application/json" \
-  -d '{"queries":[{"query":"invoice 9125779195","expected":"identifier"}]}'
-curl -s "http://localhost:8000/api/businesses/<business_id>/identifier-events/"
 ```
 
 High-Level Architecture

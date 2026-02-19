@@ -109,12 +109,6 @@ class ToolExecutionContext:
     # tool_id -> {connection_id, connection_name, remote_tool, description, input_schema}
     mcp_gateway_catalog: dict[str, dict[str, object]] = dataclasses.field(default_factory=dict)
     coverage_ledger: list[dict[str, object]] = dataclasses.field(default_factory=list)
-    identifier_gate: object | None = None
-    identifier_checks: list[dict[str, object]] = dataclasses.field(default_factory=list)
-    identifier_filters: list[dict[str, object]] = dataclasses.field(default_factory=list)
-    identifier_hashes: dict[str, str] = dataclasses.field(default_factory=dict)
-    identifier_mapping_cache: dict[tuple[tuple[tuple[str, str], ...], str | None, str | None], dict[str, object]] = dataclasses.field(default_factory=dict)
-    identifier_event_fingerprints: set[tuple[str | None, tuple[str, ...], tuple[str, ...], tuple[str, ...]]] = dataclasses.field(default_factory=set)
     audit_event_fingerprints: set[tuple[str, str, str]] = dataclasses.field(default_factory=set)
     table_aggregate_rows: list[dict[str, object]] = dataclasses.field(default_factory=list)
     table_row_cache: dict[str, list[dict[str, object]]] = dataclasses.field(default_factory=dict)

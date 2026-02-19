@@ -87,7 +87,6 @@ from apps.core.logging_utils import log_start, log_success, log_warning, log_per
 from apps.rag.tabular_limits import ToolRateLimit, enforce_tool_rate_limit, resolve_tabular_tool_limits
 from core.metrics import latency_monitor
 from core.tenancy import tenant_context
-from .identifier_registry import IdentifierGuardrail, IdentifierRegistryService
 from .types import (
     ChunkPageBudgetExceeded,
     ChunkReadBudgetExceeded,
@@ -166,7 +165,6 @@ except Exception:  # pragma: no cover
 
 
 logger = logging.getLogger(__name__)
-IDENTIFIER_MAPPING_CACHE_TTL = 300
 # Default to one query per user turn for latency predictability.
 # Additional query variants (fanout) can be enabled via `MCP_SEARCH_MAX_QUERY_VARIANTS`.
 DEFAULT_MAX_SEARCH_QUERY_VARIANTS = 1
@@ -2496,106 +2494,10 @@ def _normalize_priority(raw: object) -> str | None:
     return None
 
 
-def _identifier_guard(context: ToolExecutionContext, conversation: Conversation):
-    guard = getattr(context, "identifier_gate", None)
-    if isinstance(guard, IdentifierGuardrail):
-        return guard
-    try:
-        guard = IdentifierGuardrail.from_conversation(conversation)
-    except Exception:
-        return None
-    context.identifier_gate = guard
-    return guard
-
-
-def _record_identifier_check(context: ToolExecutionContext, decision) -> None:
-    if decision is None:
-        return
-    payload = getattr(decision, "as_dict", lambda: None)()
-    if payload is None:
-        return
-    if payload.get("status") == "ok" and not payload.get("required_keys") and not payload.get("blocked_uploads"):
-        return
-    context.identifier_checks.append(payload)
-    context.identifier_filters.append(payload)
-    if not context.identifier_hashes and isinstance(payload, dict):
-        hashes = payload.get("provided_hashes")
-        if isinstance(hashes, Mapping):
-            context.identifier_hashes = dict(hashes)
-
-
-def _identifier_mapping_cache_key(
-    guard: IdentifierGuardrail | None,
-    locked_key: str | None,
-    locked_value: str | None,
-) -> tuple[tuple[tuple[str, str], ...], str | None, str | None] | None:
-    if not guard:
-        return None
-    provided = getattr(guard, "provided_identifiers", None)
-    if not isinstance(provided, Mapping) or not provided:
-        return None
-    normalized_pairs: list[tuple[str, str]] = []
-    for key, value in provided.items():
-        text = str(value).strip()
-        if not text:
-            continue
-        normalized_pairs.append((str(key), text))
-    if not normalized_pairs:
-        return None
-    normalized_pairs.sort()
-    return (tuple(normalized_pairs), locked_key, locked_value)
-
-
-def _identifier_mapping_cache_token(
-    cache_key: tuple[tuple[tuple[str, str], ...], str | None, str | None] | None,
-    business_profile_id: object | None = None,
-) -> str | None:
-    if not cache_key:
-        return None
-    try:
-        fingerprint = json.dumps(
-            {"business_id": str(business_profile_id) if business_profile_id else None, "cache_key": cache_key},
-            sort_keys=True,
-            default=str,
-        )
-    except TypeError:
-        return None
-    digest = hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()
-    return f"mcp:idmap:{digest}"
-
-
-def _record_identifier_event_once(
-    context: ToolExecutionContext,
-    *,
-    business_profile,
-    decision,
-    tool: str,
-    conversation: Conversation,
-    upload_ids: Sequence[str] | None,
-) -> None:
-    if not decision:
-        return
-    required = tuple(sorted(decision.required_keys or ()))
-    provided = tuple(sorted(decision.provided_keys or ()))
-    uploads = tuple(sorted(str(uid) for uid in (upload_ids or ()) if uid))
-    fingerprint = (decision.status, required, provided, uploads)
-    if fingerprint in context.identifier_event_fingerprints:
-        return
-    context.identifier_event_fingerprints.add(fingerprint)
-    IdentifierRegistryService.record_event(
-        business_profile=business_profile,
-        decision=decision,
-        tool=tool,
-        conversation=conversation,
-        upload_ids=list(uploads),
-    )
-
-
 @dataclass(frozen=True, slots=True)
 class AgentKnowledgeScope:
-    mode: str  # all|documents|collections|mixed
+    mode: str  # all|documents
     explicit_upload_ids: frozenset[str] = frozenset()
-    collection_ids: frozenset[str] = frozenset()
 
     @property
     def restricted(self) -> bool:
@@ -2626,8 +2528,7 @@ def _agent_knowledge_scope(conversation: Conversation, context: ToolExecutionCon
         return scope
 
     has_doc_rules = agent.allowed_documents.filter(business_profile=conversation.business_profile).exists()
-    has_collection_rules = agent.allowed_collections.filter(business_profile=conversation.business_profile).exists()
-    if not (has_doc_rules or has_collection_rules):
+    if not has_doc_rules:
         scope = AgentKnowledgeScope(mode="all")
         context._agent_knowledge_scope = scope  # type: ignore[attr-defined]
         return scope
@@ -2644,25 +2545,9 @@ def _agent_knowledge_scope(conversation: Conversation, context: ToolExecutionCon
             ).values_list("id", flat=True)
         )
 
-    collection_ids: set[str] = set()
-    if has_collection_rules:
-        collection_ids.update(
-            str(value)
-            for value in agent.allowed_collections.filter(business_profile=conversation.business_profile).values_list("id", flat=True)
-            if value
-        )
-
-    if has_doc_rules and has_collection_rules:
-        mode = "mixed"
-    elif has_collection_rules:
-        mode = "collections"
-    else:
-        mode = "documents"
-
     scope = AgentKnowledgeScope(
-        mode=mode,
+        mode="documents",
         explicit_upload_ids=frozenset(explicit_upload_ids),
-        collection_ids=frozenset(collection_ids),
     )
     context._agent_knowledge_scope = scope  # type: ignore[attr-defined]
     return scope
@@ -2676,34 +2561,15 @@ def _agent_scope_allows_upload(
 ) -> bool:
     if not scope.restricted:
         return True
-    if str(upload_id) in scope.explicit_upload_ids:
-        return True
-    if not scope.collection_ids:
-        return False
-    return apply_customer_visible_uploads(
-        KnowledgeUpload.objects.filter(
-            business_profile=conversation.business_profile,
-            status=KnowledgeStatus.ACTIVE,
-            id=upload_id,
-            collections__id__in=list(scope.collection_ids),
-        )
-    ).exists()
+    return str(upload_id) in scope.explicit_upload_ids
 
 
 def _apply_agent_scope_to_upload_queryset(queryset, scope: AgentKnowledgeScope):
     if not scope.restricted:
         return queryset
-    clauses: list[models.Q] = []
-    if scope.explicit_upload_ids:
-        clauses.append(models.Q(id__in=list(scope.explicit_upload_ids)))
-    if scope.collection_ids:
-        clauses.append(models.Q(collections__id__in=list(scope.collection_ids)))
-    if not clauses:
+    if not scope.explicit_upload_ids:
         return queryset.none()
-    combined = clauses[0]
-    for clause in clauses[1:]:
-        combined |= clause
-    return queryset.filter(combined).distinct()
+    return queryset.filter(id__in=list(scope.explicit_upload_ids)).distinct()
 
 
 def _scope_upload_ids_to_uuids(scope: Iterable[str] | None) -> list[uuid.UUID] | None:
@@ -3058,7 +2924,7 @@ def _sanitize_snippet_payloads_for_prompt(
         if not isinstance(payload, Mapping):
             continue
         out = dict(payload)
-        # Never pass identifier mappings to the LLM; they may contain PII.
+        # Never pass extracted identifier values to the LLM; they may contain PII.
         out.pop("identifiers", None)
         if redact_text:
             for key in redacted_keys:
@@ -5341,97 +5207,13 @@ def _search_knowledge_handler(
     requested_limit = fetch_limit
 
     service = _knowledge_service()
-    # Apply identifier value filter when an email is locked/provided to prevent cross-identifier leakage.
     identifier_filter: dict[str, object] | None = None
-    allowed_uploads: set[str] | None = None
-    guard = _identifier_guard(context, conversation)
-    locked = getattr(guard, "locked_identifier", None) if guard else None
     locked_key = None
     locked_value = None
-    if isinstance(locked, Mapping):
-        locked_key = locked.get("key")
-        locked_value = locked.get("value")
-    cache_key = _identifier_mapping_cache_key(guard, locked_key, locked_value)
-    cache_token = _identifier_mapping_cache_token(cache_key, conversation.business_profile_id)
-    cached_mapping = None
-    cache_payload: dict[str, object] | None = None
-    if cache_key:
-        cached_mapping = context.identifier_mapping_cache.get(cache_key)
-        if cached_mapping is None and cache_token:
-            cached_from_store = cache.get(cache_token)
-            if isinstance(cached_from_store, dict):
-                cached_mapping = cached_from_store
-                context.identifier_mapping_cache[cache_key] = cached_mapping
-    if cached_mapping is not None:
-        identifier_filter = cached_mapping.get("identifier_filter")
-        cached_allowed = cached_mapping.get("allowed_uploads")
-        if isinstance(cached_allowed, (list, tuple, set)):
-            allowed_uploads = {str(value) for value in cached_allowed if value}
-    elif guard and guard.provided_identifiers:
-        # Derive filter from active mappings for provided identifiers (dynamic, not email-only).
-        from apps.accounts.models import (
-            IdentifierColumnStatus,
-            IdentifierSchemaStatus,
-        )
-        from apps.knowledge.models import IdentifierColumnMapping
-
-        mappings = IdentifierColumnMapping.objects.select_related("identifier").filter(
-            business_profile=conversation.business_profile,
-            status=IdentifierColumnStatus.ACTIVE,
-            identifier__status=IdentifierSchemaStatus.ACTIVE,
-            identifier__key__in=list(guard.provided_identifiers.keys()),
-        )
-        if mappings:
-            allowed_uploads = {str(m.upload_id) for m in mappings if m.upload_id}
-            # Use first mapping for value filter hint.
-            first = mappings[0]
-            value_for_filter = guard.provided_identifiers.get(first.identifier.key)
-            # If locked value exists for this key, force it.
-            if locked_key and first.identifier.key == locked_key and locked_value:
-                value_for_filter = locked_value
-            identifier_filter = {
-                "column": first.column_normalized or first.column_name,
-                "value": value_for_filter,
-                "upload_ids": list(allowed_uploads),
-            }
-            cache_payload = {
-                "allowed_uploads": list(allowed_uploads) if allowed_uploads else [],
-                "identifier_filter": identifier_filter,
-            }
-    if cache_payload is not None:
-        if cache_key:
-            context.identifier_mapping_cache[cache_key] = cache_payload
-        if cache_token:
-            cache.set(cache_token, cache_payload, IDENTIFIER_MAPPING_CACHE_TTL)
 
     agent_scope = _agent_knowledge_scope(conversation, context)
-    agent_collection_ids = _scope_upload_ids_to_uuids(agent_scope.collection_ids) if agent_scope.collection_ids else None
     agent_explicit_upload_ids = _scope_upload_ids_to_uuids(agent_scope.explicit_upload_ids) if agent_scope.explicit_upload_ids else None
-
-    combined_upload_ids: list[uuid.UUID] | None
-    if allowed_uploads is None:
-        combined_upload_ids = None
-    else:
-        combined_allowed: set[str] = set()
-        if not agent_scope.restricted:
-            combined_allowed.update(allowed_uploads)
-        else:
-            if agent_scope.explicit_upload_ids:
-                combined_allowed.update(set(allowed_uploads) & set(agent_scope.explicit_upload_ids))
-            if agent_scope.collection_ids:
-                candidate_ids = _scope_upload_ids_to_uuids(allowed_uploads) or []
-                if candidate_ids:
-                    with tenant_context(conversation.business_profile_id):
-                        in_collections = apply_customer_visible_uploads(
-                            KnowledgeUpload.objects.filter(
-                                business_profile=conversation.business_profile,
-                                status=KnowledgeStatus.ACTIVE,
-                                id__in=candidate_ids,
-                                collections__id__in=list(agent_scope.collection_ids),
-                            )
-                        ).values_list("id", flat=True)
-                        combined_allowed.update(str(value) for value in in_collections if value)
-        combined_upload_ids = _scope_upload_ids_to_uuids(combined_allowed)
+    combined_upload_ids: list[uuid.UUID] | None = agent_explicit_upload_ids if agent_scope.restricted else None
 
     def _effective_limit(base_limit: int | None) -> int | None:
         # Agentic contract: intent classification is advisory (routing/logging),
@@ -5462,7 +5244,6 @@ def _search_knowledge_handler(
             "limit": limit_value,
             "agent_scope_mode": agent_scope.mode,
             "agent_scope_explicit_uploads": len(agent_scope.explicit_upload_ids) if agent_scope.restricted else None,
-            "agent_scope_collections": len(agent_scope.collection_ids) if agent_scope.restricted else None,
             "effective_scope_uploads": len(combined_upload_ids) if combined_upload_ids is not None else None,
             "total_ms": diag.get("total_duration_ms"),
             "alias_ms": diag.get("alias_duration_ms"),
@@ -5604,7 +5385,6 @@ def _search_knowledge_handler(
                             limit=limit_for_run,
                             identifier_filter=identifier_filter,
                             allowed_upload_ids=affinity_upload_ids,
-                            allowed_collection_ids=agent_collection_ids,
                             allowed_explicit_upload_ids=agent_explicit_upload_ids,
                             session_context=session_context,
                         )
@@ -5662,7 +5442,6 @@ def _search_knowledge_handler(
                     limit=limit_for_run,
                     identifier_filter=identifier_filter,
                     allowed_upload_ids=combined_upload_ids,
-                    allowed_collection_ids=agent_collection_ids,
                     allowed_explicit_upload_ids=agent_explicit_upload_ids,
                     session_context=session_context,
                 )
@@ -5686,8 +5465,6 @@ def _search_knowledge_handler(
                             "sheet_name": hit.sheet_name,
                             "sheet_index": hit.sheet_index,
                             "column": hit.column,
-                            "identifier_key": hit.identifier_key,
-                            "identifier_required": hit.identifier_required,
                             "source": hit.source,
                         }
                         for hit in hits
@@ -5759,125 +5536,8 @@ def _search_knowledge_handler(
                         confidence=payload.get("confidence_score") if isinstance(payload.get("confidence_score"), (int, float)) else None,
                     )
 
-        if locked_key and locked_value:
-            locked_val_norm = str(locked_value).strip()
-            filtered_snippets = []
-            for payload in snippet_payloads:
-                identifiers = payload.get("identifiers") if isinstance(payload, Mapping) else None
-                if identifiers and isinstance(identifiers, Mapping):
-                    candidate = identifiers.get(locked_key)
-                    if candidate and str(candidate).strip().lower() != locked_val_norm.lower():
-                        continue
-                filtered_snippets.append(payload)
-            snippet_payloads = filtered_snippets
-        decision = None
-        if guard:
-            decision = guard.evaluate_snippets(snippet_payloads)
-            _record_identifier_check(context, decision)
-            if decision.status == "identifier_conflict":
-                _log_search_performance(
-                    snippets=snippet_payloads,
-                    diagnostics=result.diagnostics,
-                    intent=intent,
-                    limit_value=limit_for_run,
-                    status="identifier_required",
-                    note="identifier_conflict",
-                )
-                return {
-                    "tool": "search_knowledge",
-                    "query": query_text,
-                    "limit": limit_for_run,
-                    "limit_used": limit_for_run,
-                    "limit": limit_for_run,
-                    "limit_used": limit_for_run,
-                    "query_intent": intent,
-                    "intent_signal": intent_info,
-                    "status": "identifier_required",
-                    "error": "identifier_required",
-                    "error_code": "identifier_required",
-                    "diagnostics": dict(result.diagnostics or {}),
-                    "snippets": [],
-                    "identifier_gate": decision.as_dict(),
-                    "required_identifiers": list(decision.required_keys),
-                    "provided_identifiers": list(decision.provided_keys),
-                    "hint": decision.hint,
-                    "llm_hint": decision.hint,
-                }
-            if decision.status != "ok":
-                structured_log(
-                    "mcp",
-                    "identifier.denied",
-                    {
-                        "tool": "search_knowledge",
-                        "uploads": list(decision.blocked_uploads),
-                        "required": list(decision.required_keys),
-                        "provided": list(decision.provided_keys),
-                    },
-                    context={"business": conversation.business_profile_id},
-                    logger_obj=logger,
-                    level=logging.WARNING,
-                )
-                _log_search_performance(
-                    snippets=snippet_payloads,
-                    diagnostics=result.diagnostics,
-                    intent=intent,
-                    limit_value=limit_for_run,
-                    status=decision.status,
-                    note="identifier_gate_blocked",
-                )
-                return {
-                    "tool": "search_knowledge",
-                    "query": query_text,
-                    "limit": limit_for_run,
-                    "limit_used": limit_for_run,
-                    "limit": limit_for_run,
-                    "limit_used": limit_for_run,
-                    "query_intent": intent,
-                    "intent_signal": intent_info,
-                    "status": decision.status,
-                    "error": "identifier_required",
-                    "error_code": "identifier_required",
-                    "diagnostics": dict(result.diagnostics or {}),
-                    "snippets": [],
-                    "identifier_gate": decision.as_dict(),
-                    "required_identifiers": list(decision.required_keys),
-                    "provided_identifiers": list(decision.provided_keys),
-                    "hint": decision.hint,
-                    "llm_hint": decision.hint,
-                }
         read_required = False
         read_required_reasons_summary: set[str] = set()
-        if allowed_uploads is not None:
-            snippet_payloads = [payload for payload in snippet_payloads if str(payload.get("upload_id") or "") in allowed_uploads]
-            if not snippet_payloads:
-                _log_snippet_payloads(
-                    tool="search_knowledge",
-                    conversation=conversation,
-                    snippet_payloads=snippet_payloads,
-                    meta={"query": query_text, "intent": intent, "read_required": read_required, "filtered": True},
-                )
-                _log_search_performance(
-                    snippets=snippet_payloads,
-                    diagnostics=result.diagnostics,
-                    intent=intent,
-                    limit_value=limit_for_run,
-                    status="ok",
-                    note="identifier_scope_filtered",
-                )
-                return {
-                    "tool": "search_knowledge",
-                    "query": query_text,
-                    "limit": limit_for_run,
-                    "limit_used": limit_for_run,
-                    "limit": limit_for_run,
-                    "limit_used": limit_for_run,
-                    "query_intent": intent,
-                    "intent_signal": intent_info,
-                    "status": "ok",
-                    "snippets": [],
-                    "identifier_gate": decision.as_dict() if decision else None,
-                    "hint": "No records found for this identifier.",
-                }
         for payload in snippet_payloads:
             payload_read_required, reasons = _compute_read_required(payload)
             payload["read_required"] = payload_read_required
@@ -5931,27 +5591,6 @@ def _search_knowledge_handler(
                 read_hint["offset"] = chunk_index
             
             payload["read_hint"] = read_hint
-        if guard and decision and decision.status == "ok":
-            applied_filter = decision.as_dict()
-            applied_filter["tool"] = "search_knowledge"
-            context.identifier_filters.append(applied_filter)
-            _record_identifier_event_once(
-                context,
-                business_profile=conversation.business_profile,
-                decision=decision,
-                tool="search_knowledge",
-                conversation=conversation,
-                upload_ids=[str(payload.get("upload_id") or "") for payload in snippet_payloads if payload.get("upload_id")],
-            )
-        elif guard and decision:
-            _record_identifier_event_once(
-                context,
-                business_profile=conversation.business_profile,
-                decision=decision,
-                tool="search_knowledge",
-                conversation=conversation,
-                upload_ids=list(decision.blocked_uploads or ()),
-            )
         snippet_payloads = _sanitize_snippet_payloads_for_prompt(snippet_payloads, conversation=conversation)
         log_meta = {"query": query_text, "intent": intent, "read_required": read_required}
         if read_required_reasons_summary:
@@ -6071,7 +5710,6 @@ def _search_knowledge_handler(
                             limit=limit_for_run,
                             identifier_filter=identifier_filter,
                             allowed_upload_ids=combined_upload_ids,
-                            allowed_collection_ids=agent_collection_ids,
                             allowed_explicit_upload_ids=agent_explicit_upload_ids,
                             session_context=session_context,
                         )
@@ -6298,7 +5936,6 @@ def _search_knowledge_handler(
                     limit=limit_for_run,
                     identifier_filter=identifier_filter,
                     allowed_upload_ids=combined_upload_ids,
-                    allowed_collection_ids=agent_collection_ids,
                     allowed_explicit_upload_ids=agent_explicit_upload_ids,
                 )
                 run_payload = _execute_single_query(
@@ -7920,29 +7557,10 @@ def _agentic_read_v2_handler(
         return None, None, None, None, {"id": item_id, "error_code": "not_found", "hint": "Document not found for this business."}
 
     agent_scope = _agent_knowledge_scope(conversation, context)
-    guard = _identifier_guard(context, conversation)
 
     def _enforce_access(upload_id: str, *, item_id: str) -> dict[str, object] | None:
         if upload_id and not _agent_scope_allows_upload(scope=agent_scope, conversation=conversation, upload_id=upload_id):
             return {"id": item_id, "error_code": "forbidden_document", "hint": "This agent is not permitted to access that document."}
-        if guard and upload_id:
-            decision = guard.require_for_upload(str(upload_id))
-            _record_identifier_check(context, decision)
-            if decision.status != "ok":
-                _record_identifier_event_once(
-                    context,
-                    business_profile=conversation.business_profile,
-                    decision=decision,
-                    tool="read_document",
-                    conversation=conversation,
-                    upload_ids=[str(upload_id)],
-                )
-                return {
-                    "id": item_id,
-                    "error_code": "identifier_required",
-                    "hint": decision.hint or "Additional identifiers are required to access that document.",
-                    "identifier_gate": decision.as_dict(),
-                }
         return None
 
     def _is_dataset_upload(upload: KnowledgeUpload | None) -> bool:
@@ -8937,13 +8555,8 @@ def _agentic_read_v2_handler(
 
         access_error = _enforce_access(upload_id, item_id=item_id)
         if access_error:
-            # Mirror legacy behavior: identifier gate returns status="identifier_required".
-            if access_error.get("error_code") == "identifier_required":
-                errors.append(access_error)
-                read.append({"id": item_id, "status": "identifier_required"})
-            else:
-                errors.append(access_error)
-                read.append({"id": item_id, "status": "error"})
+            errors.append(access_error)
+            read.append({"id": item_id, "status": "error"})
             continue
 
         if chunk_record is not None and upload_id in expanded_upload_reads_seen and not cursor_payload:
@@ -10172,55 +9785,6 @@ def _read_document_handler(
             ),
         }
 
-    guard = _identifier_guard(context, conversation)
-    locked = getattr(guard, "locked_identifier", None) if guard else None
-    locked_key = None
-    locked_value = None
-    if isinstance(locked, Mapping):
-        locked_key = locked.get("key")
-        locked_value = locked.get("value")
-    decision = None
-    if guard and gating_upload_id:
-        decision = guard.require_for_upload(str(gating_upload_id))
-        _record_identifier_check(context, decision)
-        if decision.status != "ok":
-            structured_log(
-                "mcp",
-                "identifier.denied",
-                {
-                    "tool": "read_document",
-                    "upload": gating_upload_id,
-                    "required": list(decision.required_keys),
-                    "provided": list(decision.provided_keys),
-                },
-                context={"business": conversation.business_profile_id},
-                logger_obj=logger,
-                level=logging.WARNING,
-            )
-            _record_identifier_event_once(
-                context,
-                business_profile=conversation.business_profile,
-                decision=decision,
-                tool="read_document",
-                conversation=conversation,
-                upload_ids=[str(gating_upload_id)],
-            )
-            error_code = "identifier_required"
-            return {
-                "tool": "read_document",
-                "document_id": document_id,
-                "status": decision.status,
-                "error": error_code,
-                "error_code": error_code,
-                "snippets": [],
-                "identifier_gate": decision.as_dict(),
-                "required_identifiers": list(decision.required_keys),
-                "provided_identifiers": list(decision.provided_keys),
-                "hint": decision.hint,
-                "llm_hint": decision.hint,
-            }
-
-    
     pages_arg = arguments.get("pages")
     page_arg = arguments.get("page")
     offset_value = arguments.get("offset")
@@ -10392,18 +9956,6 @@ def _read_document_handler(
 
 
     snippet_payloads = _serialize_snippets(snippets)
-    # Enforce locked identifier match for identity-bound fields; drop snippets that don't match.
-    if locked_key and locked_value:
-        locked_val_norm = str(locked_value).strip().lower()
-        filtered = []
-        for payload in snippet_payloads:
-            identifiers = payload.get("identifiers") if isinstance(payload, Mapping) else None
-            if identifiers and isinstance(identifiers, Mapping):
-                candidate = identifiers.get(locked_key)
-                if candidate and str(candidate).strip().lower() != locked_val_norm:
-                    continue
-            filtered.append(payload)
-        snippet_payloads = filtered
     snippet_payloads = _sanitize_snippet_payloads_for_prompt(snippet_payloads, conversation=conversation)
     knowledge_reads: list[dict[str, object]] = []
     for payload in snippet_payloads:
@@ -10416,19 +9968,6 @@ def _read_document_handler(
         }
         knowledge_reads.append(read_entry)
         context.add_knowledge_read(read_entry)
-    if guard and decision and decision.status == "ok":
-        applied_filter = decision.as_dict()
-        applied_filter["tool"] = "read_document"
-        context.identifier_filters.append(applied_filter)
-        _record_identifier_event_once(
-            context,
-            business_profile=conversation.business_profile,
-            decision=decision,
-            tool="read_document",
-            conversation=conversation,
-            upload_ids=[str(gating_upload_id)] if gating_upload_id else None,
-        )
-
     ingestion_warnings = _build_ingestion_warnings(snippet_payloads, knowledge_reads)
     for warning in ingestion_warnings:
         context.add_ingestion_warning(warning)
@@ -11333,49 +10872,6 @@ def _table_aggregate_handler(
             "hint": "This agent is not permitted to access that document.",
         }
 
-    guard = _identifier_guard(context, conversation)
-    decision = None
-    if guard and upload.id:
-        decision = guard.require_for_upload(str(upload.id))
-        _record_identifier_check(context, decision)
-        if decision.status != "ok":
-            structured_log(
-                "mcp",
-                "identifier.denied",
-                {
-                    "tool": "table_aggregate",
-                    "upload": str(upload.id),
-                    "required": list(decision.required_keys),
-                    "provided": list(decision.provided_keys),
-                },
-                context={"business": conversation.business_profile_id},
-                logger_obj=logger,
-                level=logging.WARNING,
-            )
-            _record_identifier_event_once(
-                context,
-                business_profile=conversation.business_profile,
-                decision=decision,
-                tool="table_aggregate",
-                conversation=conversation,
-                upload_ids=[str(upload.id)],
-            )
-            error_code = "identifier_required"
-            return {
-                "tool": "table_aggregate",
-                "document_id": str(upload.id),
-                "status": decision.status,
-                "error": error_code,
-                "error_code": error_code,
-                "rows": [],
-                "match_count": 0,
-                "identifier_gate": decision.as_dict(),
-                "required_identifiers": list(decision.required_keys),
-                "provided_identifiers": list(decision.provided_keys),
-                "hint": decision.hint,
-                "llm_hint": decision.hint,
-            }
-
     tabular_limits = resolve_tabular_tool_limits(business_profile=conversation.business_profile, upload=upload)
     tool_limits = tabular_limits.table_aggregate
     try:
@@ -12037,49 +11533,6 @@ def _dataset_query_handler(
             "match_count": 0,
             "hint": "This agent is not permitted to access that document.",
         }
-
-    guard = _identifier_guard(context, conversation)
-    decision = None
-    if guard and upload.id:
-        decision = guard.require_for_upload(str(upload.id))
-        _record_identifier_check(context, decision)
-        if decision.status != "ok":
-            structured_log(
-                "mcp",
-                "identifier.denied",
-                {
-                    "tool": "query_dataset",
-                    "upload": str(upload.id),
-                    "required": list(decision.required_keys),
-                    "provided": list(decision.provided_keys),
-                },
-                context={"business": conversation.business_profile_id},
-                logger_obj=logger,
-                level=logging.WARNING,
-            )
-            _record_identifier_event_once(
-                context,
-                business_profile=conversation.business_profile,
-                decision=decision,
-                tool="dataset_query",
-                conversation=conversation,
-                upload_ids=[str(upload.id)],
-            )
-            error_code = "identifier_required"
-            return {
-                "tool": "query_dataset",
-                "document_id": str(upload.id),
-                "status": decision.status,
-                "error": error_code,
-                "error_code": error_code,
-                "rows": [],
-                "match_count": 0,
-                "identifier_gate": decision.as_dict(),
-                "required_identifiers": list(decision.required_keys),
-                "provided_identifiers": list(decision.provided_keys),
-                "hint": decision.hint,
-                "llm_hint": decision.hint,
-            }
 
     ingestion_meta = upload.ingestion_metadata if isinstance(getattr(upload, "ingestion_metadata", None), Mapping) else {}
     dataset_meta = ingestion_meta.get("dataset") if isinstance(ingestion_meta, Mapping) else None
@@ -13823,16 +13276,6 @@ def _read_knowledge_legacy_handler(
                 diagnostics.update(dict(identifier_diagnostics))
             except Exception:
                 pass
-
-        identifier_gate = result.get("identifier_gate") if isinstance(result.get("identifier_gate"), Mapping) else None
-        if identifier_gate:
-            diagnostics["identifier_gate"] = identifier_gate
-        required_identifiers = result.get("required_identifiers") if isinstance(result.get("required_identifiers"), list) else None
-        if required_identifiers:
-            diagnostics["required_identifiers"] = [str(item) for item in required_identifiers[:12] if str(item).strip()]
-        provided_identifiers = result.get("provided_identifiers") if isinstance(result.get("provided_identifiers"), list) else None
-        if provided_identifiers:
-            diagnostics["provided_identifiers"] = [str(item) for item in provided_identifiers[:12] if str(item).strip()]
 
         if engine == "text_page":
             snippets = result.get("snippets") if isinstance(result.get("snippets"), list) else []

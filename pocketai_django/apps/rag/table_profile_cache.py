@@ -4,9 +4,8 @@ Redis cache helpers for table profile aggregation.
 Precomputes table context (columns, profiles, row labels) at ingestion-time
 and caches in Redis to avoid 0.5-2s query penalty on every search.
 """
-import hashlib
 import uuid
-from typing import Mapping, Sequence
+from typing import Mapping
 
 from django.core.cache import cache
 from django.conf import settings
@@ -31,34 +30,26 @@ def _get_table_profile_version(business_id: uuid.UUID) -> int:
 def _table_profile_cache_key(
     business_id: uuid.UUID,
     *,
-    collection_ids: Sequence[uuid.UUID] | None = None,
     version: int | None = None,
 ) -> str:
     """
     Generate Redis cache key for table profile.
     
-    Format: table_profile:{business_id}:v{version}:{collection_hash|all}
+    Format: table_profile:{business_id}:v{version}:all
     """
     version = _get_table_profile_version(business_id) if version is None else int(version)
-    if collection_ids:
-        # Sort for deterministic hash
-        sorted_ids = sorted(str(cid) for cid in collection_ids)
-        collection_hash = hashlib.md5("".join(sorted_ids).encode()).hexdigest()[:8]
-        return f"table_profile:{business_id}:v{version}:{collection_hash}"
     return f"table_profile:{business_id}:v{version}:all"
 
 
 def get_table_profile_cache(
     business_id: uuid.UUID,
-    *,
-    collection_ids: Sequence[uuid.UUID] | None = None,
 ) -> Mapping[str, object] | None:
     """
     Fetch cached table profile from Redis.
     
     Returns None if cache miss.
     """
-    key = _table_profile_cache_key(business_id, collection_ids=collection_ids)
+    key = _table_profile_cache_key(business_id)
     cached = cache.get(key)
     if cached and isinstance(cached, (dict, Mapping)):
         return dict(cached)
@@ -69,7 +60,6 @@ def set_table_profile_cache(
     business_id: uuid.UUID,
     profile: Mapping[str, object],
     *,
-    collection_ids: Sequence[uuid.UUID] | None = None,
     ttl_seconds: int | None = None,
 ) -> None:
     """
@@ -84,13 +74,12 @@ def set_table_profile_cache(
             - table_uploads: number of uploads with tables
             - table_upload_ratio: ratio of table uploads
             - dominant: bool indicating if tables dominant
-        collection_ids: Optional collection scope
         ttl_seconds: Cache TTL (default: 15 minutes)
     """
     if ttl_seconds is None:
         ttl_seconds = int(getattr(settings, "TABLE_PROFILE_CACHE_TTL", 900))  # 15 min
     
-    key = _table_profile_cache_key(business_id, collection_ids=collection_ids)
+    key = _table_profile_cache_key(business_id)
     
     # Convert sets to lists for JSON serialization
     serializable_profile = dict(profile)
@@ -104,8 +93,6 @@ def set_table_profile_cache(
 
 def invalidate_table_profile_cache(
     business_id: uuid.UUID,
-    *,
-    collection_ids: Sequence[uuid.UUID] | None = None,
 ) -> None:
     """
     Invalidate cached table profile.

@@ -10,8 +10,7 @@ It is the backbone for multi-tenant configuration and access control.
 Directory Map
 -------------
 - models.py
-  User, BusinessProfile, AgentProfile, KnowledgeUpload, integrations, and
-  identifier schemas/mappings.
+  User, BusinessProfile, AgentProfile, KnowledgeUpload, and integrations.
 - registration.py
   Registration wizard steps and validation.
 - agents.py

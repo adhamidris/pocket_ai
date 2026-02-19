@@ -17,7 +17,6 @@ from apps.accounts.models import (
     BusinessProfile,
     KnowledgeAuditAction,
     KnowledgeBlockType,
-    KnowledgeCollectionVisibility,
     KnowledgeIngestionJobStatus,
     KnowledgeIngestionJobType,
     KnowledgeIssueSeverity,
@@ -25,7 +24,6 @@ from apps.accounts.models import (
     KnowledgeStatus,
     KnowledgeVisibility,
     User,
-    _normalize_identifier_token,
 )
 
 
@@ -34,7 +32,7 @@ class KnowledgeUpload(models.Model):
     Central knowledge artifact powering the AI agent experience.
 
     Supports uploads, URLs, manual snippets, and integration-sourced content while
-    tracking ingestion state, access metadata, and collection membership. When the
+    tracking ingestion state and access metadata. When the
     source type is ``integration`` the ``source_uid`` tracks the integration
     resource id (e.g., a Drive file + sheet gid) so sync jobs can upsert rows
     deterministically.
@@ -102,12 +100,6 @@ class KnowledgeUpload(models.Model):
     last_ingested_at = models.DateTimeField(null=True, blank=True)
     last_synced_at = models.DateTimeField(null=True, blank=True)
     ingestion_error = models.TextField(blank=True, default="")
-    collections = models.ManyToManyField(
-        "KnowledgeCollection",
-        through="KnowledgeCollectionLink",
-        related_name="knowledge_uploads",
-        blank=True,
-    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -416,206 +408,6 @@ class KnowledgeAlias(models.Model):
     def __str__(self) -> str:
         return self.alias_raw
 
-
-class IdentifierSchemaStatus(models.TextChoices):
-    PROPOSED = "proposed", "Proposed"
-    ACTIVE = "active", "Active"
-    DISABLED = "disabled", "Disabled"
-
-
-class IdentifierSchemaSource(models.TextChoices):
-    USER = "user", "User"
-    AI = "ai", "AI"
-
-
-class IdentifierColumnStatus(models.TextChoices):
-    PROPOSED = "proposed", "Proposed"
-    ACTIVE = "active", "Active"
-    DISABLED = "disabled", "Disabled"
-
-
-class IdentifierSchema(models.Model):
-    """
-    Canonical identifier definition (email, phone, customer_id) scoped to a business.
-
-    Schemas can be user-defined or AI-proposed; activation gates MCP retrieval.
-    """
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    business_profile = models.ForeignKey(
-        BusinessProfile,
-        related_name="identifier_schemas",
-        on_delete=models.CASCADE,
-    )
-    key = models.CharField(max_length=80, help_text="Machine-friendly identifier key (e.g., email, phone, customer_id).")
-    display_name = models.CharField(
-        max_length=160,
-        help_text="Human-readable label shown in admin surfaces.",
-    )
-    status = models.CharField(
-        max_length=24,
-        choices=IdentifierSchemaStatus.choices,
-        default=IdentifierSchemaStatus.PROPOSED,
-        help_text="Activation status for retrieval guardrails.",
-    )
-    source = models.CharField(
-        max_length=16,
-        choices=IdentifierSchemaSource.choices,
-        default=IdentifierSchemaSource.USER,
-        help_text="Whether this identifier was user-defined or proposed by AI.",
-    )
-    is_required = models.BooleanField(default=True, help_text="If true, retrieval must be scoped by this identifier when present.")
-    description = models.TextField(blank=True, default="")
-    metadata = models.JSONField(default=dict, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = "accounts_identifier_schema"
-        ordering = ("-updated_at",)
-        indexes = [
-            models.Index(fields=["business_profile", "status"], name="identifier_schema_status_idx"),
-        ]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["business_profile", "key"],
-                name="identifier_schema_unique_key",
-            )
-        ]
-
-    def save(self, *args, **kwargs):
-        self.key = _normalize_identifier_token(self.key) or self.key
-        if not self.display_name:
-            self.display_name = self.key
-        super().save(*args, **kwargs)
-
-    def __str__(self) -> str:
-        return f"{self.key} ({self.business_profile_id})"
-
-
-class IdentifierColumnMapping(models.Model):
-    """
-    Maps upload/sheet columns to identifier schemas for guardrails and reuse.
-    """
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    business_profile = models.ForeignKey(
-        BusinessProfile,
-        related_name="identifier_columns",
-        on_delete=models.CASCADE,
-    )
-    identifier = models.ForeignKey(
-        IdentifierSchema,
-        related_name="column_mappings",
-        on_delete=models.CASCADE,
-    )
-    upload = models.ForeignKey(
-        KnowledgeUpload,
-        related_name="identifier_columns",
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-    )
-    sheet_name = models.CharField(max_length=255, blank=True, default="")
-    column_name = models.CharField(max_length=255)
-    column_normalized = models.CharField(max_length=255, db_index=True)
-    status = models.CharField(
-        max_length=24,
-        choices=IdentifierColumnStatus.choices,
-        default=IdentifierColumnStatus.PROPOSED,
-    )
-    source = models.CharField(
-        max_length=16,
-        choices=IdentifierSchemaSource.choices,
-        default=IdentifierSchemaSource.USER,
-    )
-    confidence = models.FloatField(null=True, blank=True)
-    is_required = models.BooleanField(
-        null=True,
-        blank=True,
-        default=None,
-        help_text=(
-            "Override for identifier.is_required. When true, queries for this upload must be scoped by this "
-            "identifier; when false, it is optional for this upload."
-        ),
-    )
-    metadata = models.JSONField(default=dict, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = "accounts_identifier_column"
-        ordering = ("-updated_at",)
-        indexes = [
-            models.Index(
-                fields=["business_profile", "column_normalized"],
-                name="identifier_column_norm_idx",
-            ),
-            models.Index(
-                fields=["business_profile", "upload"],
-                name="identifier_column_upload_idx",
-            ),
-        ]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["identifier", "upload", "column_normalized", "sheet_name"],
-                name="identifier_column_unique_scope",
-            )
-        ]
-
-    def save(self, *args, **kwargs):
-        self.column_normalized = _normalize_identifier_token(self.column_name) or self.column_name
-        super().save(*args, **kwargs)
-
-    def __str__(self) -> str:
-        label = self.column_name or self.column_normalized
-        return f"{label} -> {self.identifier.key}"
-
-
-class IdentifierColumnMemory(models.Model):
-    """
-    Remembers approved identifier mappings per business to bias future proposals.
-    """
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    business_profile = models.ForeignKey(
-        BusinessProfile,
-        related_name="identifier_memories",
-        on_delete=models.CASCADE,
-    )
-    identifier_schema = models.ForeignKey(
-        IdentifierSchema,
-        related_name="identifier_memories",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-    )
-    identifier_key = models.CharField(max_length=80)
-    normalized_column = models.CharField(max_length=255, db_index=True)
-    pattern_signature = models.CharField(max_length=255, blank=True, default="")
-    last_confidence = models.FloatField(null=True, blank=True)
-    metadata = models.JSONField(default=dict, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = "accounts_identifier_memory"
-        ordering = ("-updated_at",)
-        indexes = [
-            models.Index(
-                fields=["business_profile", "normalized_column"],
-                name="identifier_memory_column_idx",
-            ),
-        ]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["business_profile", "normalized_column", "pattern_signature"],
-                name="identifier_memory_unique_signature",
-            )
-        ]
-
-    def __str__(self) -> str:
-        return f"{self.normalized_column} -> {self.identifier_key}"
 
 
 class KnowledgeUploadPage(models.Model):
@@ -974,111 +766,6 @@ class KnowledgeUploadIssue(models.Model):
         return f"Issue {self.issue_code} ({self.severity}) for upload {self.upload_id}"
 
 
-class KnowledgeCollection(models.Model):
-    """
-    Logical grouping of knowledge uploads surfaced in the dashboard collections tab.
-    """
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    business_profile = models.ForeignKey(
-        BusinessProfile,
-        related_name="knowledge_collections",
-        on_delete=models.CASCADE,
-    )
-    created_by = models.ForeignKey(
-        User,
-        related_name="knowledge_collections",
-        on_delete=models.CASCADE,
-    )
-    name = models.CharField(max_length=160)
-    slug = models.SlugField(max_length=160, blank=True, db_index=True, default="")
-    description = models.TextField(blank=True, default="")
-    visibility = models.CharField(
-        max_length=32,
-        choices=KnowledgeCollectionVisibility.choices,
-        default=KnowledgeCollectionVisibility.PRIVATE,
-    )
-    tags = models.JSONField(default=list, blank=True)
-    metadata = models.JSONField(default=dict, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = "accounts_knowledge_collection"
-        ordering = ("name",)
-        indexes = [
-            models.Index(fields=["business_profile", "slug"], name="knowledge_coll_slug_idx"),
-            models.Index(fields=["business_profile", "visibility"], name="knowledge_coll_vis_idx"),
-        ]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["business_profile", "slug"],
-                condition=~models.Q(slug=""),
-                name="knowledge_coll_slug_uniq",
-            )
-        ]
-
-    def __str__(self) -> str:
-        return self.name
-
-    def save(self, *args: Any, **kwargs: Any) -> None:
-        if not self.slug:
-            base_slug = slugify(self.name) or "collection"
-            candidate = base_slug
-            suffix = 1
-            while KnowledgeCollection.objects.filter(
-                business_profile=self.business_profile,
-                slug=candidate,
-            ).exclude(pk=self.pk).exists():
-                suffix += 1
-                candidate = f"{base_slug}-{suffix}"
-            self.slug = candidate
-
-        super().save(*args, **kwargs)
-
-
-class KnowledgeCollectionLink(models.Model):
-    """
-    Junction table mapping uploads into collections with optional ordering metadata.
-    """
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    collection = models.ForeignKey(
-        KnowledgeCollection,
-        related_name="links",
-        on_delete=models.CASCADE,
-    )
-    upload = models.ForeignKey(
-        KnowledgeUpload,
-        related_name="collection_links",
-        on_delete=models.CASCADE,
-    )
-    position = models.PositiveIntegerField(default=0)
-    added_by = models.ForeignKey(
-        User,
-        related_name="knowledge_collection_links",
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-    )
-    metadata = models.JSONField(default=dict, blank=True)
-    added_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        db_table = "accounts_knowledge_collection_link"
-        ordering = ("position", "added_at")
-        constraints = [
-            models.UniqueConstraint(
-                fields=["collection", "upload"],
-                name="knowledge_coll_upload_uniq",
-            )
-        ]
-
-    def __str__(self) -> str:
-        return f"{self.collection.name} -> {self.upload}"
-
-
-
 class KnowledgeIngestionJob(models.Model):
     """
     Tracks asynchronous ingestion, syncing, and re-index tasks for knowledge uploads.
@@ -1324,49 +1011,3 @@ class AgentKnowledgeAccess(models.Model):
 
     def __str__(self) -> str:
         return f"{self.agent_profile} -> {self.knowledge_upload}"
-
-
-class AgentCollectionAccess(models.Model):
-    """
-    Through model that tracks explicit knowledge collections granted to an agent.
-
-    Enables collection-level scoping for retrieval and auditing for collection usage.
-    """
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    agent_profile = models.ForeignKey(
-        "accounts.AgentProfile",
-        related_name="collection_access_rules",
-        on_delete=models.CASCADE,
-    )
-    collection = models.ForeignKey(
-        "KnowledgeCollection",
-        related_name="agent_access_rules",
-        on_delete=models.CASCADE,
-    )
-    granted_by = models.ForeignKey(
-        User,
-        related_name="agent_collection_grants",
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-    )
-    granted_at = models.DateTimeField(auto_now_add=True)
-    metadata = models.JSONField(
-        default=dict,
-        blank=True,
-        help_text="Optional context about why access was granted.",
-    )
-
-    class Meta:
-        db_table = "accounts_agent_collection_grant"
-        ordering = ("-granted_at",)
-        constraints = [
-            models.UniqueConstraint(
-                fields=["agent_profile", "collection"],
-                name="agent_collection_unique",
-            )
-        ]
-
-    def __str__(self) -> str:
-        return f"{self.agent_profile} -> {self.collection}"

@@ -3,8 +3,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
 import re
+import socket
 from dataclasses import dataclass
+from datetime import timezone
+from email.utils import parsedate_to_datetime
 import time
 from threading import Lock
 from typing import Any, Callable, Iterable, Mapping, Protocol
@@ -33,6 +37,49 @@ LOG_DEBUG_PAYLOADS = os.getenv("LLM_DEBUG_PAYLOADS", "").strip().lower() in {"1"
 # Optional HTTP timeout overrides (seconds) when using httpx client.
 HTTP_TIMEOUT_CONNECT = os.getenv("LLM_HTTP_TIMEOUT_CONNECT")
 HTTP_TIMEOUT_READ = os.getenv("LLM_HTTP_TIMEOUT_READ")
+DEFAULT_RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504}
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def _parse_retryable_statuses(raw: str | None) -> set[int]:
+    if not raw:
+        return set(DEFAULT_RETRYABLE_STATUS_CODES)
+    values: set[int] = set()
+    for token in str(raw).split(","):
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            values.add(int(token))
+        except (TypeError, ValueError):
+            continue
+    return values or set(DEFAULT_RETRYABLE_STATUS_CODES)
+
+
+LLM_RETRY_MAX_ATTEMPTS = max(1, min(8, _env_int("LLM_RETRY_MAX_ATTEMPTS", 3)))
+LLM_RETRY_BASE_DELAY_SECONDS = max(0.0, _env_float("LLM_RETRY_BASE_DELAY_SECONDS", 1.0))
+LLM_RETRY_MAX_DELAY_SECONDS = max(0.1, _env_float("LLM_RETRY_MAX_DELAY_SECONDS", 8.0))
+LLM_RETRY_JITTER_SECONDS = max(0.0, _env_float("LLM_RETRY_JITTER_SECONDS", 0.25))
+LLM_RETRYABLE_STATUSES = _parse_retryable_statuses(os.getenv("LLM_RETRYABLE_STATUSES"))
 
 
 logger = logging.getLogger(__name__)
@@ -208,8 +255,177 @@ def _normalize_usage_payload(
     return payload
 
 
+def _status_is_retryable(status_code: int | None) -> bool:
+    return status_code is not None and int(status_code) in LLM_RETRYABLE_STATUSES
+
+
+def _parse_retry_after_seconds(value: str | None) -> float | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        delay = float(text)
+        if delay <= 0:
+            return None
+        return delay
+    except (TypeError, ValueError):
+        pass
+    try:
+        parsed = parsedate_to_datetime(text)
+    except Exception:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    delay = parsed.timestamp() - time.time()
+    if delay <= 0:
+        return None
+    return delay
+
+
+def _extract_status_code(exc: Exception) -> int | None:
+    for attr in ("status_code", "code"):
+        value = getattr(exc, attr, None)
+        if isinstance(value, int):
+            return int(value)
+        if value is not None:
+            try:
+                return int(str(value).strip())
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def _extract_retry_after(exc: Exception) -> str | None:
+    retry_after = getattr(exc, "retry_after", None)
+    if retry_after:
+        return str(retry_after)
+
+    headers = getattr(exc, "headers", None)
+    if hasattr(headers, "get"):
+        value = headers.get("Retry-After") or headers.get("retry-after")
+        if value:
+            return str(value)
+
+    response = getattr(exc, "response", None)
+    response_headers = getattr(response, "headers", None)
+    if hasattr(response_headers, "get"):
+        value = response_headers.get("Retry-After") or response_headers.get("retry-after")
+        if value:
+            return str(value)
+    return None
+
+
+def _is_retryable_transport_error(exc: Exception) -> bool:
+    if isinstance(exc, urllib_error.URLError):
+        return True
+    if isinstance(exc, (socket.timeout, TimeoutError)):
+        return True
+    name = type(exc).__name__.lower()
+    text = f"{name} {exc}".lower()
+    retry_markers = (
+        "timeout",
+        "timed out",
+        "tempor",
+        "connection",
+        "network",
+        "reset",
+        "rate limit",
+        "too many requests",
+        "service unavailable",
+        "unavailable",
+        "overloaded",
+    )
+    return any(marker in text for marker in retry_markers)
+
+
+class _ProviderRequestError(RuntimeError):
+    """Internal transport/status failure with retry metadata."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        retry_after: str | None = None,
+        retryable: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.retry_after = retry_after
+        self.retry_after_seconds = _parse_retry_after_seconds(retry_after)
+        self.retryable = bool(retryable)
+
+
+def _provider_request_error_from_exception(prefix: str, exc: Exception) -> _ProviderRequestError:
+    status_code = _extract_status_code(exc)
+    retry_after = _extract_retry_after(exc)
+    message = f"{prefix}: {exc}"
+    return _ProviderRequestError(
+        message,
+        status_code=status_code,
+        retry_after=retry_after,
+        retryable=_status_is_retryable(status_code) or _is_retryable_transport_error(exc),
+    )
+
+
 class PromptGenerationError(RuntimeError):
     """Raised when the LLM provider fails to respond."""
+
+
+def _retry_delay_seconds(attempt: int, retry_after_seconds: float | None) -> float:
+    exponent = max(0, int(attempt) - 1)
+    backoff = LLM_RETRY_BASE_DELAY_SECONDS * (2 ** exponent)
+    backoff = min(LLM_RETRY_MAX_DELAY_SECONDS, backoff)
+    jitter = random.uniform(0.0, LLM_RETRY_JITTER_SECONDS) if LLM_RETRY_JITTER_SECONDS > 0 else 0.0
+    delay = backoff + jitter
+    if retry_after_seconds and retry_after_seconds > 0:
+        delay = max(delay, min(LLM_RETRY_MAX_DELAY_SECONDS, retry_after_seconds))
+    return min(LLM_RETRY_MAX_DELAY_SECONDS, delay)
+
+
+def _call_with_retry(
+    call: Callable[[], Any],
+    *,
+    provider: str,
+    model: str | None,
+    operation: str,
+    can_retry: Callable[[], bool] | None = None,
+) -> Any:
+    attempts = max(1, int(LLM_RETRY_MAX_ATTEMPTS))
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            return call()
+        except _ProviderRequestError as exc:
+            retry_allowed = exc.retryable and attempt < attempts
+            if retry_allowed and can_retry is not None:
+                try:
+                    retry_allowed = bool(can_retry())
+                except Exception:
+                    retry_allowed = False
+            if not retry_allowed:
+                raise PromptGenerationError(str(exc)) from exc
+            delay_s = _retry_delay_seconds(attempt, exc.retry_after_seconds)
+            structured_log(
+                "llm",
+                "retry",
+                {
+                    "provider": provider,
+                    "model": model,
+                    "operation": operation,
+                    "attempt": attempt,
+                    "max_attempts": attempts,
+                    "status_code": exc.status_code,
+                    "retry_after": exc.retry_after,
+                    "delay_s": round(delay_s, 3),
+                },
+                logger_obj=logger,
+                level=logging.WARNING,
+            )
+            time.sleep(delay_s)
 
 
 class BaseLLMProvider(Protocol):
@@ -348,30 +564,65 @@ class OpenAIChatProvider:
                 method="POST",
             )
 
+            emitted_output = False
+
+            def _stream_delta(chunk: str) -> None:
+                nonlocal emitted_output
+                if chunk:
+                    emitted_output = True
+                if on_stream_delta:
+                    on_stream_delta(chunk)
+
+            def _reasoning_delta(chunk: str) -> None:
+                nonlocal emitted_output
+                if chunk:
+                    emitted_output = True
+                if on_reasoning_delta:
+                    on_reasoning_delta(chunk)
+
+            def _request_once() -> tuple[int, str | None, Mapping[str, Any] | None]:
+                try:
+                    with urllib_request.urlopen(request, timeout=self.timeout) as resp:
+                        status_code_local = getattr(resp, "status", 200)
+                        if streaming:
+                            data_local = _consume_chat_completion_stream(
+                                resp,
+                                _stream_delta,
+                                on_reasoning_delta=_reasoning_delta if on_reasoning_delta else None,
+                                should_cancel=should_cancel,
+                            )
+                            return status_code_local, None, data_local
+                        return status_code_local, resp.read().decode("utf-8"), None
+                except urllib_error.HTTPError as exc:
+                    detail = exc.read().decode("utf-8", errors="ignore")
+                    headers_obj = getattr(exc, "headers", None)
+                    retry_after = None
+                    if hasattr(headers_obj, "get"):
+                        retry_after = headers_obj.get("Retry-After") or headers_obj.get("retry-after")
+                    raise _ProviderRequestError(
+                        f"OpenAI error ({exc.code}): {detail.strip()[:200]}",
+                        status_code=exc.code,
+                        retry_after=str(retry_after) if retry_after else None,
+                        retryable=_status_is_retryable(exc.code),
+                    ) from exc
+                except urllib_error.URLError as exc:
+                    raise _ProviderRequestError(
+                        f"OpenAI request failed: {exc}",
+                        retryable=True,
+                    ) from exc
+
             try:
-                with urllib_request.urlopen(request, timeout=self.timeout) as resp:
-                    status_code = getattr(resp, "status", 200)
-                    if streaming:
-                        data = _consume_chat_completion_stream(
-                            resp,
-                            on_stream_delta,
-                            on_reasoning_delta=on_reasoning_delta,
-                            should_cancel=should_cancel,
-                        )
-                        raw_body = None
-                    else:
-                        raw_body = resp.read().decode("utf-8")
-            except urllib_error.HTTPError as exc:
-                detail = exc.read().decode("utf-8", errors="ignore")
-                span.record_exception(exc)
-                span.set_status(Status(StatusCode.ERROR, detail))
-                raise PromptGenerationError(
-                    f"OpenAI error ({exc.code}): {detail.strip()[:200]}"
-                ) from exc
-            except urllib_error.URLError as exc:
+                status_code, raw_body, data = _call_with_retry(
+                    _request_once,
+                    provider="OpenAIChat",
+                    model=self.model,
+                    operation="chat.completions",
+                    can_retry=(lambda: not emitted_output) if streaming else None,
+                )
+            except PromptGenerationError as exc:
                 span.record_exception(exc)
                 span.set_status(Status(StatusCode.ERROR, str(exc)))
-                raise PromptGenerationError(f"OpenAI request failed: {exc}") from exc
+                raise
 
             if status_code >= 400:
                 span.set_status(Status(StatusCode.ERROR, str(status_code)))
@@ -592,16 +843,24 @@ class DeepSeekChatProvider(OpenAIChatProvider):
             return parsed
 
     def _generate_blocking(self, messages: list[Mapping[str, str]]) -> tuple[str, dict[str, object] | None]:
-        try:
-            response = self._client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=self.temperature,
-                top_p=self.top_p,
-                stream=False,
-            )
-        except Exception as exc:
-            raise PromptGenerationError(f"DeepSeek request failed: {exc}") from exc
+        def _request_once() -> Any:
+            try:
+                return self._client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    temperature=self.temperature,
+                    top_p=self.top_p,
+                    stream=False,
+                )
+            except Exception as exc:
+                raise _provider_request_error_from_exception("DeepSeek request failed", exc) from exc
+
+        response = _call_with_retry(
+            _request_once,
+            provider="DeepSeekChat",
+            model=self.model,
+            operation="chat.completions",
+        )
         usage_payload = _normalize_usage_payload(
             getattr(response, "usage", None),
             provider="DeepSeekChat",
@@ -622,71 +881,84 @@ class DeepSeekChatProvider(OpenAIChatProvider):
         on_reasoning_delta: Callable[[str], None] | None = None,
         should_cancel: Callable[[], bool] | None = None,
     ) -> tuple[str, dict[str, object] | None]:
-        streamed_response_text_parts: list[str] = []
+        emitted_output = False
 
-        def _emit_response_text(chunk: str) -> None:
-            if not chunk:
-                return
-            streamed_response_text_parts.append(chunk)
-            on_stream_delta(chunk)
+        def _request_once() -> tuple[str, dict[str, object] | None]:
+            nonlocal emitted_output
+            streamed_response_text_parts: list[str] = []
+            assembled: list[str] = []
+            usage_payload: dict[str, object] | None = None
 
-        extractor = _ResponseTextExtractor(_emit_response_text)
-        assembled: list[str] = []
-        reasoning_parts: list[str] = []
-        usage_payload = None
-        try:
-            stream = self._client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=self.temperature,
-                top_p=self.top_p,
-                stream=True,
-                stream_options={"include_usage": True},
-            )
-            for chunk in stream:
-                if should_cancel and should_cancel():
-                    break
-                if usage_payload is None:
-                    usage_payload = _normalize_usage_payload(
-                        getattr(chunk, "usage", None),
-                        provider="DeepSeekChat",
-                        model=self.model,
-                    )
-                reasoning_delta = getattr(getattr(chunk.choices[0], "delta", None), "reasoning_content", None)
-                if isinstance(reasoning_delta, str) and reasoning_delta:
-                    reasoning_parts.append(reasoning_delta)
-                    if on_reasoning_delta:
-                        try:
-                            on_reasoning_delta(reasoning_delta)
-                        except Exception:  # pragma: no cover - safeguard user callbacks
-                            logger.exception("Streaming callback failed while emitting reasoning delta chunk.")
-                delta_text = self._stringify_message_content(getattr(chunk.choices[0], "delta", None))
-                if not delta_text:
-                    continue
-                assembled.append(delta_text)
-                extractor.feed(delta_text)
-        except Exception as exc:
-            raise PromptGenerationError(f"DeepSeek streaming request failed: {exc}") from exc
-        finally:
-            extractor.flush()
+            def _emit_response_text(chunk: str) -> None:
+                nonlocal emitted_output
+                if not chunk:
+                    return
+                emitted_output = True
+                streamed_response_text_parts.append(chunk)
+                on_stream_delta(chunk)
 
-        if should_cancel and should_cancel():
-            return (
-                json.dumps(
-                    {
-                        "response_text": "".join(streamed_response_text_parts),
-                        "actions": [],
-                        "extractions": [],
-                    },
-                    ensure_ascii=False,
-                ),
-                usage_payload,
-            )
+            extractor = _ResponseTextExtractor(_emit_response_text)
+            try:
+                stream = self._client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    temperature=self.temperature,
+                    top_p=self.top_p,
+                    stream=True,
+                    stream_options={"include_usage": True},
+                )
+                for chunk in stream:
+                    if should_cancel and should_cancel():
+                        break
+                    if usage_payload is None:
+                        usage_payload = _normalize_usage_payload(
+                            getattr(chunk, "usage", None),
+                            provider="DeepSeekChat",
+                            model=self.model,
+                        )
+                    reasoning_delta = getattr(getattr(chunk.choices[0], "delta", None), "reasoning_content", None)
+                    if isinstance(reasoning_delta, str) and reasoning_delta:
+                        emitted_output = True
+                        if on_reasoning_delta:
+                            try:
+                                on_reasoning_delta(reasoning_delta)
+                            except Exception:  # pragma: no cover - safeguard user callbacks
+                                logger.exception("Streaming callback failed while emitting reasoning delta chunk.")
+                    delta_text = self._stringify_message_content(getattr(chunk.choices[0], "delta", None))
+                    if not delta_text:
+                        continue
+                    assembled.append(delta_text)
+                    extractor.feed(delta_text)
+            except Exception as exc:
+                raise _provider_request_error_from_exception("DeepSeek streaming request failed", exc) from exc
+            finally:
+                extractor.flush()
 
-        content = "".join(assembled).strip()
-        if not content:
-            raise PromptGenerationError("DeepSeek response was empty.")
-        return content, usage_payload
+            if should_cancel and should_cancel():
+                return (
+                    json.dumps(
+                        {
+                            "response_text": "".join(streamed_response_text_parts),
+                            "actions": [],
+                            "extractions": [],
+                        },
+                        ensure_ascii=False,
+                    ),
+                    usage_payload,
+                )
+
+            content = "".join(assembled).strip()
+            if not content:
+                raise _ProviderRequestError("DeepSeek response was empty.", retryable=True)
+            return content, usage_payload
+
+        return _call_with_retry(
+            _request_once,
+            provider="DeepSeekChat",
+            model=self.model,
+            operation="chat.completions.stream",
+            can_retry=lambda: not emitted_output,
+        )
 
     @staticmethod
     def _stringify_message_content(payload: Any) -> str:
@@ -1459,84 +1731,145 @@ class OpenAIToolsProvider(BaseMcpProvider):
                     except Exception:  # pragma: no cover - log best effort
                         logger.debug("Failed to serialize MCP payload for logging.")
 
-                data: dict[str, Any]
-                raw_body: str | None = None
-                start_time = time.monotonic()
-                if self._http_client:
-                    try:
-                        if streaming:
-                            with self._http_client.stream(
-                                "POST",
-                                "/v1/chat/completions",
-                                json=payload,
-                                headers=headers,
-                                timeout=self.timeout,
-                            ) as resp:
-                                status_code = resp.status_code
-                                if status_code >= 400:
-                                    try:
-                                        detail = resp.read().decode("utf-8", errors="ignore")[:200]
-                                    except Exception:
-                                        detail = ""
-                                    raise PromptGenerationError(f"OpenAI tools error ({status_code}): {detail}")
-                                data = _consume_chat_completion_stream(
-                                    _HttpxLineStream(resp.iter_lines()),
-                                    on_stream_delta,
-                                    on_reasoning_delta=on_reasoning_delta,
-                                    on_tool_call_start=on_tool_call_start,
-                                    on_tool_call_delta=on_tool_call_delta,
-                                    should_cancel=should_cancel,
-                                )
-                        else:
-                            resp = self._http_client.post(
-                                "/v1/chat/completions",
-                                json=payload,
-                                headers=headers,
-                                timeout=self.timeout,
-                            )
-                            status_code = resp.status_code
-                            raw_body = resp.text
-                            if status_code >= 400:
-                                raise PromptGenerationError(f"OpenAI tools error ({status_code}): {raw_body[:200]}")
-                        elapsed_ms = int((time.monotonic() - start_time) * 1000)
-                    except httpx.HTTPError as exc:
-                        raise PromptGenerationError(f"OpenAI tools request failed: {exc}") from exc
-                else:
-                    body = json.dumps(payload).encode("utf-8")
-                    request = urllib_request.Request(
-                        f"{self.base_url}/v1/chat/completions",
-                        data=body,
-                        headers=headers,
-                        method="POST",
-                    )
+                emitted_output = False
 
-                    try:
-                        with urllib_request.urlopen(request, timeout=self.timeout) as resp:
+                def _wrapped_stream_delta(chunk: str) -> None:
+                    nonlocal emitted_output
+                    if chunk:
+                        emitted_output = True
+                    if on_stream_delta:
+                        on_stream_delta(chunk)
+
+                def _wrapped_reasoning_delta(chunk: str) -> None:
+                    nonlocal emitted_output
+                    if chunk:
+                        emitted_output = True
+                    if on_reasoning_delta:
+                        on_reasoning_delta(chunk)
+
+                def _wrapped_tool_call_start(payload_chunk: Mapping[str, object]) -> None:
+                    nonlocal emitted_output
+                    emitted_output = True
+                    if on_tool_call_start:
+                        on_tool_call_start(payload_chunk)
+
+                def _wrapped_tool_call_delta(payload_chunk: Mapping[str, object]) -> None:
+                    nonlocal emitted_output
+                    emitted_output = True
+                    if on_tool_call_delta:
+                        on_tool_call_delta(payload_chunk)
+
+                def _request_once() -> tuple[dict[str, Any], str | None, int]:
+                    data_local: dict[str, Any] = {}
+                    raw_body_local: str | None = None
+                    status_code_local = 200
+                    if self._http_client:
+                        try:
                             if streaming:
-                                data = _consume_chat_completion_stream(
-                                    resp,
-                                    on_stream_delta,
-                                    on_reasoning_delta=on_reasoning_delta,
-                                    on_tool_call_start=on_tool_call_start,
-                                    on_tool_call_delta=on_tool_call_delta,
-                                    should_cancel=should_cancel,
-                                )
-                                raw_body = None
+                                with self._http_client.stream(
+                                    "POST",
+                                    "/v1/chat/completions",
+                                    json=payload,
+                                    headers=headers,
+                                    timeout=self.timeout,
+                                ) as resp:
+                                    status_code_local = resp.status_code
+                                    if status_code_local >= 400:
+                                        try:
+                                            detail = resp.read().decode("utf-8", errors="ignore")[:200]
+                                        except Exception:
+                                            detail = ""
+                                        retry_after = resp.headers.get("Retry-After") or resp.headers.get("retry-after")
+                                        raise _ProviderRequestError(
+                                            f"OpenAI tools error ({status_code_local}): {detail}",
+                                            status_code=status_code_local,
+                                            retry_after=retry_after,
+                                            retryable=_status_is_retryable(status_code_local),
+                                        )
+                                    data_local = _consume_chat_completion_stream(
+                                        _HttpxLineStream(resp.iter_lines()),
+                                        _wrapped_stream_delta,
+                                        on_reasoning_delta=_wrapped_reasoning_delta if on_reasoning_delta else None,
+                                        on_tool_call_start=_wrapped_tool_call_start if on_tool_call_start else None,
+                                        on_tool_call_delta=_wrapped_tool_call_delta if on_tool_call_delta else None,
+                                        should_cancel=should_cancel,
+                                    )
                             else:
-                                raw_body = resp.read().decode("utf-8")
-                                status_code = getattr(resp, "status", 200)
-                    except urllib_error.HTTPError as exc:
-                        detail = exc.read().decode("utf-8", errors="ignore")
-                        raise PromptGenerationError(
-                            f"OpenAI tools error ({exc.code}): {detail.strip()[:200]}"
-                        ) from exc
-                    except urllib_error.URLError as exc:
-                        raise PromptGenerationError(f"OpenAI tools request failed: {exc}") from exc
-                    if not streaming and status_code >= 400:
-                        raise PromptGenerationError(
-                            f"OpenAI tools error ({status_code}): {raw_body[:200] if raw_body else status_code}"
+                                resp = self._http_client.post(
+                                    "/v1/chat/completions",
+                                    json=payload,
+                                    headers=headers,
+                                    timeout=self.timeout,
+                                )
+                                status_code_local = resp.status_code
+                                raw_body_local = resp.text
+                                if status_code_local >= 400:
+                                    retry_after = resp.headers.get("Retry-After") or resp.headers.get("retry-after")
+                                    raise _ProviderRequestError(
+                                        f"OpenAI tools error ({status_code_local}): {raw_body_local[:200] if raw_body_local else ''}",
+                                        status_code=status_code_local,
+                                        retry_after=retry_after,
+                                        retryable=_status_is_retryable(status_code_local),
+                                    )
+                        except httpx.HTTPError as exc:
+                            raise _provider_request_error_from_exception("OpenAI tools request failed", exc) from exc
+                    else:
+                        body = json.dumps(payload).encode("utf-8")
+                        request = urllib_request.Request(
+                            f"{self.base_url}/v1/chat/completions",
+                            data=body,
+                            headers=headers,
+                            method="POST",
                         )
-                    elapsed_ms = int((time.monotonic() - start_time) * 1000)
+                        try:
+                            with urllib_request.urlopen(request, timeout=self.timeout) as resp:
+                                status_code_local = getattr(resp, "status", 200)
+                                if streaming:
+                                    data_local = _consume_chat_completion_stream(
+                                        resp,
+                                        _wrapped_stream_delta,
+                                        on_reasoning_delta=_wrapped_reasoning_delta if on_reasoning_delta else None,
+                                        on_tool_call_start=_wrapped_tool_call_start if on_tool_call_start else None,
+                                        on_tool_call_delta=_wrapped_tool_call_delta if on_tool_call_delta else None,
+                                        should_cancel=should_cancel,
+                                    )
+                                else:
+                                    raw_body_local = resp.read().decode("utf-8")
+                        except urllib_error.HTTPError as exc:
+                            detail = exc.read().decode("utf-8", errors="ignore")
+                            headers_obj = getattr(exc, "headers", None)
+                            retry_after = None
+                            if hasattr(headers_obj, "get"):
+                                retry_after = headers_obj.get("Retry-After") or headers_obj.get("retry-after")
+                            raise _ProviderRequestError(
+                                f"OpenAI tools error ({exc.code}): {detail.strip()[:200]}",
+                                status_code=exc.code,
+                                retry_after=str(retry_after) if retry_after else None,
+                                retryable=_status_is_retryable(exc.code),
+                            ) from exc
+                        except urllib_error.URLError as exc:
+                            raise _ProviderRequestError(
+                                f"OpenAI tools request failed: {exc}",
+                                retryable=True,
+                            ) from exc
+
+                    if not streaming and status_code_local >= 400:
+                        raise _ProviderRequestError(
+                            f"OpenAI tools error ({status_code_local}): {raw_body_local[:200] if raw_body_local else status_code_local}",
+                            status_code=status_code_local,
+                            retryable=_status_is_retryable(status_code_local),
+                        )
+                    return data_local, raw_body_local, status_code_local
+
+                start_time = time.monotonic()
+                data, raw_body, _status_code = _call_with_retry(
+                    _request_once,
+                    provider="OpenAITools",
+                    model=self.model,
+                    operation="chat.completions.tools",
+                    can_retry=(lambda: not emitted_output) if streaming else None,
+                )
+                elapsed_ms = int((time.monotonic() - start_time) * 1000)
 
                 if streaming:
                     # In streaming mode we return the assembled assistant message so the
@@ -1758,84 +2091,145 @@ class DeepSeekToolsProvider(BaseMcpProvider):
                     except Exception:  # pragma: no cover - log best effort
                         logger.debug("Failed to serialize DeepSeek MCP payload for logging.")
 
-                data: dict[str, Any]
-                raw_body: str | None = None
-                start_time = time.monotonic()
-                if self._http_client:
-                    try:
-                        if streaming:
-                            with self._http_client.stream(
-                                "POST",
-                                "/v1/chat/completions",
-                                json=payload,
-                                headers=headers,
-                                timeout=self.timeout,
-                            ) as resp:
-                                status_code = resp.status_code
-                                if status_code >= 400:
-                                    try:
-                                        detail = resp.read().decode("utf-8", errors="ignore")[:200]
-                                    except Exception:
-                                        detail = ""
-                                    raise PromptGenerationError(f"DeepSeek tools error ({status_code}): {detail}")
-                                data = _consume_chat_completion_stream(
-                                    _HttpxLineStream(resp.iter_lines()),
-                                    on_stream_delta,
-                                    on_reasoning_delta=on_reasoning_delta,
-                                    on_tool_call_start=on_tool_call_start,
-                                    on_tool_call_delta=on_tool_call_delta,
-                                    should_cancel=should_cancel,
-                                )
-                        else:
-                            resp = self._http_client.post(
-                                "/v1/chat/completions",
-                                json=payload,
-                                headers=headers,
-                                timeout=self.timeout,
-                            )
-                            status_code = resp.status_code
-                            raw_body = resp.text
-                            if status_code >= 400:
-                                raise PromptGenerationError(f"DeepSeek tools error ({status_code}): {raw_body[:200]}")
-                        elapsed_ms = int((time.monotonic() - start_time) * 1000)
-                    except httpx.HTTPError as exc:
-                        raise PromptGenerationError(f"DeepSeek tools request failed: {exc}") from exc
-                else:
-                    body = json.dumps(payload).encode("utf-8")
-                    request = urllib_request.Request(
-                        f"{self.base_url}/v1/chat/completions",
-                        data=body,
-                        headers=headers,
-                        method="POST",
-                    )
+                emitted_output = False
 
-                    try:
-                        with urllib_request.urlopen(request, timeout=self.timeout) as resp:
+                def _wrapped_stream_delta(chunk: str) -> None:
+                    nonlocal emitted_output
+                    if chunk:
+                        emitted_output = True
+                    if on_stream_delta:
+                        on_stream_delta(chunk)
+
+                def _wrapped_reasoning_delta(chunk: str) -> None:
+                    nonlocal emitted_output
+                    if chunk:
+                        emitted_output = True
+                    if on_reasoning_delta:
+                        on_reasoning_delta(chunk)
+
+                def _wrapped_tool_call_start(payload_chunk: Mapping[str, object]) -> None:
+                    nonlocal emitted_output
+                    emitted_output = True
+                    if on_tool_call_start:
+                        on_tool_call_start(payload_chunk)
+
+                def _wrapped_tool_call_delta(payload_chunk: Mapping[str, object]) -> None:
+                    nonlocal emitted_output
+                    emitted_output = True
+                    if on_tool_call_delta:
+                        on_tool_call_delta(payload_chunk)
+
+                def _request_once() -> tuple[dict[str, Any], str | None, int]:
+                    data_local: dict[str, Any] = {}
+                    raw_body_local: str | None = None
+                    status_code_local = 200
+                    if self._http_client:
+                        try:
                             if streaming:
-                                data = _consume_chat_completion_stream(
-                                    resp,
-                                    on_stream_delta,
-                                    on_reasoning_delta=on_reasoning_delta,
-                                    on_tool_call_start=on_tool_call_start,
-                                    on_tool_call_delta=on_tool_call_delta,
-                                    should_cancel=should_cancel,
-                                )
-                                raw_body = None
+                                with self._http_client.stream(
+                                    "POST",
+                                    "/v1/chat/completions",
+                                    json=payload,
+                                    headers=headers,
+                                    timeout=self.timeout,
+                                ) as resp:
+                                    status_code_local = resp.status_code
+                                    if status_code_local >= 400:
+                                        try:
+                                            detail = resp.read().decode("utf-8", errors="ignore")[:200]
+                                        except Exception:
+                                            detail = ""
+                                        retry_after = resp.headers.get("Retry-After") or resp.headers.get("retry-after")
+                                        raise _ProviderRequestError(
+                                            f"DeepSeek tools error ({status_code_local}): {detail}",
+                                            status_code=status_code_local,
+                                            retry_after=retry_after,
+                                            retryable=_status_is_retryable(status_code_local),
+                                        )
+                                    data_local = _consume_chat_completion_stream(
+                                        _HttpxLineStream(resp.iter_lines()),
+                                        _wrapped_stream_delta,
+                                        on_reasoning_delta=_wrapped_reasoning_delta if on_reasoning_delta else None,
+                                        on_tool_call_start=_wrapped_tool_call_start if on_tool_call_start else None,
+                                        on_tool_call_delta=_wrapped_tool_call_delta if on_tool_call_delta else None,
+                                        should_cancel=should_cancel,
+                                    )
                             else:
-                                raw_body = resp.read().decode("utf-8")
-                                status_code = getattr(resp, "status", 200)
-                    except urllib_error.HTTPError as exc:
-                        detail = exc.read().decode("utf-8", errors="ignore")
-                        raise PromptGenerationError(
-                            f"DeepSeek tools error ({exc.code}): {detail.strip()[:200]}"
-                        ) from exc
-                    except urllib_error.URLError as exc:
-                        raise PromptGenerationError(f"DeepSeek tools request failed: {exc}") from exc
-                    if not streaming and status_code >= 400:
-                        raise PromptGenerationError(
-                            f"DeepSeek tools error ({status_code}): {raw_body[:200] if raw_body else status_code}"
+                                resp = self._http_client.post(
+                                    "/v1/chat/completions",
+                                    json=payload,
+                                    headers=headers,
+                                    timeout=self.timeout,
+                                )
+                                status_code_local = resp.status_code
+                                raw_body_local = resp.text
+                                if status_code_local >= 400:
+                                    retry_after = resp.headers.get("Retry-After") or resp.headers.get("retry-after")
+                                    raise _ProviderRequestError(
+                                        f"DeepSeek tools error ({status_code_local}): {raw_body_local[:200] if raw_body_local else ''}",
+                                        status_code=status_code_local,
+                                        retry_after=retry_after,
+                                        retryable=_status_is_retryable(status_code_local),
+                                    )
+                        except httpx.HTTPError as exc:
+                            raise _provider_request_error_from_exception("DeepSeek tools request failed", exc) from exc
+                    else:
+                        body = json.dumps(payload).encode("utf-8")
+                        request = urllib_request.Request(
+                            f"{self.base_url}/v1/chat/completions",
+                            data=body,
+                            headers=headers,
+                            method="POST",
                         )
-                    elapsed_ms = int((time.monotonic() - start_time) * 1000)
+                        try:
+                            with urllib_request.urlopen(request, timeout=self.timeout) as resp:
+                                status_code_local = getattr(resp, "status", 200)
+                                if streaming:
+                                    data_local = _consume_chat_completion_stream(
+                                        resp,
+                                        _wrapped_stream_delta,
+                                        on_reasoning_delta=_wrapped_reasoning_delta if on_reasoning_delta else None,
+                                        on_tool_call_start=_wrapped_tool_call_start if on_tool_call_start else None,
+                                        on_tool_call_delta=_wrapped_tool_call_delta if on_tool_call_delta else None,
+                                        should_cancel=should_cancel,
+                                    )
+                                else:
+                                    raw_body_local = resp.read().decode("utf-8")
+                        except urllib_error.HTTPError as exc:
+                            detail = exc.read().decode("utf-8", errors="ignore")
+                            headers_obj = getattr(exc, "headers", None)
+                            retry_after = None
+                            if hasattr(headers_obj, "get"):
+                                retry_after = headers_obj.get("Retry-After") or headers_obj.get("retry-after")
+                            raise _ProviderRequestError(
+                                f"DeepSeek tools error ({exc.code}): {detail.strip()[:200]}",
+                                status_code=exc.code,
+                                retry_after=str(retry_after) if retry_after else None,
+                                retryable=_status_is_retryable(exc.code),
+                            ) from exc
+                        except urllib_error.URLError as exc:
+                            raise _ProviderRequestError(
+                                f"DeepSeek tools request failed: {exc}",
+                                retryable=True,
+                            ) from exc
+
+                    if not streaming and status_code_local >= 400:
+                        raise _ProviderRequestError(
+                            f"DeepSeek tools error ({status_code_local}): {raw_body_local[:200] if raw_body_local else status_code_local}",
+                            status_code=status_code_local,
+                            retryable=_status_is_retryable(status_code_local),
+                        )
+                    return data_local, raw_body_local, status_code_local
+
+                start_time = time.monotonic()
+                data, raw_body, _status_code = _call_with_retry(
+                    _request_once,
+                    provider="DeepSeekTools",
+                    model=self.model,
+                    operation="chat.completions.tools",
+                    can_retry=(lambda: not emitted_output) if streaming else None,
+                )
+                elapsed_ms = int((time.monotonic() - start_time) * 1000)
 
                 if streaming:
                     # In streaming mode we return the assembled assistant message so the

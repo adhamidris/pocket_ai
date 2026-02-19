@@ -1776,10 +1776,6 @@ msgstr "ربط Google Drive"
 msgid "Collections"
 msgstr "المجموعات"
 
-#: frontend/templates/frontend/knowledge.html:118
-msgid "Data Guardrails"
-msgstr "ضوابط البيانات"
-
 #: frontend/templates/frontend/knowledge.html:138
 msgid "Actions"
 msgstr "الإجراءات"

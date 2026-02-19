@@ -58,7 +58,6 @@ class RetrievalContext:
     
     # Scope filters
     allowed_upload_ids: Optional[Sequence[uuid.UUID]] = None
-    allowed_collection_ids: Optional[Sequence[uuid.UUID]] = None
     allowed_explicit_upload_ids: Optional[Sequence[uuid.UUID]] = None
     
     # Feature flags snapshot

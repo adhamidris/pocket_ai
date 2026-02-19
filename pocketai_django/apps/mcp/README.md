@@ -25,12 +25,8 @@ Directory Map
   Filters internal filler text from streaming responses.
 - identifier_detection.py
   Light identifier parsing helpers (email/phone/order ids).
-- identifier_registry.py
-  Identifier gating rules, registry, and audit logging.
-- identifier_eval.py
-  Helper harness for identifier-related evaluation.
 - tests/
-  Tool loop, observability, and identifier guardrail tests.
+  Tool loop and observability tests.
 
 Key Flows
 ---------
@@ -43,8 +39,7 @@ Key Flows
    calls `read_knowledge(refs[], max_chars=...)` to fetch evidence. Dataset/table
    tools are implemented server-side but are **not LLM-facing** in agentic mode.
 
-3) Guardrails
-   IdentifierGate checks required keys before retrieval.
+3) Safety limits
    Budgets and rate limits enforce safe tool usage.
 
 Tool Catalog (LLM-facing, agentic mode)

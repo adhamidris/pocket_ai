@@ -695,7 +695,6 @@ def _tool_activity_present(stream_context: StreamingTurnContext | None) -> bool:
         "tool_trace",
         "knowledge_results",
         "knowledge_reads",
-        "identifier_filters",
         "coverage_ledger",
         "table_aggregate_rows",
     )
@@ -758,11 +757,6 @@ def _has_crm_signals(stream_context: StreamingTurnContext | None, user_message: 
                     # If tool is not knowledge-only, might have side effects
                     if tool_name and tool_name not in _KNOWLEDGE_ONLY_TOOLS:
                         return True
-            # Check for identifier filters (indicates customer data was involved)
-            identifier_filters = getattr(tool_context, "identifier_filters", None)
-            if identifier_filters:
-                return True
-
     # Check message for CRM signals
     lowered = (user_message or "").lower()
     # Identifiers (email, phone, digits) suggest action requests
