@@ -10,8 +10,8 @@ from http import HTTPStatus
 
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List
-from urllib.parse import urlparse
+from typing import Any, Dict, List, Mapping
+from urllib.parse import urlencode, urlparse
 
 from django.conf import settings
 from django.contrib import messages
@@ -44,12 +44,14 @@ from apps.accounts.models import (
     RegistrationSession,
 )
 from apps.knowledge.models import (
+    KnowledgeDriftSample,
     KnowledgeUpload,
     KnowledgeUploadFile,
     KnowledgeUploadText,
     KnowledgeUploadUrl,
 )
 from apps.integrations.models import KnowledgeIntegration
+from apps.rag.query_analytics import build_query_analytics_report
 from apps.cases.models import Case, CaseStatus
 from apps.conversations.models import Conversation, ConversationSender
 from apps.customers.models import Customer
@@ -74,6 +76,12 @@ from apps.api.views import start_google_drive_oauth as start_google_drive_oauth_
 PORTAL_BOOTSTRAP_SCRIPT_ID = "portal-bootstrap-data"
 _portal_request_factory = RequestFactory()
 logger = logging.getLogger(__name__)
+QUERY_ANALYTICS_SAMPLE_LIMIT = 5000
+QUERY_ANALYTICS_WINDOWS: tuple[tuple[int, str], ...] = (
+    (24, "24h"),
+    (24 * 7, "7d"),
+    (24 * 30, "30d"),
+)
 
 KNOWLEDGE_UPLOAD_SIMPLE_TYPES: tuple[tuple[str, str], ...] = (
     (KnowledgeSourceType.FILE, _("File Upload")),
@@ -283,6 +291,146 @@ def _current_user_name(request: HttpRequest) -> str:
     if hasattr(user, "get_username"):
         return user.get_username()
     return str(user)
+
+
+def _format_ratio_percent(value: object) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = 0.0
+    number = max(0.0, min(1.0, number))
+    return f"{number * 100:.1f}%"
+
+
+def _parse_result_count(metrics: Mapping[str, object]) -> int | None:
+    for key in ("result_count", "snippet_count"):
+        raw = metrics.get(key)
+        if raw is None:
+            continue
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _humanize_metric_key(raw: str) -> str:
+    value = (raw or "").strip().replace("_", " ")
+    return value.title() if value else _("Unknown")
+
+
+def _counter_rows(counter: Mapping[str, object], *, total: int, limit: int | None = None) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for key, raw_value in counter.items():
+        try:
+            count = int(raw_value)
+        except (TypeError, ValueError):
+            continue
+        rows.append(
+            {
+                "key": key,
+                "label": _humanize_metric_key(str(key)),
+                "count": count,
+                "rate": (count / total) if total else 0.0,
+                "rate_label": _format_ratio_percent((count / total) if total else 0.0),
+            }
+        )
+    if limit is not None:
+        return rows[:limit]
+    return rows
+
+
+def _rag_window_hours(raw_value: str | None) -> int:
+    allowed = {hours for hours, _label in QUERY_ANALYTICS_WINDOWS}
+    try:
+        parsed = int(str(raw_value or "").strip())
+    except (TypeError, ValueError):
+        return 24
+    return parsed if parsed in allowed else 24
+
+
+def _build_window_links(*, selected_business_id: str) -> list[dict[str, object]]:
+    base_path = reverse("frontend:dashboard-rag-analytics")
+    links: list[dict[str, object]] = []
+    for hours, label in QUERY_ANALYTICS_WINDOWS:
+        payload: dict[str, str | int] = {"hours": hours}
+        if selected_business_id:
+            payload["business_id"] = selected_business_id
+        links.append(
+            {
+                "hours": hours,
+                "label": label,
+                "url": f"{base_path}?{urlencode(payload)}",
+            }
+        )
+    return links
+
+
+def _compute_business_rows(samples: list[dict[str, object]], *, limit: int = 12) -> list[dict[str, object]]:
+    buckets: dict[str, dict[str, int]] = {}
+    for row in samples:
+        business_id = row.get("business_profile_id")
+        if business_id is None:
+            continue
+        metrics = row.get("metrics")
+        if not isinstance(metrics, Mapping):
+            continue
+        key = str(business_id)
+        bucket = buckets.setdefault(
+            key,
+            {
+                "queries": 0,
+                "ok": 0,
+                "empty": 0,
+                "not_found": 0,
+                "throttled": 0,
+                "error": 0,
+            },
+        )
+        status = str(metrics.get("status") or "unknown").strip().lower() or "unknown"
+        result_count = _parse_result_count(metrics)
+        bucket["queries"] += 1
+        if status == "ok":
+            bucket["ok"] += 1
+        if status == "not_found":
+            bucket["not_found"] += 1
+        if status == "throttled":
+            bucket["throttled"] += 1
+        if status in {"error", "constraint_error"}:
+            bucket["error"] += 1
+        if result_count is not None and result_count == 0 and status in {"ok", "not_found", "unknown"}:
+            bucket["empty"] += 1
+
+    if not buckets:
+        return []
+
+    names = {
+        str(item["id"]): item["name"] or _("Unknown business")
+        for item in BusinessProfile.objects.filter(id__in=list(buckets.keys())).values("id", "name")
+    }
+    ranked = sorted(
+        buckets.items(),
+        key=lambda item: (-item[1]["queries"], item[0]),
+    )
+    rows: list[dict[str, object]] = []
+    for business_id, stats in ranked[:limit]:
+        total = max(1, int(stats["queries"]))
+        rows.append(
+            {
+                "business_id": business_id,
+                "business_name": names.get(business_id, _("Unknown business")),
+                "queries": int(stats["queries"]),
+                "ok_rate": stats["ok"] / total,
+                "ok_rate_label": _format_ratio_percent(stats["ok"] / total),
+                "empty_rate": stats["empty"] / total,
+                "empty_rate_label": _format_ratio_percent(stats["empty"] / total),
+                "throttled_rate": stats["throttled"] / total,
+                "throttled_rate_label": _format_ratio_percent(stats["throttled"] / total),
+                "error_rate": stats["error"] / total,
+                "error_rate_label": _format_ratio_percent(stats["error"] / total),
+            }
+        )
+    return rows
 
 
 def _case_priority_class(priority: str) -> str:
@@ -1894,6 +2042,165 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         "dashboard_agent_snapshot_empty_message": _("Invite your team to see performance insights here."),
     }
     return render(request, "frontend/dashboard.html", context)
+
+
+@login_required
+def dashboard_rag_analytics(request: HttpRequest) -> HttpResponse:
+    if not bool(getattr(request.user, "is_superuser", False)):
+        raise Http404(_("Page not found."))
+
+    user_name = _current_user_name(request)
+    selected_hours = _rag_window_hours(request.GET.get("hours"))
+    selected_business_id = (request.GET.get("business_id") or "").strip()
+    invalid_business_filter = False
+
+    now = timezone.now()
+    window_start = now - timedelta(hours=selected_hours)
+    base_qs = KnowledgeDriftSample.objects.filter(
+        sample_kind=KnowledgeDriftSample.SampleKind.RETRIEVAL,
+        observed_at__gte=window_start,
+    )
+    rows_qs = base_qs
+    if selected_business_id:
+        try:
+            selected_business_uuid = uuid.UUID(selected_business_id)
+        except (TypeError, ValueError):
+            invalid_business_filter = True
+            selected_business_id = ""
+        else:
+            rows_qs = rows_qs.filter(business_profile_id=selected_business_uuid)
+
+    rows = list(
+        rows_qs.order_by("-observed_at").values(
+            "business_profile_id",
+            "observed_at",
+            "metrics",
+            "metadata",
+        )[:QUERY_ANALYTICS_SAMPLE_LIMIT]
+    )
+    report = build_query_analytics_report(rows)
+
+    status = report.get("status") if isinstance(report.get("status"), Mapping) else {}
+    latency = report.get("latency_ms") if isinstance(report.get("latency_ms"), Mapping) else {}
+    empty = report.get("empty_results") if isinstance(report.get("empty_results"), Mapping) else {}
+    total_queries = int(report.get("total_queries") or 0)
+
+    status_counts = status.get("counts") if isinstance(status.get("counts"), Mapping) else {}
+    status_rows = _counter_rows(status_counts, total=total_queries)
+    intent_rows = _counter_rows(
+        report.get("by_intent") if isinstance(report.get("by_intent"), Mapping) else {},
+        total=total_queries,
+        limit=10,
+    )
+    error_rows = _counter_rows(
+        report.get("by_error_code") if isinstance(report.get("by_error_code"), Mapping) else {},
+        total=total_queries,
+        limit=10,
+    )
+    path_rows = _counter_rows(
+        report.get("by_path") if isinstance(report.get("by_path"), Mapping) else {},
+        total=total_queries,
+        limit=10,
+    )
+    business_rows = _compute_business_rows(rows)
+
+    analytics_cards = [
+        {
+            "label": _("Total queries"),
+            "value": f"{total_queries}",
+            "helper": _("Queries captured in this window"),
+        },
+        {
+            "label": _("Success rate"),
+            "value": _format_ratio_percent(status.get("ok_rate")),
+            "helper": _("Status = ok"),
+        },
+        {
+            "label": _("Empty result rate"),
+            "value": _format_ratio_percent(empty.get("rate")),
+            "helper": _("Zero retrieval results"),
+        },
+        {
+            "label": _("Throttled rate"),
+            "value": _format_ratio_percent(status.get("throttled_rate")),
+            "helper": _("Rate-limit events"),
+        },
+        {
+            "label": _("Error rate"),
+            "value": _format_ratio_percent(status.get("error_rate")),
+            "helper": _("Constraint + hard failures"),
+        },
+        {
+            "label": _("P95 latency"),
+            "value": (
+                _("—")
+                if latency.get("p95") is None
+                else f"{float(latency.get('p95')):.0f} ms"
+            ),
+            "helper": _("Retrieval latency (95th percentile)"),
+        },
+    ]
+
+    business_count_rows = list(
+        base_qs.values("business_profile_id")
+        .annotate(sample_count=Count("id"))
+        .order_by("-sample_count")[:100]
+    )
+    business_ids = [str(row["business_profile_id"]) for row in business_count_rows if row.get("business_profile_id") is not None]
+    business_name_rows = BusinessProfile.objects.filter(id__in=business_ids).values("id", "name")
+    business_names = {
+        str(item["id"]): item["name"] or _("Unknown business")
+        for item in business_name_rows
+    }
+    business_options = [
+        {
+            "id": business_id,
+            "name": business_names.get(business_id, _("Unknown business")),
+            "count": int(row.get("sample_count") or 0),
+        }
+        for row in business_count_rows
+        if (business_id := str(row.get("business_profile_id") or "")).strip()
+    ]
+
+    if selected_business_id and not any(option["id"] == selected_business_id for option in business_options):
+        selected_business_name = (
+            BusinessProfile.objects.filter(id=selected_business_id).values_list("name", flat=True).first()
+        )
+        selected_name = selected_business_name or business_names.get(selected_business_id, _("Unknown business"))
+        business_options.insert(
+            0,
+            {
+                "id": selected_business_id,
+                "name": selected_name,
+                "count": 0,
+            },
+        )
+
+    window_links = _build_window_links(selected_business_id=selected_business_id)
+    for item in window_links:
+        item["active"] = item["hours"] == selected_hours
+
+    context = {
+        "user_name": user_name,
+        "selected_window_hours": selected_hours,
+        "selected_business_id": selected_business_id,
+        "invalid_business_filter": invalid_business_filter,
+        "window_start": window_start,
+        "window_end": now,
+        "window_links": window_links,
+        "business_options": business_options,
+        "sample_limit": QUERY_ANALYTICS_SAMPLE_LIMIT,
+        "sample_count": len(rows),
+        "sample_capped": len(rows) >= QUERY_ANALYTICS_SAMPLE_LIMIT,
+        "query_analytics": report,
+        "analytics_cards": analytics_cards,
+        "status_rows": status_rows,
+        "intent_rows": intent_rows,
+        "error_rows": error_rows,
+        "path_rows": path_rows,
+        "business_rows": business_rows,
+    }
+    return render(request, "frontend/rag_analytics.html", context)
 
 
 @login_required

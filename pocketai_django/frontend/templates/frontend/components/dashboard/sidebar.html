@@ -197,6 +197,18 @@
         </svg>
         <span class="sidebar-label">{% trans "Controls" %}</span>
       </a>
+      {% if request.user.is_superuser %}
+        <a
+          href="{% url 'frontend:dashboard-rag-analytics' %}"
+          class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'rag-analytics' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
+          title="{% trans 'RAG Analytics' %}"
+        >
+          <svg class="sidebar-icon h-4 w-4 {% if active == 'rag-analytics' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3.75v16.5m0 0h16.5m-16.5 0 4.5-6.75 4.5 3.75 6-9" />
+          </svg>
+          <span class="sidebar-label">{% trans "RAG Analytics" %}</span>
+        </a>
+      {% endif %}
       <a
         href="{% url 'frontend:dashboard-mcp' %}"
         class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'mcp' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"

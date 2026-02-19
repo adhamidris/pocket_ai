@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import statistics
 from typing import Mapping, Sequence
@@ -73,6 +74,14 @@ class QualityMonitor:
         diagnostics: Mapping[str, object] | None = None,
         result_status: str | None = None,
     ) -> None:
+        def _query_fingerprint(value: object) -> str | None:
+            if value is None:
+                return None
+            text = str(value).strip().lower()
+            if not text:
+                return None
+            return hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()[:16]
+
         def _clamp_text(value: object, limit: int = 256) -> str | None:
             if value is None:
                 return None
@@ -81,17 +90,51 @@ class QualityMonitor:
                 return None
             return f"{text[:limit]}..." if len(text) > limit else text
 
+        status_value = str(result_status or "").strip().lower() or "unknown"
+        snippet_count_raw = diagnostics.get("snippet_count") if diagnostics else None
+        snippet_count_value: int | None
+        try:
+            snippet_count_value = int(snippet_count_raw) if snippet_count_raw is not None else None
+        except (TypeError, ValueError):
+            snippet_count_value = None
+        if snippet_count_value is None and status_value == "not_found":
+            snippet_count_value = 0
+        query_intent_value = None
+        if diagnostics:
+            for key in ("query_intent", "tabular_intent", "intent"):
+                candidate = diagnostics.get(key)
+                if candidate is not None and str(candidate).strip():
+                    query_intent_value = str(candidate).strip()
+                    break
+        error_code = None
+        if diagnostics:
+            for key in ("error_code", "reason"):
+                candidate = diagnostics.get(key)
+                if candidate is not None and str(candidate).strip():
+                    error_code = str(candidate).strip().lower()
+                    break
+        if not error_code and status_value in {"error", "constraint_error", "throttled"}:
+            error_code = status_value
+        if not error_code and status_value == "not_found":
+            error_code = "not_found"
+
         metrics = {
             "query_type": query_type,
             "alias_hit": bool(alias_hit),
             "fallback_used": bool(fallback_used),
             "latency_ms": latency_ms,
             "stage": stage or "",
-            "status": result_status or "",
+            "status": status_value,
+            "source": "rag_search",
+            "result_count": snippet_count_value if snippet_count_value is not None else 0,
+            "empty_result": bool((snippet_count_value or 0) == 0),
         }
-        snippet_count = diagnostics.get("snippet_count") if diagnostics else None
-        if snippet_count is not None:
-            metrics["snippet_count"] = snippet_count
+        if snippet_count_value is not None:
+            metrics["snippet_count"] = snippet_count_value
+        if query_intent_value:
+            metrics["query_intent"] = query_intent_value
+        if error_code:
+            metrics["error_code"] = error_code
         if diagnostics:
             for key in ("token_count", "identifier_like", "alias_stage", "tabular_intent"):
                 value = diagnostics.get(key)
@@ -140,9 +183,16 @@ class QualityMonitor:
                 for key in interesting_keys
                 if diagnostics.get(key) is not None
             }
+            raw_original = diagnostics.get("original_query")
+            raw_normalized = diagnostics.get("normalized_query")
+            original_text = _clamp_text(raw_original)
+            normalized_text = _clamp_text(raw_normalized)
             query_info = {
-                "original": _clamp_text(diagnostics.get("original_query")),
-                "normalized": _clamp_text(diagnostics.get("normalized_query")),
+                "original": original_text,
+                "normalized": normalized_text,
+                "fingerprint": _query_fingerprint(raw_normalized) or _query_fingerprint(raw_original),
+                "query_length": len(str(raw_original or "")),
+                "normalized_length": len(str(raw_normalized or "")),
                 "token_count": diagnostics.get("token_count"),
                 "identifier_like": diagnostics.get("identifier_like"),
             }

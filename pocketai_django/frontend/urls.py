@@ -17,6 +17,7 @@ urlpatterns = [
     path("dashboard/mcp/", views.dashboard_mcp, name="dashboard-mcp"),
     path("dashboard/controls/", views.dashboard_controls, name="dashboard-controls"),
     path("dashboard/voice/", views.dashboard_voice, name="dashboard-voice"),
+    path("dashboard/internal/rag-analytics/", views.dashboard_rag_analytics, name="dashboard-rag-analytics"),
     path("dashboard/knowledge/visualizer/", views.dashboard_knowledge_visualizer, name="dashboard-knowledge-visualizer"),
     path("dashboard/knowledge/upload/", views.dashboard_knowledge_upload, name="dashboard-knowledge-upload"),
     path("dashboard/knowledge/dump/", views.dashboard_knowledge_dump, name="dashboard-knowledge-dump"),
