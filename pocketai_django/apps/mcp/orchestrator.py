@@ -5805,7 +5805,19 @@ class McpOrchestratorService:
         if isinstance(recent_refs_data, (Mapping, list)):
             context.hydrate_recent_search_refs(recent_refs_data)
 
-        if context.seen_chunk_ids or context.seen_row_ids or context.primary_upload_id or context.recent_search_refs:
+        # Hydrate pending/selected scope clarification state (phase 5).
+        scope_clarification_data = metadata.get("mcp_scope_clarification")
+        if isinstance(scope_clarification_data, Mapping):
+            context.hydrate_scope_clarification(scope_clarification_data)
+
+        if (
+            context.seen_chunk_ids
+            or context.seen_row_ids
+            or context.primary_upload_id
+            or context.recent_search_refs
+            or context.pending_scope_clarification
+            or context.scope_resolution
+        ):
             structured_log(
                 "mcp",
                 "cache.seen_items_hydrate",
@@ -5815,6 +5827,8 @@ class McpOrchestratorService:
                     "primary_upload_id": context.primary_upload_id,
                     "referenced_docs": len(context.referenced_upload_ids),
                     "recent_search_refs": len(context.recent_search_refs),
+                    "scope_pending": bool(context.pending_scope_clarification),
+                    "scope_selected": bool(context.scope_resolution),
                 },
                 indent=1,
                 context={
@@ -5842,8 +5856,9 @@ class McpOrchestratorService:
         has_seen_items = context.newly_shown_chunk_ids or context.newly_shown_row_ids
         has_document_context = context.primary_upload_id or context.referenced_upload_ids
         has_recent_search_refs = bool(context.recent_search_refs_updated)
+        has_scope_clarification_state = bool(context.scope_clarification_updated)
 
-        if not has_seen_items and not has_document_context and not has_recent_search_refs:
+        if not has_seen_items and not has_document_context and not has_recent_search_refs and not has_scope_clarification_state:
             return
 
         metadata = conversation.metadata if isinstance(conversation.metadata, Mapping) else {}
@@ -5876,8 +5891,17 @@ class McpOrchestratorService:
             else:
                 new_metadata.pop("mcp_recent_search_refs", None)
 
+        if has_scope_clarification_state:
+            scope_state = context.get_scope_clarification_for_persistence()
+            if scope_state:
+                scope_state["updated_at"] = timezone.now().isoformat()
+                new_metadata["mcp_scope_clarification"] = scope_state
+            else:
+                new_metadata.pop("mcp_scope_clarification", None)
+
         conversation.metadata = new_metadata
         conversation.save(update_fields=["metadata"])
+        context.scope_clarification_updated = False
 
         structured_log(
             "mcp",
@@ -5890,6 +5914,8 @@ class McpOrchestratorService:
                 "primary_upload_id": context.primary_upload_id,
                 "referenced_docs": len(context.referenced_upload_ids),
                 "recent_search_refs": len(context.recent_search_refs) if has_recent_search_refs else 0,
+                "scope_pending": bool(context.pending_scope_clarification) if has_scope_clarification_state else False,
+                "scope_selected": bool(context.scope_resolution) if has_scope_clarification_state else False,
             },
             indent=1,
             context={

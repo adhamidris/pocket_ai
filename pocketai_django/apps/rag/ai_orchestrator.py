@@ -1531,6 +1531,14 @@ class KnowledgeSearchService:
                 },
             )
             status = "ok" if snippets else "not_found"
+            status, snippets, diagnostics = self._apply_phase6_semantics(
+                status=status,
+                snippets=snippets,
+                diagnostics=diagnostics,
+                traits=traits,
+                table_context=table_context,
+                table_blocked=False,
+            )
             diagnostics["total_duration_ms"] = self._duration_ms(overall_start)
             diagnostics["snippet_count"] = len(snippets)
             result_obj = KnowledgeSearchResult(snippets=snippets, status=status, diagnostics=diagnostics)
@@ -1729,6 +1737,70 @@ class KnowledgeSearchService:
                         "request": diagnostics.get("request_id"),
                     },
                 )
+        scope_summary = self._build_scope_summary_from_candidates(
+            chunk_hits,
+            query_tokens=traits.tokens,
+            filler_tokens=self._filler_tokens_for_business(business_profile),
+        )
+        diagnostics["scope_summary"] = scope_summary
+        _rag_log(
+            "scope.summary",
+            {
+                "total_matches": scope_summary.get("total_matches"),
+                "distinct_docs": scope_summary.get("distinct_docs"),
+                "categories": len(scope_summary.get("category_counts") or {}),
+                "is_broad_scope": scope_summary.get("is_broad_scope"),
+            },
+            indent=1,
+            context={
+                "business": business_profile.id,
+                "request": diagnostics.get("request_id"),
+            },
+        )
+        if (
+            bool(scope_summary.get("is_broad_scope"))
+            and not traits.is_identifier_like
+            and self._query_lacks_specific_scope(
+                traits=traits,
+                table_context=table_context,
+                filler_tokens=self._filler_tokens_for_business(business_profile),
+            )
+        ):
+            clarification_question, scope_categories = self._build_scope_clarification_question(
+                scope_summary=scope_summary,
+            )
+            diagnostics["path"] = "clarification"
+            diagnostics["reason"] = "broad_scope_ambiguity"
+            diagnostics["intent_requires_clarification"] = True
+            diagnostics["intent_clarification_question"] = clarification_question
+            diagnostics["scope_clarification_categories"] = list(scope_categories)
+            diagnostics["snippet_count"] = 0
+            diagnostics["total_duration_ms"] = self._duration_ms(overall_start)
+            diagnostics["auto_decision_contract"] = self._derive_auto_decision_contract(
+                scoring_diagnostics=diagnostics,
+                requires_clarification=True,
+                scope_summary=scope_summary,
+            )
+            result_obj = KnowledgeSearchResult(
+                snippets=tuple(),
+                status="needs_clarification",
+                diagnostics=diagnostics,
+            )
+            self._result_cache_set(cache_key, result_obj, limit=limit)
+            self._session_cache_set(session_cache, cache_key, result_obj, limit=limit)
+            self._record_retrieval_event(
+                business_profile=business_profile,
+                traits=traits,
+                alias_result=alias_result,
+                result=result_obj,
+                feature_state=feature_state,
+            )
+            self._log_search_summary(
+                business_profile=business_profile,
+                request_id=request_id,
+                result=result_obj,
+            )
+            return result_obj
         auto_score_diag = self._score_auto_mode_candidates(
             chunk_hits,
             query_tokens=traits.tokens,
@@ -1760,6 +1832,7 @@ class KnowledgeSearchService:
             diagnostics["auto_decision_contract"] = self._derive_auto_decision_contract(
                 scoring_diagnostics=diagnostics,
                 requires_clarification=True,
+                scope_summary=scope_summary,
             )
             result_obj = KnowledgeSearchResult(
                 snippets=tuple(),
@@ -1792,6 +1865,7 @@ class KnowledgeSearchService:
             route_diagnostics=route_diag,
             scoring_diagnostics=diagnostics,
             requires_clarification=bool(classification.requires_clarification) if classification else False,
+            scope_summary=scope_summary,
         )
         diagnostics["chunk_candidate_count"] = len(chunk_hits)
         table_snippets: tuple[KnowledgeSnippet, ...] = tuple()
@@ -1959,7 +2033,19 @@ class KnowledgeSearchService:
                 diagnostics["rrf_merged_count"] = len(rrf_merged)
 
                 status = "ok" if blended else "not_found"
-                result_obj = KnowledgeSearchResult(snippets=tuple(blended), status=status, diagnostics=diagnostics)
+                status, blended_snippets, diagnostics = self._apply_phase6_semantics(
+                    status=status,
+                    snippets=tuple(blended),
+                    diagnostics=diagnostics,
+                    traits=traits,
+                    table_context=table_context,
+                    table_blocked=table_blocked,
+                )
+                result_obj = KnowledgeSearchResult(
+                    snippets=blended_snippets,
+                    status=status,
+                    diagnostics=diagnostics,
+                )
                 self._result_cache_set(cache_key, result_obj, limit=limit)
                 self._session_cache_set(session_cache, cache_key, result_obj, limit=limit)
                 self._record_retrieval_event(
@@ -2016,8 +2102,16 @@ class KnowledgeSearchService:
 
             diagnostics["snippet_rerank_ms"] = snippet_ms
             status = "ok" if blended else "not_found"
-            diagnostics["snippet_count"] = len(blended)
-            result_obj = KnowledgeSearchResult(snippets=tuple(blended), status=status, diagnostics=diagnostics)
+            status, blended_snippets, diagnostics = self._apply_phase6_semantics(
+                status=status,
+                snippets=tuple(blended),
+                diagnostics=diagnostics,
+                traits=traits,
+                table_context=table_context,
+                table_blocked=table_blocked,
+            )
+            diagnostics["snippet_count"] = len(blended_snippets)
+            result_obj = KnowledgeSearchResult(snippets=blended_snippets, status=status, diagnostics=diagnostics)
             self._result_cache_set(cache_key, result_obj, limit=limit)
             self._session_cache_set(session_cache, cache_key, result_obj, limit=limit)
             self._record_retrieval_event(
@@ -2060,8 +2154,16 @@ class KnowledgeSearchService:
             )
             diagnostics.update(collapse_diag)
             diagnostics["total_duration_ms"] = self._duration_ms(overall_start)
+            status, snippets, diagnostics = self._apply_phase6_semantics(
+                status="ok",
+                snippets=snippets,
+                diagnostics=diagnostics,
+                traits=traits,
+                table_context=table_context,
+                table_blocked=table_blocked,
+            )
             diagnostics["snippet_count"] = len(snippets)
-            result_obj = KnowledgeSearchResult(snippets=snippets, status="ok", diagnostics=diagnostics)
+            result_obj = KnowledgeSearchResult(snippets=snippets, status=status, diagnostics=diagnostics)
             self._result_cache_set(cache_key, result_obj, limit=limit)
             self._session_cache_set(session_cache, cache_key, result_obj, limit=limit)
             self._record_retrieval_event(
@@ -2095,6 +2197,14 @@ class KnowledgeSearchService:
         diagnostics["path"] = "fallback"
         diagnostics["reason"] = "fallback_used"
         status = "ok" if fallback else "not_found"
+        status, fallback, diagnostics = self._apply_phase6_semantics(
+            status=status,
+            snippets=fallback,
+            diagnostics=diagnostics,
+            traits=traits,
+            table_context=table_context,
+            table_blocked=table_blocked,
+        )
         diagnostics["total_duration_ms"] = self._duration_ms(overall_start)
         diagnostics.setdefault("table_reason", table_reason)
         diagnostics.update(collapse_diag)
@@ -8276,6 +8386,391 @@ class KnowledgeSearchService:
         }
 
     @staticmethod
+    def _scope_key_value_pairs(content: str, *, max_pairs: int = 12) -> tuple[tuple[str, str], ...]:
+        text = str(content or "")
+        if not text:
+            return tuple()
+        pairs: list[tuple[str, str]] = []
+        window = text[:1600]
+        for match in re.finditer(r"([^\n:;|]{1,72})\s*:\s*([^;\n|]{1,220})", window):
+            key = KnowledgeSearchService._normalize_topic_value(match.group(1))
+            value = KnowledgeSearchService._normalize_topic_value(
+                KnowledgeSearchService._clean_auto_evidence_label(match.group(2), max_chars=120)
+            )
+            if not key or not value:
+                continue
+            pairs.append((key, value))
+            if len(pairs) >= max_pairs:
+                break
+        return tuple(pairs)
+
+    @staticmethod
+    def _scope_upload_identity(chunk: KnowledgeUploadChunk) -> str:
+        upload_id = getattr(chunk, "upload_id", None)
+        if upload_id:
+            return str(upload_id)
+        upload = getattr(chunk, "upload", None)
+        if upload is not None and getattr(upload, "id", None):
+            return str(upload.id)
+        return ""
+
+    @classmethod
+    def _scope_generic_tokens(cls) -> set[str]:
+        return {
+            "fee",
+            "fees",
+            "pricing",
+            "price",
+            "prices",
+            "charges",
+            "charge",
+            "customer",
+            "customers",
+            "segment",
+            "segments",
+            "plus",
+            "prime",
+            "wealth",
+            "exclusive",
+            "private",
+            "individual",
+            "individuals",
+            "tariff",
+            "tarrif",
+            "service",
+            "services",
+            "plan",
+            "plans",
+            "product",
+            "products",
+            "account",
+            "accounts",
+            "card",
+            "cards",
+            "transfer",
+            "transfers",
+            "payment",
+            "payments",
+            "invoice",
+            "invoices",
+            "loan",
+            "loans",
+            "رسوم",
+            "الرسوم",
+            "خدمة",
+            "خدمات",
+            "عميل",
+            "العميل",
+            "العملاء",
+            "بلس",
+            "سعر",
+            "اسعار",
+            "الاسعار",
+        }
+
+    @classmethod
+    def _scope_is_specific_category(
+        cls,
+        label: str,
+        *,
+        query_tokens: set[str],
+        filler_tokens: set[str],
+    ) -> bool:
+        normalized = cls._normalize_topic_value(label)
+        if not normalized:
+            return False
+        raw_tokens = [token for token in QueryNormalizer._TOKEN_SPLIT.split(normalized) if token]
+        if not raw_tokens:
+            return False
+        tokens = [token for token in raw_tokens if token not in filler_tokens]
+        if not tokens:
+            return False
+        generic = cls._scope_generic_tokens()
+        non_generic = [token for token in tokens if token not in generic]
+        if not non_generic:
+            return False
+        if len(non_generic) <= 2 and all(token in query_tokens for token in non_generic):
+            return False
+        return True
+
+    @classmethod
+    def _query_lacks_specific_scope(
+        cls,
+        *,
+        traits: QueryTraits,
+        table_context: Mapping[str, object] | None = None,
+        filler_tokens: set[str] | None = None,
+    ) -> bool:
+        filler = {str(token).strip().lower() for token in (filler_tokens or set()) if str(token).strip()}
+        filler.update(
+            {
+                "what",
+                "which",
+                "who",
+                "when",
+                "where",
+                "why",
+                "how",
+                "is",
+                "are",
+                "was",
+                "were",
+                "do",
+                "does",
+                "did",
+                "can",
+                "could",
+                "should",
+                "would",
+                "will",
+                "me",
+                "my",
+                "our",
+                "your",
+                "their",
+                "them",
+                "us",
+                "all",
+                "any",
+                "ما",
+                "ماذا",
+                "ماهو",
+                "ماهي",
+                "اي",
+                "أي",
+                "هل",
+                "كم",
+            }
+        )
+        generic = cls._scope_generic_tokens()
+        query_tokens = {
+            str(token).strip().lower()
+            for token in (traits.tokens or ())
+            if str(token).strip()
+        }
+
+        def _extract_non_generic_tokens(values: object) -> set[str]:
+            extracted: set[str] = set()
+            for raw in (values or ()):
+                normalized = cls._normalize_topic_value(raw)
+                if not normalized:
+                    continue
+                for token in QueryNormalizer._TOKEN_SPLIT.split(normalized):
+                    lowered = token.strip().lower()
+                    if not lowered or lowered in filler or lowered in generic:
+                        continue
+                    extracted.add(lowered)
+            return extracted
+
+        if table_context:
+            specific_tokens = _extract_non_generic_tokens(table_context.get("specific_tokens"))
+            if specific_tokens:
+                return False
+            specific_columns = _extract_non_generic_tokens(table_context.get("matched_columns_specific"))
+            if specific_columns:
+                return False
+            for label in (table_context.get("matched_row_labels") or ()):
+                if cls._scope_is_specific_category(
+                    str(label),
+                    query_tokens=query_tokens,
+                    filler_tokens=filler,
+                ):
+                    return False
+
+        tokens = [str(token).strip().lower() for token in (traits.tokens or ()) if str(token).strip()]
+        if not tokens:
+            return True
+        meaningful = [token for token in tokens if token not in filler]
+        if not meaningful:
+            return True
+        specific = [token for token in meaningful if token not in generic]
+        return len(specific) == 0
+
+    def _build_scope_clarification_question(
+        self,
+        *,
+        scope_summary: Mapping[str, object] | None,
+    ) -> tuple[str, tuple[str, ...]]:
+        categories_map = (
+            scope_summary.get("category_counts")
+            if isinstance(scope_summary, Mapping)
+            and isinstance(scope_summary.get("category_counts"), Mapping)
+            else {}
+        )
+        categories: list[str] = []
+        seen: set[str] = set()
+        for label, _count in categories_map.items():
+            cleaned = self._normalize_topic_value(self._clean_auto_evidence_label(label, max_chars=56))
+            if not cleaned or cleaned in seen:
+                continue
+            seen.add(cleaned)
+            categories.append(cleaned)
+            if len(categories) >= 4:
+                break
+
+        if categories:
+            if len(categories) == 1:
+                category_text = categories[0]
+            elif len(categories) == 2:
+                category_text = f"{categories[0]} or {categories[1]}"
+            else:
+                category_text = ", ".join(categories[:-1]) + f", or {categories[-1]}"
+            question = (
+                f'I found fees across multiple categories ({category_text}). '
+                "Do you want one specific category or all related fees?"
+            )
+            return question, tuple(categories)
+
+        question = (
+            "I found fees across multiple categories. "
+            "Do you want one specific category or all related fees?"
+        )
+        return question, tuple()
+
+    def _scope_category_from_hit(
+        self,
+        hit: ChunkResult,
+        *,
+        query_tokens: set[str],
+        filler_tokens: set[str],
+    ) -> str:
+        chunk = hit.chunk
+        metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+        diagnostics = hit.diagnostics if isinstance(hit.diagnostics, dict) else {}
+
+        metadata_candidates: list[object] = []
+        for key in ("row_label", "table_title", "section_heading", "entity_name", "display_name", "title", "sheet_name"):
+            metadata_candidates.append(metadata.get(key))
+        for key in ("table_title", "column_key", "value"):
+            metadata_candidates.append(diagnostics.get(key))
+
+        for candidate in metadata_candidates:
+            normalized = self._normalize_topic_value(self._clean_auto_evidence_label(candidate, max_chars=96))
+            if self._scope_is_specific_category(
+                normalized,
+                query_tokens=query_tokens,
+                filler_tokens=filler_tokens,
+            ):
+                return normalized
+
+        content = str(chunk.content or "")
+        pairs = self._scope_key_value_pairs(content)
+        preferred_value_keys = {
+            "service",
+            "services",
+            "types of services fee",
+            "types_of_services_fee",
+            "tariff",
+            "tarrif",
+            "subsection",
+            "category",
+            "product",
+            "plan",
+            "account",
+            "digital channel",
+            "digital_channel",
+            "description",
+            "type",
+            "name",
+        }
+        scope_column_keys = {
+            "prime",
+            "plus",
+            "wealth",
+            "exclusive_wealth",
+            "exclusive wealth",
+            "private",
+            "non_cib_customers",
+            "non cib customers",
+            "fees_charges",
+            "fees_charges_2",
+            "fees_charges_3",
+            "fees_charges_4",
+            "fees_charges_5",
+        }
+        fallback_values: list[str] = []
+        for key, value in pairs:
+            if key in scope_column_keys:
+                continue
+            if not self._scope_is_specific_category(
+                value,
+                query_tokens=query_tokens,
+                filler_tokens=filler_tokens,
+            ):
+                continue
+            if key in preferred_value_keys:
+                return value
+            fallback_values.append(value)
+        if fallback_values:
+            return fallback_values[0]
+
+        for raw_line in content.splitlines():
+            line = self._normalize_topic_value(self._clean_auto_evidence_label(raw_line, max_chars=96))
+            if self._scope_is_specific_category(
+                line,
+                query_tokens=query_tokens,
+                filler_tokens=filler_tokens,
+            ):
+                return line
+        return ""
+
+    def _build_scope_summary_from_candidates(
+        self,
+        hits: Sequence[ChunkResult],
+        *,
+        query_tokens: Sequence[str] | None = None,
+        filler_tokens: set[str] | None = None,
+    ) -> dict[str, object]:
+        total_matches = len(hits)
+        if not hits:
+            return {
+                "total_matches": 0,
+                "distinct_docs": 0,
+                "category_counts": {},
+                "is_broad_scope": False,
+            }
+
+        normalized_query_tokens = {
+            str(token).strip().lower()
+            for token in (query_tokens or ())
+            if str(token).strip()
+        }
+        normalized_filler_tokens = {
+            str(token).strip().lower()
+            for token in (filler_tokens or set())
+            if str(token).strip()
+        }
+        doc_ids: set[str] = set()
+        category_counts: Counter[str] = Counter()
+        for hit in hits:
+            doc_id = self._scope_upload_identity(hit.chunk)
+            if doc_id:
+                doc_ids.add(doc_id)
+            label = self._scope_category_from_hit(
+                hit,
+                query_tokens=normalized_query_tokens,
+                filler_tokens=normalized_filler_tokens,
+            )
+            if label:
+                category_counts[label] += 1
+
+        ordered_categories = sorted(category_counts.items(), key=lambda item: (-item[1], item[0]))
+        top_categories = ordered_categories[:12]
+        distinct_docs = len(doc_ids)
+        distinct_categories = len(category_counts)
+        is_broad_scope = bool(
+            total_matches >= 6
+            and distinct_docs >= 2
+            and distinct_categories >= 3
+        )
+        return {
+            "total_matches": int(total_matches),
+            "distinct_docs": int(distinct_docs),
+            "category_counts": {label: int(count) for label, count in top_categories},
+            "is_broad_scope": is_broad_scope,
+        }
+
+    @staticmethod
     def _clean_auto_evidence_label(value: object, *, max_chars: int = 72) -> str:
         text = re.sub(r"\s+", " ", str(value or "")).strip(" \n\r\t-:|,.;")
         if not text:
@@ -8460,6 +8955,9 @@ class KnowledgeSearchService:
         route_diagnostics: Mapping[str, object] | None = None,
         scoring_diagnostics: Mapping[str, object] | None = None,
         requires_clarification: bool = False,
+        scope_summary: Mapping[str, object] | None = None,
+        conflict_detected: bool | None = None,
+        no_result_reason: str | None = None,
     ) -> dict[str, object]:
         route_data = route_diagnostics or {}
         scoring_data = scoring_diagnostics or {}
@@ -8506,13 +9004,354 @@ class KnowledgeSearchService:
         else:
             decision = "undecided"
 
+        normalized_scope_summary = dict(scope_summary) if isinstance(scope_summary, Mapping) else None
+        normalized_no_result_reason = (
+            str(no_result_reason).strip().lower() if isinstance(no_result_reason, str) and no_result_reason.strip() else None
+        )
+        normalized_conflict = bool(conflict_detected) if isinstance(conflict_detected, bool) else False
+
         return {
             "table_score": table_score,
             "text_score": text_score,
             "margin": margin,
             "decision": decision,
             "needs_clarification": bool(requires_clarification),
+            "scope_summary": normalized_scope_summary,
+            "conflict_detected": normalized_conflict,
+            "no_result_reason": normalized_no_result_reason,
         }
+
+    @staticmethod
+    def _normalize_segment_key(value: object) -> str:
+        text = re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower())
+        return text.strip("_")
+
+    @classmethod
+    def _known_segment_keys(cls) -> set[str]:
+        return {
+            "plus",
+            "prime",
+            "wealth",
+            "exclusive_wealth",
+            "exclusive_wealth_and_private",
+            "private",
+            "non_cib_customers",
+            "non_cib",
+            "individual",
+            "individuals",
+        }
+
+    @staticmethod
+    def _normalize_conflict_value(value: object) -> str:
+        text = str(value or "").strip().lower()
+        if not text:
+            return ""
+        text = text.replace(",", "")
+        text = re.sub(r"\s+", " ", text)
+        text = re.sub(r"[^a-z0-9\u0600-\u06FF%./:+ -]", "", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        if text in {"n/a", "na", "-", "none", "null", "not applicable"}:
+            return ""
+        return text
+
+    @classmethod
+    def _segment_targets_from_context(
+        cls,
+        *,
+        traits: QueryTraits,
+        table_context: Mapping[str, object] | None,
+    ) -> tuple[str, ...]:
+        known_segments = cls._known_segment_keys()
+        candidates: list[str] = []
+        seen: set[str] = set()
+        for source in (
+            (table_context or {}).get("matched_columns_specific"),
+            (table_context or {}).get("matched_columns_tokens"),
+            (table_context or {}).get("specific_tokens"),
+            traits.tokens,
+        ):
+            for raw in source or ():
+                normalized = cls._normalize_segment_key(raw)
+                if not normalized:
+                    continue
+                if normalized in known_segments and normalized not in seen:
+                    seen.add(normalized)
+                    candidates.append(normalized)
+        return tuple(candidates)
+
+    def _detect_conflicting_evidence(
+        self,
+        *,
+        snippets: Sequence[KnowledgeSnippet],
+        traits: QueryTraits,
+        table_context: Mapping[str, object] | None,
+    ) -> dict[str, object] | None:
+        segment_targets = self._segment_targets_from_context(traits=traits, table_context=table_context)
+        if not segment_targets:
+            return None
+
+        segment_keys = self._known_segment_keys()
+        conflict_groups: dict[tuple[str, str], dict[str, object]] = {}
+        for snippet in snippets[:8]:
+            if not snippet.is_table_chunk:
+                continue
+            diagnostics = snippet.source_diagnostics if isinstance(snippet.source_diagnostics, Mapping) else {}
+            text = str(snippet.content or snippet.summary or "").strip()
+            if not text:
+                continue
+            pairs = self._scope_key_value_pairs(text, max_pairs=16)
+            pair_map: dict[str, str] = {}
+            category = ""
+            for key, value in pairs:
+                pair_map[key] = value
+                if key in {
+                    "service",
+                    "services",
+                    "types_of_services_fee",
+                    "types of services fee",
+                    "tariff",
+                    "tarrif",
+                    "subsection",
+                    "category",
+                    "product",
+                    "plan",
+                    "account",
+                } and value and not category:
+                    category = value
+            if not category:
+                category = str(diagnostics.get("table_title") or snippet.title or "").strip()
+            category = self._normalize_topic_value(self._clean_auto_evidence_label(category, max_chars=96))
+            if not category:
+                continue
+
+            selected_segment = ""
+            selected_value = ""
+            for segment in segment_targets:
+                if segment in pair_map and pair_map[segment]:
+                    selected_segment = segment
+                    selected_value = pair_map[segment]
+                    break
+            if not selected_value:
+                fee_value = str(diagnostics.get("table_row_fee_value") or "").strip()
+                if fee_value and segment_targets:
+                    selected_segment = segment_targets[0]
+                    selected_value = fee_value
+            if not selected_value:
+                for key, value in pairs:
+                    if self._normalize_segment_key(key) in segment_keys and value:
+                        normalized_key = self._normalize_segment_key(key)
+                        if normalized_key in segment_targets:
+                            selected_segment = normalized_key
+                            selected_value = value
+                            break
+            if not selected_segment or not selected_value:
+                continue
+
+            normalized_value = self._normalize_conflict_value(selected_value)
+            if not normalized_value:
+                continue
+            group_key = (selected_segment, category)
+            group = conflict_groups.setdefault(
+                group_key,
+                {"values": {}, "sources": set()},
+            )
+            values_map = group["values"]
+            if isinstance(values_map, dict):
+                entry = values_map.setdefault(
+                    normalized_value,
+                    {
+                        "display_value": str(selected_value).strip(),
+                        "snippet_ids": [],
+                    },
+                )
+                snippet_ids = entry.get("snippet_ids")
+                if isinstance(snippet_ids, list):
+                    snippet_ids.append(str(snippet.id))
+            sources = group.get("sources")
+            if isinstance(sources, set):
+                sources.add(str(snippet.id))
+
+        if not conflict_groups:
+            return None
+
+        best_conflict: dict[str, object] | None = None
+        for (segment, category), payload in conflict_groups.items():
+            values_map = payload.get("values")
+            sources = payload.get("sources")
+            if not isinstance(values_map, dict):
+                continue
+            if len(values_map) < 2:
+                continue
+            display_values = [
+                str((entry or {}).get("display_value") or normalized).strip()
+                for normalized, entry in values_map.items()
+            ]
+            if len(display_values) < 2:
+                continue
+            candidate = {
+                "segment": segment,
+                "category": category,
+                "values": display_values[:3],
+                "source_count": len(sources) if isinstance(sources, set) else 0,
+                "value_count": len(values_map),
+            }
+            if best_conflict is None:
+                best_conflict = candidate
+                continue
+            if int(candidate["value_count"]) > int(best_conflict.get("value_count") or 0):
+                best_conflict = candidate
+                continue
+            if (
+                int(candidate["value_count"]) == int(best_conflict.get("value_count") or 0)
+                and int(candidate["source_count"]) > int(best_conflict.get("source_count") or 0)
+            ):
+                best_conflict = candidate
+
+        return best_conflict
+
+    @staticmethod
+    def _build_conflict_clarification_question(conflict: Mapping[str, object] | None) -> str:
+        if not isinstance(conflict, Mapping):
+            return (
+                "I found conflicting values in the retrieved sources. "
+                "Do you want me to list all conflicting values with sources?"
+            )
+        segment = str(conflict.get("segment") or "").replace("_", " ").strip()
+        category = str(conflict.get("category") or "").strip()
+        values = conflict.get("values")
+        rendered_values: list[str] = []
+        if isinstance(values, list):
+            for raw in values:
+                value = str(raw or "").strip()
+                if value:
+                    rendered_values.append(value)
+                if len(rendered_values) >= 2:
+                    break
+        value_text = " vs ".join(rendered_values) if rendered_values else "different values"
+        category_text = category or "this fee item"
+        if segment:
+            return (
+                f"I found conflicting values for {category_text} in the {segment} segment "
+                f"({value_text}). Do you want both values with sources or should I narrow by document/date?"
+            )
+        return (
+            f"I found conflicting values for {category_text} ({value_text}). "
+            "Do you want both values with sources or should I narrow by document/date?"
+        )
+
+    @staticmethod
+    def _derive_no_result_reason(
+        *,
+        diagnostics: Mapping[str, object],
+        table_blocked: bool,
+    ) -> str:
+        if table_blocked or str(diagnostics.get("table_reason") or "").strip().lower() == "specific_tokens_missing":
+            return "not_applicable_to_segment"
+
+        def _safe_int(value: object) -> int:
+            try:
+                return int(value or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        candidate_signals = (
+            _safe_int(diagnostics.get("chunk_candidate_count")),
+            _safe_int(diagnostics.get("chunk_candidate_count_raw")),
+            _safe_int(diagnostics.get("vector_candidates")),
+            _safe_int(diagnostics.get("vector_candidates_post_threshold")),
+            _safe_int(diagnostics.get("fts_candidates")),
+            _safe_int(diagnostics.get("alias_hits")),
+        )
+        if any(value > 0 for value in candidate_signals):
+            return "insufficient_evidence"
+
+        path = str(diagnostics.get("path") or "").strip().lower()
+        if path in {"hybrid", "parallel_rrf", "table_direct", "table_blended"}:
+            return "insufficient_evidence"
+        return "not_found"
+
+    def _apply_phase6_semantics(
+        self,
+        *,
+        status: str,
+        snippets: Sequence[KnowledgeSnippet],
+        diagnostics: Mapping[str, object],
+        traits: QueryTraits,
+        table_context: Mapping[str, object] | None,
+        table_blocked: bool,
+    ) -> tuple[str, tuple[KnowledgeSnippet, ...], dict[str, object]]:
+        updated_status = str(status or "not_found").strip().lower() or "not_found"
+        updated_snippets = tuple(snippets or ())
+        updated_diagnostics: dict[str, object] = dict(diagnostics or {})
+        updated_diagnostics.setdefault("conflict_detected", False)
+        updated_diagnostics.setdefault("no_result_reason", None)
+
+        conflict_payload: dict[str, object] | None = None
+        if (
+            updated_status == "ok"
+            and updated_snippets
+            and not traits.is_identifier_like
+        ):
+            detected_conflict = self._detect_conflicting_evidence(
+                snippets=updated_snippets,
+                traits=traits,
+                table_context=table_context,
+            )
+            if detected_conflict:
+                conflict_payload = dict(detected_conflict)
+                updated_diagnostics["conflict_detected"] = True
+                updated_diagnostics["conflict_context"] = conflict_payload
+                updated_diagnostics["path"] = "clarification"
+                updated_diagnostics["reason"] = "conflicting_evidence"
+                updated_diagnostics["intent_requires_clarification"] = True
+                updated_diagnostics["intent_clarification_question"] = self._build_conflict_clarification_question(
+                    conflict_payload
+                )
+                updated_status = "needs_clarification"
+                updated_snippets = tuple()
+                updated_diagnostics["snippet_count"] = 0
+
+        no_result_reason = None
+        if updated_status == "not_found":
+            no_result_reason = self._derive_no_result_reason(
+                diagnostics=updated_diagnostics,
+                table_blocked=table_blocked,
+            )
+            updated_diagnostics["no_result_reason"] = no_result_reason
+
+        requires_clarification = bool(
+            updated_status == "needs_clarification"
+            or updated_diagnostics.get("intent_requires_clarification")
+        )
+        scope_summary = (
+            updated_diagnostics.get("scope_summary")
+            if isinstance(updated_diagnostics.get("scope_summary"), Mapping)
+            else None
+        )
+        existing_contract = updated_diagnostics.get("auto_decision_contract")
+        if isinstance(existing_contract, Mapping):
+            contract = dict(existing_contract)
+            if requires_clarification:
+                contract["decision"] = "clarification"
+            contract["needs_clarification"] = requires_clarification
+            contract["scope_summary"] = dict(scope_summary) if isinstance(scope_summary, Mapping) else contract.get("scope_summary")
+            contract["conflict_detected"] = bool(updated_diagnostics.get("conflict_detected"))
+            contract["no_result_reason"] = (
+                str(updated_diagnostics.get("no_result_reason")).strip().lower()
+                if str(updated_diagnostics.get("no_result_reason") or "").strip()
+                else None
+            )
+            updated_diagnostics["auto_decision_contract"] = contract
+        else:
+            updated_diagnostics["auto_decision_contract"] = self._derive_auto_decision_contract(
+                route_diagnostics=updated_diagnostics,
+                scoring_diagnostics=updated_diagnostics,
+                requires_clarification=requires_clarification,
+                scope_summary=scope_summary,
+                conflict_detected=bool(updated_diagnostics.get("conflict_detected")),
+                no_result_reason=str(updated_diagnostics.get("no_result_reason") or "") or None,
+            )
+        return updated_status, updated_snippets, updated_diagnostics
 
     def _route_chunk_hits(
         self,

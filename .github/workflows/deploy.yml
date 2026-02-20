@@ -139,8 +139,19 @@ jobs:
           python manage.py test \
             apps.rag.tests.test_knowledge_search_service.KnowledgeSearchServiceAutoDecisionContractTests \
             apps.rag.tests.test_knowledge_search_service.KnowledgeSearchServiceAutoArbitrationTests \
+            apps.rag.tests.test_knowledge_search_service.KnowledgeSearchServicePhaseSixSemanticsTests \
             apps.rag.tests.test_knowledge_search_service.KnowledgeSearchServiceClarificationTests.test_ambiguous_auto_scores_return_needs_clarification_before_route \
             apps.rag.tests.test_knowledge_search_service.KnowledgeSearchServiceClarificationTests.test_ambiguous_auto_scores_emit_dynamic_evidence_labels \
+            apps.rag.tests.test_knowledge_search_service.KnowledgeSearchServiceClarificationTests.test_broad_generic_scope_returns_dynamic_scope_clarification \
+            apps.rag.tests.test_knowledge_search_service.KnowledgeSearchServiceClarificationTests.test_specific_scope_query_skips_broad_scope_clarification \
+            apps.mcp.tests.test_mcp_tools.McpSearchKnowledgeHandlerTests.test_search_knowledge_broad_scope_clarification_stays_text_mode \
+            apps.mcp.tests.test_mcp_tools.McpSearchKnowledgeHandlerTests.test_search_knowledge_scope_clarification_followup_all_rewrites_query \
+            apps.mcp.tests.test_mcp_tools.McpSearchKnowledgeHandlerTests.test_search_knowledge_scope_clarification_followup_specific_category_rewrites_query \
+            apps.mcp.tests.test_mcp_tools.McpSearchKnowledgeHandlerTests.test_search_knowledge_scope_clarification_followup_multi_category_rewrites_query \
+            apps.mcp.tests.test_mcp_tools.McpSearchKnowledgeHandlerTests.test_search_knowledge_scope_clarification_followup_lists_categories_without_searching \
+            apps.mcp.tests.test_mcp_tools.McpSearchKnowledgeHandlerTests.test_search_knowledge_scope_clarification_followup_ambiguity_retry_keeps_clarification_state \
+            apps.mcp.tests.test_mcp_tools.McpSearchKnowledgeHandlerTests.test_search_knowledge_non_mcq_mode_strips_mcq_only_diagnostics \
+            apps.mcp.tests.test_mcp_tools.McpSearchKnowledgeHandlerTests.test_search_knowledge_legacy_payload_stays_compatible_with_additive_diagnostics \
             --noinput
       
       - name: Run Django tests

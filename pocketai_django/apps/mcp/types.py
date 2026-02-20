@@ -181,6 +181,15 @@ class ToolExecutionContext:
     # Max refinements allowed per original query (prevents infinite loops)
     max_refinements_per_query: int = 2
 
+    # =========================================================================
+    # Scope Clarification Tracking (Phase 5)
+    # =========================================================================
+    # Tracks pending "specific category or all?" clarifications returned by
+    # search_knowledge and the most recent user resolution.
+    pending_scope_clarification: dict[str, object] | None = None
+    scope_resolution: dict[str, object] | None = None
+    scope_clarification_updated: bool = False
+
     def reserve_chunk_reads(self, count: int) -> None:
         """Ensure the requested chunk reads do not exceed the per-turn budget."""
 
@@ -808,6 +817,103 @@ class ToolExecutionContext:
                     "reason": entry.get("reason"),
                 }
         return None
+
+    # =========================================================================
+    # Scope Clarification Tracking Methods (Phase 5)
+    # =========================================================================
+
+    def set_pending_scope_clarification(
+        self,
+        *,
+        base_query: str,
+        categories: Sequence[str] | None = None,
+        question: str | None = None,
+    ) -> None:
+        normalized_categories: list[str] = []
+        seen: set[str] = set()
+        for raw in categories or ():
+            value = self._clip_text(raw, limit=96).strip()
+            if not value:
+                continue
+            lowered = value.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            normalized_categories.append(value)
+            if len(normalized_categories) >= 12:
+                break
+        self.pending_scope_clarification = {
+            "base_query": self._clip_text(base_query, limit=240),
+            "categories": normalized_categories,
+            "question": self._clip_text(question or "", limit=280),
+            "updated_at": self._utc_now_iso(),
+        }
+        self.scope_clarification_updated = True
+
+    def clear_pending_scope_clarification(self) -> None:
+        if self.pending_scope_clarification is not None:
+            self.pending_scope_clarification = None
+            self.scope_clarification_updated = True
+
+    def set_scope_resolution(
+        self,
+        *,
+        mode: str,
+        base_query: str,
+        resolved_query: str,
+        user_query: str,
+        category: str | None = None,
+        categories: Sequence[str] | None = None,
+    ) -> None:
+        normalized_mode = str(mode or "").strip().lower()
+        if normalized_mode not in {"all", "specific"}:
+            normalized_mode = "specific"
+        normalized_categories: list[str] = []
+        seen: set[str] = set()
+        for raw in categories or ():
+            value = self._clip_text(raw, limit=96).strip()
+            lowered = value.lower()
+            if not value or lowered in seen:
+                continue
+            seen.add(lowered)
+            normalized_categories.append(value)
+            if len(normalized_categories) >= 12:
+                break
+        resolved_category = self._clip_text(category or "", limit=96).strip()
+        if not resolved_category and normalized_categories:
+            resolved_category = normalized_categories[0]
+        if resolved_category and not normalized_categories:
+            normalized_categories = [resolved_category]
+        self.scope_resolution = {
+            "mode": normalized_mode,
+            "base_query": self._clip_text(base_query, limit=240),
+            "resolved_query": self._clip_text(resolved_query, limit=280),
+            "user_query": self._clip_text(user_query, limit=180),
+            "category": resolved_category or None,
+            "categories": normalized_categories or None,
+            "updated_at": self._utc_now_iso(),
+        }
+        self.pending_scope_clarification = None
+        self.scope_clarification_updated = True
+
+    def get_scope_clarification_for_persistence(self) -> dict[str, object] | None:
+        pending = dict(self.pending_scope_clarification) if isinstance(self.pending_scope_clarification, dict) else None
+        resolution = dict(self.scope_resolution) if isinstance(self.scope_resolution, dict) else None
+        if not pending and not resolution:
+            return None
+        return {
+            "pending": pending,
+            "resolution": resolution,
+        }
+
+    def hydrate_scope_clarification(self, persisted: Mapping[str, object] | None) -> None:
+        if not isinstance(persisted, Mapping):
+            return
+        pending = persisted.get("pending")
+        resolution = persisted.get("resolution")
+        self.pending_scope_clarification = dict(pending) if isinstance(pending, Mapping) else None
+        self.scope_resolution = dict(resolution) if isinstance(resolution, Mapping) else None
+        self.scope_clarification_updated = False
 
 
 @dataclasses.dataclass

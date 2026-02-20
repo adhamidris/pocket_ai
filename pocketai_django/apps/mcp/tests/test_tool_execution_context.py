@@ -88,3 +88,42 @@ class ToolExecutionContextTests(SimpleTestCase):
         context.set_recent_search_refs([])
         self.assertEqual(context.recent_search_refs, [])
         self.assertTrue(context.recent_search_refs_updated)
+
+    def test_scope_clarification_persists_and_hydrates(self) -> None:
+        context = ToolExecutionContext()
+        context.set_pending_scope_clarification(
+            base_query="what are the fees for plus customers?",
+            categories=["loan service fees", "outgoing transfers", "loan service fees"],
+            question="Do you want one specific category or all related fees?",
+        )
+        self.assertTrue(context.scope_clarification_updated)
+        pending = context.pending_scope_clarification or {}
+        self.assertEqual(len(pending.get("categories") or []), 2)
+
+        context.set_scope_resolution(
+            mode="specific",
+            base_query="what are the fees for plus customers?",
+            resolved_query="what are the fees for plus customers? focus only on loan service fees",
+            user_query="loan service fees",
+            category="loan service fees",
+        )
+        self.assertIsNone(context.pending_scope_clarification)
+        self.assertIsNotNone(context.scope_resolution)
+
+        persisted = context.get_scope_clarification_for_persistence()
+        self.assertIsNotNone(persisted)
+        hydrated = ToolExecutionContext()
+        hydrated.hydrate_scope_clarification(persisted)
+        self.assertFalse(hydrated.scope_clarification_updated)
+        self.assertEqual(
+            (hydrated.scope_resolution or {}).get("mode"),
+            "specific",
+        )
+        self.assertEqual(
+            (hydrated.scope_resolution or {}).get("category"),
+            "loan service fees",
+        )
+        self.assertEqual(
+            (hydrated.scope_resolution or {}).get("categories"),
+            ["loan service fees"],
+        )

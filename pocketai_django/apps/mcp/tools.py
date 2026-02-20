@@ -3780,6 +3780,481 @@ def _maybe_throttle_full_page(
     return None
 
 
+def _normalize_scope_text(value: object) -> str:
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    return re.sub(r"\s+", " ", text)
+
+
+def _clean_scope_category_label(value: object, *, max_chars: int = 72) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip(" \n\r\t-:|,.;")
+    if not text:
+        return ""
+    if len(text) > max_chars:
+        text = text[:max_chars].rstrip()
+    return text
+
+
+def _scope_clarification_categories_from_diagnostics(
+    diagnostics: Mapping[str, object] | None,
+) -> list[str]:
+    diag = diagnostics or {}
+    candidates: list[object] = []
+    raw_categories = diag.get("scope_clarification_categories")
+    if isinstance(raw_categories, Sequence) and not isinstance(raw_categories, (str, bytes, bytearray)):
+        candidates.extend(list(raw_categories))
+    if not candidates:
+        scope_summary = diag.get("scope_summary")
+        if isinstance(scope_summary, Mapping):
+            category_counts = scope_summary.get("category_counts")
+            if isinstance(category_counts, Mapping):
+                candidates.extend(list(category_counts.keys()))
+
+    categories: list[str] = []
+    seen: set[str] = set()
+    for raw in candidates:
+        cleaned = _clean_scope_category_label(raw, max_chars=56)
+        normalized = _normalize_scope_text(cleaned)
+        if not cleaned or not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        categories.append(cleaned)
+        if len(categories) >= 4:
+            break
+    return categories
+
+
+def _build_scope_clarification_hint(
+    diagnostics: Mapping[str, object] | None,
+) -> str:
+    categories = _scope_clarification_categories_from_diagnostics(diagnostics)
+    if categories:
+        if len(categories) == 1:
+            category_text = categories[0]
+        elif len(categories) == 2:
+            category_text = f"{categories[0]} or {categories[1]}"
+        else:
+            category_text = ", ".join(categories[:-1]) + f", or {categories[-1]}"
+        return (
+            f"I found fees across multiple categories ({category_text}). "
+            "Do you want one specific category or all related fees?"
+        )
+    return (
+        "I found fees across multiple categories. "
+        "Do you want one specific category or all related fees?"
+    )
+
+
+def _scope_specific_tokens(value: object) -> set[str]:
+    normalized = _normalize_scope_text(value).replace("_", " ")
+    if not normalized:
+        return set()
+
+    generic_tokens = {
+        "a",
+        "an",
+        "and",
+        "all",
+        "also",
+        "are",
+        "as",
+        "at",
+        "be",
+        "by",
+        "category",
+        "categories",
+        "customer",
+        "customers",
+        "details",
+        "do",
+        "fee",
+        "fees",
+        "for",
+        "from",
+        "give",
+        "i",
+        "in",
+        "is",
+        "list",
+        "me",
+        "need",
+        "of",
+        "on",
+        "one",
+        "or",
+        "please",
+        "plus",
+        "prime",
+        "related",
+        "segment",
+        "service",
+        "services",
+        "show",
+        "specific",
+        "tell",
+        "the",
+        "these",
+        "those",
+        "to",
+        "want",
+        "wealth",
+        "what",
+        "which",
+        "with",
+        "you",
+        "ال",
+        "الرسوم",
+        "العميل",
+        "العملاء",
+        "الكل",
+        "تفاصيل",
+        "جميع",
+        "رسوم",
+        "فئة",
+        "فئات",
+        "عميل",
+        "عملاء",
+        "كل",
+        "كلها",
+        "كله",
+    }
+
+    tokens: set[str] = set()
+    for raw_token in re.split(r"[^0-9a-z\u0600-\u06FF]+", normalized):
+        token = raw_token.strip().lower()
+        if not token or token in generic_tokens:
+            continue
+        token_variants = {token}
+        # Light stemming for English plural/verb variants to improve category-name matching.
+        if re.fullmatch(r"[a-z0-9]+", token):
+            if token.endswith("ies") and len(token) > 4:
+                token_variants.add(token[:-3] + "y")
+            if token.endswith("es") and len(token) > 4:
+                token_variants.add(token[:-2])
+            if token.endswith("s") and len(token) > 3:
+                token_variants.add(token[:-1])
+            if token.endswith("ing") and len(token) > 5:
+                token_variants.add(token[:-3])
+            if token.endswith("ed") and len(token) > 4:
+                token_variants.add(token[:-2])
+        tokens.update(variant for variant in token_variants if variant and variant not in generic_tokens)
+    return tokens
+
+
+def _match_scope_categories_for_query(
+    *,
+    query_text: str,
+    categories: Sequence[str],
+) -> list[str]:
+    normalized_query = _normalize_scope_text(query_text)
+    if not normalized_query:
+        return []
+    query_tokens = _scope_specific_tokens(normalized_query)
+
+    scored: list[tuple[str, float, int]] = []
+    for category in categories:
+        cleaned = _clean_scope_category_label(category, max_chars=96)
+        normalized_category = _normalize_scope_text(cleaned)
+        if not normalized_category:
+            continue
+        if normalized_category in normalized_query or normalized_query in normalized_category:
+            scored.append((cleaned, 1.0, 3))
+            continue
+
+        category_tokens = _scope_specific_tokens(normalized_category)
+        if not category_tokens:
+            continue
+        overlap = category_tokens.intersection(query_tokens)
+        overlap_count = len(overlap)
+        if overlap_count <= 0:
+            continue
+        coverage = overlap_count / max(1, len(category_tokens))
+        query_coverage = overlap_count / max(1, len(query_tokens))
+        score = (coverage * 0.75) + (query_coverage * 0.25)
+        if overlap_count >= 2 or score >= 0.5 or (overlap_count == 1 and query_coverage >= 0.9):
+            scored.append((cleaned, score, overlap_count))
+
+    if not scored:
+        return []
+
+    scored.sort(key=lambda item: (-item[1], -item[2], item[0].lower()))
+    selected: list[str] = []
+    seen: set[str] = set()
+    for category, _score, _overlap_count in scored:
+        normalized = _normalize_scope_text(category)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        selected.append(category)
+        if len(selected) >= 6:
+            break
+    return selected
+
+
+def _is_scope_category_list_request(normalized_query: str) -> bool:
+    text = _normalize_scope_text(normalized_query)
+    if not text:
+        return False
+
+    exact_markers = {
+        "categories",
+        "category",
+        "available categories",
+        "other categories",
+        "what categories",
+        "which categories",
+        "list categories",
+        "show categories",
+        "الفئات",
+        "فئات",
+        "التصنيفات",
+        "الفئات المتاحة",
+    }
+    if text in exact_markers:
+        return True
+
+    phrase_markers = (
+        "what categories",
+        "which categories",
+        "show categories",
+        "list categories",
+        "other categories",
+        "available categories",
+        "what other categories",
+        "what are the categories",
+        "what categories do you have",
+        "ما هي الفئات",
+        "ما الفئات",
+        "ايه الفئات",
+        "الفئات المتاحة",
+        "ما هي التصنيفات",
+    )
+    return any(marker in text for marker in phrase_markers)
+
+
+def _build_scope_categories_listing_hint(categories: Sequence[str]) -> str:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for raw in categories:
+        value = _clean_scope_category_label(raw, max_chars=64)
+        normalized = _normalize_scope_text(value)
+        if not value or not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        cleaned.append(value)
+        if len(cleaned) >= 12:
+            break
+
+    if not cleaned:
+        return (
+            "I can continue with a specific category or all related fees. "
+            "Reply with a category name, multiple categories, or \"all\"."
+        )
+
+    listed = ", ".join(cleaned)
+    return (
+        f"Available categories: {listed}. "
+        "Reply with one category, multiple categories, or \"all\"."
+    )
+
+
+def _extract_no_result_reason(diagnostics: Mapping[str, object] | None) -> str:
+    valid_reasons = {"not_found", "not_applicable_to_segment", "insufficient_evidence"}
+    diag = diagnostics or {}
+    reason = str(diag.get("no_result_reason") or "").strip().lower()
+    if reason in valid_reasons:
+        return reason
+    contract = diag.get("auto_decision_contract")
+    if isinstance(contract, Mapping):
+        contract_reason = str(contract.get("no_result_reason") or "").strip().lower()
+        if contract_reason in valid_reasons:
+            return contract_reason
+    return ""
+
+
+def _extract_conflict_detected(diagnostics: Mapping[str, object] | None) -> bool:
+    diag = diagnostics or {}
+    if bool(diag.get("conflict_detected")):
+        return True
+    contract = diag.get("auto_decision_contract")
+    if isinstance(contract, Mapping):
+        return bool(contract.get("conflict_detected"))
+    return False
+
+
+def _sanitize_scope_clarification_diagnostics(
+    diagnostics: Mapping[str, object] | None,
+    *,
+    mcq_enabled: bool,
+) -> dict[str, object]:
+    """
+    Keep scope clarification diagnostics backward-compatible in non-MCQ mode.
+
+    When MCQ mode is disabled, any MCQ-specific diagnostic keys are removed and
+    `clarification_ui_mode` is normalized to `text`.
+    """
+
+    sanitized = dict(diagnostics or {})
+    if mcq_enabled:
+        return sanitized
+
+    mcq_only_keys = (
+        "mcq",
+        "mcq_options",
+        "mcq_actions",
+        "clarification_options",
+        "clarification_actions",
+        "clarification_choices",
+        "clarification_cta",
+        "clarification_ctas",
+        "scope_clarification_options",
+        "scope_clarification_actions",
+    )
+    for key in mcq_only_keys:
+        sanitized.pop(key, None)
+
+    if str(sanitized.get("clarification_ui_mode") or "").strip().lower() == "mcq":
+        sanitized["clarification_ui_mode"] = "text"
+    return sanitized
+
+
+def _resolve_scope_clarification_followup(
+    *,
+    user_query: str,
+    pending_scope: Mapping[str, object],
+) -> dict[str, object] | None:
+    normalized_query = _normalize_scope_text(user_query)
+    if not normalized_query:
+        return None
+    base_query = str(pending_scope.get("base_query") or "").strip()
+    if not base_query:
+        return None
+
+    raw_categories = pending_scope.get("categories")
+    categories: list[str] = []
+    if isinstance(raw_categories, Sequence) and not isinstance(raw_categories, (str, bytes, bytearray)):
+        seen: set[str] = set()
+        for raw in raw_categories:
+            cleaned = str(raw or "").strip()
+            normalized = _normalize_scope_text(cleaned)
+            if not cleaned or not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            categories.append(cleaned)
+            if len(categories) >= 12:
+                break
+
+    all_markers = {
+        "all",
+        "all fees",
+        "all related fees",
+        "everything",
+        "full list",
+        "all categories",
+        "all of them",
+        "all of those",
+        "all please",
+        "جميع",
+        "كل",
+        "كلها",
+        "الكل",
+        "كله",
+        "كل الرسوم",
+    }
+    is_all = any(
+        marker == normalized_query or marker in normalized_query
+        for marker in all_markers
+    )
+    if is_all:
+        resolved_query = f"{base_query} include all related fee categories grouped by category"
+        return {
+            "mode": "all",
+            "base_query": base_query,
+            "resolved_query": resolved_query,
+            "user_query": str(user_query or "").strip(),
+            "category": "",
+            "categories": [],
+        }
+
+    if _is_scope_category_list_request(normalized_query):
+        return {
+            "mode": "list_categories",
+            "base_query": base_query,
+            "resolved_query": base_query,
+            "user_query": str(user_query or "").strip(),
+            "category": "",
+            "categories": categories,
+            "listing_hint": _build_scope_categories_listing_hint(categories),
+        }
+
+    matched_categories = _match_scope_categories_for_query(
+        query_text=normalized_query,
+        categories=categories,
+    )
+    if len(matched_categories) > 1:
+        resolved_query = (
+            f"{base_query} focus only on these fee categories: "
+            + ", ".join(matched_categories)
+        )
+        return {
+            "mode": "specific",
+            "base_query": base_query,
+            "resolved_query": resolved_query,
+            "user_query": str(user_query or "").strip(),
+            "category": matched_categories[0],
+            "categories": matched_categories,
+            "selection_mode": "multi",
+        }
+
+    selected_category = matched_categories[0] if matched_categories else ""
+
+    if not selected_category:
+        query_tokens = [token for token in re.split(r"\s+", normalized_query) if token]
+        generic_tokens = {
+            "specific",
+            "category",
+            "fees",
+            "fee",
+            "segment",
+            "plus",
+            "prime",
+            "wealth",
+            "details",
+            "show",
+            "list",
+            "for",
+            "the",
+            "a",
+            "an",
+            "رسوم",
+            "خانة",
+            "فئة",
+            "تفاصيل",
+            "عرض",
+        }
+        specific_tokens = [token for token in query_tokens if token not in generic_tokens]
+        if specific_tokens:
+            selected_category = str(user_query or "").strip()
+
+    if not selected_category:
+        return None
+
+    selected_normalized = _normalize_scope_text(selected_category)
+    has_fee_token = any(token in selected_normalized.split() for token in ("fee", "fees", "رسوم", "الرسوم"))
+    suffix = "" if has_fee_token else " fees"
+    resolved_query = f"{base_query} focus only on {selected_category}{suffix}"
+    return {
+        "mode": "specific",
+        "base_query": base_query,
+        "resolved_query": resolved_query,
+        "user_query": str(user_query or "").strip(),
+        "category": selected_category,
+        "categories": [selected_category],
+        "selection_mode": "single",
+    }
+
+
 def _search_hint(
     status: str,
     intent: str | None,
@@ -3788,11 +4263,47 @@ def _search_hint(
 ) -> str | None:
     diag = diagnostics or {}
     if status == "needs_clarification":
+        reason = str(diag.get("reason") or "").strip().lower()
+        if reason == "conflicting_evidence" or _extract_conflict_detected(diag):
+            question = str(diag.get("intent_clarification_question") or "").strip()
+            if question:
+                return question
+            return (
+                "I found conflicting values for the same segment/category across sources. "
+                "Do you want me to compare the conflicting entries, or narrow to a specific document/date?"
+            )
+        if reason == "broad_scope_ambiguity":
+            question = str(diag.get("intent_clarification_question") or "").strip()
+            categories = _scope_clarification_categories_from_diagnostics(diag)
+            if not question:
+                return _build_scope_clarification_hint(diag)
+            if categories:
+                lowered_question = question.lower()
+                has_category_samples = any(category.lower() in lowered_question for category in categories)
+                if not has_category_samples:
+                    return _build_scope_clarification_hint(diag)
+            return question
         question = str(diag.get("intent_clarification_question") or "").strip()
         if question:
             return question
         return "Please clarify whether you want a specific item, a comparison, or a complete list."
     if status != "ok" or not snippets:
+        no_result_reason = _extract_no_result_reason(diag)
+        if no_result_reason == "not_applicable_to_segment":
+            return (
+                "I could not find this for the requested segment/scope. "
+                "Ask the visitor which segment or category they want, or use \"all\" to include every category."
+            )
+        if no_result_reason == "insufficient_evidence":
+            return (
+                "I found related signals, but not enough evidence to answer confidently. "
+                "Ask for a tighter scope (specific category, document, or date range)."
+            )
+        if no_result_reason == "not_found":
+            return (
+                "No matching evidence was found. Ask for an exact product/service name, "
+                "or verify the document was uploaded and indexed."
+            )
         if intent == "identifier":
             return "No confident match; ask for the exact identifier or a page/section name instead of guessing."
         return "No strong matches yet; ask the visitor for a clearer identifier, product name, or page reference."
@@ -4624,6 +5135,7 @@ def _search_knowledge_handler(
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
     new_contract_enabled = bool(getattr(settings, "MCP_NEW_CONTRACT_ENABLED", True))
+    scope_clarification_mcq_enabled = bool(getattr(settings, "MCP_SCOPE_CLARIFICATION_MCQ_ENABLED", False))
     feature_state = FeatureFlagService.snapshot(conversation.business_profile)
     rag_agentic_enabled = bool(getattr(feature_state, "rag_agentic_mode", False)) and new_contract_enabled
 
@@ -4886,6 +5398,119 @@ def _search_knowledge_handler(
                 _append_query(candidate_str)
 
     primary_query = queries[0] if queries else ""
+    scope_resolution_applied: dict[str, object] | None = None
+    pending_scope_state = (
+        dict(context.pending_scope_clarification)
+        if isinstance(getattr(context, "pending_scope_clarification", None), Mapping)
+        else None
+    )
+    if primary_query and pending_scope_state:
+        scope_resolution_applied = _resolve_scope_clarification_followup(
+            user_query=primary_query,
+            pending_scope=pending_scope_state,
+        )
+        if scope_resolution_applied:
+            scope_mode = str(scope_resolution_applied.get("mode") or "").strip().lower()
+            if scope_mode == "list_categories":
+                raw_scope_categories = scope_resolution_applied.get("categories")
+                scope_categories = (
+                    [str(item).strip() for item in raw_scope_categories if str(item).strip()]
+                    if isinstance(raw_scope_categories, Sequence) and not isinstance(raw_scope_categories, (str, bytes, bytearray))
+                    else []
+                )
+                listing_hint = str(scope_resolution_applied.get("listing_hint") or "").strip()
+                if not listing_hint:
+                    listing_hint = _build_scope_categories_listing_hint(scope_categories)
+                diagnostics = {
+                    "path": "clarification",
+                    "reason": "broad_scope_ambiguity",
+                    "intent_requires_clarification": True,
+                    "intent_clarification_question": listing_hint,
+                    "scope_clarification_categories": scope_categories,
+                    "clarification_ui_mode": "text",
+                    "scope_listed": True,
+                    "scope_list_count": len(scope_categories),
+                }
+                diagnostics = _sanitize_scope_clarification_diagnostics(
+                    diagnostics,
+                    mcq_enabled=scope_clarification_mcq_enabled,
+                )
+                structured_log(
+                    "mcp",
+                    "search.scope_listing",
+                    {
+                        "base_query": scope_resolution_applied.get("base_query"),
+                        "user_query": scope_resolution_applied.get("user_query"),
+                        "categories_count": len(scope_categories),
+                    },
+                    context={
+                        "conversation": conversation.id,
+                        "business": conversation.business_profile_id,
+                    },
+                    logger_obj=logger,
+                )
+                try:
+                    default_limit = int(getattr(settings, "MCP_SEARCH_KNOWLEDGE_DEFAULT_LIMIT", 5) or 5)
+                except (TypeError, ValueError):
+                    default_limit = 5
+                try:
+                    prompt_cap = int(getattr(settings, "MCP_PROMPT_MAX_SNIPPETS", default_limit) or default_limit)
+                except (TypeError, ValueError):
+                    prompt_cap = default_limit
+                listing_limit = max(1, min(default_limit, prompt_cap))
+                listing_query = str(scope_resolution_applied.get("user_query") or primary_query)
+                listing_intent_signal = _query_intent(listing_query)
+                return {
+                    "tool": "search_knowledge",
+                    "query": listing_query,
+                    "limit": listing_limit,
+                    "query_intent": listing_intent_signal.get("intent"),
+                    "intent_signal": listing_intent_signal,
+                    "status": "needs_clarification",
+                    "diagnostics": diagnostics,
+                    "snippets": [],
+                    "hint": listing_hint,
+                }
+            resolved_query = str(scope_resolution_applied.get("resolved_query") or "").strip()
+            selected_categories: list[str] = []
+            raw_selected_categories = scope_resolution_applied.get("categories")
+            if isinstance(raw_selected_categories, Sequence) and not isinstance(
+                raw_selected_categories,
+                (str, bytes, bytearray),
+            ):
+                selected_categories = [
+                    str(item).strip()
+                    for item in raw_selected_categories
+                    if str(item).strip()
+                ][:12]
+            if resolved_query:
+                queries[0] = resolved_query
+                primary_query = resolved_query
+            context.set_scope_resolution(
+                mode=str(scope_resolution_applied.get("mode") or "specific"),
+                base_query=str(scope_resolution_applied.get("base_query") or primary_query),
+                resolved_query=str(scope_resolution_applied.get("resolved_query") or primary_query),
+                user_query=str(scope_resolution_applied.get("user_query") or ""),
+                category=str(scope_resolution_applied.get("category") or "") or None,
+                categories=selected_categories,
+            )
+            structured_log(
+                "mcp",
+                "search.scope_resolution",
+                {
+                    "mode": scope_resolution_applied.get("mode"),
+                    "base_query": scope_resolution_applied.get("base_query"),
+                    "resolved_query": primary_query,
+                    "category": scope_resolution_applied.get("category") or None,
+                    "categories": selected_categories,
+                    "selection_mode": scope_resolution_applied.get("selection_mode") or "single",
+                },
+                context={
+                    "conversation": conversation.id,
+                    "business": conversation.business_profile_id,
+                },
+                logger_obj=logger,
+            )
 
     # =========================================================================
     # DIAGNOSTIC: Log document context state at search start
@@ -4899,6 +5524,8 @@ def _search_knowledge_handler(
             "primary_document_title": context.get_primary_document_title() if context else None,
             "referenced_upload_ids": list(context.referenced_upload_ids)[:5] if context else [],
             "search_history_count": len(context.search_history) if context else 0,
+            "scope_pending": bool(context.pending_scope_clarification) if context else False,
+            "scope_selected": bool(context.scope_resolution) if context else False,
         },
         context={
             "conversation": conversation.id,
@@ -5357,6 +5984,8 @@ def _search_knowledge_handler(
                 "primary_upload_id": context.primary_upload_id,
                 "referenced_upload_ids": list(context.referenced_upload_ids),
                 "document_context": context.document_context,
+                "scope_pending": dict(context.pending_scope_clarification) if context.pending_scope_clarification else None,
+                "scope_resolution": dict(context.scope_resolution) if context.scope_resolution else None,
             } if context else None
 
             # =========================================================================
@@ -5787,6 +6416,45 @@ def _search_knowledge_handler(
 
         # Track refinement in payload
         refinement_applied = is_refined_query
+        result_diagnostics = dict(result.diagnostics or {})
+
+        if result.status == "needs_clarification" and str(result_diagnostics.get("reason") or "") == "broad_scope_ambiguity":
+            result_diagnostics.setdefault(
+                "clarification_ui_mode",
+                "mcq" if scope_clarification_mcq_enabled else "text",
+            )
+            raw_categories = result_diagnostics.get("scope_clarification_categories")
+            categories = (
+                [str(item).strip() for item in raw_categories if str(item).strip()]
+                if isinstance(raw_categories, Sequence) and not isinstance(raw_categories, (str, bytes, bytearray))
+                else []
+            )
+            context.set_pending_scope_clarification(
+                base_query=query_text,
+                categories=categories,
+                question=str(result_diagnostics.get("intent_clarification_question") or ""),
+            )
+        elif (
+            scope_resolution_applied
+            and query_text == primary_query
+        ):
+            result_diagnostics["scope_resolution_mode"] = scope_resolution_applied.get("mode")
+            result_diagnostics["scope_resolution_category"] = scope_resolution_applied.get("category") or None
+            raw_scope_categories = scope_resolution_applied.get("categories")
+            if isinstance(raw_scope_categories, Sequence) and not isinstance(
+                raw_scope_categories,
+                (str, bytes, bytearray),
+            ):
+                result_diagnostics["scope_resolution_categories"] = [
+                    str(item).strip()
+                    for item in raw_scope_categories
+                    if str(item).strip()
+                ][:12]
+            result_diagnostics["scope_resolution_base_query"] = scope_resolution_applied.get("base_query")
+        result_diagnostics = _sanitize_scope_clarification_diagnostics(
+            result_diagnostics,
+            mcq_enabled=scope_clarification_mcq_enabled,
+        )
 
         payload = {
             "tool": "search_knowledge",
@@ -5797,10 +6465,31 @@ def _search_knowledge_handler(
             "query_intent": intent,
             "intent_signal": intent_info,
             "status": result.status,
-            "diagnostics": dict(result.diagnostics or {}),
+            "diagnostics": result_diagnostics,
             "snippets": snippet_payloads,
-            "hint": _search_hint(result.status, intent, snippet_payloads, result.diagnostics),
+            "hint": _search_hint(result.status, intent, snippet_payloads, result_diagnostics),
         }
+        if scope_resolution_applied and query_text == primary_query:
+            payload_scope_categories: list[str] = []
+            raw_payload_scope_categories = scope_resolution_applied.get("categories")
+            if isinstance(raw_payload_scope_categories, Sequence) and not isinstance(
+                raw_payload_scope_categories,
+                (str, bytes, bytearray),
+            ):
+                payload_scope_categories = [
+                    str(item).strip()
+                    for item in raw_payload_scope_categories
+                    if str(item).strip()
+                ][:12]
+            payload["scope_resolution"] = {
+                "mode": scope_resolution_applied.get("mode"),
+                "category": scope_resolution_applied.get("category") or None,
+                "categories": payload_scope_categories or None,
+                "selection_mode": scope_resolution_applied.get("selection_mode") or "single",
+                "base_query": scope_resolution_applied.get("base_query"),
+                "resolved_query": scope_resolution_applied.get("resolved_query"),
+                "user_query": scope_resolution_applied.get("user_query"),
+            }
 
         # Add confidence and critique info to payload
         if confidence_result:
@@ -6263,6 +6952,59 @@ def _search_knowledge_handler(
             logger_obj=logger,
         )
 
+    def _normalized_run_status(run: Mapping[str, object] | None) -> str:
+        if not isinstance(run, Mapping):
+            return ""
+        return str(run.get("status") or "").strip().lower()
+
+    status_source_run: Mapping[str, object] = primary_run
+    conflict_source_run = next(
+        (
+            run
+            for run in runs
+            if _extract_conflict_detected(
+                run.get("diagnostics") if isinstance(run.get("diagnostics"), Mapping) else {}
+            )
+        ),
+        None,
+    )
+    clarification_source_run = next(
+        (run for run in runs if _normalized_run_status(run) == "needs_clarification"),
+        None,
+    )
+    if clarification_source_run is not None:
+        final_status = "needs_clarification"
+        status_source_run = clarification_source_run
+    elif conflict_source_run is not None:
+        final_status = "needs_clarification"
+        status_source_run = conflict_source_run
+    elif page_snippets:
+        final_status = "ok"
+        status_source_run = next(
+            (run for run in runs if _normalized_run_status(run) == "ok"),
+            primary_run,
+        )
+    else:
+        non_default_status_run = next(
+            (run for run in runs if _normalized_run_status(run) not in {"", "not_found"}),
+            None,
+        )
+        if non_default_status_run is not None:
+            status_source_run = non_default_status_run
+            final_status = _normalized_run_status(non_default_status_run)
+        else:
+            status_source_run = runs[-1]
+            final_status = _normalized_run_status(status_source_run) or "not_found"
+
+    status_diag = status_source_run.get("diagnostics") if isinstance(status_source_run.get("diagnostics"), Mapping) else {}
+    status_reason = str(status_diag.get("reason") or "").strip().lower()
+    if final_status == "needs_clarification" and (
+        status_reason == "conflicting_evidence" or _extract_conflict_detected(status_diag)
+    ):
+        # Avoid sending conflicting snippets in the same payload; force clarification first.
+        page_snippets = []
+        completeness["shown"] = 0
+
     for snippet in page_snippets:
         context.add_knowledge_result(snippet)
 
@@ -6271,7 +7013,9 @@ def _search_knowledge_handler(
         conversation=conversation,
         snippets=page_snippets,
         extra={
-            "status": primary_run.get("status"),
+            "status": final_status,
+            "primary_status": primary_run.get("status"),
+            "status_source_query": status_source_run.get("query"),
             "limit": page_size,
             "query_length": len(str(primary_run.get("query") or "")),
             "fusion": fusion,
@@ -6284,8 +7028,48 @@ def _search_knowledge_handler(
     )
     context.reserve_characters(int(metrics.get("char_count", 0)))
 
-    final_status = "ok" if page_snippets else runs[-1].get("status") or "not_found"
-    diag = dict(primary_run.get("diagnostics") or {})
+    diag = dict(status_source_run.get("diagnostics") or {})
+    try:
+        diag["final_status_source_index"] = int(runs.index(status_source_run))
+    except ValueError:
+        diag["final_status_source_index"] = 0
+    diag["final_status_source_query"] = status_source_run.get("query")
+    if final_status == "needs_clarification":
+        if _extract_conflict_detected(diag):
+            diag.setdefault("reason", "conflicting_evidence")
+            diag.setdefault("intent_requires_clarification", True)
+        if str(diag.get("reason") or "") == "broad_scope_ambiguity":
+            diag.setdefault(
+                "clarification_ui_mode",
+                "mcq" if scope_clarification_mcq_enabled else "text",
+            )
+        clarification_question = str(diag.get("intent_clarification_question") or "").strip()
+        if not clarification_question:
+            for run in runs:
+                run_diag = run.get("diagnostics")
+                if not isinstance(run_diag, Mapping):
+                    continue
+                candidate = str(run_diag.get("intent_clarification_question") or "").strip()
+                if candidate:
+                    diag["intent_clarification_question"] = candidate
+                    break
+    if final_status == "not_found":
+        no_result_reason = _extract_no_result_reason(diag)
+        if not no_result_reason:
+            for run in runs:
+                run_diag = run.get("diagnostics")
+                if not isinstance(run_diag, Mapping):
+                    continue
+                candidate_reason = _extract_no_result_reason(run_diag)
+                if candidate_reason:
+                    no_result_reason = candidate_reason
+                    break
+        if no_result_reason:
+            diag["no_result_reason"] = no_result_reason
+    diag = _sanitize_scope_clarification_diagnostics(
+        diag,
+        mcq_enabled=scope_clarification_mcq_enabled,
+    )
     diag["batched_runs"] = [
         {
             "query": run.get("query"),
@@ -6297,7 +7081,12 @@ def _search_knowledge_handler(
     ]
     diag["batched_queries"] = queries
 
-    query_intent = primary_run.get("query_intent") or primary_run.get("intent")
+    query_intent = (
+        status_source_run.get("query_intent")
+        or status_source_run.get("intent")
+        or primary_run.get("query_intent")
+        or primary_run.get("intent")
+    )
 
     # Update hint if all results were previously shown
     hint = _search_hint(final_status, query_intent, page_snippets, diag)
@@ -6333,6 +7122,9 @@ def _search_knowledge_handler(
         payload["fusion"] = fusion
     if len(queries) > 1:
         payload["batched_queries"] = tuple(queries)
+    scope_resolution_payload = status_source_run.get("scope_resolution")
+    if isinstance(scope_resolution_payload, Mapping):
+        payload["scope_resolution"] = dict(scope_resolution_payload)
     
     # Convert to agentic format when enabled, and persist search intent metadata
     # for semantic dedup within this user turn.

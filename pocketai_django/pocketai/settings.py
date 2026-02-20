@@ -653,6 +653,12 @@ except (TypeError, ValueError):
 RAG_OCR_RENDER_DPI = max(72, min(600, RAG_OCR_RENDER_DPI))
 # RAG_USE_MCP_ORCHESTRATOR: Use the MCP orchestrator for RAG turns (default true).
 RAG_USE_MCP_ORCHESTRATOR = os.getenv("RAG_USE_MCP_ORCHESTRATOR", "true").lower() in {"1", "true", "yes"}
+# MCP_SCOPE_CLARIFICATION_MCQ_ENABLED: Render clarification guidance as MCQ metadata.
+# Default false keeps text-only clarification behavior (Plan B / non-MCQ mode).
+MCP_SCOPE_CLARIFICATION_MCQ_ENABLED = os.getenv(
+    "MCP_SCOPE_CLARIFICATION_MCQ_ENABLED",
+    "false",
+).lower() in {"1", "true", "yes"}
 # Retrieval is predictable by default: one strong query per user turn.
 # When the caller provides explicit batched queries (tool arg: `queries=[...]`),
 # we can safely fan out a few variants to improve recall without increasing prompt tokens.

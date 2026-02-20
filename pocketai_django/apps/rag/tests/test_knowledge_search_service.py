@@ -55,6 +55,9 @@ class KnowledgeSearchServiceAutoDecisionContractTests(SimpleTestCase):
         self.assertEqual(contract["margin"], 0.0)
         self.assertEqual(contract["decision"], "undecided")
         self.assertFalse(contract["needs_clarification"])
+        self.assertIsNone(contract["scope_summary"])
+        self.assertFalse(contract["conflict_detected"])
+        self.assertIsNone(contract["no_result_reason"])
 
     def test_contract_marks_clarification_when_required(self) -> None:
         contract = KnowledgeSearchService._derive_auto_decision_contract(
@@ -99,6 +102,129 @@ class KnowledgeSearchServiceAutoDecisionContractTests(SimpleTestCase):
         self.assertEqual(contract["table_score"], 0.21)
         self.assertEqual(contract["text_score"], 0.78)
         self.assertEqual(contract["margin"], 0.57)
+
+    def test_contract_emits_optional_phase1_diagnostics_keys(self) -> None:
+        contract = KnowledgeSearchService._derive_auto_decision_contract(
+            route_diagnostics={"index_route": "text_primary_filtered", "index_route_table_hits": 1, "index_route_text_hits": 2},
+            requires_clarification=False,
+            scope_summary={"is_broad_scope": True, "distinct_docs": 7},
+            conflict_detected=True,
+            no_result_reason="Insufficient_Evidence",
+        )
+        self.assertEqual(contract["scope_summary"], {"is_broad_scope": True, "distinct_docs": 7})
+        self.assertTrue(contract["conflict_detected"])
+        self.assertEqual(contract["no_result_reason"], "insufficient_evidence")
+
+
+class KnowledgeSearchServicePhaseSixSemanticsTests(SimpleTestCase):
+    @staticmethod
+    def _table_snippet(*, service_name: str, plus_value: str) -> KnowledgeSnippet:
+        return KnowledgeSnippet(
+            id=uuid.uuid4(),
+            title=f"{service_name} table",
+            summary=f"service: {service_name}; plus: {plus_value}",
+            source="table_direct",
+            content=f"[Table] {service_name}\nservice: {service_name}\nplus: {plus_value}\nprime: EGP 75",
+            upload_id=uuid.uuid4(),
+            chunk_id=uuid.uuid4(),
+            chunk_index=0,
+            is_table_chunk=True,
+            source_diagnostics={"table_title": service_name},
+        )
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_apply_phase6_semantics_sets_conflict_clarification(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        traits = service.analyze_query("plus loan service fees")
+        snippets = (
+            self._table_snippet(service_name="Loan Service Fees", plus_value="EGP 120"),
+            self._table_snippet(service_name="Loan Service Fees", plus_value="EGP 130"),
+        )
+
+        status, refined_snippets, diagnostics = service._apply_phase6_semantics(
+            status="ok",
+            snippets=snippets,
+            diagnostics={"path": "hybrid"},
+            traits=traits,
+            table_context={"specific_tokens": {"plus"}, "matched_columns_specific": {"plus"}},
+            table_blocked=False,
+        )
+
+        self.assertEqual(status, "needs_clarification")
+        self.assertFalse(refined_snippets)
+        self.assertTrue(bool(diagnostics.get("conflict_detected")))
+        self.assertEqual(str(diagnostics.get("reason") or ""), "conflicting_evidence")
+        self.assertIn("conflicting values", str(diagnostics.get("intent_clarification_question") or "").lower())
+        contract = diagnostics.get("auto_decision_contract") or {}
+        self.assertTrue(bool(contract.get("needs_clarification")))
+        self.assertTrue(bool(contract.get("conflict_detected")))
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_apply_phase6_semantics_sets_no_result_reason_not_applicable(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        traits = service.analyze_query("plus premium segment fees")
+
+        status, refined_snippets, diagnostics = service._apply_phase6_semantics(
+            status="not_found",
+            snippets=tuple(),
+            diagnostics={"path": "hybrid", "table_reason": "specific_tokens_missing"},
+            traits=traits,
+            table_context={"specific_tokens": {"plus"}},
+            table_blocked=True,
+        )
+
+        self.assertEqual(status, "not_found")
+        self.assertFalse(refined_snippets)
+        self.assertEqual(diagnostics.get("no_result_reason"), "not_applicable_to_segment")
+        contract = diagnostics.get("auto_decision_contract") or {}
+        self.assertEqual(contract.get("no_result_reason"), "not_applicable_to_segment")
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_apply_phase6_semantics_sets_no_result_reason_insufficient_evidence(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        traits = service.analyze_query("plus customer fees")
+
+        status, refined_snippets, diagnostics = service._apply_phase6_semantics(
+            status="not_found",
+            snippets=tuple(),
+            diagnostics={"path": "hybrid", "chunk_candidate_count": 4},
+            traits=traits,
+            table_context={},
+            table_blocked=False,
+        )
+
+        self.assertEqual(status, "not_found")
+        self.assertFalse(refined_snippets)
+        self.assertEqual(diagnostics.get("no_result_reason"), "insufficient_evidence")
+        contract = diagnostics.get("auto_decision_contract") or {}
+        self.assertEqual(contract.get("no_result_reason"), "insufficient_evidence")
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_apply_phase6_semantics_sets_no_result_reason_not_found(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        traits = service.analyze_query("fees for unknown segment")
+
+        status, refined_snippets, diagnostics = service._apply_phase6_semantics(
+            status="not_found",
+            snippets=tuple(),
+            diagnostics={
+                "path": "fallback",
+                "chunk_candidate_count": 0,
+                "chunk_candidate_count_raw": 0,
+                "vector_candidates": 0,
+                "fts_candidates": 0,
+                "alias_hits": 0,
+            },
+            traits=traits,
+            table_context={},
+            table_blocked=False,
+        )
+
+        self.assertEqual(status, "not_found")
+        self.assertFalse(refined_snippets)
+        self.assertEqual(diagnostics.get("no_result_reason"), "not_found")
+        contract = diagnostics.get("auto_decision_contract") or {}
+        self.assertEqual(contract.get("no_result_reason"), "not_found")
 
 
 class KnowledgeSearchServiceAutoScoringTests(SimpleTestCase):
@@ -264,6 +390,126 @@ class KnowledgeSearchServiceAutoArbitrationTests(SimpleTestCase):
         self.assertIn("both?", question.lower())
         self.assertEqual(table_label, "gold fee")
         self.assertIn("gold card benefits", text_label.lower())
+
+
+class KnowledgeSearchServiceScopeSummaryTests(SimpleTestCase):
+    @staticmethod
+    def _make_chunk(
+        *,
+        index_type: str,
+        content: str,
+        upload_id: uuid.UUID | None = None,
+        metadata: dict[str, object] | None = None,
+    ):
+        chunk = mock.Mock()
+        payload = {"index_type": index_type}
+        if index_type == "table":
+            payload["is_table_chunk"] = True
+        if metadata:
+            payload.update(metadata)
+        chunk.metadata = payload
+        chunk.content = content
+        chunk.upload_id = upload_id or uuid.uuid4()
+        return chunk
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_scope_summary_detects_broad_fee_scope_before_clipping(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        doc_a = uuid.uuid4()
+        doc_b = uuid.uuid4()
+        doc_c = uuid.uuid4()
+        hits = (
+            ChunkResult(
+                chunk=self._make_chunk(
+                    index_type="table",
+                    content="service: outgoing transfers; plus: free",
+                    upload_id=doc_a,
+                ),
+                source_stage="unit",
+            ),
+            ChunkResult(
+                chunk=self._make_chunk(
+                    index_type="table",
+                    content="service: outgoing transfers; plus: free",
+                    upload_id=doc_b,
+                ),
+                source_stage="unit",
+            ),
+            ChunkResult(
+                chunk=self._make_chunk(
+                    index_type="table",
+                    content="service: loan service fees monthly; plus: egp 120",
+                    upload_id=doc_b,
+                ),
+                source_stage="unit",
+            ),
+            ChunkResult(
+                chunk=self._make_chunk(
+                    index_type="table",
+                    content="service: payment of invoices; plus: customer applied fees",
+                    upload_id=doc_c,
+                ),
+                source_stage="unit",
+            ),
+            ChunkResult(
+                chunk=self._make_chunk(
+                    index_type="table",
+                    content="service: minimum balance threshold; plus: egp 20,000",
+                    upload_id=doc_c,
+                ),
+                source_stage="unit",
+            ),
+            ChunkResult(
+                chunk=self._make_chunk(
+                    index_type="text",
+                    content="section: remittance fees and transfer policies",
+                    upload_id=doc_a,
+                    metadata={"section_heading": "remittance fees"},
+                ),
+                source_stage="unit",
+            ),
+        )
+        summary = service._build_scope_summary_from_candidates(
+            hits,
+            query_tokens=("what", "are", "the", "fees", "for", "plus", "customers"),
+            filler_tokens={"what", "are", "the", "for"},
+        )
+        self.assertEqual(summary["total_matches"], 6)
+        self.assertEqual(summary["distinct_docs"], 3)
+        self.assertTrue(summary["is_broad_scope"])
+        self.assertGreaterEqual(len(summary["category_counts"]), 3)
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_scope_summary_marks_narrow_scope(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        doc_a = uuid.uuid4()
+        hits = (
+            ChunkResult(
+                chunk=self._make_chunk(
+                    index_type="table",
+                    content="service: outgoing transfers; plus: free",
+                    upload_id=doc_a,
+                ),
+                source_stage="unit",
+            ),
+            ChunkResult(
+                chunk=self._make_chunk(
+                    index_type="table",
+                    content="service: outgoing transfers; plus: free",
+                    upload_id=doc_a,
+                ),
+                source_stage="unit",
+            ),
+        )
+        summary = service._build_scope_summary_from_candidates(
+            hits,
+            query_tokens=("plus", "fees"),
+            filler_tokens=set(),
+        )
+        self.assertEqual(summary["total_matches"], 2)
+        self.assertEqual(summary["distinct_docs"], 1)
+        self.assertFalse(summary["is_broad_scope"])
+        self.assertGreaterEqual(summary["category_counts"].get("outgoing transfers", 0), 1)
 
 
 class KnowledgeSearchServiceAliasTests(TestCase):
@@ -1194,6 +1440,405 @@ class KnowledgeSearchServiceClarificationTests(TestCase):
             str(result.diagnostics.get("auto_arbitration_text_evidence_label") or "").lower(),
         )
         route_chunk_hits.assert_not_called()
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_broad_generic_scope_returns_dynamic_scope_clarification(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        classification = QueryClassification(
+            intent=QueryIntent.SPECIFIC_LOOKUP,
+            confidence=0.9,
+            reasoning="clear fee lookup",
+            retrieval_hints={},
+            requires_clarification=False,
+            clarification_question="",
+        )
+        table_context = {
+            "has_intent": True,
+            "comprehensive_intent": False,
+            "query_classification": classification,
+            "intent_fallback_attempted": False,
+            "intent_fallback_applied": False,
+            "matched_columns": {"plus", "fees"},
+            "matched_columns_query": {"plus", "fees"},
+            "matched_columns_tokens": {"plus", "fees"},
+            "matched_columns_specific": {"plus", "fees"},
+            "matched_row_labels": set(),
+            "matched_keywords": set(),
+            "numeric_intent": False,
+            "available_columns": {"prime", "plus", "wealth"},
+            "semantic_columns": set(),
+            "matched_column_count": 2,
+            "query_tokens": {"plus", "customers", "fees"},
+            "specific_tokens": {"plus", "customers", "fees"},
+            "table_dominant": True,
+            "table_upload_ratio": 0.9,
+            "table_count": 5,
+            "table_uploads": 3,
+            "allow_generic": True,
+            "tenant_lexicon_entity_terms_count": 0,
+            "tenant_lexicon_attribute_terms_count": 0,
+        }
+
+        def _make_chunk(*, content: str, upload_id: uuid.UUID):
+            chunk = mock.Mock()
+            chunk.metadata = {
+                "index_type": "table",
+                "is_table_chunk": True,
+            }
+            chunk.content = content
+            chunk.upload_id = upload_id
+            return chunk
+
+        doc_a = uuid.uuid4()
+        doc_b = uuid.uuid4()
+        doc_c = uuid.uuid4()
+        chunk_hits = (
+            ChunkResult(
+                chunk=_make_chunk(content="service: outgoing transfers; plus: free", upload_id=doc_a),
+                source_stage="unit",
+                rerank_score=0.81,
+                lexical_score=0.66,
+            ),
+            ChunkResult(
+                chunk=_make_chunk(content="service: payment of invoices; plus: customer applied fees", upload_id=doc_b),
+                source_stage="unit",
+                rerank_score=0.8,
+                lexical_score=0.64,
+            ),
+            ChunkResult(
+                chunk=_make_chunk(content="service: loan service fees monthly; plus: egp 120", upload_id=doc_c),
+                source_stage="unit",
+                rerank_score=0.79,
+                lexical_score=0.63,
+            ),
+            ChunkResult(
+                chunk=_make_chunk(content="service: minimum balance threshold fee; plus: egp 20,000", upload_id=doc_a),
+                source_stage="unit",
+                rerank_score=0.78,
+                lexical_score=0.62,
+            ),
+            ChunkResult(
+                chunk=_make_chunk(content="service: cheque collection fee; plus: correspondent fees", upload_id=doc_b),
+                source_stage="unit",
+                rerank_score=0.77,
+                lexical_score=0.61,
+            ),
+            ChunkResult(
+                chunk=_make_chunk(content="service: card issuance fee; plus: egp 150", upload_id=doc_c),
+                source_stage="unit",
+                rerank_score=0.76,
+                lexical_score=0.6,
+            ),
+        )
+
+        with (
+            mock.patch.object(service, "_table_query_context", return_value=table_context),
+            mock.patch.object(service, "_business_has_tables", return_value=True),
+            mock.patch.object(service, "search_by_alias", return_value=AliasSearchResult(tuple(), {})),
+            mock.patch.object(service, "_chunk_hits", return_value=chunk_hits),
+            mock.patch.object(
+                service,
+                "_route_chunk_hits",
+                return_value=(chunk_hits, tuple(), {"index_route": "table_specific_first"}),
+            ) as route_chunk_hits,
+        ):
+            result = service.search(
+                business_profile=self.business,
+                query="what are the fees for plus customers?",
+            )
+
+        self.assertEqual(result.status, "needs_clarification")
+        self.assertEqual(result.diagnostics.get("path"), "clarification")
+        self.assertEqual(result.diagnostics.get("reason"), "broad_scope_ambiguity")
+        self.assertTrue(result.diagnostics.get("intent_requires_clarification"))
+        self.assertIn(
+            "specific category",
+            str(result.diagnostics.get("intent_clarification_question") or "").lower(),
+        )
+        self.assertIn(
+            "all related fees",
+            str(result.diagnostics.get("intent_clarification_question") or "").lower(),
+        )
+        scope_summary = result.diagnostics.get("scope_summary") or {}
+        self.assertTrue(scope_summary.get("is_broad_scope"))
+        self.assertGreaterEqual(len(result.diagnostics.get("scope_clarification_categories") or []), 3)
+        auto_contract = result.diagnostics.get("auto_decision_contract") or {}
+        self.assertEqual(auto_contract.get("decision"), "clarification")
+        self.assertTrue(auto_contract.get("needs_clarification"))
+        route_chunk_hits.assert_not_called()
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_specific_scope_query_skips_broad_scope_clarification(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        classification = QueryClassification(
+            intent=QueryIntent.SPECIFIC_LOOKUP,
+            confidence=0.91,
+            reasoning="specific fee category",
+            retrieval_hints={},
+            requires_clarification=False,
+            clarification_question="",
+        )
+        table_context = {
+            "has_intent": True,
+            "comprehensive_intent": False,
+            "query_classification": classification,
+            "intent_fallback_attempted": False,
+            "intent_fallback_applied": False,
+            "matched_columns": {"plus", "fees"},
+            "matched_columns_query": {"plus", "fees"},
+            "matched_columns_tokens": {"plus", "fees"},
+            "matched_columns_specific": {"plus", "fees"},
+            "matched_row_labels": {"loan service fees monthly"},
+            "matched_keywords": set(),
+            "numeric_intent": False,
+            "available_columns": {"prime", "plus", "wealth"},
+            "semantic_columns": set(),
+            "matched_column_count": 2,
+            "query_tokens": {"loan", "monthly", "plus", "fees"},
+            "specific_tokens": {"loan", "monthly"},
+            "table_dominant": True,
+            "table_upload_ratio": 0.9,
+            "table_count": 5,
+            "table_uploads": 3,
+            "allow_generic": True,
+            "tenant_lexicon_entity_terms_count": 0,
+            "tenant_lexicon_attribute_terms_count": 0,
+        }
+
+        def _make_chunk(*, content: str, upload_id: uuid.UUID):
+            chunk = mock.Mock()
+            chunk.metadata = {
+                "index_type": "table",
+                "is_table_chunk": True,
+            }
+            chunk.content = content
+            chunk.upload_id = upload_id
+            return chunk
+
+        doc_a = uuid.uuid4()
+        doc_b = uuid.uuid4()
+        doc_c = uuid.uuid4()
+        chunk_hits = (
+            ChunkResult(
+                chunk=_make_chunk(content="service: outgoing transfers; plus: free", upload_id=doc_a),
+                source_stage="unit",
+                rerank_score=0.81,
+                lexical_score=0.66,
+            ),
+            ChunkResult(
+                chunk=_make_chunk(content="service: payment of invoices; plus: customer applied fees", upload_id=doc_b),
+                source_stage="unit",
+                rerank_score=0.8,
+                lexical_score=0.64,
+            ),
+            ChunkResult(
+                chunk=_make_chunk(content="service: loan service fees monthly; plus: egp 120", upload_id=doc_c),
+                source_stage="unit",
+                rerank_score=0.79,
+                lexical_score=0.63,
+            ),
+            ChunkResult(
+                chunk=_make_chunk(content="service: minimum balance threshold fee; plus: egp 20,000", upload_id=doc_a),
+                source_stage="unit",
+                rerank_score=0.78,
+                lexical_score=0.62,
+            ),
+            ChunkResult(
+                chunk=_make_chunk(content="service: cheque collection fee; plus: correspondent fees", upload_id=doc_b),
+                source_stage="unit",
+                rerank_score=0.77,
+                lexical_score=0.61,
+            ),
+            ChunkResult(
+                chunk=_make_chunk(content="service: card issuance fee; plus: egp 150", upload_id=doc_c),
+                source_stage="unit",
+                rerank_score=0.76,
+                lexical_score=0.6,
+            ),
+        )
+        snippet = KnowledgeSnippet(
+            id=uuid.uuid4(),
+            title="Loan fees",
+            summary="Loan monthly fee for plus segment",
+            source="File Upload",
+            content="Loan Service Fees (Monthly): EGP 120 for plus segment.",
+            upload_id=uuid.uuid4(),
+            chunk_id=uuid.uuid4(),
+            chunk_index=0,
+            source_diagnostics={},
+        )
+
+        with (
+            mock.patch.object(service, "_table_query_context", return_value=table_context),
+            mock.patch.object(service, "_business_has_tables", return_value=True),
+            mock.patch.object(service, "search_by_alias", return_value=AliasSearchResult(tuple(), {})),
+            mock.patch.object(service, "_chunk_hits", return_value=chunk_hits),
+            mock.patch.object(
+                service,
+                "_route_chunk_hits",
+                return_value=(chunk_hits, tuple(), {"index_route": "table_specific_first"}),
+            ) as route_chunk_hits,
+            mock.patch.object(service, "_search_chunks", return_value=(snippet,)) as search_chunks,
+        ):
+            result = service.search(
+                business_profile=self.business,
+                query="what are the monthly loan fees for plus customers?",
+                limit=1,
+            )
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.diagnostics.get("snippet_count"), 1)
+        self.assertNotEqual(result.diagnostics.get("reason"), "broad_scope_ambiguity")
+        route_chunk_hits.assert_called()
+        search_chunks.assert_called()
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_scope_summary_uses_full_candidate_set_before_snippet_limit(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        classification = QueryClassification(
+            intent=QueryIntent.SPECIFIC_LOOKUP,
+            confidence=0.9,
+            reasoning="clear text lookup",
+            retrieval_hints={},
+            requires_clarification=False,
+            clarification_question="",
+        )
+        table_context = {
+            "has_intent": False,
+            "comprehensive_intent": False,
+            "query_classification": classification,
+            "intent_fallback_attempted": False,
+            "intent_fallback_applied": False,
+            "matched_columns": set(),
+            "matched_columns_query": set(),
+            "matched_columns_tokens": set(),
+            "matched_columns_specific": set(),
+            "matched_row_labels": set(),
+            "matched_keywords": set(),
+            "numeric_intent": False,
+            "available_columns": set(),
+            "semantic_columns": set(),
+            "matched_column_count": 0,
+            "query_tokens": {"plus", "fees"},
+            "specific_tokens": set(),
+            "table_dominant": False,
+            "table_upload_ratio": 0.0,
+            "table_count": 0,
+            "table_uploads": 0,
+            "allow_generic": False,
+            "tenant_lexicon_entity_terms_count": 0,
+            "tenant_lexicon_attribute_terms_count": 0,
+        }
+
+        def _mock_chunk(*, content: str, heading: str, upload_id: uuid.UUID):
+            chunk = mock.Mock()
+            chunk.metadata = {"index_type": "text", "section_heading": heading}
+            chunk.content = content
+            chunk.upload_id = upload_id
+            return chunk
+
+        doc_a = uuid.uuid4()
+        doc_b = uuid.uuid4()
+        doc_c = uuid.uuid4()
+        chunk_hits = (
+            ChunkResult(
+                chunk=_mock_chunk(
+                    content="service: outgoing transfers for plus customers",
+                    heading="remittance",
+                    upload_id=doc_a,
+                ),
+                source_stage="unit",
+                rerank_score=0.81,
+                lexical_score=0.66,
+            ),
+            ChunkResult(
+                chunk=_mock_chunk(
+                    content="service: loan service fees monthly",
+                    heading="loans",
+                    upload_id=doc_b,
+                ),
+                source_stage="unit",
+                rerank_score=0.8,
+                lexical_score=0.62,
+            ),
+            ChunkResult(
+                chunk=_mock_chunk(
+                    content="service: payment of invoices fee",
+                    heading="wallet",
+                    upload_id=doc_c,
+                ),
+                source_stage="unit",
+                rerank_score=0.79,
+                lexical_score=0.61,
+            ),
+            ChunkResult(
+                chunk=_mock_chunk(
+                    content="service: minimum balance threshold fee",
+                    heading="accounts",
+                    upload_id=doc_b,
+                ),
+                source_stage="unit",
+                rerank_score=0.78,
+                lexical_score=0.6,
+            ),
+            ChunkResult(
+                chunk=_mock_chunk(
+                    content="service: returned cheque fee",
+                    heading="cheques",
+                    upload_id=doc_a,
+                ),
+                source_stage="unit",
+                rerank_score=0.77,
+                lexical_score=0.59,
+            ),
+            ChunkResult(
+                chunk=_mock_chunk(
+                    content="service: card issuance fee",
+                    heading="cards",
+                    upload_id=doc_c,
+                ),
+                source_stage="unit",
+                rerank_score=0.76,
+                lexical_score=0.58,
+            ),
+        )
+
+        snippet = KnowledgeSnippet(
+            id=uuid.uuid4(),
+            title="Remittance fee",
+            summary="Outgoing transfers fee",
+            source="File Upload",
+            content="Outgoing transfers fee details",
+            upload_id=uuid.uuid4(),
+            chunk_id=uuid.uuid4(),
+            chunk_index=0,
+            source_diagnostics={},
+        )
+
+        with (
+            mock.patch.object(service, "_table_query_context", return_value=table_context),
+            mock.patch.object(service, "_business_has_tables", return_value=False),
+            mock.patch.object(service, "search_by_alias", return_value=AliasSearchResult(tuple(), {})),
+            mock.patch.object(service, "_chunk_hits", return_value=chunk_hits),
+            mock.patch.object(service, "_search_chunks", return_value=(snippet,)) as search_chunks,
+        ):
+            result = service.search(
+                business_profile=self.business,
+                query="what are the fees for plus customers?",
+                limit=1,
+            )
+
+        self.assertEqual(result.status, "needs_clarification")
+        self.assertEqual(result.diagnostics.get("path"), "clarification")
+        self.assertEqual(result.diagnostics.get("reason"), "broad_scope_ambiguity")
+        self.assertEqual(result.diagnostics.get("snippet_count"), 0)
+        scope_summary = result.diagnostics.get("scope_summary") or {}
+        self.assertEqual(scope_summary.get("total_matches"), len(chunk_hits))
+        self.assertEqual(scope_summary.get("distinct_docs"), 3)
+        contract = result.diagnostics.get("auto_decision_contract") or {}
+        contract_scope = contract.get("scope_summary") or {}
+        self.assertEqual(contract_scope.get("total_matches"), len(chunk_hits))
+        search_chunks.assert_not_called()
 
 
 class KnowledgeSearchServicePhaseSixValidationTests(TestCase):

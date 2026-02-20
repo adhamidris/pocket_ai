@@ -5,6 +5,11 @@ This repo is a multi-tenant B2B SaaS. Your job is to ship production-ready chang
 ## Read first
 - `README.md`
 - `codebase_roadmap.md` — read this before touching any existing engine or path. It maps every runtime flow, background worker, core module, and external dependency in the system.
+- RAG runtime contract note (must preserve for backward compatibility):
+  - `KnowledgeSearchService.search` diagnostics include `auto_decision_contract` with additive fields `scope_summary`, `conflict_detected`, and `no_result_reason`.
+  - Valid `no_result_reason` values are exactly: `not_found`, `not_applicable_to_segment`, `insufficient_evidence`.
+  - If evidence conflicts for the same segment/category, runtime should emit `status=needs_clarification` with `reason=conflicting_evidence` and an evidence-aware `intent_clarification_question`.
+  - Scope clarification is backward-compatible by default: with `MCP_SCOPE_CLARIFICATION_MCQ_ENABLED=false`, tool payloads stay text-first and must not require MCQ-only keys. `clarification_ui_mode` should resolve to `text` in that mode.
 
 ## Django and .venv location
 - Repo app root: `/pocketai_django/`

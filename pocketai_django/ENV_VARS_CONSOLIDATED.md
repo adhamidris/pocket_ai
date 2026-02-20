@@ -58,6 +58,13 @@ MCP_AGENTIC_READ_V2_ENABLED=true
 MCP_NEW_CONTRACT_ENABLED=true
 ```
 
+### Scope Clarification UI Mode (MCP)
+```bash
+# Enable MCQ-style clarification metadata for broad-scope ambiguity.
+# Default false keeps text-only clarification (backward-compatible payloads).
+MCP_SCOPE_CLARIFICATION_MCQ_ENABLED=false
+```
+
 ### Search Controls (Recommended: LLM-Driven)
 ```bash
 # How many times the LLM can call search_knowledge per user message
