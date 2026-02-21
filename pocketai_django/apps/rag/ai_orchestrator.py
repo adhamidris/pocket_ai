@@ -563,6 +563,8 @@ KNOWLEDGE_READ_STATE_PREVIEW = "preview"
 KNOWLEDGE_READ_STATE_FULL = "full"
 RECENT_SNIPPET_TURN_WINDOW = 4
 LEDGER_LOG_LIMIT = 8
+SCOPE_CATEGORY_MAX_DEFAULT = 40
+SCOPE_TOP_CATEGORY_MAX_DEFAULT = 4
 # Global topic buckets must stay domain-agnostic for multi-tenant use.
 TOPIC_KEYWORD_MAP: dict[str, tuple[str, ...]] = {
     "pricing": ("fee", "fees", "charge", "charges", "price", "prices", "cost", "costs", "pricing", "quote", "quotes"),
@@ -878,6 +880,16 @@ class KnowledgeSearchService:
         )
         if not (0.0 <= self.auto_mode_min_score <= 1.0):
             self.auto_mode_min_score = 0.35
+        self.scope_category_max = max(
+            SCOPE_TOP_CATEGORY_MAX_DEFAULT,
+            int(getattr(settings, "RAG_SCOPE_CATEGORY_MAX", SCOPE_CATEGORY_MAX_DEFAULT) or SCOPE_CATEGORY_MAX_DEFAULT),
+        )
+        self.scope_top_category_max = max(
+            1,
+            int(getattr(settings, "RAG_SCOPE_TOP_CATEGORY_MAX", SCOPE_TOP_CATEGORY_MAX_DEFAULT) or SCOPE_TOP_CATEGORY_MAX_DEFAULT),
+        )
+        if self.scope_top_category_max > self.scope_category_max:
+            self.scope_top_category_max = self.scope_category_max
         logger.info("🎯 Strategy router initialized with intent-aware retrieval strategies")
 
     def _business_override(self, business_profile, key: str, default: int | float) -> int | float:
@@ -1737,12 +1749,20 @@ class KnowledgeSearchService:
                         "request": diagnostics.get("request_id"),
                     },
                 )
-        scope_summary = self._build_scope_summary_from_candidates(
+        filler_tokens = self._filler_tokens_for_business(business_profile)
+        postclip_scope_summary = self._build_scope_summary_from_candidates(
             chunk_hits,
             query_tokens=traits.tokens,
-            filler_tokens=self._filler_tokens_for_business(business_profile),
+            filler_tokens=filler_tokens,
         )
+        preclip_scope_summary = self._normalize_scope_summary(
+            diagnostics.get("scope_summary_preclip"),
+        )
+        scope_summary = preclip_scope_summary or postclip_scope_summary
         diagnostics["scope_summary"] = scope_summary
+        diagnostics["scope_summary_source"] = "preclip_fused" if preclip_scope_summary else "postclip_hits"
+        if preclip_scope_summary:
+            diagnostics["scope_summary_postclip"] = postclip_scope_summary
         _rag_log(
             "scope.summary",
             {
@@ -1750,6 +1770,7 @@ class KnowledgeSearchService:
                 "distinct_docs": scope_summary.get("distinct_docs"),
                 "categories": len(scope_summary.get("category_counts") or {}),
                 "is_broad_scope": scope_summary.get("is_broad_scope"),
+                "source": diagnostics.get("scope_summary_source"),
             },
             indent=1,
             context={
@@ -1763,9 +1784,12 @@ class KnowledgeSearchService:
             and self._query_lacks_specific_scope(
                 traits=traits,
                 table_context=table_context,
-                filler_tokens=self._filler_tokens_for_business(business_profile),
+                filler_tokens=filler_tokens,
             )
         ):
+            categories, top_categories = self._scope_categories_for_contract(
+                scope_summary=scope_summary,
+            )
             clarification_question, scope_categories = self._build_scope_clarification_question(
                 scope_summary=scope_summary,
             )
@@ -1774,6 +1798,9 @@ class KnowledgeSearchService:
             diagnostics["intent_requires_clarification"] = True
             diagnostics["intent_clarification_question"] = clarification_question
             diagnostics["scope_clarification_categories"] = list(scope_categories)
+            diagnostics["categories"] = list(categories)
+            diagnostics["top_categories"] = list(top_categories)
+            diagnostics.setdefault("clarification_ui_mode", "text")
             diagnostics["snippet_count"] = 0
             diagnostics["total_duration_ms"] = self._duration_ms(overall_start)
             diagnostics["auto_decision_contract"] = self._derive_auto_decision_contract(
@@ -1815,6 +1842,9 @@ class KnowledgeSearchService:
         table_intent = bool(auto_arbitration_diag.get("auto_arbitration_table_intent", table_intent))
 
         if bool(auto_arbitration_diag.get("auto_arbitration_needs_clarification")) and not traits.is_identifier_like:
+            categories, top_categories = self._scope_categories_for_contract(
+                scope_summary=scope_summary,
+            )
             clarification_question, table_evidence_label, text_evidence_label = (
                 self._build_auto_ambiguity_clarification_question(
                     hits=chunk_hits,
@@ -1827,6 +1857,9 @@ class KnowledgeSearchService:
             diagnostics["intent_clarification_question"] = clarification_question
             diagnostics["auto_arbitration_table_evidence_label"] = table_evidence_label
             diagnostics["auto_arbitration_text_evidence_label"] = text_evidence_label
+            diagnostics["categories"] = list(categories)
+            diagnostics["top_categories"] = list(top_categories)
+            diagnostics.setdefault("clarification_ui_mode", "text")
             diagnostics["snippet_count"] = 0
             diagnostics["total_duration_ms"] = self._duration_ms(overall_start)
             diagnostics["auto_decision_contract"] = self._derive_auto_decision_contract(
@@ -2903,6 +2936,11 @@ class KnowledgeSearchService:
         )
         if diagnostics is not None:
             diagnostics["vector_candidates_post_threshold"] = len(filtered)
+            diagnostics["scope_summary_preclip"] = self._build_scope_summary_from_candidates(
+                filtered,
+                query_tokens=traits.tokens,
+                filler_tokens=self._filler_tokens_for_business(business_profile),
+            )
         final = self._mmr_select(filtered, hybrid.query_vector, k=limit, lam=self.mmr_lambda)
         return tuple(final)
 
@@ -8586,40 +8624,111 @@ class KnowledgeSearchService:
         specific = [token for token in meaningful if token not in generic]
         return len(specific) == 0
 
+    def _scope_categories_for_contract(
+        self,
+        *,
+        scope_summary: Mapping[str, object] | None,
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        categories_map = (
+            scope_summary.get("category_counts")
+            if isinstance(scope_summary, Mapping)
+            and isinstance(scope_summary.get("category_counts"), Mapping)
+            else None
+        )
+        ranked_items = self._rank_scope_category_items(
+            categories_map,
+            max_categories=self.scope_category_max,
+        )
+        categories = tuple(label for label, _count in ranked_items)
+        top_categories = categories[: self.scope_top_category_max]
+        return categories, top_categories
+
+    @classmethod
+    def _rank_scope_category_items(
+        cls,
+        category_counts: Mapping[str, object] | None,
+        *,
+        max_categories: int,
+    ) -> tuple[tuple[str, int], ...]:
+        if not isinstance(category_counts, Mapping):
+            return tuple()
+
+        limit = max(1, int(max_categories))
+
+        def _coerce_count(raw: object) -> int:
+            try:
+                coerced = int(raw)
+            except (TypeError, ValueError):
+                coerced = 1
+            return coerced if coerced > 0 else 0
+
+        merged_counts: dict[str, int] = {}
+        for raw_label, raw_count in category_counts.items():
+            normalized_label = cls._normalize_topic_value(
+                cls._clean_auto_evidence_label(raw_label, max_chars=96),
+            )
+            if not normalized_label:
+                continue
+            count_value = _coerce_count(raw_count)
+            if count_value <= 0:
+                continue
+            merged_counts[normalized_label] = merged_counts.get(normalized_label, 0) + count_value
+
+        if not merged_counts:
+            return tuple()
+
+        ordered_items = sorted(
+            merged_counts.items(),
+            key=lambda item: (-int(item[1]), item[0]),
+        )
+        return tuple((label, int(count)) for label, count in ordered_items[:limit])
+
+    @classmethod
+    def _normalize_scope_category_sequence(
+        cls,
+        values: object,
+        *,
+        max_categories: int,
+    ) -> tuple[str, ...]:
+        if not isinstance(values, Sequence) or isinstance(values, (str, bytes, bytearray)):
+            return tuple()
+        limit = max(1, int(max_categories))
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw in values:
+            label = cls._normalize_topic_value(
+                cls._clean_auto_evidence_label(raw, max_chars=96),
+            )
+            if not label or label in seen:
+                continue
+            seen.add(label)
+            normalized.append(label)
+            if len(normalized) >= limit:
+                break
+        return tuple(normalized)
+
     def _build_scope_clarification_question(
         self,
         *,
         scope_summary: Mapping[str, object] | None,
     ) -> tuple[str, tuple[str, ...]]:
-        categories_map = (
-            scope_summary.get("category_counts")
-            if isinstance(scope_summary, Mapping)
-            and isinstance(scope_summary.get("category_counts"), Mapping)
-            else {}
+        categories, top_categories = self._scope_categories_for_contract(
+            scope_summary=scope_summary,
         )
-        categories: list[str] = []
-        seen: set[str] = set()
-        for label, _count in categories_map.items():
-            cleaned = self._normalize_topic_value(self._clean_auto_evidence_label(label, max_chars=56))
-            if not cleaned or cleaned in seen:
-                continue
-            seen.add(cleaned)
-            categories.append(cleaned)
-            if len(categories) >= 4:
-                break
+        shown_categories = tuple(top_categories or categories[:4])
 
-        if categories:
-            if len(categories) == 1:
-                category_text = categories[0]
-            elif len(categories) == 2:
-                category_text = f"{categories[0]} or {categories[1]}"
+        if shown_categories:
+            if len(shown_categories) == 1:
+                category_text = shown_categories[0]
+            elif len(shown_categories) == 2:
+                category_text = f"{shown_categories[0]} or {shown_categories[1]}"
             else:
-                category_text = ", ".join(categories[:-1]) + f", or {categories[-1]}"
+                category_text = ", ".join(shown_categories[:-1]) + f", or {shown_categories[-1]}"
             question = (
                 f'I found fees across multiple categories ({category_text}). '
                 "Do you want one specific category or all related fees?"
             )
-            return question, tuple(categories)
+            return question, shown_categories
 
         question = (
             "I found fees across multiple categories. "
@@ -8754,8 +8863,10 @@ class KnowledgeSearchService:
             if label:
                 category_counts[label] += 1
 
-        ordered_categories = sorted(category_counts.items(), key=lambda item: (-item[1], item[0]))
-        top_categories = ordered_categories[:12]
+        ranked_categories = self._rank_scope_category_items(
+            category_counts,
+            max_categories=self.scope_category_max,
+        )
         distinct_docs = len(doc_ids)
         distinct_categories = len(category_counts)
         is_broad_scope = bool(
@@ -8766,7 +8877,37 @@ class KnowledgeSearchService:
         return {
             "total_matches": int(total_matches),
             "distinct_docs": int(distinct_docs),
-            "category_counts": {label: int(count) for label, count in top_categories},
+            "category_counts": {label: int(count) for label, count in ranked_categories},
+            "is_broad_scope": is_broad_scope,
+        }
+
+    def _normalize_scope_summary(
+        self,
+        value: object,
+    ) -> dict[str, object] | None:
+        if not isinstance(value, Mapping):
+            return None
+
+        def _coerce_int(raw: object) -> int:
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                return 0
+
+        raw_counts = value.get("category_counts")
+        ranked_counts = self._rank_scope_category_items(
+            raw_counts if isinstance(raw_counts, Mapping) else None,
+            max_categories=self.scope_category_max,
+        )
+        total_matches = max(0, _coerce_int(value.get("total_matches")))
+        distinct_docs = max(0, _coerce_int(value.get("distinct_docs")))
+        if distinct_docs == 0 and total_matches > 0:
+            distinct_docs = 1
+        is_broad_scope = bool(value.get("is_broad_scope"))
+        return {
+            "total_matches": total_matches,
+            "distinct_docs": distinct_docs,
+            "category_counts": {label: int(count) for label, count in ranked_counts},
             "is_broad_scope": is_broad_scope,
         }
 
@@ -9009,6 +9150,45 @@ class KnowledgeSearchService:
             str(no_result_reason).strip().lower() if isinstance(no_result_reason, str) and no_result_reason.strip() else None
         )
         normalized_conflict = bool(conflict_detected) if isinstance(conflict_detected, bool) else False
+        normalized_categories = list(
+            KnowledgeSearchService._normalize_scope_category_sequence(
+                scoring_data.get("categories"),
+                max_categories=SCOPE_CATEGORY_MAX_DEFAULT,
+            )
+        )
+        if not normalized_categories:
+            ranked_items = KnowledgeSearchService._rank_scope_category_items(
+                scope_summary.get("category_counts")
+                if isinstance(scope_summary, Mapping) and isinstance(scope_summary.get("category_counts"), Mapping)
+                else None,
+                max_categories=SCOPE_CATEGORY_MAX_DEFAULT,
+            )
+            normalized_categories = [label for label, _count in ranked_items]
+
+        normalized_top_categories = list(
+            KnowledgeSearchService._normalize_scope_category_sequence(
+                scoring_data.get("top_categories"),
+                max_categories=SCOPE_TOP_CATEGORY_MAX_DEFAULT,
+            )
+        )
+        if normalized_top_categories and normalized_categories:
+            category_set = set(normalized_categories)
+            normalized_top_categories = [label for label in normalized_top_categories if label in category_set]
+        if not normalized_top_categories:
+            normalized_top_categories = list(normalized_categories[:SCOPE_TOP_CATEGORY_MAX_DEFAULT])
+        raw_ui_mode = (
+            scoring_data.get("clarification_ui_mode")
+            or route_data.get("clarification_ui_mode")
+        )
+        normalized_ui_mode = (
+            str(raw_ui_mode).strip().lower()
+            if isinstance(raw_ui_mode, str) and str(raw_ui_mode).strip()
+            else None
+        )
+        if normalized_ui_mode not in {"text", "mcq"}:
+            normalized_ui_mode = None
+        if requires_clarification and not normalized_ui_mode:
+            normalized_ui_mode = "text"
 
         return {
             "table_score": table_score,
@@ -9017,6 +9197,9 @@ class KnowledgeSearchService:
             "decision": decision,
             "needs_clarification": bool(requires_clarification),
             "scope_summary": normalized_scope_summary,
+            "categories": normalized_categories,
+            "top_categories": normalized_top_categories,
+            "clarification_ui_mode": normalized_ui_mode,
             "conflict_detected": normalized_conflict,
             "no_result_reason": normalized_no_result_reason,
         }
@@ -9328,6 +9511,19 @@ class KnowledgeSearchService:
             if isinstance(updated_diagnostics.get("scope_summary"), Mapping)
             else None
         )
+        categories: tuple[str, ...] = tuple()
+        top_categories: tuple[str, ...] = tuple()
+        if isinstance(scope_summary, Mapping):
+            categories, top_categories = self._scope_categories_for_contract(
+                scope_summary=scope_summary,
+            )
+        if categories and "categories" not in updated_diagnostics:
+            updated_diagnostics["categories"] = list(categories)
+        if top_categories and "top_categories" not in updated_diagnostics:
+            updated_diagnostics["top_categories"] = list(top_categories)
+        current_ui_mode = str(updated_diagnostics.get("clarification_ui_mode") or "").strip().lower()
+        if requires_clarification and current_ui_mode not in {"text", "mcq"}:
+            updated_diagnostics["clarification_ui_mode"] = "text"
         existing_contract = updated_diagnostics.get("auto_decision_contract")
         if isinstance(existing_contract, Mapping):
             contract = dict(existing_contract)
@@ -9335,6 +9531,10 @@ class KnowledgeSearchService:
                 contract["decision"] = "clarification"
             contract["needs_clarification"] = requires_clarification
             contract["scope_summary"] = dict(scope_summary) if isinstance(scope_summary, Mapping) else contract.get("scope_summary")
+            contract["categories"] = list(updated_diagnostics.get("categories") or contract.get("categories") or [])
+            contract["top_categories"] = list(updated_diagnostics.get("top_categories") or contract.get("top_categories") or [])
+            contract_ui_mode = str(updated_diagnostics.get("clarification_ui_mode") or contract.get("clarification_ui_mode") or "").strip().lower()
+            contract["clarification_ui_mode"] = contract_ui_mode if contract_ui_mode in {"text", "mcq"} else None
             contract["conflict_detected"] = bool(updated_diagnostics.get("conflict_detected"))
             contract["no_result_reason"] = (
                 str(updated_diagnostics.get("no_result_reason")).strip().lower()

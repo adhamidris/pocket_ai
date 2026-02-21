@@ -98,10 +98,10 @@ class ChatPortalClient {
 	    this.usingBlockStream = false;
 	    this.streamingContentBlockEls = new Map();
     this.streamingContentBlocksById = new Map();
-	    this.streamingPendingBlockOps = new Map();
+    this.streamingPendingBlockOps = new Map();
     this.streamingTextBlockActiveIds = new Set();
-	    this.streamingToolBlockActiveIds = new Set();
-	    this.streamingDirtyTextBlocks = new Set();
+    this.streamingToolBlockActiveIds = new Set();
+    this.streamingDirtyTextBlocks = new Set();
     this.streamingMissingBlockWrapperCounts = new Map();
 	    this.streamingBlockRenderRaf = null;
     this.streamingBlockPacerBudget = 0;
@@ -1133,10 +1133,35 @@ class ChatPortalClient {
 
 		  _processBlockStart(payload, block, blockType, blockId, messageId) {
 		    this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
-		    this.upsertStreamingContentBlock(block);
 	    if (blockId) {
 	      this.streamingContentBlocksById.set(blockId, block);
 	    }
+	    // scope_clarification (MCQ widget) must appear only after the narration text
+	    // has fully finished streaming AND rendering on screen.
+	    //
+	    // Two-phase gate:
+	    //   1. If text blocks are still active (streamingTextBlockActiveIds), store the
+	    //      render callback; handleBlockEndEvent will flush it once the last text
+	    //      block closes.
+	    //   2. If text blocks are already closed, fall through to _queueAfterBlockDrain
+	    //      which handles any remaining pacer backlog before rendering.
+	    if (blockType === "scope_clarification") {
+	      const renderMCQ = () => {
+	        this.upsertStreamingContentBlock(block);
+	        this.repositionStreamingStatusRow();
+	        this.scheduleScrollToBottom({ behavior: "auto" });
+	      };
+	      if (this.streamingTextBlockActiveIds && this.streamingTextBlockActiveIds.size > 0) {
+	        if (!Array.isArray(this._pendingPostTextStreamActions)) {
+	          this._pendingPostTextStreamActions = [];
+	        }
+	        this._pendingPostTextStreamActions.push(renderMCQ);
+	      } else {
+	        this._queueAfterBlockDrain(renderMCQ, { mode: "boundary" });
+	      }
+	      return;
+	    }
+		    this.upsertStreamingContentBlock(block);
 		    if (blockId && this.isStreamingTextBlock(blockType)) {
 		      this.streamingTextBlockActiveIds.add(blockId);
 	        this.clearStreamingIdleStatusTimer();
@@ -1182,7 +1207,7 @@ class ChatPortalClient {
 		    this.scheduleScrollToBottom({ behavior: "auto" });
 		  }
 
-  handleBlockEndEvent(data) {
+			  handleBlockEndEvent(data) {
 		    let payload = null;
 		    try {
 		      payload = data ? JSON.parse(data) : null;
@@ -1200,9 +1225,22 @@ class ChatPortalClient {
 		      this.scheduleStreamingBlockRender();
 		    }
 		    this.streamingTextBlockActiveIds.delete(blockId);
+	    // When the last active text block closes, flush any MCQ/clarification blocks
+	    // that were held back waiting for text to finish (Anthropic agentic style).
+	    if (
+	      this.streamingTextBlockActiveIds.size === 0 &&
+	      Array.isArray(this._pendingPostTextStreamActions) &&
+	      this._pendingPostTextStreamActions.length > 0
+	    ) {
+	      const actions = this._pendingPostTextStreamActions.splice(0);
+	      this._queueAfterBlockDrain(
+	        () => actions.forEach((fn) => { try { fn(); } catch (_) {} }),
+	        { mode: "boundary" },
+	      );
+	    }
 	      const wrapper = this.streamingContentBlockEls.get(blockId);
 	      const type = wrapper && wrapper.dataset ? (wrapper.dataset.blockType || "").toString().trim().toLowerCase() : "";
-		      if (type === "reasoning") {
+			      if (type === "reasoning") {
 		        const details = wrapper ? wrapper.querySelector("details") : null;
 		        if (details) {
 	          details.dataset.reasoningState = "complete";
@@ -1213,10 +1251,9 @@ class ChatPortalClient {
 	          if (details.open && details.dataset.userOverride !== "true") {
 	            this.animateReasoningAutoCollapse(details);
 	          }
-	        }
-		      }
-
-				  }
+			        }
+			      }
+		  }
 
 	  animateReasoningAutoCollapse(details) {
 	    if (!details || !details.open) return;
@@ -1389,22 +1426,7 @@ class ChatPortalClient {
     this._queueAfterBlockDrain(
       () => {
         blockIds.forEach((blockId) => {
-          const wrapper = this.streamingContentBlockEls.get(blockId);
-          const escapedBlockId =
-            typeof CSS !== "undefined" && CSS && typeof CSS.escape === "function"
-              ? CSS.escape(blockId)
-              : blockId.replace(/"/g, '\\"');
-          const target =
-            wrapper || (this.streamingBlocksEl ? this.streamingBlocksEl.querySelector(`[data-block-id="${escapedBlockId}"]`) : null);
-          if (target && target.parentNode) {
-            target.parentNode.removeChild(target);
-          }
-          this.streamingContentBlockEls.delete(blockId);
-          this.streamingContentBlocksById.delete(blockId);
-          this.streamingPendingBlockOps.delete(blockId);
-          this.streamingDirtyTextBlocks.delete(blockId);
-          this.streamingTextBlockActiveIds.delete(blockId);
-          this.streamingToolBlockActiveIds.delete(blockId);
+          this.removeStreamingContentBlockById(blockId);
         });
       },
       { mode: "boundary" },
@@ -1940,6 +1962,13 @@ class ChatPortalClient {
       }
       if (blockType === "tool_use" || blockType === "tool_result") {
         this.updateInlineToolCardsVisibility(this.streamingMessageNode);
+      }
+      if (blockType === "scope_clarification") {
+        const updated = this.updateContentBlockElement(existing, block) || existing;
+        if (updated && updated !== existing) {
+          this.streamingContentBlockEls.set(blockId, updated);
+        }
+        this.scheduleScrollToBottom({ behavior: "auto" });
       }
       return;
     }
@@ -2483,6 +2512,10 @@ class ChatPortalClient {
 
   buildToolEventCard(payload) {
     const toolName = (payload?.tool_name || payload?.toolName || "").toString().trim().toLowerCase();
+    // Scope clarification is a component block, not a timeline tool row.
+    if (toolName === "present_scope_clarification") {
+      return null;
+    }
     // Use custom email preview card for email tools
     if (toolName === "email_create_draft" || toolName === "email_send_draft") {
       return this.buildEmailPreviewCard(payload, toolName);
@@ -2557,6 +2590,39 @@ class ChatPortalClient {
     row.appendChild(outcome);
 
     card.appendChild(row);
+
+    const clarification = document.createElement("div");
+    clarification.dataset.toolClarification = "true";
+    clarification.className = "mcp-tool-clarification";
+    clarification.hidden = true;
+
+    const clarificationText = document.createElement("p");
+    clarificationText.dataset.toolClarificationText = "true";
+    clarificationText.className = "mcp-tool-clarification__text";
+    clarification.appendChild(clarificationText);
+
+    const clarificationActions = document.createElement("div");
+    clarificationActions.dataset.toolClarificationActions = "true";
+    clarificationActions.className = "mcp-tool-clarification__chips";
+    clarification.appendChild(clarificationActions);
+
+    const clarificationMore = document.createElement("div");
+    clarificationMore.dataset.toolClarificationMore = "true";
+    clarificationMore.className = "mcp-tool-clarification__more";
+    clarificationMore.hidden = true;
+
+    const clarificationMoreLabel = document.createElement("div");
+    clarificationMoreLabel.dataset.toolClarificationMoreLabel = "true";
+    clarificationMoreLabel.className = "mcp-tool-clarification__more-label";
+    clarificationMore.appendChild(clarificationMoreLabel);
+
+    const clarificationMoreActions = document.createElement("div");
+    clarificationMoreActions.dataset.toolClarificationMoreActions = "true";
+    clarificationMoreActions.className = "mcp-tool-clarification__chips";
+    clarificationMore.appendChild(clarificationMoreActions);
+
+    clarification.appendChild(clarificationMore);
+    card.appendChild(clarification);
     this.attachToolCardEvents(card);
     return card;
   }
@@ -3614,6 +3680,7 @@ class ChatPortalClient {
 
     this.updateToolPanel(card, "input", inputPayload, { available: inputProvided || hasStoredInput });
     this.updateToolPanel(card, "output", outputPayload, { available: outputProvided || hasStoredOutput, pending: isRunning });
+    this.renderToolScopeClarification(card, payload);
     this.updateToolApprovalPanel(card, payload);
 
     if (!card.dataset.toolTabUser) {
@@ -4573,6 +4640,186 @@ class ChatPortalClient {
     }
   }
 
+  normalizeScopeClarificationCategories(values, limit = 40) {
+    if (!Array.isArray(values) || !values.length) return [];
+    const cleaned = [];
+    const seen = new Set();
+    values.forEach((value) => {
+      const text = (value || "").toString().trim();
+      if (!text) return;
+      const key = text.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      cleaned.push(text);
+    });
+    if (Number.isFinite(limit) && limit > 0 && cleaned.length > limit) {
+      return cleaned.slice(0, limit);
+    }
+    return cleaned;
+  }
+
+  submitScopeClarificationMessage(query) {
+    const message = (query || "").toString().trim();
+    if (!message) return;
+    if (!this.sessionToken) {
+      this.showToast("Send failed", "Session is still initialising.", true);
+      return;
+    }
+
+    const wasEmpty = this.isCurrentSessionEmpty();
+    if (this.isSending || this.isStreaming) {
+      this.enqueueMessage(message);
+      return;
+    }
+
+    if (wasEmpty) {
+      this.updateSessionTitleFromMessage(message);
+      this.currentSessionHasMessages = true;
+      this.updateSessionEmptyState(1);
+    }
+
+    void this.sendMessage(message);
+  }
+
+  buildScopeClarificationElement(payload, blockId = "") {
+    const sourceCategories = this.normalizeScopeClarificationCategories(
+      (payload && payload.categories) || [],
+      40,
+    );
+    const topCategories = this.normalizeScopeClarificationCategories(
+      (payload && payload.top_categories) || [],
+      12,
+    );
+    const allQuery = ((payload && payload.all_query) || "all").toString().trim() || "all";
+    const allLabel = ((payload && payload.all_label) || "All fees").toString().trim() || "All fees";
+    const visibleCountRaw = Number(payload && payload.visible_count);
+    // Hard cap at 3 — remaining choices expand via the "More" pill button.
+    const visibleCount = Math.min(3, Number.isFinite(visibleCountRaw) && visibleCountRaw > 0 ? Math.max(1, Math.floor(visibleCountRaw)) : 3);
+    const categories = sourceCategories.length ? sourceCategories : topCategories;
+    if (!categories.length) return null;
+
+    const quickCategories = categories.slice(0, visibleCount);
+    const quickSet = new Set(quickCategories.map((value) => value.toLowerCase()));
+    const hiddenCategories = categories.filter((value) => !quickSet.has(value.toLowerCase()));
+
+    const wrapper = document.createElement("section");
+    wrapper.dataset.contentBlock = "true";
+    wrapper.dataset.blockType = "scope_clarification";
+    if (blockId) wrapper.dataset.blockId = blockId;
+    wrapper.className = "portal-scope-clarification";
+
+    const allButton = document.createElement("button");
+    allButton.type = "button";
+    allButton.className = "portal-scope-clarification__btn portal-scope-clarification__btn--primary";
+    allButton.textContent = allLabel;
+    allButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.submitScopeClarificationMessage(allQuery);
+    });
+    wrapper.appendChild(allButton);
+
+    const categoriesSection = document.createElement("div");
+    categoriesSection.className = "portal-scope-clarification__section";
+    const categoriesHeader = document.createElement("div");
+    categoriesHeader.className = "portal-scope-clarification__section-header";
+    categoriesHeader.textContent = "Categories found";
+    categoriesSection.appendChild(categoriesHeader);
+
+    const categoriesList = document.createElement("div");
+    categoriesList.className = "portal-scope-clarification__list";
+
+    const renderCategoryButton = (category) => {
+      const label = (category || "").toString().trim();
+      if (!label) return null;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "portal-scope-clarification__btn";
+      button.textContent = label;
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.submitScopeClarificationMessage(label);
+      });
+      return button;
+    };
+
+    quickCategories.forEach((category) => {
+      const button = renderCategoryButton(category);
+      if (button) categoriesList.appendChild(button);
+    });
+    categoriesSection.appendChild(categoriesList);
+
+    if (hiddenCategories.length) {
+      const hiddenWrap = document.createElement("div");
+      hiddenWrap.className = "portal-scope-clarification__list portal-scope-clarification__list--hidden";
+      hiddenWrap.hidden = true;
+      hiddenCategories.forEach((category) => {
+        const button = renderCategoryButton(category);
+        if (button) hiddenWrap.appendChild(button);
+      });
+      categoriesSection.appendChild(hiddenWrap);
+
+      const moreButton = document.createElement("button");
+      moreButton.type = "button";
+      moreButton.className = "portal-scope-clarification__more";
+      moreButton.textContent = `More (${hiddenCategories.length})`;
+      moreButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const expanding = hiddenWrap.hidden;
+        hiddenWrap.hidden = !expanding;
+        moreButton.textContent = expanding ? "Hide" : `More (${hiddenCategories.length})`;
+      });
+      categoriesSection.appendChild(moreButton);
+    }
+
+    wrapper.appendChild(categoriesSection);
+    return wrapper;
+  }
+
+  renderToolScopeClarification(card, payload) {
+    if (!card) return;
+    const wrap = card.querySelector("[data-tool-clarification]");
+    if (!wrap) return;
+
+    // Scope clarification is rendered as a dedicated message-level component.
+    // Keep tool cards focused on tool execution details only.
+    const textEl = wrap.querySelector("[data-tool-clarification-text]");
+    const actionsEl = wrap.querySelector("[data-tool-clarification-actions]");
+    const moreWrap = wrap.querySelector("[data-tool-clarification-more]");
+    const moreLabelEl = wrap.querySelector("[data-tool-clarification-more-label]");
+    const moreActionsEl = wrap.querySelector("[data-tool-clarification-more-actions]");
+    wrap.hidden = true;
+    if (textEl) textEl.textContent = "";
+    if (actionsEl) actionsEl.innerHTML = "";
+    if (moreLabelEl) moreLabelEl.textContent = "";
+    if (moreActionsEl) moreActionsEl.innerHTML = "";
+    if (moreWrap) moreWrap.hidden = true;
+  }
+
+  removeStreamingContentBlockById(blockId) {
+    const normalizedId = (blockId || "").toString().trim();
+    if (!normalizedId) return;
+    const wrapper = this.streamingContentBlockEls.get(normalizedId);
+    const escapedBlockId =
+      typeof CSS !== "undefined" && CSS && typeof CSS.escape === "function"
+        ? CSS.escape(normalizedId)
+        : normalizedId.replace(/"/g, '\\"');
+    const target =
+      wrapper ||
+      (this.streamingBlocksEl ? this.streamingBlocksEl.querySelector(`[data-block-id="${escapedBlockId}"]`) : null);
+    if (target && target.parentNode) {
+      target.parentNode.removeChild(target);
+    }
+    this.streamingContentBlockEls.delete(normalizedId);
+    this.streamingContentBlocksById.delete(normalizedId);
+    this.streamingPendingBlockOps.delete(normalizedId);
+    this.streamingDirtyTextBlocks.delete(normalizedId);
+    this.streamingTextBlockActiveIds.delete(normalizedId);
+    this.streamingToolBlockActiveIds.delete(normalizedId);
+  }
+
   getToolPreviewEntries(payload, limit = 6) {
     if (payload === null) {
       return { entries: [{ key: "value", value: "null" }], remaining: 0 };
@@ -4801,6 +5048,8 @@ class ChatPortalClient {
 
   handleTurnPersistedEvent(data) {
     this.finalizingTurn = true;
+    // Let canonical persisted blocks decide final ordering (prevents scope component
+    // from popping above text and then jumping after reconcile).
     if (this.container && this.container.dataset) {
       this.container.dataset.finalizing = "true";
     }
@@ -7688,7 +7937,7 @@ class ChatPortalClient {
         messageBodyEl.appendChild(root);
         return root;
       })();
-    const normalizedBlocks = blocks;
+    const normalizedBlocks = Array.isArray(blocks) ? blocks : [];
     this.renderContentBlocksInto(blocksRoot, normalizedBlocks);
   }
 
@@ -7715,6 +7964,9 @@ class ChatPortalClient {
       }
       if (blockId) blockEls.set(blockId, el);
     });
+
+    const visibilityRoot = containerEl.closest ? containerEl.closest("[data-message-id]") || containerEl : containerEl;
+    this.updateInlineToolCardsVisibility(visibilityRoot);
   }
 
   reconcileMessageContentBlocks(messageBodyEl, blocks) {
@@ -7729,7 +7981,7 @@ class ChatPortalClient {
         messageBodyEl.appendChild(root);
         return root;
       })();
-    const normalizedBlocks = blocks;
+    const normalizedBlocks = Array.isArray(blocks) ? blocks : [];
     this.reconcileContentBlocksInto(blocksRoot, normalizedBlocks);
   }
 
@@ -7782,6 +8034,14 @@ class ChatPortalClient {
     }
     if (type === "tool_result") {
       this.updateToolEventCard(el, { ...payload, phase: "finished" });
+      return el;
+    }
+    if (type === "scope_clarification") {
+      const replacement = this.buildScopeClarificationElement(payload, (block.block_id || block.blockId || "").toString().trim());
+      if (replacement && replacement !== el) {
+        el.replaceWith(replacement);
+        return replacement;
+      }
       return el;
     }
 
@@ -7924,7 +8184,8 @@ class ChatPortalClient {
       this.finalizeEmailStreams(containerEl);
     }
 
-    const canonical = Array.isArray(blocks) ? blocks.filter((b) => b && typeof b === "object") : [];
+    const canonicalRaw = Array.isArray(blocks) ? blocks.filter((b) => b && typeof b === "object") : [];
+    const canonical = canonicalRaw;
     if (
       canonical.some((block) => {
         const blockId = (block.block_id || block.blockId || "").toString().trim();
@@ -8138,6 +8399,10 @@ class ChatPortalClient {
       wrapper.appendChild(summary);
       wrapper.appendChild(drawer);
       return wrapper;
+    }
+
+    if (type === "scope_clarification") {
+      return this.buildScopeClarificationElement(payload, blockId);
     }
 
 		    if (type === "paragraph" || type === "heading" || type === "list_item") {

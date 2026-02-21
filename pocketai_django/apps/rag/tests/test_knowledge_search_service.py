@@ -56,6 +56,9 @@ class KnowledgeSearchServiceAutoDecisionContractTests(SimpleTestCase):
         self.assertEqual(contract["decision"], "undecided")
         self.assertFalse(contract["needs_clarification"])
         self.assertIsNone(contract["scope_summary"])
+        self.assertEqual(contract["categories"], [])
+        self.assertEqual(contract["top_categories"], [])
+        self.assertIsNone(contract["clarification_ui_mode"])
         self.assertFalse(contract["conflict_detected"])
         self.assertIsNone(contract["no_result_reason"])
 
@@ -69,6 +72,7 @@ class KnowledgeSearchServiceAutoDecisionContractTests(SimpleTestCase):
         self.assertEqual(contract["table_score"], 1.0)
         self.assertEqual(contract["text_score"], 3.0)
         self.assertEqual(contract["margin"], 2.0)
+        self.assertEqual(contract["clarification_ui_mode"], "text")
 
     def test_contract_uses_route_hit_counts_for_decision(self) -> None:
         contract = KnowledgeSearchService._derive_auto_decision_contract(
@@ -106,12 +110,41 @@ class KnowledgeSearchServiceAutoDecisionContractTests(SimpleTestCase):
     def test_contract_emits_optional_phase1_diagnostics_keys(self) -> None:
         contract = KnowledgeSearchService._derive_auto_decision_contract(
             route_diagnostics={"index_route": "text_primary_filtered", "index_route_table_hits": 1, "index_route_text_hits": 2},
+            scoring_diagnostics={"clarification_ui_mode": "mcq"},
             requires_clarification=False,
-            scope_summary={"is_broad_scope": True, "distinct_docs": 7},
+            scope_summary={
+                "is_broad_scope": True,
+                "distinct_docs": 7,
+                "category_counts": {
+                    "outgoing transfer fees": 5,
+                    "loan service fees": 4,
+                    "statement fees": 3,
+                },
+            },
             conflict_detected=True,
             no_result_reason="Insufficient_Evidence",
         )
-        self.assertEqual(contract["scope_summary"], {"is_broad_scope": True, "distinct_docs": 7})
+        self.assertEqual(
+            contract["scope_summary"],
+            {
+                "is_broad_scope": True,
+                "distinct_docs": 7,
+                "category_counts": {
+                    "outgoing transfer fees": 5,
+                    "loan service fees": 4,
+                    "statement fees": 3,
+                },
+            },
+        )
+        self.assertEqual(
+            contract["categories"],
+            ["outgoing transfer fees", "loan service fees", "statement fees"],
+        )
+        self.assertEqual(
+            contract["top_categories"],
+            ["outgoing transfer fees", "loan service fees", "statement fees"],
+        )
+        self.assertEqual(contract["clarification_ui_mode"], "mcq")
         self.assertTrue(contract["conflict_detected"])
         self.assertEqual(contract["no_result_reason"], "insufficient_evidence")
 
@@ -510,6 +543,51 @@ class KnowledgeSearchServiceScopeSummaryTests(SimpleTestCase):
         self.assertEqual(summary["distinct_docs"], 1)
         self.assertFalse(summary["is_broad_scope"])
         self.assertGreaterEqual(summary["category_counts"].get("outgoing transfers", 0), 1)
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_scope_categories_for_contract_returns_ranked_full_list(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        scope_summary = {
+            "category_counts": {
+                "statement fees": 3,
+                "administrative fees": 2,
+                "loan service fees": 5,
+                "card issuance fees": 2,
+                "outgoing transfers": 6,
+                "minimum balance threshold fees": 4,
+                "payment of invoices": 4,
+                "returned cheque fees": 1,
+                "customer service fees": 1,
+                "collection fees": 1,
+                "online banking fees": 1,
+                "mobile wallet fees": 1,
+                "trade bills fees": 1,
+                "remittance fees": 1,
+                "account closure fees": 1,
+            },
+        }
+
+        categories, top_categories = service._scope_categories_for_contract(
+            scope_summary=scope_summary,
+        )
+
+        self.assertEqual(len(categories), 15)
+        self.assertEqual(
+            categories[:7],
+            (
+                "outgoing transfers",
+                "loan service fees",
+                "minimum balance threshold fees",
+                "payment of invoices",
+                "statement fees",
+                "administrative fees",
+                "card issuance fees",
+            ),
+        )
+        self.assertEqual(
+            top_categories,
+            categories[: service.scope_top_category_max],
+        )
 
 
 class KnowledgeSearchServiceAliasTests(TestCase):
@@ -1562,9 +1640,15 @@ class KnowledgeSearchServiceClarificationTests(TestCase):
         scope_summary = result.diagnostics.get("scope_summary") or {}
         self.assertTrue(scope_summary.get("is_broad_scope"))
         self.assertGreaterEqual(len(result.diagnostics.get("scope_clarification_categories") or []), 3)
+        self.assertGreaterEqual(len(result.diagnostics.get("categories") or []), 3)
+        self.assertGreaterEqual(len(result.diagnostics.get("top_categories") or []), 3)
+        self.assertEqual(result.diagnostics.get("clarification_ui_mode"), "text")
         auto_contract = result.diagnostics.get("auto_decision_contract") or {}
         self.assertEqual(auto_contract.get("decision"), "clarification")
         self.assertTrue(auto_contract.get("needs_clarification"))
+        self.assertEqual(auto_contract.get("clarification_ui_mode"), "text")
+        self.assertGreaterEqual(len(auto_contract.get("categories") or []), 3)
+        self.assertGreaterEqual(len(auto_contract.get("top_categories") or []), 3)
         route_chunk_hits.assert_not_called()
 
     @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
@@ -1835,9 +1919,116 @@ class KnowledgeSearchServiceClarificationTests(TestCase):
         scope_summary = result.diagnostics.get("scope_summary") or {}
         self.assertEqual(scope_summary.get("total_matches"), len(chunk_hits))
         self.assertEqual(scope_summary.get("distinct_docs"), 3)
+        self.assertTrue(result.diagnostics.get("categories"))
+        self.assertTrue(result.diagnostics.get("top_categories"))
         contract = result.diagnostics.get("auto_decision_contract") or {}
         contract_scope = contract.get("scope_summary") or {}
         self.assertEqual(contract_scope.get("total_matches"), len(chunk_hits))
+        self.assertTrue(contract.get("categories"))
+        self.assertTrue(contract.get("top_categories"))
+        self.assertEqual(contract.get("clarification_ui_mode"), "text")
+        search_chunks.assert_not_called()
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_scope_summary_prefers_preclip_fused_breadth_when_available(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        classification = QueryClassification(
+            intent=QueryIntent.SPECIFIC_LOOKUP,
+            confidence=0.9,
+            reasoning="broad fee lookup",
+            retrieval_hints={},
+            requires_clarification=False,
+            clarification_question="",
+        )
+        table_context = {
+            "has_intent": True,
+            "comprehensive_intent": False,
+            "query_classification": classification,
+            "intent_fallback_attempted": False,
+            "intent_fallback_applied": False,
+            "matched_columns": {"plus", "fees"},
+            "matched_columns_query": {"plus", "fees"},
+            "matched_columns_tokens": {"plus", "fees"},
+            "matched_columns_specific": {"plus", "fees"},
+            "matched_row_labels": set(),
+            "matched_keywords": set(),
+            "numeric_intent": False,
+            "available_columns": {"prime", "plus", "wealth"},
+            "semantic_columns": set(),
+            "matched_column_count": 2,
+            "query_tokens": {"plus", "customers", "fees"},
+            "specific_tokens": {"plus", "customers", "fees"},
+            "table_dominant": True,
+            "table_upload_ratio": 0.9,
+            "table_count": 4,
+            "table_uploads": 2,
+            "allow_generic": True,
+            "tenant_lexicon_entity_terms_count": 0,
+            "tenant_lexicon_attribute_terms_count": 0,
+        }
+
+        chunk = mock.Mock()
+        chunk.metadata = {
+            "index_type": "table",
+            "is_table_chunk": True,
+            "section_heading": "outgoing transfers",
+        }
+        chunk.content = "service: outgoing transfers; plus: free"
+        chunk.upload_id = uuid.uuid4()
+        narrowed_hits = (
+            ChunkResult(
+                chunk=chunk,
+                source_stage="unit",
+                rerank_score=0.82,
+                lexical_score=0.65,
+            ),
+        )
+
+        def _chunk_hits_side_effect(*args, **kwargs):
+            runtime_diag = kwargs.get("diagnostics")
+            if isinstance(runtime_diag, dict):
+                runtime_diag["scope_summary_preclip"] = {
+                    "total_matches": 31,
+                    "distinct_docs": 9,
+                    "category_counts": {
+                        "outgoing transfers": 9,
+                        "loan service fees": 7,
+                        "payment of invoices": 5,
+                        "administrative fees": 4,
+                        "minimum balance threshold fees": 3,
+                        "statement fees": 3,
+                    },
+                    "is_broad_scope": True,
+                }
+            return narrowed_hits
+
+        with (
+            mock.patch.object(service, "_table_query_context", return_value=table_context),
+            mock.patch.object(service, "_business_has_tables", return_value=True),
+            mock.patch.object(service, "search_by_alias", return_value=AliasSearchResult(tuple(), {})),
+            mock.patch.object(service, "_chunk_hits", side_effect=_chunk_hits_side_effect),
+            mock.patch.object(service, "_search_chunks") as search_chunks,
+        ):
+            result = service.search(
+                business_profile=self.business,
+                query="what are the fees for plus customers?",
+                limit=1,
+            )
+
+        self.assertEqual(result.status, "needs_clarification")
+        self.assertEqual(result.diagnostics.get("reason"), "broad_scope_ambiguity")
+        self.assertEqual(result.diagnostics.get("scope_summary_source"), "preclip_fused")
+        scope_summary = result.diagnostics.get("scope_summary") or {}
+        self.assertEqual(scope_summary.get("total_matches"), 31)
+        self.assertEqual(scope_summary.get("distinct_docs"), 9)
+        self.assertTrue(scope_summary.get("is_broad_scope"))
+        postclip_scope = result.diagnostics.get("scope_summary_postclip") or {}
+        self.assertEqual(postclip_scope.get("total_matches"), len(narrowed_hits))
+        self.assertEqual(postclip_scope.get("distinct_docs"), 1)
+        contract = result.diagnostics.get("auto_decision_contract") or {}
+        self.assertEqual((contract.get("scope_summary") or {}).get("total_matches"), 31)
+        self.assertEqual(contract.get("decision"), "clarification")
+        self.assertEqual(contract.get("clarification_ui_mode"), "text")
         search_chunks.assert_not_called()
 
 

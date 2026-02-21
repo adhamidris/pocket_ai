@@ -1580,6 +1580,246 @@
     display: none;
   }
 
+  [data-chat-portal] .mcp-tool-clarification {
+    margin-left: calc(var(--portal-tool-orbit-size) + 0.9rem);
+    margin-top: 0.35rem;
+    max-width: min(100%, 56rem);
+    border-left: 1px solid hsl(var(--primary) / 0.2);
+    padding: 0.55rem 0 0.2rem 0.7rem;
+  }
+
+  [data-chat-portal] .mcp-tool-row[dir="rtl"] .mcp-tool-clarification {
+    margin-left: 0;
+    margin-right: calc(var(--portal-tool-orbit-size) + 0.9rem);
+    border-left: 0;
+    border-right: 1px solid hsl(var(--primary) / 0.2);
+    padding-left: 0;
+    padding-right: 0.7rem;
+  }
+
+  [data-chat-portal] .mcp-tool-clarification[hidden] {
+    display: none;
+  }
+
+  [data-chat-portal] .mcp-tool-clarification__text {
+    margin: 0;
+    font-size: var(--portal-font-xs);
+    color: hsl(var(--foreground) / 0.82);
+    line-height: 1.45;
+  }
+
+  [data-chat-portal] .mcp-tool-clarification__chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: 0.5rem;
+  }
+
+  [data-chat-portal] .mcp-tool-clarification__chip {
+    appearance: none;
+    border: 1px solid hsl(var(--border) / 0.6);
+    background: hsl(var(--background) / 0.92);
+    color: hsl(var(--foreground) / 0.9);
+    border-radius: 999px;
+    padding: 0.34rem 0.66rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    line-height: 1;
+    transition: border-color 140ms ease, background-color 140ms ease, transform 140ms ease;
+  }
+
+  [data-chat-portal] .mcp-tool-clarification__chip:hover {
+    border-color: hsl(var(--primary) / 0.45);
+    background: hsl(var(--muted) / 0.55);
+  }
+
+  [data-chat-portal] .mcp-tool-clarification__chip:active {
+    transform: translateY(1px);
+  }
+
+  [data-chat-portal] .mcp-tool-clarification__chip:focus-visible {
+    outline: 2px solid hsl(var(--primary) / 0.5);
+    outline-offset: 2px;
+  }
+
+  [data-chat-portal] .mcp-tool-clarification__chip.is-primary {
+    border-color: hsl(var(--primary) / 0.55);
+    background: hsl(var(--primary) / 0.18);
+    color: hsl(var(--foreground));
+  }
+
+  [data-chat-portal] .mcp-tool-clarification__more {
+    margin-top: 0.52rem;
+    padding-top: 0.52rem;
+    border-top: 1px dashed hsl(var(--border) / 0.6);
+  }
+
+  [data-chat-portal] .mcp-tool-clarification__more[hidden] {
+    display: none;
+  }
+
+  [data-chat-portal] .mcp-tool-clarification__more-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: hsl(var(--muted-foreground) / 0.92);
+  }
+
+  /* Standalone scope-clarification MCQ panel (separate from tool card output). */
+  /* Scope-clarification MCQ panel — Rail visual language matches tool calls + approval cards. */
+  [data-chat-portal] .portal-scope-clarification {
+    margin-top: 0.55rem;
+    margin-left: 0;
+    max-width: min(100%, 56rem);
+    padding: 0.65rem 0.75rem 0.5rem;
+    position: relative;
+  }
+
+  /* 1.5 px left rail — identical spec to .portal-call-approval::after */
+  [data-chat-portal] .portal-scope-clarification::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 1.5px;
+    height: auto;
+    border-radius: 999px;
+    background: hsl(var(--primary) / 0.5);
+    pointer-events: none;
+  }
+
+  [data-chat-portal] .portal-scope-clarification__title {
+    margin: 0 0 0.45rem;
+    font-size: var(--portal-font-xs);
+    color: hsl(var(--foreground) / 0.88);
+    line-height: 1.45;
+  }
+
+  [data-chat-portal] .portal-scope-clarification__section {
+    margin-top: 0.5rem;
+    border-top: 1px solid hsl(var(--border) / 0.55);
+    padding-top: 0.5rem;
+  }
+
+  [data-chat-portal] .portal-scope-clarification__section-header {
+    font-size: var(--portal-font-xs);
+    font-weight: 650;
+    color: hsl(var(--muted-foreground));
+    letter-spacing: 0.01em;
+    margin-bottom: 0.4rem;
+  }
+
+  [data-chat-portal] .portal-scope-clarification__list {
+    display: grid;
+    gap: 0.3rem;
+  }
+
+  [data-chat-portal] .portal-scope-clarification__list--hidden {
+    margin-top: 0.3rem;
+  }
+
+  [data-chat-portal] .portal-scope-clarification__list[hidden] {
+    display: none !important;
+  }
+
+  [data-chat-portal] .portal-scope-clarification__btn {
+    appearance: none;
+    width: 100%;
+    text-align: left;
+    border: 1px solid hsl(var(--border));
+    background: hsl(var(--background));
+    color: hsl(var(--foreground) / 0.9);
+    border-radius: 0.65rem;
+    padding: 0.45rem 0.7rem;
+    font-size: var(--portal-font-xs);
+    font-weight: 650;
+    line-height: 1.25;
+    letter-spacing: 0.01em;
+    cursor: pointer;
+    user-select: none;
+    transition: transform 120ms ease, filter 120ms ease, border-color 120ms ease, background-color 120ms ease;
+  }
+
+  [data-chat-portal] .portal-scope-clarification__btn:hover {
+    border-color: hsl(var(--primary) / 0.45);
+    background: hsl(var(--muted) / 0.5);
+  }
+
+  [data-chat-portal] .portal-scope-clarification__btn:active {
+    transform: scale(0.99);
+  }
+
+  [data-chat-portal] .portal-scope-clarification__btn:focus-visible {
+    outline: 2px solid hsl(var(--primary) / 0.35);
+    outline-offset: 2px;
+  }
+
+  [data-chat-portal] .portal-scope-clarification__btn--primary {
+    border-color: hsl(var(--primary) / 0.55);
+    background: hsl(var(--primary) / 0.16);
+    color: hsl(var(--primary));
+  }
+
+  [data-chat-portal] .portal-scope-clarification__btn--primary:hover {
+    filter: brightness(1.05);
+  }
+
+  /* "More / Less" toggle — pill button matching approval card toggle aesthetic */
+  [data-chat-portal] .portal-scope-clarification__more {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    height: 1.75rem;
+    padding: 0 0.6rem;
+    margin-top: 0.35rem;
+    border: 1px solid hsl(var(--border));
+    background: hsl(var(--muted) / 0.2);
+    border-radius: 999px;
+    color: hsl(var(--foreground) / 0.75);
+    font-size: 0.71rem;
+    font-weight: 650;
+    letter-spacing: 0.01em;
+    cursor: pointer;
+    user-select: none;
+    transition: filter 120ms ease;
+  }
+
+  [data-chat-portal] .portal-scope-clarification__more:hover {
+    filter: brightness(1.05);
+  }
+
+  [data-chat-portal] .portal-scope-clarification__more:active {
+    transform: scale(0.98);
+  }
+
+  [data-chat-portal] .portal-scope-clarification__more:focus-visible {
+    outline: 2px solid hsl(var(--primary) / 0.35);
+    outline-offset: 2px;
+  }
+
+  [data-chat-portal] .portal-scope-clarification__hint {
+    margin: 0.5rem 0 0;
+    font-size: 0.71rem;
+    color: hsl(var(--muted-foreground) / 0.95);
+    line-height: 1.45;
+  }
+
+  [data-chat-portal] .mcp-tool-row[dir="rtl"] .portal-scope-clarification,
+  [data-chat-portal] [dir="rtl"] .portal-scope-clarification {
+    margin-left: 0;
+    margin-right: 0;
+    padding-left: 0;
+    padding-right: 0.75rem;
+  }
+
+  [data-chat-portal] .mcp-tool-row[dir="rtl"] .portal-scope-clarification::after,
+  [data-chat-portal] [dir="rtl"] .portal-scope-clarification::after {
+    left: auto;
+    right: 0;
+  }
+
   [data-chat-portal] .mcp-status-spinner {
     --mcp-spinner-size: 16px;
     width: var(--mcp-spinner-size);

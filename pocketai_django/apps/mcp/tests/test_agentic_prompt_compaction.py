@@ -52,6 +52,155 @@ class AgenticPromptCompactionTests(SimpleTestCase):
         self.assertIn("label", compact["refs"][0])
         self.assertEqual(compact["refs"][0]["read_hint"]["suggested_max_chars"], 15000)
 
+    def test_search_knowledge_compaction_preserves_scope_clarification_mcq_payload(self) -> None:
+        payload = {
+            "tool": "search_knowledge",
+            "status": "needs_clarification",
+            "hint": "I found multiple fee categories. Pick one or all.",
+            "diagnostics": {
+                "reason": "broad_scope_ambiguity",
+                "clarification_ui_mode": "mcq",
+                "categories": [
+                    "online banking fees",
+                    "outgoing transfer fees",
+                    "statement fees",
+                    "administrative fees",
+                    "loan service fees",
+                ],
+                "top_categories": [
+                    "online banking fees",
+                    "outgoing transfer fees",
+                    "statement fees",
+                    "administrative fees",
+                ],
+                "scope_clarification_options": [
+                    {"id": "all_fees", "label": "All fees", "query": "all", "kind": "action"},
+                    {
+                        "id": "choose_categories",
+                        "label": "Choose categories",
+                        "query": "what categories do you have?",
+                        "kind": "action",
+                        "expands": "categories",
+                    },
+                ],
+            },
+            "clarification": {
+                "mode": "mcq",
+                "categories": [
+                    "online banking fees",
+                    "outgoing transfer fees",
+                    "statement fees",
+                    "administrative fees",
+                    "loan service fees",
+                ],
+                "top_categories": [
+                    "online banking fees",
+                    "outgoing transfer fees",
+                    "statement fees",
+                    "administrative fees",
+                ],
+                "chips": [
+                    {"id": "all_fees", "label": "All fees", "query": "all"},
+                    {"id": "choose_categories", "label": "Choose categories", "query": "what categories do you have?"},
+                ],
+                "all_query": "all",
+                "choose_categories_query": "what categories do you have?",
+            },
+            "snippets": [],
+        }
+
+        compact = self.service._compact_tool_payload_for_prompt(
+            "search_knowledge",
+            payload,
+            max_snippets=4,
+            snippet_content_chars=600,
+            max_rows=12,
+            max_contributions=25,
+            max_cells=12,
+            max_cells_exact=60,
+        )
+
+        self.assertEqual(compact.get("status"), "needs_clarification")
+        self.assertEqual(compact.get("clarification_ui_mode"), "mcq")
+        self.assertIn("diagnostics", compact)
+        self.assertEqual((compact.get("diagnostics") or {}).get("clarification_ui_mode"), "mcq")
+        self.assertIn("scope_clarification_options", compact.get("diagnostics") or {})
+        self.assertIn("clarification", compact)
+        clarification = compact.get("clarification") or {}
+        self.assertEqual(clarification.get("mode"), "mcq")
+        self.assertTrue(clarification.get("chips"))
+        self.assertEqual(clarification.get("all_query"), "all")
+        self.assertEqual(clarification.get("choose_categories_query"), "what categories do you have?")
+        self.assertTrue(compact.get("prompt_compact"))
+
+    def test_present_scope_clarification_compaction_preserves_mcq_payload(self) -> None:
+        payload = {
+            "tool": "present_scope_clarification",
+            "status": "ok",
+            "query": "plus customer fees",
+            "hint": "Please choose one category or all fees.",
+            "diagnostics": {
+                "reason": "broad_scope_ambiguity",
+                "clarification_ui_mode": "mcq",
+                "categories": [
+                    "online banking fees",
+                    "outgoing transfer fees",
+                    "statement fees",
+                    "administrative fees",
+                ],
+                "top_categories": [
+                    "online banking fees",
+                    "outgoing transfer fees",
+                    "statement fees",
+                ],
+                "scope_clarification_options": [
+                    {"id": "all_fees", "label": "All fees", "query": "all", "kind": "action"},
+                    {"id": "choose_categories", "label": "Choose categories", "query": "what categories do you have?", "kind": "action"},
+                ],
+            },
+            "clarification": {
+                "mode": "mcq",
+                "categories": [
+                    "online banking fees",
+                    "outgoing transfer fees",
+                    "statement fees",
+                    "administrative fees",
+                ],
+                "top_categories": [
+                    "online banking fees",
+                    "outgoing transfer fees",
+                    "statement fees",
+                ],
+                "chips": [
+                    {"id": "all_fees", "label": "All fees", "query": "all"},
+                    {"id": "choose_categories", "label": "Choose categories", "query": "what categories do you have?"},
+                ],
+                "all_query": "all",
+                "choose_categories_query": "what categories do you have?",
+            },
+        }
+
+        compact = self.service._compact_tool_payload_for_prompt(
+            "present_scope_clarification",
+            payload,
+            max_snippets=4,
+            snippet_content_chars=600,
+            max_rows=12,
+            max_contributions=25,
+            max_cells=12,
+            max_cells_exact=60,
+        )
+
+        self.assertEqual(compact.get("status"), "ok")
+        self.assertEqual(compact.get("clarification_ui_mode"), "mcq")
+        self.assertEqual(compact.get("query"), "plus customer fees")
+        self.assertIn("diagnostics", compact)
+        self.assertIn("clarification", compact)
+        clarification = compact.get("clarification") or {}
+        self.assertEqual(clarification.get("mode"), "mcq")
+        self.assertTrue(clarification.get("chips"))
+        self.assertTrue(compact.get("prompt_compact"))
+
     def test_read_knowledge_compacts_agentic_evidence(self) -> None:
         payload = {
             "tool": "read_knowledge",

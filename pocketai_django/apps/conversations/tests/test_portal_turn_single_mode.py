@@ -518,3 +518,144 @@ class PortalTurnSingleModeTests(TransactionTestCase):
 
         approval.refresh_from_db()
         self.assertEqual(approval.turn_id, first_turn.id)
+
+    def test_present_scope_clarification_emits_persisted_scope_block(self) -> None:
+        turn = PortalTurn.objects.create(
+            conversation=self.conversation,
+            agent_profile=self.agent,
+            status=PortalTurnStatus.STREAMING,
+            user_message="What are plus fees?",
+        )
+        runner = PortalTurnRunner(turn=turn, conversation=self.conversation)
+
+        runner.builder.on_tool_event(
+            {
+                "event_id": "evt_scope_1",
+                "phase": "finished",
+                "status": "needs_clarification",
+                "tool_call_id": "call_scope_1",
+                "tool_name": "present_scope_clarification",
+                "kind": "tool",
+                "output": {
+                    "status": "needs_clarification",
+                    "hint": "Pick one category or all fees.",
+                    "clarification_ui_mode": "mcq",
+                    "diagnostics": {
+                        "clarification_ui_mode": "mcq",
+                        "top_categories": ["Cash withdrawal", "Cheques"],
+                    },
+                    "clarification": {
+                        "mode": "mcq",
+                        "all_query": "all",
+                        "categories": ["Cash withdrawal", "Cheques", "Custody"],
+                        "top_categories": ["Cash withdrawal", "Cheques"],
+                        "chips": [
+                            {"id": "all_fees", "label": "All fees", "query": "all"},
+                        ],
+                    },
+                },
+            }
+        )
+
+        scope_blocks = [b for b in runner.builder.blocks if str(b.get("type") or "").strip().lower() == "scope_clarification"]
+        self.assertEqual(len(scope_blocks), 1)
+        scope_payload = scope_blocks[0].get("payload") or {}
+        self.assertEqual(scope_payload.get("all_query"), "all")
+        self.assertEqual(scope_payload.get("all_label"), "All fees")
+        self.assertEqual(scope_payload.get("top_categories"), ["Cash withdrawal", "Cheques"])
+
+    def test_present_scope_clarification_finished_only_emits_tool_lifecycle_events(self) -> None:
+        turn = PortalTurn.objects.create(
+            conversation=self.conversation,
+            agent_profile=self.agent,
+            status=PortalTurnStatus.STREAMING,
+            user_message="What are plus fees?",
+        )
+        runner = PortalTurnRunner(turn=turn, conversation=self.conversation)
+
+        events: list[tuple[str, dict]] = []
+
+        def _append_event(*, turn_id, event_type, payload=None):
+            del turn_id
+            events.append((str(event_type), dict(payload or {})))
+            return None
+
+        with mock.patch("apps.conversations.portal_turn_runner.append_turn_event", side_effect=_append_event):
+            runner.builder.on_tool_event(
+                {
+                    "event_id": "evt_scope_lifecycle_1",
+                    "phase": "finished",
+                    "status": "needs_clarification",
+                    "tool_call_id": "call_scope_lifecycle_1",
+                    "tool_name": "present_scope_clarification",
+                    "kind": "tool",
+                    "output": {
+                        "status": "needs_clarification",
+                        "hint": "Pick one category or all fees.",
+                        "clarification_ui_mode": "mcq",
+                        "diagnostics": {
+                            "clarification_ui_mode": "mcq",
+                            "top_categories": ["Cash withdrawal", "Cheques"],
+                        },
+                        "clarification": {
+                            "mode": "mcq",
+                            "all_query": "all",
+                            "categories": ["Cash withdrawal", "Cheques", "Custody"],
+                            "top_categories": ["Cash withdrawal", "Cheques"],
+                            "chips": [{"id": "all_fees", "label": "All fees", "query": "all"}],
+                        },
+                    },
+                }
+            )
+
+        event_types = [event_type for event_type, _payload in events]
+        self.assertIn("block_tool_use", event_types)
+        self.assertIn("block_tool_result", event_types)
+
+        block_tool_use_index = event_types.index("block_tool_use")
+        block_tool_result_index = event_types.index("block_tool_result")
+        self.assertLess(block_tool_use_index, block_tool_result_index)
+
+        scope_start_index = -1
+        for idx, (event_type, payload) in enumerate(events):
+            if event_type != "block_start":
+                continue
+            block = payload.get("block")
+            if not isinstance(block, dict):
+                continue
+            block_type = str(block.get("type") or "").strip().lower()
+            if block_type == "scope_clarification":
+                scope_start_index = idx
+                break
+        self.assertGreater(scope_start_index, block_tool_result_index)
+
+    def test_present_scope_clarification_text_mode_does_not_emit_scope_block(self) -> None:
+        turn = PortalTurn.objects.create(
+            conversation=self.conversation,
+            agent_profile=self.agent,
+            status=PortalTurnStatus.STREAMING,
+            user_message="What are plus fees?",
+        )
+        runner = PortalTurnRunner(turn=turn, conversation=self.conversation)
+
+        runner.builder.on_tool_event(
+            {
+                "event_id": "evt_scope_text_1",
+                "phase": "finished",
+                "status": "needs_clarification",
+                "tool_call_id": "call_scope_text_1",
+                "tool_name": "present_scope_clarification",
+                "kind": "tool",
+                "output": {
+                    "status": "needs_clarification",
+                    "clarification_ui_mode": "text",
+                    "clarification": {
+                        "mode": "text",
+                        "categories": ["Cash withdrawal", "Cheques"],
+                    },
+                },
+            }
+        )
+
+        scope_blocks = [b for b in runner.builder.blocks if str(b.get("type") or "").strip().lower() == "scope_clarification"]
+        self.assertEqual(scope_blocks, [])

@@ -441,6 +441,7 @@ class McpOrchestratorService:
         if rag_agentic_enabled:
             allowed = {
                 "search_knowledge",
+                "present_scope_clarification",
                 "read_knowledge",
                 "search_conversation_files",
                 "read_conversation_file",
@@ -671,6 +672,37 @@ class McpOrchestratorService:
                 if isinstance(snippets, Sequence) and not isinstance(snippets, (str, bytes, bytearray)):
                     return len(snippets)
             return 0
+
+        def _is_mcq_scope_clarification_result(
+            tool_name: str,
+            tool_result: Mapping[str, object] | None,
+        ) -> bool:
+            if tool_name != "search_knowledge" or not isinstance(tool_result, Mapping):
+                return False
+            status_value = str(tool_result.get("status") or "").strip().lower()
+            if status_value != "needs_clarification":
+                return False
+            diagnostics = (
+                tool_result.get("diagnostics")
+                if isinstance(tool_result.get("diagnostics"), Mapping)
+                else {}
+            )
+            mode_value = str(
+                tool_result.get("clarification_ui_mode")
+                or diagnostics.get("clarification_ui_mode")
+                or ""
+            ).strip().lower()
+            return mode_value == "mcq"
+
+        def _has_scope_clarification_tool_call(tool_calls: Sequence[Mapping[str, object]]) -> bool:
+            for call in tool_calls:
+                try:
+                    tool_name = str(self._tool_name(call) or "").strip().lower()
+                except Exception:
+                    continue
+                if tool_name == "present_scope_clarification":
+                    return True
+            return False
 
         def _resolve_read_label(arguments: Mapping[str, object], *, action_verb: str) -> str:
             """
@@ -1183,6 +1215,7 @@ class McpOrchestratorService:
             read_document_throttle_hits = 0
             read_document_guardrail_reason: str | None = None
             read_document_guardrail_signature: str | None = None
+            scope_clarification_tool_required = False
 
             for iteration_index in range(self.max_tool_iterations):
                 current_tool_calls_raw = list(assistant_message.get("tool_calls") or [])
@@ -1211,6 +1244,7 @@ class McpOrchestratorService:
                         iter_span.set_attribute("mcp.iteration_index", iteration_index)
                         iter_span.set_attribute("mcp.pending_tool_calls", len(current_tool_calls))
                         iter_span.set_attribute("mcp.transcript_length", len(transcript))
+                    iteration_executed_tools: list[tuple[str, str]] = []
                     # Execute each tool_call and append tool results.
                     for tool_call in current_tool_calls:
                         tool_name = self._tool_name(tool_call)
@@ -2114,6 +2148,17 @@ class McpOrchestratorService:
 
                             if self._is_knowledge_tool(tool_name):
                                 self._record_knowledge_outputs(tool_context, tool_result)
+                        tool_status_value = ""
+                        if isinstance(tool_result, Mapping):
+                            tool_status_value = str(tool_result.get("status") or "").strip().lower()
+                        iteration_executed_tools.append((tool_name, tool_status_value))
+                        if _is_mcq_scope_clarification_result(tool_name, tool_result):
+                            scope_clarification_tool_required = True
+                        elif (
+                            tool_name == "present_scope_clarification"
+                            and tool_status_value in {"ok", "needs_clarification"}
+                        ):
+                            scope_clarification_tool_required = False
                         if knowledge_phase:
                             _emit_phase_complete(knowledge_phase, snippet_total=_snippet_count(tool_result))
                         limits = self._prompt_compaction_limits()
@@ -2406,6 +2451,19 @@ class McpOrchestratorService:
                                         "response_blocks": response_blocks,
                                     }
 
+                    scope_terminal_tool = (
+                        len(iteration_executed_tools) == 1
+                        and str(iteration_executed_tools[0][0] or "").strip().lower() == "present_scope_clarification"
+                        and str(iteration_executed_tools[0][1] or "").strip().lower() in {"ok", "needs_clarification"}
+                    )
+                    if scope_terminal_tool:
+                        _mark_answer_started()
+                        tool_phase_assistant_message = assistant_message
+                        raw_content = assistant_message.get("content")
+                        if isinstance(raw_content, str) and raw_content.strip():
+                            single_pass_candidate = raw_content.strip()
+                        break
+
                     loop_messages = prompts.limit_messages_for_stage(transcript, stage="tool_iteration")
                     if read_document_guardrail_reason:
                         structured_log(
@@ -2463,12 +2521,24 @@ class McpOrchestratorService:
                         excluded_tools.add("search_knowledge")
                     if excluded_tools:
                         tools_for_iteration = self._exclude_tool_schemas(excluded_tools)
+                    scope_intro_buffer: list[str] = []
+                    scope_clarification_expected = bool(scope_clarification_tool_required)
+
+                    def _buffer_scope_intro_chunk(chunk: str) -> None:
+                        if not chunk:
+                            return
+                        scope_intro_buffer.append(chunk)
+
                     payload = self._chat_with_context_governor(
                         conversation=conversation,
                         stage="tool_iteration",
                         messages=loop_messages,
                         tools=tools_for_iteration,
-                        on_stream_delta=_answer_stream_chunk if streaming_allowed else None,
+                        on_stream_delta=(
+                            _buffer_scope_intro_chunk
+                            if (streaming_allowed and scope_clarification_expected)
+                            else (_answer_stream_chunk if streaming_allowed else None)
+                        ),
                         on_tool_call_start=_on_stream_tool_call_start,
                         on_tool_call_delta=_on_stream_tool_call_delta,
                         tool_context=tool_context,
@@ -2481,6 +2551,58 @@ class McpOrchestratorService:
                     next_tool_calls, portal_tool_calls = _split_portal_tool_calls(next_tool_calls_raw)
                     if portal_tool_calls:
                         portal_block_stream.ingest_tool_calls(portal_tool_calls)
+
+                    if scope_clarification_expected:
+                        has_scope_clarification_call = _has_scope_clarification_tool_call(next_tool_calls)
+                        if not has_scope_clarification_call:
+                            structured_log(
+                                "mcp",
+                                "scope_clarification.repair_call",
+                                {
+                                    "reason": "selector_tool_missing",
+                                    "iteration": iteration_index,
+                                },
+                                context={
+                                    "conversation": conversation.id,
+                                    "business": conversation.business_profile_id,
+                                },
+                                logger_obj=logger,
+                                level=logging.WARNING,
+                            )
+                            repair_messages = [
+                                *loop_messages,
+                                {
+                                    "role": "system",
+                                    "content": (
+                                        "REQUIRED NOW: Call present_scope_clarification in this response. "
+                                        "Output exactly one short selector-intro sentence, do not list categories, "
+                                        "and end immediately after the tool call."
+                                    ),
+                                },
+                            ]
+                            repair_payload = self._chat_with_context_governor(
+                                conversation=conversation,
+                                stage="tool_iteration",
+                                messages=repair_messages,
+                                tools=self._include_tool_schemas({"present_scope_clarification"}),
+                                on_stream_delta=_answer_stream_chunk if streaming_allowed else None,
+                                on_tool_call_start=_on_stream_tool_call_start,
+                                on_tool_call_delta=_on_stream_tool_call_delta,
+                                tool_context=tool_context,
+                                on_reasoning_event=on_reasoning_event,
+                                reasoning_label=f"Tool step {iteration_index + 1} (scope repair)",
+                                should_cancel=should_cancel,
+                            )
+                            assistant_message = self._coerce_assistant_message(repair_payload)
+                            next_tool_calls_raw = list(assistant_message.get("tool_calls") or [])
+                            next_tool_calls, portal_tool_calls = _split_portal_tool_calls(next_tool_calls_raw)
+                            if portal_tool_calls:
+                                portal_block_stream.ingest_tool_calls(portal_tool_calls)
+                            has_scope_clarification_call = _has_scope_clarification_tool_call(next_tool_calls)
+
+                        if has_scope_clarification_call and scope_intro_buffer:
+                            for chunk in scope_intro_buffer:
+                                _answer_stream_chunk(chunk)
 
                     next_signatures: list[str] = []
                     if next_tool_calls:
@@ -2551,9 +2673,20 @@ class McpOrchestratorService:
                     else:
                         _mark_answer_started()
                     # Append the assistant turn (empty content if tools present).
+                    only_scope_clarification_calls = (
+                        bool(next_tool_calls)
+                        and all(
+                            str(self._tool_name(call) or "").strip().lower() == "present_scope_clarification"
+                            for call in next_tool_calls
+                        )
+                    )
                     assistant_turn: dict[str, object] = {
                         "role": "assistant",
-                        "content": "" if next_tool_calls else assistant_message.get("content"),
+                        "content": (
+                            assistant_message.get("content")
+                            if (only_scope_clarification_calls or not next_tool_calls)
+                            else ""
+                        ),
                         **({"tool_calls": next_tool_calls} if next_tool_calls else {}),
                     }
                     if self._deepseek_reasoner_tool_loop_enabled():
@@ -3602,7 +3735,15 @@ class McpOrchestratorService:
 
     @staticmethod
     def _is_knowledge_tool(name: str) -> bool:
-        return name in {"search_knowledge", "read_knowledge", "read_document", "table_aggregate", "dataset_query", "query_dataset"}
+        return name in {
+            "search_knowledge",
+            "present_scope_clarification",
+            "read_knowledge",
+            "read_document",
+            "table_aggregate",
+            "dataset_query",
+            "query_dataset",
+        }
 
     @staticmethod
     def _tool_schema_name(tool_def: Mapping[str, object]) -> str | None:
@@ -7791,6 +7932,170 @@ class McpOrchestratorService:
             return compact
 
         if normalized_name == "search_knowledge":
+            def _compact_string_list(value: object, *, limit: int) -> list[str]:
+                if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+                    return []
+                out: list[str] = []
+                seen: set[str] = set()
+                for item in value:
+                    text = str(item or "").strip()
+                    if not text:
+                        continue
+                    key = text.lower()
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    out.append(self._clip_text(text, 120))
+                    if len(out) >= max(1, int(limit)):
+                        break
+                return out
+
+            def _compact_scope_options(value: object, *, limit: int) -> list[dict[str, object]]:
+                if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+                    return []
+                out: list[dict[str, object]] = []
+                for item in value[: max(1, int(limit))]:
+                    if not isinstance(item, Mapping):
+                        continue
+                    label = str(item.get("label") or item.get("category") or "").strip()
+                    query = str(item.get("query") or item.get("category") or label).strip()
+                    if not label:
+                        continue
+                    option: dict[str, object] = {
+                        "id": self._clip_text(str(item.get("id") or f"option_{len(out) + 1}").strip(), 64),
+                        "label": self._clip_text(label, 80),
+                        "query": self._clip_text(query, 120),
+                    }
+                    kind = str(item.get("kind") or "").strip().lower()
+                    if kind:
+                        option["kind"] = kind
+                    category = str(item.get("category") or "").strip()
+                    if category:
+                        option["category"] = self._clip_text(category, 120)
+                    expands = item.get("expands")
+                    if expands in {True, "categories"}:
+                        option["expands"] = "categories"
+                    out.append(option)
+                return out
+
+            raw_diagnostics = payload.get("diagnostics")
+            compact_diagnostics: dict[str, object] = {}
+            if isinstance(raw_diagnostics, Mapping):
+                for key in (
+                    "reason",
+                    "clarification_ui_mode",
+                    "intent_clarification_question",
+                    "assistant_guidance",
+                    "suppress_textual_choice_list",
+                    "scope_summary",
+                    "conflict_detected",
+                    "no_result_reason",
+                    "scope_listed",
+                    "scope_list_count",
+                ):
+                    value = raw_diagnostics.get(key)
+                    if value is None:
+                        continue
+                    if isinstance(value, str):
+                        if not value.strip():
+                            continue
+                        compact_diagnostics[key] = self._clip_text(value.strip(), 260)
+                        continue
+                    compact_diagnostics[key] = value
+
+                diag_categories = _compact_string_list(raw_diagnostics.get("categories"), limit=24)
+                diag_scope_categories = _compact_string_list(
+                    raw_diagnostics.get("scope_clarification_categories"),
+                    limit=24,
+                )
+                diag_top_categories = _compact_string_list(raw_diagnostics.get("top_categories"), limit=8)
+                diag_options = _compact_scope_options(
+                    raw_diagnostics.get("scope_clarification_options"),
+                    limit=12,
+                )
+                if diag_categories:
+                    compact_diagnostics["categories"] = diag_categories
+                if diag_scope_categories:
+                    compact_diagnostics["scope_clarification_categories"] = diag_scope_categories
+                if diag_top_categories:
+                    compact_diagnostics["top_categories"] = diag_top_categories
+                if diag_options:
+                    compact_diagnostics["scope_clarification_options"] = diag_options
+
+            raw_clarification = payload.get("clarification")
+            compact_clarification: dict[str, object] = {}
+            if isinstance(raw_clarification, Mapping):
+                mode_value = str(raw_clarification.get("mode") or "").strip().lower()
+                if mode_value:
+                    compact_clarification["mode"] = mode_value
+
+                clar_categories = _compact_string_list(raw_clarification.get("categories"), limit=24)
+                if not clar_categories:
+                    clar_categories = _compact_string_list(
+                        compact_diagnostics.get("categories") or compact_diagnostics.get("scope_clarification_categories"),
+                        limit=24,
+                    )
+                if clar_categories:
+                    compact_clarification["categories"] = clar_categories
+
+                clar_top_categories = _compact_string_list(raw_clarification.get("top_categories"), limit=8)
+                if not clar_top_categories:
+                    clar_top_categories = _compact_string_list(compact_diagnostics.get("top_categories"), limit=8)
+                if clar_top_categories:
+                    compact_clarification["top_categories"] = clar_top_categories
+
+                chips = _compact_scope_options(raw_clarification.get("chips"), limit=12)
+                if not chips:
+                    chips = _compact_scope_options(compact_diagnostics.get("scope_clarification_options"), limit=12)
+                if chips:
+                    compact_clarification["chips"] = chips
+
+                all_query = str(raw_clarification.get("all_query") or "").strip()
+                if all_query:
+                    compact_clarification["all_query"] = self._clip_text(all_query, 120)
+                choose_query = str(raw_clarification.get("choose_categories_query") or "").strip()
+                if choose_query:
+                    compact_clarification["choose_categories_query"] = self._clip_text(choose_query, 120)
+                assistant_guidance = str(raw_clarification.get("assistant_guidance") or "").strip()
+                if assistant_guidance:
+                    compact_clarification["assistant_guidance"] = self._clip_text(assistant_guidance, 320)
+                suppress_textual_choice_list = raw_clarification.get("suppress_textual_choice_list")
+                if isinstance(suppress_textual_choice_list, bool):
+                    compact_clarification["suppress_textual_choice_list"] = suppress_textual_choice_list
+
+            # Fallback: build a minimal clarification envelope from diagnostics if handler
+            # did not include one (needed for MCQ rendering in compact tool events).
+            if not compact_clarification:
+                mode_value = str(compact_diagnostics.get("clarification_ui_mode") or "").strip().lower()
+                categories_value = _compact_string_list(
+                    compact_diagnostics.get("categories") or compact_diagnostics.get("scope_clarification_categories"),
+                    limit=24,
+                )
+                top_categories_value = _compact_string_list(compact_diagnostics.get("top_categories"), limit=8)
+                options_value = _compact_scope_options(compact_diagnostics.get("scope_clarification_options"), limit=12)
+                if mode_value == "mcq" and (categories_value or top_categories_value or options_value):
+                    compact_clarification = {"mode": "mcq"}
+                    if categories_value:
+                        compact_clarification["categories"] = categories_value
+                    if top_categories_value:
+                        compact_clarification["top_categories"] = top_categories_value
+                    if options_value:
+                        compact_clarification["chips"] = options_value
+                    assistant_guidance = str(compact_diagnostics.get("assistant_guidance") or "").strip()
+                    if assistant_guidance:
+                        compact_clarification["assistant_guidance"] = self._clip_text(assistant_guidance, 320)
+                    suppress_textual_choice_list = compact_diagnostics.get("suppress_textual_choice_list")
+                    if isinstance(suppress_textual_choice_list, bool):
+                        compact_clarification["suppress_textual_choice_list"] = suppress_textual_choice_list
+
+            if compact_diagnostics:
+                compact["diagnostics"] = compact_diagnostics
+                mode_value = str(compact_diagnostics.get("clarification_ui_mode") or "").strip().lower()
+                if mode_value:
+                    compact["clarification_ui_mode"] = mode_value
+            if compact_clarification:
+                compact["clarification"] = compact_clarification
+
             for key in ("query", "intent", "match_policy"):
                 if key not in payload:
                     continue
@@ -7883,6 +8188,132 @@ class McpOrchestratorService:
                         )
                     )
             compact["snippets"] = snippets_out
+            compact["prompt_compact"] = True
+            return compact
+
+        if normalized_name == "present_scope_clarification":
+            def _compact_string_list(value: object, *, limit: int) -> list[str]:
+                if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+                    return []
+                out: list[str] = []
+                seen: set[str] = set()
+                for item in value:
+                    text = str(item or "").strip()
+                    if not text:
+                        continue
+                    key = text.lower()
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    out.append(self._clip_text(text, 120))
+                    if len(out) >= max(1, int(limit)):
+                        break
+                return out
+
+            def _compact_scope_options(value: object, *, limit: int) -> list[dict[str, object]]:
+                if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+                    return []
+                out: list[dict[str, object]] = []
+                for item in value[: max(1, int(limit))]:
+                    if not isinstance(item, Mapping):
+                        continue
+                    label = str(item.get("label") or item.get("category") or "").strip()
+                    query = str(item.get("query") or item.get("category") or label).strip()
+                    if not label:
+                        continue
+                    option: dict[str, object] = {
+                        "id": self._clip_text(str(item.get("id") or f"option_{len(out) + 1}").strip(), 64),
+                        "label": self._clip_text(label, 80),
+                        "query": self._clip_text(query, 120),
+                    }
+                    kind = str(item.get("kind") or "").strip().lower()
+                    if kind:
+                        option["kind"] = kind
+                    category = str(item.get("category") or "").strip()
+                    if category:
+                        option["category"] = self._clip_text(category, 120)
+                    expands = item.get("expands")
+                    if expands in {True, "categories"}:
+                        option["expands"] = "categories"
+                    out.append(option)
+                return out
+
+            raw_diagnostics = payload.get("diagnostics")
+            compact_diagnostics: dict[str, object] = {}
+            if isinstance(raw_diagnostics, Mapping):
+                for key in (
+                    "reason",
+                    "clarification_ui_mode",
+                    "intent_clarification_question",
+                    "assistant_guidance",
+                    "suppress_textual_choice_list",
+                    "scope_summary",
+                    "scope_listed",
+                    "scope_list_count",
+                ):
+                    value = raw_diagnostics.get(key)
+                    if value is None:
+                        continue
+                    if isinstance(value, str):
+                        if not value.strip():
+                            continue
+                        compact_diagnostics[key] = self._clip_text(value.strip(), 260)
+                        continue
+                    compact_diagnostics[key] = value
+
+                categories = _compact_string_list(raw_diagnostics.get("categories"), limit=24)
+                top_categories = _compact_string_list(raw_diagnostics.get("top_categories"), limit=8)
+                scope_categories = _compact_string_list(raw_diagnostics.get("scope_clarification_categories"), limit=24)
+                options = _compact_scope_options(raw_diagnostics.get("scope_clarification_options"), limit=12)
+                if categories:
+                    compact_diagnostics["categories"] = categories
+                if top_categories:
+                    compact_diagnostics["top_categories"] = top_categories
+                if scope_categories:
+                    compact_diagnostics["scope_clarification_categories"] = scope_categories
+                if options:
+                    compact_diagnostics["scope_clarification_options"] = options
+
+            raw_clarification = payload.get("clarification")
+            compact_clarification: dict[str, object] = {}
+            if isinstance(raw_clarification, Mapping):
+                mode_value = str(raw_clarification.get("mode") or "").strip().lower()
+                if mode_value:
+                    compact_clarification["mode"] = mode_value
+                categories = _compact_string_list(raw_clarification.get("categories"), limit=24)
+                if categories:
+                    compact_clarification["categories"] = categories
+                top_categories = _compact_string_list(raw_clarification.get("top_categories"), limit=8)
+                if top_categories:
+                    compact_clarification["top_categories"] = top_categories
+                chips = _compact_scope_options(raw_clarification.get("chips"), limit=12)
+                if chips:
+                    compact_clarification["chips"] = chips
+                for key in ("all_query", "choose_categories_query", "assistant_guidance"):
+                    value = str(raw_clarification.get(key) or "").strip()
+                    if value:
+                        compact_clarification[key] = self._clip_text(value, 180 if key != "assistant_guidance" else 320)
+                suppress = raw_clarification.get("suppress_textual_choice_list")
+                if isinstance(suppress, bool):
+                    compact_clarification["suppress_textual_choice_list"] = suppress
+
+            if compact_diagnostics:
+                compact["diagnostics"] = compact_diagnostics
+            if compact_clarification:
+                compact["clarification"] = compact_clarification
+
+            mode_value = (
+                str(compact_clarification.get("mode") or "").strip().lower()
+                or str(compact_diagnostics.get("clarification_ui_mode") or "").strip().lower()
+            )
+            if mode_value:
+                compact["clarification_ui_mode"] = mode_value
+
+            if "query" in payload:
+                query_value = str(payload.get("query") or "").strip()
+                if query_value:
+                    compact["query"] = self._clip_text(query_value, 220)
+
             compact["prompt_compact"] = True
             return compact
 

@@ -19,6 +19,7 @@ ContentBlockType = Literal[
     "reasoning",
     "tool_use",
     "tool_result",
+    "scope_clarification",
     "table",
     "kv",
 ]
@@ -135,7 +136,7 @@ def ensure_assistant_text_blocks(
     body_value = body.strip()
 
     # Types that should be preserved (not regenerated from body text)
-    non_text_block_types = {"tool_use", "tool_result", "reasoning", "table", "kv"}
+    non_text_block_types = {"tool_use", "tool_result", "scope_clarification", "reasoning", "table", "kv"}
 
     # Check if existing blocks have a valid structure
     has_rich_text = any(isinstance(block, Mapping) and _is_rich_text_block(block) for block in blocks)

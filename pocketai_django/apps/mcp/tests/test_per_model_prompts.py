@@ -73,6 +73,8 @@ class TemplateContentTests(SimpleTestCase):
         self.assertIn("TestBot", prompt)
         self.assertIn("Acme Corp", prompt)
         self.assertIn("NEVER re-read", prompt)
+        self.assertIn("present_scope_clarification", prompt)
+        self.assertIn("clarification_ui_mode=mcq", prompt)
 
     def test_default_template_renders(self) -> None:
         agent = mock.Mock()
@@ -84,6 +86,8 @@ class TemplateContentTests(SimpleTestCase):
         )
         self.assertIn("TestBot", prompt)
         self.assertIn("System Contract", prompt)
+        self.assertIn("present_scope_clarification", prompt)
+        self.assertIn("clarification_ui_mode=mcq", prompt)
 
     def test_default_template_prefers_read_after_search_for_factual_answers(self) -> None:
         agent = mock.Mock()
@@ -105,6 +109,8 @@ class TemplateContentTests(SimpleTestCase):
             business_name="Acme Corp",
         )
         self.assertIn("For factual business questions, call `read_knowledge` once", prompt)
+        self.assertIn("present_scope_clarification", prompt)
+        self.assertIn("clarification_ui_mode=mcq", prompt)
 
     @override_settings(MCP_SEARCH_MAX_QUERY_VARIANTS=1)
     def test_prompt_uses_single_variant_hint_when_limit_is_one(self) -> None:

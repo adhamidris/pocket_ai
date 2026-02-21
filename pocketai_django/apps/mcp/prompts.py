@@ -393,7 +393,9 @@ def build_system_message(
         1. **Evidence first**: Use tools when business facts are needed; answer from verified content.
         2. **Light planning**: Choose the smallest set of tool calls that yields a correct answer.
         3. **Do not narrate internal steps**: Keep tool steps silent; reply with an answer or a single clarifying question.
-        4. **Tool loop discipline**: Do at most one tool-loop per visitor message (user turn) unless the visitor explicitly asks to continue.
+        4. **Tool loop discipline**: Do at most one discovery/read tool-loop per visitor message (user turn), unless the visitor explicitly asks to continue.
+           Exception: if `search_knowledge` returns `status=needs_clarification` with `clarification_ui_mode=mcq`, call
+           `present_scope_clarification` in the same turn.
         5. **{tone_instruction}**
         6. **LANGUAGE**: Reply in the visitor's language; for Arabic use Modern Standard Arabic (MSA).
 
@@ -408,6 +410,8 @@ def build_system_message(
         - If results mismatch intent, refine using document terms or the suggested refinement.
         - If repeated searches keep returning the same documents/snippets, stop repeating search. Run one targeted read on the best refs if factual detail is still needed, then answer with clear gaps.
         - If reliable evidence already exists in context, answer without a new search.
+        - If it returns `status=needs_clarification` and `clarification_ui_mode=mcq`, write one short selector-intro sentence only (no prose category list),
+          then call `present_scope_clarification`, and end the response immediately after the call.
 
         ### `read_document`
         - Read when previews are too thin to answer confidently.

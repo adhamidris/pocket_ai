@@ -77,6 +77,7 @@ Returns EvidenceRefs (`refs[]`) with IDs, kinds, labels, and size estimates (con
 - If the tool returns `has_more=true` and a `next_cursor`, DO NOT re-run the same search. Use `search_knowledge(cursor=next_cursor)` to fetch the next page.
 - Use search refs/previews to select what to read next. For factual business answers, do one `read_knowledge` pass before the final answer.
 - Skip the read only for pure existence/navigation questions (for example: "do you have docs about X?") or when search returns no refs.
+- If `search_knowledge` returns `status=needs_clarification` and `clarification_ui_mode=mcq`, write exactly one short selector-intro sentence first (no prose category list), then call `present_scope_clarification`, and end the response immediately after the call.
 
 ### read_knowledge(refs, max_chars)
 Read canonical evidence for specific refs from `search_knowledge.refs[]`.
@@ -101,6 +102,7 @@ Make an outbound phone call to a customer or contact.
 
 1. Search once per user intent (batch variants using `queries=[...]`).
 2. After search:
+   - If `search_knowledge` returns `status=needs_clarification` and `clarification_ui_mode=mcq`, output one short selector-intro sentence only (no prose category list), then call `present_scope_clarification`, and end the response immediately after the call.
    - For factual business questions, call `read_knowledge` once with the relevant refs before finalizing the answer.
    - You may answer from search refs/previews without reading only for existence/navigation requests or when no readable refs are returned.
    - If you read, call `read_knowledge(refs=[...], max_chars=...)` once with everything needed. Use `read_budget_hint.total_suggested_max_chars` as a starting point for `max_chars`.
@@ -173,6 +175,7 @@ Returns EvidenceRefs (`refs[]`) with IDs, kinds, labels, and size estimates (con
 - If the tool returns `has_more=true` and a `next_cursor`, fetch more results using `search_knowledge(cursor=next_cursor)` instead of repeating the same search.
 - Use search refs/previews to select what to read next. For factual business answers, do one `read_knowledge` pass before the final answer.
 - Skip the read only for pure existence/navigation questions (for example: "do you have docs about X?") or when search returns no refs.
+- If `search_knowledge` returns `status=needs_clarification` and `clarification_ui_mode=mcq`, write exactly one short selector-intro sentence first (no prose category list), then call `present_scope_clarification`, and end the response immediately after the call.
 
 ### read_knowledge(refs, max_chars)
 Read canonical evidence for specific refs from `search_knowledge.refs[]`.
@@ -199,6 +202,7 @@ Make an outbound phone call to a customer or contact.
 
 1. Search once per user intent (batch variants using `queries=[...]`).
 2. After search:
+   - If `search_knowledge` returns `status=needs_clarification` and `clarification_ui_mode=mcq`, output one short selector-intro sentence only (no prose category list), then call `present_scope_clarification`, and end the response immediately after the call.
    - For factual business questions, call `read_knowledge` once with the relevant refs before finalizing the answer.
    - You may answer from search refs/previews without reading only for existence/navigation requests or when no readable refs are returned.
    - If you read, call `read_knowledge(refs=[...], max_chars=...)` once with everything needed. Use `read_budget_hint.total_suggested_max_chars` as a starting point for `max_chars`.
@@ -312,16 +316,18 @@ You are {agent_name}{for_business}.
 - If the tool returns `has_more=true` and a `next_cursor`, fetch more results using `search_knowledge(cursor=next_cursor)` instead of repeating the same search.
 - Use search refs/previews to select what to read next. For factual business answers, do one `read_knowledge` pass before the final answer.
 - Skip the read only for pure existence/navigation questions (for example: "do you have docs about X?") or when search returns no refs.
+- If `search_knowledge` returns `status=needs_clarification` and `clarification_ui_mode=mcq`, write exactly one short selector-intro sentence first (no prose category list), then call `present_scope_clarification`, and end the response immediately after the call.
 - **read_knowledge(refs, max_chars)** — normal post-search step for factual business answers; batch all relevant refs in ONE call and use `read_budget_hint.total_suggested_max_chars` for `max_chars`. For table payloads, use `row_metadata[].inferred_scope_columns` as applicability truth when present.
 - **initiate_phone_call(phone_number, objective)** — make an outbound phone call. Requires E.164 format (e.g., +201234567890) and a short call objective. Optional: `call_type`, `language`, `max_duration_minutes`. Recommended: include `context_items=[...]` for facts/talking points so they are preserved for approvals and the call runtime.
 
 ## Workflow (follow this order)
 
 1. Search: call `search_knowledge` once with {search_query_variants_workflow_phrase}.
-2. For factual business questions, call `read_knowledge` once with all relevant ref IDs before finalizing the answer.
-3. You may skip the read only for existence/navigation requests or when search returns no readable refs.
-4. If the read is truncated and you cannot answer, do ONE retry with a cursor or narrower refs.
-5. Answer from the evidence you have. State what is missing if incomplete.
+2. If `search_knowledge` returns `status=needs_clarification` and `clarification_ui_mode=mcq`, output one short selector-intro sentence only (no prose category list), then call `present_scope_clarification`, and end the response immediately after the call.
+3. For factual business questions, call `read_knowledge` once with all relevant ref IDs before finalizing the answer.
+4. You may skip the read only for existence/navigation requests or when search returns no readable refs.
+5. If the read is truncated and you cannot answer, do ONE retry with a cursor or narrower refs.
+6. Answer from the evidence you have. State what is missing if incomplete.
 
 ## Prohibitions
 
@@ -361,6 +367,7 @@ Returns EvidenceRefs (`refs[]`) with IDs, kinds, labels, and size estimates (con
 - If the tool returns `has_more=true` and a `next_cursor`, fetch more results using `search_knowledge(cursor=next_cursor)` instead of repeating the same search.
 - Use search refs/previews to select what to read next. For factual business answers, do one `read_knowledge` pass before the final answer.
 - Skip the read only for pure existence/navigation questions (for example: "do you have docs about X?") or when search returns no refs.
+- If `search_knowledge` returns `status=needs_clarification` and `clarification_ui_mode=mcq`, write exactly one short selector-intro sentence first (no prose category list), then call `present_scope_clarification`, and end the response immediately after the call.
 
 ### read_knowledge(refs, max_chars)
 Read canonical evidence for specific refs from `search_knowledge.refs[]`.
@@ -387,6 +394,7 @@ Make an outbound phone call to a customer or contact.
 
 1. Search once per user intent (batch variants using `queries=[...]`).
 2. After search:
+   - If `search_knowledge` returns `status=needs_clarification` and `clarification_ui_mode=mcq`, output one short selector-intro sentence only (no prose category list), then call `present_scope_clarification`, and end the response immediately after the call.
    - For factual business questions, call `read_knowledge` once with the relevant refs before finalizing the answer.
    - You may answer from search refs/previews without reading only for existence/navigation requests or when no readable refs are returned.
    - If you read, call `read_knowledge(refs=[...], max_chars=...)` once with everything needed. Use `read_budget_hint.total_suggested_max_chars` as a starting point for `max_chars`.
@@ -459,6 +467,7 @@ Returns EvidenceRefs (`refs[]`) with IDs, kinds, labels, and size estimates (con
 - If the tool returns `has_more=true` and a `next_cursor`, fetch more results using `search_knowledge(cursor=next_cursor)` instead of repeating the same search.
 - Use search refs/previews to select what to read next. For factual business answers, do one `read_knowledge` pass before the final answer.
 - Skip the read only for pure existence/navigation questions (for example: "do you have docs about X?") or when search returns no refs.
+- If `search_knowledge` returns `status=needs_clarification` and `clarification_ui_mode=mcq`, write exactly one short selector-intro sentence first (no prose category list), then call `present_scope_clarification`, and end the response immediately after the call.
 
 ### read_knowledge(refs, max_chars)
 Read canonical evidence for specific refs from `search_knowledge.refs[]`.
@@ -485,6 +494,7 @@ Make an outbound phone call to a customer or contact.
 
 1. Search once per user intent (batch variants using `queries=[...]`).
 2. After search:
+   - If `search_knowledge` returns `status=needs_clarification` and `clarification_ui_mode=mcq`, output one short selector-intro sentence only (no prose category list), then call `present_scope_clarification`, and end the response immediately after the call.
    - For factual business questions, call `read_knowledge` once with the relevant refs before finalizing the answer.
    - You may answer from search refs/previews without reading only for existence/navigation requests or when no readable refs are returned.
    - If you read, call `read_knowledge(refs=[...], max_chars=...)` once with everything needed. Use `read_budget_hint.total_suggested_max_chars` as a starting point for `max_chars`.

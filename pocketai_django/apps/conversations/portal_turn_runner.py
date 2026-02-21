@@ -236,6 +236,110 @@ class PortalTurnEventBuilder:
             return None
         return self.blocks_by_id.get(key)
 
+    @staticmethod
+    def _normalize_scope_categories(values: object, *, limit: int) -> list[str]:
+        if not isinstance(values, list):
+            return []
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            text = str(value or "").strip()
+            if not text:
+                continue
+            key = text.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(text)
+            if len(normalized) >= limit:
+                break
+        return normalized
+
+    def _build_scope_clarification_block(
+        self,
+        *,
+        tool_use_block_id: str,
+        output_payload: Mapping[str, object],
+        created_at: str | None = None,
+    ) -> dict[str, object] | None:
+        clarification = (
+            output_payload.get("clarification")
+            if isinstance(output_payload.get("clarification"), Mapping)
+            else {}
+        )
+        diagnostics = (
+            output_payload.get("diagnostics")
+            if isinstance(output_payload.get("diagnostics"), Mapping)
+            else {}
+        )
+        mode = str(
+            clarification.get("mode")
+            or diagnostics.get("clarification_ui_mode")
+            or output_payload.get("clarification_ui_mode")
+            or ""
+        ).strip().lower()
+        if mode != "mcq":
+            return None
+
+        categories = self._normalize_scope_categories(
+            clarification.get("categories")
+            or diagnostics.get("categories")
+            or diagnostics.get("scope_clarification_categories")
+            or [],
+            limit=40,
+        )
+        top_categories = self._normalize_scope_categories(
+            clarification.get("top_categories")
+            or diagnostics.get("top_categories")
+            or diagnostics.get("scope_clarification_categories")
+            or [],
+            limit=12,
+        )
+        if not top_categories and categories:
+            top_categories = categories[:3]
+        if not categories and top_categories:
+            categories = top_categories[:]
+        if not categories:
+            return None
+
+        all_query = str(clarification.get("all_query") or "all").strip() or "all"
+        all_label = "All fees"
+        chips = clarification.get("chips") if isinstance(clarification.get("chips"), list) else []
+        for chip in chips:
+            if not isinstance(chip, Mapping):
+                continue
+            chip_id = str(chip.get("id") or "").strip().lower()
+            if chip_id != "all_fees":
+                continue
+            label = str(chip.get("label") or "").strip()
+            query = str(chip.get("query") or "").strip()
+            if label:
+                all_label = label
+            if query:
+                all_query = query
+            break
+
+        question = str(
+            output_payload.get("hint")
+            or diagnostics.get("intent_clarification_question")
+            or "I found multiple categories. Pick one category or choose all fees."
+        ).strip()
+        block_id = f"{tool_use_block_id}__scope_clarification"
+        return {
+            "block_id": block_id,
+            "type": "scope_clarification",
+            "created_at": created_at or timezone.now().isoformat(),
+            "payload": {
+                "source_tool_block_id": tool_use_block_id,
+                "question": question,
+                "all_label": all_label,
+                "all_query": all_query,
+                "categories": categories,
+                "top_categories": top_categories,
+                "visible_count": 3,
+            },
+        }
+
     def _apply_block_event(self, event: Mapping[str, object]) -> None:
         event_type = str(event.get("type") or "").strip().lower()
         payload = event.get("payload") if isinstance(event.get("payload"), Mapping) else {}
@@ -642,11 +746,25 @@ class PortalTurnEventBuilder:
                 self.tool_use_block_id_by_event_id[key] = tool_use_block_id
 
         existing_payload = tool_use_block.get("payload")
+        had_prior_phase = False
+        if isinstance(existing_payload, Mapping):
+            prior_phase = str(existing_payload.get("phase") or "").strip().lower()
+            had_prior_phase = bool(prior_phase)
         merged_payload: dict[str, object] = dict(existing_payload) if isinstance(existing_payload, Mapping) else {}
         merged_payload.update(payload)
         tool_use_block["payload"] = merged_payload
 
         if phase in {"finished", "approval_resolved"}:
+            if not had_prior_phase:
+                # Some calls (including scope clarification repairs) may surface only a
+                # terminal phase. Emit a synthetic "started" snapshot first so the
+                # portal keeps the same spinner/tool lifecycle as every other tool.
+                synthetic_payload = dict(merged_payload)
+                synthetic_payload["phase"] = "started"
+                synthetic_payload["status"] = "running"
+                synthetic_tool_use_block = copy.deepcopy(tool_use_block)
+                synthetic_tool_use_block["payload"] = synthetic_payload
+                self.append_event("block_tool_use", {"block": synthetic_tool_use_block})
             duration = event.get("duration_ms")
             try:
                 payload["duration_ms"] = int(duration) if duration is not None else 0
@@ -712,6 +830,34 @@ class PortalTurnEventBuilder:
             tool_use_block["payload"] = merged_payload
 
             self.append_event("block_tool_result", {"block": copy.deepcopy(tool_use_block)})
+
+            if tool_name.strip().lower() == "present_scope_clarification" and isinstance(output_payload, Mapping):
+                source_tool_block_id = str(tool_use_block.get("block_id") or "").strip()
+                if source_tool_block_id:
+                    scope_block = self._build_scope_clarification_block(
+                        tool_use_block_id=source_tool_block_id,
+                        output_payload=output_payload,
+                        created_at=timezone.now().isoformat(),
+                    )
+                    if scope_block:
+                        scope_block_id = str(scope_block.get("block_id") or "").strip()
+                        existing_scope_block = self._get_content_block(scope_block_id) if scope_block_id else None
+                        if existing_scope_block is not None:
+                            existing_scope_block.clear()
+                            existing_scope_block.update(scope_block)
+                        else:
+                            self._append_content_block(scope_block)
+                        # Flush any buffered text through the rich builder before emitting
+                        # the MCQ block so the narration text fully lands before the selector
+                        # appears — matching the Anthropic agentic style.
+                        if not self.block_ops_active:
+                            try:
+                                boundary_events = self.rich_builder.break_flow()
+                            except Exception:  # pragma: no cover - defensive
+                                boundary_events = []
+                            if boundary_events:
+                                self.emit_block_events(boundary_events)
+                        self.append_event("block_start", {"block": copy.deepcopy(scope_block)})
 
             try:
                 if isinstance(output_payload, Mapping) and str(payload.get("status") or "").strip().lower() in {"ok", "success"}:
