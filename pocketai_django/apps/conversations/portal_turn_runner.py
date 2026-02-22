@@ -305,6 +305,8 @@ class PortalTurnEventBuilder:
         all_query = str(clarification.get("all_query") or "all").strip() or "all"
         all_label = "All fees"
         chips = clarification.get("chips") if isinstance(clarification.get("chips"), list) else []
+        if not chips and isinstance(diagnostics.get("scope_clarification_options"), list):
+            chips = diagnostics.get("scope_clarification_options")
         for chip in chips:
             if not isinstance(chip, Mapping):
                 continue
@@ -325,19 +327,23 @@ class PortalTurnEventBuilder:
             or "I found multiple categories. Pick one category or choose all fees."
         ).strip()
         block_id = f"{tool_use_block_id}__scope_clarification"
+        payload: dict[str, object] = {
+            "source_tool_block_id": tool_use_block_id,
+            "question": question,
+            "all_label": all_label,
+            "all_query": all_query,
+            "categories": categories,
+            "top_categories": top_categories,
+            "visible_count": 3,
+        }
+        sanitized_chips = [dict(chip) for chip in chips if isinstance(chip, Mapping)]
+        if sanitized_chips:
+            payload["chips"] = sanitized_chips
         return {
             "block_id": block_id,
             "type": "scope_clarification",
             "created_at": created_at or timezone.now().isoformat(),
-            "payload": {
-                "source_tool_block_id": tool_use_block_id,
-                "question": question,
-                "all_label": all_label,
-                "all_query": all_query,
-                "categories": categories,
-                "top_categories": top_categories,
-                "visible_count": 3,
-            },
+            "payload": payload,
         }
 
     def _apply_block_event(self, event: Mapping[str, object]) -> None:
@@ -1331,10 +1337,35 @@ class PortalTurnRunner:
             "on_reasoning_event": self.builder.on_reasoning_event,
             "should_cancel": _should_cancel,
         }
+        scope_selection_metadata: dict[str, object] | None = None
+        turn_metadata = self.turn.metadata if isinstance(getattr(self.turn, "metadata", None), Mapping) else {}
+        raw_scope_selection = (
+            turn_metadata.get("scope_selection") or turn_metadata.get("scopeSelection")
+            if isinstance(turn_metadata, Mapping)
+            else None
+        )
+        if isinstance(raw_scope_selection, Mapping):
+            normalized_scope_selection: dict[str, object] = {}
+            action = str(raw_scope_selection.get("action") or "").strip().lower()
+            if action in {"select_category", "all_fees", "choose_categories"}:
+                normalized_scope_selection["action"] = action
+            category_key = str(raw_scope_selection.get("category_key") or "").strip().lower()
+            if category_key:
+                normalized_scope_selection["category_key"] = category_key[:120]
+            category_label = str(raw_scope_selection.get("category_label") or "").strip()
+            if category_label:
+                normalized_scope_selection["category_label"] = category_label[:120]
+            block_id = str(raw_scope_selection.get("block_id") or "").strip().lower()
+            if block_id:
+                normalized_scope_selection["block_id"] = block_id[:120]
+            if normalized_scope_selection:
+                scope_selection_metadata = normalized_scope_selection
         try:
             parameters = inspect.signature(orchestrator.stream_turn).parameters
         except (TypeError, ValueError):
             parameters = {}
+        if "user_metadata" in parameters and scope_selection_metadata:
+            stream_kwargs["user_metadata"] = {"scope_selection": scope_selection_metadata}
         if "wait_for_tool_approval" in parameters:
             stream_kwargs["wait_for_tool_approval"] = True
         if "portal_emit_blocks_enabled" in parameters:

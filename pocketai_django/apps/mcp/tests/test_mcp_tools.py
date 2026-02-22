@@ -183,7 +183,53 @@ class McpScopeClarificationToolTests(SimpleTestCase):
         chip_ids = {str(item.get("id") or "") for item in chips if isinstance(item, dict)}
         self.assertIn("all_fees", chip_ids)
         self.assertIn("choose_categories", chip_ids)
+        action_key_by_id = {
+            str(item.get("id") or ""): str(item.get("category_key") or "")
+            for item in chips
+            if isinstance(item, dict) and str(item.get("kind") or "") == "action"
+        }
+        self.assertEqual(action_key_by_id.get("all_fees"), "scope_all_fees")
+        self.assertEqual(action_key_by_id.get("choose_categories"), "scope_choose_categories")
+        category_chips = [
+            item for item in chips if isinstance(item, dict) and str(item.get("kind") or "") == "category"
+        ]
+        self.assertTrue(category_chips)
+        self.assertTrue(all(str(item.get("category_key") or "").strip() for item in category_chips))
+        self.assertTrue(
+            all(
+                str(item.get("query") or "").strip()
+                == f"scope:category_key:{str(item.get('category_key') or '').strip()}"
+                for item in category_chips
+            )
+        )
+        self.assertTrue(all(isinstance(item.get("mapped_refs"), dict) for item in category_chips))
+        self.assertTrue(all((item.get("mapped_refs") or {}).get("fallback") == "scoped_search" for item in category_chips))
         self.assertIn("Do you want one specific category", str(result.get("hint") or ""))
+
+    def test_extract_scope_clarification_intent_parses_category_key_selector(self) -> None:
+        category_key = tools._scope_category_key("outgoing transfer fees")
+        intent = tools._extract_scope_clarification_intent(f"scope:category_key:{category_key}")
+        self.assertEqual((intent or {}).get("mode"), "specific_key")
+        self.assertEqual((intent or {}).get("category_key"), category_key)
+
+    def test_resolve_scope_clarification_followup_prefers_exact_category_key(self) -> None:
+        categories = [
+            "outgoing transfer fees",
+            "incoming transfer fees",
+        ]
+        outgoing_key = tools._scope_category_key("outgoing transfer fees")
+        resolution = tools._resolve_scope_clarification_followup(
+            user_query=f"scope:category_key:{outgoing_key}",
+            pending_scope={
+                "base_query": "what are the fees for plus customers?",
+                "categories": categories,
+            },
+        )
+        self.assertIsNotNone(resolution)
+        self.assertEqual((resolution or {}).get("mode"), "specific")
+        self.assertEqual((resolution or {}).get("category"), "outgoing transfer fees")
+        self.assertEqual((resolution or {}).get("selection_mode"), "single")
+        self.assertEqual((resolution or {}).get("categories"), ["outgoing transfer fees"])
 
 
 class McpReadDocumentHandlerTests(TestCase):
@@ -531,6 +577,62 @@ class McpSearchKnowledgeHandlerTests(TestCase):
         )
         self.assertEqual(result.get("status"), "empty")
 
+    def test_convert_to_agentic_search_response_preserves_prefetched_scope_auto_read_evidence(self) -> None:
+        legacy_payload = {
+            "tool": "search_knowledge",
+            "status": "ok",
+            "snippets": [
+                {
+                    "id": "6a8e31fb-f8d9-4a59-8ce0-c3452e0dcf8f",
+                    "chunk_id": "6a8e31fb-f8d9-4a59-8ce0-c3452e0dcf8f",
+                    "upload_id": "80514adf-ef29-4867-bb8c-76694be83f26",
+                    "title": "Transfer Fees",
+                    "summary": "Outgoing transfer fee is 0 for Plus customers.",
+                    "content": "Outgoing transfer fee is 0 for Plus customers.",
+                    "read_state": "full",
+                }
+            ],
+            "hint": "Selection resolved and evidence is already loaded.",
+            "prefetched_read_status": "ok",
+            "prefetched_evidence": [
+                {
+                    "id": "6a8e31fb-f8d9-4a59-8ce0-c3452e0dcf8f",
+                    "document_id": "80514adf-ef29-4867-bb8c-76694be83f26",
+                    "title": "Transfer Fees",
+                    "type": "text",
+                    "kind": "text_excerpt",
+                    "chars": 52,
+                    "truncated": False,
+                    "text": "Outgoing transfer fee is 0 for Plus customers.",
+                }
+            ],
+            "scope_resolution": {
+                "mode": "specific",
+                "category": "outgoing transfer fees",
+                "selection_mode": "single",
+            },
+        }
+        context = ToolExecutionContext(
+            max_chunk_reads_per_turn=5,
+            max_chunk_pages_per_turn=5,
+            char_budget_per_turn=5000,
+        )
+
+        result = tools._convert_to_agentic_search_response(
+            legacy_payload,
+            conversation=self.conversation,
+            context=context,
+        )
+
+        self.assertEqual(result.get("tool"), "search_knowledge")
+        self.assertEqual(result.get("status"), "ok")
+        self.assertEqual(result.get("prefetched_read_status"), "ok")
+        self.assertTrue(result.get("prefetched_evidence"))
+        self.assertEqual(
+            ((result.get("scope_resolution") or {}).get("category")),
+            "outgoing transfer fees",
+        )
+
     @override_settings(MCP_SEARCH_PAGINATION_ENABLED=False, MCP_NEW_CONTRACT_ENABLED=False)
     @mock.patch("apps.mcp.tools._knowledge_service")
     def test_search_knowledge_preserves_clarification_status_from_batched_runs(self, service_factory_mock) -> None:
@@ -771,6 +873,24 @@ class McpSearchKnowledgeHandlerTests(TestCase):
         self.assertIn("all_fees", option_ids)
         self.assertIn("choose_categories", option_ids)
         self.assertTrue(any(str(option_id).startswith("category_") for option_id in option_ids))
+        category_options = [
+            item for item in options if isinstance(item, dict) and str(item.get("kind") or "") == "category"
+        ]
+        self.assertTrue(category_options)
+        self.assertTrue(all(str(item.get("category_key") or "").strip() for item in category_options))
+        self.assertEqual(
+            len({str(item.get("category_key") or "") for item in category_options}),
+            len(category_options),
+        )
+        self.assertTrue(
+            all(
+                str(item.get("query") or "").strip()
+                == f"scope:category_key:{str(item.get('category_key') or '').strip()}"
+                for item in category_options
+            )
+        )
+        self.assertTrue(all(isinstance(item.get("mapped_refs"), dict) for item in category_options))
+        self.assertTrue(all((item.get("mapped_refs") or {}).get("fallback") == "scoped_search" for item in category_options))
 
         clarification = result.get("clarification") or {}
         self.assertEqual(clarification.get("mode"), "mcq")
@@ -784,6 +904,103 @@ class McpSearchKnowledgeHandlerTests(TestCase):
 
         pending_scope = context.pending_scope_clarification or {}
         self.assertEqual(len(pending_scope.get("categories") or []), 6)
+        pending_category_refs = pending_scope.get("category_refs") or {}
+        self.assertTrue(pending_category_refs)
+        self.assertEqual(
+            len(pending_category_refs),
+            len([item for item in category_options if isinstance(item, dict)]),
+        )
+
+    @override_settings(
+        MCP_SEARCH_PAGINATION_ENABLED=False,
+        MCP_NEW_CONTRACT_ENABLED=False,
+        MCP_SCOPE_CLARIFICATION_MCQ_ENABLED=True,
+    )
+    @mock.patch("apps.mcp.tools._knowledge_service")
+    def test_search_knowledge_mcq_category_keys_are_deterministic_and_mapped_refs_optional(
+        self,
+        service_factory_mock,
+    ) -> None:
+        import uuid
+
+        mapped_ref_id = str(uuid.uuid4())
+
+        class _DummySearchResult:
+            def __init__(self) -> None:
+                self.snippets = tuple()
+                self.status = "needs_clarification"
+                self.diagnostics = {
+                    "path": "clarification",
+                    "reason": "broad_scope_ambiguity",
+                    "intent_requires_clarification": True,
+                    "intent_clarification_question": "Do you want one specific category or all related fees?",
+                    "categories": [
+                        "online banking fees",
+                        "outgoing transfer fees",
+                        "statement fees",
+                    ],
+                    "top_categories": [
+                        "online banking fees",
+                        "outgoing transfer fees",
+                        "statement fees",
+                    ],
+                    "scope_clarification_category_refs": {
+                        "online banking fees": {
+                            "ref_ids": [mapped_ref_id],
+                            "source": "retrieval",
+                        }
+                    },
+                }
+
+        service_mock = mock.Mock()
+        service_mock.search.return_value = _DummySearchResult()
+        service_factory_mock.return_value = service_mock
+
+        context_one = ToolExecutionContext(
+            max_chunk_reads_per_turn=5,
+            max_chunk_pages_per_turn=5,
+            char_budget_per_turn=5000,
+        )
+        first = tools._search_knowledge_handler(
+            {"query": "what are the fees for plus customers?", "limit": 5},
+            self.conversation,
+            context_one,
+        )
+        first_options = ((first.get("diagnostics") or {}).get("scope_clarification_options") or [])
+        first_key = ""
+        for option in first_options:
+            if not isinstance(option, dict):
+                continue
+            if str(option.get("label") or "") != "online banking fees":
+                continue
+            first_key = str(option.get("category_key") or "").strip()
+            mapped_refs = option.get("mapped_refs") if isinstance(option.get("mapped_refs"), dict) else {}
+            self.assertEqual(mapped_refs.get("ref_ids"), [mapped_ref_id])
+            break
+        self.assertTrue(first_key)
+
+        context_two = ToolExecutionContext(
+            max_chunk_reads_per_turn=5,
+            max_chunk_pages_per_turn=5,
+            char_budget_per_turn=5000,
+        )
+        second = tools._search_knowledge_handler(
+            {"query": "what are the fees for plus customers?", "limit": 5},
+            self.conversation,
+            context_two,
+        )
+        second_options = ((second.get("diagnostics") or {}).get("scope_clarification_options") or [])
+        second_key = ""
+        for option in second_options:
+            if isinstance(option, dict) and str(option.get("label") or "") == "online banking fees":
+                second_key = str(option.get("category_key") or "").strip()
+                break
+        self.assertEqual(first_key, second_key)
+
+        clarification = first.get("clarification") or {}
+        category_refs = clarification.get("category_refs") or {}
+        self.assertIn(first_key, category_refs)
+        self.assertEqual((category_refs.get(first_key) or {}).get("ref_ids"), [mapped_ref_id])
 
     @override_settings(
         MCP_SEARCH_PAGINATION_ENABLED=False,
@@ -834,6 +1051,8 @@ class McpSearchKnowledgeHandlerTests(TestCase):
         self.assertNotIn("clarification_actions", diagnostics)
         self.assertNotIn("scope_clarification_options", diagnostics)
         self.assertNotIn("scope_clarification_actions", diagnostics)
+        self.assertNotIn("scope_clarification_contract_version", diagnostics)
+        self.assertNotIn("scope_clarification_category_refs", diagnostics)
         self.assertNotIn("scope_clarification_more_query", diagnostics)
 
     @override_settings(MCP_SEARCH_PAGINATION_ENABLED=False, MCP_NEW_CONTRACT_ENABLED=False)
@@ -1305,19 +1524,898 @@ class McpSearchKnowledgeHandlerTests(TestCase):
         self.assertEqual(first_diagnostics.get("clarification_ui_mode"), "mcq")
         self.assertIsNotNone(context.pending_scope_clarification)
 
+        selected_category = "outgoing transfer fees"
+        selected_category_key = tools._scope_category_key(selected_category)
         second = tools._search_knowledge_handler(
-            {"query": "outgoing transfer fees", "limit": 5},
+            {"query": f"scope:category_key:{selected_category_key}", "limit": 5},
             self.conversation,
             context,
         )
         self.assertEqual(second.get("status"), "ok")
         self.assertIsNone(context.pending_scope_clarification)
         self.assertEqual((context.scope_resolution or {}).get("mode"), "specific")
-        self.assertEqual((context.scope_resolution or {}).get("category"), "outgoing transfer fees")
+        self.assertEqual((context.scope_resolution or {}).get("category"), selected_category)
+        self.assertEqual((context.scope_resolution or {}).get("categories"), [selected_category])
 
         second_query = str(service_mock.search.call_args_list[1].kwargs.get("query") or "").lower()
         self.assertIn("what are the fees for plus customers?", second_query)
         self.assertIn("focus only on outgoing transfer fees", second_query)
+
+    @override_settings(
+        MCP_SEARCH_PAGINATION_ENABLED=False,
+        MCP_NEW_CONTRACT_ENABLED=False,
+        MCP_SCOPE_CLARIFICATION_MCQ_ENABLED=True,
+    )
+    @mock.patch("apps.mcp.tools._agentic_read_v2_handler")
+    @mock.patch("apps.mcp.tools._knowledge_service")
+    def test_search_knowledge_scope_clarification_followup_category_key_runs_scoped_search(
+        self,
+        service_factory_mock,
+        auto_read_mock,
+    ) -> None:
+        import uuid
+        from apps.rag.ai_orchestrator import KnowledgeSnippet
+
+        class _DummySearchResult:
+            def __init__(self, *, status: str, snippets: tuple[object, ...], diagnostics: dict[str, object]) -> None:
+                self.snippets = snippets
+                self.status = status
+                self.diagnostics = diagnostics
+
+        mapped_ref_id = str(uuid.uuid4())
+        snippet_upload_id = uuid.uuid4()
+        snippet_chunk_id = uuid.uuid4()
+        snippet = KnowledgeSnippet(
+            id=snippet_chunk_id,
+            title="Transfer Fees",
+            summary="Outgoing transfer fees for Plus customers.",
+            source="file",
+            content="Outgoing transfer fee is 0 for Plus customers.",
+            upload_id=snippet_upload_id,
+            chunk_id=snippet_chunk_id,
+            chunk_index=2,
+            page_number=1,
+            is_table_chunk=False,
+            read_state="summary",
+        )
+        service_mock = mock.Mock()
+        service_mock.search.side_effect = [
+            _DummySearchResult(
+                status="needs_clarification",
+                snippets=tuple(),
+                diagnostics={
+                    "reason": "broad_scope_ambiguity",
+                    "intent_clarification_question": "Do you want one specific category or all related fees?",
+                    "categories": [
+                        "online banking fees",
+                        "outgoing transfer fees",
+                        "statement fees",
+                    ],
+                    "top_categories": [
+                        "online banking fees",
+                        "outgoing transfer fees",
+                        "statement fees",
+                    ],
+                    "scope_clarification_category_refs": {
+                        "outgoing transfer fees": {
+                            "ref_ids": [mapped_ref_id],
+                            "source": "retrieval_candidates",
+                        }
+                    },
+                },
+            ),
+            _DummySearchResult(
+                status="ok",
+                snippets=(snippet,),
+                diagnostics={"path": "search"},
+            ),
+        ]
+        service_factory_mock.return_value = service_mock
+        auto_read_mock.return_value = {
+            "tool": "read_knowledge",
+            "status": "ok",
+            "evidence": [
+                {
+                    "id": mapped_ref_id,
+                    "document_id": str(uuid.uuid4()),
+                    "title": "Transfer Fees",
+                    "type": "text",
+                    "kind": "text_excerpt",
+                    "payload": {"type": "text", "text": "Outgoing transfer fee is 0 for Plus customers."},
+                    "chars": 52,
+                    "complete": True,
+                    "truncated": False,
+                }
+            ],
+            "read": [{"id": mapped_ref_id, "status": "full", "chars": 52}],
+            "total_chars": 52,
+            "max_chars": 2000,
+            "max_chars_allowed": 20000,
+        }
+
+        context = ToolExecutionContext(
+            max_chunk_reads_per_turn=5,
+            max_chunk_pages_per_turn=5,
+            char_budget_per_turn=5000,
+        )
+
+        first = tools._search_knowledge_handler(
+            {"query": "what are the fees for plus customers?", "limit": 5},
+            self.conversation,
+            context,
+        )
+        self.assertEqual(first.get("status"), "needs_clarification")
+        options = ((first.get("diagnostics") or {}).get("scope_clarification_options") or [])
+        selected_key = ""
+        for option in options:
+            if not isinstance(option, dict):
+                continue
+            if str(option.get("label") or "").strip() != "outgoing transfer fees":
+                continue
+            selected_key = str(option.get("category_key") or "").strip()
+            break
+        self.assertTrue(selected_key)
+
+        second = tools._search_knowledge_handler(
+            {"query": f"scope:category_key:{selected_key}", "limit": 5},
+            self.conversation,
+            context,
+        )
+        self.assertEqual(second.get("status"), "ok")
+        self.assertEqual(service_mock.search.call_count, 2)
+        self.assertEqual(auto_read_mock.call_count, 0)
+
+        diagnostics = second.get("diagnostics") or {}
+        self.assertFalse(diagnostics.get("scope_auto_read_applied"))
+
+    @override_settings(
+        MCP_SEARCH_PAGINATION_ENABLED=False,
+        MCP_NEW_CONTRACT_ENABLED=False,
+        MCP_SCOPE_CLARIFICATION_MCQ_ENABLED=True,
+    )
+    @mock.patch("apps.mcp.tools._knowledge_service")
+    def test_search_knowledge_scope_selection_invalid_key_falls_back_to_category_label(
+        self,
+        service_factory_mock,
+    ) -> None:
+        class _DummySearchResult:
+            def __init__(
+                self,
+                *,
+                status: str,
+                snippets: tuple[object, ...],
+                diagnostics: dict[str, object],
+            ) -> None:
+                self.snippets = snippets
+                self.status = status
+                self.diagnostics = diagnostics
+
+        service_mock = mock.Mock()
+        service_mock.search.side_effect = [
+            _DummySearchResult(
+                status="needs_clarification",
+                snippets=tuple(),
+                diagnostics={
+                    "reason": "broad_scope_ambiguity",
+                    "intent_clarification_question": "Do you want one specific category or all related fees?",
+                    "categories": [
+                        "online banking fees",
+                        "outgoing transfer fees",
+                        "statement fees",
+                    ],
+                    "top_categories": [
+                        "online banking fees",
+                        "outgoing transfer fees",
+                        "statement fees",
+                    ],
+                },
+            ),
+            _DummySearchResult(
+                status="ok",
+                snippets=tuple(),
+                diagnostics={"path": "search"},
+            ),
+        ]
+        service_factory_mock.return_value = service_mock
+
+        context = ToolExecutionContext(
+            max_chunk_reads_per_turn=5,
+            max_chunk_pages_per_turn=5,
+            char_budget_per_turn=5000,
+            latest_user_message="what are the fees for plus customers?",
+        )
+        first = tools._search_knowledge_handler(
+            {"query": "what are the fees for plus customers?", "limit": 5},
+            self.conversation,
+            context,
+        )
+        self.assertEqual(first.get("status"), "needs_clarification")
+        self.assertEqual(service_mock.search.call_count, 1)
+        self.assertIsNotNone(context.pending_scope_clarification)
+
+        context.latest_user_message = "cheques"
+        context.latest_scope_selection = {
+            "action": "select_category",
+            "category_key": "invalid_key_from_client",
+            "category_label": "outgoing transfer fees",
+        }
+        second = tools._search_knowledge_handler(
+            {"query": "cheque service charges", "limit": 5},
+            self.conversation,
+            context,
+        )
+
+        self.assertEqual(second.get("status"), "ok")
+        self.assertEqual(service_mock.search.call_count, 2)
+        scope_resolution = second.get("scope_resolution") or {}
+        self.assertEqual(scope_resolution.get("selection_mode"), "single")
+        self.assertEqual(scope_resolution.get("category"), "outgoing transfer fees")
+        self.assertEqual(
+            scope_resolution.get("user_query"),
+            "scope:category:outgoing transfer fees",
+        )
+        self.assertIsNone(context.pending_scope_clarification)
+
+    @override_settings(
+        MCP_SEARCH_PAGINATION_ENABLED=False,
+        MCP_NEW_CONTRACT_ENABLED=False,
+        MCP_SCOPE_CLARIFICATION_MCQ_ENABLED=True,
+    )
+    @mock.patch("apps.mcp.tools._agentic_read_v2_handler")
+    @mock.patch("apps.mcp.tools._knowledge_service")
+    def test_search_knowledge_scope_clarification_uses_latest_user_selector_when_tool_query_rewritten(
+        self,
+        service_factory_mock,
+        auto_read_mock,
+    ) -> None:
+        import uuid
+        from apps.rag.ai_orchestrator import KnowledgeSnippet
+
+        class _DummySearchResult:
+            def __init__(self, *, status: str, snippets: tuple[object, ...], diagnostics: dict[str, object]) -> None:
+                self.snippets = snippets
+                self.status = status
+                self.diagnostics = diagnostics
+
+        mapped_ref_id = str(uuid.uuid4())
+        snippet_upload_id = uuid.uuid4()
+        snippet_chunk_id = uuid.uuid4()
+        snippet = KnowledgeSnippet(
+            id=snippet_chunk_id,
+            title="Transfer Fees",
+            summary="Outgoing transfer fees for Plus customers.",
+            source="file",
+            content="Outgoing transfer fee is 0 for Plus customers.",
+            upload_id=snippet_upload_id,
+            chunk_id=snippet_chunk_id,
+            chunk_index=2,
+            page_number=1,
+            is_table_chunk=False,
+            read_state="summary",
+        )
+        service_mock = mock.Mock()
+        service_mock.search.side_effect = [
+            _DummySearchResult(
+                status="needs_clarification",
+                snippets=tuple(),
+                diagnostics={
+                    "reason": "broad_scope_ambiguity",
+                    "intent_clarification_question": "Do you want one specific category or all related fees?",
+                    "categories": [
+                        "online banking fees",
+                        "outgoing transfer fees",
+                        "statement fees",
+                    ],
+                    "top_categories": [
+                        "online banking fees",
+                        "outgoing transfer fees",
+                        "statement fees",
+                    ],
+                    "scope_clarification_category_refs": {
+                        "outgoing transfer fees": {
+                            "ref_ids": [mapped_ref_id],
+                            "source": "retrieval_candidates",
+                        }
+                    },
+                },
+            ),
+            _DummySearchResult(
+                status="ok",
+                snippets=(snippet,),
+                diagnostics={"path": "search"},
+            ),
+        ]
+        service_factory_mock.return_value = service_mock
+        auto_read_mock.return_value = {
+            "tool": "read_knowledge",
+            "status": "ok",
+            "evidence": [
+                {
+                    "id": mapped_ref_id,
+                    "document_id": str(uuid.uuid4()),
+                    "title": "Transfer Fees",
+                    "type": "text",
+                    "kind": "text_excerpt",
+                    "payload": {"type": "text", "text": "Outgoing transfer fee is 0 for Plus customers."},
+                    "chars": 52,
+                    "complete": True,
+                    "truncated": False,
+                }
+            ],
+            "read": [{"id": mapped_ref_id, "status": "full", "chars": 52}],
+            "total_chars": 52,
+            "max_chars": 2000,
+            "max_chars_allowed": 20000,
+        }
+
+        context = ToolExecutionContext(
+            max_chunk_reads_per_turn=5,
+            max_chunk_pages_per_turn=5,
+            char_budget_per_turn=5000,
+            latest_user_message="what are the fees for plus customers?",
+        )
+        first = tools._search_knowledge_handler(
+            {"query": "what are the fees for plus customers?", "limit": 5},
+            self.conversation,
+            context,
+        )
+        self.assertEqual(first.get("status"), "needs_clarification")
+        options = ((first.get("diagnostics") or {}).get("scope_clarification_options") or [])
+        selected_key = ""
+        for option in options:
+            if not isinstance(option, dict):
+                continue
+            if str(option.get("label") or "").strip() != "outgoing transfer fees":
+                continue
+            selected_key = str(option.get("category_key") or "").strip()
+            break
+        self.assertTrue(selected_key)
+
+        context.latest_user_message = f"scope:category_key:{selected_key}"
+        second = tools._search_knowledge_handler(
+            {"query": "cheque service charges", "limit": 5},
+            self.conversation,
+            context,
+        )
+
+        self.assertEqual(second.get("status"), "ok")
+        self.assertEqual(service_mock.search.call_count, 2)
+        self.assertEqual(auto_read_mock.call_count, 0)
+        scope_resolution = second.get("scope_resolution") or {}
+        self.assertEqual(scope_resolution.get("selection_mode"), "single")
+        self.assertEqual(scope_resolution.get("category"), "outgoing transfer fees")
+        self.assertEqual(
+            scope_resolution.get("user_query"),
+            f"scope:category_key:{selected_key}",
+        )
+        diagnostics = second.get("diagnostics") or {}
+        self.assertFalse(diagnostics.get("scope_auto_read_applied"))
+
+    @override_settings(
+        MCP_SEARCH_PAGINATION_ENABLED=False,
+        MCP_NEW_CONTRACT_ENABLED=False,
+        MCP_SCOPE_CLARIFICATION_MCQ_ENABLED=True,
+    )
+    @mock.patch("apps.mcp.tools._agentic_read_v2_handler")
+    @mock.patch("apps.mcp.tools._knowledge_service")
+    def test_search_knowledge_scope_clarification_prefers_scope_selection_metadata_when_tool_query_rewritten(
+        self,
+        service_factory_mock,
+        auto_read_mock,
+    ) -> None:
+        import uuid
+
+        class _DummySearchResult:
+            def __init__(self, *, status: str, snippets: tuple[object, ...], diagnostics: dict[str, object]) -> None:
+                self.snippets = snippets
+                self.status = status
+                self.diagnostics = diagnostics
+
+        mapped_ref_id = str(uuid.uuid4())
+        service_mock = mock.Mock()
+        service_mock.search.side_effect = [
+            _DummySearchResult(
+                status="needs_clarification",
+                snippets=tuple(),
+                diagnostics={
+                    "reason": "broad_scope_ambiguity",
+                    "intent_clarification_question": "Do you want one specific category or all related fees?",
+                    "categories": [
+                        "online banking fees",
+                        "outgoing transfer fees",
+                        "statement fees",
+                    ],
+                    "top_categories": [
+                        "online banking fees",
+                        "outgoing transfer fees",
+                        "statement fees",
+                    ],
+                    "scope_clarification_category_refs": {
+                        "outgoing transfer fees": {
+                            "ref_ids": [mapped_ref_id],
+                            "source": "retrieval_candidates",
+                        }
+                    },
+                },
+            ),
+            _DummySearchResult(
+                status="ok",
+                snippets=tuple(),
+                diagnostics={"path": "search"},
+            ),
+        ]
+        service_factory_mock.return_value = service_mock
+        auto_read_mock.return_value = {
+            "tool": "read_knowledge",
+            "status": "ok",
+            "evidence": [
+                {
+                    "id": mapped_ref_id,
+                    "document_id": str(uuid.uuid4()),
+                    "title": "Transfer Fees",
+                    "type": "text",
+                    "kind": "text_excerpt",
+                    "payload": {"type": "text", "text": "Outgoing transfer fee is 0 for Plus customers."},
+                    "chars": 52,
+                    "complete": True,
+                    "truncated": False,
+                }
+            ],
+            "read": [{"id": mapped_ref_id, "status": "full", "chars": 52}],
+            "total_chars": 52,
+            "max_chars": 2000,
+            "max_chars_allowed": 20000,
+        }
+
+        context = ToolExecutionContext(
+            max_chunk_reads_per_turn=5,
+            max_chunk_pages_per_turn=5,
+            char_budget_per_turn=5000,
+            latest_user_message="what are the fees for plus customers?",
+        )
+        first = tools._search_knowledge_handler(
+            {"query": "what are the fees for plus customers?", "limit": 5},
+            self.conversation,
+            context,
+        )
+        self.assertEqual(first.get("status"), "needs_clarification")
+        options = ((first.get("diagnostics") or {}).get("scope_clarification_options") or [])
+        selected_key = ""
+        for option in options:
+            if not isinstance(option, dict):
+                continue
+            if str(option.get("label") or "").strip() != "outgoing transfer fees":
+                continue
+            selected_key = str(option.get("category_key") or "").strip()
+            break
+        self.assertTrue(selected_key)
+
+        context.latest_user_message = "cheques"
+        context.latest_scope_selection = {
+            "action": "select_category",
+            "category_key": selected_key,
+            "category_label": "outgoing transfer fees",
+        }
+        second = tools._search_knowledge_handler(
+            {"query": "cheque service charges", "limit": 5},
+            self.conversation,
+            context,
+        )
+
+        self.assertEqual(second.get("status"), "ok")
+        self.assertEqual(service_mock.search.call_count, 2)
+        self.assertEqual(auto_read_mock.call_count, 0)
+        scope_resolution = second.get("scope_resolution") or {}
+        self.assertEqual(scope_resolution.get("selection_mode"), "single")
+        self.assertEqual(scope_resolution.get("category"), "outgoing transfer fees")
+        self.assertEqual(
+            scope_resolution.get("user_query"),
+            f"scope:category_key:{selected_key}",
+        )
+        diagnostics = second.get("diagnostics") or {}
+        self.assertFalse(diagnostics.get("scope_auto_read_applied"))
+
+    @override_settings(
+        MCP_SEARCH_PAGINATION_ENABLED=False,
+        MCP_NEW_CONTRACT_ENABLED=False,
+        MCP_SCOPE_CLARIFICATION_MCQ_ENABLED=True,
+    )
+    @mock.patch("apps.mcp.tools._agentic_read_v2_handler")
+    @mock.patch("apps.mcp.tools._knowledge_service")
+    def test_search_knowledge_scope_fallback_runs_scoped_search_then_read_when_mapping_missing(
+        self,
+        service_factory_mock,
+        auto_read_mock,
+    ) -> None:
+        import uuid
+        from apps.rag.ai_orchestrator import KnowledgeSnippet
+
+        category_label = "new international limits debit credit cards"
+        snippet_upload_id = uuid.uuid4()
+        snippet_chunk_id = uuid.uuid4()
+        snippet = KnowledgeSnippet(
+            id=snippet_chunk_id,
+            title="International Limits",
+            summary="Debit and credit card international limits.",
+            source="file",
+            content="International limits for debit and credit cards.",
+            upload_id=snippet_upload_id,
+            chunk_id=snippet_chunk_id,
+            chunk_index=2,
+            page_number=1,
+            is_table_chunk=False,
+            read_state="summary",
+        )
+
+        class _DummySearchResult:
+            def __init__(self, *, status: str, snippets: tuple[KnowledgeSnippet, ...], diagnostics: dict[str, object]) -> None:
+                self.snippets = snippets
+                self.status = status
+                self.diagnostics = diagnostics
+
+        service_mock = mock.Mock()
+        service_mock.search.side_effect = [
+            _DummySearchResult(
+                status="needs_clarification",
+                snippets=tuple(),
+                diagnostics={
+                    "reason": "broad_scope_ambiguity",
+                    "intent_clarification_question": "Do you want one specific category or all related fees?",
+                    "categories": [category_label, "monthly international purchase online limit"],
+                    "top_categories": [category_label, "monthly international purchase online limit"],
+                },
+            ),
+            _DummySearchResult(
+                status="ok",
+                snippets=(snippet,),
+                diagnostics={"path": "hybrid"},
+            ),
+        ]
+        service_factory_mock.return_value = service_mock
+
+        context = ToolExecutionContext(
+            max_chunk_reads_per_turn=5,
+            max_chunk_pages_per_turn=5,
+            char_budget_per_turn=5000,
+        )
+        first = tools._search_knowledge_handler(
+            {"query": "tell me about plus fees", "limit": 5},
+            self.conversation,
+            context,
+        )
+        self.assertEqual(first.get("status"), "needs_clarification")
+        options = ((first.get("diagnostics") or {}).get("scope_clarification_options") or [])
+        selected_key = ""
+        for option in options:
+            if isinstance(option, dict) and str(option.get("label") or "") == category_label:
+                selected_key = str(option.get("category_key") or "").strip()
+                break
+        self.assertTrue(selected_key)
+
+        second = tools._search_knowledge_handler(
+            {"query": f"scope:category_key:{selected_key}", "limit": 5},
+            self.conversation,
+            context,
+        )
+        self.assertEqual(second.get("status"), "ok")
+        diagnostics = second.get("diagnostics") or {}
+        self.assertTrue(diagnostics.get("scope_fallback_applied"))
+        self.assertEqual(diagnostics.get("scope_fallback_mode"), "scoped_search")
+        self.assertEqual(diagnostics.get("scope_fallback_reason"), "missing_or_stale_mapping")
+        self.assertEqual(service_mock.search.call_count, 2)
+        self.assertEqual(auto_read_mock.call_count, 0)
+        self.assertFalse(second.get("prefetched_evidence"))
+
+    @override_settings(
+        MCP_SEARCH_PAGINATION_ENABLED=False,
+        MCP_NEW_CONTRACT_ENABLED=False,
+        MCP_SCOPE_CLARIFICATION_MCQ_ENABLED=True,
+        MCP_SEARCH_DUPLICATE_INTENT_ENABLED=False,
+    )
+    @mock.patch("apps.mcp.tools._agentic_read_v2_handler")
+    @mock.patch("apps.mcp.tools._knowledge_service")
+    def test_search_knowledge_scope_fallback_asks_source_preference_once_on_auto_source_ambiguity(
+        self,
+        service_factory_mock,
+        auto_read_mock,
+    ) -> None:
+        category_label = "new international limits debit credit cards"
+
+        class _DummySearchResult:
+            def __init__(self, *, status: str, snippets: tuple[object, ...], diagnostics: dict[str, object]) -> None:
+                self.snippets = snippets
+                self.status = status
+                self.diagnostics = diagnostics
+
+        service_mock = mock.Mock()
+        service_mock.search.side_effect = [
+            _DummySearchResult(
+                status="needs_clarification",
+                snippets=tuple(),
+                diagnostics={
+                    "reason": "broad_scope_ambiguity",
+                    "intent_clarification_question": "Do you want one specific category or all related fees?",
+                    "categories": [category_label, "monthly international purchase online limit"],
+                    "top_categories": [category_label, "monthly international purchase online limit"],
+                },
+            ),
+            _DummySearchResult(
+                status="needs_clarification",
+                snippets=tuple(),
+                diagnostics={
+                    "reason": "auto_source_ambiguity",
+                    "intent_clarification_question": "I found both table and text evidence around limits.",
+                },
+            ),
+        ]
+        service_factory_mock.return_value = service_mock
+        auto_read_mock.return_value = {"tool": "read_knowledge", "status": "ok", "evidence": [], "read": []}
+
+        context = ToolExecutionContext(
+            max_chunk_reads_per_turn=5,
+            max_chunk_pages_per_turn=5,
+            char_budget_per_turn=5000,
+        )
+        first = tools._search_knowledge_handler(
+            {"query": "tell me about plus fees", "limit": 5},
+            self.conversation,
+            context,
+        )
+        self.assertEqual(first.get("status"), "needs_clarification")
+        options = ((first.get("diagnostics") or {}).get("scope_clarification_options") or [])
+        selected_key = ""
+        for option in options:
+            if isinstance(option, dict) and str(option.get("label") or "") == category_label:
+                selected_key = str(option.get("category_key") or "").strip()
+                break
+        self.assertTrue(selected_key)
+
+        second = tools._search_knowledge_handler(
+            {"query": f"scope:category_key:{selected_key}", "limit": 5},
+            self.conversation,
+            context,
+        )
+        self.assertEqual(second.get("status"), "needs_clarification")
+        self.assertIn("table-only", str(second.get("hint") or "").lower())
+        self.assertIn("text-only", str(second.get("hint") or "").lower())
+        self.assertIn("both", str(second.get("hint") or "").lower())
+        diagnostics = second.get("diagnostics") or {}
+        self.assertTrue(diagnostics.get("scope_fallback_applied"))
+        self.assertTrue(diagnostics.get("scope_source_preference_followup"))
+        self.assertEqual(auto_read_mock.call_count, 0)
+
+    @override_settings(
+        MCP_SEARCH_PAGINATION_ENABLED=False,
+        MCP_NEW_CONTRACT_ENABLED=False,
+        MCP_SCOPE_CLARIFICATION_MCQ_ENABLED=True,
+    )
+    @mock.patch("apps.mcp.tools._agentic_read_v2_handler")
+    @mock.patch("apps.mcp.tools._knowledge_service")
+    def test_search_knowledge_scope_fallback_triggers_when_mapping_confidence_low(
+        self,
+        service_factory_mock,
+        auto_read_mock,
+    ) -> None:
+        import uuid
+        from apps.rag.ai_orchestrator import KnowledgeSnippet
+
+        category_label = "new international limits debit credit cards"
+        low_conf_mapped_ref = str(uuid.uuid4())
+        snippet_upload_id = uuid.uuid4()
+        snippet_chunk_id = uuid.uuid4()
+        snippet = KnowledgeSnippet(
+            id=snippet_chunk_id,
+            title="International Limits",
+            summary="Debit and credit card international limits.",
+            source="file",
+            content="International limits for debit and credit cards.",
+            upload_id=snippet_upload_id,
+            chunk_id=snippet_chunk_id,
+            chunk_index=1,
+            page_number=1,
+            is_table_chunk=False,
+            read_state="summary",
+        )
+
+        class _DummySearchResult:
+            def __init__(self, *, status: str, snippets: tuple[KnowledgeSnippet, ...], diagnostics: dict[str, object]) -> None:
+                self.snippets = snippets
+                self.status = status
+                self.diagnostics = diagnostics
+
+        service_mock = mock.Mock()
+        service_mock.search.side_effect = [
+            _DummySearchResult(
+                status="needs_clarification",
+                snippets=tuple(),
+                diagnostics={
+                    "reason": "broad_scope_ambiguity",
+                    "intent_clarification_question": "Do you want one specific category or all related fees?",
+                    "categories": [category_label, "monthly international purchase online limit"],
+                    "top_categories": [category_label, "monthly international purchase online limit"],
+                    "scope_clarification_category_refs": {
+                        category_label: {
+                            "ref_ids": [low_conf_mapped_ref],
+                            "confidence": 0.2,
+                            "source": "retrieval_candidates",
+                        }
+                    },
+                },
+            ),
+            _DummySearchResult(
+                status="ok",
+                snippets=(snippet,),
+                diagnostics={"path": "hybrid"},
+            ),
+        ]
+        service_factory_mock.return_value = service_mock
+        context = ToolExecutionContext(
+            max_chunk_reads_per_turn=5,
+            max_chunk_pages_per_turn=5,
+            char_budget_per_turn=5000,
+        )
+        first = tools._search_knowledge_handler(
+            {"query": "tell me about plus fees", "limit": 5},
+            self.conversation,
+            context,
+        )
+        self.assertEqual(first.get("status"), "needs_clarification")
+        options = ((first.get("diagnostics") or {}).get("scope_clarification_options") or [])
+        selected_key = ""
+        for option in options:
+            if isinstance(option, dict) and str(option.get("label") or "") == category_label:
+                selected_key = str(option.get("category_key") or "").strip()
+                break
+        self.assertTrue(selected_key)
+
+        second = tools._search_knowledge_handler(
+            {"query": f"scope:category_key:{selected_key}", "limit": 5},
+            self.conversation,
+            context,
+        )
+        self.assertEqual(second.get("status"), "ok")
+        diagnostics = second.get("diagnostics") or {}
+        self.assertTrue(diagnostics.get("scope_fallback_applied"))
+        self.assertEqual(diagnostics.get("scope_fallback_reason"), "low_confidence_mapping")
+        self.assertEqual(service_mock.search.call_count, 2)
+        self.assertEqual(auto_read_mock.call_count, 0)
+
+    @override_settings(
+        MCP_NEW_CONTRACT_ENABLED=True,
+        MCP_SCOPE_CLARIFICATION_MCQ_ENABLED=True,
+    )
+    @mock.patch("apps.mcp.tools._agentic_read_v2_handler")
+    def test_read_knowledge_agentic_wrapper_repairs_label_id_using_scope_state(
+        self,
+        read_engine_mock,
+    ) -> None:
+        import uuid
+
+        mapped_ref_id = str(uuid.uuid4())
+        context = ToolExecutionContext(
+            max_chunk_reads_per_turn=5,
+            max_chunk_pages_per_turn=5,
+            char_budget_per_turn=5000,
+        )
+        selected_category = "new international limits debit credit cards"
+        context.set_scope_resolution(
+            mode="specific",
+            base_query="tell me about plus fees",
+            resolved_query="tell me about plus fees focus only on new international limits debit credit cards",
+            user_query=f"scope:category_key:{tools._scope_category_key(selected_category)}",
+            category=selected_category,
+            categories=[selected_category],
+            category_key=tools._scope_category_key(selected_category),
+            mapped_ref_ids=[mapped_ref_id],
+            mapped_refs={"ref_ids": [mapped_ref_id], "source": "scope_state"},
+            selection_source="category_key",
+        )
+        read_engine_mock.return_value = {
+            "tool": "read_knowledge",
+            "status": "ok",
+            "evidence": [],
+            "read": [{"id": mapped_ref_id, "status": "full"}],
+        }
+
+        result = tools._read_knowledge_agentic_wrapper(
+            {
+                "refs": [{"id": selected_category}],
+                "max_chars": 2000,
+            },
+            self.conversation,
+            context,
+        )
+
+        self.assertEqual(result.get("status"), "ok")
+        self.assertEqual(read_engine_mock.call_count, 1)
+        engine_args = read_engine_mock.call_args.args[0] if read_engine_mock.call_args else {}
+        self.assertEqual(
+            [str(item.get("id") or "") for item in (engine_args.get("items") or [])],
+            [mapped_ref_id],
+        )
+        repairs = result.get("ref_repairs") or []
+        self.assertTrue(repairs)
+        self.assertEqual((repairs[0] or {}).get("input_id"), selected_category)
+
+    @override_settings(
+        MCP_NEW_CONTRACT_ENABLED=True,
+        MCP_SCOPE_CLARIFICATION_MCQ_ENABLED=True,
+        MCP_INVALID_READ_REF_RETRY_LIMIT=2,
+    )
+    @mock.patch("apps.mcp.tools._agentic_read_v2_handler")
+    def test_read_knowledge_agentic_wrapper_blocks_invalid_ref_retry_loop(
+        self,
+        read_engine_mock,
+    ) -> None:
+        context = ToolExecutionContext(
+            max_chunk_reads_per_turn=5,
+            max_chunk_pages_per_turn=5,
+            char_budget_per_turn=5000,
+        )
+
+        first = tools._read_knowledge_agentic_wrapper(
+            {"refs": [{"id": "new international limits debit credit cards"}], "max_chars": 2000},
+            self.conversation,
+            context,
+        )
+        second = tools._read_knowledge_agentic_wrapper(
+            {"refs": [{"id": "new international limits debit credit cards"}], "max_chars": 2000},
+            self.conversation,
+            context,
+        )
+
+        self.assertEqual(first.get("status"), "error")
+        self.assertEqual(first.get("error_code"), "invalid_refs")
+        self.assertEqual(second.get("status"), "blocked")
+        self.assertEqual(second.get("error_code"), "invalid_ref_retry_limit")
+        self.assertEqual(read_engine_mock.call_count, 0)
+
+    @override_settings(
+        MCP_NEW_CONTRACT_ENABLED=True,
+        MCP_SCOPE_CLARIFICATION_MCQ_ENABLED=True,
+    )
+    @mock.patch("apps.mcp.tools._agentic_read_v2_handler")
+    def test_read_knowledge_agentic_wrapper_drops_non_uuid_refs_before_engine(
+        self,
+        read_engine_mock,
+    ) -> None:
+        import uuid
+
+        valid_ref = str(uuid.uuid4())
+        read_engine_mock.return_value = {
+            "tool": "read_knowledge",
+            "status": "ok",
+            "evidence": [],
+            "read": [{"id": valid_ref, "status": "full"}],
+        }
+        context = ToolExecutionContext(
+            max_chunk_reads_per_turn=5,
+            max_chunk_pages_per_turn=5,
+            char_budget_per_turn=5000,
+        )
+
+        result = tools._read_knowledge_agentic_wrapper(
+            {
+                "refs": [
+                    {"id": "monthly international cash withdrawal limit"},
+                    {"id": valid_ref},
+                ],
+                "max_chars": 2000,
+            },
+            self.conversation,
+            context,
+        )
+
+        self.assertEqual(result.get("status"), "ok")
+        self.assertEqual(read_engine_mock.call_count, 1)
+        engine_args = read_engine_mock.call_args.args[0] if read_engine_mock.call_args else {}
+        self.assertEqual(
+            [str(item.get("id") or "") for item in (engine_args.get("items") or [])],
+            [valid_ref],
+        )
+        errors = result.get("errors") or []
+        self.assertTrue(errors)
+        self.assertEqual((errors[0] or {}).get("error_code"), "invalid_id")
 
     @override_settings(MCP_SEARCH_PAGINATION_ENABLED=False, MCP_NEW_CONTRACT_ENABLED=False)
     @mock.patch("apps.mcp.tools._knowledge_service")

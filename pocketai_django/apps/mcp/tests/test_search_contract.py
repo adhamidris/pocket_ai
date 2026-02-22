@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import uuid
 from unittest.mock import patch
 
 from django.test import TestCase, override_settings
 
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession, User
 from apps.conversations.models import Conversation
+from apps.llm.llm_provider import PromptGenerationError
 from apps.mcp.orchestrator import McpOrchestratorService
+from apps.mcp import tools as mcp_tools
 
 
 class _SearchTwiceProvider:
@@ -53,6 +56,136 @@ class _SearchTwiceProvider:
 
         content = "Annual fee example: 100 EGP. Tell me your card type if you want exact fees."
         return {"message": {"role": "assistant", "content": content}}
+
+
+class _SingleAnswerProvider:
+    def __init__(self, content: str = "Cheque fees are available in the selected category.") -> None:
+        self.calls = 0
+        self.content = content
+
+    def chat(
+        self,
+        messages,
+        *,
+        tools=None,
+        on_stream_delta=None,
+        on_reasoning_delta=None,
+        on_tool_call_start=None,
+        on_tool_call_delta=None,
+        response_format=None,
+        should_cancel=None,
+    ):
+        del messages, tools, on_stream_delta, on_reasoning_delta, on_tool_call_start, on_tool_call_delta, response_format, should_cancel
+        self.calls += 1
+        return {"message": {"role": "assistant", "content": self.content}}
+
+
+class _StrictToolEnvelopeProvider:
+    """
+    Provider that mimics DeepSeek's strict request validation.
+
+    It raises when any message content is not a string or when an assistant
+    tool_call carries non-string function.arguments.
+    """
+
+    def __init__(self, content: str = "Cheque fees in Plus are now loaded.") -> None:
+        self.calls = 0
+        self.content = content
+        self.requests: list[list[dict[str, object]]] = []
+
+    def chat(
+        self,
+        messages,
+        *,
+        tools=None,
+        on_stream_delta=None,
+        on_reasoning_delta=None,
+        on_tool_call_start=None,
+        on_tool_call_delta=None,
+        response_format=None,
+        should_cancel=None,
+    ):
+        del tools, on_stream_delta, on_reasoning_delta, on_tool_call_start, on_tool_call_delta, response_format, should_cancel
+        self.calls += 1
+        materialized = [dict(message) for message in messages]
+        self.requests.append(materialized)
+
+        for idx, message in enumerate(materialized):
+            content = message.get("content")
+            if not isinstance(content, str):
+                raise PromptGenerationError(
+                    "DeepSeek tools error (400): "
+                    + json.dumps(
+                        {
+                            "error": {
+                                "message": (
+                                    "Failed to deserialize the JSON body into the target type: "
+                                    f"messages[{idx}]: invalid type: map, expected a string"
+                                )
+                            }
+                        }
+                    )
+                )
+
+            tool_calls = message.get("tool_calls")
+            if not isinstance(tool_calls, list):
+                continue
+            for call in tool_calls:
+                if not isinstance(call, dict):
+                    continue
+                function = call.get("function")
+                if not isinstance(function, dict):
+                    continue
+                arguments = function.get("arguments")
+                if not isinstance(arguments, str):
+                    raise PromptGenerationError(
+                        "DeepSeek tools error (400): "
+                        + json.dumps(
+                            {
+                                "error": {
+                                    "message": (
+                                        "Failed to deserialize the JSON body into the target type: "
+                                        f"messages[{idx}]: invalid type: map, expected a string"
+                                    )
+                                }
+                            }
+                        )
+                    )
+
+        return {"message": {"role": "assistant", "content": self.content}}
+
+
+class _PresentScopeProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def chat(
+        self,
+        messages,
+        *,
+        tools=None,
+        on_stream_delta=None,
+        on_reasoning_delta=None,
+        on_tool_call_start=None,
+        on_tool_call_delta=None,
+        response_format=None,
+        should_cancel=None,
+    ):
+        del messages, tools, on_stream_delta, on_reasoning_delta, on_tool_call_delta, response_format, should_cancel
+        self.calls += 1
+        if self.calls == 1:
+            tool_call = {
+                "id": "call_present_scope",
+                "type": "function",
+                "function": {
+                    "name": "present_scope_clarification",
+                    "arguments": json.dumps({}, ensure_ascii=False),
+                },
+            }
+            if on_tool_call_start:
+                on_tool_call_start(tool_call)
+            return {"message": {"role": "assistant", "content": "", "tool_calls": [tool_call]}}
+        return {"message": {"role": "assistant", "content": "Please choose one category."}}
 
 
 class McpSearchContractTests(TestCase):
@@ -127,3 +260,218 @@ class McpSearchContractTests(TestCase):
 
         self.assertNotIn("search limit", context.response_text.lower())
         self.assertNotIn("budget", context.response_text.lower())
+
+    @override_settings(MCP_SCOPE_CLARIFICATION_MCQ_ENABLED=True)
+    @patch("apps.mcp.orchestrator.mcp_tools.execute_tool")
+    def test_scope_selection_turn_forces_deterministic_capability_commit(self, execute_tool_mock) -> None:
+        selected_category = "cheques"
+        selected_key = mcp_tools._scope_category_key(selected_category)
+        mapped_ref_id = str(uuid.uuid4())
+        self.conversation.metadata = {
+            "mcp_scope_clarification": {
+                "pending": {
+                    "base_query": "plus fees",
+                    "question": "Pick one category.",
+                    "categories": [selected_category, "cash withdrawal fees"],
+                    "category_refs": {
+                        selected_key: {
+                            "ref_ids": [mapped_ref_id],
+                            "source": "retrieval_candidates",
+                            "confidence": 0.95,
+                        }
+                    },
+                }
+            }
+        }
+        self.conversation.save(update_fields=["metadata"])
+
+        called_tools: list[str] = []
+
+        def _fake_execute_tool(name, arguments, *, conversation, context=None):
+            called_tools.append(str(name))
+            self.assertIsNotNone(context)
+            if name == "read_knowledge":
+                return {
+                    "tool": "read_knowledge",
+                    "status": "ok",
+                    "evidence": [
+                        {
+                            "id": mapped_ref_id,
+                            "document_id": str(uuid.uuid4()),
+                            "title": "Cheques-EN.pdf",
+                            "kind": "text_excerpt",
+                            "chars": 240,
+                        }
+                    ],
+                    "hint": "Selection evidence loaded.",
+                }
+            return {
+                "tool": str(name),
+                "status": "error",
+                "error_code": "unexpected_tool",
+                "hint": "Unexpected tool for deterministic scope selection test.",
+            }
+
+        execute_tool_mock.side_effect = _fake_execute_tool
+
+        provider = _SingleAnswerProvider("Cheque fees in Plus are now loaded.")
+        orchestrator = McpOrchestratorService(agent=self.agent, provider=provider)
+        context = orchestrator.stream_turn(
+            conversation=self.conversation,
+            user_message="cheques",
+            user_metadata={
+                "scope_selection": {
+                    "action": "select_category",
+                    "category_key": selected_key,
+                    "category_label": selected_category,
+                }
+            },
+        )
+
+        self.assertTrue(called_tools)
+        self.assertEqual(called_tools[0], "read_knowledge")
+        self.assertNotIn("present_scope_clarification", called_tools)
+        self.assertEqual(provider.calls, 1)
+        self.assertIn("cheque fees", context.response_text.lower())
+
+    @override_settings(MCP_SCOPE_CLARIFICATION_MCQ_ENABLED=True)
+    @patch("apps.mcp.orchestrator.mcp_tools.execute_tool")
+    def test_scope_selection_deterministic_commit_keeps_tool_call_arguments_serialized(self, execute_tool_mock) -> None:
+        selected_category = "cheques"
+        selected_key = mcp_tools._scope_category_key(selected_category)
+        mapped_ref_id = str(uuid.uuid4())
+        self.conversation.metadata = {
+            "mcp_scope_clarification": {
+                "pending": {
+                    "base_query": "plus fees",
+                    "question": "Pick one category.",
+                    "categories": [selected_category, "cash withdrawal fees"],
+                    "category_refs": {
+                        selected_key: {
+                            "ref_ids": [mapped_ref_id],
+                            "source": "retrieval_candidates",
+                            "confidence": 0.95,
+                        }
+                    },
+                }
+            }
+        }
+        self.conversation.save(update_fields=["metadata"])
+
+        def _fake_execute_tool(name, arguments, *, conversation, context=None):
+            self.assertEqual(name, "read_knowledge")
+            self.assertIsNotNone(context)
+            return {
+                "tool": "read_knowledge",
+                "status": "ok",
+                "evidence": [
+                    {
+                        "id": mapped_ref_id,
+                        "document_id": str(uuid.uuid4()),
+                        "title": "Cheques-EN.pdf",
+                        "kind": "text_excerpt",
+                        "chars": 240,
+                    }
+                ],
+                "hint": "Selection evidence loaded.",
+            }
+
+        execute_tool_mock.side_effect = _fake_execute_tool
+
+        provider = _StrictToolEnvelopeProvider()
+        orchestrator = McpOrchestratorService(agent=self.agent, provider=provider)
+        context = orchestrator.stream_turn(
+            conversation=self.conversation,
+            user_message="cheques",
+            user_metadata={
+                "scope_selection": {
+                    "action": "select_category",
+                    "category_key": selected_key,
+                    "category_label": selected_category,
+                }
+            },
+        )
+
+        self.assertEqual(provider.calls, 1)
+        self.assertIn("cheque fees", context.response_text.lower())
+        self.assertTrue(provider.requests)
+
+        first_request = provider.requests[0]
+        deterministic_call_arguments = None
+        for message in first_request:
+            if not isinstance(message, dict):
+                continue
+            tool_calls = message.get("tool_calls")
+            if not isinstance(tool_calls, list):
+                continue
+            for call in tool_calls:
+                if not isinstance(call, dict):
+                    continue
+                function = call.get("function")
+                if not isinstance(function, dict):
+                    continue
+                if function.get("name") != "read_knowledge":
+                    continue
+                deterministic_call_arguments = function.get("arguments")
+                break
+            if deterministic_call_arguments is not None:
+                break
+
+        self.assertIsInstance(deterministic_call_arguments, str)
+        decoded = json.loads(deterministic_call_arguments or "{}")
+        refs = decoded.get("refs")
+        self.assertIsInstance(refs, list)
+        self.assertEqual((refs or [{}])[0].get("id"), mapped_ref_id)
+
+    @override_settings(MCP_SCOPE_CLARIFICATION_MCQ_ENABLED=False)
+    @patch("apps.mcp.orchestrator.mcp_tools.execute_tool")
+    def test_scope_selection_does_not_force_deterministic_commit_when_mcq_disabled(self, execute_tool_mock) -> None:
+        self.conversation.metadata = {
+            "mcp_scope_clarification": {
+                "pending": {
+                    "base_query": "plus fees",
+                    "question": "Pick one category.",
+                    "categories": ["cheques", "cash withdrawal fees"],
+                }
+            }
+        }
+        self.conversation.save(update_fields=["metadata"])
+
+        called_tools: list[str] = []
+
+        def _fake_execute_tool(name, arguments, *, conversation, context=None):
+            called_tools.append(str(name))
+            if name == "present_scope_clarification":
+                return {
+                    "tool": "present_scope_clarification",
+                    "status": "ok",
+                    "clarification_ui_mode": "text",
+                    "hint": "Pick one category.",
+                }
+            if name == "search_knowledge":
+                context.reserve_search()
+                return {
+                    "tool": "search_knowledge",
+                    "status": "ok",
+                    "snippets": [],
+                }
+            return {"tool": str(name), "status": "ok"}
+
+        execute_tool_mock.side_effect = _fake_execute_tool
+
+        provider = _PresentScopeProvider()
+        orchestrator = McpOrchestratorService(agent=self.agent, provider=provider)
+        orchestrator.stream_turn(
+            conversation=self.conversation,
+            user_message="cheques",
+            user_metadata={
+                "scope_selection": {
+                    "action": "select_category",
+                    "category_key": mcp_tools._scope_category_key("cheques"),
+                    "category_label": "cheques",
+                }
+            },
+        )
+
+        self.assertTrue(called_tools)
+        self.assertEqual(called_tools[0], "present_scope_clarification")

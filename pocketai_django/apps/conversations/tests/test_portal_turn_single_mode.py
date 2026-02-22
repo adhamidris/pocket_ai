@@ -550,7 +550,12 @@ class PortalTurnSingleModeTests(TransactionTestCase):
                         "categories": ["Cash withdrawal", "Cheques", "Custody"],
                         "top_categories": ["Cash withdrawal", "Cheques"],
                         "chips": [
-                            {"id": "all_fees", "label": "All fees", "query": "all"},
+                            {
+                                "id": "all_fees",
+                                "label": "All fees",
+                                "query": "all",
+                                "category_key": "scope_all_fees",
+                            },
                         ],
                     },
                 },
@@ -563,6 +568,17 @@ class PortalTurnSingleModeTests(TransactionTestCase):
         self.assertEqual(scope_payload.get("all_query"), "all")
         self.assertEqual(scope_payload.get("all_label"), "All fees")
         self.assertEqual(scope_payload.get("top_categories"), ["Cash withdrawal", "Cheques"])
+        self.assertEqual(
+            scope_payload.get("chips"),
+            [
+                {
+                    "id": "all_fees",
+                    "label": "All fees",
+                    "query": "all",
+                    "category_key": "scope_all_fees",
+                },
+            ],
+        )
 
     def test_present_scope_clarification_finished_only_emits_tool_lifecycle_events(self) -> None:
         turn = PortalTurn.objects.create(

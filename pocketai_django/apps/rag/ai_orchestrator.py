@@ -890,6 +890,13 @@ class KnowledgeSearchService:
         )
         if self.scope_top_category_max > self.scope_category_max:
             self.scope_top_category_max = self.scope_category_max
+        self.scope_category_ref_max = max(
+            1,
+            min(
+                8,
+                int(getattr(settings, "RAG_SCOPE_CATEGORY_REF_MAX", 4) or 4),
+            ),
+        )
         logger.info("🎯 Strategy router initialized with intent-aware retrieval strategies")
 
     def _business_override(self, business_profile, key: str, default: int | float) -> int | float:
@@ -1790,6 +1797,12 @@ class KnowledgeSearchService:
             categories, top_categories = self._scope_categories_for_contract(
                 scope_summary=scope_summary,
             )
+            category_ref_hints = self._scope_category_ref_hints_from_candidates(
+                hits=chunk_hits,
+                top_categories=top_categories,
+                query_tokens=traits.tokens,
+                filler_tokens=filler_tokens,
+            )
             clarification_question, scope_categories = self._build_scope_clarification_question(
                 scope_summary=scope_summary,
             )
@@ -1800,6 +1813,8 @@ class KnowledgeSearchService:
             diagnostics["scope_clarification_categories"] = list(scope_categories)
             diagnostics["categories"] = list(categories)
             diagnostics["top_categories"] = list(top_categories)
+            if category_ref_hints:
+                diagnostics["scope_clarification_category_refs"] = category_ref_hints
             diagnostics.setdefault("clarification_ui_mode", "text")
             diagnostics["snippet_count"] = 0
             diagnostics["total_duration_ms"] = self._duration_ms(overall_start)
@@ -8432,8 +8447,9 @@ class KnowledgeSearchService:
         window = text[:1600]
         for match in re.finditer(r"([^\n:;|]{1,72})\s*:\s*([^;\n|]{1,220})", window):
             key = KnowledgeSearchService._normalize_topic_value(match.group(1))
-            value = KnowledgeSearchService._normalize_topic_value(
-                KnowledgeSearchService._clean_auto_evidence_label(match.group(2), max_chars=120)
+            value = KnowledgeSearchService._normalize_scope_category_value(
+                match.group(2),
+                max_chars=120,
             )
             if not key or not value:
                 continue
@@ -8505,6 +8521,96 @@ class KnowledgeSearchService:
             "اسعار",
             "الاسعار",
         }
+
+    @classmethod
+    def _scope_label_stop_tokens(cls) -> set[str]:
+        return {
+            "and",
+            "or",
+            "for",
+            "from",
+            "to",
+            "in",
+            "on",
+            "with",
+            "by",
+            "the",
+            "a",
+            "an",
+            "و",
+            "او",
+            "أو",
+            "من",
+            "في",
+            "على",
+            "الى",
+            "إلى",
+            "عن",
+            "ال",
+            "en",
+            "ar",
+            "fr",
+            "de",
+            "es",
+            "it",
+            "pt",
+            "ru",
+            "tr",
+            "zh",
+            "ja",
+        }
+
+    @classmethod
+    def _normalize_scope_category_value(
+        cls,
+        value: object,
+        *,
+        max_chars: int = 96,
+    ) -> str:
+        """
+        Normalize candidate scope labels into a stable, user-facing category key.
+
+        This is deterministic and tenant-agnostic: strip structural artifacts
+        (table/sheet markers, punctuation noise), dedupe repeated tokens, and keep
+        a compact lexical phrase that remains easy to match later.
+        """
+        cleaned = cls._clean_auto_evidence_label(value, max_chars=max_chars)
+        if not cleaned:
+            return ""
+
+        normalized = cls._normalize_topic_value(cleaned)
+        if not normalized:
+            return ""
+
+        normalized = re.sub(r"\b(?:table|sheet|tab)\s*\d*\b", " ", normalized)
+        normalized = re.sub(r"\b([a-z]{3,}s)(?:en|ar|fr|de|es)\b", r"\1", normalized)
+        normalized = re.sub(r"[^0-9a-z\u0600-\u06FF]+", " ", normalized)
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        if not normalized:
+            return ""
+
+        stop_tokens = cls._scope_label_stop_tokens()
+        tokens = [token for token in QueryNormalizer._TOKEN_SPLIT.split(normalized) if token]
+        selected: list[str] = []
+        seen: set[str] = set()
+        for token in tokens:
+            lowered = token.strip().lower()
+            if not lowered:
+                continue
+            if lowered in stop_tokens:
+                continue
+            if len(lowered) == 1 and not lowered.isdigit():
+                continue
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            selected.append(lowered)
+            if len(selected) >= 10:
+                break
+
+        if not selected:
+            return normalized
+        return " ".join(selected)
 
     @classmethod
     def _scope_is_specific_category(
@@ -8643,6 +8749,97 @@ class KnowledgeSearchService:
         top_categories = categories[: self.scope_top_category_max]
         return categories, top_categories
 
+    @staticmethod
+    def _scope_ref_uuid_string(value: object) -> str:
+        if isinstance(value, uuid.UUID):
+            return str(value)
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        try:
+            return str(uuid.UUID(text))
+        except (TypeError, ValueError):
+            return ""
+
+    def _scope_category_ref_hints_from_candidates(
+        self,
+        *,
+        hits: Sequence[ChunkResult],
+        top_categories: Sequence[str],
+        query_tokens: Sequence[str] | None = None,
+        filler_tokens: set[str] | None = None,
+    ) -> dict[str, dict[str, object]]:
+        normalized_top_categories = self._normalize_scope_category_sequence(
+            top_categories,
+            max_categories=self.scope_top_category_max,
+        )
+        if not normalized_top_categories:
+            return {}
+
+        normalized_query_tokens = {
+            str(token).strip().lower()
+            for token in (query_tokens or ())
+            if str(token).strip()
+        }
+        normalized_filler_tokens = {
+            str(token).strip().lower()
+            for token in (filler_tokens or set())
+            if str(token).strip()
+        }
+
+        category_lookup: dict[str, str] = {}
+        for category in normalized_top_categories:
+            normalized = self._normalize_scope_category_value(category, max_chars=96)
+            if normalized:
+                category_lookup[normalized] = category
+        if not category_lookup:
+            return {}
+
+        per_category_refs: dict[str, list[str]] = {category: [] for category in normalized_top_categories}
+        per_category_seen: dict[str, set[str]] = {category: set() for category in normalized_top_categories}
+        max_refs_per_category = max(1, int(self.scope_category_ref_max))
+
+        for hit in hits:
+            label = self._scope_category_from_hit(
+                hit,
+                query_tokens=normalized_query_tokens,
+                filler_tokens=normalized_filler_tokens,
+            )
+            normalized_label = self._normalize_scope_category_value(label, max_chars=96)
+            canonical_label = category_lookup.get(normalized_label)
+            if not canonical_label:
+                continue
+
+            ref_uuid = self._scope_ref_uuid_string(getattr(hit, "chunk_id", None))
+            if not ref_uuid:
+                ref_uuid = self._scope_ref_uuid_string(getattr(getattr(hit, "chunk", None), "id", None))
+            if not ref_uuid:
+                continue
+
+            seen_ids = per_category_seen.get(canonical_label)
+            ref_list = per_category_refs.get(canonical_label)
+            if seen_ids is None or ref_list is None:
+                continue
+            if ref_uuid in seen_ids or len(ref_list) >= max_refs_per_category:
+                continue
+            seen_ids.add(ref_uuid)
+            ref_list.append(ref_uuid)
+
+            if all(len(refs) >= max_refs_per_category for refs in per_category_refs.values()):
+                break
+
+        out: dict[str, dict[str, object]] = {}
+        for category in normalized_top_categories:
+            refs = per_category_refs.get(category) or []
+            if refs:
+                out[category] = {
+                    "ref_ids": refs,
+                    "source": "retrieval_candidates",
+                }
+            else:
+                out[category] = {"fallback": "scoped_search"}
+        return out
+
     @classmethod
     def _rank_scope_category_items(
         cls,
@@ -8664,9 +8861,7 @@ class KnowledgeSearchService:
 
         merged_counts: dict[str, int] = {}
         for raw_label, raw_count in category_counts.items():
-            normalized_label = cls._normalize_topic_value(
-                cls._clean_auto_evidence_label(raw_label, max_chars=96),
-            )
+            normalized_label = cls._normalize_scope_category_value(raw_label, max_chars=96)
             if not normalized_label:
                 continue
             count_value = _coerce_count(raw_count)
@@ -8696,9 +8891,7 @@ class KnowledgeSearchService:
         normalized: list[str] = []
         seen: set[str] = set()
         for raw in values:
-            label = cls._normalize_topic_value(
-                cls._clean_auto_evidence_label(raw, max_chars=96),
-            )
+            label = cls._normalize_scope_category_value(raw, max_chars=96)
             if not label or label in seen:
                 continue
             seen.add(label)
@@ -8754,7 +8947,7 @@ class KnowledgeSearchService:
             metadata_candidates.append(diagnostics.get(key))
 
         for candidate in metadata_candidates:
-            normalized = self._normalize_topic_value(self._clean_auto_evidence_label(candidate, max_chars=96))
+            normalized = self._normalize_scope_category_value(candidate, max_chars=96)
             if self._scope_is_specific_category(
                 normalized,
                 query_tokens=query_tokens,
@@ -8814,7 +9007,7 @@ class KnowledgeSearchService:
             return fallback_values[0]
 
         for raw_line in content.splitlines():
-            line = self._normalize_topic_value(self._clean_auto_evidence_label(raw_line, max_chars=96))
+            line = self._normalize_scope_category_value(raw_line, max_chars=96)
             if self._scope_is_specific_category(
                 line,
                 query_tokens=query_tokens,

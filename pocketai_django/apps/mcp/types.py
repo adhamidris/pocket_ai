@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 from datetime import datetime, timezone as dt_timezone
+import uuid
 from typing import Callable, Mapping, Sequence, Tuple
 
 
@@ -153,6 +154,12 @@ class ToolExecutionContext:
 
     # Ref IDs already read this turn (for repeat-read detection / loop prevention)
     read_ref_ids_this_turn: set[str] = dataclasses.field(default_factory=set)
+    # Tracks unresolved/non-UUID read ref attempts within the current turn so
+    # wrapper-level guardrails can stop retry loops quickly.
+    invalid_read_ref_attempts: dict[str, int] = dataclasses.field(default_factory=dict)
+    # Tracks "table/text/both" follow-ups already asked for scoped fallback
+    # ambiguity to prevent repetitive clarification loops in one turn.
+    scope_source_preference_prompts: set[str] = dataclasses.field(default_factory=set)
 
     # =========================================================================
     # Document Context Tracking (Conversation-Aware RAG)
@@ -186,6 +193,13 @@ class ToolExecutionContext:
     # =========================================================================
     # Tracks pending "specific category or all?" clarifications returned by
     # search_knowledge and the most recent user resolution.
+    # latest_user_message keeps the raw turn input so selector tokens can be
+    # resolved deterministically even if the model rewrites tool queries.
+    latest_user_message: str | None = None
+    # Structured scope selection payload from the UI turn metadata.
+    # Shape: {"action": "select_category|all_fees|choose_categories",
+    #         "category_key"?: str, "category_label"?: str, "block_id"?: str}
+    latest_scope_selection: dict[str, object] | None = None
     pending_scope_clarification: dict[str, object] | None = None
     scope_resolution: dict[str, object] | None = None
     scope_clarification_updated: bool = False
@@ -828,7 +842,33 @@ class ToolExecutionContext:
         base_query: str,
         categories: Sequence[str] | None = None,
         question: str | None = None,
+        category_refs: Mapping[str, object] | None = None,
     ) -> None:
+        def _normalize_ref_ids(value: object, *, limit: int = 8) -> list[str]:
+            if isinstance(value, (str, bytes, bytearray)):
+                candidates: list[object] = [value]
+            elif isinstance(value, Sequence):
+                candidates = list(value)
+            else:
+                return []
+            out: list[str] = []
+            seen_ids: set[str] = set()
+            for raw in candidates:
+                text = str(raw or "").strip()
+                if not text:
+                    continue
+                try:
+                    parsed = str(uuid.UUID(text))
+                except (TypeError, ValueError):
+                    continue
+                if parsed in seen_ids:
+                    continue
+                seen_ids.add(parsed)
+                out.append(parsed)
+                if len(out) >= max(1, int(limit)):
+                    break
+            return out
+
         normalized_categories: list[str] = []
         seen: set[str] = set()
         for raw in categories or ():
@@ -842,12 +882,65 @@ class ToolExecutionContext:
             normalized_categories.append(value)
             if len(normalized_categories) >= 12:
                 break
+        normalized_category_refs: dict[str, dict[str, object]] = {}
+        seen_ref_keys: set[str] = set()
+        if isinstance(category_refs, Mapping):
+            for raw_key, raw_value in category_refs.items():
+                category_key = self._clip_text(raw_key, limit=120).strip()
+                if not category_key:
+                    continue
+                lowered_key = category_key.lower()
+                if lowered_key in seen_ref_keys:
+                    continue
+
+                mapped: dict[str, object] = {}
+                if isinstance(raw_value, Mapping):
+                    ref_ids = _normalize_ref_ids(
+                        raw_value.get("ref_ids") or raw_value.get("refs") or raw_value.get("ids")
+                    )
+                    if ref_ids:
+                        mapped["ref_ids"] = ref_ids
+                    cursor_value = self._clip_text(raw_value.get("cursor") or "", limit=200).strip()
+                    if cursor_value:
+                        mapped["cursor"] = cursor_value
+                    source_value = self._clip_text(raw_value.get("source") or "", limit=64).strip()
+                    if source_value:
+                        mapped["source"] = source_value
+                    confidence_value = raw_value.get("confidence")
+                    if isinstance(confidence_value, (int, float)):
+                        bounded_confidence = max(0.0, min(1.0, float(confidence_value)))
+                        mapped["confidence"] = round(bounded_confidence, 3)
+                    fallback_value = raw_value.get("fallback")
+                    if isinstance(fallback_value, bool):
+                        if fallback_value:
+                            mapped["fallback"] = "scoped_search"
+                    elif fallback_value is not None:
+                        fallback_text = self._clip_text(str(fallback_value), limit=64).strip().lower()
+                        if fallback_text:
+                            mapped["fallback"] = fallback_text
+                else:
+                    ref_ids = _normalize_ref_ids(raw_value)
+                    if ref_ids:
+                        mapped["ref_ids"] = ref_ids
+                    fallback_text = self._clip_text(str(raw_value or ""), limit=64).strip().lower()
+                    if fallback_text in {"fallback", "scoped_search"}:
+                        mapped["fallback"] = "scoped_search"
+
+                if not mapped:
+                    continue
+                seen_ref_keys.add(lowered_key)
+                normalized_category_refs[category_key] = mapped
+                if len(normalized_category_refs) >= 24:
+                    break
         self.pending_scope_clarification = {
             "base_query": self._clip_text(base_query, limit=240),
             "categories": normalized_categories,
             "question": self._clip_text(question or "", limit=280),
             "updated_at": self._utc_now_iso(),
         }
+        if normalized_category_refs:
+            self.pending_scope_clarification["category_refs"] = normalized_category_refs
+            self.pending_scope_clarification["contract_version"] = 1
         self.scope_clarification_updated = True
 
     def clear_pending_scope_clarification(self) -> None:
@@ -864,7 +957,36 @@ class ToolExecutionContext:
         user_query: str,
         category: str | None = None,
         categories: Sequence[str] | None = None,
+        category_key: str | None = None,
+        mapped_ref_ids: Sequence[str] | None = None,
+        mapped_refs: Mapping[str, object] | None = None,
+        selection_source: str | None = None,
     ) -> None:
+        def _normalize_ref_ids(value: object, *, limit: int = 8) -> list[str]:
+            if isinstance(value, (str, bytes, bytearray)):
+                candidates: list[object] = [value]
+            elif isinstance(value, Sequence):
+                candidates = list(value)
+            else:
+                return []
+            out: list[str] = []
+            seen_ids: set[str] = set()
+            for raw in candidates:
+                text = str(raw or "").strip()
+                if not text:
+                    continue
+                try:
+                    parsed = str(uuid.UUID(text))
+                except (TypeError, ValueError):
+                    continue
+                if parsed in seen_ids:
+                    continue
+                seen_ids.add(parsed)
+                out.append(parsed)
+                if len(out) >= max(1, int(limit)):
+                    break
+            return out
+
         normalized_mode = str(mode or "").strip().lower()
         if normalized_mode not in {"all", "specific"}:
             normalized_mode = "specific"
@@ -884,6 +1006,39 @@ class ToolExecutionContext:
             resolved_category = normalized_categories[0]
         if resolved_category and not normalized_categories:
             normalized_categories = [resolved_category]
+        resolved_category_key = self._clip_text(category_key or "", limit=120).strip().lower()
+        normalized_selection_source = self._clip_text(selection_source or "", limit=32).strip().lower()
+        normalized_mapped_ref_ids = _normalize_ref_ids(mapped_ref_ids)
+        normalized_mapped_refs: dict[str, object] | None = None
+        if isinstance(mapped_refs, Mapping):
+            mapped_payload: dict[str, object] = {}
+            ref_ids = _normalize_ref_ids(
+                mapped_refs.get("ref_ids") or mapped_refs.get("refs") or mapped_refs.get("ids")
+            )
+            if ref_ids:
+                mapped_payload["ref_ids"] = ref_ids
+            cursor_value = self._clip_text(mapped_refs.get("cursor") or "", limit=200).strip()
+            if cursor_value:
+                mapped_payload["cursor"] = cursor_value
+            source_value = self._clip_text(mapped_refs.get("source") or "", limit=64).strip()
+            if source_value:
+                mapped_payload["source"] = source_value
+            confidence_value = mapped_refs.get("confidence")
+            if isinstance(confidence_value, (int, float)):
+                bounded_confidence = max(0.0, min(1.0, float(confidence_value)))
+                mapped_payload["confidence"] = round(bounded_confidence, 3)
+            fallback_value = mapped_refs.get("fallback")
+            if isinstance(fallback_value, bool):
+                if fallback_value:
+                    mapped_payload["fallback"] = "scoped_search"
+            elif fallback_value is not None:
+                fallback_text = self._clip_text(str(fallback_value), limit=64).strip().lower()
+                if fallback_text:
+                    mapped_payload["fallback"] = fallback_text
+            if mapped_payload:
+                normalized_mapped_refs = mapped_payload
+                if not normalized_mapped_ref_ids:
+                    normalized_mapped_ref_ids = _normalize_ref_ids(mapped_payload.get("ref_ids"))
         self.scope_resolution = {
             "mode": normalized_mode,
             "base_query": self._clip_text(base_query, limit=240),
@@ -893,6 +1048,14 @@ class ToolExecutionContext:
             "categories": normalized_categories or None,
             "updated_at": self._utc_now_iso(),
         }
+        if resolved_category_key:
+            self.scope_resolution["category_key"] = resolved_category_key
+        if normalized_mapped_ref_ids:
+            self.scope_resolution["mapped_ref_ids"] = normalized_mapped_ref_ids
+        if normalized_mapped_refs:
+            self.scope_resolution["mapped_refs"] = normalized_mapped_refs
+        if normalized_selection_source:
+            self.scope_resolution["selection_source"] = normalized_selection_source
         self.pending_scope_clarification = None
         self.scope_clarification_updated = True
 

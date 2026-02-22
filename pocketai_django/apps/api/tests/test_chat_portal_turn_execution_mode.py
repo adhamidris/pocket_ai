@@ -80,3 +80,68 @@ class PortalTurnExecutionModeTests(TestCase):
         turn = PortalTurn.objects.get(id=turn_id)
         self.assertEqual(str((turn.metadata or {}).get("execution_mode") or ""), "worker")
 
+    @override_settings(PORTAL_TURN_EXECUTION_MODE="thread")
+    def test_turn_create_persists_normalized_scope_selection(self) -> None:
+        payload = {
+            "session_token": self.conversation.session_token,
+            "body": "Cheques",
+            "metadata": {
+                "scope_selection": {
+                    "action": "category",
+                    "categoryKey": "Cheques_42FC263D814C",
+                    "categoryLabel": "Cheques",
+                    "blockId": "scope-block:01",
+                }
+            },
+        }
+        request = self.factory.post(
+            "/api/chat/turns/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+        with mock.patch.object(chat_portal, "run_turn_background"):
+            response = chat_portal.portal_turn_create(request)
+
+        self.assertEqual(response.status_code, 201)
+        data = json.loads(response.content.decode("utf-8"))
+        turn_id = data.get("turn", {}).get("id")
+        self.assertTrue(turn_id)
+        turn = PortalTurn.objects.get(id=turn_id)
+        scope_selection = (turn.metadata or {}).get("scope_selection") or {}
+        self.assertEqual(scope_selection.get("action"), "select_category")
+        self.assertEqual(scope_selection.get("category_key"), "cheques_42fc263d814c")
+        self.assertEqual(scope_selection.get("category_label"), "Cheques")
+        self.assertEqual(scope_selection.get("block_id"), "scope-block:01")
+
+    @override_settings(PORTAL_TURN_EXECUTION_MODE="thread")
+    def test_turn_create_preserves_arabic_scope_category_key(self) -> None:
+        payload = {
+            "session_token": self.conversation.session_token,
+            "body": "رسوم الشيكات",
+            "metadata": {
+                "scope_selection": {
+                    "action": "select_category",
+                    "categoryKey": "رسوم_الشيكات_42fc263d814c",
+                    "categoryLabel": "رسوم الشيكات",
+                    "blockId": "scope-block:ar-01",
+                }
+            },
+        }
+        request = self.factory.post(
+            "/api/chat/turns/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+        with mock.patch.object(chat_portal, "run_turn_background"):
+            response = chat_portal.portal_turn_create(request)
+
+        self.assertEqual(response.status_code, 201)
+        data = json.loads(response.content.decode("utf-8"))
+        turn_id = data.get("turn", {}).get("id")
+        self.assertTrue(turn_id)
+        turn = PortalTurn.objects.get(id=turn_id)
+        scope_selection = (turn.metadata or {}).get("scope_selection") or {}
+        self.assertEqual(scope_selection.get("action"), "select_category")
+        self.assertEqual(scope_selection.get("category_key"), "رسوم_الشيكات_42fc263d814c")
+        self.assertEqual(scope_selection.get("category_label"), "رسوم الشيكات")
+        self.assertEqual(scope_selection.get("block_id"), "scope-block:ar-01")

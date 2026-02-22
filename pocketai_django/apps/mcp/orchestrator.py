@@ -334,6 +334,7 @@ class McpOrchestratorService:
         *,
         conversation: Conversation,
         user_message: str,
+        user_metadata: Mapping[str, object] | None = None,
         allowed_tools: set[str] | None = None,
         wait_for_tool_approval: bool = True,
         portal_emit_blocks_enabled: bool = True,
@@ -373,12 +374,33 @@ class McpOrchestratorService:
             char_turn_limit = self._char_budget_per_turn(conversation.business_profile)
             char_minute_limit = self._char_budget_per_minute(conversation.business_profile)
             minute_reserver = self._build_minute_budget_reserver(conversation.business_profile, char_minute_limit)
+            scope_selection_payload: dict[str, object] | None = None
+            if isinstance(user_metadata, Mapping):
+                raw_scope_selection = user_metadata.get("scope_selection") or user_metadata.get("scopeSelection")
+                if isinstance(raw_scope_selection, Mapping):
+                    normalized_scope_selection: dict[str, object] = {}
+                    action = str(raw_scope_selection.get("action") or "").strip().lower()
+                    if action in {"select_category", "all_fees", "choose_categories"}:
+                        normalized_scope_selection["action"] = action
+                    category_key = str(raw_scope_selection.get("category_key") or "").strip().lower()
+                    if category_key:
+                        normalized_scope_selection["category_key"] = category_key[:120]
+                    category_label = str(raw_scope_selection.get("category_label") or "").strip()
+                    if category_label:
+                        normalized_scope_selection["category_label"] = category_label[:120]
+                    block_id = str(raw_scope_selection.get("block_id") or "").strip().lower()
+                    if block_id:
+                        normalized_scope_selection["block_id"] = block_id[:120]
+                    if normalized_scope_selection:
+                        scope_selection_payload = normalized_scope_selection
             tool_context = ToolExecutionContext(
                 max_chunk_reads_per_turn=self.max_chunk_reads_per_turn,
                 max_chunk_pages_per_turn=self.max_chunk_pages_per_turn,
                 char_budget_per_turn=char_turn_limit,
                 char_budget_per_minute=char_minute_limit,
                 minute_budget_reserver=minute_reserver,
+                latest_user_message=user_message,
+                latest_scope_selection=scope_selection_payload,
             )
             with TRACER.start_as_current_span("portal.mcp.table_cache") as cache_span:
                 self._hydrate_table_result_cache(conversation, tool_context)
@@ -393,7 +415,12 @@ class McpOrchestratorService:
         feature_state = FeatureFlagService.snapshot(conversation.business_profile)
         new_contract_enabled = bool(getattr(settings, "MCP_NEW_CONTRACT_ENABLED", True))
         rag_agentic_enabled = bool(getattr(feature_state, "rag_agentic_mode", False)) and new_contract_enabled
+        scope_clarification_mcq_enabled = bool(getattr(settings, "MCP_SCOPE_CLARIFICATION_MCQ_ENABLED", False))
         query_classification = self._classify_query_intent(user_message)
+        scope_selection_turn = bool(scope_clarification_mcq_enabled and scope_selection_payload)
+        scope_selection_requires_resolution = bool(
+            scope_selection_turn and getattr(tool_context, "pending_scope_clarification", None)
+        )
 
         disable_tools_for_turn = self._is_low_intent_message(user_message)
 
@@ -1134,38 +1161,92 @@ class McpOrchestratorService:
                 return
             _emit_tokens(emit_text)
 
-        # Limit the initial payload so the provider only sees the guardrails and
-        # the latest transcript entries needed for intent selection.
-        primary_messages = prompts.limit_messages_for_stage(transcript, stage="initial_pass")
-        self._log_prompt("primary", conversation=conversation, messages=primary_messages)
-        with TRACER.start_as_current_span("portal.mcp.initial_pass") as initial_span:
-            if initial_span.is_recording():
-                initial_span.set_attribute("mcp.message_count", len(primary_messages))
-                initial_span.set_attribute("mcp.tools_enabled", bool(initial_tools))
-            first_payload = self._chat_with_context_governor(
-                conversation=conversation,
-                stage="initial_pass",
-                messages=primary_messages,
-                tools=initial_tools,
-                on_stream_delta=_first_stream_chunk if streaming_allowed else None,
-                on_tool_call_start=_on_stream_tool_call_start,
-                on_tool_call_delta=_on_stream_tool_call_delta,
-                tool_context=tool_context,
-                on_reasoning_event=on_reasoning_event,
-                reasoning_label="Initial pass",
-                should_cancel=should_cancel,
+        first_stream_message: dict[str, object]
+        first_stream_tool_calls: list[Mapping[str, object]]
+        if scope_selection_requires_resolution:
+            # Deterministic selection commit: when MCQ click metadata is present and
+            # pending scope exists, execute the real capability directly.
+            deterministic_plan = mcp_tools.plan_scope_selection_deterministic_call(
+                user_query=str(user_message or "").strip(),
+                context=tool_context,
             )
-        first_message = self._coerce_assistant_message(first_payload)
-        first_stream_message = dict(first_message or {})
-        first_stream_tool_calls_raw = list(first_stream_message.get("tool_calls") or [])
-        first_stream_tool_calls, portal_tool_calls = _split_portal_tool_calls(first_stream_tool_calls_raw)
-        if portal_tool_calls:
-            portal_block_stream.ingest_tool_calls(portal_tool_calls)
-        if on_tool_decision:
-            try:
-                on_tool_decision("used" if first_stream_tool_calls else "no_tools")
-            except Exception:  # pragma: no cover - defensive
-                logger.exception("on_tool_decision callback failed")
+            forced_tool_name = str(deterministic_plan.get("tool_name") or "search_knowledge").strip() or "search_knowledge"
+            forced_arguments = (
+                dict(deterministic_plan.get("arguments"))
+                if isinstance(deterministic_plan.get("arguments"), Mapping)
+                else {"query": str(user_message or "").strip()}
+            )
+            forced_search_call = {
+                "id": f"call_scope_selection_{uuid.uuid4().hex[:12]}",
+                "type": "function",
+                "function": {
+                    "name": forced_tool_name,
+                    "arguments": json.dumps(
+                        forced_arguments,
+                        ensure_ascii=False,
+                    ),
+                },
+            }
+            first_stream_message = {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [forced_search_call],
+            }
+            first_stream_tool_calls = [forced_search_call]
+            structured_log(
+                "mcp",
+                "scope_selection.deterministic_entry",
+                {
+                    "action": str((scope_selection_payload or {}).get("action") or ""),
+                    "category_key": str((scope_selection_payload or {}).get("category_key") or ""),
+                    "has_pending_scope": bool(getattr(tool_context, "pending_scope_clarification", None)),
+                    "planned_tool": forced_tool_name,
+                    "planned_route": str(deterministic_plan.get("route") or ""),
+                },
+                context={
+                    "conversation": conversation.id,
+                    "business": conversation.business_profile_id,
+                },
+                logger_obj=logger,
+            )
+            if on_tool_decision:
+                try:
+                    on_tool_decision("used")
+                except Exception:  # pragma: no cover - defensive
+                    logger.exception("on_tool_decision callback failed")
+        else:
+            # Limit the initial payload so the provider only sees the guardrails and
+            # the latest transcript entries needed for intent selection.
+            primary_messages = prompts.limit_messages_for_stage(transcript, stage="initial_pass")
+            self._log_prompt("primary", conversation=conversation, messages=primary_messages)
+            with TRACER.start_as_current_span("portal.mcp.initial_pass") as initial_span:
+                if initial_span.is_recording():
+                    initial_span.set_attribute("mcp.message_count", len(primary_messages))
+                    initial_span.set_attribute("mcp.tools_enabled", bool(initial_tools))
+                first_payload = self._chat_with_context_governor(
+                    conversation=conversation,
+                    stage="initial_pass",
+                    messages=primary_messages,
+                    tools=initial_tools,
+                    on_stream_delta=_first_stream_chunk if streaming_allowed else None,
+                    on_tool_call_start=_on_stream_tool_call_start,
+                    on_tool_call_delta=_on_stream_tool_call_delta,
+                    tool_context=tool_context,
+                    on_reasoning_event=on_reasoning_event,
+                    reasoning_label="Initial pass",
+                    should_cancel=should_cancel,
+                )
+            first_message = self._coerce_assistant_message(first_payload)
+            first_stream_message = dict(first_message or {})
+            first_stream_tool_calls_raw = list(first_stream_message.get("tool_calls") or [])
+            first_stream_tool_calls, portal_tool_calls = _split_portal_tool_calls(first_stream_tool_calls_raw)
+            if portal_tool_calls:
+                portal_block_stream.ingest_tool_calls(portal_tool_calls)
+            if on_tool_decision:
+                try:
+                    on_tool_decision("used" if first_stream_tool_calls else "no_tools")
+                except Exception:  # pragma: no cover - defensive
+                    logger.exception("on_tool_decision callback failed")
         if first_stream_tool_calls:
             _prime_phase_starts(first_stream_tool_calls)
         first_content_raw = ""
@@ -1216,6 +1297,7 @@ class McpOrchestratorService:
             read_document_guardrail_reason: str | None = None
             read_document_guardrail_signature: str | None = None
             scope_clarification_tool_required = False
+            scope_selection_turn_lock_active = bool(scope_selection_requires_resolution)
 
             for iteration_index in range(self.max_tool_iterations):
                 current_tool_calls_raw = list(assistant_message.get("tool_calls") or [])
@@ -2519,10 +2601,16 @@ class McpOrchestratorService:
                         excluded_tools.add("read_knowledge")
                     if self._search_budget_remaining(tool_context) == 0:
                         excluded_tools.add("search_knowledge")
+                    if scope_selection_turn_lock_active:
+                        # Selection turns are already committed; never re-render MCQ
+                        # during the same turn.
+                        excluded_tools.add("present_scope_clarification")
                     if excluded_tools:
                         tools_for_iteration = self._exclude_tool_schemas(excluded_tools)
                     scope_intro_buffer: list[str] = []
-                    scope_clarification_expected = bool(scope_clarification_tool_required)
+                    scope_clarification_expected = bool(
+                        scope_clarification_tool_required and not scope_selection_turn_lock_active
+                    )
 
                     def _buffer_scope_intro_chunk(chunk: str) -> None:
                         if not chunk:
@@ -2966,6 +3054,7 @@ class McpOrchestratorService:
         *,
         conversation: Conversation,
         user_message: str,
+        user_metadata: Mapping[str, object] | None = None,
         allowed_tools: set[str] | None = None,
         wait_for_tool_approval: bool = True,
         portal_emit_blocks_enabled: bool = True,
@@ -2984,6 +3073,7 @@ class McpOrchestratorService:
         result = self._execute_turn(
             conversation=conversation,
             user_message=user_message,
+            user_metadata=user_metadata,
             allowed_tools=allowed_tools,
             wait_for_tool_approval=wait_for_tool_approval,
             portal_emit_blocks_enabled=portal_emit_blocks_enabled,
@@ -4356,6 +4446,61 @@ class McpOrchestratorService:
             next_cursor_fp = _cursor_fingerprint(tool_result.get("next_cursor"))
             if next_cursor_fp:
                 out["next_cursor"] = next_cursor_fp
+
+            requested_query = str(tool_result.get("query") or "").strip()
+            if requested_query:
+                out["requested_query"] = self._clip_text(requested_query, 220)
+
+            scope_resolution_summary: dict[str, object] | None = None
+            scope_resolution = tool_result.get("scope_resolution")
+            if isinstance(scope_resolution, Mapping):
+                scope_out: dict[str, object] = {}
+                mode_value = str(scope_resolution.get("mode") or "").strip().lower()
+                if mode_value:
+                    scope_out["mode"] = self._clip_text(mode_value, 24)
+                category_value = str(scope_resolution.get("category") or "").strip()
+                if category_value:
+                    scope_out["category"] = self._clip_text(category_value, 120)
+                categories_raw = scope_resolution.get("categories")
+                if isinstance(categories_raw, Sequence) and not isinstance(categories_raw, (str, bytes, bytearray)):
+                    categories_out: list[str] = []
+                    seen_categories: set[str] = set()
+                    for raw in categories_raw:
+                        text = str(raw or "").strip()
+                        if not text:
+                            continue
+                        lowered = text.lower()
+                        if lowered in seen_categories:
+                            continue
+                        seen_categories.add(lowered)
+                        categories_out.append(self._clip_text(text, 120))
+                        if len(categories_out) >= 8:
+                            break
+                    if categories_out:
+                        scope_out["categories"] = categories_out
+                selection_mode = str(scope_resolution.get("selection_mode") or "").strip().lower()
+                if selection_mode in {"single", "multi"}:
+                    scope_out["selection_mode"] = selection_mode
+                for query_key, query_limit in (("base_query", 220), ("resolved_query", 260), ("user_query", 180)):
+                    query_value = str(scope_resolution.get(query_key) or "").strip()
+                    if query_value:
+                        scope_out[query_key] = self._clip_text(query_value, query_limit)
+                if scope_out:
+                    scope_resolution_summary = scope_out
+            if scope_resolution_summary:
+                out["scope_resolution"] = scope_resolution_summary
+
+            effective_query = ""
+            if scope_resolution_summary:
+                effective_query = str(scope_resolution_summary.get("resolved_query") or "").strip()
+            if not effective_query:
+                diagnostics = tool_result.get("diagnostics")
+                if isinstance(diagnostics, Mapping):
+                    effective_query = str(diagnostics.get("scope_resolution_resolved_query") or "").strip()
+            if not effective_query:
+                effective_query = requested_query
+            if effective_query:
+                out["effective_query"] = self._clip_text(effective_query, 260)
             return out
 
         if normalized == "read_document":
@@ -7953,6 +8098,58 @@ class McpOrchestratorService:
             def _compact_scope_options(value: object, *, limit: int) -> list[dict[str, object]]:
                 if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
                     return []
+
+                def _compact_scope_mapped_refs(mapped_value: object) -> dict[str, object] | None:
+                    if not isinstance(mapped_value, Mapping):
+                        return None
+                    mapped_out: dict[str, object] = {}
+                    raw_ids = (
+                        mapped_value.get("ref_ids")
+                        or mapped_value.get("refs")
+                        or mapped_value.get("ids")
+                    )
+                    id_candidates: list[object] = []
+                    if isinstance(raw_ids, Sequence) and not isinstance(raw_ids, (str, bytes, bytearray)):
+                        id_candidates = list(raw_ids)
+                    elif raw_ids is not None:
+                        id_candidates = [raw_ids]
+                    ref_ids: list[str] = []
+                    seen_ref_ids: set[str] = set()
+                    for raw_id in id_candidates:
+                        ref_id = str(raw_id or "").strip()
+                        if not ref_id:
+                            continue
+                        try:
+                            parsed_id = str(uuid.UUID(ref_id))
+                        except (TypeError, ValueError, AttributeError):
+                            continue
+                        if parsed_id in seen_ref_ids:
+                            continue
+                        seen_ref_ids.add(parsed_id)
+                        ref_ids.append(parsed_id)
+                        if len(ref_ids) >= 6:
+                            break
+                    if ref_ids:
+                        mapped_out["ref_ids"] = ref_ids
+                    cursor = str(mapped_value.get("cursor") or mapped_value.get("next_cursor") or "").strip()
+                    if cursor:
+                        mapped_out["cursor"] = self._clip_text(cursor, 120)
+                    source = str(mapped_value.get("source") or "").strip()
+                    if source:
+                        mapped_out["source"] = self._clip_text(source, 64)
+                    confidence = mapped_value.get("confidence")
+                    if isinstance(confidence, (int, float)):
+                        mapped_out["confidence"] = round(max(0.0, min(1.0, float(confidence))), 3)
+                    fallback = mapped_value.get("fallback")
+                    if isinstance(fallback, bool):
+                        if fallback:
+                            mapped_out["fallback"] = "scoped_search"
+                    elif fallback is not None:
+                        fallback_text = str(fallback).strip().lower()
+                        if fallback_text:
+                            mapped_out["fallback"] = self._clip_text(fallback_text, 64)
+                    return mapped_out or None
+
                 out: list[dict[str, object]] = []
                 for item in value[: max(1, int(limit))]:
                     if not isinstance(item, Mapping):
@@ -7972,11 +8169,161 @@ class McpOrchestratorService:
                     category = str(item.get("category") or "").strip()
                     if category:
                         option["category"] = self._clip_text(category, 120)
+                    category_key = str(item.get("category_key") or "").strip().lower()
+                    if category_key:
+                        option["category_key"] = self._clip_text(category_key, 120)
+                    selection_mode = str(item.get("selection_mode") or "").strip().lower()
+                    if selection_mode in {"single", "multi"}:
+                        option["selection_mode"] = selection_mode
                     expands = item.get("expands")
                     if expands in {True, "categories"}:
                         option["expands"] = "categories"
+                    mapped_refs = _compact_scope_mapped_refs(item.get("mapped_refs"))
+                    if mapped_refs:
+                        option["mapped_refs"] = mapped_refs
                     out.append(option)
                 return out
+
+            def _compact_prefetched_evidence(value: object, *, limit: int) -> list[dict[str, object]]:
+                if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+                    return []
+                out: list[dict[str, object]] = []
+                for item in value[: max(1, int(limit))]:
+                    if not isinstance(item, Mapping):
+                        continue
+                    entry: dict[str, object] = {}
+                    for key in ("id", "document_id", "title", "type", "kind", "chars", "rows_shown", "total_rows"):
+                        if key not in item:
+                            continue
+                        raw = item.get(key)
+                        if raw is None:
+                            continue
+                        if isinstance(raw, str):
+                            text = raw.strip()
+                            if not text:
+                                continue
+                            entry[key] = self._clip_text(text, 180 if key == "title" else 120)
+                        else:
+                            entry[key] = raw
+                    truncated = item.get("truncated")
+                    if isinstance(truncated, bool):
+                        entry["truncated"] = truncated
+                    next_cursor = str(item.get("next_cursor") or "").strip()
+                    if next_cursor:
+                        entry["next_cursor"] = self._clip_text(next_cursor, 120)
+                    text = str(item.get("text") or "").strip()
+                    if text:
+                        entry["text"] = self._clip_text(text, 520)
+                    if entry:
+                        out.append(entry)
+                return out
+
+            def _compact_scope_resolution(value: object) -> dict[str, object] | None:
+                if not isinstance(value, Mapping):
+                    return None
+                scope_out: dict[str, object] = {}
+
+                mode_value = str(value.get("mode") or "").strip().lower()
+                if mode_value:
+                    scope_out["mode"] = self._clip_text(mode_value, 24)
+
+                category_value = str(value.get("category") or "").strip()
+                if category_value:
+                    scope_out["category"] = self._clip_text(category_value, 120)
+
+                categories_value = _compact_string_list(value.get("categories"), limit=12)
+                if categories_value:
+                    scope_out["categories"] = categories_value
+
+                category_key_value = str(value.get("category_key") or "").strip().lower()
+                if category_key_value:
+                    scope_out["category_key"] = self._clip_text(category_key_value, 120)
+
+                selection_mode = str(value.get("selection_mode") or "").strip().lower()
+                if selection_mode in {"single", "multi"}:
+                    scope_out["selection_mode"] = selection_mode
+
+                for query_key, limit in (("base_query", 220), ("resolved_query", 260), ("user_query", 180)):
+                    query_value = str(value.get(query_key) or "").strip()
+                    if query_value:
+                        scope_out[query_key] = self._clip_text(query_value, limit)
+
+                selection_source = str(value.get("selection_source") or "").strip().lower()
+                if selection_source:
+                    scope_out["selection_source"] = self._clip_text(selection_source, 64)
+
+                mapped_refs_raw = value.get("mapped_refs")
+                if isinstance(mapped_refs_raw, Mapping):
+                    mapped_refs_out: dict[str, object] = {}
+                    mapped_source = str(mapped_refs_raw.get("source") or "").strip()
+                    if mapped_source:
+                        mapped_refs_out["source"] = self._clip_text(mapped_source, 64)
+                    mapped_cursor = str(
+                        mapped_refs_raw.get("cursor") or mapped_refs_raw.get("next_cursor") or ""
+                    ).strip()
+                    if mapped_cursor:
+                        mapped_refs_out["cursor"] = self._clip_text(mapped_cursor, 120)
+                    mapped_confidence = mapped_refs_raw.get("confidence")
+                    if isinstance(mapped_confidence, (int, float)):
+                        mapped_refs_out["confidence"] = round(
+                            max(0.0, min(1.0, float(mapped_confidence))),
+                            3,
+                        )
+                    mapped_ref_ids_raw_inner = (
+                        mapped_refs_raw.get("ref_ids")
+                        or mapped_refs_raw.get("refs")
+                        or mapped_refs_raw.get("ids")
+                    )
+                    if isinstance(mapped_ref_ids_raw_inner, Sequence) and not isinstance(
+                        mapped_ref_ids_raw_inner,
+                        (str, bytes, bytearray),
+                    ):
+                        mapped_refs_ids: list[str] = []
+                        seen_mapped_ids: set[str] = set()
+                        for raw_id in mapped_ref_ids_raw_inner:
+                            ref_id = str(raw_id or "").strip()
+                            if not ref_id:
+                                continue
+                            try:
+                                parsed_id = str(uuid.UUID(ref_id))
+                            except (TypeError, ValueError, AttributeError):
+                                continue
+                            if parsed_id in seen_mapped_ids:
+                                continue
+                            seen_mapped_ids.add(parsed_id)
+                            mapped_refs_ids.append(parsed_id)
+                            if len(mapped_refs_ids) >= 6:
+                                break
+                        if mapped_refs_ids:
+                            mapped_refs_out["ref_ids"] = mapped_refs_ids
+                    if mapped_refs_out:
+                        scope_out["mapped_refs"] = mapped_refs_out
+
+                mapped_ref_ids_raw = value.get("mapped_ref_ids")
+                mapped_ref_ids: list[str] = []
+                if isinstance(mapped_ref_ids_raw, Sequence) and not isinstance(
+                    mapped_ref_ids_raw,
+                    (str, bytes, bytearray),
+                ):
+                    seen_ref_ids: set[str] = set()
+                    for raw_id in mapped_ref_ids_raw:
+                        ref_id = str(raw_id or "").strip()
+                        if not ref_id:
+                            continue
+                        try:
+                            parsed_id = str(uuid.UUID(ref_id))
+                        except (TypeError, ValueError, AttributeError):
+                            continue
+                        if parsed_id in seen_ref_ids:
+                            continue
+                        seen_ref_ids.add(parsed_id)
+                        mapped_ref_ids.append(parsed_id)
+                        if len(mapped_ref_ids) >= 6:
+                            break
+                if mapped_ref_ids:
+                    scope_out["mapped_ref_ids"] = mapped_ref_ids
+
+                return scope_out or None
 
             raw_diagnostics = payload.get("diagnostics")
             compact_diagnostics: dict[str, object] = {}
@@ -7984,6 +8331,7 @@ class McpOrchestratorService:
                 for key in (
                     "reason",
                     "clarification_ui_mode",
+                    "scope_clarification_contract_version",
                     "intent_clarification_question",
                     "assistant_guidance",
                     "suppress_textual_choice_list",
@@ -7992,6 +8340,10 @@ class McpOrchestratorService:
                     "no_result_reason",
                     "scope_listed",
                     "scope_list_count",
+                    "scope_resolution_mode",
+                    "scope_resolution_category",
+                    "scope_resolution_base_query",
+                    "scope_resolution_resolved_query",
                 ):
                     value = raw_diagnostics.get(key)
                     if value is None:
@@ -8021,6 +8373,13 @@ class McpOrchestratorService:
                     compact_diagnostics["top_categories"] = diag_top_categories
                 if diag_options:
                     compact_diagnostics["scope_clarification_options"] = diag_options
+
+                diag_resolution_categories = _compact_string_list(
+                    raw_diagnostics.get("scope_resolution_categories"),
+                    limit=12,
+                )
+                if diag_resolution_categories:
+                    compact_diagnostics["scope_resolution_categories"] = diag_resolution_categories
 
             raw_clarification = payload.get("clarification")
             compact_clarification: dict[str, object] = {}
@@ -8059,6 +8418,11 @@ class McpOrchestratorService:
                 assistant_guidance = str(raw_clarification.get("assistant_guidance") or "").strip()
                 if assistant_guidance:
                     compact_clarification["assistant_guidance"] = self._clip_text(assistant_guidance, 320)
+                contract_version = raw_clarification.get("contract_version")
+                if isinstance(contract_version, int) and contract_version > 0:
+                    compact_clarification["contract_version"] = contract_version
+                elif isinstance(contract_version, str) and contract_version.strip().isdigit():
+                    compact_clarification["contract_version"] = int(contract_version.strip())
                 suppress_textual_choice_list = raw_clarification.get("suppress_textual_choice_list")
                 if isinstance(suppress_textual_choice_list, bool):
                     compact_clarification["suppress_textual_choice_list"] = suppress_textual_choice_list
@@ -8095,8 +8459,42 @@ class McpOrchestratorService:
                     compact["clarification_ui_mode"] = mode_value
             if compact_clarification:
                 compact["clarification"] = compact_clarification
+            prefetched_evidence = _compact_prefetched_evidence(
+                payload.get("prefetched_evidence"),
+                limit=4,
+            )
+            if prefetched_evidence:
+                compact["prefetched_evidence"] = prefetched_evidence
+            prefetched_read_status = str(payload.get("prefetched_read_status") or "").strip().lower()
+            if prefetched_read_status:
+                compact["prefetched_read_status"] = prefetched_read_status
 
-            for key in ("query", "intent", "match_policy"):
+            compact_scope_resolution = _compact_scope_resolution(payload.get("scope_resolution"))
+            if not compact_scope_resolution and compact_diagnostics:
+                scope_from_diag: dict[str, object] = {}
+                mode_value = str(compact_diagnostics.get("scope_resolution_mode") or "").strip().lower()
+                if mode_value:
+                    scope_from_diag["mode"] = mode_value
+                category_value = str(compact_diagnostics.get("scope_resolution_category") or "").strip()
+                if category_value:
+                    scope_from_diag["category"] = category_value
+                categories_value = _compact_string_list(
+                    compact_diagnostics.get("scope_resolution_categories"),
+                    limit=12,
+                )
+                if categories_value:
+                    scope_from_diag["categories"] = categories_value
+                base_query_value = str(compact_diagnostics.get("scope_resolution_base_query") or "").strip()
+                if base_query_value:
+                    scope_from_diag["base_query"] = self._clip_text(base_query_value, 220)
+                resolved_query_value = str(compact_diagnostics.get("scope_resolution_resolved_query") or "").strip()
+                if resolved_query_value:
+                    scope_from_diag["resolved_query"] = self._clip_text(resolved_query_value, 260)
+                compact_scope_resolution = scope_from_diag or None
+            if compact_scope_resolution:
+                compact["scope_resolution"] = compact_scope_resolution
+
+            for key in ("query", "intent", "query_intent", "match_policy"):
                 if key not in payload:
                     continue
                 value = payload.get(key)
@@ -8213,6 +8611,58 @@ class McpOrchestratorService:
             def _compact_scope_options(value: object, *, limit: int) -> list[dict[str, object]]:
                 if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
                     return []
+
+                def _compact_scope_mapped_refs(mapped_value: object) -> dict[str, object] | None:
+                    if not isinstance(mapped_value, Mapping):
+                        return None
+                    mapped_out: dict[str, object] = {}
+                    raw_ids = (
+                        mapped_value.get("ref_ids")
+                        or mapped_value.get("refs")
+                        or mapped_value.get("ids")
+                    )
+                    id_candidates: list[object] = []
+                    if isinstance(raw_ids, Sequence) and not isinstance(raw_ids, (str, bytes, bytearray)):
+                        id_candidates = list(raw_ids)
+                    elif raw_ids is not None:
+                        id_candidates = [raw_ids]
+                    ref_ids: list[str] = []
+                    seen_ref_ids: set[str] = set()
+                    for raw_id in id_candidates:
+                        ref_id = str(raw_id or "").strip()
+                        if not ref_id:
+                            continue
+                        try:
+                            parsed_id = str(uuid.UUID(ref_id))
+                        except (TypeError, ValueError, AttributeError):
+                            continue
+                        if parsed_id in seen_ref_ids:
+                            continue
+                        seen_ref_ids.add(parsed_id)
+                        ref_ids.append(parsed_id)
+                        if len(ref_ids) >= 6:
+                            break
+                    if ref_ids:
+                        mapped_out["ref_ids"] = ref_ids
+                    cursor = str(mapped_value.get("cursor") or mapped_value.get("next_cursor") or "").strip()
+                    if cursor:
+                        mapped_out["cursor"] = self._clip_text(cursor, 120)
+                    source = str(mapped_value.get("source") or "").strip()
+                    if source:
+                        mapped_out["source"] = self._clip_text(source, 64)
+                    confidence = mapped_value.get("confidence")
+                    if isinstance(confidence, (int, float)):
+                        mapped_out["confidence"] = round(max(0.0, min(1.0, float(confidence))), 3)
+                    fallback = mapped_value.get("fallback")
+                    if isinstance(fallback, bool):
+                        if fallback:
+                            mapped_out["fallback"] = "scoped_search"
+                    elif fallback is not None:
+                        fallback_text = str(fallback).strip().lower()
+                        if fallback_text:
+                            mapped_out["fallback"] = self._clip_text(fallback_text, 64)
+                    return mapped_out or None
+
                 out: list[dict[str, object]] = []
                 for item in value[: max(1, int(limit))]:
                     if not isinstance(item, Mapping):
@@ -8232,9 +8682,18 @@ class McpOrchestratorService:
                     category = str(item.get("category") or "").strip()
                     if category:
                         option["category"] = self._clip_text(category, 120)
+                    category_key = str(item.get("category_key") or "").strip().lower()
+                    if category_key:
+                        option["category_key"] = self._clip_text(category_key, 120)
+                    selection_mode = str(item.get("selection_mode") or "").strip().lower()
+                    if selection_mode in {"single", "multi"}:
+                        option["selection_mode"] = selection_mode
                     expands = item.get("expands")
                     if expands in {True, "categories"}:
                         option["expands"] = "categories"
+                    mapped_refs = _compact_scope_mapped_refs(item.get("mapped_refs"))
+                    if mapped_refs:
+                        option["mapped_refs"] = mapped_refs
                     out.append(option)
                 return out
 
@@ -8244,6 +8703,7 @@ class McpOrchestratorService:
                 for key in (
                     "reason",
                     "clarification_ui_mode",
+                    "scope_clarification_contract_version",
                     "intent_clarification_question",
                     "assistant_guidance",
                     "suppress_textual_choice_list",
@@ -8293,6 +8753,11 @@ class McpOrchestratorService:
                     value = str(raw_clarification.get(key) or "").strip()
                     if value:
                         compact_clarification[key] = self._clip_text(value, 180 if key != "assistant_guidance" else 320)
+                contract_version = raw_clarification.get("contract_version")
+                if isinstance(contract_version, int) and contract_version > 0:
+                    compact_clarification["contract_version"] = contract_version
+                elif isinstance(contract_version, str) and contract_version.strip().isdigit():
+                    compact_clarification["contract_version"] = int(contract_version.strip())
                 suppress = raw_clarification.get("suppress_textual_choice_list")
                 if isinstance(suppress, bool):
                     compact_clarification["suppress_textual_choice_list"] = suppress

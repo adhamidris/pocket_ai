@@ -855,7 +855,7 @@ class ChatPortalClient {
     return data;
   }
 
-		  async sendMessage(message) {
+		  async sendMessage(message, options = {}) {
 		    if (!this.sessionToken) return;
         if (!this.endpoints.turnCreate) {
           this.showToast("Send failed", "Turn endpoint is not configured.", true);
@@ -885,10 +885,14 @@ class ChatPortalClient {
 	    this.setSpinnerText("", { pending: true });
 
     try {
+      const turnMetadataOverrides =
+        options && typeof options === "object" && options.turnMetadata && typeof options.turnMetadata === "object"
+          ? options.turnMetadata
+          : null;
       const requestBody = {
         session_token: this.sessionToken,
         body: message,
-        metadata: this.buildTurnMetadata(),
+        metadata: this.buildTurnMetadata(turnMetadataOverrides),
       };
       const response = await fetch(this.endpoints.turnCreate, {
         method: "POST",
@@ -3484,11 +3488,12 @@ class ChatPortalClient {
     const connectionNameRaw = remote && remote.connection_name ? remote.connection_name.toString() : "";
     const remoteTool = remote && remote.remote_tool ? remote.remote_tool.toString() : "";
     const toolNameFallback = (payload.tool_name || payload.toolName || "").toString().trim();
-    const normalizedInternalTool = toolNameFallback.toLowerCase();
+    const effectiveInternalTool = this.getEffectiveToolName(toolNameFallback, payload);
+    const normalizedInternalTool = effectiveInternalTool || this.normalizeToolName(toolNameFallback);
     const internalToolLabel = normalizedInternalTool === "mcp_search_tools" ? "Tool discovery" : "";
     const titleEl = card.querySelector("[data-tool-title]");
     const existingTitle = titleEl ? titleEl.textContent : "";
-    const displayTool = remoteTool || internalToolLabel || toolNameFallback || "";
+    const displayTool = remoteTool || internalToolLabel || effectiveInternalTool || toolNameFallback || "";
 
     const connectionName = connectionNameRaw.replace(/\s*\(mcp\)\s*$/i, "").trim();
     const displayToolLabel = displayTool ? this.formatStatus(displayTool) : "";
@@ -3498,6 +3503,9 @@ class ChatPortalClient {
         : displayToolLabel || connectionName || existingTitle || "External tool";
 
     if (titleEl) titleEl.textContent = titleText;
+    if (effectiveInternalTool) {
+      card.dataset.toolName = effectiveInternalTool;
+    }
 
     const approvalData = payload.approval && typeof payload.approval === "object" ? payload.approval : null;
     let approvalStatus = "";
@@ -4658,17 +4666,140 @@ class ChatPortalClient {
     return cleaned;
   }
 
-  submitScopeClarificationMessage(query) {
+  formatScopeClarificationCategoryLabel(value) {
+    const raw = (value || "").toString().trim();
+    if (!raw) return "";
+
+    let normalized = raw
+      .replace(/[_/|]+/g, " ")
+      .replace(/[–—]+/g, "-")
+      .replace(/\b(?:table|sheet|tab)\s*\d*\b/gi, " ")
+      .replace(/\b([a-z]{3,}s)(?:en|ar|fr|de|es)\b/gi, "$1")
+      .replace(/[^0-9A-Za-z\u0600-\u06FF\s-]+/g, " ")
+      .replace(/[-]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!normalized) normalized = raw;
+
+    const stopTokens = new Set([
+      "and",
+      "or",
+      "for",
+      "from",
+      "to",
+      "in",
+      "on",
+      "with",
+      "by",
+      "the",
+      "a",
+      "an",
+      "و",
+      "او",
+      "أو",
+      "من",
+      "في",
+      "على",
+      "الى",
+      "إلى",
+      "عن",
+      "ال",
+      "en",
+      "ar",
+      "fr",
+      "de",
+      "es",
+      "it",
+      "pt",
+      "ru",
+      "tr",
+      "zh",
+      "ja",
+    ]);
+
+    const tokens = normalized.split(/\s+/).filter(Boolean);
+    const selected = [];
+    const seen = new Set();
+    tokens.forEach((token) => {
+      const lowered = token.toLowerCase();
+      if (!lowered) return;
+      if (stopTokens.has(lowered)) return;
+      if (lowered.length === 1 && !/\d/.test(lowered)) return;
+      if (seen.has(lowered)) return;
+      seen.add(lowered);
+      selected.push(token);
+    });
+    const base = selected.length ? selected.join(" ") : normalized;
+    const clipped = base.split(/\s+/).slice(0, 10).join(" ").trim();
+    if (!clipped) return raw;
+
+    // For Latin text, title-case the label for cleaner UI presentation.
+    if (/[A-Za-z]/.test(clipped)) {
+      return clipped
+        .split(/\s+/)
+        .map((token) => {
+          if (!token) return token;
+          if (/^\d+$/.test(token)) return token;
+          if (/^[A-Za-z]/.test(token)) return token.charAt(0).toUpperCase() + token.slice(1).toLowerCase();
+          return token;
+        })
+        .join(" ");
+    }
+
+    return clipped;
+  }
+
+  normalizeScopeSelectionMetadata(selection) {
+    if (!selection || typeof selection !== "object") return null;
+    const normalizeAction = (value) =>
+      (value || "")
+        .toString()
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, "_");
+    let action = normalizeAction(selection.action);
+    if (action === "all" || action === "scope_all" || action === "scope_all_fees") {
+      action = "all_fees";
+    } else if (action === "choose_categories" || action === "list_categories" || action === "scope_choose_categories") {
+      action = "choose_categories";
+    } else if (
+      action === "select_category" ||
+      action === "category" ||
+      action === "scope_category" ||
+      action === "scope_category_key"
+    ) {
+      action = "select_category";
+    }
+    const categoryKey = (selection.categoryKey || selection.category_key || "").toString().trim();
+    const categoryLabel = (selection.categoryLabel || selection.category_label || "").toString().trim();
+    const blockId = (selection.blockId || selection.block_id || "").toString().trim();
+    if (!action && categoryKey) action = "select_category";
+    if (!action) return null;
+    const payload = { action };
+    if (categoryKey) payload.category_key = categoryKey;
+    if (categoryLabel) payload.category_label = categoryLabel;
+    if (blockId) payload.block_id = blockId;
+    return payload;
+  }
+
+  buildScopeSelectionTurnMetadata(selection) {
+    const normalizedSelection = this.normalizeScopeSelectionMetadata(selection);
+    if (!normalizedSelection) return null;
+    return { scope_selection: normalizedSelection };
+  }
+
+  submitScopeClarificationMessage(query, scopeSelection = null) {
     const message = (query || "").toString().trim();
     if (!message) return;
     if (!this.sessionToken) {
       this.showToast("Send failed", "Session is still initialising.", true);
       return;
     }
+    const scopeTurnMetadata = this.buildScopeSelectionTurnMetadata(scopeSelection);
 
     const wasEmpty = this.isCurrentSessionEmpty();
     if (this.isSending || this.isStreaming) {
-      this.enqueueMessage(message);
+      this.enqueueMessage(message, { turnMetadata: scopeTurnMetadata });
       return;
     }
 
@@ -4678,7 +4809,7 @@ class ChatPortalClient {
       this.updateSessionEmptyState(1);
     }
 
-    void this.sendMessage(message);
+    void this.sendMessage(message, { turnMetadata: scopeTurnMetadata });
   }
 
   buildScopeClarificationElement(payload, blockId = "") {
@@ -4690,17 +4821,112 @@ class ChatPortalClient {
       (payload && payload.top_categories) || [],
       12,
     );
-    const allQuery = ((payload && payload.all_query) || "all").toString().trim() || "all";
-    const allLabel = ((payload && payload.all_label) || "All fees").toString().trim() || "All fees";
+    const chips = Array.isArray(payload && payload.chips)
+      ? payload.chips.filter((item) => item && typeof item === "object")
+      : [];
+    const chipKind = (item) => ((item && item.kind) || "").toString().trim().toLowerCase();
+    const chipId = (item) => ((item && item.id) || "").toString().trim().toLowerCase();
+    const chipCategoryKey = (item) => ((item && item.category_key) || "").toString().trim().toLowerCase();
+    const isActionChip = (item) => {
+      const kind = chipKind(item);
+      if (kind === "action") return true;
+      const id = chipId(item);
+      if (id === "all_fees" || id === "choose_categories") return true;
+      const key = chipCategoryKey(item);
+      return key === "scope_all_fees" || key === "scope_choose_categories";
+    };
+    const isCategoryChip = (item) => {
+      if (!item || typeof item !== "object") return false;
+      const kind = chipKind(item);
+      if (kind === "category") return true;
+      if (kind === "action" || isActionChip(item)) return false;
+      const label = ((item.label || item.category || "") + "").trim();
+      const query = ((item.query || "") + "").trim();
+      const key = chipCategoryKey(item);
+      return Boolean(label && (key || query));
+    };
+
+    const actionChips = chips.filter((item) => isActionChip(item));
+    const categoryChips = chips.filter((item) => isCategoryChip(item));
+    const allActionChip =
+      actionChips.find((item) => ((item && item.id) || "").toString().trim() === "all_fees") ||
+      actionChips.find(
+        (item) => ((item && item.category_key) || "").toString().trim().toLowerCase() === "scope_all_fees",
+      ) ||
+      null;
+    const allLabel = (
+      ((allActionChip && allActionChip.label) || (payload && payload.all_label) || "All fees")
+        .toString()
+        .trim()
+    ) || "All fees";
     const visibleCountRaw = Number(payload && payload.visible_count);
     // Hard cap at 3 — remaining choices expand via the "More" pill button.
     const visibleCount = Math.min(3, Number.isFinite(visibleCountRaw) && visibleCountRaw > 0 ? Math.max(1, Math.floor(visibleCountRaw)) : 3);
     const categories = sourceCategories.length ? sourceCategories : topCategories;
-    if (!categories.length) return null;
 
-    const quickCategories = categories.slice(0, visibleCount);
-    const quickSet = new Set(quickCategories.map((value) => value.toLowerCase()));
-    const hiddenCategories = categories.filter((value) => !quickSet.has(value.toLowerCase()));
+    const resolveChipQuery = (chip, fallback) => {
+      const fallbackQuery = (fallback || "").toString().trim();
+      if (!chip || typeof chip !== "object") return fallbackQuery;
+      const categoryKey = String(chip.category_key || "").trim();
+      if (categoryKey) return `scope:category_key:${categoryKey}`;
+      const chipQuery = String(chip.query || "").trim();
+      if (chipQuery) return chipQuery;
+      return fallbackQuery;
+    };
+
+    const categoryItemsFromChips = [];
+    const seenCategorySelectors = new Set();
+    categoryChips.forEach((chip) => {
+      const rawLabel = (
+        (chip.label || chip.category || chip.query || "")
+          .toString()
+          .trim()
+      );
+      if (!rawLabel) return;
+      const queryValue = resolveChipQuery(chip, rawLabel);
+      const categoryKey = String(chip.category_key || "").trim();
+      const dedupeKey = (categoryKey || queryValue || rawLabel).toLowerCase();
+      if (seenCategorySelectors.has(dedupeKey)) return;
+      seenCategorySelectors.add(dedupeKey);
+      categoryItemsFromChips.push({
+        label: rawLabel,
+        displayLabel: this.formatScopeClarificationCategoryLabel(rawLabel) || rawLabel,
+        query: queryValue,
+        categoryKey,
+      });
+    });
+
+    const normalizeCategoryLookupKey = (value) =>
+      (value || "")
+        .toString()
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, " ");
+    const categoryKeyByLabel = new Map();
+    categoryItemsFromChips.forEach((item) => {
+      const label = normalizeCategoryLookupKey((item && item.label) || "");
+      const categoryKey = ((item && item.categoryKey) || "").toString().trim();
+      if (!label || !categoryKey || categoryKeyByLabel.has(label)) return;
+      categoryKeyByLabel.set(label, categoryKey);
+    });
+
+    const categoryItemsFromLists = categories.map((category) => {
+      const queryValue = (category || "").toString().trim();
+      const displayLabel = this.formatScopeClarificationCategoryLabel(queryValue) || queryValue;
+      const categoryKey = categoryKeyByLabel.get(normalizeCategoryLookupKey(queryValue)) || "";
+      return {
+        label: queryValue,
+        displayLabel,
+        query: categoryKey ? `scope:category_key:${categoryKey}` : queryValue,
+        categoryKey,
+      };
+    });
+
+    const categoryItems = categoryItemsFromChips.length ? categoryItemsFromChips : categoryItemsFromLists;
+    if (!categoryItems.length) return null;
+
+    const quickCategories = categoryItems.slice(0, visibleCount);
+    const hiddenCategories = categoryItems.slice(visibleCount);
 
     const wrapper = document.createElement("section");
     wrapper.dataset.contentBlock = "true";
@@ -4715,7 +4941,10 @@ class ChatPortalClient {
     allButton.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      this.submitScopeClarificationMessage(allQuery);
+      this.submitScopeClarificationMessage(allLabel, {
+        action: "all_fees",
+        blockId,
+      });
     });
     wrapper.appendChild(allButton);
 
@@ -4729,17 +4958,35 @@ class ChatPortalClient {
     const categoriesList = document.createElement("div");
     categoriesList.className = "portal-scope-clarification__list";
 
-    const renderCategoryButton = (category) => {
-      const label = (category || "").toString().trim();
-      if (!label) return null;
+    const renderCategoryButton = (categoryItem) => {
+      const queryValue = ((categoryItem && categoryItem.query) || "").toString().trim();
+      const displayLabel = (
+        (categoryItem && categoryItem.displayLabel) ||
+        (categoryItem && categoryItem.label) ||
+        queryValue
+      )
+        .toString()
+        .trim();
+      if (!displayLabel) return null;
+      const sendLabel = (
+        ((categoryItem && categoryItem.label) || displayLabel || queryValue || "")
+          .toString()
+          .trim()
+      );
+      if (!sendLabel) return null;
       const button = document.createElement("button");
       button.type = "button";
       button.className = "portal-scope-clarification__btn";
-      button.textContent = label;
+      button.textContent = displayLabel;
       button.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
-        this.submitScopeClarificationMessage(label);
+        this.submitScopeClarificationMessage(sendLabel, {
+          action: "select_category",
+          categoryKey: ((categoryItem && categoryItem.categoryKey) || "").toString().trim(),
+          categoryLabel: ((categoryItem && categoryItem.label) || displayLabel).toString().trim(),
+          blockId,
+        });
       });
       return button;
     };
@@ -6862,7 +7109,9 @@ class ChatPortalClient {
       if (stream === "executed") {
         const phase = (payload.phase || "").toString().trim().toLowerCase();
         if (phase !== "finished") return "";
-        const toolName = (payload.tool_name || payload.toolName || "").toString().trim();
+        const toolNameRaw = (payload.tool_name || payload.toolName || "").toString().trim();
+        const effectiveToolName = this.getEffectiveToolName(toolNameRaw, payload);
+        const toolName = effectiveToolName ? this.formatStatus(effectiveToolName) : toolNameRaw;
         const remote = payload.remote && typeof payload.remote === "object" ? payload.remote : null;
         const connectionName = remote && remote.connection_name ? remote.connection_name.toString().trim() : "";
         const remoteTool = remote && remote.remote_tool ? remote.remote_tool.toString().trim() : "";
@@ -6982,6 +7231,8 @@ class ChatPortalClient {
           continue;
         }
         const toolNameRaw = (payload.tool_name || payload.toolName || "").toString().trim();
+        const effectiveToolName = this.getEffectiveToolName(toolNameRaw, payload);
+        const toolName = effectiveToolName ? this.formatStatus(effectiveToolName) : toolNameRaw;
         const remote = payload.remote && typeof payload.remote === "object" ? payload.remote : null;
         const connectionName = remote && remote.connection_name ? remote.connection_name.toString().trim() : "";
         const remoteTool = remote && remote.remote_tool ? remote.remote_tool.toString().trim() : "";
@@ -6990,7 +7241,7 @@ class ChatPortalClient {
           (output && output.status ? String(output.status).trim().toLowerCase() : "") ||
           (payload.status ? String(payload.status).trim().toLowerCase() : "");
 
-        let title = toolNameRaw || remoteTool || labelRaw || "Tool";
+        let title = toolName || remoteTool || labelRaw || "Tool";
         if (connectionName) {
           title = `${connectionName} · ${title}`;
         }
@@ -6999,7 +7250,9 @@ class ChatPortalClient {
         const line = status ? `Tool: ${toolLabel} - ${status}` : `Tool: ${toolLabel}`;
         const key = `tool:${title}:${status || ""}`;
         if (key === lastKey) continue;
-        if (toolNameRaw) {
+        if (effectiveToolName) {
+          seenTools.add(effectiveToolName.toLowerCase());
+        } else if (toolNameRaw) {
           seenTools.add(toolNameRaw.toLowerCase());
         }
         if (remoteTool) {
@@ -9432,6 +9685,79 @@ class ChatPortalClient {
     }
   }
 
+  normalizeToolName(toolName) {
+    return (toolName || "").toString().trim().toLowerCase();
+  }
+
+  collectToolClassificationCandidates(payload) {
+    const candidates = [];
+    const pushCandidate = (value) => {
+      if (value && typeof value === "object") {
+        candidates.push(value);
+      }
+    };
+    pushCandidate(payload);
+    if (!payload || typeof payload !== "object") {
+      return candidates;
+    }
+    pushCandidate(payload.output);
+    pushCandidate(payload.output_summary);
+    const llmResponse = payload.llm_response;
+    if (llmResponse && typeof llmResponse === "object") {
+      pushCandidate(llmResponse.content_json);
+      const contentRaw = llmResponse.content;
+      if (
+        (!llmResponse.content_json || typeof llmResponse.content_json !== "object") &&
+        typeof contentRaw === "string" &&
+        contentRaw.trim()
+      ) {
+        try {
+          const parsed = JSON.parse(contentRaw);
+          pushCandidate(parsed);
+        } catch (_err) {
+          // Ignore malformed tool payload content.
+        }
+      }
+    }
+    return candidates;
+  }
+
+  isScopeAutoReadPayload(payload) {
+    const candidates = this.collectToolClassificationCandidates(payload);
+    for (const candidate of candidates) {
+      if (!candidate || typeof candidate !== "object") continue;
+      const diagnostics = candidate.diagnostics && typeof candidate.diagnostics === "object" ? candidate.diagnostics : null;
+      const pathValue = (
+        (diagnostics && diagnostics.path) ||
+        candidate.path ||
+        ""
+      )
+        .toString()
+        .trim()
+        .toLowerCase();
+      if (pathValue === "scope_auto_read") return true;
+      if (diagnostics && diagnostics.scope_auto_read_applied === true) return true;
+
+      const prefetchedEvidence = Array.isArray(candidate.prefetched_evidence) ? candidate.prefetched_evidence : [];
+      if (!prefetchedEvidence.length) continue;
+
+      const budget = candidate.budget && typeof candidate.budget === "object" ? candidate.budget : null;
+      const searchesUsed = Number(budget && budget.searches_used);
+      const readsUsed = Number(budget && budget.reads_used);
+      if (Number.isFinite(searchesUsed) && Number.isFinite(readsUsed) && searchesUsed === 0 && readsUsed > 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  getEffectiveToolName(toolName, payload) {
+    const normalized = this.normalizeToolName(toolName);
+    if (!normalized) return "";
+    if (normalized !== "search_knowledge") return normalized;
+    return this.isScopeAutoReadPayload(payload) ? "read_knowledge" : normalized;
+  }
+
 
 
   humanizeAgentToolName(toolName) {
@@ -10525,7 +10851,9 @@ class ChatPortalClient {
       container.appendChild(
         buildSection("Tools", toolTrace, (item) => {
 	          const toolRaw = item && item.tool ? String(item.tool) : "tool";
-          const tool = toolRaw.toLowerCase();
+          const effectiveTool = this.getEffectiveToolName(toolRaw, item);
+          const tool = (effectiveTool || toolRaw).toLowerCase();
+          const toolLabel = effectiveTool ? this.formatStatus(effectiveTool) : toolRaw;
           const status = item && item.status ? String(item.status) : "";
           let extra = "";
 
@@ -10545,7 +10873,7 @@ class ChatPortalClient {
             }
           }
 
-          return [toolRaw, status, extra].filter(Boolean).join(" • ");
+          return [toolLabel, status, extra].filter(Boolean).join(" • ");
         }),
       );
     }
@@ -10555,17 +10883,24 @@ class ChatPortalClient {
         tool: item.tool,
         status: item.status,
         duration_ms: item.duration_ms,
+        output_summary: item.output_summary || null,
         llm_request: item.llm_request || null,
         llm_response: item.llm_response || null,
         prompt_compaction: item.prompt_compaction || null,
       }));
       container.appendChild(
         buildSection("Tool I/O (LLM Exact)", ioEntries, (item, idx) => {
-          const requestTool =
+          const requestToolRaw =
             item && item.llm_request && item.llm_request.tool
               ? String(item.llm_request.tool)
               : "";
-          const executedTool = item && item.tool ? String(item.tool) : `Tool ${idx + 1}`;
+          const requestTool = requestToolRaw ? this.formatStatus(requestToolRaw) : "";
+          const executedToolRaw = item && item.tool ? String(item.tool) : "";
+          const effectiveExecutedTool = this.getEffectiveToolName(executedToolRaw, item);
+          const executedTool =
+            effectiveExecutedTool
+              ? this.formatStatus(effectiveExecutedTool)
+              : executedToolRaw || `Tool ${idx + 1}`;
           const status = item && item.status ? String(item.status) : "";
           const flow = requestTool && requestTool !== executedTool ? `${requestTool} → ${executedTool}` : executedTool;
           return [flow, status].filter(Boolean).join(" • ");
@@ -10869,14 +11204,31 @@ class ChatPortalClient {
     }
   }
 
-  enqueueMessage(message) {
-    if (!message) return;
+  normalizeQueuedMessagePayload(message, options = null) {
+    const normalizedMessage = (message || "").toString().trim();
+    if (!normalizedMessage) return null;
+    const turnMetadata =
+      options &&
+      typeof options === "object" &&
+      options.turnMetadata &&
+      typeof options.turnMetadata === "object"
+        ? options.turnMetadata
+        : null;
+    return {
+      message: normalizedMessage,
+      turnMetadata,
+    };
+  }
+
+  enqueueMessage(message, options = null) {
+    const payload = this.normalizeQueuedMessagePayload(message, options);
+    if (!payload) return;
     if (this.pendingMessages.length >= 1) {
-      this.pendingMessages[0] = message;
+      this.pendingMessages[0] = payload;
       this.showToast("Queued", "Updated your next message.");
       return;
     }
-    this.pendingMessages.push(message);
+    this.pendingMessages.push(payload);
     this.showToast("Queued", "I'll send this after the current reply finishes.");
   }
 
@@ -11166,11 +11518,20 @@ class ChatPortalClient {
     return metadata;
   }
 
-  buildTurnMetadata() {
-    return {
+  buildTurnMetadata(overrides = null) {
+    const metadata = {
       ui_language: this.getUiLanguage(),
       locale: this.getLocale(),
     };
+    if (overrides && typeof overrides === "object") {
+      Object.keys(overrides).forEach((key) => {
+        if (!key) return;
+        const value = overrides[key];
+        if (value === undefined) return;
+        metadata[key] = value;
+      });
+    }
+    return metadata;
   }
 
   setComposerAvailability(enabled) {
@@ -11234,7 +11595,17 @@ class ChatPortalClient {
     if (this.isSending || this.isStreaming) return;
     const next = this.pendingMessages.shift();
     if (next) {
-      this.sendMessage(next);
+      if (typeof next === "string") {
+        this.sendMessage(next);
+        return;
+      }
+      if (next && typeof next === "object") {
+        const nextMessage = (next.message || "").toString().trim();
+        if (!nextMessage) return;
+        const turnMetadata =
+          next.turnMetadata && typeof next.turnMetadata === "object" ? next.turnMetadata : null;
+        this.sendMessage(nextMessage, { turnMetadata });
+      }
     }
   }
 

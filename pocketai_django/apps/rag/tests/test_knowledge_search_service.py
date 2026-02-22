@@ -544,6 +544,22 @@ class KnowledgeSearchServiceScopeSummaryTests(SimpleTestCase):
         self.assertFalse(summary["is_broad_scope"])
         self.assertGreaterEqual(summary["category_counts"].get("outgoing transfers", 0), 1)
 
+    def test_scope_category_normalizer_strips_structural_noise(self) -> None:
+        normalized = KnowledgeSearchService._normalize_scope_category_value(
+            "cash, withdrawal, fees, from, international, atms",
+            max_chars=96,
+        )
+        self.assertEqual(
+            normalized,
+            "cash withdrawal fees international atms",
+        )
+
+        normalized_table_suffix = KnowledgeSearchService._normalize_scope_category_value(
+            "cheques-en - table 2",
+            max_chars=96,
+        )
+        self.assertEqual(normalized_table_suffix, "cheques")
+
     @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
     def test_scope_categories_for_contract_returns_ranked_full_list(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
@@ -1559,6 +1575,7 @@ class KnowledgeSearchServiceClarificationTests(TestCase):
 
         def _make_chunk(*, content: str, upload_id: uuid.UUID):
             chunk = mock.Mock()
+            chunk.id = uuid.uuid4()
             chunk.metadata = {
                 "index_type": "table",
                 "is_table_chunk": True,
@@ -1642,6 +1659,18 @@ class KnowledgeSearchServiceClarificationTests(TestCase):
         self.assertGreaterEqual(len(result.diagnostics.get("scope_clarification_categories") or []), 3)
         self.assertGreaterEqual(len(result.diagnostics.get("categories") or []), 3)
         self.assertGreaterEqual(len(result.diagnostics.get("top_categories") or []), 3)
+        category_refs = result.diagnostics.get("scope_clarification_category_refs") or {}
+        self.assertTrue(isinstance(category_refs, dict) and category_refs)
+        for category in result.diagnostics.get("top_categories") or []:
+            mapped = category_refs.get(category) or {}
+            self.assertTrue(mapped)
+            ref_ids = mapped.get("ref_ids")
+            if isinstance(ref_ids, list) and ref_ids:
+                self.assertLessEqual(len(ref_ids), service.scope_category_ref_max)
+                for ref_id in ref_ids:
+                    uuid.UUID(str(ref_id))
+            else:
+                self.assertEqual(mapped.get("fallback"), "scoped_search")
         self.assertEqual(result.diagnostics.get("clarification_ui_mode"), "text")
         auto_contract = result.diagnostics.get("auto_decision_contract") or {}
         self.assertEqual(auto_contract.get("decision"), "clarification")
@@ -1691,6 +1720,7 @@ class KnowledgeSearchServiceClarificationTests(TestCase):
 
         def _make_chunk(*, content: str, upload_id: uuid.UUID):
             chunk = mock.Mock()
+            chunk.id = uuid.uuid4()
             chunk.metadata = {
                 "index_type": "table",
                 "is_table_chunk": True,
