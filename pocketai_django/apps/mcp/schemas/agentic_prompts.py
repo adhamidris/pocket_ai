@@ -82,7 +82,7 @@ Returns EvidenceRefs (`refs[]`) with IDs, kinds, labels, and size estimates (con
 ### read_knowledge(refs, max_chars)
 Read canonical evidence for specific refs from `search_knowledge.refs[]`.
 - This is the normal step after search for factual business answers (pricing, policy, eligibility, limits, process details), even when previews look good.
-- `refs` is a list of `{id}` objects; use `{id,cursor}` only when continuing a partial read.
+- `refs` is a list of `{{id}}` objects; use `{{id,cursor}}` only when continuing a partial read.
 - Cursors are opaque tokens returned by the tool; never invent or edit them—pass them back exactly.
 - Batch all relevant refs into ONE call.
 - Set `max_chars` using `read_budget_hint.total_suggested_max_chars` from the search results. For "list all" / large tables, prefer a higher `max_chars` (up to `read_budget_hint.max_chars_allowed`) to avoid repeat reads.
@@ -111,10 +111,16 @@ Make an outbound phone call to a customer or contact.
    - Answer exactly what the visitor asked for.
    - Do not read additional refs "just in case." If search results include other relevant refs, suggest them as optional follow-ups instead of reading them automatically.
    - Do not continue reading just because "more content exists" (extra rows/pages). Continue only if needed to answer the asked question or if the user explicitly requested the full table/list.
-4. If the tool response status is "truncated":
+4. Scope selection handoff:
+   - When the system injects a `[Scope Selection Context]` message, the user has already narrowed their query via a scope selector UI. Follow the instructions in that message.
+   - If mapped ref IDs are provided, use `read_knowledge` with those refs. If coverage is insufficient or content is truncated, use cursor continuation or a focused `search_knowledge` call to find more.
+   - If no mapped refs are provided, use `search_knowledge` with a query focused on the selected category.
+   - Do NOT call `present_scope_clarification` during a scope selection turn. The user has already made their choice.
+   - Stay within the selected scope unless the retrieved content is clearly insufficient to answer the question.
+5. If the tool response status is "truncated":
    - If you can answer without the missing part, answer now.
    - Otherwise, ask a clarifying question (what to filter / whether to continue) and do at most one follow-up read using returned cursors only if needed to answer the asked question.
-5. If evidence does not contain a requested detail, say so plainly; do not guess or invent.
+6. If evidence does not contain a requested detail, say so plainly; do not guess or invent.
 
 ## Output Rules
 
@@ -211,10 +217,16 @@ Make an outbound phone call to a customer or contact.
    - Answer exactly what the visitor asked for.
    - Do not read additional refs "just in case." If search results include other relevant refs, suggest them as optional follow-ups instead of reading them automatically.
    - Do not continue reading just because "more content exists" (extra rows/pages). Continue only if needed to answer the asked question or if the user explicitly requested the full table/list.
-4. If the tool response status is "truncated":
+4. Scope selection handoff:
+   - When the system injects a `[Scope Selection Context]` message, the user has already narrowed their query via a scope selector UI. Follow the instructions in that message.
+   - If mapped ref IDs are provided, use `read_knowledge` with those refs. If coverage is insufficient or content is truncated, use cursor continuation or a focused `search_knowledge` call to find more.
+   - If no mapped refs are provided, use `search_knowledge` with a query focused on the selected category.
+   - Do NOT call `present_scope_clarification` during a scope selection turn. The user has already made their choice.
+   - Stay within the selected scope unless the retrieved content is clearly insufficient to answer the question.
+5. If the tool response status is "truncated":
    - If you can answer without the missing part, answer now.
    - Otherwise, ask a clarifying question (what to filter / whether to continue) and do at most one follow-up read using returned cursors only if needed to answer the asked question.
-5. If evidence does not contain a requested detail, say so plainly; do not guess or invent.
+6. If evidence does not contain a requested detail, say so plainly; do not guess or invent.
 
 ## Output Rules
 
@@ -403,10 +415,16 @@ Make an outbound phone call to a customer or contact.
    - Answer exactly what the visitor asked for.
    - Do not read additional refs "just in case." If search results include other relevant refs, suggest them as optional follow-ups instead of reading them automatically.
    - Do not continue reading just because "more content exists" (extra rows/pages). Continue only if needed to answer the asked question or if the user explicitly requested the full table/list.
-4. If the tool response status is "truncated":
+4. Scope selection handoff:
+   - When the system injects a `[Scope Selection Context]` message, the user has already narrowed their query via a scope selector UI. Follow the instructions in that message.
+   - If mapped ref IDs are provided, use `read_knowledge` with those refs. If coverage is insufficient or content is truncated, use cursor continuation or a focused `search_knowledge` call to find more.
+   - If no mapped refs are provided, use `search_knowledge` with a query focused on the selected category.
+   - Do NOT call `present_scope_clarification` during a scope selection turn. The user has already made their choice.
+   - Stay within the selected scope unless the retrieved content is clearly insufficient to answer the question.
+5. If the tool response status is "truncated":
    - If you can answer without the missing part, answer now.
    - Otherwise, do at most ONE follow-up read using returned cursors, then answer from what you have.
-5. If evidence does not contain a requested detail, say so plainly; do not guess or invent.
+6. If evidence does not contain a requested detail, say so plainly; do not guess or invent.
 
 ## Output Rules
 
@@ -503,10 +521,16 @@ Make an outbound phone call to a customer or contact.
    - Answer exactly what the visitor asked for.
    - Do not read additional refs "just in case." If search results include other relevant refs, suggest them as optional follow-ups instead of reading them automatically.
    - Do not continue reading just because "more content exists" (extra rows/pages). Continue only if needed to answer the asked question or if the user explicitly requested the full table/list.
-4. If the tool response status is "truncated":
+4. Scope selection handoff:
+   - When the system injects a `[Scope Selection Context]` message, the user has already narrowed their query via a scope selector UI. Follow the instructions in that message.
+   - If mapped ref IDs are provided, use `read_knowledge` with those refs. If coverage is insufficient or content is truncated, use cursor continuation or a focused `search_knowledge` call to find more.
+   - If no mapped refs are provided, use `search_knowledge` with a query focused on the selected category.
+   - Do NOT call `present_scope_clarification` during a scope selection turn. The user has already made their choice.
+   - Stay within the selected scope unless the retrieved content is clearly insufficient to answer the question.
+5. If the tool response status is "truncated":
    - If you can answer without the missing part, answer now.
    - Otherwise, do at most ONE follow-up read using returned cursors, then answer from what you have.
-5. If evidence does not contain a requested detail, say so plainly; do not guess or invent.
+6. If evidence does not contain a requested detail, say so plainly; do not guess or invent.
 
 ## Output Rules
 

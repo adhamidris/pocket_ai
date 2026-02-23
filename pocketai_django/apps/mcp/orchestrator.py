@@ -1163,45 +1163,30 @@ class McpOrchestratorService:
 
         first_stream_message: dict[str, object]
         first_stream_tool_calls: list[Mapping[str, object]]
+
+        # --- Agentic Scope Handoff ---
+        # When the user clicks an MCQ category, instead of forcing a deterministic
+        # tool call, we build a context packet and inject it into the transcript so
+        # the LLM can decide which tools to use (read_knowledge, search_knowledge, etc.).
+        scope_handoff_injected = False
         if scope_selection_requires_resolution:
-            # Deterministic selection commit: when MCQ click metadata is present and
-            # pending scope exists, execute the real capability directly.
-            deterministic_plan = mcp_tools.plan_scope_selection_deterministic_call(
+            scope_handoff = mcp_tools.build_scope_handoff_context(
                 user_query=str(user_message or "").strip(),
                 context=tool_context,
             )
-            forced_tool_name = str(deterministic_plan.get("tool_name") or "search_knowledge").strip() or "search_knowledge"
-            forced_arguments = (
-                dict(deterministic_plan.get("arguments"))
-                if isinstance(deterministic_plan.get("arguments"), Mapping)
-                else {"query": str(user_message or "").strip()}
-            )
-            forced_search_call = {
-                "id": f"call_scope_selection_{uuid.uuid4().hex[:12]}",
-                "type": "function",
-                "function": {
-                    "name": forced_tool_name,
-                    "arguments": json.dumps(
-                        forced_arguments,
-                        ensure_ascii=False,
-                    ),
-                },
-            }
-            first_stream_message = {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [forced_search_call],
-            }
-            first_stream_tool_calls = [forced_search_call]
+            scope_handoff_message = str(scope_handoff.get("context_message") or "").strip()
+            scope_handoff_resolved = bool(scope_handoff.get("resolved"))
+            scope_handoff_route = str(scope_handoff.get("route") or "")
             structured_log(
                 "mcp",
-                "scope_selection.deterministic_entry",
+                "scope_selection.agentic_handoff",
                 {
                     "action": str((scope_selection_payload or {}).get("action") or ""),
                     "category_key": str((scope_selection_payload or {}).get("category_key") or ""),
                     "has_pending_scope": bool(getattr(tool_context, "pending_scope_clarification", None)),
-                    "planned_tool": forced_tool_name,
-                    "planned_route": str(deterministic_plan.get("route") or ""),
+                    "resolved": scope_handoff_resolved,
+                    "route": scope_handoff_route,
+                    "mapped_ref_count": len(scope_handoff.get("mapped_ref_ids") or []),
                 },
                 context={
                     "conversation": conversation.id,
@@ -1209,44 +1194,59 @@ class McpOrchestratorService:
                 },
                 logger_obj=logger,
             )
-            if on_tool_decision:
-                try:
-                    on_tool_decision("used")
-                except Exception:  # pragma: no cover - defensive
-                    logger.exception("on_tool_decision callback failed")
-        else:
-            # Limit the initial payload so the provider only sees the guardrails and
-            # the latest transcript entries needed for intent selection.
-            primary_messages = prompts.limit_messages_for_stage(transcript, stage="initial_pass")
-            self._log_prompt("primary", conversation=conversation, messages=primary_messages)
-            with TRACER.start_as_current_span("portal.mcp.initial_pass") as initial_span:
-                if initial_span.is_recording():
-                    initial_span.set_attribute("mcp.message_count", len(primary_messages))
-                    initial_span.set_attribute("mcp.tools_enabled", bool(initial_tools))
-                first_payload = self._chat_with_context_governor(
-                    conversation=conversation,
-                    stage="initial_pass",
-                    messages=primary_messages,
-                    tools=initial_tools,
-                    on_stream_delta=_first_stream_chunk if streaming_allowed else None,
-                    on_tool_call_start=_on_stream_tool_call_start,
-                    on_tool_call_delta=_on_stream_tool_call_delta,
-                    tool_context=tool_context,
-                    on_reasoning_event=on_reasoning_event,
-                    reasoning_label="Initial pass",
-                    should_cancel=should_cancel,
-                )
-            first_message = self._coerce_assistant_message(first_payload)
-            first_stream_message = dict(first_message or {})
-            first_stream_tool_calls_raw = list(first_stream_message.get("tool_calls") or [])
-            first_stream_tool_calls, portal_tool_calls = _split_portal_tool_calls(first_stream_tool_calls_raw)
-            if portal_tool_calls:
-                portal_block_stream.ingest_tool_calls(portal_tool_calls)
-            if on_tool_decision:
-                try:
-                    on_tool_decision("used" if first_stream_tool_calls else "no_tools")
-                except Exception:  # pragma: no cover - defensive
-                    logger.exception("on_tool_decision callback failed")
+            if scope_handoff_resolved and scope_handoff_message:
+                # Inject the scope context as a system message at the end of transcript
+                # (before the LLM inference call) so the LLM is fully aware of what
+                # the user chose and what refs are available.
+                transcript.append({
+                    "role": "system",
+                    "content": scope_handoff_message,
+                })
+                scope_handoff_injected = True
+
+        # Scope-lock: when a scope selection turn is active, remove the
+        # present_scope_clarification tool from the initial tool set so
+        # the LLM cannot re-trigger scope clarification on this turn.
+        if scope_selection_requires_resolution:
+            initial_tools = [
+                tool_def for tool_def in initial_tools
+                if self._tool_schema_name(tool_def) != "present_scope_clarification"
+            ] if initial_tools else initial_tools
+
+        # Limit the initial payload so the provider only sees the guardrails and
+        # the latest transcript entries needed for intent selection.
+        primary_messages = prompts.limit_messages_for_stage(transcript, stage="initial_pass")
+        self._log_prompt("primary", conversation=conversation, messages=primary_messages)
+        with TRACER.start_as_current_span("portal.mcp.initial_pass") as initial_span:
+            if initial_span.is_recording():
+                initial_span.set_attribute("mcp.message_count", len(primary_messages))
+                initial_span.set_attribute("mcp.tools_enabled", bool(initial_tools))
+                if scope_handoff_injected:
+                    initial_span.set_attribute("mcp.scope_handoff", True)
+            first_payload = self._chat_with_context_governor(
+                conversation=conversation,
+                stage="initial_pass",
+                messages=primary_messages,
+                tools=initial_tools,
+                on_stream_delta=_first_stream_chunk if streaming_allowed else None,
+                on_tool_call_start=_on_stream_tool_call_start,
+                on_tool_call_delta=_on_stream_tool_call_delta,
+                tool_context=tool_context,
+                on_reasoning_event=on_reasoning_event,
+                reasoning_label="Initial pass",
+                should_cancel=should_cancel,
+            )
+        first_message = self._coerce_assistant_message(first_payload)
+        first_stream_message = dict(first_message or {})
+        first_stream_tool_calls_raw = list(first_stream_message.get("tool_calls") or [])
+        first_stream_tool_calls, portal_tool_calls = _split_portal_tool_calls(first_stream_tool_calls_raw)
+        if portal_tool_calls:
+            portal_block_stream.ingest_tool_calls(portal_tool_calls)
+        if on_tool_decision:
+            try:
+                on_tool_decision("used" if first_stream_tool_calls else "no_tools")
+            except Exception:  # pragma: no cover - defensive
+                logger.exception("on_tool_decision callback failed")
         if first_stream_tool_calls:
             _prime_phase_starts(first_stream_tool_calls)
         first_content_raw = ""

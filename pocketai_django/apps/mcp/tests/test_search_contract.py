@@ -263,7 +263,13 @@ class McpSearchContractTests(TestCase):
 
     @override_settings(MCP_SCOPE_CLARIFICATION_MCQ_ENABLED=True)
     @patch("apps.mcp.orchestrator.mcp_tools.execute_tool")
-    def test_scope_selection_turn_forces_deterministic_capability_commit(self, execute_tool_mock) -> None:
+    def test_scope_selection_turn_uses_agentic_handoff(self, execute_tool_mock) -> None:
+        """
+        Verify the agentic scope handoff: when the user clicks an MCQ category,
+        the scope context is injected into the transcript so the LLM can decide
+        which tools to call. The LLM should see the mapped refs and choose
+        read_knowledge. present_scope_clarification must NOT be available.
+        """
         selected_category = "cheques"
         selected_key = mcp_tools._scope_category_key(selected_category)
         mapped_ref_id = str(uuid.uuid4())
@@ -307,14 +313,66 @@ class McpSearchContractTests(TestCase):
                 }
             return {
                 "tool": str(name),
-                "status": "error",
-                "error_code": "unexpected_tool",
-                "hint": "Unexpected tool for deterministic scope selection test.",
+                "status": "ok",
             }
 
         execute_tool_mock.side_effect = _fake_execute_tool
 
-        provider = _SingleAnswerProvider("Cheque fees in Plus are now loaded.")
+        # Provider that simulates the LLM reading the scope context and choosing
+        # to call read_knowledge with the mapped refs.
+        class _ScopeAwareProvider:
+            def __init__(self_inner, ref_id: str) -> None:
+                self_inner.calls = 0
+                self_inner.ref_id = ref_id
+                self_inner.tool_schemas: list[str] = []
+
+            def chat(
+                self_inner,
+                messages,
+                *,
+                tools=None,
+                on_stream_delta=None,
+                on_reasoning_delta=None,
+                on_tool_call_start=None,
+                on_tool_call_delta=None,
+                response_format=None,
+                should_cancel=None,
+            ):
+                del on_reasoning_delta, on_tool_call_start, on_tool_call_delta, response_format, should_cancel
+                self_inner.calls += 1
+                # Record what tools were offered to the LLM
+                if tools:
+                    for tool_def in tools:
+                        func = tool_def.get("function") if isinstance(tool_def, dict) else None
+                        if isinstance(func, dict):
+                            self_inner.tool_schemas.append(str(func.get("name") or ""))
+                if self_inner.calls == 1:
+                    # First call: LLM sees scope context and decides to read the mapped refs
+                    return {
+                        "message": {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "call_read_scope_ref",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "read_knowledge",
+                                        "arguments": json.dumps({
+                                            "refs": [{"id": self_inner.ref_id}],
+                                            "max_chars": 4000,
+                                        }),
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                # Second call: after reading, generate the final answer
+                if on_stream_delta:
+                    on_stream_delta("Cheque fees in Plus are now loaded.")
+                return {"message": {"role": "assistant", "content": "Cheque fees in Plus are now loaded."}}
+
+        provider = _ScopeAwareProvider(mapped_ref_id)
         orchestrator = McpOrchestratorService(agent=self.agent, provider=provider)
         context = orchestrator.stream_turn(
             conversation=self.conversation,
@@ -328,15 +386,23 @@ class McpSearchContractTests(TestCase):
             },
         )
 
+        # The LLM chose read_knowledge (agentic decision, not forced)
         self.assertTrue(called_tools)
         self.assertEqual(called_tools[0], "read_knowledge")
+        # present_scope_clarification must NOT have been offered (scope lock)
+        self.assertNotIn("present_scope_clarification", provider.tool_schemas)
         self.assertNotIn("present_scope_clarification", called_tools)
-        self.assertEqual(provider.calls, 1)
         self.assertIn("cheque fees", context.response_text.lower())
 
     @override_settings(MCP_SCOPE_CLARIFICATION_MCQ_ENABLED=True)
     @patch("apps.mcp.orchestrator.mcp_tools.execute_tool")
-    def test_scope_selection_deterministic_commit_keeps_tool_call_arguments_serialized(self, execute_tool_mock) -> None:
+    def test_scope_selection_agentic_handoff_injects_context_for_strict_provider(self, execute_tool_mock) -> None:
+        """
+        Verify that the agentic scope handoff injects a scope context system
+        message into the transcript and that a strict envelope provider
+        (DeepSeek-style, all message.content must be strings) can process
+        the transcript without serialization errors.
+        """
         selected_category = "cheques"
         selected_key = mcp_tools._scope_category_key(selected_category)
         mapped_ref_id = str(uuid.uuid4())
@@ -358,25 +424,9 @@ class McpSearchContractTests(TestCase):
         }
         self.conversation.save(update_fields=["metadata"])
 
-        def _fake_execute_tool(name, arguments, *, conversation, context=None):
-            self.assertEqual(name, "read_knowledge")
-            self.assertIsNotNone(context)
-            return {
-                "tool": "read_knowledge",
-                "status": "ok",
-                "evidence": [
-                    {
-                        "id": mapped_ref_id,
-                        "document_id": str(uuid.uuid4()),
-                        "title": "Cheques-EN.pdf",
-                        "kind": "text_excerpt",
-                        "chars": 240,
-                    }
-                ],
-                "hint": "Selection evidence loaded.",
-            }
-
-        execute_tool_mock.side_effect = _fake_execute_tool
+        execute_tool_mock.side_effect = lambda name, arguments, *, conversation, context=None: {
+            "tool": str(name), "status": "ok",
+        }
 
         provider = _StrictToolEnvelopeProvider()
         orchestrator = McpOrchestratorService(agent=self.agent, provider=provider)
@@ -392,36 +442,29 @@ class McpSearchContractTests(TestCase):
             },
         )
 
+        # The strict provider did NOT raise — all message.content fields were strings.
         self.assertEqual(provider.calls, 1)
-        self.assertIn("cheque fees", context.response_text.lower())
         self.assertTrue(provider.requests)
 
+        # The scope context system message should be present in the LLM request.
+        # It's a separate system message injected alongside the main system prompt.
         first_request = provider.requests[0]
-        deterministic_call_arguments = None
+        scope_context_found = False
         for message in first_request:
             if not isinstance(message, dict):
                 continue
-            tool_calls = message.get("tool_calls")
-            if not isinstance(tool_calls, list):
+            if message.get("role") != "system":
                 continue
-            for call in tool_calls:
-                if not isinstance(call, dict):
-                    continue
-                function = call.get("function")
-                if not isinstance(function, dict):
-                    continue
-                if function.get("name") != "read_knowledge":
-                    continue
-                deterministic_call_arguments = function.get("arguments")
+            content = str(message.get("content") or "")
+            # Match on the injected context (starts with [Scope Selection Context]),
+            # not the prompt instruction that references it.
+            if content.startswith("[Scope Selection Context]"):
+                scope_context_found = True
+                # Verify it contains the category and ref ID
+                self.assertIn("cheques", content.lower())
+                self.assertIn(mapped_ref_id, content)
                 break
-            if deterministic_call_arguments is not None:
-                break
-
-        self.assertIsInstance(deterministic_call_arguments, str)
-        decoded = json.loads(deterministic_call_arguments or "{}")
-        refs = decoded.get("refs")
-        self.assertIsInstance(refs, list)
-        self.assertEqual((refs or [{}])[0].get("id"), mapped_ref_id)
+        self.assertTrue(scope_context_found, "Scope handoff context message not found in LLM request")
 
     @override_settings(MCP_SCOPE_CLARIFICATION_MCQ_ENABLED=False)
     @patch("apps.mcp.orchestrator.mcp_tools.execute_tool")

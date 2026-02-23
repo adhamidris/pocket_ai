@@ -5078,6 +5078,272 @@ def plan_scope_selection_deterministic_call(
     }
 
 
+# ---------------------------------------------------------------------------
+# Agentic Scope Handoff – replaces deterministic routing for MCQ turns
+# ---------------------------------------------------------------------------
+
+
+def build_scope_handoff_context(
+    *,
+    user_query: str,
+    context: ToolExecutionContext,
+) -> dict[str, object]:
+    """
+    Build an agentic scope-handoff context packet for an MCQ category-click turn.
+
+    Instead of forcing a deterministic tool call, this resolves the user's scope
+    selection against the pending clarification state, persists the resolution on
+    the context, and returns a structured dict with:
+      - ``"context_message"``  – a human-readable instruction block to inject into
+        the LLM transcript so it knows what the user chose and what refs are available.
+      - ``"resolved"``         – bool, whether resolution succeeded.
+      - ``"action"``           – the selection action (``select_category`` / ``all_fees`` / …).
+      - ``"category"``         – resolved category label (if specific).
+      - ``"mapped_ref_ids"``   – list of ref UUIDs mapped to the selected category.
+      - ``"total_search_hits"``– total refs from the initial search (coverage denominator).
+      - ``"route"``            – descriptive route tag for logging.
+
+    The caller injects ``context_message`` into the transcript and lets the normal
+    agentic loop decide which tools to call.
+    """
+
+    primary_query = str(user_query or "").strip()
+
+    # ------------------------------------------------------------------
+    # 1. Read pending scope & latest scope selection from context
+    # ------------------------------------------------------------------
+    pending_scope_state = (
+        dict(context.pending_scope_clarification)
+        if isinstance(getattr(context, "pending_scope_clarification", None), Mapping)
+        else None
+    )
+    if not pending_scope_state:
+        return {
+            "resolved": False,
+            "context_message": "",
+            "route": "no_pending_scope",
+        }
+
+    latest_scope_selection = (
+        dict(context.latest_scope_selection)
+        if isinstance(getattr(context, "latest_scope_selection", None), Mapping)
+        else {}
+    )
+
+    selection_action = str(latest_scope_selection.get("action") or "").strip().lower()
+    selection_key = _normalize_scope_category_key(latest_scope_selection.get("category_key") or "")
+    selection_label = _clean_scope_category_label(
+        latest_scope_selection.get("category_label"),
+        max_chars=96,
+    )
+
+    # ------------------------------------------------------------------
+    # 2. Determine the scope resolution query (same logic as deterministic planner)
+    # ------------------------------------------------------------------
+    scope_resolution_query = primary_query
+    scope_resolution_input_source = "tool_query"
+
+    if selection_action == "all_fees":
+        scope_resolution_query = "all"
+        scope_resolution_input_source = "scope_selection_metadata"
+    elif selection_action in {"choose_categories", "list_categories"}:
+        scope_resolution_query = "choose categories"
+        scope_resolution_input_source = "scope_selection_metadata"
+    elif selection_action == "select_category" or selection_key:
+        if selection_key:
+            scope_resolution_query = _scope_category_selector_query(selection_key) or selection_key
+        elif selection_label:
+            scope_resolution_query = f"scope:category:{selection_label}"
+        scope_resolution_input_source = "scope_selection_metadata"
+
+    latest_user_message = str(getattr(context, "latest_user_message", "") or "").strip()
+    if latest_user_message and scope_resolution_input_source == "tool_query":
+        latest_user_intent = _extract_scope_clarification_intent(latest_user_message)
+        latest_mode = (
+            str(latest_user_intent.get("mode") or "").strip().lower()
+            if isinstance(latest_user_intent, Mapping)
+            else ""
+        )
+        if latest_mode in {"specific_key", "all", "list_categories", "specific"}:
+            scope_resolution_query = latest_user_message
+            scope_resolution_input_source = "latest_user_message"
+
+    # ------------------------------------------------------------------
+    # 3. Resolve scope clarification (reuse existing resolution logic)
+    # ------------------------------------------------------------------
+    scope_resolution_applied = _resolve_scope_clarification_followup(
+        user_query=scope_resolution_query,
+        pending_scope=pending_scope_state,
+    )
+    if (
+        not scope_resolution_applied
+        and selection_key
+        and selection_label
+        and scope_resolution_input_source == "scope_selection_metadata"
+    ):
+        label_selector_query = f"scope:category:{selection_label}"
+        if label_selector_query != scope_resolution_query:
+            scope_resolution_applied = _resolve_scope_clarification_followup(
+                user_query=label_selector_query,
+                pending_scope=pending_scope_state,
+            )
+    if not scope_resolution_applied and scope_resolution_query != primary_query:
+        scope_resolution_applied = _resolve_scope_clarification_followup(
+            user_query=primary_query,
+            pending_scope=pending_scope_state,
+        )
+    if not scope_resolution_applied:
+        return {
+            "resolved": False,
+            "context_message": "",
+            "route": "resolution_failed",
+        }
+
+    # ------------------------------------------------------------------
+    # 4. Persist the resolution on the context (clears pending state)
+    # ------------------------------------------------------------------
+    scope_mode = str(scope_resolution_applied.get("mode") or "").strip().lower()
+    resolved_query = str(scope_resolution_applied.get("resolved_query") or "").strip() or primary_query
+    raw_selected_categories = scope_resolution_applied.get("categories")
+    selected_categories = (
+        [str(item).strip() for item in raw_selected_categories if str(item).strip()]
+        if isinstance(raw_selected_categories, Sequence) and not isinstance(raw_selected_categories, (str, bytes, bytearray))
+        else []
+    )[:SCOPE_CLARIFICATION_MAX_CATEGORIES]
+    mapped_ref_ids = _normalize_scope_ref_ids(scope_resolution_applied.get("mapped_ref_ids") or [])
+
+    # list_categories: keep pending, inject listing hint, LLM can present categories
+    if scope_mode == "list_categories":
+        listing_hint = scope_resolution_applied.get("listing_hint") or ""
+        categories_list = pending_scope_state.get("categories") or []
+        base_query = str(pending_scope_state.get("base_query") or primary_query).strip()
+        lines = [
+            "[Scope Selection – List Categories]",
+            f'User asked to see all available categories for query "{base_query}".',
+            "",
+        ]
+        if categories_list:
+            lines.append("Available categories:")
+            for cat in categories_list:
+                lines.append(f"  - {cat}")
+            lines.append("")
+        lines.append(
+            "Present these categories to the user and ask them to choose one. "
+            "Do NOT call search_knowledge or read_knowledge yet."
+        )
+        return {
+            "resolved": True,
+            "context_message": "\n".join(lines),
+            "action": "list_categories",
+            "route": "scope_list_categories",
+        }
+
+    context.set_scope_resolution(
+        mode=str(scope_resolution_applied.get("mode") or "specific"),
+        base_query=str(scope_resolution_applied.get("base_query") or primary_query),
+        resolved_query=resolved_query,
+        user_query=str(scope_resolution_applied.get("user_query") or ""),
+        category=str(scope_resolution_applied.get("category") or "") or None,
+        categories=selected_categories,
+        category_key=str(scope_resolution_applied.get("category_key") or "") or None,
+        mapped_ref_ids=mapped_ref_ids,
+        mapped_refs=(
+            dict(scope_resolution_applied.get("mapped_refs"))
+            if isinstance(scope_resolution_applied.get("mapped_refs"), Mapping)
+            else None
+        ),
+        selection_source=str(scope_resolution_applied.get("selection_source") or "") or None,
+    )
+
+    # ------------------------------------------------------------------
+    # 5. Build the context message for the LLM
+    # ------------------------------------------------------------------
+    base_query = str(scope_resolution_applied.get("base_query") or primary_query).strip()
+    resolved_category = str(scope_resolution_applied.get("category") or "").strip()
+    is_all = scope_mode == "all"
+
+    # Gather ref previews from recent_search_refs (persisted from the initial search)
+    recent_refs = getattr(context, "recent_search_refs", None) or []
+    recent_refs_by_id: dict[str, dict[str, object]] = {}
+    for ref in recent_refs:
+        if isinstance(ref, Mapping):
+            ref_id = str(ref.get("id") or "").strip()
+            if ref_id:
+                recent_refs_by_id[ref_id] = dict(ref)
+    total_search_hits = len(recent_refs)
+
+    # Build the context message
+    lines: list[str] = ["[Scope Selection Context]"]
+
+    if is_all:
+        lines.append(
+            f'The user was shown a scope clarification for the query "{base_query}" '
+            f"and chose to see ALL categories."
+        )
+        lines.append("")
+        if recent_refs:
+            lines.append(f"Initial search returned {total_search_hits} refs across all categories.")
+            lines.append(
+                "Proceed with search_knowledge using the original query. "
+                "Read and paginate as needed to cover all relevant categories."
+            )
+        else:
+            lines.append(
+                "Search the knowledge base for the original query and cover all categories."
+            )
+    else:
+        lines.append(
+            f'The user was shown a scope clarification for the query "{base_query}" '
+            f'and selected the category: "{resolved_category}".'
+        )
+        lines.append("")
+
+        if mapped_ref_ids:
+            lines.append(f"Mapped refs for this category ({len(mapped_ref_ids)} of {total_search_hits} total search hits):")
+            for ref_id in mapped_ref_ids:
+                preview_ref = recent_refs_by_id.get(ref_id)
+                if preview_ref:
+                    label = str(preview_ref.get("label") or preview_ref.get("preview") or "").strip()
+                    if label:
+                        lines.append(f'  - id="{ref_id}" — {label}')
+                    else:
+                        lines.append(f'  - id="{ref_id}"')
+                else:
+                    lines.append(f'  - id="{ref_id}"')
+            lines.append("")
+            lines.append(
+                "Use read_knowledge with these ref IDs to retrieve the content. "
+                "If the content is insufficient or truncated, use cursor continuation "
+                "or search_knowledge with a focused query to find more."
+            )
+        else:
+            lines.append(
+                f"No pre-mapped refs available for this category. "
+                f'Use search_knowledge with a query focused on "{resolved_category}" '
+                f'within the context of "{base_query}" to find relevant content.'
+            )
+
+    # Scope lock instruction
+    lines.append("")
+    lines.append(
+        "IMPORTANT: The user has already narrowed their scope via the selector. "
+        "Do NOT call present_scope_clarification. Do NOT re-trigger scope clarification. "
+        "Stay within the selected scope unless the retrieved content is clearly insufficient."
+    )
+
+    route = "scope_handoff_all" if is_all else ("scope_handoff_read" if mapped_ref_ids else "scope_handoff_search")
+
+    return {
+        "resolved": True,
+        "context_message": "\n".join(lines),
+        "action": selection_action or ("all_fees" if is_all else "select_category"),
+        "category": resolved_category,
+        "mapped_ref_ids": mapped_ref_ids,
+        "total_search_hits": total_search_hits,
+        "route": route,
+    }
+
+
 def _scope_source_preference_followup_key(
     *,
     base_query: object,

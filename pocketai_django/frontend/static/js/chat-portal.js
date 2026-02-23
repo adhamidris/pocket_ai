@@ -4854,6 +4854,12 @@ class ChatPortalClient {
         (item) => ((item && item.category_key) || "").toString().trim().toLowerCase() === "scope_all_fees",
       ) ||
       null;
+    const chooseCategoriesActionChip =
+      actionChips.find((item) => ((item && item.id) || "").toString().trim() === "choose_categories") ||
+      actionChips.find(
+        (item) => ((item && item.category_key) || "").toString().trim().toLowerCase() === "scope_choose_categories",
+      ) ||
+      null;
     const allLabel = (
       ((allActionChip && allActionChip.label) || (payload && payload.all_label) || "All fees")
         .toString()
@@ -4922,7 +4928,33 @@ class ChatPortalClient {
       };
     });
 
-    const categoryItems = categoryItemsFromChips.length ? categoryItemsFromChips : categoryItemsFromLists;
+    // Build final category list from full categories first (for "More" expansion),
+    // then enrich with chip-provided category keys for deterministic selection.
+    const categoryItems = [];
+    const categoryItemKeys = new Set();
+    const appendCategoryItem = (item) => {
+      if (!item || typeof item !== "object") return;
+      const label = ((item.label || "") + "").trim();
+      const query = ((item.query || "") + "").trim();
+      const categoryKey = ((item.categoryKey || "") + "").trim();
+      if (!label) return;
+      const dedupeKey = (categoryKey || query || label).toLowerCase();
+      if (!dedupeKey || categoryItemKeys.has(dedupeKey)) return;
+      categoryItemKeys.add(dedupeKey);
+      categoryItems.push({
+        label,
+        displayLabel: ((item.displayLabel || "") + "").trim() || this.formatScopeClarificationCategoryLabel(label) || label,
+        query: query || (categoryKey ? `scope:category_key:${categoryKey}` : label),
+        categoryKey,
+      });
+    };
+    if (categoryItemsFromLists.length) {
+      categoryItemsFromLists.forEach(appendCategoryItem);
+      // Keep any chip-only categories (defensive) after the canonical categories list.
+      categoryItemsFromChips.forEach(appendCategoryItem);
+    } else {
+      categoryItemsFromChips.forEach(appendCategoryItem);
+    }
     if (!categoryItems.length) return null;
 
     const quickCategories = categoryItems.slice(0, visibleCount);
@@ -5017,6 +5049,30 @@ class ChatPortalClient {
         const expanding = hiddenWrap.hidden;
         hiddenWrap.hidden = !expanding;
         moreButton.textContent = expanding ? "Hide" : `More (${hiddenCategories.length})`;
+      });
+      categoriesSection.appendChild(moreButton);
+    } else if (chooseCategoriesActionChip) {
+      const moreButton = document.createElement("button");
+      moreButton.type = "button";
+      moreButton.className = "portal-scope-clarification__more";
+      moreButton.textContent = "More";
+      moreButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const fallbackLabel = (
+          ((chooseCategoriesActionChip && chooseCategoriesActionChip.label) ||
+            (payload && payload.more_label) ||
+            (payload && payload.choose_categories_label) ||
+            "Choose categories")
+            .toString()
+            .trim()
+        ) || "Choose categories";
+        this.submitScopeClarificationMessage(fallbackLabel, {
+          action: "choose_categories",
+          categoryLabel: fallbackLabel,
+          categoryKey: ((chooseCategoriesActionChip && chooseCategoriesActionChip.category_key) || "").toString().trim(),
+          blockId,
+        });
       });
       categoriesSection.appendChild(moreButton);
     }
