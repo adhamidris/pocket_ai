@@ -91,6 +91,7 @@ class PortalTurnExecutionModeTests(TestCase):
                     "categoryKey": "Cheques_42FC263D814C",
                     "categoryLabel": "Cheques",
                     "blockId": "scope-block:01",
+                    "bucketId": "scope_bucket:01",
                 }
             },
         }
@@ -112,6 +113,7 @@ class PortalTurnExecutionModeTests(TestCase):
         self.assertEqual(scope_selection.get("category_key"), "cheques_42fc263d814c")
         self.assertEqual(scope_selection.get("category_label"), "Cheques")
         self.assertEqual(scope_selection.get("block_id"), "scope-block:01")
+        self.assertEqual(scope_selection.get("bucket_id"), "scope_bucket:01")
 
     @override_settings(PORTAL_TURN_EXECUTION_MODE="thread")
     def test_turn_create_preserves_arabic_scope_category_key(self) -> None:
@@ -124,6 +126,7 @@ class PortalTurnExecutionModeTests(TestCase):
                     "categoryKey": "رسوم_الشيكات_42fc263d814c",
                     "categoryLabel": "رسوم الشيكات",
                     "blockId": "scope-block:ar-01",
+                    "bucketId": "scope_bucket:ar-01",
                 }
             },
         }
@@ -145,3 +148,4 @@ class PortalTurnExecutionModeTests(TestCase):
         self.assertEqual(scope_selection.get("category_key"), "رسوم_الشيكات_42fc263d814c")
         self.assertEqual(scope_selection.get("category_label"), "رسوم الشيكات")
         self.assertEqual(scope_selection.get("block_id"), "scope-block:ar-01")
+        self.assertEqual(scope_selection.get("bucket_id"), "scope_bucket:ar-01")

@@ -22,6 +22,11 @@ import logging
 import hashlib
 
 from apps.rag.tenant_lexicon import normalize_lexicon_text, tokenize_lexicon_text
+from apps.rag.text_utils import (
+    PLURAL_BLACKLIST as _SHARED_PLURAL_BLACKLIST,
+    is_plural_candidate,
+    singularize,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -217,9 +222,7 @@ class QueryClassifier:
         "all", "every", "each", "some", "many", "few", "several", "for", "about", "regarding",
         "كل", "جميع", "كافة", "عن",
     }
-    PLURAL_BLACKLIST = {
-        "this", "that", "thus", "is", "was", "does", "plus", "versus",
-    }
+    PLURAL_BLACKLIST = _SHARED_PLURAL_BLACKLIST
     COMPARE_TOKENS = {
         "vs",
         "versus",
@@ -573,22 +576,11 @@ class QueryClassifier:
 
     @staticmethod
     def _singularize(token: str) -> str:
-        if len(token) > 4 and token.endswith("ies"):
-            return f"{token[:-3]}y"
-        if len(token) > 3 and token.endswith("sses"):
-            return token[:-2]
-        if len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
-            return token[:-1]
-        return token
+        return singularize(token)
 
     @classmethod
     def _looks_like_plural_noun(cls, token: str) -> bool:
-        return (
-            len(token) > 3
-            and token.endswith("s")
-            and token not in cls.PLURAL_BLACKLIST
-            and not token.endswith("ss")
-        )
+        return is_plural_candidate(token)
 
     @staticmethod
     def _dedupe_preserve(values: list[str]) -> list[str]:

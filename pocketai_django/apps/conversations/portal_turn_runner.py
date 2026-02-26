@@ -327,6 +327,11 @@ class PortalTurnEventBuilder:
             or "I found multiple categories. Pick one category or choose all fees."
         ).strip()
         block_id = f"{tool_use_block_id}__scope_clarification"
+        bucket_id = str(
+            clarification.get("bucket_id")
+            or diagnostics.get("scope_clarification_bucket_id")
+            or ""
+        ).strip().lower()
         payload: dict[str, object] = {
             "source_tool_block_id": tool_use_block_id,
             "question": question,
@@ -334,8 +339,13 @@ class PortalTurnEventBuilder:
             "all_query": all_query,
             "categories": categories,
             "top_categories": top_categories,
-            "visible_count": 3,
+            "visible_count": min(
+                len(top_categories),
+                getattr(settings, "MCP_SCOPE_VISIBLE_CHIP_COUNT", 3),
+            ),
         }
+        if bucket_id:
+            payload["bucket_id"] = bucket_id[:120]
         sanitized_chips = [dict(chip) for chip in chips if isinstance(chip, Mapping)]
         if sanitized_chips:
             payload["chips"] = sanitized_chips
@@ -1358,6 +1368,9 @@ class PortalTurnRunner:
             block_id = str(raw_scope_selection.get("block_id") or "").strip().lower()
             if block_id:
                 normalized_scope_selection["block_id"] = block_id[:120]
+            bucket_id = str(raw_scope_selection.get("bucket_id") or "").strip().lower()
+            if bucket_id:
+                normalized_scope_selection["bucket_id"] = bucket_id[:120]
             if normalized_scope_selection:
                 scope_selection_metadata = normalized_scope_selection
         try:

@@ -555,6 +555,151 @@ RAG_TABLE_DOMINANT_UPLOAD_RATIO = float(os.getenv("RAG_TABLE_DOMINANT_UPLOAD_RAT
 RAG_TABLE_ROW_LABEL_SAMPLE_LIMIT = int(os.getenv("RAG_TABLE_ROW_LABEL_SAMPLE_LIMIT", "200"))
 # RAG_TABLE_CONTEXT_CACHE_SIZE: Cache size for table context/profiles.
 RAG_TABLE_CONTEXT_CACHE_SIZE = int(os.getenv("RAG_TABLE_CONTEXT_CACHE_SIZE", "128"))
+
+# ---------------------------------------------------------------------------
+# RAG retrieval knobs (previously only reachable via getattr() fallback
+# defaults inside ai_orchestrator.py — now wired so .env overrides work).
+# ---------------------------------------------------------------------------
+
+# -- Retrieval core --
+# RAG_MAX_CHUNKS_PER_UPLOAD: Max vector chunks returned per upload during search.
+RAG_MAX_CHUNKS_PER_UPLOAD = int(os.getenv("RAG_MAX_CHUNKS_PER_UPLOAD", "2"))
+# RAG_TOKEN_GATE_FALLBACK: Minimum query-token count before retrieval runs.
+RAG_TOKEN_GATE_FALLBACK = int(os.getenv("RAG_TOKEN_GATE_FALLBACK", "6"))
+# RAG_ENTITY_NEIGHBOR_MIN: Minimum neighbor chunks fetched around entity hits.
+RAG_ENTITY_NEIGHBOR_MIN = int(os.getenv("RAG_ENTITY_NEIGHBOR_MIN", "2"))
+# RAG_SHORT_QUERY_ANN_MULTIPLIER: ANN pool multiplier for short queries.
+RAG_SHORT_QUERY_ANN_MULTIPLIER = float(os.getenv("RAG_SHORT_QUERY_ANN_MULTIPLIER", "3.0"))
+# RAG_READY_CHAR_THRESHOLD: Char count threshold for a chunk to be "read-ready".
+RAG_READY_CHAR_THRESHOLD = int(os.getenv("RAG_READY_CHAR_THRESHOLD", "900"))
+# RAG_READY_TABLE_THRESHOLD: Char count threshold for a table chunk to be "read-ready".
+RAG_READY_TABLE_THRESHOLD = int(os.getenv("RAG_READY_TABLE_THRESHOLD", "600"))
+# RAG_CHUNK_NEIGHBOR_WINDOW: Default neighbor window around retrieved chunks.
+RAG_CHUNK_NEIGHBOR_WINDOW = int(os.getenv("RAG_CHUNK_NEIGHBOR_WINDOW", "1"))
+# RAG_CHUNK_MIN_TOKENS: Minimum tokens for a chunk to pass quality check.
+RAG_CHUNK_MIN_TOKENS = int(os.getenv("RAG_CHUNK_MIN_TOKENS", "20"))
+# RAG_CHUNK_LOW_QUALITY_SCORE: Score threshold below which a chunk is low-quality.
+RAG_CHUNK_LOW_QUALITY_SCORE = float(os.getenv("RAG_CHUNK_LOW_QUALITY_SCORE", "0.45"))
+# RAG_TEXT_CHUNK_PENALTY_MAX: Max penalty applied to low-quality text chunk scores.
+RAG_TEXT_CHUNK_PENALTY_MAX = float(os.getenv("RAG_TEXT_CHUNK_PENALTY_MAX", "0.35"))
+# RAG_MAX_INLINE_KNOWLEDGE_CHARS: Max chars of knowledge inlined into the prompt.
+RAG_MAX_INLINE_KNOWLEDGE_CHARS = int(os.getenv("RAG_MAX_INLINE_KNOWLEDGE_CHARS", "12000"))
+# RAG_PAGE_CHAR_LIMIT: Max chars per page summary extraction.
+RAG_PAGE_CHAR_LIMIT = int(os.getenv("RAG_PAGE_CHAR_LIMIT", "6000"))
+# RAG_PAGE_SUMMARY_CACHE_SIZE: LRU cache size for page summaries.
+RAG_PAGE_SUMMARY_CACHE_SIZE = int(os.getenv("RAG_PAGE_SUMMARY_CACHE_SIZE", "128"))
+
+# -- Caches and TTLs --
+# RAG_QUERY_VECTOR_CACHE_TTL: TTL (seconds) for query vector cache entries.
+RAG_QUERY_VECTOR_CACHE_TTL = int(os.getenv("RAG_QUERY_VECTOR_CACHE_TTL", "300"))
+# RAG_RESULT_CACHE_ENABLED: Toggle result caching on/off globally.
+RAG_RESULT_CACHE_ENABLED = os.getenv("RAG_RESULT_CACHE_ENABLED", "true").lower() in {"1", "true", "yes"}
+# RAG_RESULT_CACHE_TTL: TTL (seconds) for result cache entries.
+RAG_RESULT_CACHE_TTL = int(os.getenv("RAG_RESULT_CACHE_TTL", "900"))
+# RAG_SESSION_CACHE_LIMIT: Max entries in session-level result cache.
+RAG_SESSION_CACHE_LIMIT = int(os.getenv("RAG_SESSION_CACHE_LIMIT", "64"))
+
+# -- Alias retrieval --
+# RAG_ALIAS_FILLER_TOKENS: Additional filler tokens for alias filtering (None = use defaults).
+RAG_ALIAS_FILLER_TOKENS = os.getenv("RAG_ALIAS_FILLER_TOKENS") or None
+# RAG_ALIAS_RESULTS_LIMIT: Max alias-based retrieval results.
+RAG_ALIAS_RESULTS_LIMIT = int(os.getenv("RAG_ALIAS_RESULTS_LIMIT", "4"))
+# RAG_ALIAS_NEIGHBOR_WINDOW: Neighbor window for alias chunk hits.
+RAG_ALIAS_NEIGHBOR_WINDOW = int(os.getenv("RAG_ALIAS_NEIGHBOR_WINDOW", "1"))
+# RAG_ALIAS_CACHE_TTL: TTL (seconds) for alias lookup cache.
+RAG_ALIAS_CACHE_TTL = int(os.getenv("RAG_ALIAS_CACHE_TTL", "900"))
+# RAG_ALIAS_FTS_LIMIT: Max full-text-search results for alias queries.
+RAG_ALIAS_FTS_LIMIT = int(os.getenv("RAG_ALIAS_FTS_LIMIT", "20"))
+# RAG_ALIAS_FTS_THRESHOLD: Min similarity score for alias FTS matches.
+RAG_ALIAS_FTS_THRESHOLD = float(os.getenv("RAG_ALIAS_FTS_THRESHOLD", "0.25"))
+# RAG_ALIAS_LOW_CONFIDENCE_THRESHOLD: Score below which alias match is low-confidence.
+RAG_ALIAS_LOW_CONFIDENCE_THRESHOLD = float(os.getenv("RAG_ALIAS_LOW_CONFIDENCE_THRESHOLD", "0.35"))
+
+# -- Reranking --
+# RAG_CROSS_ENCODER_WEIGHT: Blend weight for cross-encoder scores in fusion.
+RAG_CROSS_ENCODER_WEIGHT = float(os.getenv("RAG_CROSS_ENCODER_WEIGHT", "0.6"))
+# RAG_CROSS_ENCODER_CACHE_SIZE: LRU cache size for cross-encoder (query, chunk) pairs.
+RAG_CROSS_ENCODER_CACHE_SIZE = int(os.getenv("RAG_CROSS_ENCODER_CACHE_SIZE", "500"))
+# RAG_SNIPPET_RERANK_POOL: Candidate pool size for snippet-level reranking.
+RAG_SNIPPET_RERANK_POOL = int(os.getenv("RAG_SNIPPET_RERANK_POOL", "20"))
+# RAG_WEIGHT_DOCUMENT_NAME: Fusion weight for document-name matching signal.
+RAG_WEIGHT_DOCUMENT_NAME = float(os.getenv("RAG_WEIGHT_DOCUMENT_NAME", "0.35"))
+# RAG_WEIGHT_DOCUMENT_CONTINUITY: Bonus weight for same-document continuity.
+RAG_WEIGHT_DOCUMENT_CONTINUITY = float(os.getenv("RAG_WEIGHT_DOCUMENT_CONTINUITY", "0.35"))
+
+# -- Recency --
+# RAG_RECENCY_DECAY_DAYS: Half-life days for recency decay curve.
+RAG_RECENCY_DECAY_DAYS = float(os.getenv("RAG_RECENCY_DECAY_DAYS", "90"))
+# RAG_RECENCY_MIN_FLOOR: Minimum recency score floor.
+RAG_RECENCY_MIN_FLOOR = float(os.getenv("RAG_RECENCY_MIN_FLOOR", "0.05"))
+# RAG_RECENCY_BONUS_FRESH: Bonus score for recently-added content.
+RAG_RECENCY_BONUS_FRESH = float(os.getenv("RAG_RECENCY_BONUS_FRESH", "0.15"))
+
+# -- Evidence --
+# RAG_EVIDENCE_GROUPING_ENABLED: Enable evidence grouping by source document.
+RAG_EVIDENCE_GROUPING_ENABLED = os.getenv("RAG_EVIDENCE_GROUPING_ENABLED", "true").lower() in {"1", "true", "yes"}
+# RAG_EVIDENCE_CONFLICT_MIN_OVERLAP: Min overlap to flag conflicting evidence chunks.
+RAG_EVIDENCE_CONFLICT_MIN_OVERLAP = float(os.getenv("RAG_EVIDENCE_CONFLICT_MIN_OVERLAP", "0.25"))
+
+# -- Table retrieval: residual, rescue, and parallel --
+# RAG_TABLE_RERANK_FLOOR: Min rerank score for table candidates.
+RAG_TABLE_RERANK_FLOOR = float(os.getenv("RAG_TABLE_RERANK_FLOOR", "0.35"))
+# RAG_TABLE_VECTOR_FLOOR: Min vector score for table candidates.
+RAG_TABLE_VECTOR_FLOOR = float(os.getenv("RAG_TABLE_VECTOR_FLOOR", "0.45"))
+# RAG_TABLE_CHUNK_SAMPLE: Sample size for table chunk evaluation.
+RAG_TABLE_CHUNK_SAMPLE = int(os.getenv("RAG_TABLE_CHUNK_SAMPLE", "6"))
+# RAG_TABLE_SPECIFIC_MIN_MATCH_COUNT: Min column matches for specific-table mode.
+RAG_TABLE_SPECIFIC_MIN_MATCH_COUNT = int(os.getenv("RAG_TABLE_SPECIFIC_MIN_MATCH_COUNT", "2"))
+# RAG_TABLE_SPECIFIC_MIN_MATCH_RATIO: Min match ratio for specific-table mode.
+RAG_TABLE_SPECIFIC_MIN_MATCH_RATIO = float(os.getenv("RAG_TABLE_SPECIFIC_MIN_MATCH_RATIO", "0.34"))
+# RAG_TABLE_QUALITY_THRESHOLD: Quality boundary below which table chunks are penalized.
+RAG_TABLE_QUALITY_THRESHOLD = float(os.getenv("RAG_TABLE_QUALITY_THRESHOLD", "0.5"))
+# RAG_TABLE_RESIDUAL_PENALTY: Penalty for residual table-row matches.
+RAG_TABLE_RESIDUAL_PENALTY = float(os.getenv("RAG_TABLE_RESIDUAL_PENALTY", "0.12"))
+# RAG_TABLE_RESIDUAL_TABLE_INTENT_PENALTY: Extra penalty when query has table intent.
+RAG_TABLE_RESIDUAL_TABLE_INTENT_PENALTY = float(os.getenv("RAG_TABLE_RESIDUAL_TABLE_INTENT_PENALTY", "0.28"))
+# RAG_TABLE_RESIDUAL_RESCUE_ENABLED: Enable rescue of high-signal residual rows.
+RAG_TABLE_RESIDUAL_RESCUE_ENABLED = os.getenv("RAG_TABLE_RESIDUAL_RESCUE_ENABLED", "true").lower() in {"1", "true", "yes"}
+# RAG_TABLE_RESIDUAL_RESCUE_BONUS: Bonus for rescued residual row matches.
+RAG_TABLE_RESIDUAL_RESCUE_BONUS = float(os.getenv("RAG_TABLE_RESIDUAL_RESCUE_BONUS", "0.18"))
+# RAG_TABLE_RESIDUAL_RESCUE_PHRASE_MIN: Min phrase similarity for residual rescue.
+RAG_TABLE_RESIDUAL_RESCUE_PHRASE_MIN = float(os.getenv("RAG_TABLE_RESIDUAL_RESCUE_PHRASE_MIN", "0.24"))
+# RAG_TABLE_RESIDUAL_RESCUE_LEXICAL_MIN: Min lexical score for residual rescue.
+RAG_TABLE_RESIDUAL_RESCUE_LEXICAL_MIN = float(os.getenv("RAG_TABLE_RESIDUAL_RESCUE_LEXICAL_MIN", "0.42"))
+# RAG_TABLE_RESIDUAL_RESCUE_MAX_RESULTS: Max rescued residual rows per query.
+RAG_TABLE_RESIDUAL_RESCUE_MAX_RESULTS = int(os.getenv("RAG_TABLE_RESIDUAL_RESCUE_MAX_RESULTS", "1"))
+# RAG_TABLE_ROW_EXPANSION_LIMIT: Max rows returned by row expansion.
+RAG_TABLE_ROW_EXPANSION_LIMIT = int(os.getenv("RAG_TABLE_ROW_EXPANSION_LIMIT", "20"))
+# RAG_TABLE_ROW_EXPANSION_MAX_PARENT_CONTEXT: Max parent tables in row expansion.
+RAG_TABLE_ROW_EXPANSION_MAX_PARENT_CONTEXT = int(os.getenv("RAG_TABLE_ROW_EXPANSION_MAX_PARENT_CONTEXT", "2"))
+# RAG_PARALLEL_TABLE_SEARCH_ENABLED: Enable parallel table search execution.
+RAG_PARALLEL_TABLE_SEARCH_ENABLED = os.getenv("RAG_PARALLEL_TABLE_SEARCH_ENABLED", "true").lower() in {"1", "true", "yes"}
+# RAG_PARALLEL_TABLE_MIN_RATIO: Min table ratio to trigger parallel search.
+RAG_PARALLEL_TABLE_MIN_RATIO = float(os.getenv("RAG_PARALLEL_TABLE_MIN_RATIO", "0.25"))
+# RAG_PARALLEL_TABLE_RRF_K: RRF constant K for merging parallel table results.
+RAG_PARALLEL_TABLE_RRF_K = int(os.getenv("RAG_PARALLEL_TABLE_RRF_K", "60"))
+
+# -- Scope / intent --
+# RAG_INTENT_LLM_FALLBACK_THRESHOLD: Confidence below which LLM intent classifier runs.
+RAG_INTENT_LLM_FALLBACK_THRESHOLD = float(os.getenv("RAG_INTENT_LLM_FALLBACK_THRESHOLD", "0.62"))
+# RAG_INTENT_CLARIFICATION_THRESHOLD: Confidence below which clarification is triggered.
+RAG_INTENT_CLARIFICATION_THRESHOLD = float(os.getenv("RAG_INTENT_CLARIFICATION_THRESHOLD", "0.45"))
+# RAG_AUTO_MODE_MARGIN_THRESHOLD: Min margin between top-two intent scores.
+RAG_AUTO_MODE_MARGIN_THRESHOLD = float(os.getenv("RAG_AUTO_MODE_MARGIN_THRESHOLD", "0.12"))
+# RAG_AUTO_MODE_MIN_SCORE: Min score to accept auto-mode intent selection.
+RAG_AUTO_MODE_MIN_SCORE = float(os.getenv("RAG_AUTO_MODE_MIN_SCORE", "0.35"))
+# RAG_SCOPE_CATEGORY_MAX: Max categories in scope classification.
+RAG_SCOPE_CATEGORY_MAX = int(os.getenv("RAG_SCOPE_CATEGORY_MAX", "40"))
+# RAG_SCOPE_TOP_CATEGORY_MAX: Max top categories kept after ranking.
+RAG_SCOPE_TOP_CATEGORY_MAX = int(os.getenv("RAG_SCOPE_TOP_CATEGORY_MAX", "4"))
+# RAG_SCOPE_CATEGORY_REF_MAX: Max reference chunks per scope category.
+RAG_SCOPE_CATEGORY_REF_MAX = int(os.getenv("RAG_SCOPE_CATEGORY_REF_MAX", "4"))
+# -- MCP orchestrator (second class) --
+# RAG_KNOWLEDGE_SNIPPET_BUDGET: Max knowledge snippets per prompt turn.
+RAG_KNOWLEDGE_SNIPPET_BUDGET = int(os.getenv("RAG_KNOWLEDGE_SNIPPET_BUDGET", "6"))
+# RAG_KNOWLEDGE_TRACE_LIMIT: Max entries in knowledge provenance trace.
+RAG_KNOWLEDGE_TRACE_LIMIT = int(os.getenv("RAG_KNOWLEDGE_TRACE_LIMIT", "12"))
+
 # RAG_NON_QUERYABLE_TABLE_FORMATS: Formats excluded from table-aware retrieval (e.g., ["docx"]).
 # Default is empty to allow PDF/DOCX tables to be queryable. Set to ["pdf", "docx"] to disable.
 _raw_non_queryable_formats = os.getenv("RAG_NON_QUERYABLE_TABLE_FORMATS", "").strip()
@@ -605,6 +750,22 @@ RAG_TABLE_VLM_MODEL = os.getenv("RAG_TABLE_VLM_MODEL", "gpt-4o")
 RAG_TABLE_VLM_CONFIDENCE_THRESHOLD = float(os.getenv("RAG_TABLE_VLM_CONFIDENCE_THRESHOLD", "0.6"))
 # RAG_TABLE_VLM_MAX_REPAIRS_PER_UPLOAD: Max repair attempts per upload during ingestion.
 RAG_TABLE_VLM_MAX_REPAIRS_PER_UPLOAD = int(os.getenv("RAG_TABLE_VLM_MAX_REPAIRS_PER_UPLOAD", "3"))
+# RAG_TABLE_VLM_GUARDRAILS_ENABLED: Run regression guardrails before accepting VLM-repaired tables.
+RAG_TABLE_VLM_GUARDRAILS_ENABLED = os.getenv("RAG_TABLE_VLM_GUARDRAILS_ENABLED", "true").lower() in {"1", "true", "yes"}
+# RAG_TABLE_VLM_GUARDRAIL_MIN_ROW_RECALL: Minimum candidate/baseline data-row recall ratio.
+RAG_TABLE_VLM_GUARDRAIL_MIN_ROW_RECALL = float(os.getenv("RAG_TABLE_VLM_GUARDRAIL_MIN_ROW_RECALL", "0.99"))
+# RAG_TABLE_VLM_GUARDRAIL_HARD_ROW_RECALL_FLOOR: Hard lower bound for row recall; values below are always rejected.
+RAG_TABLE_VLM_GUARDRAIL_HARD_ROW_RECALL_FLOOR = float(
+    os.getenv("RAG_TABLE_VLM_GUARDRAIL_HARD_ROW_RECALL_FLOOR", "0.75")
+)
+# RAG_TABLE_VLM_GUARDRAIL_MIN_ORDER_RATIO: Minimum LCS row-order similarity against baseline.
+RAG_TABLE_VLM_GUARDRAIL_MIN_ORDER_RATIO = float(os.getenv("RAG_TABLE_VLM_GUARDRAIL_MIN_ORDER_RATIO", "0.7"))
+# RAG_TABLE_VLM_GUARDRAIL_MIN_SCHEMA_RECALL: Minimum column/schema recall ratio versus baseline.
+RAG_TABLE_VLM_GUARDRAIL_MIN_SCHEMA_RECALL = float(
+    os.getenv("RAG_TABLE_VLM_GUARDRAIL_MIN_SCHEMA_RECALL", "0.9")
+)
+# RAG_TABLE_VLM_GUARDRAIL_MIN_CELL_RECALL: Minimum non-empty-cell/value recall versus baseline.
+RAG_TABLE_VLM_GUARDRAIL_MIN_CELL_RECALL = float(os.getenv("RAG_TABLE_VLM_GUARDRAIL_MIN_CELL_RECALL", "0.9"))
 
 # RAG_TABLE_SCHEMA_CHUNKING: Enable schema-aware chunking for table artifacts.
 RAG_TABLE_SCHEMA_CHUNKING = os.getenv("RAG_TABLE_SCHEMA_CHUNKING", "true").lower() in {"1", "true", "yes"}
@@ -624,6 +785,10 @@ RAG_TABLE_DEDUPE_ENABLED = os.getenv("RAG_TABLE_DEDUPE_ENABLED", "true").lower()
 RAG_TABLE_DEDUPE_MIN_OVERLAP = float(os.getenv("RAG_TABLE_DEDUPE_MIN_OVERLAP", "0.6"))
 # RAG_TABLE_POSTPROCESS_ROW_LIMIT: Max rows kept after table postprocessing/cleanup.
 RAG_TABLE_POSTPROCESS_ROW_LIMIT = int(os.getenv("RAG_TABLE_POSTPROCESS_ROW_LIMIT", "40"))
+# RAG_TABLE_ROW_SIGNAL_MIN_PAIRS: Minimum non-empty key/value pairs before bypassing low-signal suppression.
+RAG_TABLE_ROW_SIGNAL_MIN_PAIRS = int(os.getenv("RAG_TABLE_ROW_SIGNAL_MIN_PAIRS", "2"))
+# RAG_TABLE_ROW_SIGNAL_MIN_SCORE: Minimum computed row-signal score for sparse rows.
+RAG_TABLE_ROW_SIGNAL_MIN_SCORE = float(os.getenv("RAG_TABLE_ROW_SIGNAL_MIN_SCORE", "1.6"))
 # RAG_TABLE_ANNOTATION_ENABLED: Convert table residual text into anchored table-note chunks.
 RAG_TABLE_ANNOTATION_ENABLED = os.getenv("RAG_TABLE_ANNOTATION_ENABLED", "true").lower() in {"1", "true", "yes"}
 # RAG_TABLE_ANNOTATION_MAX_CHARS: Max chars per anchored table-note chunk.
@@ -659,6 +824,13 @@ MCP_SCOPE_CLARIFICATION_MCQ_ENABLED = os.getenv(
     "MCP_SCOPE_CLARIFICATION_MCQ_ENABLED",
     "false",
 ).lower() in {"1", "true", "yes"}
+# MCP_SCOPE_VISIBLE_CHIP_COUNT: Max number of clarification chips shown in portal UI.
+try:
+    MCP_SCOPE_VISIBLE_CHIP_COUNT = int(os.getenv("MCP_SCOPE_VISIBLE_CHIP_COUNT", "3"))
+except (TypeError, ValueError):
+    MCP_SCOPE_VISIBLE_CHIP_COUNT = 3
+if MCP_SCOPE_VISIBLE_CHIP_COUNT < 1:
+    MCP_SCOPE_VISIBLE_CHIP_COUNT = 1
 # Retrieval is predictable by default: one strong query per user turn.
 # When the caller provides explicit batched queries (tool arg: `queries=[...]`),
 # we can safely fan out a few variants to improve recall without increasing prompt tokens.

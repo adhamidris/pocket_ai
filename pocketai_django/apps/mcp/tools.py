@@ -4022,6 +4022,62 @@ def _scope_clarification_category_ref_map(
     return normalized_map
 
 
+def _normalize_scope_bucket_id(value: object) -> str:
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    normalized = "".join(ch for ch in text if ch.isalnum() or ch in {"_", "-", ":"})
+    return normalized[:120]
+
+
+def _scope_selection_bucket_id_from_context(context: ToolExecutionContext) -> str:
+    latest_scope_selection = (
+        dict(context.latest_scope_selection)
+        if isinstance(getattr(context, "latest_scope_selection", None), Mapping)
+        else {}
+    )
+    return _normalize_scope_bucket_id(
+        latest_scope_selection.get("bucket_id") or latest_scope_selection.get("bucketId")
+    )
+
+
+def _pending_scope_clarification_state(
+    *,
+    context: ToolExecutionContext,
+) -> dict[str, object] | None:
+    selected_bucket_id = _scope_selection_bucket_id_from_context(context)
+    if selected_bucket_id:
+        get_pending_scope = getattr(context, "get_pending_scope_clarification", None)
+        if callable(get_pending_scope):
+            resolved = get_pending_scope(bucket_id=selected_bucket_id)
+            if isinstance(resolved, Mapping):
+                return dict(resolved)
+            return None
+        raw_buckets = getattr(context, "scope_clarification_buckets", None)
+        if isinstance(raw_buckets, Mapping):
+            bucket_state = raw_buckets.get(selected_bucket_id)
+            if isinstance(bucket_state, Mapping):
+                return dict(bucket_state)
+        pending = (
+            dict(context.pending_scope_clarification)
+            if isinstance(getattr(context, "pending_scope_clarification", None), Mapping)
+            else None
+        )
+        if isinstance(pending, Mapping):
+            pending_bucket_id = _normalize_scope_bucket_id(pending.get("bucket_id"))
+            if pending_bucket_id == selected_bucket_id:
+                return dict(pending)
+        return None
+    pending = (
+        dict(context.pending_scope_clarification)
+        if isinstance(getattr(context, "pending_scope_clarification", None), Mapping)
+        else None
+    )
+    if isinstance(pending, Mapping):
+        return dict(pending)
+    return None
+
+
 def _resolve_scope_option_mapped_refs(
     *,
     category_key: str,
@@ -4047,6 +4103,9 @@ def _build_scope_clarification_mcq_diagnostics(
     diagnostics: Mapping[str, object] | None,
 ) -> dict[str, object]:
     base = dict(diagnostics or {})
+    bucket_id = _normalize_scope_bucket_id(
+        base.get("scope_clarification_bucket_id") or base.get("bucket_id")
+    )
     categories = _scope_clarification_all_categories_from_diagnostics(base)
     top_categories = _scope_clarification_categories_from_diagnostics(base)
     category_ref_map = _scope_clarification_category_ref_map(base)
@@ -4083,6 +4142,8 @@ def _build_scope_clarification_mcq_diagnostics(
             "selection_mode": "single",
             "category_key": category_key,
         }
+        if bucket_id:
+            option["bucket_id"] = bucket_id
         if category:
             option["category"] = category
         if expands_categories:
@@ -4091,6 +4152,8 @@ def _build_scope_clarification_mcq_diagnostics(
             option["mapped_refs"] = dict(mapped_refs)
         options.append(option)
         action: dict[str, object] = {"id": option_id, "query": query, "category_key": category_key}
+        if bucket_id:
+            action["bucket_id"] = bucket_id
         if isinstance(mapped_refs, Mapping) and mapped_refs:
             action["mapped_refs"] = dict(mapped_refs)
         actions.append(action)
@@ -4152,6 +4215,8 @@ def _build_scope_clarification_mcq_diagnostics(
         "scope_clarification_more_query": choose_categories_query,
         "scope_clarification_all_query": all_query,
     }
+    if bucket_id:
+        result["scope_clarification_bucket_id"] = bucket_id
     if category_refs_for_payload:
         result["scope_clarification_category_refs"] = dict(category_refs_for_payload)
     return result
@@ -4183,14 +4248,52 @@ def _build_scope_clarification_payload(
     options = diagnostics.get("scope_clarification_options") if isinstance(diagnostics, Mapping) else None
     actions = diagnostics.get("scope_clarification_actions") if isinstance(diagnostics, Mapping) else None
     if isinstance(options, Sequence) and not isinstance(options, (str, bytes, bytearray)):
-        payload["chips"] = [dict(item) for item in options if isinstance(item, Mapping)]
+        chips: list[dict[str, object]] = []
+        for item in options:
+            if not isinstance(item, Mapping):
+                continue
+            chip = dict(item)
+            chips.append(chip)
+        if chips:
+            payload["chips"] = chips
     if isinstance(actions, Sequence) and not isinstance(actions, (str, bytes, bytearray)):
-        payload["actions"] = [dict(item) for item in actions if isinstance(item, Mapping)]
+        payload_actions: list[dict[str, object]] = []
+        for item in actions:
+            if not isinstance(item, Mapping):
+                continue
+            payload_actions.append(dict(item))
+        if payload_actions:
+            payload["actions"] = payload_actions
     contract_version = diagnostics.get("scope_clarification_contract_version") if isinstance(diagnostics, Mapping) else None
     if isinstance(contract_version, int) and contract_version > 0:
         payload["contract_version"] = int(contract_version)
     elif isinstance(contract_version, str) and contract_version.strip().isdigit():
         payload["contract_version"] = int(contract_version.strip())
+    bucket_id = _normalize_scope_bucket_id(
+        diagnostics.get("scope_clarification_bucket_id") if isinstance(diagnostics, Mapping) else ""
+    )
+    if bucket_id:
+        payload["bucket_id"] = bucket_id
+        chips_for_payload = payload.get("chips")
+        if isinstance(chips_for_payload, list):
+            normalized_chips: list[dict[str, object]] = []
+            for item in chips_for_payload:
+                if not isinstance(item, Mapping):
+                    continue
+                chip = dict(item)
+                chip.setdefault("bucket_id", bucket_id)
+                normalized_chips.append(chip)
+            payload["chips"] = normalized_chips
+        actions_for_payload = payload.get("actions")
+        if isinstance(actions_for_payload, list):
+            normalized_actions: list[dict[str, object]] = []
+            for item in actions_for_payload:
+                if not isinstance(item, Mapping):
+                    continue
+                action = dict(item)
+                action.setdefault("bucket_id", bucket_id)
+                normalized_actions.append(action)
+            payload["actions"] = normalized_actions
     raw_category_refs = diagnostics.get("scope_clarification_category_refs") if isinstance(diagnostics, Mapping) else None
     if isinstance(raw_category_refs, Mapping):
         canonical_refs: dict[str, dict[str, object]] = {}
@@ -4576,6 +4679,7 @@ def _sanitize_scope_clarification_diagnostics(
         "scope_clarification_options",
         "scope_clarification_actions",
         "scope_clarification_contract_version",
+        "scope_clarification_bucket_id",
         "scope_clarification_category_refs",
         "scope_clarification_more_available",
         "scope_clarification_more_query",
@@ -4888,11 +4992,7 @@ def plan_scope_selection_deterministic_call(
         "route": "search_default",
     }
 
-    pending_scope_state = (
-        dict(context.pending_scope_clarification)
-        if isinstance(getattr(context, "pending_scope_clarification", None), Mapping)
-        else None
-    )
+    pending_scope_state = _pending_scope_clarification_state(context=context)
     if not pending_scope_state:
         return fallback_plan
 
@@ -5112,11 +5212,7 @@ def build_scope_handoff_context(
     # ------------------------------------------------------------------
     # 1. Read pending scope & latest scope selection from context
     # ------------------------------------------------------------------
-    pending_scope_state = (
-        dict(context.pending_scope_clarification)
-        if isinstance(getattr(context, "pending_scope_clarification", None), Mapping)
-        else None
-    )
+    pending_scope_state = _pending_scope_clarification_state(context=context)
     if not pending_scope_state:
         return {
             "resolved": False,
@@ -5413,11 +5509,7 @@ def _scope_state_category_ref_lookup(
             if normalized_label and normalized_label not in by_label:
                 by_label[normalized_label] = dict(mapped)
 
-    pending_scope = (
-        dict(context.pending_scope_clarification)
-        if isinstance(getattr(context, "pending_scope_clarification", None), Mapping)
-        else {}
-    )
+    pending_scope = _pending_scope_clarification_state(context=context) or {}
     pending_categories = pending_scope.get("categories")
     pending_labels_by_key: dict[str, str] = {}
     if isinstance(pending_categories, Sequence) and not isinstance(
@@ -5619,11 +5711,7 @@ def _present_scope_clarification_handler(
 ) -> Mapping[str, object]:
     del arguments, conversation
     scope_clarification_mcq_enabled = bool(getattr(settings, "MCP_SCOPE_CLARIFICATION_MCQ_ENABLED", False))
-    pending_scope = (
-        dict(context.pending_scope_clarification)
-        if isinstance(getattr(context, "pending_scope_clarification", None), Mapping)
-        else None
-    )
+    pending_scope = _pending_scope_clarification_state(context=context)
     if not pending_scope:
         return {
             "tool": "present_scope_clarification",
@@ -5635,6 +5723,7 @@ def _present_scope_clarification_handler(
 
     base_query = str(pending_scope.get("base_query") or "").strip()
     pending_question = str(pending_scope.get("question") or "").strip()
+    pending_bucket_id = _normalize_scope_bucket_id(pending_scope.get("bucket_id"))
     raw_categories = pending_scope.get("categories")
     categories: list[str] = []
     seen_categories: set[str] = set()
@@ -5675,6 +5764,8 @@ def _present_scope_clarification_handler(
             "is_broad_scope": len(categories) > 1,
         },
     }
+    if pending_bucket_id:
+        diagnostics["scope_clarification_bucket_id"] = pending_bucket_id
     pending_category_refs: dict[str, dict[str, object]] = {}
     raw_pending_category_refs = pending_scope.get("category_refs")
     if scope_clarification_mcq_enabled and isinstance(raw_pending_category_refs, Mapping):
@@ -6862,11 +6953,7 @@ def _search_knowledge_handler(
     primary_query = queries[0] if queries else ""
     scope_resolution_applied: dict[str, object] | None = None
     scope_fallback_plan: dict[str, object] | None = None
-    pending_scope_state = (
-        dict(context.pending_scope_clarification)
-        if isinstance(getattr(context, "pending_scope_clarification", None), Mapping)
-        else None
-    )
+    pending_scope_state = _pending_scope_clarification_state(context=context)
     scope_resolution_input_source = "tool_query"
     if primary_query and pending_scope_state:
         scope_resolution_query = primary_query
@@ -8017,7 +8104,7 @@ def _search_knowledge_handler(
                     _build_scope_clarification_mcq_diagnostics(result_diagnostics)
                 )
             categories = _scope_clarification_all_categories_from_diagnostics(result_diagnostics)
-            context.set_pending_scope_clarification(
+            scope_bucket_id = context.set_pending_scope_clarification(
                 base_query=query_text,
                 categories=categories,
                 question=str(result_diagnostics.get("intent_clarification_question") or ""),
@@ -8027,6 +8114,11 @@ def _search_knowledge_handler(
                     else None
                 ),
             )
+            result_diagnostics["scope_clarification_bucket_id"] = scope_bucket_id
+            if scope_clarification_mcq_enabled:
+                result_diagnostics.update(
+                    _build_scope_clarification_mcq_diagnostics(result_diagnostics)
+                )
         elif (
             scope_resolution_applied
             and query_text == primary_query
@@ -8819,7 +8911,7 @@ def _search_knowledge_handler(
             )
             if scope_clarification_mcq_enabled:
                 diag.update(_build_scope_clarification_mcq_diagnostics(diag))
-            context.set_pending_scope_clarification(
+            scope_bucket_id = context.set_pending_scope_clarification(
                 base_query=str(status_source_run.get("query") or primary_run.get("query") or ""),
                 categories=_scope_clarification_all_categories_from_diagnostics(diag),
                 question=str(diag.get("intent_clarification_question") or ""),
@@ -8829,6 +8921,9 @@ def _search_knowledge_handler(
                     else None
                 ),
             )
+            diag["scope_clarification_bucket_id"] = scope_bucket_id
+            if scope_clarification_mcq_enabled:
+                diag.update(_build_scope_clarification_mcq_diagnostics(diag))
         clarification_question = str(diag.get("intent_clarification_question") or "").strip()
         if not clarification_question:
             for run in runs:

@@ -406,3 +406,80 @@ class SectionHeaderClassificationTests(SimpleTestCase):
         text = payloads[0]["text"]
         self.assertIn("[SubSection] Foreign Currency Transactions", text)
         self.assertIn("Service: FX Purchase", text)
+
+
+class TableRowSignalFilterTests(SimpleTestCase):
+    class _Manager:
+        def __init__(self, items):
+            self._items = list(items)
+
+        def all(self):
+            return list(self._items)
+
+    class _Cell:
+        def __init__(self, cell_id: str, column_index: int, raw_text: str, column_key: str = ""):
+            self.id = cell_id
+            self.column_index = column_index
+            self.column_key = column_key
+            self.raw_text = raw_text
+
+    class _Row:
+        def __init__(self, row_index, metadata, cells):
+            self.row_index = row_index
+            self.metadata = metadata
+            self.cells = TableRowSignalFilterTests._Manager(cells)
+
+    class _Table:
+        def __init__(self, rows):
+            self.id = "table-signal"
+            self.title = "Signal Table"
+            self.order_index = 1
+            self.section_heading = ""
+            self.rows = TableRowSignalFilterTests._Manager(rows)
+
+    def _build_table(self):
+        low_signal_row = self._Row(
+            row_index=1,
+            metadata={"row_type": "data"},
+            cells=[
+                self._Cell("r1-c1", 0, "Issuance"),
+            ],
+        )
+        value_row = self._Row(
+            row_index=2,
+            metadata={"row_type": "data"},
+            cells=[
+                self._Cell("r2-c1", 0, "Stop Payment"),
+                self._Cell("r2-c2", 1, "EGP"),
+                self._Cell("r2-c3", 2, "EGP 25"),
+                self._Cell("r2-c4", 3, "EGP 25"),
+                self._Cell("r2-c5", 4, "EGP 25"),
+            ],
+        )
+        return self._Table([low_signal_row, value_row])
+
+    def _build_payloads(self):
+        service = KnowledgeIngestionService(enable_ocr=False)
+        return service._table_row_chunk_payloads(
+            table=self._build_table(),
+            column_map=[
+                ("Service", "service", 0),
+                ("Tariff", "tariff", 1),
+                ("Prime", "prime", 2),
+                ("Plus", "plus", 3),
+                ("Wealth", "wealth", 4),
+            ],
+            raw_schema=["service", "tariff", "prime", "plus", "wealth"],
+            privacy_rules={},
+            base_metadata={"is_table_chunk": True, "table_id": "table-signal"},
+            max_rows=50,
+        )
+
+    def test_row_signal_filter_suppresses_sparse_low_signal_rows(self) -> None:
+        payloads = self._build_payloads()
+
+        self.assertEqual(len(payloads), 1)
+        metadata = payloads[0]["metadata"]
+        self.assertEqual(metadata.get("table_row_index"), 2)
+        self.assertTrue(metadata.get("table_row_signal_filter_enabled"))
+        self.assertGreater(float(metadata.get("table_row_signal_score") or 0.0), 0.0)

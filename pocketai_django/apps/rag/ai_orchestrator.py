@@ -23,6 +23,8 @@ from contextvars import ContextVar
 from typing import Any, Callable, Iterable, Mapping, MutableMapping, Sequence
 from zoneinfo import ZoneInfo
 
+from apps.rag.text_utils import is_plural_candidate, singularize
+
 from django.db import connection, transaction
 from django.db.utils import DatabaseError
 from django.db.models import Prefetch, Q
@@ -38,6 +40,7 @@ from apps.knowledge.models import (
     KnowledgeUpload,
     KnowledgeUploadChunk,
     KnowledgeUploadIssue,
+    KnowledgeTableColumn,
     KnowledgeUploadTable,
     KnowledgeUploadTableCell,
     KnowledgeUploadTableRow,
@@ -719,6 +722,9 @@ class KnowledgeSearchService:
         self.text_chunk_penalty_max = float(getattr(settings, "RAG_TEXT_CHUNK_PENALTY_MAX", 0.35))
         if self.text_chunk_penalty_max <= 0.0:
             self.text_chunk_penalty_max = 0.35
+        self.table_quality_threshold = float(getattr(settings, "RAG_TABLE_QUALITY_THRESHOLD", 0.5))
+        if not (0.0 < self.table_quality_threshold <= 1.0):
+            self.table_quality_threshold = 0.5
         self.table_residual_penalty = float(getattr(settings, "RAG_TABLE_RESIDUAL_PENALTY", 0.12))
         if self.table_residual_penalty < 0.0:
             self.table_residual_penalty = 0.0
@@ -981,6 +987,162 @@ class KnowledgeSearchService:
             if isinstance(extra, (list, tuple, set)):
                 tokens.update(str(item).strip().lower() for item in extra if str(item).strip())
         return tokens
+
+    @staticmethod
+    def _normalized_scope_values(value: object) -> set[str]:
+        if isinstance(value, Mapping):
+            iterable = tuple(value.keys())
+        elif isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+            iterable = value
+        else:
+            iterable = (value,)
+        normalized: set[str] = set()
+        for raw in iterable:
+            cleaned = KnowledgeSearchService._normalize_topic_value(str(raw or ""))
+            if cleaned:
+                normalized.add(cleaned)
+        return normalized
+
+    def _scope_metadata_keysets_for_business(self, business_profile) -> dict[str, set[str]]:
+        empty = {
+            "scope_generic_tokens": set(),
+            "scope_column_keys": set(),
+            "known_segment_keys": set(),
+            "preferred_value_keys": set(),
+        }
+        business_id = getattr(business_profile, "id", None)
+        if not business_id:
+            return empty
+
+        raw_version = cache.get(f"table_profile:ver:{business_id}")
+        try:
+            version = max(0, int(raw_version or 0))
+        except (TypeError, ValueError):
+            version = 0
+        cache_key = f"rag_scope_keys:{business_id}:v{version}"
+        cached = cache.get(cache_key)
+        if isinstance(cached, Mapping):
+            return {
+                "scope_generic_tokens": {
+                    str(token).strip().lower()
+                    for token in (cached.get("scope_generic_tokens") or ())
+                    if str(token).strip()
+                },
+                "scope_column_keys": {
+                    str(token).strip().lower()
+                    for token in (cached.get("scope_column_keys") or ())
+                    if str(token).strip()
+                },
+                "known_segment_keys": {
+                    str(token).strip().lower()
+                    for token in (cached.get("known_segment_keys") or ())
+                    if str(token).strip()
+                },
+                "preferred_value_keys": {
+                    str(token).strip().lower()
+                    for token in (cached.get("preferred_value_keys") or ())
+                    if str(token).strip()
+                },
+            }
+
+        row_scope_labels: set[str] = set()
+        rows = KnowledgeUploadTableRow.objects.filter(
+            table__upload__business_profile=business_profile,
+            table__upload__status=KnowledgeStatus.ACTIVE,
+        ).exclude(table__upload__visibility=KnowledgeVisibility.INTERNAL).order_by("-updated_at").values_list(
+            "metadata",
+            flat=True,
+        )[: self.table_row_label_sample_limit]
+        for metadata in rows:
+            if not isinstance(metadata, Mapping):
+                continue
+            for key in (
+                "scope_dimension_columns",
+                "inferred_scope_columns",
+                "table_row_scope_dimension_columns",
+                "table_row_inferred_scope_columns",
+            ):
+                row_scope_labels.update(self._normalized_scope_values(metadata.get(key)))
+
+        column_labels = {
+            self._normalize_topic_value(column)
+            for column in self._table_columns_for_business(business_profile)
+            if self._normalize_topic_value(column)
+        }
+        column_rows = KnowledgeTableColumn.objects.filter(
+            business_profile=business_profile,
+            table__upload__status=KnowledgeStatus.ACTIVE,
+        ).exclude(table__upload__visibility=KnowledgeVisibility.INTERNAL).order_by("-updated_at").values_list(
+            "column_name",
+            "column_normalized",
+        )[: self.table_column_sample_limit]
+        for column_name, column_normalized in column_rows:
+            for raw in (column_normalized, column_name):
+                normalized = self._normalize_topic_value(raw)
+                if normalized:
+                    column_labels.add(normalized)
+
+        scope_column_keys = set(row_scope_labels)
+        known_segment_keys = {
+            self._normalize_segment_key(label)
+            for label in row_scope_labels
+            if self._normalize_segment_key(label)
+        }
+
+        preferred_value_keys = {
+            label for label in column_labels if label and label not in scope_column_keys
+        }
+        if len(preferred_value_keys) > 64:
+            preferred_value_keys = set(sorted(preferred_value_keys)[:64])
+
+        phrase_pool = set(column_labels) | set(scope_column_keys)
+        token_counts: Counter[str] = Counter()
+        for phrase in phrase_pool:
+            tokens = {
+                token
+                for token in QueryNormalizer._TOKEN_SPLIT.split(phrase)
+                if token and len(token) > 1 and not token.isdigit()
+            }
+            for token in tokens:
+                token_counts[token] += 1
+
+        min_frequency = (
+            max(2, int(round(len(phrase_pool) * self.table_generic_df_threshold)))
+            if phrase_pool
+            else 2
+        )
+        generic_tokens = {token for token, count in token_counts.items() if count >= min_frequency}
+        for label in scope_column_keys:
+            for token in QueryNormalizer._TOKEN_SPLIT.split(label):
+                cleaned = token.strip().lower()
+                if cleaned and len(cleaned) > 1 and not cleaned.isdigit():
+                    generic_tokens.add(cleaned)
+
+        payload = {
+            "scope_generic_tokens": sorted(generic_tokens),
+            "scope_column_keys": sorted(scope_column_keys),
+            "known_segment_keys": sorted(known_segment_keys),
+            "preferred_value_keys": sorted(preferred_value_keys),
+        }
+        cache.set(cache_key, payload, timeout=900)
+        return {
+            "scope_generic_tokens": set(payload["scope_generic_tokens"]),
+            "scope_column_keys": set(payload["scope_column_keys"]),
+            "known_segment_keys": set(payload["known_segment_keys"]),
+            "preferred_value_keys": set(payload["preferred_value_keys"]),
+        }
+
+    def _scope_generic_tokens_for_business(self, business_profile) -> set[str]:
+        return set(self._scope_metadata_keysets_for_business(business_profile).get("scope_generic_tokens") or set())
+
+    def _scope_column_keys_for_business(self, business_profile) -> set[str]:
+        return set(self._scope_metadata_keysets_for_business(business_profile).get("scope_column_keys") or set())
+
+    def _known_segment_keys_for_business(self, business_profile) -> set[str]:
+        return set(self._scope_metadata_keysets_for_business(business_profile).get("known_segment_keys") or set())
+
+    def _preferred_value_keys_for_business(self, business_profile) -> set[str]:
+        return set(self._scope_metadata_keysets_for_business(business_profile).get("preferred_value_keys") or set())
 
     def inline_char_limit_for_business(self, business_profile, requested: int | None = None) -> int:
         """
@@ -1554,6 +1716,7 @@ class KnowledgeSearchService:
                 status=status,
                 snippets=snippets,
                 diagnostics=diagnostics,
+                business_profile=business_profile,
                 traits=traits,
                 table_context=table_context,
                 table_blocked=False,
@@ -1759,6 +1922,7 @@ class KnowledgeSearchService:
         filler_tokens = self._filler_tokens_for_business(business_profile)
         postclip_scope_summary = self._build_scope_summary_from_candidates(
             chunk_hits,
+            business_profile=business_profile,
             query_tokens=traits.tokens,
             filler_tokens=filler_tokens,
         )
@@ -1789,6 +1953,7 @@ class KnowledgeSearchService:
             bool(scope_summary.get("is_broad_scope"))
             and not traits.is_identifier_like
             and self._query_lacks_specific_scope(
+                business_profile=business_profile,
                 traits=traits,
                 table_context=table_context,
                 filler_tokens=filler_tokens,
@@ -1797,52 +1962,78 @@ class KnowledgeSearchService:
             categories, top_categories = self._scope_categories_for_contract(
                 scope_summary=scope_summary,
             )
+            if preclip_scope_summary:
+                ref_source_hits = diagnostics.get("scope_candidates_preclip") or chunk_hits
+            else:
+                ref_source_hits = chunk_hits
             category_ref_hints = self._scope_category_ref_hints_from_candidates(
-                hits=chunk_hits,
+                hits=ref_source_hits,
+                business_profile=business_profile,
                 top_categories=top_categories,
                 query_tokens=traits.tokens,
                 filler_tokens=filler_tokens,
             )
-            clarification_question, scope_categories = self._build_scope_clarification_question(
-                scope_summary=scope_summary,
-            )
-            diagnostics["path"] = "clarification"
-            diagnostics["reason"] = "broad_scope_ambiguity"
-            diagnostics["intent_requires_clarification"] = True
-            diagnostics["intent_clarification_question"] = clarification_question
-            diagnostics["scope_clarification_categories"] = list(scope_categories)
-            diagnostics["categories"] = list(categories)
-            diagnostics["top_categories"] = list(top_categories)
+            evidenced_categories: tuple[str, ...] = tuple()
             if category_ref_hints:
-                diagnostics["scope_clarification_category_refs"] = category_ref_hints
-            diagnostics.setdefault("clarification_ui_mode", "text")
-            diagnostics["snippet_count"] = 0
-            diagnostics["total_duration_ms"] = self._duration_ms(overall_start)
-            diagnostics["auto_decision_contract"] = self._derive_auto_decision_contract(
-                scoring_diagnostics=diagnostics,
-                requires_clarification=True,
-                scope_summary=scope_summary,
-            )
-            result_obj = KnowledgeSearchResult(
-                snippets=tuple(),
-                status="needs_clarification",
-                diagnostics=diagnostics,
-            )
-            self._result_cache_set(cache_key, result_obj, limit=limit)
-            self._session_cache_set(session_cache, cache_key, result_obj, limit=limit)
-            self._record_retrieval_event(
-                business_profile=business_profile,
-                traits=traits,
-                alias_result=alias_result,
-                result=result_obj,
-                feature_state=feature_state,
-            )
-            self._log_search_summary(
-                business_profile=business_profile,
-                request_id=request_id,
-                result=result_obj,
-            )
-            return result_obj
+                evidenced_categories = tuple(
+                    cat
+                    for cat in categories
+                    if cat in category_ref_hints and category_ref_hints[cat].get("ref_ids")
+                )
+                evidenced_top = tuple(
+                    cat
+                    for cat in top_categories
+                    if cat in category_ref_hints and category_ref_hints[cat].get("ref_ids")
+                )
+                if evidenced_categories:
+                    categories = evidenced_categories
+                    top_categories = evidenced_top or evidenced_categories[:self.scope_top_category_max]
+
+            if evidenced_categories and len(evidenced_categories) <= 1:
+                diagnostics["path"] = "direct_answer"
+                diagnostics["reason"] = "single_scope_cluster"
+                diagnostics["intent_requires_clarification"] = False
+            else:
+                clarification_question, scope_categories = self._build_scope_clarification_question(
+                    scope_summary=scope_summary,
+                )
+                diagnostics["path"] = "clarification"
+                diagnostics["reason"] = "broad_scope_ambiguity"
+                diagnostics["intent_requires_clarification"] = True
+                diagnostics["intent_clarification_question"] = clarification_question
+                diagnostics["scope_clarification_categories"] = list(scope_categories)
+                diagnostics["categories"] = list(categories)
+                diagnostics["top_categories"] = list(top_categories)
+                if category_ref_hints:
+                    diagnostics["scope_clarification_category_refs"] = category_ref_hints
+                diagnostics.setdefault("clarification_ui_mode", "text")
+                diagnostics["snippet_count"] = 0
+                diagnostics["total_duration_ms"] = self._duration_ms(overall_start)
+                diagnostics["auto_decision_contract"] = self._derive_auto_decision_contract(
+                    scoring_diagnostics=diagnostics,
+                    requires_clarification=True,
+                    scope_summary=scope_summary,
+                )
+                result_obj = KnowledgeSearchResult(
+                    snippets=tuple(),
+                    status="needs_clarification",
+                    diagnostics=diagnostics,
+                )
+                self._result_cache_set(cache_key, result_obj, limit=limit)
+                self._session_cache_set(session_cache, cache_key, result_obj, limit=limit)
+                self._record_retrieval_event(
+                    business_profile=business_profile,
+                    traits=traits,
+                    alias_result=alias_result,
+                    result=result_obj,
+                    feature_state=feature_state,
+                )
+                self._log_search_summary(
+                    business_profile=business_profile,
+                    request_id=request_id,
+                    result=result_obj,
+                )
+                return result_obj
         auto_score_diag = self._score_auto_mode_candidates(
             chunk_hits,
             query_tokens=traits.tokens,
@@ -2085,6 +2276,7 @@ class KnowledgeSearchService:
                     status=status,
                     snippets=tuple(blended),
                     diagnostics=diagnostics,
+                    business_profile=business_profile,
                     traits=traits,
                     table_context=table_context,
                     table_blocked=table_blocked,
@@ -2154,6 +2346,7 @@ class KnowledgeSearchService:
                 status=status,
                 snippets=tuple(blended),
                 diagnostics=diagnostics,
+                business_profile=business_profile,
                 traits=traits,
                 table_context=table_context,
                 table_blocked=table_blocked,
@@ -2206,6 +2399,7 @@ class KnowledgeSearchService:
                 status="ok",
                 snippets=snippets,
                 diagnostics=diagnostics,
+                business_profile=business_profile,
                 traits=traits,
                 table_context=table_context,
                 table_blocked=table_blocked,
@@ -2249,6 +2443,7 @@ class KnowledgeSearchService:
             status=status,
             snippets=fallback,
             diagnostics=diagnostics,
+            business_profile=business_profile,
             traits=traits,
             table_context=table_context,
             table_blocked=table_blocked,
@@ -2951,8 +3146,10 @@ class KnowledgeSearchService:
         )
         if diagnostics is not None:
             diagnostics["vector_candidates_post_threshold"] = len(filtered)
+            diagnostics["scope_candidates_preclip"] = filtered
             diagnostics["scope_summary_preclip"] = self._build_scope_summary_from_candidates(
                 filtered,
+                business_profile=business_profile,
                 query_tokens=traits.tokens,
                 filler_tokens=self._filler_tokens_for_business(business_profile),
             )
@@ -4247,10 +4444,11 @@ class KnowledgeSearchService:
                 except (TypeError, ValueError):
                     quality_score = None
                 
-                if quality_score is not None and quality_score < 0.5:
-                    # Apply penalty for low quality tables
-                    # Penalty ranges from 0% (quality=0.5) to 50% (quality=0.0)
-                    quality_penalty = (0.5 - quality_score) * 1.0  # Max penalty of 0.5
+                if quality_score is not None and quality_score < self.table_quality_threshold:
+                    # Apply a smooth linear penalty below the configured threshold.
+                    # Penalty ranges from 0% (quality=threshold) to 50% (quality=0.0).
+                    quality_gap = self.table_quality_threshold - quality_score
+                    quality_penalty = (quality_gap / self.table_quality_threshold) * 0.5
                 elif is_decorative:
                     # Fallback: if is_decorative flag is set, apply moderate penalty
                     quality_penalty = 0.30
@@ -5035,8 +5233,8 @@ class KnowledgeSearchService:
         tokens = {token for token in tokens if token not in filler and not token.isdigit()}
         normalized_tokens: set[str] = set()
         for token in tokens:
-            if token.endswith("s") and len(token) > 3:
-                normalized_tokens.add(token[:-1])
+            if is_plural_candidate(token):
+                normalized_tokens.add(singularize(token))
                 continue
             normalized_tokens.add(token)
         tokens = normalized_tokens
@@ -8469,60 +8667,6 @@ class KnowledgeSearchService:
         return ""
 
     @classmethod
-    def _scope_generic_tokens(cls) -> set[str]:
-        return {
-            "fee",
-            "fees",
-            "pricing",
-            "price",
-            "prices",
-            "charges",
-            "charge",
-            "customer",
-            "customers",
-            "segment",
-            "segments",
-            "plus",
-            "prime",
-            "wealth",
-            "exclusive",
-            "private",
-            "individual",
-            "individuals",
-            "tariff",
-            "tarrif",
-            "service",
-            "services",
-            "plan",
-            "plans",
-            "product",
-            "products",
-            "account",
-            "accounts",
-            "card",
-            "cards",
-            "transfer",
-            "transfers",
-            "payment",
-            "payments",
-            "invoice",
-            "invoices",
-            "loan",
-            "loans",
-            "رسوم",
-            "الرسوم",
-            "خدمة",
-            "خدمات",
-            "عميل",
-            "العميل",
-            "العملاء",
-            "بلس",
-            "سعر",
-            "اسعار",
-            "الاسعار",
-        }
-
-    @classmethod
     def _scope_label_stop_tokens(cls) -> set[str]:
         return {
             "and",
@@ -8559,6 +8703,24 @@ class KnowledgeSearchService:
             "zh",
             "ja",
         }
+
+    @staticmethod
+    def _canonical_scope_token(value: object) -> str:
+        token = str(value or "").strip().lower()
+        if not token:
+            return ""
+        if is_plural_candidate(token):
+            token = singularize(token)
+        return token.strip()
+
+    @classmethod
+    def _canonical_scope_token_set(cls, values: Iterable[object]) -> set[str]:
+        canonical: set[str] = set()
+        for raw in values:
+            token = cls._canonical_scope_token(raw)
+            if token:
+                canonical.add(token)
+        return canonical
 
     @classmethod
     def _normalize_scope_category_value(
@@ -8612,35 +8774,45 @@ class KnowledgeSearchService:
             return normalized
         return " ".join(selected)
 
-    @classmethod
     def _scope_is_specific_category(
-        cls,
+        self,
         label: str,
         *,
+        business_profile,
         query_tokens: set[str],
         filler_tokens: set[str],
     ) -> bool:
-        normalized = cls._normalize_topic_value(label)
+        normalized = self._normalize_topic_value(label)
         if not normalized:
             return False
         raw_tokens = [token for token in QueryNormalizer._TOKEN_SPLIT.split(normalized) if token]
         if not raw_tokens:
             return False
-        tokens = [token for token in raw_tokens if token not in filler_tokens]
+        canonical_filler_tokens = self._canonical_scope_token_set(filler_tokens)
+        canonical_generic_tokens = self._canonical_scope_token_set(
+            self._scope_generic_tokens_for_business(business_profile),
+        )
+        canonical_query_tokens = self._canonical_scope_token_set(query_tokens)
+
+        tokens: list[str] = []
+        for token in raw_tokens:
+            canonical = self._canonical_scope_token(token)
+            if not canonical or canonical in canonical_filler_tokens:
+                continue
+            tokens.append(canonical)
         if not tokens:
             return False
-        generic = cls._scope_generic_tokens()
-        non_generic = [token for token in tokens if token not in generic]
+        non_generic = [token for token in tokens if token not in canonical_generic_tokens]
         if not non_generic:
             return False
-        if len(non_generic) <= 2 and all(token in query_tokens for token in non_generic):
+        if len(non_generic) <= 2 and all(token in canonical_query_tokens for token in non_generic):
             return False
         return True
 
-    @classmethod
     def _query_lacks_specific_scope(
-        cls,
+        self,
         *,
+        business_profile,
         traits: QueryTraits,
         table_context: Mapping[str, object] | None = None,
         filler_tokens: set[str] | None = None,
@@ -8686,24 +8858,26 @@ class KnowledgeSearchService:
                 "كم",
             }
         )
-        generic = cls._scope_generic_tokens()
-        query_tokens = {
-            str(token).strip().lower()
-            for token in (traits.tokens or ())
-            if str(token).strip()
-        }
+        generic = self._scope_generic_tokens_for_business(business_profile)
+        canonical_filler = self._canonical_scope_token_set(filler)
+        canonical_generic = self._canonical_scope_token_set(generic)
+        query_tokens = self._canonical_scope_token_set(traits.tokens or ())
 
         def _extract_non_generic_tokens(values: object) -> set[str]:
             extracted: set[str] = set()
             for raw in (values or ()):
-                normalized = cls._normalize_topic_value(raw)
+                normalized = self._normalize_topic_value(raw)
                 if not normalized:
                     continue
                 for token in QueryNormalizer._TOKEN_SPLIT.split(normalized):
-                    lowered = token.strip().lower()
-                    if not lowered or lowered in filler or lowered in generic:
+                    canonical = self._canonical_scope_token(token)
+                    if (
+                        not canonical
+                        or canonical in canonical_filler
+                        or canonical in canonical_generic
+                    ):
                         continue
-                    extracted.add(lowered)
+                    extracted.add(canonical)
             return extracted
 
         if table_context:
@@ -8714,20 +8888,22 @@ class KnowledgeSearchService:
             if specific_columns:
                 return False
             for label in (table_context.get("matched_row_labels") or ()):
-                if cls._scope_is_specific_category(
+                if self._scope_is_specific_category(
                     str(label),
+                    business_profile=business_profile,
                     query_tokens=query_tokens,
                     filler_tokens=filler,
                 ):
                     return False
 
-        tokens = [str(token).strip().lower() for token in (traits.tokens or ()) if str(token).strip()]
+        tokens = [self._canonical_scope_token(token) for token in (traits.tokens or ())]
+        tokens = [token for token in tokens if token]
         if not tokens:
             return True
-        meaningful = [token for token in tokens if token not in filler]
+        meaningful = [token for token in tokens if token not in canonical_filler]
         if not meaningful:
             return True
-        specific = [token for token in meaningful if token not in generic]
+        specific = [token for token in meaningful if token not in canonical_generic]
         return len(specific) == 0
 
     def _scope_categories_for_contract(
@@ -8765,6 +8941,7 @@ class KnowledgeSearchService:
         self,
         *,
         hits: Sequence[ChunkResult],
+        business_profile,
         top_categories: Sequence[str],
         query_tokens: Sequence[str] | None = None,
         filler_tokens: set[str] | None = None,
@@ -8802,6 +8979,7 @@ class KnowledgeSearchService:
         for hit in hits:
             label = self._scope_category_from_hit(
                 hit,
+                business_profile=business_profile,
                 query_tokens=normalized_query_tokens,
                 filler_tokens=normalized_filler_tokens,
             )
@@ -8933,6 +9111,7 @@ class KnowledgeSearchService:
         self,
         hit: ChunkResult,
         *,
+        business_profile,
         query_tokens: set[str],
         filler_tokens: set[str],
     ) -> str:
@@ -8950,6 +9129,7 @@ class KnowledgeSearchService:
             normalized = self._normalize_scope_category_value(candidate, max_chars=96)
             if self._scope_is_specific_category(
                 normalized,
+                business_profile=business_profile,
                 query_tokens=query_tokens,
                 filler_tokens=filler_tokens,
             ):
@@ -8957,45 +9137,15 @@ class KnowledgeSearchService:
 
         content = str(chunk.content or "")
         pairs = self._scope_key_value_pairs(content)
-        preferred_value_keys = {
-            "service",
-            "services",
-            "types of services fee",
-            "types_of_services_fee",
-            "tariff",
-            "tarrif",
-            "subsection",
-            "category",
-            "product",
-            "plan",
-            "account",
-            "digital channel",
-            "digital_channel",
-            "description",
-            "type",
-            "name",
-        }
-        scope_column_keys = {
-            "prime",
-            "plus",
-            "wealth",
-            "exclusive_wealth",
-            "exclusive wealth",
-            "private",
-            "non_cib_customers",
-            "non cib customers",
-            "fees_charges",
-            "fees_charges_2",
-            "fees_charges_3",
-            "fees_charges_4",
-            "fees_charges_5",
-        }
+        preferred_value_keys = self._preferred_value_keys_for_business(business_profile)
+        scope_column_keys = self._scope_column_keys_for_business(business_profile)
         fallback_values: list[str] = []
         for key, value in pairs:
             if key in scope_column_keys:
                 continue
             if not self._scope_is_specific_category(
                 value,
+                business_profile=business_profile,
                 query_tokens=query_tokens,
                 filler_tokens=filler_tokens,
             ):
@@ -9010,6 +9160,7 @@ class KnowledgeSearchService:
             line = self._normalize_scope_category_value(raw_line, max_chars=96)
             if self._scope_is_specific_category(
                 line,
+                business_profile=business_profile,
                 query_tokens=query_tokens,
                 filler_tokens=filler_tokens,
             ):
@@ -9020,6 +9171,7 @@ class KnowledgeSearchService:
         self,
         hits: Sequence[ChunkResult],
         *,
+        business_profile,
         query_tokens: Sequence[str] | None = None,
         filler_tokens: set[str] | None = None,
     ) -> dict[str, object]:
@@ -9050,6 +9202,7 @@ class KnowledgeSearchService:
                 doc_ids.add(doc_id)
             label = self._scope_category_from_hit(
                 hit,
+                business_profile=business_profile,
                 query_tokens=normalized_query_tokens,
                 filler_tokens=normalized_filler_tokens,
             )
@@ -9402,21 +9555,6 @@ class KnowledgeSearchService:
         text = re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower())
         return text.strip("_")
 
-    @classmethod
-    def _known_segment_keys(cls) -> set[str]:
-        return {
-            "plus",
-            "prime",
-            "wealth",
-            "exclusive_wealth",
-            "exclusive_wealth_and_private",
-            "private",
-            "non_cib_customers",
-            "non_cib",
-            "individual",
-            "individuals",
-        }
-
     @staticmethod
     def _normalize_conflict_value(value: object) -> str:
         text = str(value or "").strip().lower()
@@ -9430,14 +9568,14 @@ class KnowledgeSearchService:
             return ""
         return text
 
-    @classmethod
     def _segment_targets_from_context(
-        cls,
+        self,
         *,
+        business_profile,
         traits: QueryTraits,
         table_context: Mapping[str, object] | None,
     ) -> tuple[str, ...]:
-        known_segments = cls._known_segment_keys()
+        known_segments = self._known_segment_keys_for_business(business_profile)
         candidates: list[str] = []
         seen: set[str] = set()
         for source in (
@@ -9447,7 +9585,7 @@ class KnowledgeSearchService:
             traits.tokens,
         ):
             for raw in source or ():
-                normalized = cls._normalize_segment_key(raw)
+                normalized = self._normalize_segment_key(raw)
                 if not normalized:
                     continue
                 if normalized in known_segments and normalized not in seen:
@@ -9459,14 +9597,19 @@ class KnowledgeSearchService:
         self,
         *,
         snippets: Sequence[KnowledgeSnippet],
+        business_profile,
         traits: QueryTraits,
         table_context: Mapping[str, object] | None,
     ) -> dict[str, object] | None:
-        segment_targets = self._segment_targets_from_context(traits=traits, table_context=table_context)
+        segment_targets = self._segment_targets_from_context(
+            business_profile=business_profile,
+            traits=traits,
+            table_context=table_context,
+        )
         if not segment_targets:
             return None
 
-        segment_keys = self._known_segment_keys()
+        segment_keys = self._known_segment_keys_for_business(business_profile)
         conflict_groups: dict[tuple[str, str], dict[str, object]] = {}
         for snippet in snippets[:8]:
             if not snippet.is_table_chunk:
@@ -9652,6 +9795,7 @@ class KnowledgeSearchService:
         status: str,
         snippets: Sequence[KnowledgeSnippet],
         diagnostics: Mapping[str, object],
+        business_profile,
         traits: QueryTraits,
         table_context: Mapping[str, object] | None,
         table_blocked: bool,
@@ -9670,6 +9814,7 @@ class KnowledgeSearchService:
         ):
             detected_conflict = self._detect_conflicting_evidence(
                 snippets=updated_snippets,
+                business_profile=business_profile,
                 traits=traits,
                 table_context=table_context,
             )

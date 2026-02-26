@@ -179,10 +179,18 @@ class McpScopeClarificationToolTests(SimpleTestCase):
         self.assertEqual(result.get("clarification_ui_mode"), "mcq")
         clarification = result.get("clarification") or {}
         self.assertEqual(clarification.get("mode"), "mcq")
+        self.assertTrue(str(clarification.get("bucket_id") or "").strip())
         chips = clarification.get("chips") or []
         chip_ids = {str(item.get("id") or "") for item in chips if isinstance(item, dict)}
         self.assertIn("all_fees", chip_ids)
         self.assertIn("choose_categories", chip_ids)
+        self.assertTrue(
+            all(
+                str(item.get("bucket_id") or "").strip() == str(clarification.get("bucket_id") or "").strip()
+                for item in chips
+                if isinstance(item, dict)
+            )
+        )
         action_key_by_id = {
             str(item.get("id") or ""): str(item.get("category_key") or "")
             for item in chips
@@ -894,16 +902,28 @@ class McpSearchKnowledgeHandlerTests(TestCase):
 
         clarification = result.get("clarification") or {}
         self.assertEqual(clarification.get("mode"), "mcq")
+        self.assertTrue(str(clarification.get("bucket_id") or "").strip())
         self.assertEqual(clarification.get("categories"), diagnostics.get("categories"))
         self.assertEqual(clarification.get("top_categories"), diagnostics.get("top_categories"))
         chips = clarification.get("chips") or []
         self.assertTrue(chips)
+        self.assertTrue(
+            all(
+                str(item.get("bucket_id") or "").strip() == str(clarification.get("bucket_id") or "").strip()
+                for item in chips
+                if isinstance(item, dict)
+            )
+        )
         chip_labels = {str(item.get("label") or "") for item in chips if isinstance(item, dict)}
         self.assertIn("All fees", chip_labels)
         self.assertIn("Choose categories", chip_labels)
 
         pending_scope = context.pending_scope_clarification or {}
         self.assertEqual(len(pending_scope.get("categories") or []), 6)
+        self.assertEqual(
+            str(pending_scope.get("bucket_id") or "").strip(),
+            str(clarification.get("bucket_id") or "").strip(),
+        )
         pending_category_refs = pending_scope.get("category_refs") or {}
         self.assertTrue(pending_category_refs)
         self.assertEqual(
@@ -1667,6 +1687,117 @@ class McpSearchKnowledgeHandlerTests(TestCase):
 
         diagnostics = second.get("diagnostics") or {}
         self.assertFalse(diagnostics.get("scope_auto_read_applied"))
+
+    @override_settings(
+        MCP_SEARCH_PAGINATION_ENABLED=False,
+        MCP_NEW_CONTRACT_ENABLED=False,
+        MCP_SCOPE_CLARIFICATION_MCQ_ENABLED=True,
+    )
+    @mock.patch("apps.mcp.tools._knowledge_service")
+    def test_search_knowledge_scope_selection_bucket_id_resolves_original_bucket(
+        self,
+        service_factory_mock,
+    ) -> None:
+        import uuid
+
+        class _DummySearchResult:
+            def __init__(self, *, status: str, snippets: tuple[object, ...], diagnostics: dict[str, object]) -> None:
+                self.snippets = snippets
+                self.status = status
+                self.diagnostics = diagnostics
+
+        mapped_ref_id = str(uuid.uuid4())
+        service_mock = mock.Mock()
+        service_mock.search.side_effect = [
+            _DummySearchResult(
+                status="needs_clarification",
+                snippets=tuple(),
+                diagnostics={
+                    "reason": "broad_scope_ambiguity",
+                    "intent_clarification_question": "Pick one category.",
+                    "categories": ["outgoing transfer fees", "statement fees"],
+                    "top_categories": ["outgoing transfer fees", "statement fees"],
+                    "scope_clarification_category_refs": {
+                        "outgoing transfer fees": {
+                            "ref_ids": [mapped_ref_id],
+                            "source": "retrieval_candidates",
+                            "confidence": 0.95,
+                        }
+                    },
+                },
+            ),
+            _DummySearchResult(
+                status="needs_clarification",
+                snippets=tuple(),
+                diagnostics={
+                    "reason": "broad_scope_ambiguity",
+                    "intent_clarification_question": "Pick one category.",
+                    "categories": ["cash withdrawal fees", "statement fees"],
+                    "top_categories": ["cash withdrawal fees", "statement fees"],
+                },
+            ),
+            _DummySearchResult(
+                status="ok",
+                snippets=tuple(),
+                diagnostics={"path": "search"},
+            ),
+        ]
+        service_factory_mock.return_value = service_mock
+
+        context = ToolExecutionContext(
+            max_chunk_reads_per_turn=5,
+            max_chunk_pages_per_turn=5,
+            char_budget_per_turn=5000,
+        )
+
+        first = tools._search_knowledge_handler(
+            {"query": "what are the fees for plus customers?", "limit": 5},
+            self.conversation,
+            context,
+        )
+        self.assertEqual(first.get("status"), "needs_clarification")
+        first_bucket_id = str((first.get("clarification") or {}).get("bucket_id") or "").strip()
+        self.assertTrue(first_bucket_id)
+        first_options = ((first.get("diagnostics") or {}).get("scope_clarification_options") or [])
+        selected_key = ""
+        for option in first_options:
+            if not isinstance(option, dict):
+                continue
+            if str(option.get("label") or "").strip() != "outgoing transfer fees":
+                continue
+            selected_key = str(option.get("category_key") or "").strip()
+            self.assertEqual(str(option.get("bucket_id") or "").strip(), first_bucket_id)
+            break
+        self.assertTrue(selected_key)
+
+        second = tools._search_knowledge_handler(
+            {"query": "what are cash withdrawal fees for plus customers?", "limit": 5},
+            self.conversation,
+            context,
+        )
+        self.assertEqual(second.get("status"), "needs_clarification")
+        second_bucket_id = str((second.get("clarification") or {}).get("bucket_id") or "").strip()
+        self.assertTrue(second_bucket_id)
+        self.assertNotEqual(first_bucket_id, second_bucket_id)
+
+        context.latest_scope_selection = {
+            "action": "select_category",
+            "category_key": selected_key,
+            "category_label": "outgoing transfer fees",
+            "bucket_id": first_bucket_id,
+        }
+        third = tools._search_knowledge_handler(
+            {"query": f"scope:category_key:{selected_key}", "limit": 5},
+            self.conversation,
+            context,
+        )
+
+        self.assertEqual(third.get("status"), "ok")
+        self.assertEqual(service_mock.search.call_count, 3)
+        scope_resolution_payload = third.get("scope_resolution") or {}
+        self.assertEqual(scope_resolution_payload.get("category"), "outgoing transfer fees")
+        scope_resolution_state = context.scope_resolution or {}
+        self.assertEqual(scope_resolution_state.get("mapped_ref_ids"), [mapped_ref_id])
 
     @override_settings(
         MCP_SEARCH_PAGINATION_ENABLED=False,

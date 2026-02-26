@@ -391,6 +391,9 @@ class McpOrchestratorService:
                     block_id = str(raw_scope_selection.get("block_id") or "").strip().lower()
                     if block_id:
                         normalized_scope_selection["block_id"] = block_id[:120]
+                    bucket_id = str(raw_scope_selection.get("bucket_id") or "").strip().lower()
+                    if bucket_id:
+                        normalized_scope_selection["bucket_id"] = bucket_id[:120]
                     if normalized_scope_selection:
                         scope_selection_payload = normalized_scope_selection
             tool_context = ToolExecutionContext(
@@ -699,37 +702,6 @@ class McpOrchestratorService:
                 if isinstance(snippets, Sequence) and not isinstance(snippets, (str, bytes, bytearray)):
                     return len(snippets)
             return 0
-
-        def _is_mcq_scope_clarification_result(
-            tool_name: str,
-            tool_result: Mapping[str, object] | None,
-        ) -> bool:
-            if tool_name != "search_knowledge" or not isinstance(tool_result, Mapping):
-                return False
-            status_value = str(tool_result.get("status") or "").strip().lower()
-            if status_value != "needs_clarification":
-                return False
-            diagnostics = (
-                tool_result.get("diagnostics")
-                if isinstance(tool_result.get("diagnostics"), Mapping)
-                else {}
-            )
-            mode_value = str(
-                tool_result.get("clarification_ui_mode")
-                or diagnostics.get("clarification_ui_mode")
-                or ""
-            ).strip().lower()
-            return mode_value == "mcq"
-
-        def _has_scope_clarification_tool_call(tool_calls: Sequence[Mapping[str, object]]) -> bool:
-            for call in tool_calls:
-                try:
-                    tool_name = str(self._tool_name(call) or "").strip().lower()
-                except Exception:
-                    continue
-                if tool_name == "present_scope_clarification":
-                    return True
-            return False
 
         def _resolve_read_label(arguments: Mapping[str, object], *, action_verb: str) -> str:
             """
@@ -1296,7 +1268,6 @@ class McpOrchestratorService:
             read_document_throttle_hits = 0
             read_document_guardrail_reason: str | None = None
             read_document_guardrail_signature: str | None = None
-            scope_clarification_tool_required = False
             scope_selection_turn_lock_active = bool(scope_selection_requires_resolution)
 
             for iteration_index in range(self.max_tool_iterations):
@@ -2234,13 +2205,6 @@ class McpOrchestratorService:
                         if isinstance(tool_result, Mapping):
                             tool_status_value = str(tool_result.get("status") or "").strip().lower()
                         iteration_executed_tools.append((tool_name, tool_status_value))
-                        if _is_mcq_scope_clarification_result(tool_name, tool_result):
-                            scope_clarification_tool_required = True
-                        elif (
-                            tool_name == "present_scope_clarification"
-                            and tool_status_value in {"ok", "needs_clarification"}
-                        ):
-                            scope_clarification_tool_required = False
                         if knowledge_phase:
                             _emit_phase_complete(knowledge_phase, snippet_total=_snippet_count(tool_result))
                         limits = self._prompt_compaction_limits()
@@ -2607,26 +2571,12 @@ class McpOrchestratorService:
                         excluded_tools.add("present_scope_clarification")
                     if excluded_tools:
                         tools_for_iteration = self._exclude_tool_schemas(excluded_tools)
-                    scope_intro_buffer: list[str] = []
-                    scope_clarification_expected = bool(
-                        scope_clarification_tool_required and not scope_selection_turn_lock_active
-                    )
-
-                    def _buffer_scope_intro_chunk(chunk: str) -> None:
-                        if not chunk:
-                            return
-                        scope_intro_buffer.append(chunk)
-
                     payload = self._chat_with_context_governor(
                         conversation=conversation,
                         stage="tool_iteration",
                         messages=loop_messages,
                         tools=tools_for_iteration,
-                        on_stream_delta=(
-                            _buffer_scope_intro_chunk
-                            if (streaming_allowed and scope_clarification_expected)
-                            else (_answer_stream_chunk if streaming_allowed else None)
-                        ),
+                        on_stream_delta=_answer_stream_chunk if streaming_allowed else None,
                         on_tool_call_start=_on_stream_tool_call_start,
                         on_tool_call_delta=_on_stream_tool_call_delta,
                         tool_context=tool_context,
@@ -2639,58 +2589,6 @@ class McpOrchestratorService:
                     next_tool_calls, portal_tool_calls = _split_portal_tool_calls(next_tool_calls_raw)
                     if portal_tool_calls:
                         portal_block_stream.ingest_tool_calls(portal_tool_calls)
-
-                    if scope_clarification_expected:
-                        has_scope_clarification_call = _has_scope_clarification_tool_call(next_tool_calls)
-                        if not has_scope_clarification_call:
-                            structured_log(
-                                "mcp",
-                                "scope_clarification.repair_call",
-                                {
-                                    "reason": "selector_tool_missing",
-                                    "iteration": iteration_index,
-                                },
-                                context={
-                                    "conversation": conversation.id,
-                                    "business": conversation.business_profile_id,
-                                },
-                                logger_obj=logger,
-                                level=logging.WARNING,
-                            )
-                            repair_messages = [
-                                *loop_messages,
-                                {
-                                    "role": "system",
-                                    "content": (
-                                        "REQUIRED NOW: Call present_scope_clarification in this response. "
-                                        "Output exactly one short selector-intro sentence, do not list categories, "
-                                        "and end immediately after the tool call."
-                                    ),
-                                },
-                            ]
-                            repair_payload = self._chat_with_context_governor(
-                                conversation=conversation,
-                                stage="tool_iteration",
-                                messages=repair_messages,
-                                tools=self._include_tool_schemas({"present_scope_clarification"}),
-                                on_stream_delta=_answer_stream_chunk if streaming_allowed else None,
-                                on_tool_call_start=_on_stream_tool_call_start,
-                                on_tool_call_delta=_on_stream_tool_call_delta,
-                                tool_context=tool_context,
-                                on_reasoning_event=on_reasoning_event,
-                                reasoning_label=f"Tool step {iteration_index + 1} (scope repair)",
-                                should_cancel=should_cancel,
-                            )
-                            assistant_message = self._coerce_assistant_message(repair_payload)
-                            next_tool_calls_raw = list(assistant_message.get("tool_calls") or [])
-                            next_tool_calls, portal_tool_calls = _split_portal_tool_calls(next_tool_calls_raw)
-                            if portal_tool_calls:
-                                portal_block_stream.ingest_tool_calls(portal_tool_calls)
-                            has_scope_clarification_call = _has_scope_clarification_tool_call(next_tool_calls)
-
-                        if has_scope_clarification_call and scope_intro_buffer:
-                            for chunk in scope_intro_buffer:
-                                _answer_stream_chunk(chunk)
 
                     next_signatures: list[str] = []
                     if next_tool_calls:
@@ -8172,6 +8070,9 @@ class McpOrchestratorService:
                     category_key = str(item.get("category_key") or "").strip().lower()
                     if category_key:
                         option["category_key"] = self._clip_text(category_key, 120)
+                    bucket_id = str(item.get("bucket_id") or "").strip().lower()
+                    if bucket_id:
+                        option["bucket_id"] = self._clip_text(bucket_id, 120)
                     selection_mode = str(item.get("selection_mode") or "").strip().lower()
                     if selection_mode in {"single", "multi"}:
                         option["selection_mode"] = selection_mode
@@ -8332,6 +8233,7 @@ class McpOrchestratorService:
                     "reason",
                     "clarification_ui_mode",
                     "scope_clarification_contract_version",
+                    "scope_clarification_bucket_id",
                     "intent_clarification_question",
                     "assistant_guidance",
                     "suppress_textual_choice_list",
@@ -8423,6 +8325,9 @@ class McpOrchestratorService:
                     compact_clarification["contract_version"] = contract_version
                 elif isinstance(contract_version, str) and contract_version.strip().isdigit():
                     compact_clarification["contract_version"] = int(contract_version.strip())
+                bucket_id = str(raw_clarification.get("bucket_id") or "").strip().lower()
+                if bucket_id:
+                    compact_clarification["bucket_id"] = self._clip_text(bucket_id, 120)
                 suppress_textual_choice_list = raw_clarification.get("suppress_textual_choice_list")
                 if isinstance(suppress_textual_choice_list, bool):
                     compact_clarification["suppress_textual_choice_list"] = suppress_textual_choice_list
@@ -8448,6 +8353,9 @@ class McpOrchestratorService:
                     assistant_guidance = str(compact_diagnostics.get("assistant_guidance") or "").strip()
                     if assistant_guidance:
                         compact_clarification["assistant_guidance"] = self._clip_text(assistant_guidance, 320)
+                    bucket_id = str(compact_diagnostics.get("scope_clarification_bucket_id") or "").strip().lower()
+                    if bucket_id:
+                        compact_clarification["bucket_id"] = self._clip_text(bucket_id, 120)
                     suppress_textual_choice_list = compact_diagnostics.get("suppress_textual_choice_list")
                     if isinstance(suppress_textual_choice_list, bool):
                         compact_clarification["suppress_textual_choice_list"] = suppress_textual_choice_list
@@ -8685,6 +8593,9 @@ class McpOrchestratorService:
                     category_key = str(item.get("category_key") or "").strip().lower()
                     if category_key:
                         option["category_key"] = self._clip_text(category_key, 120)
+                    bucket_id = str(item.get("bucket_id") or "").strip().lower()
+                    if bucket_id:
+                        option["bucket_id"] = self._clip_text(bucket_id, 120)
                     selection_mode = str(item.get("selection_mode") or "").strip().lower()
                     if selection_mode in {"single", "multi"}:
                         option["selection_mode"] = selection_mode
@@ -8704,6 +8615,7 @@ class McpOrchestratorService:
                     "reason",
                     "clarification_ui_mode",
                     "scope_clarification_contract_version",
+                    "scope_clarification_bucket_id",
                     "intent_clarification_question",
                     "assistant_guidance",
                     "suppress_textual_choice_list",
@@ -8758,6 +8670,9 @@ class McpOrchestratorService:
                     compact_clarification["contract_version"] = contract_version
                 elif isinstance(contract_version, str) and contract_version.strip().isdigit():
                     compact_clarification["contract_version"] = int(contract_version.strip())
+                bucket_id = str(raw_clarification.get("bucket_id") or "").strip().lower()
+                if bucket_id:
+                    compact_clarification["bucket_id"] = self._clip_text(bucket_id, 120)
                 suppress = raw_clarification.get("suppress_textual_choice_list")
                 if isinstance(suppress, bool):
                     compact_clarification["suppress_textual_choice_list"] = suppress

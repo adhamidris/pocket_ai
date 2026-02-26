@@ -119,6 +119,10 @@ _TABLE_NUMERIC_SIGNAL_TOKEN_RE = re.compile(
 _TABLE_NUMBER_LIKE_RE = re.compile(r"[+-]?\d[\d,]*(?:[.:]\d+)?")
 _TABLE_DATE_TIME_LIKE_RE = re.compile(r"\b\d{1,4}[/-]\d{1,2}(?:[/-]\d{1,4})?\b|\b\d{1,2}:\d{2}(?::\d{2})?\b")
 _TABLE_NUMBER_WITH_UNIT_RE = re.compile(r"\b\d+(?:[.,]\d+)?\s*(?:[a-zA-Z]{1,5}|%)\b")
+_TABLE_ROW_VALUE_KEYWORD_RE = re.compile(
+    r"\b(?:free|discount|waived?|commission|fee|fees|charge|charges|min(?:imum)?|max(?:imum)?|equivalent)\b",
+    flags=re.IGNORECASE,
+)
 
 
 def _column_numeric_signal(text: str) -> bool:
@@ -3534,6 +3538,15 @@ class KnowledgeIngestionService:
         self.table_postprocess_row_limit = max(
             5, int(getattr(settings, "RAG_TABLE_POSTPROCESS_ROW_LIMIT", 40))
         )
+        self.table_row_signal_min_pairs = max(
+            1,
+            int(getattr(settings, "RAG_TABLE_ROW_SIGNAL_MIN_PAIRS", 2)),
+        )
+        self.table_row_signal_min_score = float(
+            getattr(settings, "RAG_TABLE_ROW_SIGNAL_MIN_SCORE", 1.6)
+        )
+        if self.table_row_signal_min_score < 0.0:
+            self.table_row_signal_min_score = 0.0
         self.ocr_normalization_enabled = bool(getattr(settings, "RAG_OCR_NORMALIZATION_ENABLED", True))
         self.ocr_word_replacements = self._compile_ocr_replacements(
             getattr(settings, "RAG_OCR_NORMALIZATION_REPLACEMENTS", None)
@@ -6487,6 +6500,57 @@ class KnowledgeIngestionService:
                     **diagnostics,
                 }
                 meta.setdefault("guardrail_diagnostics", []).append(diagnostics_record)
+
+                # Crop extracts can be partial on dense PDFs. If the first candidate is rejected,
+                # run a single full-page retry before final rejection.
+                if not accepted and render_mode == "crop":
+                    retry_bytes = self._render_full_page(path, int(table.page_number))
+                    if retry_bytes:
+                        attempted_modes.append("full_page")
+                        logger.info(
+                            "table.vlm.retry_full_page_after_guardrail_rejection table=%s page=%s reasons=%s",
+                            table.order_index,
+                            table.page_number,
+                            ",".join(diagnostics.get("rejection_reasons") or []),
+                        )
+                        retry_payload = self._run_vlm_table_repair(
+                            client,
+                            retry_bytes,
+                            render_mode="full_page",
+                            table_hint=table_hint,
+                        )
+                        if retry_payload:
+                            retry_table = self._table_payload_from_vlm(
+                                payload=retry_payload,
+                                order_index=table.order_index,
+                                page_number=int(table.page_number),
+                                bbox=table.bbox,
+                                title=table.title,
+                                section_heading=table.section_heading,
+                                source_metadata=table.metadata,
+                            )
+                            if retry_table:
+                                retry_accepted, retry_diagnostics, retry_guarded_table = self._evaluate_vlm_guardrails(
+                                    baseline=table,
+                                    candidate=retry_table,
+                                )
+                                retry_record = {
+                                    "order_index": table.order_index,
+                                    "page_number": table.page_number,
+                                    "reason": repair_reason,
+                                    "render_mode": "full_page_retry",
+                                    **retry_diagnostics,
+                                }
+                                meta.setdefault("guardrail_diagnostics", []).append(retry_record)
+                                if retry_accepted:
+                                    accepted = True
+                                    diagnostics = retry_diagnostics
+                                    guarded_table = retry_guarded_table
+                                    render_mode = "full_page_retry"
+                                else:
+                                    diagnostics = retry_diagnostics
+                                    render_mode = "full_page_retry"
+
                 if not accepted:
                     meta["rejected"] += 1
                     meta.setdefault("rejected_tables", []).append(
@@ -6515,6 +6579,7 @@ class KnowledgeIngestionService:
                                 "structure_confidence": conf,
                                 "repair_reason": repair_reason,
                                 "render_mode": render_mode,
+                                "attempted_modes": attempted_modes,
                                 "rejection_reasons": diagnostics.get("rejection_reasons") or [],
                                 "metrics": diagnostics.get("metrics") or {},
                             },
@@ -9635,6 +9700,57 @@ class KnowledgeIngestionService:
                 sample,
             )
         )
+
+    @staticmethod
+    def _table_row_has_value_keyword(value: str) -> bool:
+        sample = str(value or "").strip()
+        if not sample:
+            return False
+        return bool(_TABLE_ROW_VALUE_KEYWORD_RE.search(sample))
+
+    def _table_row_signal_score(
+        self,
+        *,
+        value_by_label: Mapping[str, str],
+        inferred_scope_columns: Sequence[str],
+        observed_value_columns: Sequence[str],
+        fee_value: str,
+    ) -> tuple[float, dict[str, Any]]:
+        values = [self._table_cell_text(value) for value in value_by_label.values()]
+        values = [value for value in values if value]
+        pair_count = len(values)
+        numeric_value_count = sum(1 for value in values if _column_numeric_signal(value))
+        keyword_value_count = sum(1 for value in values if self._table_row_has_value_keyword(value))
+        scope_column_count = len(list(inferred_scope_columns or []))
+        observed_value_column_count = len(list(observed_value_columns or []))
+        has_fee_value = bool(self._table_cell_text(fee_value))
+
+        score = 0.0
+        if numeric_value_count > 0:
+            score += 1.25
+        if keyword_value_count > 0:
+            score += 0.75
+        if has_fee_value:
+            score += 1.0
+        if scope_column_count > 0:
+            score += 0.6
+        if observed_value_column_count >= 2:
+            score += 0.35
+        if pair_count >= 3:
+            score += 0.4
+        if pair_count >= 5:
+            score += 0.3
+
+        diagnostics = {
+            "pair_count": int(pair_count),
+            "numeric_value_count": int(numeric_value_count),
+            "keyword_value_count": int(keyword_value_count),
+            "scope_column_count": int(scope_column_count),
+            "observed_value_column_count": int(observed_value_column_count),
+            "has_fee_value": has_fee_value,
+            "score": round(float(score), 3),
+        }
+        return score, diagnostics
 
     def _is_prefix_value_fragment(self, value: str) -> bool:
         sample = self._table_cell_text(value)
@@ -14175,6 +14291,7 @@ class KnowledgeIngestionService:
         payloads: list[dict[str, Any]] = []
         title = table.title or f"Table {table.order_index}"
         data_rows = 0
+        suppressed_low_signal_rows = 0
         shard_size = max(1, int(max_rows or 1))
         table_rows = list(table.rows.all())
         table_data_dictionary = (
@@ -14285,6 +14402,19 @@ class KnowledgeIngestionService:
                 if len(unique_values) == 1:
                     fee_value = unique_values[0]
 
+            row_signal_score, row_signal_diag = self._table_row_signal_score(
+                value_by_label=value_by_label,
+                inferred_scope_columns=inferred_scope_columns,
+                observed_value_columns=observed_value_columns,
+                fee_value=fee_value,
+            )
+            if (
+                row_signal_diag["pair_count"] < self.table_row_signal_min_pairs
+                and row_signal_score < self.table_row_signal_min_score
+            ):
+                suppressed_low_signal_rows += 1
+                continue
+
             evidence_cell_ids = [
                 str(cell.id)
                 for cell in row_cells
@@ -14323,10 +14453,37 @@ class KnowledgeIngestionService:
                     "table_row_shard_index": int(shard_index),
                     "table_row_shard_size": int(shard_size),
                     "table_row_shard_offset": int(shard_offset),
+                    "table_row_signal_filter_enabled": True,
+                    "table_row_signal_min_pairs": int(self.table_row_signal_min_pairs),
+                    "table_row_signal_min_score": float(self.table_row_signal_min_score),
+                    "table_row_signal_pair_count": int(row_signal_diag["pair_count"]),
+                    "table_row_signal_numeric_value_count": int(row_signal_diag["numeric_value_count"]),
+                    "table_row_signal_value_keyword_count": int(row_signal_diag["keyword_value_count"]),
+                    "table_row_signal_scope_column_count": int(row_signal_diag["scope_column_count"]),
+                    "table_row_signal_observed_value_column_count": int(
+                        row_signal_diag["observed_value_column_count"]
+                    ),
+                    "table_row_signal_has_fee_value": bool(row_signal_diag["has_fee_value"]),
+                    "table_row_signal_score": float(row_signal_diag["score"]),
                 }
             )
             payloads.append({"text": text, "metadata": row_meta})
             data_rows += 1
+        if suppressed_low_signal_rows > 0:
+            table_id = getattr(table, "id", None)
+            page_number = None
+            page = getattr(table, "page", None)
+            if page is not None:
+                page_number = getattr(page, "page_number", None)
+            logger.info(
+                "table.row_signal_filter table_id=%s page=%s kept=%s suppressed=%s min_pairs=%s min_score=%.2f",
+                table_id,
+                page_number,
+                len(payloads),
+                suppressed_low_signal_rows,
+                self.table_row_signal_min_pairs,
+                self.table_row_signal_min_score,
+            )
         return payloads
 
     def _table_summary_chunk_payloads(

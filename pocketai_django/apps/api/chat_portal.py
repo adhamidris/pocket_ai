@@ -1064,6 +1064,8 @@ def _normalize_scope_selection_metadata(raw: object) -> dict[str, object] | None
     category_label = _clip(raw.get("category_label") or raw.get("categoryLabel"), limit=120)
     block_id_raw = _clip(raw.get("block_id") or raw.get("blockId"), limit=120).lower()
     block_id = re.sub(r"[^a-z0-9_:-]+", "", block_id_raw)
+    bucket_id_raw = _clip(raw.get("bucket_id") or raw.get("bucketId"), limit=120).lower()
+    bucket_id = re.sub(r"[^a-z0-9_:-]+", "", bucket_id_raw)
 
     if not action and category_key:
         action = "select_category"
@@ -1077,6 +1079,8 @@ def _normalize_scope_selection_metadata(raw: object) -> dict[str, object] | None
         payload["category_label"] = category_label
     if block_id:
         payload["block_id"] = block_id
+    if bucket_id:
+        payload["bucket_id"] = bucket_id
     return payload
 
 

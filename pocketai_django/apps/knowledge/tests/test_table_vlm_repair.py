@@ -256,6 +256,49 @@ class TableVlmRepairTests(SimpleTestCase):
         self.assertIn("row_coverage_regression", rejection.details.get("rejection_reasons") or [])
 
     @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_vlm_repair_retries_full_page_after_guardrail_rejection(self, _build_embeddings) -> None:
+        service = self._service()
+        table = self._low_conf_geometry_table()
+        crop_payload = {
+            "columns": ["Fee", "Amount"],
+            # Regression: drops one row vs baseline.
+            "rows": [["Annual fee", "100"]],
+        }
+        full_page_payload = {
+            "columns": ["Fee", "Amount"],
+            "rows": [["Annual fee", "100"], ["Late fee", "50"]],
+        }
+
+        with (
+            mock.patch.dict(os.environ, {"OPENAI_API_KEY": "test"}, clear=False),
+            mock.patch("openai.OpenAI"),
+            mock.patch.object(KnowledgeIngestionService, "_render_table_crop", return_value=b"crop"),
+            mock.patch.object(KnowledgeIngestionService, "_render_full_page", return_value=b"full_page"),
+            mock.patch.object(
+                KnowledgeIngestionService,
+                "_run_vlm_table_repair",
+                side_effect=[crop_payload, full_page_payload],
+            ) as run,
+        ):
+            repaired, issues, meta = service._repair_tables_with_vlm(Path("dummy.pdf"), [table])
+
+        self.assertEqual(meta.get("attempted"), 1)
+        self.assertEqual(meta.get("repaired"), 1)
+        self.assertEqual(meta.get("rejected"), 0)
+        self.assertEqual(len(issues), 0)
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(run.call_args_list[0].kwargs.get("render_mode"), "crop")
+        self.assertEqual(run.call_args_list[1].kwargs.get("render_mode"), "full_page")
+        self.assertEqual(meta.get("repaired_tables")[0].get("render_mode"), "full_page_retry")
+        diagnostics = meta.get("guardrail_diagnostics") or []
+        self.assertEqual(len(diagnostics), 2)
+        self.assertFalse(bool(diagnostics[0].get("accepted")))
+        self.assertEqual(diagnostics[0].get("render_mode"), "crop")
+        self.assertTrue(bool(diagnostics[1].get("accepted")))
+        self.assertEqual(diagnostics[1].get("render_mode"), "full_page_retry")
+        self.assertEqual(repaired[0].metadata.get("detected_via"), "geometry+vlm")
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
     def test_vlm_repair_rejects_candidates_with_row_order_regression(self, _build_embeddings) -> None:
         service = self._service()
         table = self._low_conf_geometry_table_three_rows()

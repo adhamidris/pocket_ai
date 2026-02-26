@@ -198,9 +198,10 @@ class ToolExecutionContext:
     latest_user_message: str | None = None
     # Structured scope selection payload from the UI turn metadata.
     # Shape: {"action": "select_category|all_fees|choose_categories",
-    #         "category_key"?: str, "category_label"?: str, "block_id"?: str}
+    #         "category_key"?: str, "category_label"?: str, "block_id"?: str, "bucket_id"?: str}
     latest_scope_selection: dict[str, object] | None = None
     pending_scope_clarification: dict[str, object] | None = None
+    scope_clarification_buckets: dict[str, dict[str, object]] = dataclasses.field(default_factory=dict)
     scope_resolution: dict[str, object] | None = None
     scope_clarification_updated: bool = False
 
@@ -247,20 +248,21 @@ class ToolExecutionContext:
 
     def reserve_search(self) -> None:
         """Ensure the search call does not exceed the per-turn search budget (Phase 4)."""
-        
+
         effective_limit = self._effective_max_searches
         if effective_limit <= 0:
             # No limit configured (set MCP_MAX_SEARCHES_PER_TURN=0 to disable)
             self.searches_used += 1
             return
-        
-        self.searches_used += 1
-        if self.searches_used > effective_limit:
+
+        projected = self.searches_used + 1
+        if projected > effective_limit:
             raise SearchBudgetExceeded(
-                f"Search limit exceeded ({self.searches_used} calls this turn, max {effective_limit}). "
+                f"Search limit exceeded ({projected} calls this turn, max {effective_limit}). "
                 "You have already searched the knowledge base this turn. Use read_knowledge to get more details "
                 "from the snippets you received, or answer based on what you found."
             )
+        self.searches_used = projected
 
     def reserve_read(self) -> None:
         """
@@ -269,23 +271,24 @@ class ToolExecutionContext:
         Layer 2 uses this only for budgeting visibility (tool responses). Enforcement
         can be enabled later without changing the budget contract.
         """
-
-        self.reads_used += 1
+        projected = self.reads_used + 1
         try:
             from django.conf import settings
             enforce = bool(getattr(settings, "MCP_ENFORCE_READ_BUDGET", False))
         except Exception:
             enforce = False
         if not enforce:
+            self.reads_used = projected
             return
 
         effective_limit = self._effective_max_reads
         # No limit configured (set MCP_MAX_READS_PER_TURN=0 to disable)
-        if effective_limit > 0 and self.reads_used > effective_limit:
+        if effective_limit > 0 and projected > effective_limit:
             raise ReadBudgetExceeded(
-                f"Read limit exceeded ({self.reads_used} calls this turn, max {effective_limit}). "
+                f"Read limit exceeded ({projected} calls this turn, max {effective_limit}). "
                 "Batch IDs into a single read_knowledge call and answer from collected evidence."
             )
+        self.reads_used = projected
 
     def budget_snapshot(self) -> dict[str, object]:
         """
@@ -843,7 +846,8 @@ class ToolExecutionContext:
         categories: Sequence[str] | None = None,
         question: str | None = None,
         category_refs: Mapping[str, object] | None = None,
-    ) -> None:
+        bucket_id: str | None = None,
+    ) -> str:
         def _normalize_ref_ids(value: object, *, limit: int = 8) -> list[str]:
             if isinstance(value, (str, bytes, bytearray)):
                 candidates: list[object] = [value]
@@ -932,16 +936,56 @@ class ToolExecutionContext:
                 normalized_category_refs[category_key] = mapped
                 if len(normalized_category_refs) >= 24:
                     break
-        self.pending_scope_clarification = {
+        normalized_bucket_id = self._clip_text(bucket_id or "", limit=120).strip().lower()
+        normalized_bucket_id = "".join(
+            ch for ch in normalized_bucket_id if ch.isalnum() or ch in {"_", "-", ":"}
+        )
+        if not normalized_bucket_id:
+            normalized_bucket_id = f"scope_{uuid.uuid4().hex[:16]}"
+        pending_payload: dict[str, object] = {
             "base_query": self._clip_text(base_query, limit=240),
             "categories": normalized_categories,
             "question": self._clip_text(question or "", limit=280),
+            "bucket_id": normalized_bucket_id,
             "updated_at": self._utc_now_iso(),
         }
         if normalized_category_refs:
-            self.pending_scope_clarification["category_refs"] = normalized_category_refs
-            self.pending_scope_clarification["contract_version"] = 1
+            pending_payload["category_refs"] = normalized_category_refs
+            pending_payload["contract_version"] = 1
+        self.pending_scope_clarification = dict(pending_payload)
+        self.scope_clarification_buckets[normalized_bucket_id] = dict(pending_payload)
+        while len(self.scope_clarification_buckets) > 24:
+            stale_bucket_id = next(iter(self.scope_clarification_buckets))
+            if stale_bucket_id == normalized_bucket_id and len(self.scope_clarification_buckets) > 1:
+                stale_candidates = [key for key in self.scope_clarification_buckets.keys() if key != normalized_bucket_id]
+                if stale_candidates:
+                    stale_bucket_id = stale_candidates[0]
+            self.scope_clarification_buckets.pop(stale_bucket_id, None)
         self.scope_clarification_updated = True
+        return normalized_bucket_id
+
+    def get_pending_scope_clarification(
+        self,
+        *,
+        bucket_id: str | None = None,
+    ) -> dict[str, object] | None:
+        normalized_bucket_id = self._clip_text(bucket_id or "", limit=120).strip().lower()
+        normalized_bucket_id = "".join(
+            ch for ch in normalized_bucket_id if ch.isalnum() or ch in {"_", "-", ":"}
+        )
+        if normalized_bucket_id:
+            bucket_state = self.scope_clarification_buckets.get(normalized_bucket_id)
+            if isinstance(bucket_state, Mapping):
+                return dict(bucket_state)
+            pending = self.pending_scope_clarification
+            if isinstance(pending, Mapping):
+                pending_bucket_id = self._clip_text(pending.get("bucket_id") or "", limit=120).strip().lower()
+                if pending_bucket_id == normalized_bucket_id:
+                    return dict(pending)
+            return None
+        if isinstance(self.pending_scope_clarification, Mapping):
+            return dict(self.pending_scope_clarification)
+        return None
 
     def clear_pending_scope_clarification(self) -> None:
         if self.pending_scope_clarification is not None:
@@ -1062,19 +1106,41 @@ class ToolExecutionContext:
     def get_scope_clarification_for_persistence(self) -> dict[str, object] | None:
         pending = dict(self.pending_scope_clarification) if isinstance(self.pending_scope_clarification, dict) else None
         resolution = dict(self.scope_resolution) if isinstance(self.scope_resolution, dict) else None
-        if not pending and not resolution:
+        buckets = (
+            {
+                str(bucket_id): dict(bucket_state)
+                for bucket_id, bucket_state in self.scope_clarification_buckets.items()
+                if isinstance(bucket_state, Mapping)
+            }
+            if isinstance(self.scope_clarification_buckets, Mapping)
+            else {}
+        )
+        if not pending and not resolution and not buckets:
             return None
-        return {
+        payload: dict[str, object] = {
             "pending": pending,
             "resolution": resolution,
         }
+        if buckets:
+            payload["buckets"] = buckets
+        return payload
 
     def hydrate_scope_clarification(self, persisted: Mapping[str, object] | None) -> None:
         if not isinstance(persisted, Mapping):
             return
         pending = persisted.get("pending")
         resolution = persisted.get("resolution")
+        raw_buckets = persisted.get("buckets")
         self.pending_scope_clarification = dict(pending) if isinstance(pending, Mapping) else None
+        self.scope_clarification_buckets = (
+            {
+                str(bucket_id): dict(bucket_state)
+                for bucket_id, bucket_state in raw_buckets.items()
+                if isinstance(bucket_state, Mapping)
+            }
+            if isinstance(raw_buckets, Mapping)
+            else {}
+        )
         self.scope_resolution = dict(resolution) if isinstance(resolution, Mapping) else None
         self.scope_clarification_updated = False
 

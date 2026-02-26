@@ -4773,12 +4773,14 @@ class ChatPortalClient {
     const categoryKey = (selection.categoryKey || selection.category_key || "").toString().trim();
     const categoryLabel = (selection.categoryLabel || selection.category_label || "").toString().trim();
     const blockId = (selection.blockId || selection.block_id || "").toString().trim();
+    const bucketId = (selection.bucketId || selection.bucket_id || "").toString().trim();
     if (!action && categoryKey) action = "select_category";
     if (!action) return null;
     const payload = { action };
     if (categoryKey) payload.category_key = categoryKey;
     if (categoryLabel) payload.category_label = categoryLabel;
     if (blockId) payload.block_id = blockId;
+    if (bucketId) payload.bucket_id = bucketId;
     return payload;
   }
 
@@ -4868,6 +4870,7 @@ class ChatPortalClient {
     const visibleCountRaw = Number(payload && payload.visible_count);
     // Hard cap at 3 — remaining choices expand via the "More" pill button.
     const visibleCount = Math.min(3, Number.isFinite(visibleCountRaw) && visibleCountRaw > 0 ? Math.max(1, Math.floor(visibleCountRaw)) : 3);
+    const clarificationBucketId = ((payload && payload.bucket_id) || "").toString().trim();
     const categories = sourceCategories.length ? sourceCategories : topCategories;
 
     const resolveChipQuery = (chip, fallback) => {
@@ -4899,6 +4902,7 @@ class ChatPortalClient {
         displayLabel: this.formatScopeClarificationCategoryLabel(rawLabel) || rawLabel,
         query: queryValue,
         categoryKey,
+        bucketId: ((chip && chip.bucket_id) || clarificationBucketId || "").toString().trim(),
       });
     });
 
@@ -4925,6 +4929,7 @@ class ChatPortalClient {
         displayLabel,
         query: categoryKey ? `scope:category_key:${categoryKey}` : queryValue,
         categoryKey,
+        bucketId: clarificationBucketId,
       };
     });
 
@@ -4937,6 +4942,7 @@ class ChatPortalClient {
       const label = ((item.label || "") + "").trim();
       const query = ((item.query || "") + "").trim();
       const categoryKey = ((item.categoryKey || "") + "").trim();
+      const bucketId = ((item.bucketId || "") + "").trim();
       if (!label) return;
       const dedupeKey = (categoryKey || query || label).toLowerCase();
       if (!dedupeKey || categoryItemKeys.has(dedupeKey)) return;
@@ -4946,6 +4952,7 @@ class ChatPortalClient {
         displayLabel: ((item.displayLabel || "") + "").trim() || this.formatScopeClarificationCategoryLabel(label) || label,
         query: query || (categoryKey ? `scope:category_key:${categoryKey}` : label),
         categoryKey,
+        bucketId,
       });
     };
     if (categoryItemsFromLists.length) {
@@ -4976,6 +4983,7 @@ class ChatPortalClient {
       this.submitScopeClarificationMessage(allLabel, {
         action: "all_fees",
         blockId,
+        bucketId: clarificationBucketId,
       });
     });
     wrapper.appendChild(allButton);
@@ -5018,6 +5026,7 @@ class ChatPortalClient {
           categoryKey: ((categoryItem && categoryItem.categoryKey) || "").toString().trim(),
           categoryLabel: ((categoryItem && categoryItem.label) || displayLabel).toString().trim(),
           blockId,
+          bucketId: ((categoryItem && categoryItem.bucketId) || clarificationBucketId || "").toString().trim(),
         });
       });
       return button;
@@ -5072,6 +5081,7 @@ class ChatPortalClient {
           categoryLabel: fallbackLabel,
           categoryKey: ((chooseCategoriesActionChip && chooseCategoriesActionChip.category_key) || "").toString().trim(),
           blockId,
+          bucketId: ((chooseCategoriesActionChip && chooseCategoriesActionChip.bucket_id) || clarificationBucketId || "").toString().trim(),
         });
       });
       categoriesSection.appendChild(moreButton);

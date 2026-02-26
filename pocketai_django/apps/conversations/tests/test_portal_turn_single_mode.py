@@ -546,6 +546,7 @@ class PortalTurnSingleModeTests(TransactionTestCase):
                     },
                     "clarification": {
                         "mode": "mcq",
+                        "bucket_id": "scope_bucket:01",
                         "all_query": "all",
                         "categories": ["Cash withdrawal", "Cheques", "Custody"],
                         "top_categories": ["Cash withdrawal", "Cheques"],
@@ -555,6 +556,7 @@ class PortalTurnSingleModeTests(TransactionTestCase):
                                 "label": "All fees",
                                 "query": "all",
                                 "category_key": "scope_all_fees",
+                                "bucket_id": "scope_bucket:01",
                             },
                         ],
                     },
@@ -567,6 +569,7 @@ class PortalTurnSingleModeTests(TransactionTestCase):
         scope_payload = scope_blocks[0].get("payload") or {}
         self.assertEqual(scope_payload.get("all_query"), "all")
         self.assertEqual(scope_payload.get("all_label"), "All fees")
+        self.assertEqual(scope_payload.get("bucket_id"), "scope_bucket:01")
         self.assertEqual(scope_payload.get("top_categories"), ["Cash withdrawal", "Cheques"])
         self.assertEqual(
             scope_payload.get("chips"),
@@ -576,6 +579,7 @@ class PortalTurnSingleModeTests(TransactionTestCase):
                     "label": "All fees",
                     "query": "all",
                     "category_key": "scope_all_fees",
+                    "bucket_id": "scope_bucket:01",
                 },
             ],
         )

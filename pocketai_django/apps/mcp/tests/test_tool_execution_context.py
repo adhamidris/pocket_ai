@@ -93,7 +93,7 @@ class ToolExecutionContextTests(SimpleTestCase):
 
     def test_scope_clarification_persists_and_hydrates(self) -> None:
         context = ToolExecutionContext()
-        context.set_pending_scope_clarification(
+        bucket_id = context.set_pending_scope_clarification(
             base_query="what are the fees for plus customers?",
             categories=["loan service fees", "outgoing transfers", "loan service fees"],
             question="Do you want one specific category or all related fees?",
@@ -101,6 +101,8 @@ class ToolExecutionContextTests(SimpleTestCase):
         self.assertTrue(context.scope_clarification_updated)
         pending = context.pending_scope_clarification or {}
         self.assertEqual(len(pending.get("categories") or []), 2)
+        self.assertEqual(pending.get("bucket_id"), bucket_id)
+        self.assertIn(bucket_id, context.scope_clarification_buckets)
 
         context.set_scope_resolution(
             mode="specific",
@@ -117,6 +119,8 @@ class ToolExecutionContextTests(SimpleTestCase):
         hydrated = ToolExecutionContext()
         hydrated.hydrate_scope_clarification(persisted)
         self.assertFalse(hydrated.scope_clarification_updated)
+        hydrated_pending = hydrated.get_pending_scope_clarification(bucket_id=bucket_id) or {}
+        self.assertEqual(hydrated_pending.get("bucket_id"), bucket_id)
         self.assertEqual(
             (hydrated.scope_resolution or {}).get("mode"),
             "specific",
@@ -133,7 +137,7 @@ class ToolExecutionContextTests(SimpleTestCase):
     def test_scope_clarification_pending_stores_category_refs(self) -> None:
         context = ToolExecutionContext()
         valid_ref = str(uuid.uuid4())
-        context.set_pending_scope_clarification(
+        bucket_id = context.set_pending_scope_clarification(
             base_query="what are the fees for plus customers?",
             categories=["loan service fees"],
             question="Pick one category.",
@@ -150,6 +154,7 @@ class ToolExecutionContextTests(SimpleTestCase):
 
         pending = context.pending_scope_clarification or {}
         self.assertEqual(pending.get("contract_version"), 1)
+        self.assertEqual(pending.get("bucket_id"), bucket_id)
         category_refs = pending.get("category_refs") or {}
         self.assertEqual(set(category_refs.keys()), {"loan_service_fees_key"})
         mapped = category_refs.get("loan_service_fees_key") or {}
@@ -157,6 +162,28 @@ class ToolExecutionContextTests(SimpleTestCase):
         self.assertEqual(mapped.get("source"), "retrieval_candidates")
         self.assertEqual(mapped.get("fallback"), "scoped_search")
         self.assertEqual(mapped.get("confidence"), 1.0)
+
+    def test_scope_clarification_bucket_lookup_prefers_requested_bucket(self) -> None:
+        context = ToolExecutionContext()
+        first_bucket_id = context.set_pending_scope_clarification(
+            base_query="plus fees",
+            categories=["cheques"],
+            question="Pick one category.",
+        )
+        second_bucket_id = context.set_pending_scope_clarification(
+            base_query="prime fees",
+            categories=["cash withdrawal"],
+            question="Pick one category.",
+        )
+        self.assertNotEqual(first_bucket_id, second_bucket_id)
+        self.assertEqual(
+            (context.pending_scope_clarification or {}).get("bucket_id"),
+            second_bucket_id,
+        )
+
+        first_bucket_state = context.get_pending_scope_clarification(bucket_id=first_bucket_id) or {}
+        self.assertEqual(first_bucket_state.get("base_query"), "plus fees")
+        self.assertEqual(first_bucket_state.get("bucket_id"), first_bucket_id)
 
     def test_scope_resolution_stores_mapped_refs_for_click_followups(self) -> None:
         context = ToolExecutionContext()
