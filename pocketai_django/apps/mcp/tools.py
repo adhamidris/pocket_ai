@@ -3893,8 +3893,19 @@ def _convert_to_agentic_search_response(
         if _evidence_conflict(group_snippets):
             conflict_keys.add(key)
 
+    def _canonical_table_id(raw_table_id: object) -> str:
+        value = str(raw_table_id or "").strip()
+        if not value:
+            return ""
+        try:
+            return str(uuid.UUID(value))
+        except (TypeError, ValueError):
+            return ""
+
     table_row_ref_counts: Counter[str] = Counter()
-    total_table_row_candidates = 0
+    table_row_hit_scores: dict[str, dict[int, float]] = defaultdict(dict)
+    table_estimated_rows: dict[str, int] = {}
+    table_estimated_columns: dict[str, int] = {}
     for snippet in planned_snippets:
         if not bool(snippet.get("is_table_chunk")):
             continue
@@ -3909,8 +3920,41 @@ def _convert_to_agentic_search_response(
             row_index = diagnostics.get("table_row_index")
         if not table_id or row_index is None:
             continue
-        total_table_row_candidates += 1
-        table_row_ref_counts[str(table_id)] += 1
+        canonical_table_id = _canonical_table_id(table_id)
+        if not canonical_table_id:
+            continue
+        row_index_int = _coerce_int(row_index)
+        if row_index_int is None or row_index_int < 0:
+            continue
+        table_row_ref_counts[canonical_table_id] += 1
+
+        score_val = 0.0
+        try:
+            raw_score = snippet.get("confidence_score")
+            if raw_score is not None:
+                score_val = float(raw_score)
+        except (TypeError, ValueError):
+            score_val = 0.0
+        prior = table_row_hit_scores[canonical_table_id].get(int(row_index_int))
+        if prior is None or score_val > float(prior):
+            table_row_hit_scores[canonical_table_id][int(row_index_int)] = float(score_val)
+
+        est_rows = _coerce_int(
+            diagnostics.get("table_total_rows")
+            or diagnostics.get("table_row_count")
+            or snippet.get("row_count")
+        )
+        if est_rows is not None and est_rows > 0:
+            table_estimated_rows[canonical_table_id] = max(
+                int(table_estimated_rows.get(canonical_table_id, 0)),
+                int(est_rows),
+            )
+        est_cols = _coerce_int(diagnostics.get("table_column_count") or snippet.get("column_count"))
+        if est_cols is not None and est_cols > 0:
+            table_estimated_columns[canonical_table_id] = max(
+                int(table_estimated_columns.get(canonical_table_id, 0)),
+                int(est_cols),
+            )
 
     promoted_table_candidates: set[str] = {
         str(table_id)
@@ -3919,6 +3963,71 @@ def _convert_to_agentic_search_response(
     }
     promote_table_context = bool(promoted_table_candidates)
     promoted_table_ids: set[str] = set()
+    precomputed_table_anchor_manifests: dict[str, dict[str, object]] = {}
+
+    def _build_multi_anchor_manifest(table_id: str) -> dict[str, object] | None:
+        row_scores = table_row_hit_scores.get(table_id)
+        if not isinstance(row_scores, Mapping) or not row_scores:
+            return None
+        row_items: list[tuple[int, float]] = []
+        for raw_index, raw_score in row_scores.items():
+            try:
+                idx = int(raw_index)
+            except (TypeError, ValueError):
+                continue
+            if idx < 0:
+                continue
+            try:
+                score = float(raw_score)
+            except (TypeError, ValueError):
+                score = 0.0
+            row_items.append((idx, score))
+        if not row_items:
+            return None
+        row_items.sort(key=lambda item: item[0])
+
+        clusters: list[list[tuple[int, float]]] = []
+        current: list[tuple[int, float]] = []
+        prev_idx: int | None = None
+        for idx, score in row_items:
+            if prev_idx is not None and current and (idx - prev_idx) >= 4:
+                clusters.append(current)
+                current = []
+            current.append((idx, score))
+            prev_idx = idx
+        if current:
+            clusters.append(current)
+
+        anchor_candidates: list[tuple[float, int]] = []
+        for cluster in clusters:
+            # Highest score wins; tie-breaker is the lowest row index.
+            best_idx, best_score = max(cluster, key=lambda item: (float(item[1]), -int(item[0])))
+            anchor_candidates.append((float(best_score), int(best_idx)))
+        anchor_candidates.sort(key=lambda item: (-float(item[0]), int(item[1])))
+
+        anchor_rows = [int(idx) for _score, idx in anchor_candidates[:2]]
+        if not anchor_rows:
+            return None
+        matched_row_index = int(anchor_rows[0])
+
+        manifest: dict[str, object] = {
+            "ref_id": str(table_id),
+            "table_id": str(table_id),
+            "matched_row_index": matched_row_index,
+            "anchors": [{"row_index": int(idx)} for idx in anchor_rows],
+        }
+        est_rows = _coerce_int(table_estimated_rows.get(table_id))
+        if est_rows is not None and est_rows > 0:
+            manifest["estimated_rows"] = int(est_rows)
+        est_cols = _coerce_int(table_estimated_columns.get(table_id))
+        if est_cols is not None and est_cols > 0:
+            manifest["estimated_columns"] = int(est_cols)
+        return manifest
+
+    for table_id in promoted_table_candidates:
+        manifest = _build_multi_anchor_manifest(str(table_id))
+        if isinstance(manifest, Mapping):
+            precomputed_table_anchor_manifests[str(table_id)] = dict(manifest)
 
     text_chunk_upload_counts: Counter[str] = Counter()
     text_chunk_upload_snippets: dict[str, list[Mapping[str, object]]] = defaultdict(list)
@@ -4015,6 +4124,16 @@ def _convert_to_agentic_search_response(
         row_index = diagnostics.get("row_index")
         if row_index is None:
             row_index = diagnostics.get("table_row_index")
+        canonical_table_id = _canonical_table_id(table_id) if (content_type == "table" and table_id) else ""
+        # Strict one-ref-per-promoted-table: skip chunk-only table refs when the table
+        # is already eligible for promotion via row hits (we'll emit the table ref instead).
+        if (
+            content_type == "table"
+            and canonical_table_id
+            and canonical_table_id in promoted_table_candidates
+            and row_index is None
+        ):
+            continue
 
         suggested_max_chars = _suggest_max_chars_for_estimate(
             char_estimate,
@@ -4055,7 +4174,7 @@ def _convert_to_agentic_search_response(
             and table_id
             and row_index is not None
             and promote_table_context
-            and str(table_id) in promoted_table_candidates
+            and canonical_table_id in promoted_table_candidates
         )
         text_group = text_chunk_groups.get(upload_id) if upload_id else None
         promote_text_group_ref = bool(
@@ -4162,35 +4281,23 @@ def _convert_to_agentic_search_response(
             read_hint_out.setdefault("suggested_max_chars", suggested_max_chars)
 
         ref_id = chunk_id
-        if promote_table_ref and table_id:
-            canonical_table_id = str(table_id).strip()
-            try:
-                canonical_table_id = str(uuid.UUID(canonical_table_id))
-            except (TypeError, ValueError):
-                canonical_table_id = ""
-            if canonical_table_id:
-                matched_row_index = _coerce_int(row_index)
-                if (
-                    matched_row_index is not None
-                    and matched_row_index >= 0
-                    and canonical_table_id not in promoted_table_anchor_manifests
-                ):
-                    table_manifest: dict[str, object] = {
-                        "ref_id": canonical_table_id,
-                        "table_id": canonical_table_id,
-                        "matched_row_index": int(matched_row_index),
-                    }
-                    estimated_rows = _coerce_int(row_count)
-                    if estimated_rows is not None and estimated_rows > 0:
-                        table_manifest["estimated_rows"] = int(estimated_rows)
-                    estimated_columns = _coerce_int(column_count)
-                    if estimated_columns is not None and estimated_columns > 0:
-                        table_manifest["estimated_columns"] = int(estimated_columns)
-                    promoted_table_anchor_manifests[canonical_table_id] = table_manifest
-                if canonical_table_id in promoted_table_ids:
-                    continue
-                promoted_table_ids.add(canonical_table_id)
-                ref_id = canonical_table_id
+        if promote_table_ref and canonical_table_id:
+            if canonical_table_id not in promoted_table_anchor_manifests:
+                manifest = precomputed_table_anchor_manifests.get(canonical_table_id)
+                if isinstance(manifest, Mapping):
+                    promoted_table_anchor_manifests[canonical_table_id] = dict(manifest)
+                else:
+                    matched_row_index = _coerce_int(row_index)
+                    if matched_row_index is not None and matched_row_index >= 0:
+                        promoted_table_anchor_manifests[canonical_table_id] = {
+                            "ref_id": canonical_table_id,
+                            "table_id": canonical_table_id,
+                            "matched_row_index": int(matched_row_index),
+                        }
+            if canonical_table_id in promoted_table_ids:
+                continue
+            promoted_table_ids.add(canonical_table_id)
+            ref_id = canonical_table_id
         if promote_text_group_ref and upload_id:
             canonical_upload_id = str(upload_id).strip()
             try:
@@ -4291,9 +4398,15 @@ def _convert_to_agentic_search_response(
             ref_item["read_hint"] = read_hint_out
             ref_item["why"] = why[:3]
         if promote_table_ref and isinstance(coverage_hint, dict):
-            matched_row_index = coverage_hint.get("row_index")
+            matched_row_index: int | None = None
+            if canonical_table_id:
+                manifest = precomputed_table_anchor_manifests.get(canonical_table_id)
+                if isinstance(manifest, Mapping):
+                    matched_row_index = _coerce_int(manifest.get("matched_row_index"))
+            if matched_row_index is None:
+                matched_row_index = _coerce_int(coverage_hint.get("row_index"))
             if matched_row_index is not None:
-                coverage_hint["matched_row_index"] = matched_row_index
+                coverage_hint["matched_row_index"] = int(matched_row_index)
             coverage_hint.pop("row_index", None)
         if coverage_hint:
             ref_item["coverage_hint"] = coverage_hint
@@ -6992,18 +7105,45 @@ def _agentic_read_v2_handler(
             raw_manifest = cache_value.get(key)
             if not isinstance(raw_manifest, Mapping):
                 continue
-            try:
-                matched_row_index = int(raw_manifest.get("matched_row_index"))
-            except (TypeError, ValueError):
-                continue
+            anchors: list[int] = []
+            raw_anchors = raw_manifest.get("anchors")
+            if isinstance(raw_anchors, list):
+                for entry in raw_anchors:
+                    if isinstance(entry, Mapping):
+                        parsed = _coerce_int(entry.get("row_index"))
+                    else:
+                        parsed = _coerce_int(entry)
+                    if parsed is None or parsed < 0:
+                        continue
+                    anchors.append(int(parsed))
+            # Deduplicate anchors while preserving order.
+            if anchors:
+                seen_rows: set[int] = set()
+                anchors = [row for row in anchors if (row not in seen_rows and not seen_rows.add(row))]
+
+            matched_row_index = _coerce_int(raw_manifest.get("matched_row_index"))
+            if matched_row_index is None:
+                matched_row_index = -1
             if matched_row_index < 0:
-                continue
+                if anchors:
+                    matched_row_index = int(anchors[0])
+                else:
+                    continue
+
+            # Ensure anchors includes matched_row_index, and keep it first.
+            if matched_row_index in anchors:
+                anchors = [matched_row_index] + [row for row in anchors if row != matched_row_index]
+            else:
+                anchors = [matched_row_index] + anchors
+            anchors = anchors[:5]
 
             out: dict[str, object] = {
                 "ref_id": key,
                 "table_id": table_key or str(raw_manifest.get("table_id") or "").strip(),
                 "matched_row_index": int(matched_row_index),
             }
+            if anchors:
+                out["anchors"] = list(anchors)
 
             try:
                 estimated_rows = int(raw_manifest.get("estimated_rows") or 0)
@@ -7571,37 +7711,49 @@ def _agentic_read_v2_handler(
         if use_anchor and anchor_start_row <= 0:
             manifest = _load_table_anchor_manifest(ref_id=item_id, table_id=table_id)
             if isinstance(manifest, Mapping):
-                try:
-                    matched_row_index = int(manifest.get("matched_row_index"))
-                except (TypeError, ValueError):
-                    matched_row_index = -1
-                if matched_row_index >= 0:
-                    anchor_start_row = max(0, int(matched_row_index) - 1)
+                anchor_rows: list[int] = []
+                primary_anchor = _coerce_int(manifest.get("matched_row_index"))
+                if primary_anchor is not None and primary_anchor >= 0:
+                    anchor_rows.append(int(primary_anchor))
+                raw_anchors = manifest.get("anchors")
+                if isinstance(raw_anchors, list):
+                    for entry in raw_anchors:
+                        parsed = _coerce_int(entry)
+                        if parsed is None or parsed < 0:
+                            continue
+                        anchor_rows.append(int(parsed))
+                if anchor_rows:
+                    # Deduplicate while preserving order, and cap attempts.
+                    seen_rows: set[int] = set()
+                    anchor_rows = [row for row in anchor_rows if (row not in seen_rows and not seen_rows.add(row))]
                     anchor_used = True
+                    for row_idx in anchor_rows[:2]:
+                        anchor_start_row = max(0, int(row_idx) - 1)
+                        table_payload, cursor_out, complete = _read_tabular_rows_segment_facts(
+                            item_id=item_id,
+                            upload_id=upload_id,
+                            table_id=table_id,
+                            start_row_index=anchor_start_row,
+                            budget_chars=budget_chars,
+                            max_rows=max_rows,
+                            business_profile=business_profile,
+                            selection_mode="anchor_match",
+                        )
+                        if _table_payload_is_informative(table_payload):
+                            return table_payload, cursor_out, complete, anchor_used, fallback_used
+                    # Anchors were tried but didn't yield useful rows; fall back.
+                    fallback_used = True
 
         table_payload, cursor_out, complete = _read_tabular_rows_segment_facts(
             item_id=item_id,
             upload_id=upload_id,
             table_id=table_id,
-            start_row_index=anchor_start_row,
+            start_row_index=max(0, int(start_row_index)),
             budget_chars=budget_chars,
             max_rows=max_rows,
             business_profile=business_profile,
-            selection_mode="anchor_match" if anchor_used else "row_range",
+            selection_mode="row_range",
         )
-
-        if anchor_used and not _table_payload_is_informative(table_payload):
-            fallback_used = True
-            table_payload, cursor_out, complete = _read_tabular_rows_segment_facts(
-                item_id=item_id,
-                upload_id=upload_id,
-                table_id=table_id,
-                start_row_index=max(0, int(start_row_index)),
-                budget_chars=budget_chars,
-                max_rows=max_rows,
-                business_profile=business_profile,
-                selection_mode="row_range",
-            )
 
         return table_payload, cursor_out, complete, anchor_used, fallback_used
 
