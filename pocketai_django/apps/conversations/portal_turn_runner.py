@@ -236,126 +236,6 @@ class PortalTurnEventBuilder:
             return None
         return self.blocks_by_id.get(key)
 
-    @staticmethod
-    def _normalize_scope_categories(values: object, *, limit: int) -> list[str]:
-        if not isinstance(values, list):
-            return []
-        normalized: list[str] = []
-        seen: set[str] = set()
-        for value in values:
-            text = str(value or "").strip()
-            if not text:
-                continue
-            key = text.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            normalized.append(text)
-            if len(normalized) >= limit:
-                break
-        return normalized
-
-    def _build_scope_clarification_block(
-        self,
-        *,
-        tool_use_block_id: str,
-        output_payload: Mapping[str, object],
-        created_at: str | None = None,
-    ) -> dict[str, object] | None:
-        clarification = (
-            output_payload.get("clarification")
-            if isinstance(output_payload.get("clarification"), Mapping)
-            else {}
-        )
-        diagnostics = (
-            output_payload.get("diagnostics")
-            if isinstance(output_payload.get("diagnostics"), Mapping)
-            else {}
-        )
-        mode = str(
-            clarification.get("mode")
-            or diagnostics.get("clarification_ui_mode")
-            or output_payload.get("clarification_ui_mode")
-            or ""
-        ).strip().lower()
-        if mode != "mcq":
-            return None
-
-        categories = self._normalize_scope_categories(
-            clarification.get("categories")
-            or diagnostics.get("categories")
-            or diagnostics.get("scope_clarification_categories")
-            or [],
-            limit=40,
-        )
-        top_categories = self._normalize_scope_categories(
-            clarification.get("top_categories")
-            or diagnostics.get("top_categories")
-            or diagnostics.get("scope_clarification_categories")
-            or [],
-            limit=12,
-        )
-        if not top_categories and categories:
-            top_categories = categories[:3]
-        if not categories and top_categories:
-            categories = top_categories[:]
-        if not categories:
-            return None
-
-        all_query = str(clarification.get("all_query") or "all").strip() or "all"
-        all_label = "All fees"
-        chips = clarification.get("chips") if isinstance(clarification.get("chips"), list) else []
-        if not chips and isinstance(diagnostics.get("scope_clarification_options"), list):
-            chips = diagnostics.get("scope_clarification_options")
-        for chip in chips:
-            if not isinstance(chip, Mapping):
-                continue
-            chip_id = str(chip.get("id") or "").strip().lower()
-            if chip_id != "all_fees":
-                continue
-            label = str(chip.get("label") or "").strip()
-            query = str(chip.get("query") or "").strip()
-            if label:
-                all_label = label
-            if query:
-                all_query = query
-            break
-
-        question = str(
-            output_payload.get("hint")
-            or diagnostics.get("intent_clarification_question")
-            or "I found multiple categories. Pick one category or choose all fees."
-        ).strip()
-        block_id = f"{tool_use_block_id}__scope_clarification"
-        bucket_id = str(
-            clarification.get("bucket_id")
-            or diagnostics.get("scope_clarification_bucket_id")
-            or ""
-        ).strip().lower()
-        payload: dict[str, object] = {
-            "source_tool_block_id": tool_use_block_id,
-            "question": question,
-            "all_label": all_label,
-            "all_query": all_query,
-            "categories": categories,
-            "top_categories": top_categories,
-            "visible_count": min(
-                len(top_categories),
-                getattr(settings, "MCP_SCOPE_VISIBLE_CHIP_COUNT", 3),
-            ),
-        }
-        if bucket_id:
-            payload["bucket_id"] = bucket_id[:120]
-        sanitized_chips = [dict(chip) for chip in chips if isinstance(chip, Mapping)]
-        if sanitized_chips:
-            payload["chips"] = sanitized_chips
-        return {
-            "block_id": block_id,
-            "type": "scope_clarification",
-            "created_at": created_at or timezone.now().isoformat(),
-            "payload": payload,
-        }
-
     def _apply_block_event(self, event: Mapping[str, object]) -> None:
         event_type = str(event.get("type") or "").strip().lower()
         payload = event.get("payload") if isinstance(event.get("payload"), Mapping) else {}
@@ -847,34 +727,6 @@ class PortalTurnEventBuilder:
 
             self.append_event("block_tool_result", {"block": copy.deepcopy(tool_use_block)})
 
-            if tool_name.strip().lower() == "present_scope_clarification" and isinstance(output_payload, Mapping):
-                source_tool_block_id = str(tool_use_block.get("block_id") or "").strip()
-                if source_tool_block_id:
-                    scope_block = self._build_scope_clarification_block(
-                        tool_use_block_id=source_tool_block_id,
-                        output_payload=output_payload,
-                        created_at=timezone.now().isoformat(),
-                    )
-                    if scope_block:
-                        scope_block_id = str(scope_block.get("block_id") or "").strip()
-                        existing_scope_block = self._get_content_block(scope_block_id) if scope_block_id else None
-                        if existing_scope_block is not None:
-                            existing_scope_block.clear()
-                            existing_scope_block.update(scope_block)
-                        else:
-                            self._append_content_block(scope_block)
-                        # Flush any buffered text through the rich builder before emitting
-                        # the MCQ block so the narration text fully lands before the selector
-                        # appears — matching the Anthropic agentic style.
-                        if not self.block_ops_active:
-                            try:
-                                boundary_events = self.rich_builder.break_flow()
-                            except Exception:  # pragma: no cover - defensive
-                                boundary_events = []
-                            if boundary_events:
-                                self.emit_block_events(boundary_events)
-                        self.append_event("block_start", {"block": copy.deepcopy(scope_block)})
-
             try:
                 if isinstance(output_payload, Mapping) and str(payload.get("status") or "").strip().lower() in {"ok", "success"}:
                     created_blocks: list[dict[str, object]] = []
@@ -1347,38 +1199,10 @@ class PortalTurnRunner:
             "on_reasoning_event": self.builder.on_reasoning_event,
             "should_cancel": _should_cancel,
         }
-        scope_selection_metadata: dict[str, object] | None = None
-        turn_metadata = self.turn.metadata if isinstance(getattr(self.turn, "metadata", None), Mapping) else {}
-        raw_scope_selection = (
-            turn_metadata.get("scope_selection") or turn_metadata.get("scopeSelection")
-            if isinstance(turn_metadata, Mapping)
-            else None
-        )
-        if isinstance(raw_scope_selection, Mapping):
-            normalized_scope_selection: dict[str, object] = {}
-            action = str(raw_scope_selection.get("action") or "").strip().lower()
-            if action in {"select_category", "all_fees", "choose_categories"}:
-                normalized_scope_selection["action"] = action
-            category_key = str(raw_scope_selection.get("category_key") or "").strip().lower()
-            if category_key:
-                normalized_scope_selection["category_key"] = category_key[:120]
-            category_label = str(raw_scope_selection.get("category_label") or "").strip()
-            if category_label:
-                normalized_scope_selection["category_label"] = category_label[:120]
-            block_id = str(raw_scope_selection.get("block_id") or "").strip().lower()
-            if block_id:
-                normalized_scope_selection["block_id"] = block_id[:120]
-            bucket_id = str(raw_scope_selection.get("bucket_id") or "").strip().lower()
-            if bucket_id:
-                normalized_scope_selection["bucket_id"] = bucket_id[:120]
-            if normalized_scope_selection:
-                scope_selection_metadata = normalized_scope_selection
         try:
             parameters = inspect.signature(orchestrator.stream_turn).parameters
         except (TypeError, ValueError):
             parameters = {}
-        if "user_metadata" in parameters and scope_selection_metadata:
-            stream_kwargs["user_metadata"] = {"scope_selection": scope_selection_metadata}
         if "wait_for_tool_approval" in parameters:
             stream_kwargs["wait_for_tool_approval"] = True
         if "portal_emit_blocks_enabled" in parameters:

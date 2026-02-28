@@ -1140,31 +1140,6 @@ class ChatPortalClient {
 	    if (blockId) {
 	      this.streamingContentBlocksById.set(blockId, block);
 	    }
-	    // scope_clarification (MCQ widget) must appear only after the narration text
-	    // has fully finished streaming AND rendering on screen.
-	    //
-	    // Two-phase gate:
-	    //   1. If text blocks are still active (streamingTextBlockActiveIds), store the
-	    //      render callback; handleBlockEndEvent will flush it once the last text
-	    //      block closes.
-	    //   2. If text blocks are already closed, fall through to _queueAfterBlockDrain
-	    //      which handles any remaining pacer backlog before rendering.
-	    if (blockType === "scope_clarification") {
-	      const renderMCQ = () => {
-	        this.upsertStreamingContentBlock(block);
-	        this.repositionStreamingStatusRow();
-	        this.scheduleScrollToBottom({ behavior: "auto" });
-	      };
-	      if (this.streamingTextBlockActiveIds && this.streamingTextBlockActiveIds.size > 0) {
-	        if (!Array.isArray(this._pendingPostTextStreamActions)) {
-	          this._pendingPostTextStreamActions = [];
-	        }
-	        this._pendingPostTextStreamActions.push(renderMCQ);
-	      } else {
-	        this._queueAfterBlockDrain(renderMCQ, { mode: "boundary" });
-	      }
-	      return;
-	    }
 		    this.upsertStreamingContentBlock(block);
 		    if (blockId && this.isStreamingTextBlock(blockType)) {
 		      this.streamingTextBlockActiveIds.add(blockId);
@@ -1229,7 +1204,7 @@ class ChatPortalClient {
 		      this.scheduleStreamingBlockRender();
 		    }
 		    this.streamingTextBlockActiveIds.delete(blockId);
-	    // When the last active text block closes, flush any MCQ/clarification blocks
+	    // When the last active text block closes, flush any deferred clarification blocks
 	    // that were held back waiting for text to finish (Anthropic agentic style).
 	    if (
 	      this.streamingTextBlockActiveIds.size === 0 &&
@@ -1967,13 +1942,6 @@ class ChatPortalClient {
       if (blockType === "tool_use" || blockType === "tool_result") {
         this.updateInlineToolCardsVisibility(this.streamingMessageNode);
       }
-      if (blockType === "scope_clarification") {
-        const updated = this.updateContentBlockElement(existing, block) || existing;
-        if (updated && updated !== existing) {
-          this.streamingContentBlockEls.set(blockId, updated);
-        }
-        this.scheduleScrollToBottom({ behavior: "auto" });
-      }
       return;
     }
 
@@ -2516,10 +2484,6 @@ class ChatPortalClient {
 
   buildToolEventCard(payload) {
     const toolName = (payload?.tool_name || payload?.toolName || "").toString().trim().toLowerCase();
-    // Scope clarification is a component block, not a timeline tool row.
-    if (toolName === "present_scope_clarification") {
-      return null;
-    }
     // Use custom email preview card for email tools
     if (toolName === "email_create_draft" || toolName === "email_send_draft") {
       return this.buildEmailPreviewCard(payload, toolName);
@@ -4648,448 +4612,6 @@ class ChatPortalClient {
     }
   }
 
-  normalizeScopeClarificationCategories(values, limit = 40) {
-    if (!Array.isArray(values) || !values.length) return [];
-    const cleaned = [];
-    const seen = new Set();
-    values.forEach((value) => {
-      const text = (value || "").toString().trim();
-      if (!text) return;
-      const key = text.toLowerCase();
-      if (seen.has(key)) return;
-      seen.add(key);
-      cleaned.push(text);
-    });
-    if (Number.isFinite(limit) && limit > 0 && cleaned.length > limit) {
-      return cleaned.slice(0, limit);
-    }
-    return cleaned;
-  }
-
-  formatScopeClarificationCategoryLabel(value) {
-    const raw = (value || "").toString().trim();
-    if (!raw) return "";
-
-    let normalized = raw
-      .replace(/[_/|]+/g, " ")
-      .replace(/[–—]+/g, "-")
-      .replace(/\b(?:table|sheet|tab)\s*\d*\b/gi, " ")
-      .replace(/\b([a-z]{3,}s)(?:en|ar|fr|de|es)\b/gi, "$1")
-      .replace(/[^0-9A-Za-z\u0600-\u06FF\s-]+/g, " ")
-      .replace(/[-]+/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-    if (!normalized) normalized = raw;
-
-    const stopTokens = new Set([
-      "and",
-      "or",
-      "for",
-      "from",
-      "to",
-      "in",
-      "on",
-      "with",
-      "by",
-      "the",
-      "a",
-      "an",
-      "و",
-      "او",
-      "أو",
-      "من",
-      "في",
-      "على",
-      "الى",
-      "إلى",
-      "عن",
-      "ال",
-      "en",
-      "ar",
-      "fr",
-      "de",
-      "es",
-      "it",
-      "pt",
-      "ru",
-      "tr",
-      "zh",
-      "ja",
-    ]);
-
-    const tokens = normalized.split(/\s+/).filter(Boolean);
-    const selected = [];
-    const seen = new Set();
-    tokens.forEach((token) => {
-      const lowered = token.toLowerCase();
-      if (!lowered) return;
-      if (stopTokens.has(lowered)) return;
-      if (lowered.length === 1 && !/\d/.test(lowered)) return;
-      if (seen.has(lowered)) return;
-      seen.add(lowered);
-      selected.push(token);
-    });
-    const base = selected.length ? selected.join(" ") : normalized;
-    const clipped = base.split(/\s+/).slice(0, 10).join(" ").trim();
-    if (!clipped) return raw;
-
-    // For Latin text, title-case the label for cleaner UI presentation.
-    if (/[A-Za-z]/.test(clipped)) {
-      return clipped
-        .split(/\s+/)
-        .map((token) => {
-          if (!token) return token;
-          if (/^\d+$/.test(token)) return token;
-          if (/^[A-Za-z]/.test(token)) return token.charAt(0).toUpperCase() + token.slice(1).toLowerCase();
-          return token;
-        })
-        .join(" ");
-    }
-
-    return clipped;
-  }
-
-  normalizeScopeSelectionMetadata(selection) {
-    if (!selection || typeof selection !== "object") return null;
-    const normalizeAction = (value) =>
-      (value || "")
-        .toString()
-        .trim()
-        .toLowerCase()
-        .replace(/\s+/g, "_");
-    let action = normalizeAction(selection.action);
-    if (action === "all" || action === "scope_all" || action === "scope_all_fees") {
-      action = "all_fees";
-    } else if (action === "choose_categories" || action === "list_categories" || action === "scope_choose_categories") {
-      action = "choose_categories";
-    } else if (
-      action === "select_category" ||
-      action === "category" ||
-      action === "scope_category" ||
-      action === "scope_category_key"
-    ) {
-      action = "select_category";
-    }
-    const categoryKey = (selection.categoryKey || selection.category_key || "").toString().trim();
-    const categoryLabel = (selection.categoryLabel || selection.category_label || "").toString().trim();
-    const blockId = (selection.blockId || selection.block_id || "").toString().trim();
-    const bucketId = (selection.bucketId || selection.bucket_id || "").toString().trim();
-    if (!action && categoryKey) action = "select_category";
-    if (!action) return null;
-    const payload = { action };
-    if (categoryKey) payload.category_key = categoryKey;
-    if (categoryLabel) payload.category_label = categoryLabel;
-    if (blockId) payload.block_id = blockId;
-    if (bucketId) payload.bucket_id = bucketId;
-    return payload;
-  }
-
-  buildScopeSelectionTurnMetadata(selection) {
-    const normalizedSelection = this.normalizeScopeSelectionMetadata(selection);
-    if (!normalizedSelection) return null;
-    return { scope_selection: normalizedSelection };
-  }
-
-  submitScopeClarificationMessage(query, scopeSelection = null) {
-    const message = (query || "").toString().trim();
-    if (!message) return;
-    if (!this.sessionToken) {
-      this.showToast("Send failed", "Session is still initialising.", true);
-      return;
-    }
-    const scopeTurnMetadata = this.buildScopeSelectionTurnMetadata(scopeSelection);
-
-    const wasEmpty = this.isCurrentSessionEmpty();
-    if (this.isSending || this.isStreaming) {
-      this.enqueueMessage(message, { turnMetadata: scopeTurnMetadata });
-      return;
-    }
-
-    if (wasEmpty) {
-      this.updateSessionTitleFromMessage(message);
-      this.currentSessionHasMessages = true;
-      this.updateSessionEmptyState(1);
-    }
-
-    void this.sendMessage(message, { turnMetadata: scopeTurnMetadata });
-  }
-
-  buildScopeClarificationElement(payload, blockId = "") {
-    const sourceCategories = this.normalizeScopeClarificationCategories(
-      (payload && payload.categories) || [],
-      40,
-    );
-    const topCategories = this.normalizeScopeClarificationCategories(
-      (payload && payload.top_categories) || [],
-      12,
-    );
-    const chips = Array.isArray(payload && payload.chips)
-      ? payload.chips.filter((item) => item && typeof item === "object")
-      : [];
-    const chipKind = (item) => ((item && item.kind) || "").toString().trim().toLowerCase();
-    const chipId = (item) => ((item && item.id) || "").toString().trim().toLowerCase();
-    const chipCategoryKey = (item) => ((item && item.category_key) || "").toString().trim().toLowerCase();
-    const isActionChip = (item) => {
-      const kind = chipKind(item);
-      if (kind === "action") return true;
-      const id = chipId(item);
-      if (id === "all_fees" || id === "choose_categories") return true;
-      const key = chipCategoryKey(item);
-      return key === "scope_all_fees" || key === "scope_choose_categories";
-    };
-    const isCategoryChip = (item) => {
-      if (!item || typeof item !== "object") return false;
-      const kind = chipKind(item);
-      if (kind === "category") return true;
-      if (kind === "action" || isActionChip(item)) return false;
-      const label = ((item.label || item.category || "") + "").trim();
-      const query = ((item.query || "") + "").trim();
-      const key = chipCategoryKey(item);
-      return Boolean(label && (key || query));
-    };
-
-    const actionChips = chips.filter((item) => isActionChip(item));
-    const categoryChips = chips.filter((item) => isCategoryChip(item));
-    const allActionChip =
-      actionChips.find((item) => ((item && item.id) || "").toString().trim() === "all_fees") ||
-      actionChips.find(
-        (item) => ((item && item.category_key) || "").toString().trim().toLowerCase() === "scope_all_fees",
-      ) ||
-      null;
-    const chooseCategoriesActionChip =
-      actionChips.find((item) => ((item && item.id) || "").toString().trim() === "choose_categories") ||
-      actionChips.find(
-        (item) => ((item && item.category_key) || "").toString().trim().toLowerCase() === "scope_choose_categories",
-      ) ||
-      null;
-    const allLabel = (
-      ((allActionChip && allActionChip.label) || (payload && payload.all_label) || "All fees")
-        .toString()
-        .trim()
-    ) || "All fees";
-    const visibleCountRaw = Number(payload && payload.visible_count);
-    // Hard cap at 3 — remaining choices expand via the "More" pill button.
-    const visibleCount = Math.min(3, Number.isFinite(visibleCountRaw) && visibleCountRaw > 0 ? Math.max(1, Math.floor(visibleCountRaw)) : 3);
-    const clarificationBucketId = ((payload && payload.bucket_id) || "").toString().trim();
-    const categories = sourceCategories.length ? sourceCategories : topCategories;
-
-    const resolveChipQuery = (chip, fallback) => {
-      const fallbackQuery = (fallback || "").toString().trim();
-      if (!chip || typeof chip !== "object") return fallbackQuery;
-      const categoryKey = String(chip.category_key || "").trim();
-      if (categoryKey) return `scope:category_key:${categoryKey}`;
-      const chipQuery = String(chip.query || "").trim();
-      if (chipQuery) return chipQuery;
-      return fallbackQuery;
-    };
-
-    const categoryItemsFromChips = [];
-    const seenCategorySelectors = new Set();
-    categoryChips.forEach((chip) => {
-      const rawLabel = (
-        (chip.label || chip.category || chip.query || "")
-          .toString()
-          .trim()
-      );
-      if (!rawLabel) return;
-      const queryValue = resolveChipQuery(chip, rawLabel);
-      const categoryKey = String(chip.category_key || "").trim();
-      const dedupeKey = (categoryKey || queryValue || rawLabel).toLowerCase();
-      if (seenCategorySelectors.has(dedupeKey)) return;
-      seenCategorySelectors.add(dedupeKey);
-      categoryItemsFromChips.push({
-        label: rawLabel,
-        displayLabel: this.formatScopeClarificationCategoryLabel(rawLabel) || rawLabel,
-        query: queryValue,
-        categoryKey,
-        bucketId: ((chip && chip.bucket_id) || clarificationBucketId || "").toString().trim(),
-      });
-    });
-
-    const normalizeCategoryLookupKey = (value) =>
-      (value || "")
-        .toString()
-        .trim()
-        .toLowerCase()
-        .replace(/\s+/g, " ");
-    const categoryKeyByLabel = new Map();
-    categoryItemsFromChips.forEach((item) => {
-      const label = normalizeCategoryLookupKey((item && item.label) || "");
-      const categoryKey = ((item && item.categoryKey) || "").toString().trim();
-      if (!label || !categoryKey || categoryKeyByLabel.has(label)) return;
-      categoryKeyByLabel.set(label, categoryKey);
-    });
-
-    const categoryItemsFromLists = categories.map((category) => {
-      const queryValue = (category || "").toString().trim();
-      const displayLabel = this.formatScopeClarificationCategoryLabel(queryValue) || queryValue;
-      const categoryKey = categoryKeyByLabel.get(normalizeCategoryLookupKey(queryValue)) || "";
-      return {
-        label: queryValue,
-        displayLabel,
-        query: categoryKey ? `scope:category_key:${categoryKey}` : queryValue,
-        categoryKey,
-        bucketId: clarificationBucketId,
-      };
-    });
-
-    // Build final category list from full categories first (for "More" expansion),
-    // then enrich with chip-provided category keys for deterministic selection.
-    const categoryItems = [];
-    const categoryItemKeys = new Set();
-    const appendCategoryItem = (item) => {
-      if (!item || typeof item !== "object") return;
-      const label = ((item.label || "") + "").trim();
-      const query = ((item.query || "") + "").trim();
-      const categoryKey = ((item.categoryKey || "") + "").trim();
-      const bucketId = ((item.bucketId || "") + "").trim();
-      if (!label) return;
-      const dedupeKey = (categoryKey || query || label).toLowerCase();
-      if (!dedupeKey || categoryItemKeys.has(dedupeKey)) return;
-      categoryItemKeys.add(dedupeKey);
-      categoryItems.push({
-        label,
-        displayLabel: ((item.displayLabel || "") + "").trim() || this.formatScopeClarificationCategoryLabel(label) || label,
-        query: query || (categoryKey ? `scope:category_key:${categoryKey}` : label),
-        categoryKey,
-        bucketId,
-      });
-    };
-    if (categoryItemsFromLists.length) {
-      categoryItemsFromLists.forEach(appendCategoryItem);
-      // Keep any chip-only categories (defensive) after the canonical categories list.
-      categoryItemsFromChips.forEach(appendCategoryItem);
-    } else {
-      categoryItemsFromChips.forEach(appendCategoryItem);
-    }
-    if (!categoryItems.length) return null;
-
-    const quickCategories = categoryItems.slice(0, visibleCount);
-    const hiddenCategories = categoryItems.slice(visibleCount);
-
-    const wrapper = document.createElement("section");
-    wrapper.dataset.contentBlock = "true";
-    wrapper.dataset.blockType = "scope_clarification";
-    if (blockId) wrapper.dataset.blockId = blockId;
-    wrapper.className = "portal-scope-clarification";
-
-    const allButton = document.createElement("button");
-    allButton.type = "button";
-    allButton.className = "portal-scope-clarification__btn portal-scope-clarification__btn--primary";
-    allButton.textContent = allLabel;
-    allButton.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      this.submitScopeClarificationMessage(allLabel, {
-        action: "all_fees",
-        blockId,
-        bucketId: clarificationBucketId,
-      });
-    });
-    wrapper.appendChild(allButton);
-
-    const categoriesSection = document.createElement("div");
-    categoriesSection.className = "portal-scope-clarification__section";
-    const categoriesHeader = document.createElement("div");
-    categoriesHeader.className = "portal-scope-clarification__section-header";
-    categoriesHeader.textContent = "Categories found";
-    categoriesSection.appendChild(categoriesHeader);
-
-    const categoriesList = document.createElement("div");
-    categoriesList.className = "portal-scope-clarification__list";
-
-    const renderCategoryButton = (categoryItem) => {
-      const queryValue = ((categoryItem && categoryItem.query) || "").toString().trim();
-      const displayLabel = (
-        (categoryItem && categoryItem.displayLabel) ||
-        (categoryItem && categoryItem.label) ||
-        queryValue
-      )
-        .toString()
-        .trim();
-      if (!displayLabel) return null;
-      const sendLabel = (
-        ((categoryItem && categoryItem.label) || displayLabel || queryValue || "")
-          .toString()
-          .trim()
-      );
-      if (!sendLabel) return null;
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "portal-scope-clarification__btn";
-      button.textContent = displayLabel;
-      button.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        this.submitScopeClarificationMessage(sendLabel, {
-          action: "select_category",
-          categoryKey: ((categoryItem && categoryItem.categoryKey) || "").toString().trim(),
-          categoryLabel: ((categoryItem && categoryItem.label) || displayLabel).toString().trim(),
-          blockId,
-          bucketId: ((categoryItem && categoryItem.bucketId) || clarificationBucketId || "").toString().trim(),
-        });
-      });
-      return button;
-    };
-
-    quickCategories.forEach((category) => {
-      const button = renderCategoryButton(category);
-      if (button) categoriesList.appendChild(button);
-    });
-    categoriesSection.appendChild(categoriesList);
-
-    if (hiddenCategories.length) {
-      const hiddenWrap = document.createElement("div");
-      hiddenWrap.className = "portal-scope-clarification__list portal-scope-clarification__list--hidden";
-      hiddenWrap.hidden = true;
-      hiddenCategories.forEach((category) => {
-        const button = renderCategoryButton(category);
-        if (button) hiddenWrap.appendChild(button);
-      });
-      categoriesSection.appendChild(hiddenWrap);
-
-      const moreButton = document.createElement("button");
-      moreButton.type = "button";
-      moreButton.className = "portal-scope-clarification__more";
-      moreButton.textContent = `More (${hiddenCategories.length})`;
-      moreButton.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        const expanding = hiddenWrap.hidden;
-        hiddenWrap.hidden = !expanding;
-        moreButton.textContent = expanding ? "Hide" : `More (${hiddenCategories.length})`;
-      });
-      categoriesSection.appendChild(moreButton);
-    } else if (chooseCategoriesActionChip) {
-      const moreButton = document.createElement("button");
-      moreButton.type = "button";
-      moreButton.className = "portal-scope-clarification__more";
-      moreButton.textContent = "More";
-      moreButton.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        const fallbackLabel = (
-          ((chooseCategoriesActionChip && chooseCategoriesActionChip.label) ||
-            (payload && payload.more_label) ||
-            (payload && payload.choose_categories_label) ||
-            "Choose categories")
-            .toString()
-            .trim()
-        ) || "Choose categories";
-        this.submitScopeClarificationMessage(fallbackLabel, {
-          action: "choose_categories",
-          categoryLabel: fallbackLabel,
-          categoryKey: ((chooseCategoriesActionChip && chooseCategoriesActionChip.category_key) || "").toString().trim(),
-          blockId,
-          bucketId: ((chooseCategoriesActionChip && chooseCategoriesActionChip.bucket_id) || clarificationBucketId || "").toString().trim(),
-        });
-      });
-      categoriesSection.appendChild(moreButton);
-    }
-
-    wrapper.appendChild(categoriesSection);
-    return wrapper;
-  }
 
   renderToolScopeClarification(card, payload) {
     if (!card) return;
@@ -8355,15 +7877,6 @@ class ChatPortalClient {
       this.updateToolEventCard(el, { ...payload, phase: "finished" });
       return el;
     }
-    if (type === "scope_clarification") {
-      const replacement = this.buildScopeClarificationElement(payload, (block.block_id || block.blockId || "").toString().trim());
-      if (replacement && replacement !== el) {
-        el.replaceWith(replacement);
-        return replacement;
-      }
-      return el;
-    }
-
     if (type === "paragraph" || type === "heading" || type === "list_item") {
       const content = Array.isArray(payload.content) ? payload.content : [];
       const rawText = this.inlineNodesToText(content);
@@ -8718,10 +8231,6 @@ class ChatPortalClient {
       wrapper.appendChild(summary);
       wrapper.appendChild(drawer);
       return wrapper;
-    }
-
-    if (type === "scope_clarification") {
-      return this.buildScopeClarificationElement(payload, blockId);
     }
 
 		    if (type === "paragraph" || type === "heading" || type === "list_item") {
@@ -10895,6 +10404,120 @@ class ChatPortalClient {
       return section;
     };
 
+    const buildToolIoSection = (title, items, labelBuilder) => {
+      const section = document.createElement("div");
+      const header = document.createElement("div");
+      header.className = "text-[11px] font-semibold text-muted-foreground/80 uppercase tracking-wide";
+      header.textContent = title;
+      section.appendChild(header);
+
+      const buildJsonBlock = (label, payload, { open = false, renderAs = "json", mono = true } = {}) => {
+        const details = document.createElement("details");
+        details.className = "mt-2 rounded-md border border-border/30 bg-background/30 px-2 py-1";
+        if (open) details.open = true;
+
+        const summary = document.createElement("summary");
+        summary.className = "cursor-pointer select-none text-[11px] font-semibold text-foreground/80";
+        summary.textContent = label;
+        details.appendChild(summary);
+
+        const pre = document.createElement("pre");
+        pre.className = `mt-2 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed ${mono ? "" : "font-sans"}`.trim();
+        try {
+          if (renderAs === "text") {
+            pre.textContent = payload === null || typeof payload === "undefined" ? "" : String(payload);
+          } else {
+            pre.textContent = JSON.stringify(payload, null, 2);
+          }
+        } catch (_err) {
+          pre.textContent = payload === null || typeof payload === "undefined" ? "" : String(payload);
+        }
+        details.appendChild(pre);
+
+        return details;
+      };
+
+      items.forEach((item, idx) => {
+        const itemDetails = document.createElement("details");
+        itemDetails.className = "mt-1 rounded-md border border-border/40 bg-background/40 px-2 py-1";
+
+        const itemSummary = document.createElement("summary");
+        itemSummary.className = "cursor-pointer select-none";
+        itemSummary.textContent = labelBuilder(item, idx);
+        itemDetails.appendChild(itemSummary);
+
+        // Compact meta row (quick glance) so you don't need to open 3 nested objects to know what's going on.
+        const meta = document.createElement("div");
+        meta.className = "mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground";
+        const metaBits = [];
+        if (item && typeof item.duration_ms === "number") metaBits.push(`duration_ms=${item.duration_ms}`);
+        if (item && item.status) metaBits.push(`status=${String(item.status)}`);
+        if (item && item.tool) metaBits.push(`executed=${String(item.tool)}`);
+        if (item && item.llm_request && item.llm_request.tool) metaBits.push(`requested=${String(item.llm_request.tool)}`);
+        meta.textContent = metaBits.join(" • ");
+        if (meta.textContent) itemDetails.appendChild(meta);
+
+        // Show the same information, but separated into labeled blocks:
+        // - output_summary is curated
+        // - llm_request is what the model asked for
+        // - llm_response has both raw + parsed (we keep both, but don't interleave them)
+        // - full_record is "everything", for when you need it
+
+        if (item && item.output_summary) {
+          itemDetails.appendChild(buildJsonBlock("Output summary", item.output_summary, { open: true }));
+        }
+
+        if (item && item.llm_request) {
+          itemDetails.appendChild(buildJsonBlock("LLM request", item.llm_request, { open: false }));
+        }
+
+        if (item && item.llm_response) {
+          const resp = item.llm_response;
+          const parsed = resp && typeof resp === "object" ? resp.content_json : null;
+          const raw = resp && typeof resp === "object" ? resp.content : null;
+
+          if (parsed) {
+            itemDetails.appendChild(buildJsonBlock("LLM response (parsed)", parsed, { open: true }));
+          } else if (raw) {
+            // Fallback: if parsing failed upstream for some reason, still try to show a parsed view.
+            let rawParsed = null;
+            try {
+              rawParsed = JSON.parse(String(raw));
+            } catch (_err) {
+              rawParsed = null;
+            }
+            if (rawParsed) {
+              itemDetails.appendChild(buildJsonBlock("LLM response (parsed)", rawParsed, { open: true }));
+            }
+          }
+
+          if (raw) {
+            itemDetails.appendChild(buildJsonBlock("LLM response (raw)", raw, { open: false, renderAs: "text" }));
+          }
+
+          // Keep the rest of the response object (tool_call_id, etc.) available without duplicating parsed/raw.
+          const respMeta = resp && typeof resp === "object" ? { ...resp } : null;
+          if (respMeta && typeof respMeta === "object") {
+            delete respMeta.content;
+            delete respMeta.content_json;
+            if (Object.keys(respMeta).length) {
+              itemDetails.appendChild(buildJsonBlock("LLM response (meta)", respMeta, { open: false }));
+            }
+          }
+        }
+
+        if (item && item.prompt_compaction) {
+          itemDetails.appendChild(buildJsonBlock("Prompt compaction", item.prompt_compaction, { open: false }));
+        }
+
+        itemDetails.appendChild(buildJsonBlock("Full record", item, { open: false }));
+
+        section.appendChild(itemDetails);
+      });
+
+      return section;
+    };
+
 	    if (!toolTrace.length && !promptBudget.length && !searchHistory.length && !results.length && !reads.length && !coverage.length && !tableRows.length) {
 	      const empty = document.createElement("div");
 	      empty.className = "text-[11px] text-muted-foreground";
@@ -10955,7 +10578,7 @@ class ChatPortalClient {
         prompt_compaction: item.prompt_compaction || null,
       }));
       container.appendChild(
-        buildSection("Tool I/O (LLM Exact)", ioEntries, (item, idx) => {
+        buildToolIoSection("Tool I/O (LLM Exact)", ioEntries, (item, idx) => {
           const requestToolRaw =
             item && item.llm_request && item.llm_request.tool
               ? String(item.llm_request.tool)

@@ -1949,91 +1949,6 @@ class KnowledgeSearchService:
                 "request": diagnostics.get("request_id"),
             },
         )
-        if (
-            bool(scope_summary.get("is_broad_scope"))
-            and not traits.is_identifier_like
-            and self._query_lacks_specific_scope(
-                business_profile=business_profile,
-                traits=traits,
-                table_context=table_context,
-                filler_tokens=filler_tokens,
-            )
-        ):
-            categories, top_categories = self._scope_categories_for_contract(
-                scope_summary=scope_summary,
-            )
-            if preclip_scope_summary:
-                ref_source_hits = diagnostics.get("scope_candidates_preclip") or chunk_hits
-            else:
-                ref_source_hits = chunk_hits
-            category_ref_hints = self._scope_category_ref_hints_from_candidates(
-                hits=ref_source_hits,
-                business_profile=business_profile,
-                top_categories=top_categories,
-                query_tokens=traits.tokens,
-                filler_tokens=filler_tokens,
-            )
-            evidenced_categories: tuple[str, ...] = tuple()
-            if category_ref_hints:
-                evidenced_categories = tuple(
-                    cat
-                    for cat in categories
-                    if cat in category_ref_hints and category_ref_hints[cat].get("ref_ids")
-                )
-                evidenced_top = tuple(
-                    cat
-                    for cat in top_categories
-                    if cat in category_ref_hints and category_ref_hints[cat].get("ref_ids")
-                )
-                if evidenced_categories:
-                    categories = evidenced_categories
-                    top_categories = evidenced_top or evidenced_categories[:self.scope_top_category_max]
-
-            if evidenced_categories and len(evidenced_categories) <= 1:
-                diagnostics["path"] = "direct_answer"
-                diagnostics["reason"] = "single_scope_cluster"
-                diagnostics["intent_requires_clarification"] = False
-            else:
-                clarification_question, scope_categories = self._build_scope_clarification_question(
-                    scope_summary=scope_summary,
-                )
-                diagnostics["path"] = "clarification"
-                diagnostics["reason"] = "broad_scope_ambiguity"
-                diagnostics["intent_requires_clarification"] = True
-                diagnostics["intent_clarification_question"] = clarification_question
-                diagnostics["scope_clarification_categories"] = list(scope_categories)
-                diagnostics["categories"] = list(categories)
-                diagnostics["top_categories"] = list(top_categories)
-                if category_ref_hints:
-                    diagnostics["scope_clarification_category_refs"] = category_ref_hints
-                diagnostics.setdefault("clarification_ui_mode", "text")
-                diagnostics["snippet_count"] = 0
-                diagnostics["total_duration_ms"] = self._duration_ms(overall_start)
-                diagnostics["auto_decision_contract"] = self._derive_auto_decision_contract(
-                    scoring_diagnostics=diagnostics,
-                    requires_clarification=True,
-                    scope_summary=scope_summary,
-                )
-                result_obj = KnowledgeSearchResult(
-                    snippets=tuple(),
-                    status="needs_clarification",
-                    diagnostics=diagnostics,
-                )
-                self._result_cache_set(cache_key, result_obj, limit=limit)
-                self._session_cache_set(session_cache, cache_key, result_obj, limit=limit)
-                self._record_retrieval_event(
-                    business_profile=business_profile,
-                    traits=traits,
-                    alias_result=alias_result,
-                    result=result_obj,
-                    feature_state=feature_state,
-                )
-                self._log_search_summary(
-                    business_profile=business_profile,
-                    request_id=request_id,
-                    result=result_obj,
-                )
-                return result_obj
         auto_score_diag = self._score_auto_mode_candidates(
             chunk_hits,
             query_tokens=traits.tokens,
@@ -8809,103 +8724,6 @@ class KnowledgeSearchService:
             return False
         return True
 
-    def _query_lacks_specific_scope(
-        self,
-        *,
-        business_profile,
-        traits: QueryTraits,
-        table_context: Mapping[str, object] | None = None,
-        filler_tokens: set[str] | None = None,
-    ) -> bool:
-        filler = {str(token).strip().lower() for token in (filler_tokens or set()) if str(token).strip()}
-        filler.update(
-            {
-                "what",
-                "which",
-                "who",
-                "when",
-                "where",
-                "why",
-                "how",
-                "is",
-                "are",
-                "was",
-                "were",
-                "do",
-                "does",
-                "did",
-                "can",
-                "could",
-                "should",
-                "would",
-                "will",
-                "me",
-                "my",
-                "our",
-                "your",
-                "their",
-                "them",
-                "us",
-                "all",
-                "any",
-                "ما",
-                "ماذا",
-                "ماهو",
-                "ماهي",
-                "اي",
-                "أي",
-                "هل",
-                "كم",
-            }
-        )
-        generic = self._scope_generic_tokens_for_business(business_profile)
-        canonical_filler = self._canonical_scope_token_set(filler)
-        canonical_generic = self._canonical_scope_token_set(generic)
-        query_tokens = self._canonical_scope_token_set(traits.tokens or ())
-
-        def _extract_non_generic_tokens(values: object) -> set[str]:
-            extracted: set[str] = set()
-            for raw in (values or ()):
-                normalized = self._normalize_topic_value(raw)
-                if not normalized:
-                    continue
-                for token in QueryNormalizer._TOKEN_SPLIT.split(normalized):
-                    canonical = self._canonical_scope_token(token)
-                    if (
-                        not canonical
-                        or canonical in canonical_filler
-                        or canonical in canonical_generic
-                    ):
-                        continue
-                    extracted.add(canonical)
-            return extracted
-
-        if table_context:
-            specific_tokens = _extract_non_generic_tokens(table_context.get("specific_tokens"))
-            if specific_tokens:
-                return False
-            specific_columns = _extract_non_generic_tokens(table_context.get("matched_columns_specific"))
-            if specific_columns:
-                return False
-            for label in (table_context.get("matched_row_labels") or ()):
-                if self._scope_is_specific_category(
-                    str(label),
-                    business_profile=business_profile,
-                    query_tokens=query_tokens,
-                    filler_tokens=filler,
-                ):
-                    return False
-
-        tokens = [self._canonical_scope_token(token) for token in (traits.tokens or ())]
-        tokens = [token for token in tokens if token]
-        if not tokens:
-            return True
-        meaningful = [token for token in tokens if token not in canonical_filler]
-        if not meaningful:
-            return True
-        specific = [token for token in meaningful if token not in canonical_generic]
-        return len(specific) == 0
-
     def _scope_categories_for_contract(
         self,
         *,
@@ -9078,35 +8896,6 @@ class KnowledgeSearchService:
                 break
         return tuple(normalized)
 
-    def _build_scope_clarification_question(
-        self,
-        *,
-        scope_summary: Mapping[str, object] | None,
-    ) -> tuple[str, tuple[str, ...]]:
-        categories, top_categories = self._scope_categories_for_contract(
-            scope_summary=scope_summary,
-        )
-        shown_categories = tuple(top_categories or categories[:4])
-
-        if shown_categories:
-            if len(shown_categories) == 1:
-                category_text = shown_categories[0]
-            elif len(shown_categories) == 2:
-                category_text = f"{shown_categories[0]} or {shown_categories[1]}"
-            else:
-                category_text = ", ".join(shown_categories[:-1]) + f", or {shown_categories[-1]}"
-            question = (
-                f'I found fees across multiple categories ({category_text}). '
-                "Do you want one specific category or all related fees?"
-            )
-            return question, shown_categories
-
-        question = (
-            "I found fees across multiple categories. "
-            "Do you want one specific category or all related fees?"
-        )
-        return question, tuple()
-
     def _scope_category_from_hit(
         self,
         hit: ChunkResult,
@@ -9171,7 +8960,7 @@ class KnowledgeSearchService:
         self,
         hits: Sequence[ChunkResult],
         *,
-        business_profile,
+        business_profile=None,
         query_tokens: Sequence[str] | None = None,
         filler_tokens: set[str] | None = None,
     ) -> dict[str, object]:
@@ -9531,7 +9320,7 @@ class KnowledgeSearchService:
             if isinstance(raw_ui_mode, str) and str(raw_ui_mode).strip()
             else None
         )
-        if normalized_ui_mode not in {"text", "mcq"}:
+        if normalized_ui_mode not in {"text"}:
             normalized_ui_mode = None
         if requires_clarification and not normalized_ui_mode:
             normalized_ui_mode = "text"
@@ -9576,6 +9365,8 @@ class KnowledgeSearchService:
         table_context: Mapping[str, object] | None,
     ) -> tuple[str, ...]:
         known_segments = self._known_segment_keys_for_business(business_profile)
+        allow_fallback_tokens = not known_segments
+        stop_tokens = self._scope_label_stop_tokens()
         candidates: list[str] = []
         seen: set[str] = set()
         for source in (
@@ -9588,7 +9379,16 @@ class KnowledgeSearchService:
                 normalized = self._normalize_segment_key(raw)
                 if not normalized:
                     continue
-                if normalized in known_segments and normalized not in seen:
+                if known_segments and normalized in known_segments and normalized not in seen:
+                    seen.add(normalized)
+                    candidates.append(normalized)
+                    continue
+                if (
+                    allow_fallback_tokens
+                    and normalized not in seen
+                    and normalized not in stop_tokens
+                    and len(normalized) > 1
+                ):
                     seen.add(normalized)
                     candidates.append(normalized)
         return tuple(candidates)
@@ -9795,7 +9595,7 @@ class KnowledgeSearchService:
         status: str,
         snippets: Sequence[KnowledgeSnippet],
         diagnostics: Mapping[str, object],
-        business_profile,
+        business_profile=None,
         traits: QueryTraits,
         table_context: Mapping[str, object] | None,
         table_blocked: bool,
@@ -9860,7 +9660,7 @@ class KnowledgeSearchService:
         if top_categories and "top_categories" not in updated_diagnostics:
             updated_diagnostics["top_categories"] = list(top_categories)
         current_ui_mode = str(updated_diagnostics.get("clarification_ui_mode") or "").strip().lower()
-        if requires_clarification and current_ui_mode not in {"text", "mcq"}:
+        if requires_clarification and current_ui_mode not in {"text"}:
             updated_diagnostics["clarification_ui_mode"] = "text"
         existing_contract = updated_diagnostics.get("auto_decision_contract")
         if isinstance(existing_contract, Mapping):
@@ -9872,7 +9672,7 @@ class KnowledgeSearchService:
             contract["categories"] = list(updated_diagnostics.get("categories") or contract.get("categories") or [])
             contract["top_categories"] = list(updated_diagnostics.get("top_categories") or contract.get("top_categories") or [])
             contract_ui_mode = str(updated_diagnostics.get("clarification_ui_mode") or contract.get("clarification_ui_mode") or "").strip().lower()
-            contract["clarification_ui_mode"] = contract_ui_mode if contract_ui_mode in {"text", "mcq"} else None
+            contract["clarification_ui_mode"] = contract_ui_mode if contract_ui_mode in {"text"} else None
             contract["conflict_detected"] = bool(updated_diagnostics.get("conflict_detected"))
             contract["no_result_reason"] = (
                 str(updated_diagnostics.get("no_result_reason")).strip().lower()

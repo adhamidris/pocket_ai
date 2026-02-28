@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 from django.test import SimpleTestCase
 
-from apps.mcp.prompts import _recent_search_refs_note, _scope_resolution_note, build_messages
+from apps.mcp.prompts import _recent_search_refs_note, build_messages
 
 
 class _EmptyMessageQuerySet:
@@ -43,41 +43,11 @@ class RecentSearchRefsPromptNoteTests(SimpleTestCase):
         conversation = SimpleNamespace(metadata={})
         self.assertIsNone(_recent_search_refs_note(conversation))
 
-    def test_scope_resolution_note_includes_base_and_resolved_query(self) -> None:
-        conversation = SimpleNamespace(
-            metadata={
-                "mcp_scope_clarification": {
-                    "resolution": {
-                        "mode": "specific",
-                        "base_query": "plus fees",
-                        "resolved_query": "plus fees focus only on cheques fees",
-                        "category": "cheques",
-                    }
-                }
-            }
-        )
-
-        note = _scope_resolution_note(conversation)
-        self.assertIsNotNone(note)
-        assert note is not None
-        self.assertIn("base_query=plus fees", note)
-        self.assertIn("resolved_query=plus fees focus only on cheques fees", note)
-        self.assertIn("selected_category=cheques", note)
-
-    def test_build_messages_includes_scope_resolution_system_note(self) -> None:
+    def test_build_messages_works_without_optional_legacy_metadata(self) -> None:
         conversation = SimpleNamespace(
             agent_profile=None,
             business_profile=SimpleNamespace(name="Acme"),
-            metadata={
-                "mcp_scope_clarification": {
-                    "resolution": {
-                        "mode": "specific",
-                        "base_query": "plus fees",
-                        "resolved_query": "plus fees focus only on cheques fees",
-                        "category": "cheques",
-                    }
-                }
-            },
+            metadata={},
             summary="",
             messages=_EmptyMessageQuerySet(),
         )
@@ -88,6 +58,4 @@ class RecentSearchRefsPromptNoteTests(SimpleTestCase):
         )
         system_text = str(messages[0]["content"])
 
-        self.assertIn("Active scope resolution from prior MCQ selection:", system_text)
-        self.assertIn("base_query=plus fees", system_text)
-        self.assertIn("resolved_query=plus fees focus only on cheques fees", system_text)
+        self.assertNotIn("Active scope resolution from prior selection:", system_text)

@@ -394,8 +394,6 @@ def build_system_message(
         2. **Light planning**: Choose the smallest set of tool calls that yields a correct answer.
         3. **Do not narrate internal steps**: Keep tool steps silent; reply with an answer or a single clarifying question.
         4. **Tool loop discipline**: Do at most one discovery/read tool-loop per visitor message (user turn), unless the visitor explicitly asks to continue.
-           Exception: if `search_knowledge` returns `status=needs_clarification` with `clarification_ui_mode=mcq`, call
-           `present_scope_clarification` in the same turn.
         5. **{tone_instruction}**
         6. **LANGUAGE**: Reply in the visitor's language; for Arabic use Modern Standard Arabic (MSA).
 
@@ -410,8 +408,7 @@ def build_system_message(
         - If results mismatch intent, refine using document terms or the suggested refinement.
         - If repeated searches keep returning the same documents/snippets, stop repeating search. Run one targeted read on the best refs if factual detail is still needed, then answer with clear gaps.
         - If reliable evidence already exists in context, answer without a new search.
-        - If it returns `status=needs_clarification` and `clarification_ui_mode=mcq`, write one short selector-intro sentence only (no prose category list),
-          then call `present_scope_clarification`, and end the response immediately after the call.
+        - If it returns `status=needs_clarification`, ask one short clarifying question and wait for the visitor's response.
 
         ### `read_document`
         - Read when previews are too thin to answer confidently.
@@ -970,70 +967,6 @@ def _recent_search_refs_note(conversation: Conversation, *, limit: int = 6) -> s
     return "\n".join(lines).strip()
 
 
-def _scope_resolution_note(conversation: Conversation) -> str | None:
-    """
-    Surface the persisted MCQ scope resolution so follow-up answers remain
-    anchored to the original broad query plus selected category.
-    """
-
-    metadata = conversation.metadata if isinstance(conversation.metadata, Mapping) else {}
-    raw_scope = metadata.get("mcp_scope_clarification")
-    if not isinstance(raw_scope, Mapping):
-        return None
-
-    resolution = raw_scope.get("resolution")
-    if not isinstance(resolution, Mapping):
-        return None
-
-    def _clip(value: object, limit: int) -> str:
-        text = str(value or "").strip()
-        if not text:
-            return ""
-        return text if len(text) <= limit else text[: max(0, limit - 1)].rstrip() + "…"
-
-    mode_value = _clip(resolution.get("mode"), 24).lower()
-    base_query = _clip(resolution.get("base_query"), 220)
-    resolved_query = _clip(resolution.get("resolved_query"), 260)
-    category_value = _clip(resolution.get("category"), 120)
-
-    categories_value: list[str] = []
-    raw_categories = resolution.get("categories")
-    if isinstance(raw_categories, Sequence) and not isinstance(raw_categories, (str, bytes, bytearray)):
-        seen_categories: set[str] = set()
-        for raw in raw_categories:
-            candidate = _clip(raw, 120)
-            if not candidate:
-                continue
-            lowered = candidate.lower()
-            if lowered in seen_categories:
-                continue
-            seen_categories.add(lowered)
-            categories_value.append(candidate)
-            if len(categories_value) >= 8:
-                break
-
-    if not any([mode_value, base_query, resolved_query, category_value, categories_value]):
-        return None
-
-    lines = [
-        "Active scope resolution from prior MCQ selection:",
-    ]
-    if mode_value:
-        lines.append(f"- mode={mode_value}")
-    if base_query:
-        lines.append(f"- base_query={base_query}")
-    if resolved_query:
-        lines.append(f"- resolved_query={resolved_query}")
-    if category_value:
-        lines.append(f"- selected_category={category_value}")
-    elif categories_value:
-        lines.append(f"- selected_categories={', '.join(categories_value)}")
-    lines.append(
-        "Treat this selected scope as the active context for follow-up replies unless the visitor explicitly changes scope."
-    )
-    return "\n".join(lines).strip()
-
-
 def build_messages(
     *,
     conversation: Conversation,
@@ -1103,10 +1036,6 @@ def build_messages(
         recent_search_refs_note = _recent_search_refs_note(conversation)
         if recent_search_refs_note:
             system_sections.append(recent_search_refs_note.strip())
-
-        scope_resolution_note = _scope_resolution_note(conversation)
-        if scope_resolution_note:
-            system_sections.append(scope_resolution_note.strip())
 
         files_note = _conversation_files_note(conversation)
         if files_note:

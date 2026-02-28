@@ -101,26 +101,40 @@ def structured_log(
         logger_obj: Optional logger override
         children: Optional list of child entries (for results, etc.)
     """
-    verbosity = get_verbosity(for_console=True)
+    verbosity_console = get_verbosity(for_console=True)
+    verbosity_file = get_verbosity(for_console=False)
     
     # Parse stage into category.event
     parts = stage.split(".", 1) if "." in stage else [stage, ""]
     category = parts[0].upper()
     event = parts[1].upper() if len(parts) > 1 else ""
     
-    # Build fields from detail and context
-    fields = _compact_detail(detail, verbosity)
+    # Build fields from detail and context.
+    #
+    # Important: do not permanently drop debug fields just because console verbosity is
+    # "standard". Console verbosity should only control what we *display* to stdout/stderr.
+    # File logs should be able to remain verbose for post-mortems.
+    fields_full = _compact_detail(detail, Verbosity.VERBOSE)
+    fields_console = _compact_detail(detail, verbosity_console)
     if context:
-        fields.update({k: v for k, v in context.items() if v is not None})
+        ctx_fields = {k: v for k, v in context.items() if v is not None}
+        fields_full.update(ctx_fields)
+        fields_console.update(ctx_fields)
     
     # Get target logger
     target_logger = logger_obj or NAMESPACE_LOGGERS.get(namespace) or logger
     
     # Create structured entry
-    entry = LogEntry(
+    entry_console = LogEntry(
         category=category,
         event=event,
-        fields=fields,
+        fields=fields_console,
+        level=level,
+    )
+    entry_file = LogEntry(
+        category=category,
+        event=event,
+        fields=fields_full,
         level=level,
     )
     
@@ -132,11 +146,12 @@ def structured_log(
                 event="",
                 fields={k: v for k, v in child.items() if k not in ("label", "name")},
             )
-            entry.children.append(child_entry)
+            entry_console.children.append(child_entry)
+            entry_file.children.append(child_entry)
     
     # Format based on verbosity and output type
-    console_fmt = ConsoleFormatter(verbosity)
-    file_fmt = FileFormatter(get_verbosity(for_console=False))
+    console_fmt = ConsoleFormatter(verbosity_console)
+    file_fmt = FileFormatter(verbosity_file)
     level_name = logging.getLevelName(level)
     
     # Check if we have handlers
@@ -150,9 +165,9 @@ def structured_log(
             is_console = isinstance(handler, logging.StreamHandler) and handler.stream in (sys.stdout, sys.stderr)
             
             if is_console:
-                msg = console_fmt.format(entry)
+                msg = console_fmt.format(entry_console)
             else:
-                msg = file_fmt.format(entry, level_name)
+                msg = file_fmt.format(entry_file, level_name)
             
             record = logging.LogRecord(
                 name=target_logger.name,
@@ -166,7 +181,7 @@ def structured_log(
             handler.emit(record)
     else:
         # Fallback: use file format
-        target_logger.log(level, file_fmt.format(entry, level_name))
+        target_logger.log(level, file_fmt.format(entry_file, level_name))
 
 
 def rag_log(

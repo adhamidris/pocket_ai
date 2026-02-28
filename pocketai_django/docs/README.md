@@ -10,8 +10,6 @@
 ## Core Areas
 - `architecture/` — portal content blocks + streaming state
 - `mcp/` — MCP connector beta checklist + validation plan
-- `mcp/phase0_scope_clarification_mcq_baseline_2026-02-22.md` — MCQ baseline + acceptance targets
-- `mcp/phase8_scope_clarification_mcq_rollout_2026-02-22.md` — MCQ rollout + monitoring runbook
 - `rag/` — RAG rollout + ops (Azure Search optional)
 - `ingestion/` — ingestion + normalization
 - `integrations/` — integrations APIs + email connectors (live)

@@ -9,7 +9,7 @@ This repo is a multi-tenant B2B SaaS. Your job is to ship production-ready chang
   - `KnowledgeSearchService.search` diagnostics include `auto_decision_contract` with additive fields `scope_summary`, `categories`, `top_categories`, `clarification_ui_mode`, `conflict_detected`, and `no_result_reason`.
   - Valid `no_result_reason` values are exactly: `not_found`, `not_applicable_to_segment`, `insufficient_evidence`.
   - If evidence conflicts for the same segment/category, runtime should emit `status=needs_clarification` with `reason=conflicting_evidence` and an evidence-aware `intent_clarification_question`.
-  - Scope clarification is backward-compatible by default: with `MCP_SCOPE_CLARIFICATION_MCQ_ENABLED=false`, tool payloads stay text-first and must not require MCQ-only keys. `clarification_ui_mode` should resolve to `text` in that mode.
+  - Scope clarification is text-only. Tool payloads must not require or emit selector-style clarification keys, and `clarification_ui_mode` should resolve to `text` when clarification is needed.
 
 ## Django and .venv location
 - Repo app root: `/pocketai_django/`
@@ -155,7 +155,7 @@ Example question format — always multiple choice, never open-ended:
 >
 > Your answers will shape the recommendation — no wrong answers, just different directions.
 
-Always use MCQ. Never ask an open-ended question the owner has to formulate an answer to. If the right options are not obvious to you, think harder before asking — the goal is that the owner just replies with letters like "1A, 2B, 3A" and that is enough to make the call.
+Always use multiple-choice questions. Never ask an open-ended question the owner has to formulate an answer to. If the right options are not obvious to you, think harder before asking — the goal is that the owner just replies with letters like "1A, 2B, 3A" and that is enough to make the call.
 
 Then wait for the owner's response before proposing a solution. The answers directly change what the correct technical recommendation is.
 

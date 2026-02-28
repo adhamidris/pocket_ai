@@ -1030,60 +1030,6 @@ def _with_ui_language(request: HttpRequest, metadata: Mapping[str, object] | Non
     return payload
 
 
-def _normalize_scope_selection_metadata(raw: object) -> dict[str, object] | None:
-    if not isinstance(raw, Mapping):
-        return None
-
-    def _clip(value: object, *, limit: int) -> str:
-        text = str(value or "").strip()
-        if not text:
-            return ""
-        if len(text) <= limit:
-            return text
-        return text[: max(1, limit)].rstrip()
-
-    def _normalize_action(value: object) -> str:
-        raw_action = _clip(value, limit=48).lower().replace("-", "_").replace(" ", "_")
-        aliases = {
-            "all": "all_fees",
-            "scope_all": "all_fees",
-            "scope_all_fees": "all_fees",
-            "choose_categories": "choose_categories",
-            "list_categories": "choose_categories",
-            "scope_choose_categories": "choose_categories",
-            "category": "select_category",
-            "scope_category": "select_category",
-            "scope_category_key": "select_category",
-        }
-        normalized = aliases.get(raw_action, raw_action)
-        return normalized if normalized in {"select_category", "all_fees", "choose_categories"} else ""
-
-    action = _normalize_action(raw.get("action") or raw.get("type"))
-    category_key_raw = _clip(raw.get("category_key") or raw.get("categoryKey"), limit=120).lower()
-    category_key = re.sub(r"[^0-9a-z_:\-\u0600-\u06FF]+", "", category_key_raw)
-    category_label = _clip(raw.get("category_label") or raw.get("categoryLabel"), limit=120)
-    block_id_raw = _clip(raw.get("block_id") or raw.get("blockId"), limit=120).lower()
-    block_id = re.sub(r"[^a-z0-9_:-]+", "", block_id_raw)
-    bucket_id_raw = _clip(raw.get("bucket_id") or raw.get("bucketId"), limit=120).lower()
-    bucket_id = re.sub(r"[^a-z0-9_:-]+", "", bucket_id_raw)
-
-    if not action and category_key:
-        action = "select_category"
-    if not action:
-        return None
-
-    payload: dict[str, object] = {"action": action}
-    if category_key:
-        payload["category_key"] = category_key
-    if category_label:
-        payload["category_label"] = category_label
-    if block_id:
-        payload["block_id"] = block_id
-    if bucket_id:
-        payload["bucket_id"] = bucket_id
-    return payload
-
-
 def _business_prefers_mcp(business: BusinessProfile | None, *, conversation=None) -> bool:
     """
     Evaluate whether a business should use the MCP orchestrator.
@@ -3688,14 +3634,6 @@ def portal_turn_create(request: HttpRequest) -> JsonResponse:
     session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
     body = (payload.get("body") or "").strip()
     metadata = _with_ui_language(request, _normalize_portal_metadata(payload.get("metadata") or {}))
-    scope_selection = _normalize_scope_selection_metadata(
-        metadata.get("scope_selection") or metadata.get("scopeSelection")
-    )
-    if scope_selection:
-        metadata["scope_selection"] = scope_selection
-    else:
-        metadata.pop("scope_selection", None)
-    metadata.pop("scopeSelection", None)
 
     if not session_token or not body:
         return _json_error("validation_error", "session_token and body are required.")
@@ -3728,8 +3666,6 @@ def portal_turn_create(request: HttpRequest) -> JsonResponse:
         "origin": "turn_create",
         "execution_mode": execution_mode,
     }
-    if scope_selection:
-        turn_metadata["scope_selection"] = scope_selection
     business_id = getattr(conversation, "business_profile_id", None)
     with tenant_context(business_id):
         turn = PortalTurn.objects.create(

@@ -234,12 +234,6 @@ SEARCH_PREFETCH_ABSOLUTE_CAP = 200
 # search_knowledge pagination (cursor) helpers
 SEARCH_KNOWLEDGE_CURSOR_SALT = "mcp.search_knowledge.cursor.v1"
 SEARCH_KNOWLEDGE_CURSOR_CACHE_PREFIX = "mcp:search_knowledge:cursor:v1"
-SCOPE_CLARIFICATION_MAX_CATEGORIES = 40
-SCOPE_CLARIFICATION_TOP_CATEGORIES = 3
-SCOPE_FALLBACK_MAX_REF_ITEMS = 2
-SCOPE_FALLBACK_MIN_MAPPED_CONFIDENCE = 0.6
-
-
 def _search_cursor_cache_key(*, conversation: Conversation, session_id: str) -> str:
     return (
         f"{SEARCH_KNOWLEDGE_CURSOR_CACHE_PREFIX}:"
@@ -1374,27 +1368,6 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
         required=(),
     ),
     _function_schema(
-        name="present_scope_clarification",
-        description=(
-            "Render the pending scope-clarification selector after search_knowledge returns broad-scope ambiguity "
-            "in MCQ mode. Call this immediately when search_knowledge responds with status=needs_clarification "
-            "and clarification_ui_mode=mcq."
-        ),
-        properties={
-            "__ui": {
-                "type": "object",
-                "description": "UI-only metadata (ignored by the tool).",
-                "properties": {
-                    "spinner_text": {
-                        "type": "string",
-                        "description": "Short portal spinner label for this tool call.",
-                    }
-                },
-            }
-        },
-        required=(),
-    ),
-    _function_schema(
         name="search_conversation_files",
         description="Search files uploaded in this chat session (PDFs).",
         properties={
@@ -1753,6 +1726,20 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
                         "cursor": {
                             "type": "string",
                             "description": "Opaque continuation cursor from a previous read_knowledge response.",
+                        },
+                        "row_start": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": (
+                                "For table refs only: 0-based row offset within the returned table body "
+                                "(excluding header/separator rows)."
+                            ),
+                        },
+                        "row_limit": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 200,
+                            "description": "For table refs only: maximum number of rows to return for this read.",
                         },
                     },
                     "required": ["id"],
@@ -2393,7 +2380,7 @@ def execute_tool(
             "error_code": "unsupported_tool",
             "hint": (
                 "Unsupported tool. Use search_knowledge/read_knowledge/list_tables, "
-                "or present_scope_clarification for pending MCQ clarification."
+                "or query_dataset."
             ),
         }
     ctx = context or ToolExecutionContext()
@@ -3808,815 +3795,6 @@ def _maybe_throttle_full_page(
     return None
 
 
-def _normalize_scope_text(value: object) -> str:
-    text = str(value or "").strip().lower()
-    if not text:
-        return ""
-    return re.sub(r"\s+", " ", text)
-
-
-def _clean_scope_category_label(value: object, *, max_chars: int = 72) -> str:
-    text = re.sub(r"\s+", " ", str(value or "")).strip(" \n\r\t-:|,.;")
-    if not text:
-        return ""
-    if len(text) > max_chars:
-        text = text[:max_chars].rstrip()
-    return text
-
-
-def _scope_clarification_categories_from_diagnostics(
-    diagnostics: Mapping[str, object] | None,
-) -> list[str]:
-    diag = diagnostics or {}
-    candidates: list[object] = []
-    raw_top_categories = diag.get("top_categories")
-    if isinstance(raw_top_categories, Sequence) and not isinstance(raw_top_categories, (str, bytes, bytearray)):
-        candidates.extend(list(raw_top_categories))
-    raw_categories = diag.get("scope_clarification_categories")
-    if isinstance(raw_categories, Sequence) and not isinstance(raw_categories, (str, bytes, bytearray)):
-        candidates.extend(list(raw_categories))
-    if not candidates:
-        raw_contract_categories = diag.get("categories")
-        if isinstance(raw_contract_categories, Sequence) and not isinstance(
-            raw_contract_categories, (str, bytes, bytearray)
-        ):
-            candidates.extend(list(raw_contract_categories))
-    if not candidates:
-        scope_summary = diag.get("scope_summary")
-        if isinstance(scope_summary, Mapping):
-            category_counts = scope_summary.get("category_counts")
-            if isinstance(category_counts, Mapping):
-                candidates.extend(list(category_counts.keys()))
-
-    categories: list[str] = []
-    seen: set[str] = set()
-    for raw in candidates:
-        cleaned = _clean_scope_category_label(raw, max_chars=56)
-        normalized = _normalize_scope_text(cleaned)
-        if not cleaned or not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        categories.append(cleaned)
-        if len(categories) >= SCOPE_CLARIFICATION_TOP_CATEGORIES:
-            break
-    return categories
-
-
-def _scope_clarification_all_categories_from_diagnostics(
-    diagnostics: Mapping[str, object] | None,
-) -> list[str]:
-    diag = diagnostics or {}
-    candidates: list[object] = []
-
-    raw_categories = diag.get("categories")
-    if isinstance(raw_categories, Sequence) and not isinstance(raw_categories, (str, bytes, bytearray)):
-        candidates.extend(list(raw_categories))
-
-    raw_top_categories = diag.get("top_categories")
-    if isinstance(raw_top_categories, Sequence) and not isinstance(raw_top_categories, (str, bytes, bytearray)):
-        candidates.extend(list(raw_top_categories))
-
-    raw_scope_categories = diag.get("scope_clarification_categories")
-    if isinstance(raw_scope_categories, Sequence) and not isinstance(raw_scope_categories, (str, bytes, bytearray)):
-        candidates.extend(list(raw_scope_categories))
-
-    if not candidates:
-        scope_summary = diag.get("scope_summary")
-        if isinstance(scope_summary, Mapping):
-            category_counts = scope_summary.get("category_counts")
-            if isinstance(category_counts, Mapping):
-                candidates.extend(list(category_counts.keys()))
-
-    categories: list[str] = []
-    seen: set[str] = set()
-    for raw in candidates:
-        cleaned = _clean_scope_category_label(raw, max_chars=64)
-        normalized = _normalize_scope_text(cleaned)
-        if not cleaned or not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        categories.append(cleaned)
-        if len(categories) >= SCOPE_CLARIFICATION_MAX_CATEGORIES:
-            break
-    return categories
-
-
-def _scope_chip_slug(value: str) -> str:
-    normalized = _normalize_scope_text(value)
-    if not normalized:
-        return ""
-    slug = re.sub(r"[^0-9a-z\u0600-\u06FF]+", "_", normalized)
-    return slug.strip("_")
-
-
-def _scope_category_key(value: object) -> str:
-    normalized = _normalize_scope_text(value)
-    if not normalized:
-        return ""
-    digest = hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:12]
-    slug = _scope_chip_slug(str(value or ""))
-    slug_part = slug[:40] if slug else "category"
-    return f"{slug_part}_{digest}"
-
-
-def _normalize_scope_category_key(value: object) -> str:
-    key = str(value or "").strip().lower()
-    if not key:
-        return ""
-    compact = re.sub(r"\s+", "", key)
-    compact = re.sub(r"[^0-9a-z_\-\u0600-\u06FF]", "", compact)
-    return compact[:120]
-
-
-def _scope_category_selector_query(category_key: object) -> str:
-    normalized_key = _normalize_scope_category_key(category_key)
-    if not normalized_key:
-        return ""
-    return f"scope:category_key:{normalized_key}"
-
-
-def _normalize_scope_ref_ids(values: object, *, limit: int = 8) -> list[str]:
-    if isinstance(values, (str, bytes, bytearray)):
-        candidates: list[object] = [values]
-    elif isinstance(values, Sequence):
-        candidates = list(values)
-    else:
-        return []
-
-    ref_ids: list[str] = []
-    seen: set[str] = set()
-    for raw in candidates:
-        value = str(raw or "").strip()
-        if not value:
-            continue
-        try:
-            parsed = str(uuid.UUID(value))
-        except (ValueError, TypeError, AttributeError):
-            continue
-        if parsed in seen:
-            continue
-        seen.add(parsed)
-        ref_ids.append(parsed)
-        if len(ref_ids) >= limit:
-            break
-    return ref_ids
-
-
-def _coerce_scope_option_mapped_refs(value: object) -> dict[str, object] | None:
-    if isinstance(value, Mapping):
-        mapped: dict[str, object] = {}
-        ref_ids = _normalize_scope_ref_ids(value.get("ref_ids") or value.get("refs") or value.get("ids"))
-        if ref_ids:
-            mapped["ref_ids"] = ref_ids
-        cursor = str(value.get("cursor") or value.get("next_cursor") or "").strip()
-        if cursor:
-            mapped["cursor"] = cursor[:200]
-        source = str(value.get("source") or "").strip()
-        if source:
-            mapped["source"] = source[:64]
-        confidence = value.get("confidence")
-        if isinstance(confidence, (int, float)):
-            confidence_value = max(0.0, min(1.0, float(confidence)))
-            mapped["confidence"] = round(confidence_value, 3)
-        fallback_value = value.get("fallback")
-        if isinstance(fallback_value, bool):
-            if fallback_value:
-                mapped["fallback"] = "scoped_search"
-        elif fallback_value is not None:
-            fallback_text = str(fallback_value).strip().lower()
-            if fallback_text:
-                mapped["fallback"] = fallback_text[:64]
-        if mapped:
-            return mapped
-        return None
-
-    ref_ids = _normalize_scope_ref_ids(value)
-    if ref_ids:
-        return {"ref_ids": ref_ids}
-    fallback_text = str(value or "").strip().lower()
-    if fallback_text in {"fallback", "scoped_search"}:
-        return {"fallback": "scoped_search"}
-    return None
-
-
-def _scope_clarification_category_ref_map(
-    diagnostics: Mapping[str, object] | None,
-) -> dict[str, dict[str, object]]:
-    diag = diagnostics or {}
-    raw_map = diag.get("scope_clarification_category_refs")
-    if not isinstance(raw_map, Mapping):
-        return {}
-
-    normalized_map: dict[str, dict[str, object]] = {}
-    for raw_key, raw_value in raw_map.items():
-        key = str(raw_key or "").strip()
-        if not key:
-            continue
-        mapped = _coerce_scope_option_mapped_refs(raw_value)
-        if not mapped:
-            continue
-        normalized_map[key] = dict(mapped)
-        normalized_key = _normalize_scope_text(key)
-        if normalized_key and normalized_key not in normalized_map:
-            normalized_map[normalized_key] = dict(mapped)
-    return normalized_map
-
-
-def _normalize_scope_bucket_id(value: object) -> str:
-    text = str(value or "").strip().lower()
-    if not text:
-        return ""
-    normalized = "".join(ch for ch in text if ch.isalnum() or ch in {"_", "-", ":"})
-    return normalized[:120]
-
-
-def _scope_selection_bucket_id_from_context(context: ToolExecutionContext) -> str:
-    latest_scope_selection = (
-        dict(context.latest_scope_selection)
-        if isinstance(getattr(context, "latest_scope_selection", None), Mapping)
-        else {}
-    )
-    return _normalize_scope_bucket_id(
-        latest_scope_selection.get("bucket_id") or latest_scope_selection.get("bucketId")
-    )
-
-
-def _pending_scope_clarification_state(
-    *,
-    context: ToolExecutionContext,
-) -> dict[str, object] | None:
-    selected_bucket_id = _scope_selection_bucket_id_from_context(context)
-    if selected_bucket_id:
-        get_pending_scope = getattr(context, "get_pending_scope_clarification", None)
-        if callable(get_pending_scope):
-            resolved = get_pending_scope(bucket_id=selected_bucket_id)
-            if isinstance(resolved, Mapping):
-                return dict(resolved)
-            return None
-        raw_buckets = getattr(context, "scope_clarification_buckets", None)
-        if isinstance(raw_buckets, Mapping):
-            bucket_state = raw_buckets.get(selected_bucket_id)
-            if isinstance(bucket_state, Mapping):
-                return dict(bucket_state)
-        pending = (
-            dict(context.pending_scope_clarification)
-            if isinstance(getattr(context, "pending_scope_clarification", None), Mapping)
-            else None
-        )
-        if isinstance(pending, Mapping):
-            pending_bucket_id = _normalize_scope_bucket_id(pending.get("bucket_id"))
-            if pending_bucket_id == selected_bucket_id:
-                return dict(pending)
-        return None
-    pending = (
-        dict(context.pending_scope_clarification)
-        if isinstance(getattr(context, "pending_scope_clarification", None), Mapping)
-        else None
-    )
-    if isinstance(pending, Mapping):
-        return dict(pending)
-    return None
-
-
-def _resolve_scope_option_mapped_refs(
-    *,
-    category_key: str,
-    category_label: str | None,
-    category_ref_map: Mapping[str, dict[str, object]],
-) -> dict[str, object] | None:
-    candidates: list[str] = []
-    if category_key:
-        candidates.append(category_key)
-    if category_label:
-        candidates.append(category_label)
-        normalized_label = _normalize_scope_text(category_label)
-        if normalized_label:
-            candidates.append(normalized_label)
-    for candidate in candidates:
-        mapped = category_ref_map.get(candidate)
-        if isinstance(mapped, Mapping):
-            return dict(mapped)
-    return None
-
-
-def _build_scope_clarification_mcq_diagnostics(
-    diagnostics: Mapping[str, object] | None,
-) -> dict[str, object]:
-    base = dict(diagnostics or {})
-    bucket_id = _normalize_scope_bucket_id(
-        base.get("scope_clarification_bucket_id") or base.get("bucket_id")
-    )
-    categories = _scope_clarification_all_categories_from_diagnostics(base)
-    top_categories = _scope_clarification_categories_from_diagnostics(base)
-    category_ref_map = _scope_clarification_category_ref_map(base)
-    category_refs_for_payload: dict[str, dict[str, object]] = {}
-
-    if not categories and top_categories:
-        categories = list(top_categories)
-    if not top_categories and categories:
-        top_categories = list(categories[:SCOPE_CLARIFICATION_TOP_CATEGORIES])
-    if not categories:
-        return {}
-
-    all_query = "all"
-    choose_categories_query = "what categories do you have?"
-    options: list[dict[str, object]] = []
-    actions: list[dict[str, object]] = []
-
-    def _add_option(
-        *,
-        option_id: str,
-        label: str,
-        query: str,
-        kind: str,
-        category_key: str,
-        category: str | None = None,
-        mapped_refs: Mapping[str, object] | None = None,
-        expands_categories: bool = False,
-    ) -> None:
-        option: dict[str, object] = {
-            "id": option_id,
-            "label": label,
-            "kind": kind,
-            "query": query,
-            "selection_mode": "single",
-            "category_key": category_key,
-        }
-        if bucket_id:
-            option["bucket_id"] = bucket_id
-        if category:
-            option["category"] = category
-        if expands_categories:
-            option["expands"] = "categories"
-        if isinstance(mapped_refs, Mapping) and mapped_refs:
-            option["mapped_refs"] = dict(mapped_refs)
-        options.append(option)
-        action: dict[str, object] = {"id": option_id, "query": query, "category_key": category_key}
-        if bucket_id:
-            action["bucket_id"] = bucket_id
-        if isinstance(mapped_refs, Mapping) and mapped_refs:
-            action["mapped_refs"] = dict(mapped_refs)
-        actions.append(action)
-
-    _add_option(
-        option_id="all_fees",
-        label="All fees",
-        query=all_query,
-        kind="action",
-        category_key="scope_all_fees",
-    )
-    _add_option(
-        option_id="choose_categories",
-        label="Choose categories",
-        query=choose_categories_query,
-        kind="action",
-        category_key="scope_choose_categories",
-        expands_categories=True,
-    )
-    for category in top_categories:
-        category_key = _scope_category_key(category)
-        option_id = f"category_{category_key}" if category_key else f"category_{len(options)}"
-        selector_query = _scope_category_selector_query(category_key) or category
-        mapped_refs = _resolve_scope_option_mapped_refs(
-            category_key=category_key,
-            category_label=category,
-            category_ref_map=category_ref_map,
-        )
-        if not mapped_refs:
-            mapped_refs = {"fallback": "scoped_search"}
-        if category_key and isinstance(mapped_refs, Mapping) and mapped_refs:
-            category_refs_for_payload[category_key] = dict(mapped_refs)
-        _add_option(
-            option_id=option_id,
-            label=category,
-            query=selector_query,
-            kind="category",
-            category_key=category_key,
-            category=category,
-            mapped_refs=mapped_refs,
-        )
-
-    result: dict[str, object] = {
-        "clarification_ui_mode": "mcq",
-        "scope_clarification_contract_version": 1,
-        "assistant_guidance": (
-            "MCQ selector is shown to the visitor. Ask them to choose one option, "
-            "and do not enumerate category choices in prose."
-        ),
-        "suppress_textual_choice_list": True,
-        "categories": categories,
-        "top_categories": top_categories,
-        "scope_clarification_categories": top_categories,
-        "scope_clarification_options": options,
-        "scope_clarification_actions": actions,
-        "mcq_options": list(options),
-        "mcq_actions": list(actions),
-        "scope_clarification_more_available": len(categories) > len(top_categories),
-        "scope_clarification_more_query": choose_categories_query,
-        "scope_clarification_all_query": all_query,
-    }
-    if bucket_id:
-        result["scope_clarification_bucket_id"] = bucket_id
-    if category_refs_for_payload:
-        result["scope_clarification_category_refs"] = dict(category_refs_for_payload)
-    return result
-
-
-def _build_scope_clarification_payload(
-    diagnostics: Mapping[str, object] | None,
-    *,
-    mcq_enabled: bool,
-) -> dict[str, object] | None:
-    categories = _scope_clarification_all_categories_from_diagnostics(diagnostics)
-    top_categories = _scope_clarification_categories_from_diagnostics(diagnostics)
-    if not categories and top_categories:
-        categories = list(top_categories)
-    if not top_categories and categories:
-        top_categories = list(categories[:SCOPE_CLARIFICATION_TOP_CATEGORIES])
-    if not categories:
-        return None
-
-    payload: dict[str, object] = {
-        "mode": "mcq" if mcq_enabled else "text",
-        "categories": categories,
-        "top_categories": top_categories,
-    }
-
-    if not mcq_enabled:
-        return payload
-
-    options = diagnostics.get("scope_clarification_options") if isinstance(diagnostics, Mapping) else None
-    actions = diagnostics.get("scope_clarification_actions") if isinstance(diagnostics, Mapping) else None
-    if isinstance(options, Sequence) and not isinstance(options, (str, bytes, bytearray)):
-        chips: list[dict[str, object]] = []
-        for item in options:
-            if not isinstance(item, Mapping):
-                continue
-            chip = dict(item)
-            chips.append(chip)
-        if chips:
-            payload["chips"] = chips
-    if isinstance(actions, Sequence) and not isinstance(actions, (str, bytes, bytearray)):
-        payload_actions: list[dict[str, object]] = []
-        for item in actions:
-            if not isinstance(item, Mapping):
-                continue
-            payload_actions.append(dict(item))
-        if payload_actions:
-            payload["actions"] = payload_actions
-    contract_version = diagnostics.get("scope_clarification_contract_version") if isinstance(diagnostics, Mapping) else None
-    if isinstance(contract_version, int) and contract_version > 0:
-        payload["contract_version"] = int(contract_version)
-    elif isinstance(contract_version, str) and contract_version.strip().isdigit():
-        payload["contract_version"] = int(contract_version.strip())
-    bucket_id = _normalize_scope_bucket_id(
-        diagnostics.get("scope_clarification_bucket_id") if isinstance(diagnostics, Mapping) else ""
-    )
-    if bucket_id:
-        payload["bucket_id"] = bucket_id
-        chips_for_payload = payload.get("chips")
-        if isinstance(chips_for_payload, list):
-            normalized_chips: list[dict[str, object]] = []
-            for item in chips_for_payload:
-                if not isinstance(item, Mapping):
-                    continue
-                chip = dict(item)
-                chip.setdefault("bucket_id", bucket_id)
-                normalized_chips.append(chip)
-            payload["chips"] = normalized_chips
-        actions_for_payload = payload.get("actions")
-        if isinstance(actions_for_payload, list):
-            normalized_actions: list[dict[str, object]] = []
-            for item in actions_for_payload:
-                if not isinstance(item, Mapping):
-                    continue
-                action = dict(item)
-                action.setdefault("bucket_id", bucket_id)
-                normalized_actions.append(action)
-            payload["actions"] = normalized_actions
-    raw_category_refs = diagnostics.get("scope_clarification_category_refs") if isinstance(diagnostics, Mapping) else None
-    if isinstance(raw_category_refs, Mapping):
-        canonical_refs: dict[str, dict[str, object]] = {}
-        for raw_key, raw_value in raw_category_refs.items():
-            category_key = str(raw_key or "").strip()
-            if not category_key:
-                continue
-            mapped = _coerce_scope_option_mapped_refs(raw_value)
-            if not mapped:
-                continue
-            canonical_refs[category_key] = dict(mapped)
-        if canonical_refs:
-            payload["category_refs"] = canonical_refs
-    payload["all_query"] = "all"
-    payload["choose_categories_query"] = "what categories do you have?"
-    payload["more_available"] = len(categories) > len(top_categories)
-    payload["assistant_guidance"] = (
-        "MCQ selector is shown to the visitor. Ask them to choose one option, "
-        "and do not enumerate category choices in prose."
-    )
-    payload["suppress_textual_choice_list"] = True
-    return payload
-
-
-def _build_scope_clarification_hint(
-    diagnostics: Mapping[str, object] | None,
-) -> str:
-    categories = _scope_clarification_categories_from_diagnostics(diagnostics)
-    if categories:
-        if len(categories) == 1:
-            category_text = categories[0]
-        elif len(categories) == 2:
-            category_text = f"{categories[0]} or {categories[1]}"
-        else:
-            category_text = ", ".join(categories[:-1]) + f", or {categories[-1]}"
-        return (
-            f"I found fees across multiple categories ({category_text}). "
-            "Do you want one specific category or all related fees?"
-        )
-    return (
-        "I found fees across multiple categories. "
-        "Do you want one specific category or all related fees?"
-    )
-
-
-def _scope_specific_tokens(value: object) -> set[str]:
-    normalized = _normalize_scope_text(value).replace("_", " ")
-    if not normalized:
-        return set()
-
-    generic_tokens = {
-        "a",
-        "an",
-        "and",
-        "all",
-        "also",
-        "are",
-        "as",
-        "at",
-        "be",
-        "by",
-        "category",
-        "categories",
-        "customer",
-        "customers",
-        "details",
-        "do",
-        "fee",
-        "fees",
-        "for",
-        "from",
-        "give",
-        "i",
-        "in",
-        "is",
-        "list",
-        "me",
-        "need",
-        "of",
-        "on",
-        "one",
-        "or",
-        "please",
-        "plus",
-        "prime",
-        "related",
-        "segment",
-        "service",
-        "services",
-        "show",
-        "specific",
-        "tell",
-        "the",
-        "these",
-        "those",
-        "to",
-        "want",
-        "wealth",
-        "what",
-        "which",
-        "with",
-        "you",
-        "ال",
-        "الرسوم",
-        "العميل",
-        "العملاء",
-        "الكل",
-        "تفاصيل",
-        "جميع",
-        "رسوم",
-        "فئة",
-        "فئات",
-        "عميل",
-        "عملاء",
-        "كل",
-        "كلها",
-        "كله",
-    }
-
-    tokens: set[str] = set()
-    for raw_token in re.split(r"[^0-9a-z\u0600-\u06FF]+", normalized):
-        token = raw_token.strip().lower()
-        if not token or token in generic_tokens:
-            continue
-        token_variants = {token}
-        # Light stemming for English plural/verb variants to improve category-name matching.
-        if re.fullmatch(r"[a-z0-9]+", token):
-            if token.endswith("ies") and len(token) > 4:
-                token_variants.add(token[:-3] + "y")
-            if token.endswith("es") and len(token) > 4:
-                token_variants.add(token[:-2])
-            if token.endswith("s") and len(token) > 3:
-                token_variants.add(token[:-1])
-            if token.endswith("ing") and len(token) > 5:
-                token_variants.add(token[:-3])
-            if token.endswith("ed") and len(token) > 4:
-                token_variants.add(token[:-2])
-        tokens.update(variant for variant in token_variants if variant and variant not in generic_tokens)
-    return tokens
-
-
-def _match_scope_categories_for_query(
-    *,
-    query_text: str,
-    categories: Sequence[str],
-) -> list[str]:
-    normalized_query = _normalize_scope_text(query_text)
-    if not normalized_query:
-        return []
-    query_tokens = _scope_specific_tokens(normalized_query)
-
-    scored: list[tuple[str, float, int]] = []
-    for category in categories:
-        cleaned = _clean_scope_category_label(category, max_chars=96)
-        normalized_category = _normalize_scope_text(cleaned)
-        if not normalized_category:
-            continue
-        if normalized_category in normalized_query or normalized_query in normalized_category:
-            scored.append((cleaned, 1.0, 3))
-            continue
-
-        category_tokens = _scope_specific_tokens(normalized_category)
-        if not category_tokens:
-            continue
-        overlap = category_tokens.intersection(query_tokens)
-        overlap_count = len(overlap)
-        if overlap_count <= 0:
-            continue
-        coverage = overlap_count / max(1, len(category_tokens))
-        query_coverage = overlap_count / max(1, len(query_tokens))
-        score = (coverage * 0.75) + (query_coverage * 0.25)
-        if overlap_count >= 2 or score >= 0.5 or (overlap_count == 1 and query_coverage >= 0.9):
-            scored.append((cleaned, score, overlap_count))
-
-    if not scored:
-        return []
-
-    scored.sort(key=lambda item: (-item[1], -item[2], item[0].lower()))
-    selected: list[str] = []
-    seen: set[str] = set()
-    for category, _score, _overlap_count in scored:
-        normalized = _normalize_scope_text(category)
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        selected.append(category)
-        if len(selected) >= 6:
-            break
-    return selected
-
-
-def _is_scope_category_list_request(normalized_query: str) -> bool:
-    text = _normalize_scope_text(normalized_query)
-    if not text:
-        return False
-
-    exact_markers = {
-        "categories",
-        "category",
-        "available categories",
-        "other categories",
-        "what categories",
-        "which categories",
-        "list categories",
-        "show categories",
-        "الفئات",
-        "فئات",
-        "التصنيفات",
-        "الفئات المتاحة",
-    }
-    if text in exact_markers:
-        return True
-
-    phrase_markers = (
-        "what categories",
-        "which categories",
-        "show categories",
-        "list categories",
-        "other categories",
-        "available categories",
-        "what other categories",
-        "what are the categories",
-        "what categories do you have",
-        "ما هي الفئات",
-        "ما الفئات",
-        "ايه الفئات",
-        "الفئات المتاحة",
-        "ما هي التصنيفات",
-    )
-    return any(marker in text for marker in phrase_markers)
-
-
-def _build_scope_categories_listing_hint(categories: Sequence[str]) -> str:
-    cleaned: list[str] = []
-    seen: set[str] = set()
-    for raw in categories:
-        value = _clean_scope_category_label(raw, max_chars=64)
-        normalized = _normalize_scope_text(value)
-        if not value or not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        cleaned.append(value)
-        if len(cleaned) >= SCOPE_CLARIFICATION_MAX_CATEGORIES:
-            break
-
-    if not cleaned:
-        return (
-            "I can continue with a specific category or all related fees. "
-            "Reply with a category name, multiple categories, or \"all\"."
-        )
-
-    listed = ", ".join(cleaned)
-    return (
-        f"Available categories: {listed}. "
-        "Reply with one category, multiple categories, or \"all\"."
-    )
-
-
-def _extract_scope_clarification_intent(user_query: str) -> dict[str, str] | None:
-    raw_query = str(user_query or "").strip()
-    normalized_query = _normalize_scope_text(raw_query)
-    if not normalized_query:
-        return None
-
-    compact = re.sub(r"[\s_-]+", "", normalized_query)
-    all_aliases = {
-        "allfees",
-        "scopeall",
-        "intentall",
-        "scopeallfees",
-        "intentallfees",
-    }
-    if compact in all_aliases:
-        return {"mode": "all"}
-
-    list_aliases = {
-        "choosecategories",
-        "listcategories",
-        "scopecategories",
-        "intentcategories",
-        "scopelistcategories",
-        "intentlistcategories",
-    }
-    if compact in list_aliases:
-        return {"mode": "list_categories"}
-
-    if re.fullmatch(r"\s*(?:scope|intent)\s*[:=_-]\s*all(?:\s*[_-]?\s*fees)?\s*", raw_query, flags=re.IGNORECASE):
-        return {"mode": "all"}
-    if re.fullmatch(
-        r"\s*(?:scope|intent)\s*[:=_-]\s*(?:list|categories|list[_-]?categories|choose[_-]?categories)\s*",
-        raw_query,
-        flags=re.IGNORECASE,
-    ):
-        return {"mode": "list_categories"}
-
-    category_key_patterns = (
-        r"\s*(?:scope|intent)\s*[:=_-]\s*category[_-]?key\s*[:=_-]\s*(?P<category_key>.+?)\s*",
-        r"\s*scope[_-]?category[_-]?key\s*[:=_-]\s*(?P<category_key>.+?)\s*",
-        r"\s*category[_-]?key\s*[:=_-]\s*(?P<category_key>.+?)\s*",
-    )
-    for pattern in category_key_patterns:
-        match = re.fullmatch(pattern, raw_query, flags=re.IGNORECASE)
-        if not match:
-            continue
-        selected_category_key = _normalize_scope_category_key(match.group("category_key"))
-        if selected_category_key:
-            return {"mode": "specific_key", "category_key": selected_category_key}
-
-    category_patterns = (
-        r"\s*(?:scope|intent)\s*[:=_-]\s*category\s*[:=_-]\s*(?P<category>.+?)\s*",
-        r"\s*scope[_-]?category\s*[:=_-]\s*(?P<category>.+?)\s*",
-        r"\s*category\s*[:=_-]\s*(?P<category>.+?)\s*",
-    )
-    for pattern in category_patterns:
-        match = re.fullmatch(pattern, raw_query, flags=re.IGNORECASE)
-        if not match:
-            continue
-        selected_category = _clean_scope_category_label(match.group("category"), max_chars=96)
-        if selected_category:
-            return {"mode": "specific", "category": selected_category}
-    return None
-
-
 def _extract_no_result_reason(diagnostics: Mapping[str, object] | None) -> str:
     valid_reasons = {"not_found", "not_applicable_to_segment", "insufficient_evidence"}
     diag = diagnostics or {}
@@ -4641,835 +3819,6 @@ def _extract_conflict_detected(diagnostics: Mapping[str, object] | None) -> bool
     return False
 
 
-def _sanitize_scope_clarification_diagnostics(
-    diagnostics: Mapping[str, object] | None,
-    *,
-    mcq_enabled: bool,
-) -> dict[str, object]:
-    """
-    Keep scope clarification diagnostics backward-compatible in non-MCQ mode.
-
-    When MCQ mode is disabled, any MCQ-specific diagnostic keys are removed and
-    `clarification_ui_mode` is normalized to `text`.
-    """
-
-    sanitized = dict(diagnostics or {})
-    if mcq_enabled:
-        if str(sanitized.get("clarification_ui_mode") or "").strip().lower() == "mcq":
-            sanitized["intent_clarification_question"] = (
-                "I found multiple fee categories for this request. "
-                "Ask the visitor to choose one category or all fees using the selector."
-            )
-            sanitized["assistant_guidance"] = (
-                "MCQ selector is shown to the visitor. Ask them to choose one option, "
-                "and do not enumerate category choices in prose."
-            )
-            sanitized["suppress_textual_choice_list"] = True
-        return sanitized
-
-    mcq_only_keys = (
-        "mcq",
-        "mcq_options",
-        "mcq_actions",
-        "clarification_options",
-        "clarification_actions",
-        "clarification_choices",
-        "clarification_cta",
-        "clarification_ctas",
-        "scope_clarification_options",
-        "scope_clarification_actions",
-        "scope_clarification_contract_version",
-        "scope_clarification_bucket_id",
-        "scope_clarification_category_refs",
-        "scope_clarification_more_available",
-        "scope_clarification_more_query",
-        "scope_clarification_all_query",
-    )
-    for key in mcq_only_keys:
-        sanitized.pop(key, None)
-
-    if str(sanitized.get("clarification_ui_mode") or "").strip().lower() == "mcq":
-        sanitized["clarification_ui_mode"] = "text"
-    return sanitized
-
-
-def _resolve_scope_clarification_followup(
-    *,
-    user_query: str,
-    pending_scope: Mapping[str, object],
-) -> dict[str, object] | None:
-    normalized_query = _normalize_scope_text(user_query)
-    if not normalized_query:
-        return None
-    base_query = str(pending_scope.get("base_query") or "").strip()
-    if not base_query:
-        return None
-
-    explicit_intent = _extract_scope_clarification_intent(user_query)
-    explicit_mode = str(explicit_intent.get("mode") or "").strip().lower() if isinstance(explicit_intent, Mapping) else ""
-    explicit_category = (
-        str(explicit_intent.get("category") or "").strip()
-        if isinstance(explicit_intent, Mapping)
-        else ""
-    )
-    explicit_category_key = (
-        _normalize_scope_category_key(explicit_intent.get("category_key") or "")
-        if isinstance(explicit_intent, Mapping)
-        else ""
-    )
-
-    raw_categories = pending_scope.get("categories")
-    categories: list[str] = []
-    if isinstance(raw_categories, Sequence) and not isinstance(raw_categories, (str, bytes, bytearray)):
-        seen: set[str] = set()
-        for raw in raw_categories:
-            cleaned = str(raw or "").strip()
-            normalized = _normalize_scope_text(cleaned)
-            if not cleaned or not normalized or normalized in seen:
-                continue
-            seen.add(normalized)
-            categories.append(cleaned)
-            if len(categories) >= SCOPE_CLARIFICATION_MAX_CATEGORIES:
-                break
-
-    pending_category_ref_map: dict[str, dict[str, object]] = {}
-    raw_pending_category_refs = pending_scope.get("category_refs")
-    if isinstance(raw_pending_category_refs, Mapping):
-        for raw_key, raw_value in raw_pending_category_refs.items():
-            normalized_key = _normalize_scope_category_key(raw_key)
-            if not normalized_key:
-                continue
-            mapped = _coerce_scope_option_mapped_refs(raw_value)
-            if not mapped:
-                continue
-            pending_category_ref_map[normalized_key] = dict(mapped)
-
-    def _mapped_refs_for_category(*, category_key: str, category_label: str | None) -> dict[str, object] | None:
-        candidates: list[str] = []
-        normalized_key = _normalize_scope_category_key(category_key)
-        if normalized_key:
-            candidates.append(normalized_key)
-        if category_label:
-            synthesized_key = _normalize_scope_category_key(_scope_category_key(category_label))
-            if synthesized_key:
-                candidates.append(synthesized_key)
-        for candidate in candidates:
-            mapped = pending_category_ref_map.get(candidate)
-            if isinstance(mapped, Mapping):
-                return dict(mapped)
-        return None
-
-    category_by_key: dict[str, str] = {}
-    for category in categories:
-        category_key = _normalize_scope_category_key(_scope_category_key(category))
-        if category_key and category_key not in category_by_key:
-            category_by_key[category_key] = category
-
-    if explicit_mode == "all":
-        resolved_query = f"{base_query} include all related fee categories grouped by category"
-        return {
-            "mode": "all",
-            "base_query": base_query,
-            "resolved_query": resolved_query,
-            "user_query": str(user_query or "").strip(),
-            "category": "",
-            "categories": [],
-        }
-
-    if explicit_mode == "list_categories":
-        return {
-            "mode": "list_categories",
-            "base_query": base_query,
-            "resolved_query": base_query,
-            "user_query": str(user_query or "").strip(),
-            "category": "",
-            "categories": categories,
-            "listing_hint": _build_scope_categories_listing_hint(categories),
-        }
-
-    all_markers = {
-        "all",
-        "all fees",
-        "all related fees",
-        "everything",
-        "full list",
-        "all categories",
-        "all of them",
-        "all of those",
-        "all please",
-        "جميع",
-        "كل",
-        "كلها",
-        "الكل",
-        "كله",
-        "كل الرسوم",
-    }
-    is_all = any(
-        marker == normalized_query or marker in normalized_query
-        for marker in all_markers
-    )
-    if is_all:
-        resolved_query = f"{base_query} include all related fee categories grouped by category"
-        return {
-            "mode": "all",
-            "base_query": base_query,
-            "resolved_query": resolved_query,
-            "user_query": str(user_query or "").strip(),
-            "category": "",
-            "categories": [],
-        }
-
-    if _is_scope_category_list_request(normalized_query):
-        return {
-            "mode": "list_categories",
-            "base_query": base_query,
-            "resolved_query": base_query,
-            "user_query": str(user_query or "").strip(),
-            "category": "",
-            "categories": categories,
-            "listing_hint": _build_scope_categories_listing_hint(categories),
-        }
-
-    if explicit_mode == "specific_key" and explicit_category_key:
-        selected_category = category_by_key.get(explicit_category_key)
-        if not selected_category:
-            return None
-        selected_key = _normalize_scope_category_key(_scope_category_key(selected_category))
-        mapped_refs = _mapped_refs_for_category(
-            category_key=explicit_category_key or selected_key,
-            category_label=selected_category,
-        ) or {}
-        mapped_ref_ids = _normalize_scope_ref_ids((mapped_refs or {}).get("ref_ids") or [])
-        selected_normalized = _normalize_scope_text(selected_category)
-        has_fee_token = any(token in selected_normalized.split() for token in ("fee", "fees", "رسوم", "الرسوم"))
-        suffix = "" if has_fee_token else " fees"
-        resolved_query = f"{base_query} focus only on {selected_category}{suffix}"
-        return {
-            "mode": "specific",
-            "base_query": base_query,
-            "resolved_query": resolved_query,
-            "user_query": str(user_query or "").strip(),
-            "category": selected_category,
-            "categories": [selected_category],
-            "category_key": selected_key or explicit_category_key,
-            "mapped_refs": dict(mapped_refs) if mapped_refs else None,
-            "mapped_ref_ids": mapped_ref_ids,
-            "selection_source": "category_key",
-            "selection_mode": "single",
-        }
-
-    if explicit_mode == "specific" and explicit_category:
-        explicit_matches = _match_scope_categories_for_query(
-            query_text=explicit_category,
-            categories=categories,
-        )
-        selected_category = explicit_matches[0] if explicit_matches else explicit_category
-        selected_key = _normalize_scope_category_key(_scope_category_key(selected_category))
-        mapped_refs = _mapped_refs_for_category(
-            category_key=selected_key,
-            category_label=selected_category,
-        ) or {}
-        mapped_ref_ids = _normalize_scope_ref_ids((mapped_refs or {}).get("ref_ids") or [])
-        selected_normalized = _normalize_scope_text(selected_category)
-        has_fee_token = any(token in selected_normalized.split() for token in ("fee", "fees", "رسوم", "الرسوم"))
-        suffix = "" if has_fee_token else " fees"
-        resolved_query = f"{base_query} focus only on {selected_category}{suffix}"
-        return {
-            "mode": "specific",
-            "base_query": base_query,
-            "resolved_query": resolved_query,
-            "user_query": str(user_query or "").strip(),
-            "category": selected_category,
-            "categories": [selected_category],
-            "category_key": selected_key,
-            "mapped_refs": dict(mapped_refs) if mapped_refs else None,
-            "mapped_ref_ids": mapped_ref_ids,
-            "selection_source": "text",
-            "selection_mode": "single",
-        }
-
-    # Explicit selector tokens should resolve deterministically and never fan out
-    # through fuzzy matching. Fuzzy matching is reserved for free-typed input.
-    if explicit_intent is not None:
-        return None
-
-    matched_categories = _match_scope_categories_for_query(
-        query_text=normalized_query,
-        categories=categories,
-    )
-    if len(matched_categories) > 1:
-        resolved_query = (
-            f"{base_query} focus only on these fee categories: "
-            + ", ".join(matched_categories)
-        )
-        return {
-            "mode": "specific",
-            "base_query": base_query,
-            "resolved_query": resolved_query,
-            "user_query": str(user_query or "").strip(),
-            "category": matched_categories[0],
-            "categories": matched_categories,
-            "selection_source": "text",
-            "selection_mode": "multi",
-        }
-
-    selected_category = matched_categories[0] if matched_categories else ""
-
-    if not selected_category:
-        query_tokens = [token for token in re.split(r"\s+", normalized_query) if token]
-        generic_tokens = {
-            "specific",
-            "category",
-            "fees",
-            "fee",
-            "segment",
-            "plus",
-            "prime",
-            "wealth",
-            "details",
-            "show",
-            "list",
-            "for",
-            "the",
-            "a",
-            "an",
-            "رسوم",
-            "خانة",
-            "فئة",
-            "تفاصيل",
-            "عرض",
-        }
-        specific_tokens = [token for token in query_tokens if token not in generic_tokens]
-        if specific_tokens:
-            selected_category = str(user_query or "").strip()
-
-    if not selected_category:
-        return None
-
-    selected_key = _normalize_scope_category_key(_scope_category_key(selected_category))
-    mapped_refs = _mapped_refs_for_category(
-        category_key=selected_key,
-        category_label=selected_category,
-    ) or {}
-    mapped_ref_ids = _normalize_scope_ref_ids((mapped_refs or {}).get("ref_ids") or [])
-    selected_normalized = _normalize_scope_text(selected_category)
-    has_fee_token = any(token in selected_normalized.split() for token in ("fee", "fees", "رسوم", "الرسوم"))
-    suffix = "" if has_fee_token else " fees"
-    resolved_query = f"{base_query} focus only on {selected_category}{suffix}"
-    return {
-        "mode": "specific",
-        "base_query": base_query,
-        "resolved_query": resolved_query,
-        "user_query": str(user_query or "").strip(),
-        "category": selected_category,
-        "categories": [selected_category],
-        "category_key": selected_key,
-        "mapped_refs": dict(mapped_refs) if mapped_refs else None,
-        "mapped_ref_ids": mapped_ref_ids,
-        "selection_source": "text",
-        "selection_mode": "single",
-    }
-
-
-def plan_scope_selection_deterministic_call(
-    *,
-    user_query: str,
-    context: ToolExecutionContext,
-) -> dict[str, object]:
-    """
-    Build the deterministic tool call for a scope-selection turn.
-
-    Architecture contract:
-    - Valid mapped category selections route directly to read_knowledge.
-    - Everything else routes to search_knowledge (scoped query when resolved).
-    - search_knowledge is never used as an implicit read wrapper in this planner.
-    """
-
-    primary_query = str(user_query or "").strip()
-    fallback_plan: dict[str, object] = {
-        "tool_name": "search_knowledge",
-        "arguments": {"query": primary_query},
-        "route": "search_default",
-    }
-
-    pending_scope_state = _pending_scope_clarification_state(context=context)
-    if not pending_scope_state:
-        return fallback_plan
-
-    scope_resolution_query = primary_query
-    scope_resolution_input_source = "tool_query"
-    selection_action = ""
-    selection_key = ""
-    selection_label = ""
-    latest_scope_selection = (
-        dict(context.latest_scope_selection)
-        if isinstance(getattr(context, "latest_scope_selection", None), Mapping)
-        else {}
-    )
-    if latest_scope_selection:
-        selection_action = str(latest_scope_selection.get("action") or "").strip().lower()
-        selection_key = _normalize_scope_category_key(latest_scope_selection.get("category_key") or "")
-        selection_label = _clean_scope_category_label(
-            latest_scope_selection.get("category_label"),
-            max_chars=96,
-        )
-        if selection_action == "all_fees":
-            scope_resolution_query = "all"
-            scope_resolution_input_source = "scope_selection_metadata"
-        elif selection_action in {"choose_categories", "list_categories"}:
-            scope_resolution_query = "choose categories"
-            scope_resolution_input_source = "scope_selection_metadata"
-        elif selection_action == "select_category" or selection_key:
-            if selection_key:
-                scope_resolution_query = _scope_category_selector_query(selection_key) or selection_key
-            elif selection_label:
-                scope_resolution_query = f"scope:category:{selection_label}"
-            scope_resolution_input_source = "scope_selection_metadata"
-
-    latest_user_message = str(getattr(context, "latest_user_message", "") or "").strip()
-    if latest_user_message and scope_resolution_input_source == "tool_query":
-        latest_user_intent = _extract_scope_clarification_intent(latest_user_message)
-        latest_mode = (
-            str(latest_user_intent.get("mode") or "").strip().lower()
-            if isinstance(latest_user_intent, Mapping)
-            else ""
-        )
-        if latest_mode in {"specific_key", "all", "list_categories", "specific"}:
-            scope_resolution_query = latest_user_message
-            scope_resolution_input_source = "latest_user_message"
-
-    scope_resolution_applied = _resolve_scope_clarification_followup(
-        user_query=scope_resolution_query,
-        pending_scope=pending_scope_state,
-    )
-    if (
-        not scope_resolution_applied
-        and selection_key
-        and selection_label
-        and scope_resolution_input_source == "scope_selection_metadata"
-    ):
-        label_selector_query = f"scope:category:{selection_label}"
-        if label_selector_query != scope_resolution_query:
-            scope_resolution_applied = _resolve_scope_clarification_followup(
-                user_query=label_selector_query,
-                pending_scope=pending_scope_state,
-            )
-            if scope_resolution_applied:
-                scope_resolution_input_source = "scope_selection_metadata_label_fallback"
-
-    if not scope_resolution_applied and scope_resolution_query != primary_query:
-        scope_resolution_applied = _resolve_scope_clarification_followup(
-            user_query=primary_query,
-            pending_scope=pending_scope_state,
-        )
-        if scope_resolution_applied:
-            scope_resolution_input_source = "tool_query_fallback"
-
-    if not scope_resolution_applied:
-        return fallback_plan
-
-    scope_mode = str(scope_resolution_applied.get("mode") or "").strip().lower()
-    resolved_query = str(scope_resolution_applied.get("resolved_query") or "").strip() or primary_query
-    raw_selected_categories = scope_resolution_applied.get("categories")
-    selected_categories = (
-        [str(item).strip() for item in raw_selected_categories if str(item).strip()]
-        if isinstance(raw_selected_categories, Sequence) and not isinstance(raw_selected_categories, (str, bytes, bytearray))
-        else []
-    )[:SCOPE_CLARIFICATION_MAX_CATEGORIES]
-
-    # Keep pending clarification active when user explicitly asks to list categories.
-    if scope_mode == "list_categories":
-        listing_query = str(scope_resolution_applied.get("user_query") or primary_query).strip() or primary_query
-        return {
-            "tool_name": "search_knowledge",
-            "arguments": {"query": listing_query},
-            "route": "scope_list_categories",
-            "scope_resolution_input_source": scope_resolution_input_source,
-        }
-
-    context.set_scope_resolution(
-        mode=str(scope_resolution_applied.get("mode") or "specific"),
-        base_query=str(scope_resolution_applied.get("base_query") or primary_query),
-        resolved_query=resolved_query,
-        user_query=str(scope_resolution_applied.get("user_query") or ""),
-        category=str(scope_resolution_applied.get("category") or "") or None,
-        categories=selected_categories,
-        category_key=str(scope_resolution_applied.get("category_key") or "") or None,
-        mapped_ref_ids=_normalize_scope_ref_ids(scope_resolution_applied.get("mapped_ref_ids") or []),
-        mapped_refs=(
-            dict(scope_resolution_applied.get("mapped_refs"))
-            if isinstance(scope_resolution_applied.get("mapped_refs"), Mapping)
-            else None
-        ),
-        selection_source=str(scope_resolution_applied.get("selection_source") or "") or None,
-    )
-
-    scope_selection_source = str(scope_resolution_applied.get("selection_source") or "").strip().lower()
-    mapped_ref_ids = _normalize_scope_ref_ids(scope_resolution_applied.get("mapped_ref_ids") or [])
-    mapped_refs = (
-        dict(scope_resolution_applied.get("mapped_refs"))
-        if isinstance(scope_resolution_applied.get("mapped_refs"), Mapping)
-        else {}
-    )
-    mapped_confidence: float | None = None
-    raw_confidence = mapped_refs.get("confidence")
-    if isinstance(raw_confidence, (int, float)):
-        mapped_confidence = max(0.0, min(1.0, float(raw_confidence)))
-    elif raw_confidence is not None:
-        try:
-            mapped_confidence = max(0.0, min(1.0, float(str(raw_confidence).strip())))
-        except (TypeError, ValueError):
-            mapped_confidence = None
-    mapped_fallback = str(mapped_refs.get("fallback") or "").strip().lower()
-    mapped_source = str(mapped_refs.get("source") or "").strip().lower()
-    mapping_low_confidence = (
-        mapped_confidence is not None
-        and mapped_confidence < SCOPE_FALLBACK_MIN_MAPPED_CONFIDENCE
-    )
-    mapping_stale_or_missing = bool(
-        (not mapped_ref_ids)
-        or mapped_fallback in {"scoped_search", "fallback"}
-        or mapped_source in {"stale", "expired", "low_confidence"}
-    )
-
-    if (
-        str(scope_resolution_applied.get("mode") or "").strip().lower() == "specific"
-        and scope_selection_source == "category_key"
-        and mapped_ref_ids
-        and not mapping_low_confidence
-        and not mapping_stale_or_missing
-    ):
-        remaining_budget_chars: int | None = None
-        if context.char_budget_per_turn is not None:
-            try:
-                remaining_budget_chars = max(
-                    0,
-                    int(context.char_budget_per_turn) - int(context.characters_used or 0),
-                )
-            except (TypeError, ValueError):
-                remaining_budget_chars = None
-        read_max_chars = min(6000, int(READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX))
-        if remaining_budget_chars is not None and remaining_budget_chars > 0:
-            read_max_chars = min(read_max_chars, max(200, int(remaining_budget_chars)))
-        read_max_chars = max(200, min(read_max_chars, int(READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX)))
-
-        return {
-            "tool_name": "read_knowledge",
-            "arguments": {
-                "refs": [{"id": ref_id} for ref_id in mapped_ref_ids],
-                "max_chars": read_max_chars,
-            },
-            "route": "scope_mapped_read",
-            "scope_resolution_input_source": scope_resolution_input_source,
-            "mapped_ref_count": len(mapped_ref_ids),
-        }
-
-    # Any stale/missing mapping or non-specific scope routes to a real scoped search.
-    return {
-        "tool_name": "search_knowledge",
-        "arguments": {"query": resolved_query},
-        "route": "scope_scoped_search",
-        "scope_resolution_input_source": scope_resolution_input_source,
-        "scope_fallback_reason": (
-            "low_confidence_mapping"
-            if mapping_low_confidence
-            else ("missing_or_stale_mapping" if mapping_stale_or_missing else None)
-        ),
-    }
-
-
-# ---------------------------------------------------------------------------
-# Agentic Scope Handoff – replaces deterministic routing for MCQ turns
-# ---------------------------------------------------------------------------
-
-
-def build_scope_handoff_context(
-    *,
-    user_query: str,
-    context: ToolExecutionContext,
-) -> dict[str, object]:
-    """
-    Build an agentic scope-handoff context packet for an MCQ category-click turn.
-
-    Instead of forcing a deterministic tool call, this resolves the user's scope
-    selection against the pending clarification state, persists the resolution on
-    the context, and returns a structured dict with:
-      - ``"context_message"``  – a human-readable instruction block to inject into
-        the LLM transcript so it knows what the user chose and what refs are available.
-      - ``"resolved"``         – bool, whether resolution succeeded.
-      - ``"action"``           – the selection action (``select_category`` / ``all_fees`` / …).
-      - ``"category"``         – resolved category label (if specific).
-      - ``"mapped_ref_ids"``   – list of ref UUIDs mapped to the selected category.
-      - ``"total_search_hits"``– total refs from the initial search (coverage denominator).
-      - ``"route"``            – descriptive route tag for logging.
-
-    The caller injects ``context_message`` into the transcript and lets the normal
-    agentic loop decide which tools to call.
-    """
-
-    primary_query = str(user_query or "").strip()
-
-    # ------------------------------------------------------------------
-    # 1. Read pending scope & latest scope selection from context
-    # ------------------------------------------------------------------
-    pending_scope_state = _pending_scope_clarification_state(context=context)
-    if not pending_scope_state:
-        return {
-            "resolved": False,
-            "context_message": "",
-            "route": "no_pending_scope",
-        }
-
-    latest_scope_selection = (
-        dict(context.latest_scope_selection)
-        if isinstance(getattr(context, "latest_scope_selection", None), Mapping)
-        else {}
-    )
-
-    selection_action = str(latest_scope_selection.get("action") or "").strip().lower()
-    selection_key = _normalize_scope_category_key(latest_scope_selection.get("category_key") or "")
-    selection_label = _clean_scope_category_label(
-        latest_scope_selection.get("category_label"),
-        max_chars=96,
-    )
-
-    # ------------------------------------------------------------------
-    # 2. Determine the scope resolution query (same logic as deterministic planner)
-    # ------------------------------------------------------------------
-    scope_resolution_query = primary_query
-    scope_resolution_input_source = "tool_query"
-
-    if selection_action == "all_fees":
-        scope_resolution_query = "all"
-        scope_resolution_input_source = "scope_selection_metadata"
-    elif selection_action in {"choose_categories", "list_categories"}:
-        scope_resolution_query = "choose categories"
-        scope_resolution_input_source = "scope_selection_metadata"
-    elif selection_action == "select_category" or selection_key:
-        if selection_key:
-            scope_resolution_query = _scope_category_selector_query(selection_key) or selection_key
-        elif selection_label:
-            scope_resolution_query = f"scope:category:{selection_label}"
-        scope_resolution_input_source = "scope_selection_metadata"
-
-    latest_user_message = str(getattr(context, "latest_user_message", "") or "").strip()
-    if latest_user_message and scope_resolution_input_source == "tool_query":
-        latest_user_intent = _extract_scope_clarification_intent(latest_user_message)
-        latest_mode = (
-            str(latest_user_intent.get("mode") or "").strip().lower()
-            if isinstance(latest_user_intent, Mapping)
-            else ""
-        )
-        if latest_mode in {"specific_key", "all", "list_categories", "specific"}:
-            scope_resolution_query = latest_user_message
-            scope_resolution_input_source = "latest_user_message"
-
-    # ------------------------------------------------------------------
-    # 3. Resolve scope clarification (reuse existing resolution logic)
-    # ------------------------------------------------------------------
-    scope_resolution_applied = _resolve_scope_clarification_followup(
-        user_query=scope_resolution_query,
-        pending_scope=pending_scope_state,
-    )
-    if (
-        not scope_resolution_applied
-        and selection_key
-        and selection_label
-        and scope_resolution_input_source == "scope_selection_metadata"
-    ):
-        label_selector_query = f"scope:category:{selection_label}"
-        if label_selector_query != scope_resolution_query:
-            scope_resolution_applied = _resolve_scope_clarification_followup(
-                user_query=label_selector_query,
-                pending_scope=pending_scope_state,
-            )
-    if not scope_resolution_applied and scope_resolution_query != primary_query:
-        scope_resolution_applied = _resolve_scope_clarification_followup(
-            user_query=primary_query,
-            pending_scope=pending_scope_state,
-        )
-    if not scope_resolution_applied:
-        return {
-            "resolved": False,
-            "context_message": "",
-            "route": "resolution_failed",
-        }
-
-    # ------------------------------------------------------------------
-    # 4. Persist the resolution on the context (clears pending state)
-    # ------------------------------------------------------------------
-    scope_mode = str(scope_resolution_applied.get("mode") or "").strip().lower()
-    resolved_query = str(scope_resolution_applied.get("resolved_query") or "").strip() or primary_query
-    raw_selected_categories = scope_resolution_applied.get("categories")
-    selected_categories = (
-        [str(item).strip() for item in raw_selected_categories if str(item).strip()]
-        if isinstance(raw_selected_categories, Sequence) and not isinstance(raw_selected_categories, (str, bytes, bytearray))
-        else []
-    )[:SCOPE_CLARIFICATION_MAX_CATEGORIES]
-    mapped_ref_ids = _normalize_scope_ref_ids(scope_resolution_applied.get("mapped_ref_ids") or [])
-
-    # list_categories: keep pending, inject listing hint, LLM can present categories
-    if scope_mode == "list_categories":
-        listing_hint = scope_resolution_applied.get("listing_hint") or ""
-        categories_list = pending_scope_state.get("categories") or []
-        base_query = str(pending_scope_state.get("base_query") or primary_query).strip()
-        lines = [
-            "[Scope Selection – List Categories]",
-            f'User asked to see all available categories for query "{base_query}".',
-            "",
-        ]
-        if categories_list:
-            lines.append("Available categories:")
-            for cat in categories_list:
-                lines.append(f"  - {cat}")
-            lines.append("")
-        lines.append(
-            "Present these categories to the user and ask them to choose one. "
-            "Do NOT call search_knowledge or read_knowledge yet."
-        )
-        return {
-            "resolved": True,
-            "context_message": "\n".join(lines),
-            "action": "list_categories",
-            "route": "scope_list_categories",
-        }
-
-    context.set_scope_resolution(
-        mode=str(scope_resolution_applied.get("mode") or "specific"),
-        base_query=str(scope_resolution_applied.get("base_query") or primary_query),
-        resolved_query=resolved_query,
-        user_query=str(scope_resolution_applied.get("user_query") or ""),
-        category=str(scope_resolution_applied.get("category") or "") or None,
-        categories=selected_categories,
-        category_key=str(scope_resolution_applied.get("category_key") or "") or None,
-        mapped_ref_ids=mapped_ref_ids,
-        mapped_refs=(
-            dict(scope_resolution_applied.get("mapped_refs"))
-            if isinstance(scope_resolution_applied.get("mapped_refs"), Mapping)
-            else None
-        ),
-        selection_source=str(scope_resolution_applied.get("selection_source") or "") or None,
-    )
-
-    # ------------------------------------------------------------------
-    # 5. Build the context message for the LLM
-    # ------------------------------------------------------------------
-    base_query = str(scope_resolution_applied.get("base_query") or primary_query).strip()
-    resolved_category = str(scope_resolution_applied.get("category") or "").strip()
-    is_all = scope_mode == "all"
-
-    # Gather ref previews from recent_search_refs (persisted from the initial search)
-    recent_refs = getattr(context, "recent_search_refs", None) or []
-    recent_refs_by_id: dict[str, dict[str, object]] = {}
-    for ref in recent_refs:
-        if isinstance(ref, Mapping):
-            ref_id = str(ref.get("id") or "").strip()
-            if ref_id:
-                recent_refs_by_id[ref_id] = dict(ref)
-    total_search_hits = len(recent_refs)
-
-    # Build the context message
-    lines: list[str] = ["[Scope Selection Context]"]
-
-    if is_all:
-        lines.append(
-            f'The user was shown a scope clarification for the query "{base_query}" '
-            f"and chose to see ALL categories."
-        )
-        lines.append("")
-        if recent_refs:
-            lines.append(f"Initial search returned {total_search_hits} refs across all categories.")
-            lines.append(
-                "Proceed with search_knowledge using the original query. "
-                "Read and paginate as needed to cover all relevant categories."
-            )
-        else:
-            lines.append(
-                "Search the knowledge base for the original query and cover all categories."
-            )
-    else:
-        lines.append(
-            f'The user was shown a scope clarification for the query "{base_query}" '
-            f'and selected the category: "{resolved_category}".'
-        )
-        lines.append("")
-
-        if mapped_ref_ids:
-            lines.append(f"Mapped refs for this category ({len(mapped_ref_ids)} of {total_search_hits} total search hits):")
-            for ref_id in mapped_ref_ids:
-                preview_ref = recent_refs_by_id.get(ref_id)
-                if preview_ref:
-                    label = str(preview_ref.get("label") or preview_ref.get("preview") or "").strip()
-                    if label:
-                        lines.append(f'  - id="{ref_id}" — {label}')
-                    else:
-                        lines.append(f'  - id="{ref_id}"')
-                else:
-                    lines.append(f'  - id="{ref_id}"')
-            lines.append("")
-            lines.append(
-                "Use read_knowledge with these ref IDs to retrieve the content. "
-                "If the content is insufficient or truncated, use cursor continuation "
-                "or search_knowledge with a focused query to find more."
-            )
-        else:
-            lines.append(
-                f"No pre-mapped refs available for this category. "
-                f'Use search_knowledge with a query focused on "{resolved_category}" '
-                f'within the context of "{base_query}" to find relevant content.'
-            )
-
-    # Scope lock instruction
-    lines.append("")
-    lines.append(
-        "IMPORTANT: The user has already narrowed their scope via the selector. "
-        "Do NOT call present_scope_clarification. Do NOT re-trigger scope clarification. "
-        "Stay within the selected scope unless the retrieved content is clearly insufficient."
-    )
-
-    route = "scope_handoff_all" if is_all else ("scope_handoff_read" if mapped_ref_ids else "scope_handoff_search")
-
-    return {
-        "resolved": True,
-        "context_message": "\n".join(lines),
-        "action": selection_action or ("all_fees" if is_all else "select_category"),
-        "category": resolved_category,
-        "mapped_ref_ids": mapped_ref_ids,
-        "total_search_hits": total_search_hits,
-        "route": route,
-    }
-
-
-def _scope_source_preference_followup_key(
-    *,
-    base_query: object,
-    resolved_query: object,
-    category: object,
-) -> str:
-    raw = "|".join(
-        [
-            _normalize_scope_text(base_query),
-            _normalize_scope_text(resolved_query),
-            _normalize_scope_text(category),
-        ]
-    )
-    normalized = _normalize_scope_text(raw)
-    if not normalized:
-        return ""
-    return hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:24]
-
-
-def _scope_source_preference_followup_hint(
-    diagnostics: Mapping[str, object] | None,
-) -> str:
-    diag = diagnostics or {}
-    question = str(diag.get("intent_clarification_question") or "").strip()
-    if "table-only" in question.lower() and "text-only" in question.lower():
-        return question
-    return (
-        "I found both table and text evidence for this category. "
-        "Do you want table-only, text-only, or both?"
-    )
 def _is_uuid_ref_id(value: object) -> bool:
     try:
         uuid.UUID(str(value or "").strip())
@@ -5484,154 +3833,6 @@ def _scope_invalid_read_retry_limit() -> int:
     except (TypeError, ValueError):
         configured = 2
     return max(1, min(5, configured))
-
-
-def _scope_state_category_ref_lookup(
-    context: ToolExecutionContext,
-) -> tuple[dict[str, dict[str, object]], dict[str, dict[str, object]]]:
-    by_key: dict[str, dict[str, object]] = {}
-    by_label: dict[str, dict[str, object]] = {}
-
-    def _register_mapping(
-        *,
-        category_key: str,
-        category_label: str | None,
-        mapped_raw: object,
-    ) -> None:
-        mapped = _coerce_scope_option_mapped_refs(mapped_raw)
-        if not mapped:
-            return
-        normalized_key = _normalize_scope_category_key(category_key)
-        if normalized_key and normalized_key not in by_key:
-            by_key[normalized_key] = dict(mapped)
-        if category_label:
-            normalized_label = _normalize_scope_text(category_label)
-            if normalized_label and normalized_label not in by_label:
-                by_label[normalized_label] = dict(mapped)
-
-    pending_scope = _pending_scope_clarification_state(context=context) or {}
-    pending_categories = pending_scope.get("categories")
-    pending_labels_by_key: dict[str, str] = {}
-    if isinstance(pending_categories, Sequence) and not isinstance(
-        pending_categories,
-        (str, bytes, bytearray),
-    ):
-        for raw_label in pending_categories:
-            label = _clean_scope_category_label(raw_label, max_chars=96)
-            if not label:
-                continue
-            category_key = _normalize_scope_category_key(_scope_category_key(label))
-            if category_key and category_key not in pending_labels_by_key:
-                pending_labels_by_key[category_key] = label
-
-    pending_refs = pending_scope.get("category_refs")
-    if isinstance(pending_refs, Mapping):
-        for raw_key, raw_value in pending_refs.items():
-            normalized_key = _normalize_scope_category_key(raw_key)
-            if not normalized_key:
-                continue
-            _register_mapping(
-                category_key=normalized_key,
-                category_label=pending_labels_by_key.get(normalized_key),
-                mapped_raw=raw_value,
-            )
-
-    scope_resolution = (
-        dict(context.scope_resolution)
-        if isinstance(getattr(context, "scope_resolution", None), Mapping)
-        else {}
-    )
-    if scope_resolution:
-        resolution_label = _clean_scope_category_label(scope_resolution.get("category"), max_chars=96)
-        resolution_key = _normalize_scope_category_key(scope_resolution.get("category_key"))
-        if not resolution_key and resolution_label:
-            resolution_key = _normalize_scope_category_key(_scope_category_key(resolution_label))
-        if resolution_key:
-            _register_mapping(
-                category_key=resolution_key,
-                category_label=resolution_label or None,
-                mapped_raw=scope_resolution.get("mapped_refs")
-                or {"ref_ids": scope_resolution.get("mapped_ref_ids")},
-            )
-        resolution_category_refs = scope_resolution.get("category_refs")
-        if isinstance(resolution_category_refs, Mapping):
-            for raw_key, raw_value in resolution_category_refs.items():
-                _register_mapping(
-                    category_key=str(raw_key or ""),
-                    category_label=None,
-                    mapped_raw=raw_value,
-                )
-
-    return by_key, by_label
-
-
-def _scope_mapped_ref_ids_for_read_item(
-    *,
-    item_id: str,
-    context: ToolExecutionContext,
-) -> list[str]:
-    by_key, by_label = _scope_state_category_ref_lookup(context)
-    if not by_key and not by_label:
-        return []
-
-    explicit_intent = _extract_scope_clarification_intent(item_id)
-    candidate_keys: list[str] = []
-    candidate_labels: list[str] = []
-    if isinstance(explicit_intent, Mapping):
-        mode = str(explicit_intent.get("mode") or "").strip().lower()
-        if mode == "specific_key":
-            normalized_key = _normalize_scope_category_key(explicit_intent.get("category_key"))
-            if normalized_key:
-                candidate_keys.append(normalized_key)
-        elif mode == "specific":
-            label = _clean_scope_category_label(explicit_intent.get("category"), max_chars=96)
-            if label:
-                candidate_labels.append(label)
-
-    direct_key = _normalize_scope_category_key(item_id)
-    if direct_key:
-        candidate_keys.append(direct_key)
-    direct_label = _clean_scope_category_label(item_id, max_chars=96)
-    if direct_label:
-        candidate_labels.append(direct_label)
-
-    current_scope = (
-        dict(context.scope_resolution)
-        if isinstance(getattr(context, "scope_resolution", None), Mapping)
-        else {}
-    )
-    current_label = _clean_scope_category_label(current_scope.get("category"), max_chars=96)
-    current_key = _normalize_scope_category_key(current_scope.get("category_key"))
-    if not current_key and current_label:
-        current_key = _normalize_scope_category_key(_scope_category_key(current_label))
-    if current_label and _normalize_scope_text(current_label) == _normalize_scope_text(direct_label):
-        if current_key:
-            candidate_keys.append(current_key)
-        candidate_labels.append(current_label)
-
-    seen_keys: set[str] = set()
-    for key in candidate_keys:
-        normalized_key = _normalize_scope_category_key(key)
-        if not normalized_key or normalized_key in seen_keys:
-            continue
-        seen_keys.add(normalized_key)
-        mapped = by_key.get(normalized_key)
-        ref_ids = _normalize_scope_ref_ids((mapped or {}).get("ref_ids") or [])
-        if ref_ids:
-            return ref_ids
-
-    seen_labels: set[str] = set()
-    for label in candidate_labels:
-        normalized_label = _normalize_scope_text(label)
-        if not normalized_label or normalized_label in seen_labels:
-            continue
-        seen_labels.add(normalized_label)
-        mapped = by_label.get(normalized_label)
-        ref_ids = _normalize_scope_ref_ids((mapped or {}).get("ref_ids") or [])
-        if ref_ids:
-            return ref_ids
-
-    return []
 
 
 def _search_hint(
@@ -5651,23 +3852,6 @@ def _search_hint(
                 "I found conflicting values for the same segment/category across sources. "
                 "Do you want me to compare the conflicting entries, or narrow to a specific document/date?"
             )
-        if reason == "broad_scope_ambiguity":
-            question = str(diag.get("intent_clarification_question") or "").strip()
-            clarification_ui_mode = str(diag.get("clarification_ui_mode") or "").strip().lower()
-            if clarification_ui_mode == "mcq":
-                return (
-                    "Write one short selector-intro sentence first, then call present_scope_clarification. "
-                    "Do not enumerate categories in prose, and end the response immediately after the call."
-                )
-            categories = _scope_clarification_categories_from_diagnostics(diag)
-            if not question:
-                return _build_scope_clarification_hint(diag)
-            if categories:
-                lowered_question = question.lower()
-                has_category_samples = any(category.lower() in lowered_question for category in categories)
-                if not has_category_samples:
-                    return _build_scope_clarification_hint(diag)
-            return question
         question = str(diag.get("intent_clarification_question") or "").strip()
         if question:
             return question
@@ -5702,113 +3886,6 @@ def _search_hint(
     if diag.get("path") == "fallback":
         return "Fallback snippets in use; confirm details with the visitor or narrow the request before citing specifics."
     return None
-
-
-def _present_scope_clarification_handler(
-    arguments: Mapping[str, object],
-    conversation: Conversation,
-    context: ToolExecutionContext,
-) -> Mapping[str, object]:
-    del arguments, conversation
-    scope_clarification_mcq_enabled = bool(getattr(settings, "MCP_SCOPE_CLARIFICATION_MCQ_ENABLED", False))
-    pending_scope = _pending_scope_clarification_state(context=context)
-    if not pending_scope:
-        return {
-            "tool": "present_scope_clarification",
-            "status": "error",
-            "error": "no_pending_scope_clarification",
-            "error_code": "no_pending_scope_clarification",
-            "hint": "No pending scope clarification found. Call search_knowledge first.",
-        }
-
-    base_query = str(pending_scope.get("base_query") or "").strip()
-    pending_question = str(pending_scope.get("question") or "").strip()
-    pending_bucket_id = _normalize_scope_bucket_id(pending_scope.get("bucket_id"))
-    raw_categories = pending_scope.get("categories")
-    categories: list[str] = []
-    seen_categories: set[str] = set()
-    if isinstance(raw_categories, Sequence) and not isinstance(raw_categories, (str, bytes, bytearray)):
-        for raw in raw_categories:
-            cleaned = _clean_scope_category_label(raw, max_chars=64)
-            normalized = _normalize_scope_text(cleaned)
-            if not cleaned or not normalized or normalized in seen_categories:
-                continue
-            seen_categories.add(normalized)
-            categories.append(cleaned)
-            if len(categories) >= SCOPE_CLARIFICATION_MAX_CATEGORIES:
-                break
-
-    if not categories:
-        return {
-            "tool": "present_scope_clarification",
-            "status": "error",
-            "error": "scope_categories_missing",
-            "error_code": "scope_categories_missing",
-            "hint": "Scope clarification categories are missing. Re-run search_knowledge.",
-            "query": base_query,
-        }
-
-    top_categories = categories[:SCOPE_CLARIFICATION_TOP_CATEGORIES]
-    diagnostics: dict[str, object] = {
-        "path": "clarification",
-        "reason": "broad_scope_ambiguity",
-        "intent_requires_clarification": True,
-        "clarification_ui_mode": "mcq" if scope_clarification_mcq_enabled else "text",
-        "categories": categories,
-        "top_categories": top_categories,
-        "scope_clarification_categories": top_categories,
-        "scope_summary": {
-            "total_matches": len(categories),
-            "distinct_docs": 0,
-            "category_counts": {category: 1 for category in categories},
-            "is_broad_scope": len(categories) > 1,
-        },
-    }
-    if pending_bucket_id:
-        diagnostics["scope_clarification_bucket_id"] = pending_bucket_id
-    pending_category_refs: dict[str, dict[str, object]] = {}
-    raw_pending_category_refs = pending_scope.get("category_refs")
-    if scope_clarification_mcq_enabled and isinstance(raw_pending_category_refs, Mapping):
-        for raw_key, raw_value in raw_pending_category_refs.items():
-            category_key = str(raw_key or "").strip()
-            if not category_key:
-                continue
-            mapped = _coerce_scope_option_mapped_refs(raw_value)
-            if not mapped:
-                continue
-            pending_category_refs[category_key] = dict(mapped)
-        if pending_category_refs:
-            diagnostics["scope_clarification_contract_version"] = 1
-            diagnostics["scope_clarification_category_refs"] = pending_category_refs
-    if pending_question:
-        diagnostics["intent_clarification_question"] = pending_question
-    if scope_clarification_mcq_enabled:
-        diagnostics.update(_build_scope_clarification_mcq_diagnostics(diagnostics))
-    diagnostics = _sanitize_scope_clarification_diagnostics(
-        diagnostics,
-        mcq_enabled=scope_clarification_mcq_enabled,
-    )
-    hint = (
-        pending_question
-        or _search_hint("needs_clarification", None, [], diagnostics)
-        or _build_scope_clarification_hint(diagnostics)
-    )
-    clarification_payload = _build_scope_clarification_payload(
-        diagnostics,
-        mcq_enabled=scope_clarification_mcq_enabled,
-    )
-
-    response: dict[str, object] = {
-        "tool": "present_scope_clarification",
-        "status": "ok",
-        "query": base_query,
-        "hint": hint,
-        "clarification_ui_mode": "mcq" if scope_clarification_mcq_enabled else "text",
-        "diagnostics": diagnostics,
-    }
-    if clarification_payload:
-        response["clarification"] = clarification_payload
-    return response
 
 
 def _build_ingestion_warnings(
@@ -6562,9 +4639,48 @@ def _convert_to_agentic_search_response(
             "max_chars_allowed": max_chars_allowed,
         }
 
-    completeness = legacy_payload.get("completeness")
-    if isinstance(completeness, Mapping) and completeness:
-        agentic_response["completeness"] = dict(completeness)
+    # NOTE: In agentic mode, we may dedupe/collapse a legacy "page" of N snippets
+    # down to fewer refs (e.g., 10 legacy snippets -> 3 refs). The legacy
+    # completeness metadata refers to snippet paging, not ref paging, which is
+    # confusing in debugging. Keep both counts and make `shown` consistent with
+    # the actual returned refs.
+    completeness_in = legacy_payload.get("completeness")
+    completeness_out: dict[str, object] = {}
+    if isinstance(completeness_in, Mapping) and completeness_in:
+        completeness_out = dict(completeness_in)
+
+    legacy_shown = _coerce_int(completeness_out.get("shown"))
+    if legacy_shown is None:
+        legacy_shown = len(raw_snippets)
+    legacy_already_seen = _coerce_int(completeness_out.get("already_seen"))
+    if legacy_already_seen is None:
+        legacy_already_seen = 0
+
+    planned_already_seen = legacy_already_seen
+    if context is not None:
+        planned_already_seen = 0
+        for snippet in planned_snippets:
+            if not isinstance(snippet, Mapping):
+                continue
+            chunk_id = str(snippet.get("chunk_id") or snippet.get("id") or "").strip()
+            if chunk_id and context.is_chunk_seen(chunk_id):
+                planned_already_seen += 1
+
+    completeness_out.setdefault("total_found", total_found)
+    # Make agentic completeness consistent with what we actually returned.
+    completeness_out["shown"] = len(refs)
+    completeness_out["already_seen"] = planned_already_seen
+    # Preserve the legacy counts for debug visibility.
+    completeness_out["legacy_shown"] = legacy_shown
+    completeness_out["legacy_already_seen"] = legacy_already_seen
+    completeness_out["planned_unique_snippets"] = len(planned_snippets)
+    completeness_out["raw_snippet_count"] = len(raw_snippets)
+
+    if "has_more" not in completeness_out and "has_more" in legacy_payload:
+        completeness_out["has_more"] = bool(legacy_payload.get("has_more"))
+
+    if completeness_out:
+        agentic_response["completeness"] = completeness_out
 
     # Pagination hints (cursor-based "next page" support).
     next_cursor = legacy_payload.get("next_cursor")
@@ -6581,12 +4697,6 @@ def _convert_to_agentic_search_response(
             "No matching documents found. The knowledge base may not contain this. "
             "Answer from available evidence or ask a clarifying question; do not guess."
         )
-    legacy_clarification = legacy_payload.get("clarification")
-    if isinstance(legacy_clarification, Mapping):
-        agentic_response["clarification"] = dict(legacy_clarification)
-    legacy_scope_resolution = legacy_payload.get("scope_resolution")
-    if isinstance(legacy_scope_resolution, Mapping):
-        agentic_response["scope_resolution"] = dict(legacy_scope_resolution)
     legacy_prefetched_read_status = str(legacy_payload.get("prefetched_read_status") or "").strip().lower()
     if legacy_prefetched_read_status:
         agentic_response["prefetched_read_status"] = legacy_prefetched_read_status
@@ -6629,7 +4739,9 @@ def _convert_to_agentic_search_response(
         "mcp",
         "search.agentic_conversion",
         {
+            "limit_requested": _coerce_int(legacy_payload.get("limit")) or 0,
             "legacy_snippet_count": len(snippets),
+            "legacy_completeness_shown": _coerce_int(completeness_in.get("shown")) if isinstance(completeness_in, Mapping) else None,
             "agentic_ref_count": len(refs),
             "total_found": total_found,
             "agentic_read_v2_enabled": agentic_read_v2_enabled,
@@ -6638,6 +4750,7 @@ def _convert_to_agentic_search_response(
             "table_context_promote_candidates": len(promoted_table_candidates),
             "table_context_promoted_refs": len(promoted_table_ids),
             "planner_dropped": max(0, len(raw_snippets) - len(planned_snippets)),
+            "planned_unique_snippets": len(planned_snippets),
             "evidence_conflict_groups": len(conflict_keys),
             "previews_full_enabled": preview_full_enabled,
             "previews_hybrid_enabled": preview_hybrid_enabled,
@@ -6669,28 +4782,8 @@ def _search_knowledge_handler(
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
     new_contract_enabled = bool(getattr(settings, "MCP_NEW_CONTRACT_ENABLED", True))
-    scope_clarification_mcq_enabled = bool(getattr(settings, "MCP_SCOPE_CLARIFICATION_MCQ_ENABLED", False))
     feature_state = FeatureFlagService.snapshot(conversation.business_profile)
     rag_agentic_enabled = bool(getattr(feature_state, "rag_agentic_mode", False)) and new_contract_enabled
-    # Keep nested rollout behavior under the single MCQ flag surface.
-    scope_fallback_min_confidence = SCOPE_FALLBACK_MIN_MAPPED_CONFIDENCE
-    scope_fallback_read_max_items = SCOPE_FALLBACK_MAX_REF_ITEMS
-
-    def _log_scope_fallback(stage: str, payload: Mapping[str, object]) -> None:
-        if not scope_clarification_mcq_enabled:
-            return
-        event_payload = dict(payload)
-        event_payload["stage"] = stage
-        structured_log(
-            "mcp",
-            "search.scope_fallback",
-            event_payload,
-            context={
-                "conversation": conversation.id,
-                "business": conversation.business_profile_id,
-            },
-            logger_obj=logger,
-        )
 
     pagination_enabled = bool(getattr(settings, "MCP_SEARCH_PAGINATION_ENABLED", True))
     try:
@@ -6767,6 +4860,60 @@ def _search_knowledge_handler(
                         break
 
         return out, idx, has_more, excluded
+
+    def _read_budget_hint_for_refs(refs: Sequence[Mapping[str, object]]) -> dict[str, int] | None:
+        if not refs:
+            return None
+        total_suggested = 0
+        for ref in refs:
+            if not isinstance(ref, Mapping):
+                continue
+            read_hint = ref.get("read_hint")
+            if not isinstance(read_hint, Mapping):
+                continue
+            try:
+                total_suggested += int(read_hint.get("suggested_max_chars") or 0)
+            except (TypeError, ValueError):
+                continue
+        max_chars_allowed = int(READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX)
+        return {
+            "total_suggested_max_chars": min(int(total_suggested), int(max_chars_allowed)),
+            "max_chars_allowed": int(max_chars_allowed),
+        }
+
+    def _extract_agentic_manifests(
+        refs: Sequence[Mapping[str, object]],
+    ) -> tuple[dict[str, dict[str, object]], dict[str, dict[str, object]]]:
+        """
+        Persist only the manifests needed to resolve document_anchor/table_chunk refs.
+
+        These manifests live on ToolExecutionContext and are populated by
+        _convert_to_agentic_search_response. Cursor paging needs them to be
+        present so read_knowledge can hydrate anchors without requiring a re-search.
+        """
+        text_manifests: dict[str, dict[str, object]] = {}
+        table_manifests: dict[str, dict[str, object]] = {}
+        text_cache = getattr(context, "text_chunk_group_manifests", None)
+        table_cache = getattr(context, "table_row_anchor_manifests", None)
+        if not isinstance(text_cache, dict) and not isinstance(table_cache, dict):
+            return text_manifests, table_manifests
+
+        for ref in refs:
+            if not isinstance(ref, Mapping):
+                continue
+            kind = str(ref.get("kind") or "").strip().lower()
+            ref_id = str(ref.get("id") or "").strip()
+            if not ref_id:
+                continue
+            if kind == "document_anchor" and isinstance(text_cache, dict):
+                manifest = text_cache.get(ref_id)
+                if isinstance(manifest, Mapping):
+                    text_manifests[ref_id] = dict(manifest)
+            if kind == "table_chunk" and isinstance(table_cache, dict):
+                manifest = table_cache.get(ref_id)
+                if isinstance(manifest, Mapping):
+                    table_manifests[ref_id] = dict(manifest)
+        return text_manifests, table_manifests
 
     def _enforce_search_rate_limit() -> Mapping[str, object] | None:
         window_seconds = int(getattr(settings, "MCP_TOOL_RATE_LIMIT_WINDOW_SECONDS", 60) or 60)
@@ -6863,6 +5010,104 @@ def _search_knowledge_handler(
                 page_size = SEARCH_KNOWLEDGE_LIMIT_SCHEMA_DEFAULT
         page_size = max(1, min(int(page_size), MCP_PROMPT_MAX_SNIPPETS_CAP))
 
+        session_version = 1
+        try:
+            session_version = int(session.get("version") or 1)
+        except (TypeError, ValueError):
+            session_version = 1
+
+        # Agentic ref paging (v2): return up to limit refs (not snippet rows) and page over refs.
+        if session_version >= 2:
+            refs_full = session.get("refs")
+            if isinstance(refs_full, list):
+                offset_refs = max(0, int(offset))
+                refs_total_found = session.get("refs_total_found")
+                try:
+                    refs_total_found = int(refs_total_found) if refs_total_found is not None else len(refs_full)
+                except (TypeError, ValueError):
+                    refs_total_found = len(refs_full)
+
+                snippet_total_found = session.get("snippets_total_found")
+                try:
+                    snippet_total_found_int = int(snippet_total_found) if snippet_total_found is not None else None
+                except (TypeError, ValueError):
+                    snippet_total_found_int = None
+
+                # Rehydrate anchor manifests so read_knowledge can resolve document_anchor/table_chunk refs.
+                manifests_text = session.get("text_chunk_group_manifests")
+                manifests_table = session.get("table_row_anchor_manifests")
+                if isinstance(manifests_text, Mapping):
+                    cache_value = getattr(context, "text_chunk_group_manifests", None)
+                    if isinstance(cache_value, dict):
+                        for key, value in dict(manifests_text).items():
+                            if isinstance(value, Mapping):
+                                cache_value[str(key)] = dict(value)
+                if isinstance(manifests_table, Mapping):
+                    cache_value = getattr(context, "table_row_anchor_manifests", None)
+                    if isinstance(cache_value, dict):
+                        for key, value in dict(manifests_table).items():
+                            if isinstance(value, Mapping):
+                                cache_value[str(key)] = dict(value)
+
+                refs_page = [dict(ref) for ref in refs_full[offset_refs : offset_refs + page_size] if isinstance(ref, Mapping)]
+                next_offset = offset_refs + len(refs_page)
+                has_more_refs = bool(next_offset < refs_total_found)
+                next_cursor = _encode_search_cursor(session_id=session_id, offset=next_offset) if has_more_refs else None
+
+                completeness_base = session.get("completeness_base")
+                completeness: dict[str, object] = dict(completeness_base) if isinstance(completeness_base, Mapping) else {}
+                # For transparency, keep snippet totals even though we page over refs.
+                if snippet_total_found_int is not None:
+                    completeness.setdefault("total_found", snippet_total_found_int)
+                    completeness["snippets_total_found"] = snippet_total_found_int
+                completeness["refs_total_found"] = int(refs_total_found)
+                completeness["paging_mode"] = "refs"
+                completeness["ref_offset"] = int(offset_refs)
+                completeness["shown"] = len(refs_page)
+                completeness["has_more"] = bool(has_more_refs)
+
+                payload: dict[str, object] = {
+                    "tool": "search_knowledge",
+                    "query": str(session.get("query") or "").strip(),
+                    "limit": page_size,
+                    "query_intent": session.get("query_intent"),
+                    "status": "ok" if refs_page else "not_found",
+                    "diagnostics": {"cursor_used": True, "offset": offset_refs, "paging_mode": "refs"},
+                    "refs": refs_page,
+                    "total_found": int(refs_total_found),
+                    "hint": "Use next_cursor to continue paging." if has_more_refs else "No more results.",
+                    "completeness": completeness,
+                    "has_more": bool(has_more_refs),
+                }
+                read_budget_hint = _read_budget_hint_for_refs(refs_page)
+                if read_budget_hint:
+                    payload["read_budget_hint"] = read_budget_hint
+                if next_cursor:
+                    payload["next_cursor"] = next_cursor
+
+                structured_log(
+                    "mcp",
+                    "search.agentic_paging",
+                    {
+                        "session_version": int(session_version),
+                        "paging_mode": "refs",
+                        "cursor_used": True,
+                        "offset": int(offset_refs),
+                        "limit": int(page_size),
+                        "snippets_total_found": snippet_total_found_int,
+                        "refs_total_found": int(refs_total_found),
+                        "returned_refs": len(refs_page),
+                        "has_more": bool(has_more_refs),
+                    },
+                    context={
+                        "conversation": conversation.id,
+                        "business": conversation.business_profile_id,
+                    },
+                    logger_obj=logger,
+                )
+
+                return payload
+
         results_full = session.get("results")
         if not isinstance(results_full, list):
             results_full = []
@@ -6951,238 +5196,6 @@ def _search_knowledge_handler(
                 _append_query(candidate_str)
 
     primary_query = queries[0] if queries else ""
-    scope_resolution_applied: dict[str, object] | None = None
-    scope_fallback_plan: dict[str, object] | None = None
-    pending_scope_state = _pending_scope_clarification_state(context=context)
-    scope_resolution_input_source = "tool_query"
-    if primary_query and pending_scope_state:
-        scope_resolution_query = primary_query
-        selection_action = ""
-        selection_key = ""
-        selection_label = ""
-        latest_scope_selection = (
-            dict(context.latest_scope_selection)
-            if isinstance(getattr(context, "latest_scope_selection", None), Mapping)
-            else {}
-        )
-        if latest_scope_selection:
-            selection_action = str(latest_scope_selection.get("action") or "").strip().lower()
-            selection_key = _normalize_scope_category_key(latest_scope_selection.get("category_key") or "")
-            selection_label = _clean_scope_category_label(
-                latest_scope_selection.get("category_label"),
-                max_chars=96,
-            )
-            if selection_action == "all_fees":
-                scope_resolution_query = "all"
-                scope_resolution_input_source = "scope_selection_metadata"
-            elif selection_action in {"choose_categories", "list_categories"}:
-                scope_resolution_query = "choose categories"
-                scope_resolution_input_source = "scope_selection_metadata"
-            elif selection_action == "select_category" or selection_key:
-                if selection_key:
-                    scope_resolution_query = _scope_category_selector_query(selection_key) or selection_key
-                elif selection_label:
-                    scope_resolution_query = f"scope:category:{selection_label}"
-                scope_resolution_input_source = "scope_selection_metadata"
-
-        latest_user_message = str(getattr(context, "latest_user_message", "") or "").strip()
-        if latest_user_message and scope_resolution_input_source == "tool_query":
-            latest_user_intent = _extract_scope_clarification_intent(latest_user_message)
-            latest_mode = (
-                str(latest_user_intent.get("mode") or "").strip().lower()
-                if isinstance(latest_user_intent, Mapping)
-                else ""
-            )
-            # MCQ selector clicks are encoded in the raw user message. Use them
-            # as the source of truth even when the model rewrites its tool query.
-            if latest_mode in {"specific_key", "all", "list_categories", "specific"}:
-                scope_resolution_query = latest_user_message
-                scope_resolution_input_source = "latest_user_message"
-
-        scope_resolution_applied = _resolve_scope_clarification_followup(
-            user_query=scope_resolution_query,
-            pending_scope=pending_scope_state,
-        )
-        if (
-            not scope_resolution_applied
-            and selection_key
-            and selection_label
-            and scope_resolution_input_source == "scope_selection_metadata"
-        ):
-            label_selector_query = f"scope:category:{selection_label}"
-            if label_selector_query != scope_resolution_query:
-                scope_resolution_applied = _resolve_scope_clarification_followup(
-                    user_query=label_selector_query,
-                    pending_scope=pending_scope_state,
-                )
-                if scope_resolution_applied:
-                    scope_resolution_input_source = "scope_selection_metadata_label_fallback"
-        if not scope_resolution_applied and scope_resolution_query != primary_query:
-            scope_resolution_applied = _resolve_scope_clarification_followup(
-                user_query=primary_query,
-                pending_scope=pending_scope_state,
-            )
-            if scope_resolution_applied:
-                scope_resolution_input_source = "tool_query_fallback"
-        if scope_resolution_applied:
-            scope_mode = str(scope_resolution_applied.get("mode") or "").strip().lower()
-            if scope_mode == "list_categories":
-                raw_scope_categories = scope_resolution_applied.get("categories")
-                scope_categories = (
-                    [str(item).strip() for item in raw_scope_categories if str(item).strip()]
-                    if isinstance(raw_scope_categories, Sequence) and not isinstance(raw_scope_categories, (str, bytes, bytearray))
-                    else []
-                )
-                listing_hint = str(scope_resolution_applied.get("listing_hint") or "").strip()
-                if not listing_hint:
-                    listing_hint = _build_scope_categories_listing_hint(scope_categories)
-                diagnostics = {
-                    "path": "clarification",
-                    "reason": "broad_scope_ambiguity",
-                    "intent_requires_clarification": True,
-                    "intent_clarification_question": listing_hint,
-                    "scope_clarification_categories": scope_categories,
-                    "clarification_ui_mode": "text",
-                    "scope_listed": True,
-                    "scope_list_count": len(scope_categories),
-                }
-                diagnostics = _sanitize_scope_clarification_diagnostics(
-                    diagnostics,
-                    mcq_enabled=scope_clarification_mcq_enabled,
-                )
-                structured_log(
-                    "mcp",
-                    "search.scope_listing",
-                    {
-                        "base_query": scope_resolution_applied.get("base_query"),
-                        "user_query": scope_resolution_applied.get("user_query"),
-                        "categories_count": len(scope_categories),
-                    },
-                    context={
-                        "conversation": conversation.id,
-                        "business": conversation.business_profile_id,
-                    },
-                    logger_obj=logger,
-                )
-                try:
-                    default_limit = int(getattr(settings, "MCP_SEARCH_KNOWLEDGE_DEFAULT_LIMIT", 5) or 5)
-                except (TypeError, ValueError):
-                    default_limit = 5
-                try:
-                    prompt_cap = int(getattr(settings, "MCP_PROMPT_MAX_SNIPPETS", default_limit) or default_limit)
-                except (TypeError, ValueError):
-                    prompt_cap = default_limit
-                listing_limit = max(1, min(default_limit, prompt_cap))
-                listing_query = str(scope_resolution_applied.get("user_query") or primary_query)
-                listing_intent_signal = _query_intent(listing_query)
-                return {
-                    "tool": "search_knowledge",
-                    "query": listing_query,
-                    "limit": listing_limit,
-                    "query_intent": listing_intent_signal.get("intent"),
-                    "intent_signal": listing_intent_signal,
-                    "status": "needs_clarification",
-                    "diagnostics": diagnostics,
-                    "snippets": [],
-                    "hint": listing_hint,
-                }
-            resolved_query = str(scope_resolution_applied.get("resolved_query") or "").strip()
-            selected_categories: list[str] = []
-            raw_selected_categories = scope_resolution_applied.get("categories")
-            if isinstance(raw_selected_categories, Sequence) and not isinstance(
-                raw_selected_categories,
-                (str, bytes, bytearray),
-            ):
-                selected_categories = [
-                    str(item).strip()
-                    for item in raw_selected_categories
-                    if str(item).strip()
-                ][:SCOPE_CLARIFICATION_MAX_CATEGORIES]
-            if resolved_query:
-                queries[0] = resolved_query
-                primary_query = resolved_query
-            context.set_scope_resolution(
-                mode=str(scope_resolution_applied.get("mode") or "specific"),
-                base_query=str(scope_resolution_applied.get("base_query") or primary_query),
-                resolved_query=str(scope_resolution_applied.get("resolved_query") or primary_query),
-                user_query=str(scope_resolution_applied.get("user_query") or ""),
-                category=str(scope_resolution_applied.get("category") or "") or None,
-                categories=selected_categories,
-                category_key=str(scope_resolution_applied.get("category_key") or "") or None,
-                mapped_ref_ids=_normalize_scope_ref_ids(scope_resolution_applied.get("mapped_ref_ids") or []),
-                mapped_refs=(
-                    dict(scope_resolution_applied.get("mapped_refs"))
-                    if isinstance(scope_resolution_applied.get("mapped_refs"), Mapping)
-                    else None
-                ),
-                selection_source=str(scope_resolution_applied.get("selection_source") or "") or None,
-            )
-            structured_log(
-                "mcp",
-                "search.scope_resolution",
-                {
-                    "mode": scope_resolution_applied.get("mode"),
-                    "base_query": scope_resolution_applied.get("base_query"),
-                    "resolved_query": primary_query,
-                    "category": scope_resolution_applied.get("category") or None,
-                    "categories": selected_categories,
-                    "selection_mode": scope_resolution_applied.get("selection_mode") or "single",
-                    "resolution_input_source": scope_resolution_input_source,
-                },
-                context={
-                    "conversation": conversation.id,
-                    "business": conversation.business_profile_id,
-                },
-                logger_obj=logger,
-            )
-
-            scope_selection_source = str(scope_resolution_applied.get("selection_source") or "").strip().lower()
-            mapped_ref_ids = _normalize_scope_ref_ids(scope_resolution_applied.get("mapped_ref_ids") or [])
-            mapped_refs = (
-                dict(scope_resolution_applied.get("mapped_refs"))
-                if isinstance(scope_resolution_applied.get("mapped_refs"), Mapping)
-                else {}
-            )
-            mapped_confidence: float | None = None
-            raw_confidence = mapped_refs.get("confidence")
-            if isinstance(raw_confidence, (int, float)):
-                mapped_confidence = max(0.0, min(1.0, float(raw_confidence)))
-            elif raw_confidence is not None:
-                try:
-                    mapped_confidence = max(0.0, min(1.0, float(str(raw_confidence).strip())))
-                except (TypeError, ValueError):
-                    mapped_confidence = None
-            mapped_fallback = str(mapped_refs.get("fallback") or "").strip().lower()
-            mapped_source = str(mapped_refs.get("source") or "").strip().lower()
-            mapping_low_confidence = (
-                mapped_confidence is not None
-                and mapped_confidence < scope_fallback_min_confidence
-            )
-            mapping_stale_or_missing = bool(
-                (not mapped_ref_ids)
-                or mapped_fallback in {"scoped_search", "fallback"}
-                or mapped_source in {"stale", "expired", "low_confidence"}
-            )
-            if (
-                scope_clarification_mcq_enabled
-                and str(scope_resolution_applied.get("mode") or "").strip().lower() == "specific"
-                and scope_selection_source == "category_key"
-            ):
-                if mapping_stale_or_missing or mapping_low_confidence:
-                    scope_fallback_reason = "missing_or_stale_mapping"
-                    if mapping_low_confidence:
-                        scope_fallback_reason = "low_confidence_mapping"
-                    scope_fallback_plan = {
-                        "reason": scope_fallback_reason,
-                        "confidence": mapped_confidence,
-                        "source": mapped_source or None,
-                        "fallback": mapped_fallback or None,
-                        "category": scope_resolution_applied.get("category") or None,
-                        "base_query": scope_resolution_applied.get("base_query") or primary_query,
-                        "resolved_query": scope_resolution_applied.get("resolved_query") or primary_query,
-                    }
-                    # Graceful degrade path should remain one scoped query only.
-                    queries = [primary_query]
 
     # =========================================================================
     # DIAGNOSTIC: Log document context state at search start
@@ -7196,8 +5209,6 @@ def _search_knowledge_handler(
             "primary_document_title": context.get_primary_document_title() if context else None,
             "referenced_upload_ids": list(context.referenced_upload_ids)[:5] if context else [],
             "search_history_count": len(context.search_history) if context else 0,
-            "scope_pending": bool(context.pending_scope_clarification) if context else False,
-            "scope_selected": bool(context.scope_resolution) if context else False,
         },
         context={
             "conversation": conversation.id,
@@ -7657,8 +5668,6 @@ def _search_knowledge_handler(
                 "primary_upload_id": context.primary_upload_id,
                 "referenced_upload_ids": list(context.referenced_upload_ids),
                 "document_context": context.document_context,
-                "scope_pending": dict(context.pending_scope_clarification) if context.pending_scope_clarification else None,
-                "scope_resolution": dict(context.scope_resolution) if context.scope_resolution else None,
             } if context else None
 
             # =========================================================================
@@ -8094,53 +6103,6 @@ def _search_knowledge_handler(
         refinement_applied = is_refined_query
         result_diagnostics = dict(result.diagnostics or {})
 
-        if result.status == "needs_clarification" and str(result_diagnostics.get("reason") or "") == "broad_scope_ambiguity":
-            result_diagnostics.setdefault(
-                "clarification_ui_mode",
-                "mcq" if scope_clarification_mcq_enabled else "text",
-            )
-            if scope_clarification_mcq_enabled:
-                result_diagnostics.update(
-                    _build_scope_clarification_mcq_diagnostics(result_diagnostics)
-                )
-            categories = _scope_clarification_all_categories_from_diagnostics(result_diagnostics)
-            scope_bucket_id = context.set_pending_scope_clarification(
-                base_query=query_text,
-                categories=categories,
-                question=str(result_diagnostics.get("intent_clarification_question") or ""),
-                category_refs=(
-                    result_diagnostics.get("scope_clarification_category_refs")
-                    if scope_clarification_mcq_enabled
-                    else None
-                ),
-            )
-            result_diagnostics["scope_clarification_bucket_id"] = scope_bucket_id
-            if scope_clarification_mcq_enabled:
-                result_diagnostics.update(
-                    _build_scope_clarification_mcq_diagnostics(result_diagnostics)
-                )
-        elif (
-            scope_resolution_applied
-            and query_text == primary_query
-        ):
-            result_diagnostics["scope_resolution_mode"] = scope_resolution_applied.get("mode")
-            result_diagnostics["scope_resolution_category"] = scope_resolution_applied.get("category") or None
-            raw_scope_categories = scope_resolution_applied.get("categories")
-            if isinstance(raw_scope_categories, Sequence) and not isinstance(
-                raw_scope_categories,
-                (str, bytes, bytearray),
-            ):
-                result_diagnostics["scope_resolution_categories"] = [
-                    str(item).strip()
-                    for item in raw_scope_categories
-                    if str(item).strip()
-                ][:SCOPE_CLARIFICATION_MAX_CATEGORIES]
-            result_diagnostics["scope_resolution_base_query"] = scope_resolution_applied.get("base_query")
-        result_diagnostics = _sanitize_scope_clarification_diagnostics(
-            result_diagnostics,
-            mcq_enabled=scope_clarification_mcq_enabled,
-        )
-
         payload = {
             "tool": "search_knowledge",
             "query": query_text,
@@ -8154,34 +6116,6 @@ def _search_knowledge_handler(
             "snippets": snippet_payloads,
             "hint": _search_hint(result.status, intent, snippet_payloads, result_diagnostics),
         }
-        if result.status == "needs_clarification" and str(result_diagnostics.get("reason") or "") == "broad_scope_ambiguity":
-            clarification_payload = _build_scope_clarification_payload(
-                result_diagnostics,
-                mcq_enabled=scope_clarification_mcq_enabled,
-            )
-            if clarification_payload:
-                payload["clarification"] = clarification_payload
-        if scope_resolution_applied and query_text == primary_query:
-            payload_scope_categories: list[str] = []
-            raw_payload_scope_categories = scope_resolution_applied.get("categories")
-            if isinstance(raw_payload_scope_categories, Sequence) and not isinstance(
-                raw_payload_scope_categories,
-                (str, bytes, bytearray),
-            ):
-                payload_scope_categories = [
-                    str(item).strip()
-                    for item in raw_payload_scope_categories
-                    if str(item).strip()
-                ][:SCOPE_CLARIFICATION_MAX_CATEGORIES]
-            payload["scope_resolution"] = {
-                "mode": scope_resolution_applied.get("mode"),
-                "category": scope_resolution_applied.get("category") or None,
-                "categories": payload_scope_categories or None,
-                "selection_mode": scope_resolution_applied.get("selection_mode") or "single",
-                "base_query": scope_resolution_applied.get("base_query"),
-                "resolved_query": scope_resolution_applied.get("resolved_query"),
-                "user_query": scope_resolution_applied.get("user_query"),
-            }
 
         # Add confidence and critique info to payload
         if confidence_result:
@@ -8219,180 +6153,6 @@ def _search_knowledge_handler(
         if search_cache_key:
             _bounded_cache_store(context.search_cache, search_cache_key, copy.deepcopy(payload))
         return payload
-
-    if scope_fallback_plan and queries:
-        fallback_query = str(queries[0] or primary_query).strip()
-        fallback_intent_signal = _query_intent(fallback_query)
-        fallback_intent = fallback_intent_signal.get("intent")
-        fallback_limit = _effective_limit(requested_limit)
-
-        limited = _enforce_search_rate_limit()
-        if limited is not None:
-            return limited
-        context.reserve_search()
-
-        run_payload = _execute_single_query(
-            fallback_query,
-            intent_info_override=fallback_intent_signal,
-            intent_override=fallback_intent,
-            limit_override=fallback_limit,
-            allow_auto_refine=False,
-        )
-        fallback_diag = (
-            dict(run_payload.get("diagnostics"))
-            if isinstance(run_payload.get("diagnostics"), Mapping)
-            else {}
-        )
-        fallback_diag["scope_fallback_applied"] = True
-        fallback_diag["scope_fallback_mode"] = "scoped_search"
-        fallback_diag["scope_fallback_reason"] = scope_fallback_plan.get("reason")
-        fallback_diag["scope_fallback_confidence"] = scope_fallback_plan.get("confidence")
-        fallback_diag["scope_fallback_source"] = scope_fallback_plan.get("source")
-        fallback_diag["scope_fallback_marker"] = scope_fallback_plan.get("fallback")
-        fallback_diag["scope_fallback_read_max_items"] = int(scope_fallback_read_max_items)
-
-        run_status = str(run_payload.get("status") or "").strip().lower()
-        run_reason = str(fallback_diag.get("reason") or "").strip().lower()
-        _log_scope_fallback(
-            "scoped_search_result",
-            {
-                "query": fallback_query[:160],
-                "status": run_status or "unknown",
-                "reason": run_reason or None,
-                "scope_fallback_reason": fallback_diag.get("scope_fallback_reason"),
-                "scope_fallback_confidence": fallback_diag.get("scope_fallback_confidence"),
-            },
-        )
-        if run_status == "needs_clarification" and run_reason == "auto_source_ambiguity":
-            followup_key = _scope_source_preference_followup_key(
-                base_query=scope_fallback_plan.get("base_query"),
-                resolved_query=scope_fallback_plan.get("resolved_query"),
-                category=scope_fallback_plan.get("category"),
-            )
-            followup_tracker = getattr(context, "scope_source_preference_prompts", None)
-            if not isinstance(followup_tracker, set):
-                followup_tracker = set()
-                context.scope_source_preference_prompts = followup_tracker
-
-            if followup_key and followup_key in followup_tracker:
-                _log_scope_fallback(
-                    "source_followup_blocked_repeat",
-                    {
-                        "query": fallback_query[:160],
-                        "followup_key": followup_key or None,
-                    },
-                )
-                blocked_diag = dict(fallback_diag)
-                blocked_diag["scope_source_preference_followup_already_requested"] = True
-                blocked_diag = _sanitize_scope_clarification_diagnostics(
-                    blocked_diag,
-                    mcq_enabled=scope_clarification_mcq_enabled,
-                )
-                blocked_payload: Mapping[str, object] = {
-                    "tool": "search_knowledge",
-                    "query": fallback_query,
-                    "limit": fallback_limit,
-                    "query_intent": fallback_intent,
-                    "intent_signal": fallback_intent_signal,
-                    "status": "blocked",
-                    "error": "scope_source_preference_followup_already_requested",
-                    "error_code": "scope_source_preference_followup_already_requested",
-                    "diagnostics": blocked_diag,
-                    "snippets": [],
-                    "hint": (
-                        "Scope source ambiguity follow-up was already asked this turn. "
-                        "Wait for the visitor to choose table-only, text-only, or both."
-                    ),
-                }
-                if rag_agentic_enabled:
-                    return dict(
-                        _convert_to_agentic_search_response(
-                            blocked_payload,
-                            conversation=conversation,
-                            context=context,
-                        )
-                    )
-                return dict(blocked_payload)
-
-            if followup_key:
-                followup_tracker.add(followup_key)
-
-            followup_question = _scope_source_preference_followup_hint(fallback_diag)
-            _log_scope_fallback(
-                "source_followup_requested",
-                {
-                    "query": fallback_query[:160],
-                    "followup_key": followup_key or None,
-                    "question": followup_question[:180],
-                },
-            )
-            followup_diag = dict(fallback_diag)
-            followup_diag["clarification_ui_mode"] = "text"
-            followup_diag["intent_requires_clarification"] = True
-            followup_diag["intent_clarification_question"] = followup_question
-            followup_diag["scope_source_preference_followup"] = True
-            followup_diag["scope_source_preference_followup_key"] = followup_key or None
-            followup_diag = _sanitize_scope_clarification_diagnostics(
-                followup_diag,
-                mcq_enabled=scope_clarification_mcq_enabled,
-            )
-
-            followup_payload: Mapping[str, object] = {
-                "tool": "search_knowledge",
-                "query": fallback_query,
-                "limit": fallback_limit,
-                "query_intent": fallback_intent,
-                "intent_signal": fallback_intent_signal,
-                "status": "needs_clarification",
-                "diagnostics": followup_diag,
-                "snippets": [],
-                "hint": followup_question,
-            }
-            scope_resolution_payload = run_payload.get("scope_resolution")
-            if isinstance(scope_resolution_payload, Mapping):
-                followup_payload = dict(followup_payload)
-                followup_payload["scope_resolution"] = dict(scope_resolution_payload)
-            if isinstance(run_payload.get("completeness"), Mapping):
-                followup_payload = dict(followup_payload)
-                followup_payload["completeness"] = dict(run_payload.get("completeness") or {})
-            if rag_agentic_enabled:
-                return dict(
-                    _convert_to_agentic_search_response(
-                        followup_payload,
-                        conversation=conversation,
-                        context=context,
-                    )
-                )
-            return dict(followup_payload)
-
-        fallback_payload_out = dict(run_payload)
-        fallback_payload_out["diagnostics"] = _sanitize_scope_clarification_diagnostics(
-            fallback_diag,
-            mcq_enabled=scope_clarification_mcq_enabled,
-        )
-        _log_scope_fallback(
-            "return_payload",
-            {
-                "query": fallback_query[:160],
-                "status": str(fallback_payload_out.get("status") or "").strip().lower() or "unknown",
-                "scope_fallback_reason": fallback_diag.get("scope_fallback_reason"),
-                "scope_fallback_read_status": fallback_diag.get("scope_fallback_read_status"),
-            },
-        )
-        if not str(fallback_payload_out.get("hint") or "").strip():
-            fallback_payload_out["hint"] = (
-                "Scoped fallback search completed. Answer from retrieved snippets, "
-                "or ask one focused follow-up if details are still ambiguous."
-            )
-        if rag_agentic_enabled:
-            return dict(
-                _convert_to_agentic_search_response(
-                    fallback_payload_out,
-                    conversation=conversation,
-                    context=context,
-                )
-            )
-        return fallback_payload_out
 
     resolved_runs: list[tuple[int, Mapping[str, object]]] = []
     pending_specs: list[tuple[int, str, Mapping[str, object], str | None, int | None]] = []
@@ -8769,7 +6529,7 @@ def _search_knowledge_handler(
 
     next_cursor = None
     session_id = None
-    if pagination_enabled and has_more and results_full:
+    if pagination_enabled and has_more and results_full and not rag_agentic_enabled:
         session_id = str(uuid.uuid4())
         cache_key = _search_cursor_cache_key(conversation=conversation, session_id=session_id)
         cache.set(
@@ -8904,26 +6664,6 @@ def _search_knowledge_handler(
         if _extract_conflict_detected(diag):
             diag.setdefault("reason", "conflicting_evidence")
             diag.setdefault("intent_requires_clarification", True)
-        if str(diag.get("reason") or "") == "broad_scope_ambiguity":
-            diag.setdefault(
-                "clarification_ui_mode",
-                "mcq" if scope_clarification_mcq_enabled else "text",
-            )
-            if scope_clarification_mcq_enabled:
-                diag.update(_build_scope_clarification_mcq_diagnostics(diag))
-            scope_bucket_id = context.set_pending_scope_clarification(
-                base_query=str(status_source_run.get("query") or primary_run.get("query") or ""),
-                categories=_scope_clarification_all_categories_from_diagnostics(diag),
-                question=str(diag.get("intent_clarification_question") or ""),
-                category_refs=(
-                    diag.get("scope_clarification_category_refs")
-                    if scope_clarification_mcq_enabled
-                    else None
-                ),
-            )
-            diag["scope_clarification_bucket_id"] = scope_bucket_id
-            if scope_clarification_mcq_enabled:
-                diag.update(_build_scope_clarification_mcq_diagnostics(diag))
         clarification_question = str(diag.get("intent_clarification_question") or "").strip()
         if not clarification_question:
             for run in runs:
@@ -8947,10 +6687,6 @@ def _search_knowledge_handler(
                     break
         if no_result_reason:
             diag["no_result_reason"] = no_result_reason
-    diag = _sanitize_scope_clarification_diagnostics(
-        diag,
-        mcq_enabled=scope_clarification_mcq_enabled,
-    )
     diag["batched_runs"] = [
         {
             "query": run.get("query"),
@@ -8992,13 +6728,6 @@ def _search_knowledge_handler(
         "snippets": page_snippets,
         "hint": hint,
     }
-    if final_status == "needs_clarification" and str(diag.get("reason") or "") == "broad_scope_ambiguity":
-        clarification_payload = _build_scope_clarification_payload(
-            diag,
-            mcq_enabled=scope_clarification_mcq_enabled,
-        )
-        if clarification_payload:
-            payload["clarification"] = clarification_payload
 
     # Always include completeness metadata for transparent decisions
     payload["completeness"] = completeness
@@ -9010,18 +6739,121 @@ def _search_knowledge_handler(
         payload["fusion"] = fusion
     if len(queries) > 1:
         payload["batched_queries"] = tuple(queries)
-    scope_resolution_payload = status_source_run.get("scope_resolution")
-    if isinstance(scope_resolution_payload, Mapping):
-        payload["scope_resolution"] = dict(scope_resolution_payload)
-    
+
     # Convert to agentic format when enabled, and persist search intent metadata
     # for semantic dedup within this user turn.
     if rag_agentic_enabled:
-        final_response = _convert_to_agentic_search_response(
-            payload,
-            conversation=conversation,
-            context=context,
-        )
+        if final_status in {"ok", "not_found"} and results_full:
+            # Agentic search must return up to `limit` unique refs. The legacy flow
+            # converts only the first snippet page, which can collapse to fewer refs
+            # (e.g., 10 snippets -> 3 refs) and starve the model of evidence breadth.
+            #
+            # Fix: derive refs from the full candidate set (prefetch window) and page
+            # over refs (not snippets). This preserves stable pagination and avoids
+            # skipping refs when dedupe collapses multiple snippets into one ref.
+            full_payload = dict(payload)
+            full_payload["snippets"] = [dict(snippet) for snippet in results_full if isinstance(snippet, Mapping)]
+            agentic_full = _convert_to_agentic_search_response(
+                full_payload,
+                conversation=conversation,
+                context=context,
+            )
+            refs_full_raw = agentic_full.get("refs")
+            refs_full: list[dict[str, object]] = (
+                [dict(ref) for ref in refs_full_raw if isinstance(ref, Mapping)]
+                if isinstance(refs_full_raw, list)
+                else []
+            )
+            refs_total_found = len(refs_full)
+            refs_page = refs_full[:page_size]
+            has_more_refs = bool(refs_total_found > len(refs_page))
+
+            # Cache a ref paging session for cursor paging.
+            next_cursor = None
+            session_id = None
+            if pagination_enabled and has_more_refs and refs_full:
+                session_id = str(uuid.uuid4())
+                cache_key = _search_cursor_cache_key(conversation=conversation, session_id=session_id)
+                manifests_text, manifests_table = _extract_agentic_manifests(refs_full)
+                completeness_base = agentic_full.get("completeness")
+                completeness_base_out = dict(completeness_base) if isinstance(completeness_base, Mapping) else {}
+                completeness_base_out["refs_total_found"] = int(refs_total_found)
+                completeness_base_out["paging_mode"] = "refs"
+                completeness_base_out["snippets_total_found"] = int(total_found)
+                cache.set(
+                    cache_key,
+                    {
+                        "version": 2,
+                        "query": payload.get("query"),
+                        "query_intent": payload.get("query_intent"),
+                        "page_size": page_size,
+                        "snippets_total_found": int(total_found),
+                        "refs_total_found": int(refs_total_found),
+                        "refs": refs_full,
+                        "completeness_base": completeness_base_out,
+                        "text_chunk_group_manifests": manifests_text,
+                        "table_row_anchor_manifests": manifests_table,
+                    },
+                    cursor_ttl_seconds,
+                )
+                next_cursor = _encode_search_cursor(session_id=session_id, offset=len(refs_page))
+
+            completeness_out = dict(agentic_full.get("completeness") or {}) if isinstance(agentic_full.get("completeness"), Mapping) else {}
+            # Normalize agentic completeness to what we actually returned.
+            completeness_out.setdefault("total_found", int(total_found))  # snippet candidates
+            completeness_out["snippets_total_found"] = int(total_found)
+            completeness_out["refs_total_found"] = int(refs_total_found)
+            completeness_out["paging_mode"] = "refs"
+            completeness_out["ref_offset"] = 0
+            completeness_out["shown"] = len(refs_page)
+            completeness_out["has_more"] = bool(has_more_refs)
+
+            final_response = {
+                **{k: v for k, v in dict(agentic_full).items() if k not in {"refs", "next_cursor", "has_more", "total_found", "read_budget_hint", "completeness"}},
+                "tool": "search_knowledge",
+                "query": payload.get("query"),
+                "limit": int(page_size),
+                "query_intent": payload.get("query_intent"),
+                "status": agentic_full.get("status") if refs_page else "not_found",
+                "refs": refs_page,
+                # In agentic ref paging, total_found refers to refs (not snippets).
+                "total_found": int(refs_total_found),
+                "completeness": completeness_out,
+                "has_more": bool(has_more_refs),
+            }
+            read_budget_hint = _read_budget_hint_for_refs(refs_page)
+            if read_budget_hint:
+                final_response["read_budget_hint"] = read_budget_hint
+            if next_cursor:
+                final_response["next_cursor"] = next_cursor
+
+            structured_log(
+                "mcp",
+                "search.agentic_paging",
+                {
+                    "session_version": 2,
+                    "session_stored": bool(next_cursor),
+                    "paging_mode": "refs",
+                    "cursor_used": False,
+                    "offset": 0,
+                    "limit": int(page_size),
+                    "snippets_total_found": int(total_found),
+                    "refs_total_found": int(refs_total_found),
+                    "returned_refs": len(refs_page),
+                    "has_more": bool(has_more_refs),
+                },
+                context={
+                    "conversation": conversation.id,
+                    "business": conversation.business_profile_id,
+                },
+                logger_obj=logger,
+            )
+        else:
+            final_response = _convert_to_agentic_search_response(
+                payload,
+                conversation=conversation,
+                context=context,
+            )
     else:
         final_response = payload
 
@@ -9867,7 +7699,7 @@ def _agentic_read_v2_handler(
 
     # Dedup items by (id,cursor) while preserving order.
     ordered_items: list[dict[str, object]] = []
-    seen_keys: set[tuple[str, str | None]] = set()
+    seen_keys: set[tuple[str, str | None, int | None, int | None]] = set()
     for entry in raw_items:
         if not isinstance(entry, Mapping):
             continue
@@ -9876,11 +7708,33 @@ def _agentic_read_v2_handler(
             continue
         cursor = entry.get("cursor")
         cursor_str = str(cursor).strip() if isinstance(cursor, str) and cursor.strip() else None
-        key = (item_id, cursor_str)
+        row_start_raw = entry.get("row_start")
+        row_limit_raw = entry.get("row_limit")
+        row_start_value: int | None = None
+        if row_start_raw is not None and row_start_raw != "":
+            try:
+                row_start_value = max(0, int(row_start_raw))
+            except (TypeError, ValueError):
+                row_start_value = None
+        row_limit_value: int | None = None
+        if row_limit_raw is not None and row_limit_raw != "":
+            try:
+                row_limit_value = int(row_limit_raw)
+            except (TypeError, ValueError):
+                row_limit_value = None
+        if row_limit_value is not None:
+            row_limit_value = max(1, min(200, int(row_limit_value)))
+
+        key = (item_id, cursor_str, row_start_value, row_limit_value)
         if key in seen_keys:
             continue
         seen_keys.add(key)
-        ordered_items.append({"id": item_id, "cursor": cursor_str})
+        out_item: dict[str, object] = {"id": item_id, "cursor": cursor_str}
+        if row_start_value is not None:
+            out_item["row_start"] = row_start_value
+        if row_limit_value is not None:
+            out_item["row_limit"] = row_limit_value
+        ordered_items.append(out_item)
 
     # ── Repeat-read detection (loop prevention) ──────────────────────────
     # Allow cursor-continuation reads (same ID + cursor = new page of content).
@@ -9891,7 +7745,8 @@ def _agentic_read_v2_handler(
     for item in ordered_items:
         item_id = str(item["id"])
         has_cursor = bool(item.get("cursor"))
-        if item_id in already_read_ids and not has_cursor:
+        has_row_start = item.get("row_start") is not None
+        if item_id in already_read_ids and not has_cursor and not has_row_start:
             blocked_items.append({"id": item_id, "error": "Already read this turn. Answer from available evidence."})
         else:
             filtered_items.append(item)
@@ -10925,6 +8780,290 @@ def _agentic_read_v2_handler(
         cursor_str = _sign_agentic_read_cursor_v2(cursor_next) if cursor_next else None
         return payload, ({"cursor": cursor_str} if cursor_str else None), complete
 
+    def _read_table_rows_segment_facts(
+        *,
+        item_id: str,
+        upload_id: str,
+        table_id: str,
+        start_row_index: int = 0,
+        budget_chars: int,
+        max_rows: int | None = None,
+        business_profile,
+        selection_mode: str | None = None,
+    ) -> tuple[dict[str, object], dict[str, object] | None, bool]:
+        """
+        Facts-first table read for the LLM.
+
+        Contract:
+        - `start_row_index` is a 0-based row offset within the visible table body
+          (header/separator rows excluded by ingestion metadata).
+        - Returns only the table facts + paging signals needed to continue via
+          `row_start` + `row_limit` (no table cursors).
+        """
+
+        budget_limit = max(0, int(budget_chars))
+        complete = True
+
+        payload: dict[str, object] = {
+            "type": "table",
+            "table_id": str(table_id),
+            "columns": [],
+            "rows": [],
+            "row_offset": 0,
+            "rows_shown": 0,
+            "total_rows": 0,
+        }
+        if isinstance(selection_mode, str) and selection_mode.strip():
+            payload["selection_mode"] = selection_mode.strip()
+
+        try:
+            table_uuid = uuid.UUID(str(table_id))
+        except (TypeError, ValueError):
+            return payload, None, True
+
+        table = (
+            KnowledgeUploadTable.objects.filter(
+                id=table_uuid,
+                upload_id=upload_id,
+                upload__business_profile=business_profile,
+                upload__status=KnowledgeStatus.ACTIVE,
+            )
+            .only("id", "order_index", "title", "section_heading", "column_schema")
+            .first()
+        )
+        if not table:
+            return payload, None, True
+
+        def _dedupe_column_labels(raw_columns: Sequence[str]) -> list[str]:
+            deduped: list[str] = []
+            seen: dict[str, int] = {}
+            for index, raw_column in enumerate(raw_columns):
+                label = str(raw_column or "").strip() or f"column_{index + 1}"
+                key = label.lower()
+                count = seen.get(key, 0) + 1
+                seen[key] = count
+                deduped.append(label if count == 1 else f"{label}_{count}")
+            return deduped
+
+        # Column labels: prefer column_schema if it looks like a list of strings.
+        raw_schema = table.column_schema if isinstance(getattr(table, "column_schema", None), list) else []
+        columns: list[str] = []
+        for entry in raw_schema:
+            if isinstance(entry, str) and entry.strip():
+                columns.append(entry.strip())
+            elif isinstance(entry, Mapping):
+                for key in ("column", "name", "label", "key", "column_key"):
+                    value = entry.get(key)
+                    if isinstance(value, str) and value.strip():
+                        columns.append(value.strip())
+                        break
+        columns = columns[:200]
+
+        # Visible rows are non-header rows only (in ingestion metadata).
+        non_header_q = models.Q(metadata__row_type__isnull=True) | ~models.Q(
+            metadata__row_type__in=["header", "section_header"]
+        )
+
+        # If schema is missing/empty, infer columns from the first visible row's cells.
+        if not columns:
+            row_obj = (
+                table.rows.filter(non_header_q)
+                .order_by("row_index")
+                .only("id", "row_index")
+                .first()
+            )
+            if row_obj:
+                cell_qs = (
+                    KnowledgeUploadTableCell.objects.filter(row_id=row_obj.id)
+                    .order_by("column_index")
+                    .values_list("column_index", "column_key")
+                )
+                inferred: list[tuple[int, str]] = []
+                for col_idx, col_key in cell_qs:
+                    try:
+                        idx = int(col_idx)
+                    except (TypeError, ValueError):
+                        continue
+                    label = str(col_key or "").strip() or f"column_{idx + 1}"
+                    inferred.append((idx, label))
+                inferred.sort(key=lambda item: item[0])
+                columns = [label for _idx, label in inferred][:200]
+
+        columns = _dedupe_column_labels(columns[:200])
+        payload["columns"] = columns
+
+        try:
+            start_row = max(0, int(start_row_index))
+        except (TypeError, ValueError):
+            start_row = 0
+        payload["row_offset"] = start_row
+
+        try:
+            total_rows = int(table.rows.filter(non_header_q).count())
+        except Exception:
+            total_rows = 0
+        payload["total_rows"] = total_rows
+
+        # Bound reads: even for "list everything", never scan unbounded rows in one call.
+        try:
+            scan_cap = int(max(50, min(500, int(budget_chars) // 30 or 50)))
+        except Exception:
+            scan_cap = 200
+        limit_rows = scan_cap
+        if isinstance(max_rows, int) and max_rows > 0:
+            limit_rows = min(limit_rows, int(max_rows))
+        limit_rows = max(1, int(limit_rows))
+
+        row_qs = (
+            table.rows.filter(non_header_q)
+            .order_by("row_index")
+            .only("id", "row_index", "metadata")
+        )
+        row_qs = row_qs[start_row : start_row + limit_rows]
+        row_qs = row_qs.prefetch_related(
+            Prefetch(
+                "cells",
+                queryset=KnowledgeUploadTableCell.objects.order_by("column_index").only(
+                    "row_id",
+                    "column_index",
+                    "column_key",
+                    "raw_text",
+                ),
+            )
+        )
+
+        def _normalize_cell_text(value: str) -> str:
+            normalized = str(value or "").strip().lower()
+            normalized = re.sub(r"\\s+", " ", normalized)
+            return normalized
+
+        def _is_uniform_section_separator(values: Sequence[str]) -> tuple[bool, str]:
+            non_empty = [str(cell or "").strip() for cell in values if str(cell or "").strip()]
+            if len(non_empty) < 4:
+                return False, ""
+            normalized = [_normalize_cell_text(cell) for cell in non_empty]
+            first = normalized[0] if normalized else ""
+            if not first:
+                return False, ""
+            if any(cell != first for cell in normalized[1:]):
+                return False, ""
+            return True, non_empty[0]
+
+        scope_overlay_reasons = {
+            "scope_explicit_span",
+            "scope_repeated_value_span",
+            "scope_sparse_expansion",
+            "scope_edge_completion",
+        }
+        column_index_lookup: dict[str, int] = {}
+        for idx, label in enumerate(columns):
+            normalized = _normalize_column_name(label)
+            if normalized and normalized not in column_index_lookup:
+                column_index_lookup[normalized] = idx
+            lowered = str(label or "").strip().lower()
+            if lowered and lowered not in column_index_lookup:
+                column_index_lookup[lowered] = idx
+
+        index_offset: int | None = None
+        rows_out: list[list[str]] = []
+
+        def _payload_size(candidate_rows: Sequence[Sequence[str]]) -> int:
+            candidate: dict[str, object] = {
+                "type": "table",
+                "table_id": str(table_id),
+                "columns": list(columns),
+                "rows": [list(row) for row in candidate_rows],
+                "row_offset": int(start_row),
+                "rows_shown": int(len(candidate_rows)),
+                "total_rows": int(total_rows),
+            }
+            if isinstance(selection_mode, str) and selection_mode.strip():
+                candidate["selection_mode"] = selection_mode.strip()
+            try:
+                return len(json.dumps(candidate, ensure_ascii=False, default=str))
+            except Exception:
+                return 0
+
+        for row in row_qs:
+            cell_lookup: dict[int, str] = {}
+            for cell in row.cells.all():  # type: ignore[attr-defined]
+                try:
+                    idx = int(getattr(cell, "column_index", None) or 0)
+                except (TypeError, ValueError):
+                    continue
+                text = str(getattr(cell, "raw_text", "") or "")
+                if redact_text and text:
+                    text = redact_free_text(text)
+                cell_lookup[idx] = text
+
+            if index_offset is None:
+                keys = list(cell_lookup.keys())
+                if 0 in cell_lookup:
+                    index_offset = 0
+                elif 1 in cell_lookup:
+                    index_offset = 1
+                elif keys:
+                    index_offset = min(keys)
+                else:
+                    index_offset = 0
+
+            values: list[str] = []
+            for col_idx in range(len(columns)):
+                values.append(str(cell_lookup.get(int(col_idx) + int(index_offset or 0), "")))
+
+            # Collapse broad-span note rows (same text duplicated across many columns) to:
+            #   [note_text, "", "", ...]
+            is_uniform, uniform_label = _is_uniform_section_separator(values)
+            if is_uniform and uniform_label:
+                values = [uniform_label] + [""] * max(0, len(columns) - 1)
+
+            row_meta = row.metadata if isinstance(getattr(row, "metadata", None), Mapping) else {}
+            inferred_scope_columns: list[str] = []
+            raw_applies_to = row_meta.get("inferred_scope_columns")
+            if isinstance(raw_applies_to, (list, tuple)):
+                for scope_entry in raw_applies_to:
+                    label = str(scope_entry or "").strip()
+                    if label:
+                        inferred_scope_columns.append(label)
+            scope_reason = str(row_meta.get("scope_reason") or "").strip()
+            scope_reason_key = scope_reason.lower()
+            fee_value = str(row_meta.get("scope_value") or "").strip()
+
+            effective_values = list(values)
+            if (
+                fee_value
+                and inferred_scope_columns
+                and (
+                    scope_reason_key.startswith("inferred_")
+                    or scope_reason_key in scope_overlay_reasons
+                )
+            ):
+                for scope_label in inferred_scope_columns:
+                    normalized_scope = _normalize_column_name(scope_label)
+                    if not normalized_scope:
+                        continue
+                    col_pos = column_index_lookup.get(normalized_scope)
+                    if col_pos is None:
+                        col_pos = column_index_lookup.get(str(scope_label).strip().lower())
+                    if col_pos is None or col_pos < 0 or col_pos >= len(effective_values):
+                        continue
+                    if str(effective_values[col_pos] or "").strip():
+                        continue
+                    effective_values[col_pos] = fee_value
+
+            candidate_rows = [*rows_out, effective_values]
+            if _payload_size(candidate_rows) > budget_limit:
+                complete = False
+                break
+            rows_out = candidate_rows
+
+        payload["rows"] = rows_out
+        payload["rows_shown"] = len(rows_out)
+        if (start_row + len(rows_out)) < int(total_rows or 0):
+            payload["next_row_start"] = int(start_row + len(rows_out))
+
+        return payload, None, complete
+
     def _table_payload_is_informative(table_payload: Mapping[str, object]) -> bool:
         rows_value = table_payload.get("rows")
         if not isinstance(rows_value, list) or not rows_value:
@@ -10962,7 +9101,7 @@ def _agentic_read_v2_handler(
                     anchor_start_row = max(0, int(matched_row_index) - 1)
                     anchor_used = True
 
-        table_payload, cursor_out, complete = _read_table_rows_segment(
+        table_payload, cursor_out, complete = _read_table_rows_segment_facts(
             item_id=item_id,
             upload_id=upload_id,
             table_id=table_id,
@@ -10970,11 +9109,12 @@ def _agentic_read_v2_handler(
             budget_chars=budget_chars,
             max_rows=max_rows,
             business_profile=business_profile,
+            selection_mode="anchor_match" if anchor_used else "row_range",
         )
 
         if anchor_used and not _table_payload_is_informative(table_payload):
             fallback_used = True
-            table_payload, cursor_out, complete = _read_table_rows_segment(
+            table_payload, cursor_out, complete = _read_table_rows_segment_facts(
                 item_id=item_id,
                 upload_id=upload_id,
                 table_id=table_id,
@@ -10982,6 +9122,7 @@ def _agentic_read_v2_handler(
                 budget_chars=budget_chars,
                 max_rows=max_rows,
                 business_profile=business_profile,
+                selection_mode="row_range",
             )
 
         return table_payload, cursor_out, complete, anchor_used, fallback_used
@@ -11197,6 +9338,22 @@ def _agentic_read_v2_handler(
     for idx, entry in enumerate(ordered_items):
         item_id = str(entry.get("id") or "").strip()
         cursor_in = entry.get("cursor")
+        row_start: int | None = None
+        row_limit: int | None = None
+        row_start_raw = entry.get("row_start")
+        if row_start_raw is not None and row_start_raw != "":
+            try:
+                row_start = max(0, int(row_start_raw))
+            except (TypeError, ValueError):
+                row_start = None
+        row_limit_raw = entry.get("row_limit")
+        if row_limit_raw is not None and row_limit_raw != "":
+            try:
+                row_limit = int(row_limit_raw)
+            except (TypeError, ValueError):
+                row_limit = None
+        if row_limit is not None:
+            row_limit = max(1, min(200, int(row_limit)))
         cursor_in_resolved = _resolve_cursor_from_handle(cursor_in if isinstance(cursor_in, str) else None)
         if remaining_chars < 200:
             deferred.append(
@@ -11316,16 +9473,20 @@ def _agentic_read_v2_handler(
                     start_row_index = int(raw_row_index) if raw_row_index is not None else 0
                 except (TypeError, ValueError):
                     start_row_index = 0
-                table_payload, cursor_out, complete = _read_table_rows_segment(
+                effective_start_row = row_start if row_start is not None else start_row_index
+                table_payload, cursor_out, complete = _read_table_rows_segment_facts(
                     item_id=item_id,
                     upload_id=upload_id,
                     table_id=table_id,
-                    start_row_index=start_row_index,
+                    start_row_index=effective_start_row,
                     budget_chars=per_item_budget,
+                    max_rows=row_limit,
                     business_profile=business,
+                    selection_mode="row_range",
                 )
                 payload = table_payload
-                next_cursor = cursor_out.get("cursor") if cursor_out else None
+                # Tables page via row_start/row_limit (no cursors).
+                next_cursor = None
             elif kind == "chunk_window":
                 start_index = int(cursor_payload.get("chunk_start") or 0)
                 end_index = int(cursor_payload.get("chunk_end") or start_index)
@@ -11418,10 +9579,17 @@ def _agentic_read_v2_handler(
                     )
                     continue
 
-                effective_start_row = 0 if expand_to_table_context else row_index
-                effective_max_rows: int | None = None if expand_to_table_context else 1
+                explicit_range = row_start is not None or row_limit is not None
+                if explicit_range:
+                    effective_start_row = int(row_start or 0)
+                    effective_max_rows = row_limit
+                    selection_mode = "row_range"
+                else:
+                    effective_start_row = 0 if expand_to_table_context else row_index
+                    effective_max_rows = None if expand_to_table_context else 1
+                    selection_mode = "row_ref"
 
-                table_payload, cursor_out, complete = _read_table_rows_segment(
+                table_payload, _cursor_out, complete = _read_table_rows_segment_facts(
                     item_id=item_id,
                     upload_id=upload_id,
                     table_id=table_id,
@@ -11429,14 +9597,13 @@ def _agentic_read_v2_handler(
                     budget_chars=per_item_budget,
                     max_rows=effective_max_rows,
                     business_profile=business,
+                    selection_mode=selection_mode,
                 )
                 payload = table_payload
                 if expand_to_table_context:
                     expanded_row_tables_seen.add(table_id)
-                    next_cursor = cursor_out.get("cursor") if cursor_out else None
-                else:
-                    # Exact row reads remain a single-row, lossless slice.
-                    next_cursor = None
+                # Tables page via row_start/row_limit (no cursors).
+                next_cursor = None
             elif table_record is not None:
                 payload_type = "table"
                 evidence_kind = "table_rows"
@@ -11447,23 +9614,36 @@ def _agentic_read_v2_handler(
                     table_title = f"Table {order_index}" if order_index else "Table"
                 title = redact_free_text(table_title) if redact_text else table_title
 
-                table_anchor_manifest_lookups += 1
-                table_payload, cursor_out, complete, anchor_used, fallback_used = _read_table_rows_with_anchor(
-                    item_id=item_id,
-                    upload_id=upload_id,
-                    table_id=table_id,
-                    start_row_index=0,
-                    budget_chars=per_item_budget,
-                    max_rows=None,
-                    business_profile=business,
-                    use_anchor=True,
-                )
-                if anchor_used:
-                    table_anchor_manifest_hits += 1
-                if fallback_used:
-                    table_anchor_fallback_reads += 1
+                if row_start is not None or row_limit is not None:
+                    table_payload, _cursor_out, complete = _read_table_rows_segment_facts(
+                        item_id=item_id,
+                        upload_id=upload_id,
+                        table_id=table_id,
+                        start_row_index=int(row_start or 0),
+                        budget_chars=per_item_budget,
+                        max_rows=row_limit,
+                        business_profile=business,
+                        selection_mode="row_range",
+                    )
+                else:
+                    table_anchor_manifest_lookups += 1
+                    table_payload, _cursor_out, complete, anchor_used, fallback_used = _read_table_rows_with_anchor(
+                        item_id=item_id,
+                        upload_id=upload_id,
+                        table_id=table_id,
+                        start_row_index=0,
+                        budget_chars=per_item_budget,
+                        max_rows=None,
+                        business_profile=business,
+                        use_anchor=True,
+                    )
+                    if anchor_used:
+                        table_anchor_manifest_hits += 1
+                    if fallback_used:
+                        table_anchor_fallback_reads += 1
                 payload = table_payload
-                next_cursor = cursor_out.get("cursor") if cursor_out else None
+                # Tables page via row_start/row_limit (no cursors).
+                next_cursor = None
             elif upload_record is not None and chunk_record is None:
                 text_group_manifest_lookups += 1
                 text_group_manifest = _load_text_group_manifest(upload_id)
@@ -11597,23 +9777,36 @@ def _agentic_read_v2_handler(
                 except Exception:
                     pass
 
-                table_anchor_manifest_lookups += 1
-                table_payload, cursor_out, complete, anchor_used, fallback_used = _read_table_rows_with_anchor(
-                    item_id=item_id,
-                    upload_id=upload_id,
-                    table_id=table_id,
-                    start_row_index=0,
-                    budget_chars=per_item_budget,
-                    max_rows=None,
-                    business_profile=business,
-                    use_anchor=True,
-                )
-                if anchor_used:
-                    table_anchor_manifest_hits += 1
-                if fallback_used:
-                    table_anchor_fallback_reads += 1
+                if row_start is not None or row_limit is not None:
+                    table_payload, _cursor_out, complete = _read_table_rows_segment_facts(
+                        item_id=item_id,
+                        upload_id=upload_id,
+                        table_id=table_id,
+                        start_row_index=int(row_start or 0),
+                        budget_chars=per_item_budget,
+                        max_rows=row_limit,
+                        business_profile=business,
+                        selection_mode="row_range",
+                    )
+                else:
+                    table_anchor_manifest_lookups += 1
+                    table_payload, _cursor_out, complete, anchor_used, fallback_used = _read_table_rows_with_anchor(
+                        item_id=item_id,
+                        upload_id=upload_id,
+                        table_id=table_id,
+                        start_row_index=0,
+                        budget_chars=per_item_budget,
+                        max_rows=None,
+                        business_profile=business,
+                        use_anchor=True,
+                    )
+                    if anchor_used:
+                        table_anchor_manifest_hits += 1
+                    if fallback_used:
+                        table_anchor_fallback_reads += 1
                 payload = table_payload
-                next_cursor = cursor_out.get("cursor") if cursor_out else None
+                # Tables page via row_start/row_limit (no cursors).
+                next_cursor = None
             elif mode != "excerpt" and is_table_chunk and table_id and table_role == "row":
                 payload_type = "table"
                 evidence_kind = "table_rows"
@@ -11632,23 +9825,33 @@ def _agentic_read_v2_handler(
                         title = redact_free_text(table_title) if redact_text else table_title
                 except Exception:
                     pass
-                # Return a single lossless row when possible.
-                row_index_raw = chunk_meta.get("table_row_index")
-                try:
-                    row_index = int(row_index_raw) if row_index_raw is not None else 0
-                except (TypeError, ValueError):
-                    row_index = 0
-                table_payload, cursor_out, complete = _read_table_rows_segment(
+                if row_start is not None or row_limit is not None:
+                    effective_start_row = int(row_start or 0)
+                    effective_max_rows = row_limit
+                    selection_mode = "row_range"
+                else:
+                    # Default: return a single row for row-chunk refs.
+                    row_index_raw = chunk_meta.get("table_row_index")
+                    try:
+                        effective_start_row = int(row_index_raw) if row_index_raw is not None else 0
+                    except (TypeError, ValueError):
+                        effective_start_row = 0
+                    effective_max_rows = 1
+                    selection_mode = "row_ref"
+
+                table_payload, _cursor_out, complete = _read_table_rows_segment_facts(
                     item_id=item_id,
                     upload_id=upload_id,
                     table_id=table_id,
-                    start_row_index=row_index,
+                    start_row_index=effective_start_row,
                     budget_chars=per_item_budget,
-                    max_rows=1,
+                    max_rows=effective_max_rows,
                     business_profile=business,
+                    selection_mode=selection_mode,
                 )
                 payload = table_payload
-                next_cursor = cursor_out.get("cursor") if cursor_out else None
+                # Tables page via row_start/row_limit (no cursors).
+                next_cursor = None
             else:
                 # Prefer page blocks when a page can be resolved; fall back to a chunk window.
                 page_number = 1
@@ -11762,20 +9965,6 @@ def _agentic_read_v2_handler(
         }
         if isinstance(evidence_coverage_hint, Mapping) and evidence_coverage_hint:
             evidence_entry["coverage_hint"] = dict(evidence_coverage_hint)
-        if payload_type == "table":
-            # Surface table coverage metadata at the top level so the LLM doesn't have to
-            # infer "slice vs full table" from a small payload.
-            for key in ("table_id", "row_offset", "rows_shown", "total_rows"):
-                if key in payload:
-                    evidence_entry[key] = payload.get(key)
-            try:
-                row_offset = int(payload.get("row_offset") or 0)
-                rows_shown = int(payload.get("rows_shown") or 0)
-                total_rows = payload.get("total_rows")
-                if total_rows is not None:
-                    evidence_entry["has_more"] = bool((row_offset + rows_shown) < int(total_rows))
-            except Exception:
-                pass
         if cursor_used:
             evidence_entry["cursor_used"] = cursor_used
         next_cursor_handle = _store_cursor_handle(next_cursor) if next_cursor else None
@@ -11795,48 +9984,16 @@ def _agentic_read_v2_handler(
             # judge if the answer is already complete.
             hint_parts: list[str] = []
             if payload_type == "table":
-                rows_data = payload.get("rows") or []
-                rows_shown = len(rows_data)
-                total_rows = payload.get("total_rows")
-                if total_rows:
-                    hint_parts.append(f"{rows_shown} of {total_rows} rows returned.")
-                else:
-                    hint_parts.append(f"{rows_shown} rows returned (total unknown).")
-                # Surface first-column labels so the LLM knows what it
-                # already has and can decide if remaining rows matter.
-                if rows_data:
-                    labels = []
-                    for row in rows_data:
-                        if isinstance(row, (list, tuple)) and row:
-                            label = str(row[0]).strip()
-                            if label:
-                                labels.append(label)
-                    if labels:
-                        preview = ", ".join(labels[:8])
-                        if len(labels) > 8:
-                            preview += f", ... (+{len(labels) - 8} more)"
-                        hint_parts.append(f"Rows included: {preview}.")
-            hint_parts.append(
-                f"Only use next_cursor if you still need data not yet returned. "
-                f"Max chars allowed: {int(max_chars_allowed)}."
-            )
-            read_entry["hint"] = " ".join(hint_parts)
-        elif payload_type == "table":
-            # Even when not truncated, the table payload may intentionally be a single-row slice.
-            try:
-                rows_shown = int(payload.get("rows_shown") or len(payload.get("rows") or []))
-            except Exception:
-                rows_shown = len(payload.get("rows") or [])
-            total_rows = payload.get("total_rows")
-            try:
-                total_rows_int = int(total_rows) if total_rows is not None else None
-            except (TypeError, ValueError):
-                total_rows_int = None
-            if total_rows_int is not None and rows_shown < total_rows_int:
-                read_entry["hint"] = (
-                    f"{rows_shown} of {total_rows_int} rows returned. "
-                    "This may be a targeted row slice (e.g., the matching fee row), not the full table."
+                next_row_start = payload.get("next_row_start")
+                if isinstance(next_row_start, (int, float)):
+                    hint_parts.append(f"Continue with row_start={int(next_row_start)}.")
+                hint_parts.append(f"Max chars allowed: {int(max_chars_allowed)}.")
+            else:
+                hint_parts.append(
+                    f"Only use next_cursor if you still need data not yet returned. "
+                    f"Max chars allowed: {int(max_chars_allowed)}."
                 )
+            read_entry["hint"] = " ".join(hint_parts)
         read.append(read_entry)
         continue
 
@@ -16891,11 +15048,9 @@ def _read_knowledge_agentic_wrapper(
 
     # Normalize "refs" into the internal "items" shape used by the read engine.
     items: list[dict[str, object]] = []
-    seen_item_keys: set[tuple[str, str | None]] = set()
-    repaired_aliases: list[dict[str, object]] = []
+    seen_item_keys: set[tuple[str, str | None, int | None, int | None]] = set()
     unresolved_invalid_ids: list[str] = []
     unresolved_invalid_errors: list[dict[str, object]] = []
-    scope_clarification_mcq_enabled = bool(getattr(settings, "MCP_SCOPE_CLARIFICATION_MCQ_ENABLED", False))
     for entry in raw_refs:
         if not isinstance(entry, Mapping):
             continue
@@ -16904,35 +15059,42 @@ def _read_knowledge_agentic_wrapper(
             continue
         cursor = entry.get("cursor")
         cursor_value = cursor.strip() if isinstance(cursor, str) and cursor.strip() else None
+        row_start_raw = entry.get("row_start")
+        if row_start_raw is None:
+            row_start_raw = entry.get("start_row")
+        row_limit_raw = entry.get("row_limit")
+        if row_limit_raw is None:
+            row_limit_raw = entry.get("max_rows")
+
+        row_start_value: int | None = None
+        if row_start_raw is not None and row_start_raw != "":
+            try:
+                row_start_value = max(0, int(row_start_raw))
+            except (TypeError, ValueError):
+                row_start_value = None
+
+        row_limit_value: int | None = None
+        if row_limit_raw is not None and row_limit_raw != "":
+            try:
+                row_limit_value = int(row_limit_raw)
+            except (TypeError, ValueError):
+                row_limit_value = None
+        if row_limit_value is not None:
+            row_limit_value = max(1, min(200, int(row_limit_value)))
         if _is_uuid_ref_id(item_id):
             canonical_id = str(uuid.UUID(item_id))
-            item_key = (canonical_id, cursor_value)
+            item_key = (canonical_id, cursor_value, row_start_value, row_limit_value)
             if item_key in seen_item_keys:
                 continue
             seen_item_keys.add(item_key)
             out: dict[str, object] = {"id": canonical_id}
             if cursor_value:
                 out["cursor"] = cursor_value
+            if row_start_value is not None:
+                out["row_start"] = row_start_value
+            if row_limit_value is not None:
+                out["row_limit"] = row_limit_value
             items.append(out)
-            continue
-
-        repaired_ref_ids: list[str] = []
-        if scope_clarification_mcq_enabled:
-            repaired_ref_ids = _scope_mapped_ref_ids_for_read_item(item_id=item_id, context=context)
-        if repaired_ref_ids:
-            repaired_aliases.append(
-                {
-                    "input_id": item_id,
-                    "repaired_ref_ids": repaired_ref_ids,
-                    "source": "scope_state",
-                }
-            )
-            for repaired_id in repaired_ref_ids:
-                item_key = (repaired_id, None)
-                if item_key in seen_item_keys:
-                    continue
-                seen_item_keys.add(item_key)
-                items.append({"id": repaired_id})
             continue
 
         unresolved_invalid_ids.append(item_id)
@@ -16951,7 +15113,7 @@ def _read_knowledge_agentic_wrapper(
     retry_limit = _scope_invalid_read_retry_limit()
     retry_limit_hit = False
     for unresolved_id in unresolved_invalid_ids:
-        tracker_key = _normalize_scope_text(unresolved_id) or str(unresolved_id).strip().lower()[:160]
+        tracker_key = re.sub(r"\s+", " ", str(unresolved_id or "").strip().lower())[:160]
         if not tracker_key:
             continue
         attempt_count = int(retry_tracker.get(tracker_key, 0) or 0) + 1
@@ -16967,11 +15129,7 @@ def _read_knowledge_agentic_wrapper(
                 {
                     "stage": "retry_limit_blocked",
                     "invalid_ref_count": len(unresolved_invalid_ids),
-                    "repaired_ref_count": sum(
-                        len(item.get("repaired_ref_ids") or [])
-                        for item in repaired_aliases
-                        if isinstance(item, Mapping)
-                    ),
+                    "repaired_ref_count": 0,
                     "retry_limit": retry_limit,
                 },
                 context={
@@ -16999,11 +15157,7 @@ def _read_knowledge_agentic_wrapper(
             {
                 "stage": "invalid_refs_rejected",
                 "invalid_ref_count": len(unresolved_invalid_ids),
-                "repaired_ref_count": sum(
-                    len(item.get("repaired_ref_ids") or [])
-                    for item in repaired_aliases
-                    if isinstance(item, Mapping)
-                ),
+                "repaired_ref_count": 0,
             },
             context={
                 "conversation": conversation.id,
@@ -17021,7 +15175,7 @@ def _read_knowledge_agentic_wrapper(
             "budget": context.budget_snapshot(),
             "hint": (
                 "refs[] must contain UUID ids from search_knowledge results. "
-                "If this came from MCQ selection, pass the category selector query first so mapped refs can be resolved."
+                "If refs came from a category label, run search_knowledge first and use the returned UUID refs."
             ),
         }
 
@@ -17031,22 +15185,19 @@ def _read_knowledge_agentic_wrapper(
         "max_chars": arguments.get("max_chars"),
     }
     engine_result = _agentic_read_v2_handler(engine_args, conversation, context)
-    if repaired_aliases or unresolved_invalid_errors:
+    if unresolved_invalid_errors:
         patched_result = dict(engine_result)
-        if repaired_aliases:
-            patched_result["ref_repairs"] = repaired_aliases
-        if unresolved_invalid_errors:
-            existing_errors = patched_result.get("errors")
-            merged_errors = (
-                [dict(item) for item in existing_errors if isinstance(item, Mapping)]
-                if isinstance(existing_errors, list)
-                else []
-            )
-            merged_errors.extend(unresolved_invalid_errors)
-            patched_result["errors"] = merged_errors
-            hint_text = str(patched_result.get("hint") or "").strip()
-            reminder = "Ignored non-UUID refs and continued with repaired/valid UUID refs."
-            patched_result["hint"] = f"{hint_text} {reminder}".strip() if hint_text else reminder
+        existing_errors = patched_result.get("errors")
+        merged_errors = (
+            [dict(item) for item in existing_errors if isinstance(item, Mapping)]
+            if isinstance(existing_errors, list)
+            else []
+        )
+        merged_errors.extend(unresolved_invalid_errors)
+        patched_result["errors"] = merged_errors
+        hint_text = str(patched_result.get("hint") or "").strip()
+        reminder = "Ignored non-UUID refs and continued with valid UUID refs."
+        patched_result["hint"] = f"{hint_text} {reminder}".strip() if hint_text else reminder
         return patched_result
     return engine_result
 
@@ -20952,7 +19103,6 @@ _TOOL_HANDLERS: dict[str, ToolHandler] = {
     "get_agent_run": _get_agent_run_handler,
     "continue_agent_run": _continue_agent_run_handler,
     "search_knowledge": _search_knowledge_handler,
-    "present_scope_clarification": _present_scope_clarification_handler,
     "search_conversation_files": _search_conversation_files_handler,
     "read_knowledge": _read_knowledge_handler,
     "read_document": _read_document_agentic_wrapper,  # Uses agentic handler when flag enabled

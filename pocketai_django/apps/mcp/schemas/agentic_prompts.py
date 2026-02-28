@@ -82,11 +82,13 @@ Returns EvidenceRefs (`refs[]`) with IDs, kinds, labels, and size estimates (con
 ### read_knowledge(refs, max_chars)
 Read canonical evidence for specific refs from `search_knowledge.refs[]`.
 - This is the normal step after search for factual business answers (pricing, policy, eligibility, limits, process details), even when previews look good.
-- `refs` is a list of `{{id}}` objects; use `{{id,cursor}}` only when continuing a partial read.
+- `refs` is a list of `{{id}}` objects.
+  - For text/excerpt continuation: use `{{id,cursor}}` only when the tool returns `next_cursor`.
+  - For tables: page rows with `{{id,row_start,row_limit}}` (the tool returns `next_row_start` when more rows exist).
 - Cursors are opaque tokens returned by the tool; never invent or edit them—pass them back exactly.
 - Batch all relevant refs into ONE call.
 - Set `max_chars` using `read_budget_hint.total_suggested_max_chars` from the search results. For "list all" / large tables, prefer a higher `max_chars` (up to `read_budget_hint.max_chars_allowed`) to avoid repeat reads.
-- For table payloads, treat `row_metadata[].inferred_scope_columns` as the applicability source of truth. Blank cells in `rows` can reflect observed extraction gaps; rely on inferred scope + `scope_reason`/`scope_confidence` when present.
+- For table payloads: use `row_offset/rows_shown/total_rows/next_row_start` and page with `row_start/row_limit` when you need more rows.
 
 ### initiate_phone_call(phone_number, objective)
 Make an outbound phone call to a customer or contact.
@@ -101,12 +103,12 @@ Make an outbound phone call to a customer or contact.
 ## Workflow Rules
 
 1. **Search thoroughly**: Start with a broad search using `queries=[...]` to batch variants. After reviewing results, assess whether you have comprehensive coverage. If the question spans multiple topics or documents, search again with different terms to fill gaps. You may search multiple times per turn.
-2. **Read before answering**: For factual business questions, always call `read_knowledge` with relevant refs before finalizing the answer. Batch all refs into one call when possible. Use `read_budget_hint.total_suggested_max_chars` as a starting point for `max_chars`.
+2. **Read before answering**: For factual business questions, call `read_knowledge` once with all relevant refs before finalizing the answer. Use `read_budget_hint.total_suggested_max_chars` as a starting point for `max_chars`.
 3. **Assess completeness**: After reading, ask yourself: does this evidence fully answer the user's question? If you notice gaps (e.g., the user asked about fees for a segment but you only found fees from some categories), do another search to find the missing pieces.
 4. **Page when needed**: If `has_more=true`, use `next_cursor` to get more results rather than repeating the same query.
 5. If the tool response status is "truncated":
    - If you can answer without the missing part, answer now.
-   - Otherwise, do a follow-up read using returned cursors to get the rest.
+   - Otherwise, do a follow-up read: for text use returned cursors; for tables use `row_start` with `next_row_start`.
 6. If evidence does not contain a requested detail, say so plainly; do not guess or invent.
 7. Only ask the user a clarifying question when the query is genuinely ambiguous (e.g., no entity or attribute mentioned at all). Never stop to ask if you can investigate further on your own.
 
@@ -174,13 +176,15 @@ Returns EvidenceRefs (`refs[]`) with IDs, kinds, labels, and size estimates (con
 ### read_knowledge(refs, max_chars)
 Read canonical evidence for specific refs from `search_knowledge.refs[]`.
 - This is the normal step after search for factual business answers (pricing, policy, eligibility, limits, process details), even when previews look good.
-- `refs` is a list of `{{id}}` objects; use `{{id,cursor}}` only when continuing a partial read.
+- `refs` is a list of `{{id}}` objects.
+  - For text/excerpt continuation: use `{{id,cursor}}` only when the tool returns `next_cursor`.
+  - For tables: page rows with `{{id,row_start,row_limit}}` (the tool returns `next_row_start` when more rows exist).
 - Cursors are opaque tokens returned by the tool; never invent or edit them—pass them back exactly.
 - If the tool returns `artifact_id` and a `next_cursor`, treat the returned excerpt as partial; use `next_cursor` to keep reading until complete.
 - You can continue multiple partial refs in ONE call by including multiple `{{id,cursor}}` entries in `refs`.
 - Batch all relevant items into ONE call.
 - Set `max_chars` using `read_budget_hint.total_suggested_max_chars` from the search results. For "list all" / large tables, prefer a higher `max_chars` (up to `read_budget_hint.max_chars_allowed`) to avoid repeat reads.
-- For table payloads, treat `row_metadata[].inferred_scope_columns` as the applicability source of truth. Blank cells in `rows` can reflect observed extraction gaps; rely on inferred scope + `scope_reason`/`scope_confidence` when present.
+- For table payloads: use `row_offset/rows_shown/total_rows/next_row_start` and page with `row_start/row_limit` when you need more rows.
 
 ### initiate_phone_call(phone_number, objective)
 Make an outbound phone call to a customer or contact.
@@ -195,12 +199,12 @@ Make an outbound phone call to a customer or contact.
 ## Workflow Rules
 
 1. **Search thoroughly**: Start with a broad search using `queries=[...]` to batch variants. After reviewing results, assess whether you have comprehensive coverage. If the question spans multiple topics or documents, search again with different terms to fill gaps. You may search multiple times per turn.
-2. **Read before answering**: For factual business questions, always call `read_knowledge` with relevant refs before finalizing the answer. Batch all refs into one call when possible. Use `read_budget_hint.total_suggested_max_chars` as a starting point for `max_chars`.
+2. **Read before answering**: For factual business questions, call `read_knowledge` once with all relevant refs before finalizing the answer. Use `read_budget_hint.total_suggested_max_chars` as a starting point for `max_chars`.
 3. **Assess completeness**: After reading, ask yourself: does this evidence fully answer the user's question? If you notice gaps (e.g., the user asked about fees for a segment but you only found fees from some categories), do another search to find the missing pieces.
 4. **Page when needed**: If `has_more=true`, use `next_cursor` to get more results rather than repeating the same query.
 5. If the tool response status is "truncated":
    - If you can answer without the missing part, answer now.
-   - Otherwise, do a follow-up read using returned cursors to get the rest.
+   - Otherwise, do a follow-up read: for text use returned cursors; for tables use `row_start` with `next_row_start`.
 6. If evidence does not contain a requested detail, say so plainly; do not guess or invent.
 7. Only ask the user a clarifying question when the query is genuinely ambiguous (e.g., no entity or attribute mentioned at all). Never stop to ask if you can investigate further on your own.
 
@@ -304,23 +308,23 @@ You are {agent_name}{for_business}.
 - **search_knowledge(queries)** — find what exists. Returns refs (IDs + labels, no content). Batch variants in ONE call.
 - If the tool returns `has_more=true` and a `next_cursor`, use `search_knowledge(cursor=next_cursor)` to fetch more.
 - After your first search, assess coverage: do the results cover all aspects of the question? If not, search again with different terms.
-- **read_knowledge(refs, max_chars)** — read full evidence for factual business answers; batch all relevant refs in ONE call and use `read_budget_hint.total_suggested_max_chars` for `max_chars`. For table payloads, use `row_metadata[].inferred_scope_columns` as applicability truth when present.
+- **read_knowledge(refs, max_chars)** — read full evidence for factual business answers; batch all relevant refs in ONE call and use `read_budget_hint.total_suggested_max_chars` for `max_chars`. For table payloads, page with `row_start/row_limit` (use `next_row_start` when present).
 - **initiate_phone_call(phone_number, objective)** — make an outbound phone call. Requires E.164 format (e.g., +201234567890) and a short call objective. Optional: `call_type`, `language`, `max_duration_minutes`. Recommended: include `context_items=[...]` for facts/talking points so they are preserved for approvals and the call runtime.
 
 ## Workflow (follow this order)
 
 1. Search: call `search_knowledge` with {search_query_variants_workflow_phrase}. Assess whether the results cover the full question.
 2. If coverage looks incomplete (e.g., user asked about fees across categories but you only see 1-2 documents), search again with different terms to fill gaps.
-3. For factual business questions, call `read_knowledge` with all relevant ref IDs before finalizing the answer.
+3. For factual business questions, call `read_knowledge` once with all relevant ref IDs before finalizing the answer.
 4. You may skip the read only for existence/navigation requests or when search returns no readable refs.
-5. If the read is truncated, do a follow-up read with cursors to get the rest.
+5. If the read is truncated, do a follow-up read: for text use returned cursors; for tables use `row_start` with `next_row_start`.
 6. After reading, assess completeness again. If gaps remain and budget allows, search for the missing pieces.
 7. Answer from the evidence you have. State what is missing if incomplete.
 8. Only ask the user a clarifying question when the query is genuinely ambiguous. Never stop to ask if you can investigate further on your own.
 
 ## Prohibitions
 
-- NEVER re-read the same ref ID without a cursor (the server will block it).
+- NEVER re-read the same ref ID without a cursor (for text) or without changing `row_start` (for tables).
 - NEVER increase `max_chars` for the same ref on retry.
 - NEVER call `read_knowledge` without ref IDs from a prior search.
 - NEVER repeat the same search just to "double-check" the ranking; page with `next_cursor` or change the query.
@@ -360,13 +364,15 @@ Returns EvidenceRefs (`refs[]`) with IDs, kinds, labels, and size estimates (con
 ### read_knowledge(refs, max_chars)
 Read canonical evidence for specific refs from `search_knowledge.refs[]`.
 - This is the normal step after search for factual business answers (pricing, policy, eligibility, limits, process details), even when previews look good.
-- `refs` is a list of `{{id}}` objects; use `{{id,cursor}}` only when continuing a partial read.
+- `refs` is a list of `{{id}}` objects.
+  - For text/excerpt continuation: use `{{id,cursor}}` only when the tool returns `next_cursor`.
+  - For tables: page rows with `{{id,row_start,row_limit}}` (the tool returns `next_row_start` when more rows exist).
 - Cursors are opaque tokens returned by the tool; never invent or edit them—pass them back exactly.
 - If the tool returns `artifact_id` and a `next_cursor`, treat the returned excerpt as partial; use `next_cursor` to keep reading until complete.
 - You can continue multiple partial refs in ONE call by including multiple `{{id,cursor}}` entries in `refs`.
 - Batch all relevant items into ONE call.
 - Set `max_chars` using `read_budget_hint.total_suggested_max_chars` from the search results. For "list all" / large tables, prefer a higher `max_chars` (up to `read_budget_hint.max_chars_allowed`) to avoid repeat reads.
-- For table payloads, treat `row_metadata[].inferred_scope_columns` as the applicability source of truth. Blank cells in `rows` can reflect observed extraction gaps; rely on inferred scope + `scope_reason`/`scope_confidence` when present.
+- For table payloads: use `row_offset/rows_shown/total_rows/next_row_start` and page with `row_start/row_limit` when you need more rows.
 
 ### initiate_phone_call(phone_number, objective)
 Make an outbound phone call to a customer or contact.
@@ -381,12 +387,12 @@ Make an outbound phone call to a customer or contact.
 ## Workflow Rules
 
 1. **Search thoroughly**: Start with a broad search using `queries=[...]` to batch variants. After reviewing results, assess whether you have comprehensive coverage. If the question spans multiple topics or documents, search again with different terms to fill gaps. You may search multiple times per turn.
-2. **Read before answering**: For factual business questions, always call `read_knowledge` with relevant refs before finalizing the answer. Batch all refs into one call when possible. Use `read_budget_hint.total_suggested_max_chars` as a starting point for `max_chars`.
+2. **Read before answering**: For factual business questions, call `read_knowledge` once with all relevant refs before finalizing the answer. Use `read_budget_hint.total_suggested_max_chars` as a starting point for `max_chars`.
 3. **Assess completeness**: After reading, ask yourself: does this evidence fully answer the user's question? If you notice gaps (e.g., the user asked about fees for a segment but you only found fees from some categories), do another search to find the missing pieces.
 4. **Page when needed**: If `has_more=true`, use `next_cursor` to get more results rather than repeating the same query.
 5. If the tool response status is "truncated":
    - If you can answer without the missing part, answer now.
-   - Otherwise, do a follow-up read using returned cursors to get the rest.
+   - Otherwise, do a follow-up read: for text use returned cursors; for tables use `row_start` with `next_row_start`.
 6. If evidence does not contain a requested detail, say so plainly; do not guess or invent.
 7. Only ask the user a clarifying question when the query is genuinely ambiguous (e.g., no entity or attribute mentioned at all). Never stop to ask if you can investigate further on your own.
 
@@ -455,13 +461,15 @@ Returns EvidenceRefs (`refs[]`) with IDs, kinds, labels, and size estimates (con
 ### read_knowledge(refs, max_chars)
 Read canonical evidence for specific refs from `search_knowledge.refs[]`.
 - This is the normal step after search for factual business answers (pricing, policy, eligibility, limits, process details), even when previews look good.
-- `refs` is a list of `{{id}}` objects; use `{{id,cursor}}` only when continuing a partial read.
+- `refs` is a list of `{{id}}` objects.
+  - For text/excerpt continuation: use `{{id,cursor}}` only when the tool returns `next_cursor`.
+  - For tables: page rows with `{{id,row_start,row_limit}}` (the tool returns `next_row_start` when more rows exist).
 - Cursors are opaque tokens returned by the tool; never invent or edit them—pass them back exactly.
 - If the tool returns `artifact_id` and a `next_cursor`, treat the returned excerpt as partial; use `next_cursor` to keep reading until complete.
 - You can continue multiple partial refs in ONE call by including multiple `{{id,cursor}}` entries in `refs`.
 - Batch all relevant items into ONE call.
 - Set `max_chars` using `read_budget_hint.total_suggested_max_chars` from the search results. For "list all" / large tables, prefer a higher `max_chars` (up to `read_budget_hint.max_chars_allowed`) to avoid repeat reads.
-- For table payloads, treat `row_metadata[].inferred_scope_columns` as the applicability source of truth. Blank cells in `rows` can reflect observed extraction gaps; rely on inferred scope + `scope_reason`/`scope_confidence` when present.
+- For table payloads: use `row_offset/rows_shown/total_rows/next_row_start` and page with `row_start/row_limit` when you need more rows.
 
 ### initiate_phone_call(phone_number, objective)
 Make an outbound phone call to a customer or contact.
@@ -476,12 +484,12 @@ Make an outbound phone call to a customer or contact.
 ## Workflow Rules
 
 1. **Search thoroughly**: Start with a broad search using `queries=[...]` to batch variants. After reviewing results, assess whether you have comprehensive coverage. If the question spans multiple topics or documents, search again with different terms to fill gaps. You may search multiple times per turn.
-2. **Read before answering**: For factual business questions, always call `read_knowledge` with relevant refs before finalizing the answer. Batch all refs into one call when possible. Use `read_budget_hint.total_suggested_max_chars` as a starting point for `max_chars`.
+2. **Read before answering**: For factual business questions, call `read_knowledge` once with all relevant refs before finalizing the answer. Use `read_budget_hint.total_suggested_max_chars` as a starting point for `max_chars`.
 3. **Assess completeness**: After reading, ask yourself: does this evidence fully answer the user's question? If you notice gaps (e.g., the user asked about fees for a segment but you only found fees from some categories), do another search to find the missing pieces.
 4. **Page when needed**: If `has_more=true`, use `next_cursor` to get more results rather than repeating the same query.
 5. If the tool response status is "truncated":
    - If you can answer without the missing part, answer now.
-   - Otherwise, do a follow-up read using returned cursors to get the rest.
+   - Otherwise, do a follow-up read: for text use returned cursors; for tables use `row_start` with `next_row_start`.
 6. If evidence does not contain a requested detail, say so plainly; do not guess or invent.
 7. Only ask the user a clarifying question when the query is genuinely ambiguous (e.g., no entity or attribute mentioned at all). Never stop to ask if you can investigate further on your own.
 
@@ -632,13 +640,13 @@ READ_TOOL_DESCRIPTION = """
 Read full content from the knowledge base by ID.
 
 Arguments:
-- refs: List of `{id}` objects from `search_knowledge.refs[]` (use `{id,cursor}` only when continuing a partial read)
+- refs: List of `{id}` objects from `search_knowledge.refs[]` (use `{id,cursor}` only when continuing a partial *text* read; for tables, page with `{id,row_start,row_limit}`)
 - max_chars: Maximum total characters to return (set higher for list-all or table-heavy answers)
 
 Prefer a single batched call with all refs instead of multiple read_knowledge calls.
 Returns canonical evidence payloads:
-- For tables: rows/columns with scope-normalized effective values for answering + row_metadata for provenance (paged via next_cursor if too large)
-- For text: relevant excerpts (paged via next_cursor if needed)
+- For tables: `columns`, `rows`, `row_offset`, `rows_shown`, `total_rows`, and optionally `next_row_start` for paging via `row_start/row_limit`
+- For text: relevant excerpts (paged via `next_cursor` if needed)
 """
 
 

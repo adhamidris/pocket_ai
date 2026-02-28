@@ -227,12 +227,9 @@ class AgenticReadV2CursorAndArtifactTests(TestCase):
         self.assertIn(result["status"], {"ok", "truncated"}, json.dumps(result, indent=2, default=str))
         self.assertTrue(result.get("evidence"), json.dumps(result, indent=2, default=str))
         payload = result["evidence"][0]["payload"]
-        self.assertEqual(payload.get("row_value_mode"), "effective_scope_normalized")
         self.assertEqual(payload["rows"][0][6], fee_value)
-        row_metadata = payload.get("row_metadata") or []
-        self.assertEqual(len(row_metadata), 1)
-        self.assertIn("private", row_metadata[0].get("effective_scope_overrides") or [])
-        self.assertEqual(row_metadata[0].get("scope_reason"), "scope_edge_completion")
+        self.assertNotIn("row_value_mode", payload)
+        self.assertNotIn("row_metadata", payload)
 
     @override_settings(
         MCP_NEW_CONTRACT_ENABLED=True,
@@ -293,9 +290,7 @@ class AgenticReadV2CursorAndArtifactTests(TestCase):
 
         payload = result["evidence"][0]["payload"]
         self.assertEqual(payload["rows"][0][3], "")
-        row_metadata = payload.get("row_metadata") or []
-        self.assertEqual(len(row_metadata), 1)
-        self.assertNotIn("effective_scope_overrides", row_metadata[0])
+        self.assertNotIn("row_metadata", payload)
 
     @override_settings(
         MCP_NEW_CONTRACT_ENABLED=True,
@@ -507,8 +502,7 @@ class AgenticReadV2CursorAndArtifactTests(TestCase):
         self.assertEqual(payload.get("row_offset"), 5)
         row_services = [str(row[0]) for row in (payload.get("rows") or []) if isinstance(row, list) and row]
         self.assertIn("Cash deposit with same day value date", row_services)
-        semantic_links = payload.get("semantic_links") or []
-        self.assertTrue(semantic_links, json.dumps(payload, indent=2, default=str))
+        self.assertEqual(payload.get("selection_mode"), "anchor_match")
         self.assertFalse(item.get("next_cursor"))
 
     @override_settings(
@@ -650,13 +644,12 @@ class AgenticReadV2CursorAndArtifactTests(TestCase):
         payload = evidence[0].get("payload") or {}
         self.assertEqual(payload.get("row_offset"), 0)
         rows = payload.get("rows") or []
-        self.assertEqual(len(rows), 1, json.dumps(payload, indent=2, default=str))
+        self.assertEqual(len(rows), 2, json.dumps(payload, indent=2, default=str))
         self.assertEqual(rows[0][0], "Cash deposit with same day value date (T+5 customers)")
-
-        context_rows = payload.get("context_rows") or []
-        self.assertEqual(len(context_rows), 1, json.dumps(payload, indent=2, default=str))
-        self.assertEqual(str(context_rows[0].get("text") or "").strip(), section_note)
-        self.assertIn("after 2:00 pm", str(context_rows[0].get("text") or "").lower())
+        self.assertEqual(str(rows[1][0]).strip(), section_note)
+        self.assertIn("after 2:00 pm", str(rows[1][0]).lower())
+        self.assertNotIn("context_rows", payload)
+        self.assertNotIn("row_metadata", payload)
 
     @override_settings(
         MCP_NEW_CONTRACT_ENABLED=True,
@@ -722,16 +715,11 @@ class AgenticReadV2CursorAndArtifactTests(TestCase):
         self.assertEqual(len(evidence), 1, json.dumps(result, indent=2, default=str))
         payload = evidence[0].get("payload") or {}
         rows = payload.get("rows") or []
-        self.assertEqual(len(rows), 1, json.dumps(payload, indent=2, default=str))
-        self.assertEqual(rows[0][0], "Cash deposit with same day value date")
-
-        context_rows = payload.get("context_rows") or []
-        self.assertEqual(len(context_rows), 1, json.dumps(payload, indent=2, default=str))
-        self.assertEqual(context_rows[0].get("text"), section_text)
-
-        row_metadata = payload.get("row_metadata") or []
-        self.assertEqual(len(row_metadata), 1, json.dumps(payload, indent=2, default=str))
-        self.assertEqual(row_metadata[0].get("contextual_service_label"), section_text)
+        self.assertEqual(len(rows), 2, json.dumps(payload, indent=2, default=str))
+        self.assertEqual(rows[0][0], section_text)
+        self.assertEqual(rows[1][0], "Cash deposit with same day value date")
+        self.assertNotIn("context_rows", payload)
+        self.assertNotIn("row_metadata", payload)
 
     @override_settings(
         MCP_NEW_CONTRACT_ENABLED=True,
@@ -766,7 +754,7 @@ class AgenticReadV2CursorAndArtifactTests(TestCase):
             row=row,
             column_index=0,
             column_key="service",
-            raw_text="Oversized metadata row",
+            raw_text="A" * 5000,
         )
         KnowledgeUploadTableCell.objects.create(
             table=table,
@@ -785,15 +773,11 @@ class AgenticReadV2CursorAndArtifactTests(TestCase):
                 context=context,
             )
 
-        self.assertIn(result["status"], {"ok", "truncated"}, json.dumps(result, indent=2, default=str))
-        evidence = result.get("evidence") or []
-        self.assertEqual(len(evidence), 1, json.dumps(result, indent=2, default=str))
-        item = evidence[0]
-        payload = item.get("payload") or {}
-        payload_chars = len(json.dumps(payload, ensure_ascii=False, default=str))
-        self.assertLessEqual(payload_chars, 700)
-        self.assertEqual(payload.get("rows"), [])
-        self.assertTrue(item.get("next_cursor"))
+        self.assertEqual(result.get("status"), "error", json.dumps(result, indent=2, default=str))
+        self.assertFalse(result.get("evidence"), json.dumps(result, indent=2, default=str))
+        deferred = result.get("deferred") or []
+        self.assertTrue(deferred, json.dumps(result, indent=2, default=str))
+        self.assertEqual(deferred[0].get("reason"), "budget_too_small")
 
     @override_settings(
         MCP_NEW_CONTRACT_ENABLED=True,

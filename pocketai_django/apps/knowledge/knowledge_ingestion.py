@@ -10445,6 +10445,142 @@ class KnowledgeIngestionService:
 
         return processed, issues, meta
 
+    @staticmethod
+    def _derive_table_section_heading_from_blocks(
+        *,
+        table_bbox: Mapping[str, Any],
+        page_blocks: Sequence[PageBlockPayload],
+        page_number: int | None,
+        page_height: float | None,
+    ) -> tuple[str, str | None]:
+        """
+        Best-effort extraction of a table "section heading" from the page text blocks.
+
+        Motivation: many PDFs render headings (e.g. "Fees & Charges") as a separate
+        block above the table. If we only index the table rows, broad queries like
+        "plus fees" may never retrieve the table even though it's relevant.
+
+        Heuristic: pick the closest *heading-like* block above the table bbox with
+        sufficient horizontal overlap. Returns (heading_text, heading_anchor).
+        """
+
+        def _bbox_tuple(bbox: Mapping[str, Any]) -> tuple[float, float, float, float]:
+            try:
+                x0 = float(bbox.get("x0") or 0.0)
+                y0 = float(bbox.get("y0") or 0.0)
+                x1 = float(bbox.get("x1") or 0.0)
+                y1 = float(bbox.get("y1") or 0.0)
+            except Exception:
+                return 0.0, 0.0, 0.0, 0.0
+            return x0, y0, x1, y1
+
+        def _heading_like(text: str) -> bool:
+            if not text:
+                return False
+            if len(text) > 80:
+                return False
+            if "@" in text:
+                return False
+            lowered = text.lower()
+            if "http://" in lowered or "https://" in lowered or "www." in lowered:
+                return False
+            if CARD_NUMBER_PATTERN.search(text):
+                return False
+            # Loose phone-number-like detector (avoid copying PII-ish headings).
+            if re.search(r"\+?\d[\d\s().-]{8,}\d", text):
+                return False
+
+            alnum = [c for c in text if c.isalnum()]
+            if alnum:
+                digits = sum(1 for c in alnum if c.isdigit())
+                if (digits / len(alnum)) > 0.3:
+                    return False
+
+            words = text.split()
+            if not words or len(words) > 12:
+                return False
+
+            # Headings tend to be short fragments, not sentences.
+            if text.endswith((".", "?", "!")):
+                return False
+            if text.count(".") >= 2:
+                return False
+
+            return True
+
+        table_x0, table_y0, table_x1, table_y1 = _bbox_tuple(table_bbox)
+        if table_x1 <= table_x0 or table_y1 <= table_y0:
+            return "", None
+
+        table_width = max(1.0, table_x1 - table_x0)
+        max_gap = 200.0
+        if page_height and page_height > 0:
+            max_gap = max(40.0, float(page_height) * 0.25)
+
+        candidates: list[tuple[float, float, int, str, str | None]] = []
+        for block in page_blocks:
+            raw_text = KnowledgeIngestionService._sanitize_text(getattr(block, "text", "")).strip()
+            if not raw_text:
+                continue
+            if "\t" in raw_text or "|" in raw_text:
+                # Likely a table-like block; don't use as a heading.
+                continue
+
+            text = raw_text.replace("\n", " ")
+            text = re.sub(r"\s+", " ", text).strip()
+            if not _heading_like(text):
+                continue
+
+            meta = getattr(block, "metadata", None) or {}
+            region_role = str(meta.get("region_role") or "").strip().lower()
+            if region_role in {"table", "figure", "decorative"}:
+                continue
+
+            bx0, by0, bx1, by1 = _bbox_tuple(getattr(block, "bbox", {}) or {})
+            if bx1 <= bx0 or by1 <= by0:
+                continue
+
+            # Skip page headers/footers (reduce false associations).
+            if page_height and page_height > 0:
+                if by1 <= float(page_height) * 0.08:
+                    continue
+                if by0 >= float(page_height) * 0.92:
+                    continue
+
+            # Must be above (or barely overlapping) the table.
+            if by1 > (table_y0 + 2.0):
+                continue
+
+            gap = table_y0 - by1
+            if gap < -2.0 or gap > max_gap:
+                continue
+
+            # Require some horizontal overlap with the table region.
+            overlap = min(bx1, table_x1) - max(bx0, table_x0)
+            if overlap <= 0:
+                continue
+            block_width = max(1.0, bx1 - bx0)
+            overlap_ratio = overlap / max(1.0, min(block_width, table_width))
+            if overlap_ratio < 0.3:
+                continue
+
+            anchor = None
+            if page_number is not None:
+                try:
+                    anchor = f"p{int(page_number)}-b{int(getattr(block, 'order_index', 0))}"
+                except Exception:
+                    anchor = f"p{page_number}-b0"
+
+            # Prefer: closest block above table, then best overlap.
+            candidates.append((float(gap), -float(overlap_ratio), len(text), text, anchor))
+
+        if not candidates:
+            return "", None
+
+        candidates.sort(key=lambda item: (item[0], item[1], item[2]))
+        _gap, _overlap, _len, best_text, best_anchor = candidates[0]
+        return best_text, best_anchor
+
     def _persist_structured_artifacts(self, upload: KnowledgeUpload, extraction: ExtractionResult) -> dict[str, Any]:
         KnowledgeUploadPage.objects.filter(upload=upload).delete()
         KnowledgeTableColumn.objects.filter(upload=upload).delete()  # PHASE 2: Delete indexed columns
@@ -10476,10 +10612,12 @@ class KnowledgeIngestionService:
         ) or 160
 
         page_lookup: dict[int, KnowledgeUploadPage] = {}
+        page_payload_lookup: dict[int, PageLayout] = {}
         block_objects: list[KnowledgeUploadPageBlock] = []
         page_summaries: list[dict[str, Any]] = []
 
         for page_payload in extraction.pages:
+            page_payload_lookup[page_payload.page_number] = page_payload
             page_obj = KnowledgeUploadPage.objects.create(
                 upload=upload,
                 page_number=page_payload.page_number,
@@ -10564,6 +10702,32 @@ class KnowledgeIngestionService:
             else:
                 table_metadata["page_anchor"] = f"t{table_payload.order_index}"
             
+            raw_section_heading = (
+                self._sanitize_text(table_payload.section_heading).strip()
+                if isinstance(table_payload.section_heading, str)
+                else ""
+            )
+            derived_section_heading = ""
+            derived_section_heading_anchor: str | None = None
+            if not raw_section_heading:
+                page_payload = page_payload_lookup.get(table_payload.page_number or -1)
+                derived_section_heading, derived_section_heading_anchor = (
+                    self._derive_table_section_heading_from_blocks(
+                        table_bbox=table_payload.bbox or {},
+                        page_blocks=(page_payload.blocks if page_payload else []),
+                        page_number=(page_payload.page_number if page_payload else None),
+                        page_height=(page_payload.height if page_payload else None),
+                    )
+                )
+                derived_section_heading = self._sanitize_text(derived_section_heading).strip()
+                if derived_section_heading:
+                    table_metadata["derived_section_heading"] = derived_section_heading
+                    table_metadata["derived_section_heading_method"] = "page_block_above_table"
+                    if derived_section_heading_anchor:
+                        table_metadata["derived_section_heading_anchor"] = derived_section_heading_anchor
+
+            section_heading = raw_section_heading or derived_section_heading
+
             page_obj = page_lookup.get(table_payload.page_number or -1)
             table_obj = KnowledgeUploadTable.objects.create(
                 upload=upload,
@@ -10573,7 +10737,7 @@ class KnowledgeIngestionService:
                     self._derive_table_title(table_payload, upload),
                     table_title_max,
                 ),
-                section_heading=self._clamp_text(table_payload.section_heading, table_section_heading_max),
+                section_heading=self._clamp_text(section_heading, table_section_heading_max),
                 order_index=table_payload.order_index,
                 bbox=table_payload.bbox,
                 column_schema=table_payload.column_schema,
@@ -14421,8 +14585,13 @@ class KnowledgeIngestionService:
                 if str(cell.raw_text or "").strip()
             ]
             preface = []
-            if table.section_heading:
-                preface.append(f"[Section] {table.section_heading}")
+            # Keep derived headings out of row-level chunks to avoid broad-term noise.
+            section_heading = str(getattr(table, "section_heading", "") or "").strip()
+            if section_heading:
+                table_meta = getattr(table, "metadata", None) if isinstance(getattr(table, "metadata", None), Mapping) else {}
+                derived_heading = str((table_meta or {}).get("derived_section_heading") or "").strip()
+                if not derived_heading or derived_heading != section_heading:
+                    preface.append(f"[Section] {section_heading}")
             if active_subsection:
                 preface.append(f"[SubSection] {active_subsection}")
             preface.append(f"[Table] {title}")
