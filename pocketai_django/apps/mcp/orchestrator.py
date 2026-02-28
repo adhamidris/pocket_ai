@@ -5096,8 +5096,6 @@ class McpOrchestratorService:
             normalized.append(text)
         return normalized
 
-    @staticmethod
-
     def _hydrate_seen_items(self, conversation: Conversation, context: ToolExecutionContext) -> None:
         """Load previously-shown chunk/row IDs and document context from conversation metadata.
 
