@@ -4375,15 +4375,6 @@ def _convert_to_agentic_search_response(
         agentic_response["next_cursor"] = next_cursor.strip()
     if "has_more" in legacy_payload:
         agentic_response["has_more"] = bool(legacy_payload.get("has_more"))
-
-    legacy_hint = legacy_payload.get("hint")
-    if isinstance(legacy_hint, str) and legacy_hint.strip():
-        agentic_response["hint"] = legacy_hint.strip()
-    elif not refs:
-        agentic_response["hint"] = (
-            "No matching documents found. The knowledge base may not contain this. "
-            "Answer from available evidence or ask a clarifying question; do not guess."
-        )
     legacy_prefetched_read_status = str(legacy_payload.get("prefetched_read_status") or "").strip().lower()
     if legacy_prefetched_read_status:
         agentic_response["prefetched_read_status"] = legacy_prefetched_read_status
