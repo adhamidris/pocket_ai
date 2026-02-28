@@ -3812,6 +3812,26 @@ def _convert_to_agentic_search_response(
                     pass
         return max(0, int(char_estimate_local))
 
+    def _suggest_max_chars_for_estimate(char_estimate: object, *, max_chars_allowed: int) -> int:
+        """
+        Convert a rough char estimate into a safe `max_chars` suggestion for read_knowledge.
+
+        We intentionally add headroom so the model doesn't under-allocate and get truncated.
+        """
+        try:
+            estimate = int(char_estimate or 0)
+        except (TypeError, ValueError):
+            estimate = 0
+        max_chars_allowed_int = max(1, int(max_chars_allowed))
+
+        if estimate <= 0:
+            return min(int(READ_DOCUMENT_MAX_CHARS_SCHEMA_DEFAULT), max_chars_allowed_int)
+
+        # +20% headroom + a small constant for JSON/table framing overhead.
+        suggested = int(estimate * 1.2) + 200
+        suggested = max(500, suggested)
+        return min(max_chars_allowed_int, suggested)
+
     def _suggest_table_read_chars(
         *,
         base_suggested: int,
