@@ -210,9 +210,9 @@ PREPLAN_OUTPUT_HINT = textwrap.dedent(
     """
     Return JSON inside response_text with this shape:
     {
-      "route": "search" | "read" | "answer" | "dataset" | "list_tables",
+      "route": "search" | "read" | "answer",
       "search_query": "short query if search is needed",
-      "tools": ["search_knowledge", "read_knowledge", "get_document_structure", "query_dataset", "list_tables"],
+      "tools": ["search_knowledge", "read_knowledge"],
       "clarifying_question": "optional question if key info is missing",
       "notes": "short reasoning"
     }
@@ -259,8 +259,8 @@ OPENAI_PROACTIVE_TOOL_INSTRUCTIONS = textwrap.dedent(
     - `search_knowledge` is a common starting point when evidence is missing.
     - For multi-part questions, prefer one `search_knowledge(queries=[...])` call instead of multiple searches.
     - If evidence is already present in context, answer directly.
-    - Use `read_document` when previews are thin or ambiguous.
-    - For exhaustive lists, consider `get_document_structure` to confirm scope.
+    - Use `read_knowledge` when previews are thin or ambiguous.
+    - For exhaustive lists, read more refs (and page through tables) to confirm scope.
     - Keep tool calls silent; answer once you have evidence.
 
     **Prompt Version**: 2.5-openai-hints
@@ -301,9 +301,8 @@ DEEPSEEK_COMPREHENSIVE_QUERY_INSTRUCTIONS = textwrap.dedent(
 
     When the visitor expects a complete list or full coverage, verify scope before answering.
     - Use `search_knowledge` to locate the right source.
-    - Consider `get_document_structure` to confirm the full set (row labels, tables).
+    - Use `read_knowledge` to confirm the full set (page tables when needed).
     - If structured data is absent, read the relevant sections instead.
-    - If a document_id is already known, `search_knowledge` and `get_document_structure` can run in parallel.
     - Answer from what you can verify, and note any remaining gaps.
 
     **Prompt Version**: 2.3-deepseek-hints
@@ -410,19 +409,12 @@ def build_system_message(
         - If reliable evidence already exists in context, answer without a new search.
         - If it returns `status=needs_clarification`, ask one short clarifying question and wait for the visitor's response.
 
-        ### `read_document`
+        ### `read_knowledge`
         - Read when previews are too thin to answer confidently.
-        - Prefer smaller scopes (`excerpt`) unless a full table is needed.
-        - Batch related pages/ids to reduce round-trips.
+        - Use the `refs` returned by `search_knowledge` (do not invent IDs).
+        - For tables, page with `row_start` + `row_limit`; if the response includes `next_row_start`, continue from that offset.
         - Prefer one comprehensive batched read over multiple small reads (extra tool-loop turns can cost more overall).
         - If existing evidence is sufficient, answer without an extra read.
-
-        ### `get_document_structure`
-        - Use when a complete list is expected and you need to confirm the full set.
-
-        ### `query_dataset`
-        - Use for dataset totals/rollups, filtering, and grouping.
-        - If you do not have a dataset_id yet, start with `list_tables`.
 
         ### CRM tools
         - Log business inquiries as cases; create leads for product interest; do this silently.
@@ -459,7 +451,7 @@ def build_system_message(
         ---
 
         ## Lightweight Heuristics
-        - Exhaustive list? `search_knowledge` → `get_document_structure` → read as needed.
+        - Exhaustive list? `search_knowledge` → `read_knowledge` (page tables if needed) → answer.
         - Weak search + specific lookup? Ask for a doc/page/ID.
         - Repeated items? Use `already_seen` to avoid re-listing.
 
@@ -1176,83 +1168,6 @@ def build_messages(
         return messages
 
 
-def build_cached_table_messages(
-    *, knowledge_results: Sequence[Mapping[str, object]], limit: int = 8
-) -> list[Mapping[str, object]]:
-    """
-    Render hydrated table cache snippets as synthetic tool traffic so the provider
-    can see deterministic contributor lists before planning tools.
-    """
-
-    if not knowledge_results:
-        return []
-
-    tool_calls: list[Mapping[str, object]] = []
-    tool_messages: list[Mapping[str, object]] = []
-    seen: set[str] = set()
-    injected = 0
-    for entry in knowledge_results:
-        if not isinstance(entry, Mapping):
-            continue
-        if entry.get("search_stage") != "table_cached":
-            continue
-        if injected >= limit:
-            break
-        snippet = dict(entry)
-        snippet.setdefault("read_state", "full")
-        snippet.setdefault("page_mode", "structured_table")
-        snippet.setdefault("search_stage", "table_cached")
-        snippet["suppress_in_prompt"] = False
-        snippet_id = str(snippet.get("id") or f"{snippet.get('upload_id')}:{snippet.get('chunk_id')}")
-        dedupe_key = f"{snippet.get('upload_id')}:{snippet.get('chunk_id')}:{snippet_id}"
-        if dedupe_key in seen:
-            continue
-        seen.add(dedupe_key)
-        call_id = f"cached_table_{uuid.uuid4().hex[:8]}"
-        tool_calls.append(
-            {
-                "id": call_id,
-                "type": "function",
-                "function": {
-                    "name": "read_document",
-                    "arguments": json.dumps(
-                        {
-                            "document_id": snippet.get("upload_id") or snippet.get("chunk_id"),
-                            "intent": "table",
-                        },
-                        ensure_ascii=False,
-                    ),
-                },
-            }
-        )
-        tool_messages.append(
-            {
-                "role": "tool",
-                "tool_call_id": call_id,
-                "name": "read_document",
-                "content": json.dumps(
-                    {
-                        "tool": "read_document",
-                        "status": "ok",
-                        "mode": "cached",
-                        "snippets": [snippet],
-                    },
-                    ensure_ascii=False,
-                ),
-            }
-        )
-        injected += 1
-
-    if not tool_calls:
-        return []
-
-    assistant_message = {
-        "role": "assistant",
-        "content": "",
-        "tool_calls": tool_calls,
-    }
-    return [assistant_message, *tool_messages]
-
 
 def build_planner_messages(
     *,
@@ -1402,7 +1317,7 @@ def build_preplan_messages(
         ),
         (
             "If the request is a follow-up that clearly refers to an already-known document or table, "
-            "you may route to read_knowledge or query_dataset, but only if IDs are already available."
+            "you may route to read_knowledge, but only if IDs are already available."
         ),
         PREPLAN_OUTPUT_HINT,
         (

@@ -494,11 +494,7 @@ class McpConnectionsApiTests(TestCase):
         self.assertIn("search_knowledge", tool_names)
         self.assertIn("read_knowledge", tool_names)
 
-        # Legacy/non-agentic tool surface should not appear in Controls.
-        self.assertNotIn("read_document", tool_names)
-        self.assertNotIn("query_dataset", tool_names)
-        self.assertNotIn("dataset_query", tool_names)
-        self.assertNotIn("table_aggregate", tool_names)
+        # Only agentic KB tools should appear in Controls.
         self.assertNotIn("retrieve_earlier_context", tool_names)
 
         # Internal UI/system helper tools should never be end-user controls.

@@ -8066,7 +8066,7 @@ class KnowledgeSearchService:
         - Query-aware: for parent/preview chunks, pick the most relevant rows by token overlap.
 
         Returns a `structuredTables`-compatible payload (columns + rows + provenance metadata)
-        so the LLM can answer table questions without needing an extra `read_document` call.
+        so the LLM can answer table questions without needing an extra `read_knowledge` call.
         """
         chunk_metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
         if not chunk_metadata.get("is_table_chunk"):
@@ -8275,7 +8275,7 @@ class KnowledgeSearchService:
 
         # If the first line is a short heading (common for PDF table-ish chunks),
         # include a few additional non-empty lines so the LLM has enough context
-        # to answer without immediately calling read_document.
+        # to answer without immediately calling read_knowledge.
         parts: list[str] = []
         for line in lines[:10]:
             if not line:

@@ -92,7 +92,6 @@ from .redaction import redact_tool_input_payload
 from .tool_artifacts import build_prompt_view_for_remote_tool_result, store_remote_tool_output_artifact
 from .sanitizer import (
     extract_sentences,
-    is_investigative_filler_with_level,
     sanitize_with_diagnostics,
     sanitize_text,
 )
@@ -248,8 +247,6 @@ class McpOrchestratorService:
         self._remote_tool_registry: dict[str, tuple[object, str]] = {}
         self._tool_approval_overrides_cache: dict[str, dict[str, str]] = {}
         self.max_tool_iterations = int(getattr(settings, "MCP_MAX_TOOL_ITERATIONS", 10))
-        self.read_document_repeat_limit = max(1, int(getattr(settings, "MCP_READ_DOCUMENT_REPEAT_LIMIT", 2)))
-        self.read_document_throttle_limit = max(1, int(getattr(settings, "MCP_READ_DOCUMENT_THROTTLE_LIMIT", 2)))
         self.business_override_key = getattr(settings, "RAG_BUSINESS_OVERRIDE_KEY", "rag_overrides")
         # Increased from 3 to 8 to allow richer context for table-heavy documents
         default_chunk_reads = max(1, int(getattr(settings, "RAG_MAX_CHUNK_READS_PER_TURN", 8)))
@@ -382,13 +379,6 @@ class McpOrchestratorService:
                 minute_budget_reserver=minute_reserver,
                 latest_user_message=user_message,
             )
-            with TRACER.start_as_current_span("portal.mcp.table_cache") as cache_span:
-                self._hydrate_table_result_cache(conversation, tool_context)
-                if cache_span.is_recording():
-                    cache_span.set_attribute(
-                        "mcp.cached_tables",
-                        len(getattr(tool_context, "table_result_cache", {}) or {}),
-                    )
             # Load seen items from previous turns (for "are there more?" follow-ups)
             self._hydrate_seen_items(conversation, tool_context)
 
@@ -677,7 +667,7 @@ class McpOrchestratorService:
         def _resolve_read_label(arguments: Mapping[str, object], *, action_verb: str) -> str:
             """
             Best-effort label for read operations that prefers a human document name
-            over opaque UUIDs (especially when read_knowledge/read_document are called with ids/refs).
+            over opaque UUIDs (especially when read operations are called with ids/refs).
             """
             try:
                 business_id = getattr(conversation, "business_profile_id", None)
@@ -784,26 +774,6 @@ class McpOrchestratorService:
                 label = base_label if not short_id else f"{base_label}: {short_id}"
 
                 meta = {"document_id": doc_id, "intent": intent_hint} if doc_id else {}
-                return {"code": "reading", "label": label, "meta": meta, "compat_code": "reading_document"}
-
-            if tool_name == "read_document":
-                raw_id = arguments.get("document_id")
-                doc_id = str(raw_id).strip() if raw_id is not None else ""
-                
-                mode = str(arguments.get("mode") or "").strip().lower()
-                # Pillar 3: Status confidence
-                action_verb = "Scanning" if mode == "full_page" else "Reading"
-                label = _resolve_read_label(arguments, action_verb=action_verb) or f"{action_verb} document"
-                    
-                meta = {"document_id": doc_id} if doc_id else {}
-                return {"code": "reading", "label": label, "meta": meta, "compat_code": "reading_document"}
-
-            if tool_name == "table_aggregate" or tool_name == "query_dataset":
-                raw_id = arguments.get("document_id") or arguments.get("dataset_id")
-                doc_id = str(raw_id).strip() if raw_id is not None else ""
-                # Pillar 3: Status confidence
-                label = "Analyzing dataset"
-                meta = {"document_id": doc_id} if doc_id else {}
                 return {"code": "reading", "label": label, "meta": meta, "compat_code": "reading_document"}
 
             return None
@@ -1024,26 +994,7 @@ class McpOrchestratorService:
             trailing = stream_buffer
             if not trailing:
                 return
-            trailing_stripped = trailing.strip()
-            active_filter = filter_override or filter_level
-            if trailing_stripped and is_investigative_filler_with_level(trailing_stripped, filter_level=active_filter):
-                stream_dropped.append(trailing_stripped)
-                structured_log(
-                    "mcp",
-                    "sanitizer.dropped_sentence",
-                    {
-                        "stage": stage,
-                        "text": trailing_stripped[:200],
-                    },
-                    indent=1,
-                    context={
-                        "conversation": conversation.id,
-                        "business": conversation.business_profile_id,
-                    },
-                    logger_obj=logger,
-                )
-            else:
-                _emit_tokens(trailing)
+            _emit_tokens(trailing)
             stream_buffer = ""
 
         # Phase 1: streaming tool-enabled call. If tool_calls appear, we will
@@ -1083,24 +1034,6 @@ class McpOrchestratorService:
                 inline_response_blocks_detected = True
             stream_buffer = ""
             if not emit_text:
-                return
-            stripped = emit_text.strip()
-            if stripped and is_investigative_filler_with_level(stripped, filter_level=filter_level):
-                stream_dropped.append(stripped)
-                structured_log(
-                    "mcp",
-                    "sanitizer.dropped_sentence",
-                    {
-                        "stage": "streaming_answer",
-                        "text": stripped[:200],
-                    },
-                    indent=1,
-                    context={
-                        "conversation": conversation.id,
-                        "business": conversation.business_profile_id,
-                    },
-                    logger_obj=logger,
-                )
                 return
             _emit_tokens(emit_text)
 
@@ -1184,10 +1117,6 @@ class McpOrchestratorService:
             duplicate_loop_streak = 0
             duplicate_loop_threshold = 2
             table_only_workflow = False
-            read_document_signatures: dict[str, int] = {}
-            read_document_throttle_hits = 0
-            read_document_guardrail_reason: str | None = None
-            read_document_guardrail_signature: str | None = None
 
             for iteration_index in range(self.max_tool_iterations):
                 current_tool_calls_raw = list(assistant_message.get("tool_calls") or [])
@@ -1233,12 +1162,6 @@ class McpOrchestratorService:
                         tool_call_id = str(tool_call.get("id") or "").strip()
                         tool_event_id = tool_call_id or str(uuid.uuid4())
 
-                        # --- Pillar 2: Adaptive Routing (Auto-Repair) ---
-                        # Intercept and fix mismatched tool calls (e.g. query_dataset on PDF)
-                        # before they hit the handler and return an error.
-                        tool_name, arguments = self._adaptive_routing_policy(tool_name, arguments, conversation, status_callback=_status_event)
-                        # ------------------------------------------------
-
                         # Cross-turn continuity: if the model invents non-UUID ref IDs on
                         # follow-up read_knowledge turns, repair from persisted search refs.
                         if tool_name == "read_knowledge":
@@ -1249,29 +1172,6 @@ class McpOrchestratorService:
                         if missing_fields:
                             policy_tool_result = self._missing_required_payload(tool_name, missing_fields)
 
-                        cached_table_result = None
-                        table_cache_key = None
-                        if tool_name == "table_aggregate":
-                            arguments = dict(arguments)
-                            self._apply_table_column_hint(arguments, tool_context)
-                            table_cache_key = self._table_aggregate_cache_key(arguments)
-                            if table_cache_key and table_cache_key in tool_context.table_result_cache:
-                                cached_table_result = copy.deepcopy(tool_context.table_result_cache[table_cache_key])
-                                structured_log(
-                                    "mcp",
-                                    "table.aggregate.cache_hit",
-                                    {
-                                        "document_id": str(arguments.get("document_id") or ""),
-                                        "match_column": arguments.get("match_column"),
-                                        "match_values": arguments.get("match_values"),
-                                        "columns": arguments.get("columns"),
-                                    },
-                                    context={
-                                        "conversation": conversation.id,
-                                        "business": conversation.business_profile_id,
-                                    },
-                                    logger_obj=logger,
-                                )
                         if tool_name == "search_knowledge" and not policy_tool_result:
                             remaining_searches = self._search_budget_remaining(tool_context)
                             if remaining_searches == 0:
@@ -1306,11 +1206,7 @@ class McpOrchestratorService:
                                 tool_span.set_attribute("mcp.tool_name", tool_name)
                                 tool_span.set_attribute("mcp.iteration_index", iteration_index)
                                 tool_span.set_attribute("mcp.tool_args_keys", sorted(arguments.keys()))
-                            if cached_table_result is not None:
-                                tool_result = cached_table_result
-                                cache_hit = True
-                                call_origin = "cache"
-                            elif policy_tool_result:
+                            if policy_tool_result:
                                 tool_result = policy_tool_result
                                 call_origin = "policy"
                             else:
@@ -1333,37 +1229,6 @@ class McpOrchestratorService:
                                             "refs": refs_out[:10],
                                             "refs_count": len(refs_out),
                                             "mode": arguments.get("mode"),
-                                            "max_chars": arguments.get("max_chars"),
-                                        },
-                                        context={
-                                            "conversation": conversation.id,
-                                            "business": conversation.business_profile_id,
-                                        },
-                                        logger_obj=logger,
-                                    )
-                                if tool_name == "read_document":
-                                    ids_requested = arguments.get("ids")
-                                    if not isinstance(ids_requested, list):
-                                        ids_requested = []
-                                    pages_requested = arguments.get("pages")
-                                    if not isinstance(pages_requested, list):
-                                        pages_requested = []
-                                    page_requested = arguments.get("page")
-                                    if page_requested is not None and page_requested not in pages_requested:
-                                        pages_requested.append(page_requested)
-                                    structured_log(
-                                        "mcp",
-                                        "tool.read_document.request",
-                                        {
-                                            "document_id": str(arguments.get("document_id") or ""),
-                                            "ids": [str(value) for value in ids_requested if str(value).strip()][:10],
-                                            "pages": pages_requested,
-                                            "page": arguments.get("page"),
-                                            "offset": arguments.get("offset"),
-                                            "mode": arguments.get("mode"),
-                                            "neighbor_window": arguments.get("neighbor_window")
-                                            or arguments.get("chunk_neighbor"),
-                                            "token_budget": arguments.get("token_budget"),
                                             "max_chars": arguments.get("max_chars"),
                                         },
                                         context={
@@ -2024,26 +1889,13 @@ class McpOrchestratorService:
                             snippets = tool_result.get("snippets")
                             if isinstance(snippets, list) and snippets:
                                 table_only_workflow = self._search_result_is_table(tool_result)
-                        if tool_name == "table_aggregate":
-                            self._record_table_column_hint(arguments, tool_context, tool_result)
-                            if cached_table_result is None and table_cache_key:
-                                status_value = str(tool_result.get("status") or "").strip().lower()
-                                if status_value not in {"constraint_error", "error"}:
-                                    self._cache_table_result(tool_context, table_cache_key, tool_result)
-                            # If the aggregate returned nothing, drop any cached column
-                            # filters so a follow-up call without explicit columns can
-                            # broaden the search instead of repeating a too‑narrow set.
-                            if str(tool_result.get("status") or "").lower() in {"not_found", "error"}:
-                                document_id_hint = str(arguments.get("document_id") or tool_result.get("document_id") or "").strip()
-                                if document_id_hint:
-                                    tool_context.table_column_filters.pop(document_id_hint, None)
 
                         trace_index: int | None = None
                         if isinstance(tool_result, Mapping):
                             # Layer 2: tool responses carry budget telemetry instead of mid-loop
                             # injected system messages.
 
-                            if tool_name in {"search_knowledge", "read_knowledge", "read_document"}:
+                            if tool_name in {"search_knowledge", "read_knowledge"}:
                                 if bool(getattr(settings, "MCP_NEW_CONTRACT_ENABLED", True)):
                                     tool_result = dict(tool_result)
                                     tool_result["budget"] = tool_context.budget_snapshot()
@@ -2093,30 +1945,6 @@ class McpOrchestratorService:
                                 }
                             )
                             trace_index = len(tool_context.tool_trace) - 1
-                            if tool_name in {"read_document", "read_knowledge"}:
-                                signature = self._read_document_signature(arguments, tool_result)
-                                if signature:
-                                    repeat_count = read_document_signatures.get(signature, 0) + 1
-                                    read_document_signatures[signature] = repeat_count
-                                    if (
-                                        read_document_guardrail_reason is None
-                                        and repeat_count >= self.read_document_repeat_limit
-                                    ):
-                                        read_document_guardrail_reason = "read_document_repeat"
-                                        read_document_guardrail_signature = signature
-                                status_value = str(tool_result.get("status") or "").strip().lower()
-                                error_code = str(tool_result.get("error_code") or "").strip().lower()
-                                throttled = bool(tool_result.get("throttle_notice"))
-                                if status_value == "throttled" or error_code == "prompt_budget_exceeded":
-                                    throttled = True
-                                if throttled:
-                                    read_document_throttle_hits += 1
-                                    if (
-                                        read_document_guardrail_reason is None
-                                        and read_document_throttle_hits >= self.read_document_throttle_limit
-                                    ):
-                                        read_document_guardrail_reason = "read_document_throttle"
-                                    read_document_guardrail_signature = signature
 
                             if self._is_knowledge_tool(tool_name):
                                 self._record_knowledge_outputs(tool_context, tool_result)
@@ -2205,53 +2033,6 @@ class McpOrchestratorService:
                                 "content": truncated_tool_json,
                             }
                         )
-
-                        if tool_name == "table_aggregate":
-                            document_id = str(arguments.get("document_id") or tool_result.get("document_id") or "").strip()
-                            status_value = str(tool_result.get("status") or "").strip().lower()
-                            if document_id and status_value == "ok":
-                                self._satisfy_transcript_snippets(transcript, document_id, tool_context)
-                        elif tool_name == "read_knowledge" and isinstance(tool_result, Mapping):
-                            engine = str(tool_result.get("engine") or "").strip()
-                            status_value = str(tool_result.get("status") or "").strip().lower() or "ok"
-                            if status_value == "ok" and engine in {"table_preview", "file_dataset", "db_preview"}:
-                                document_id = str(tool_result.get("document_id") or "").strip()
-                                if document_id:
-                                    self._satisfy_transcript_snippets(transcript, document_id, tool_context)
-
-                        if (
-                            tool_name == "search_knowledge"
-                            and auto_structure_intent
-                            and isinstance(tool_result, Mapping)
-                            and str(tool_result.get("status") or "").strip().lower() == "ok"
-                        ):
-                            remaining = max(0, auto_structure_doc_limit - len(auto_structure_docs))
-                            if remaining:
-                                candidates = self._extract_structure_upload_ids(tool_result)
-                                for candidate in candidates:
-                                    if candidate in auto_structure_docs:
-                                        continue
-                                    auto_structure_docs.add(candidate)
-                                    deferred_structure_doc_ids.append(candidate)
-                                    if len(deferred_structure_doc_ids) >= remaining:
-                                        break
-
-                        # Ask the model again with tools enabled to see if more tool_calls are needed.
-                        # Trim tool-loop prompts so each call focuses on the newest inputs.
-
-                        # Inject deferred document structures AFTER all tool responses
-                        # have been added to maintain proper tool_call/response ordering.
-                        if deferred_structure_doc_ids:
-                            self._inject_document_structures(
-                                conversation=conversation,
-                                tool_context=tool_context,
-                                transcript=transcript,
-                                document_ids=deferred_structure_doc_ids,
-                                attributes=auto_fetch_attributes,
-                                auto_fetch_enabled=auto_fetch_enabled,
-                                auto_fetch_max_rows=auto_fetch_max_rows,
-                                auto_fetch_max_tables=auto_fetch_max_tables,
-                            )
 
                         if created_email_draft and not email_send_requested:
                             lowered = (user_message or "").strip().lower()
@@ -2417,54 +2198,6 @@ class McpOrchestratorService:
                                     }
 
                     loop_messages = prompts.limit_messages_for_stage(transcript, stage="tool_iteration")
-                    if read_document_guardrail_reason:
-                        structured_log(
-                            "mcp",
-                            "tool.loop.force_final",
-                            {
-                                "reason": read_document_guardrail_reason,
-                                "signature": read_document_guardrail_signature,
-                                "repeat_limit": self.read_document_repeat_limit,
-                                "throttle_limit": self.read_document_throttle_limit,
-                                "throttle_hits": read_document_throttle_hits,
-                            },
-                            context={
-                                "conversation": conversation.id,
-                                "business": conversation.business_profile_id,
-                            },
-                            logger_obj=logger,
-                            level=logging.WARNING,
-                        )
-                        forced_payload = self._chat_with_context_governor(
-                            conversation=conversation,
-                            stage="force_final",
-                            messages=loop_messages,
-                            tools=portal_only_tools if portal_only_tools and on_block_event else None,
-                            on_stream_delta=_answer_stream_chunk if streaming_allowed else None,
-                            on_tool_call_delta=_on_stream_tool_call_delta,
-                            tool_context=tool_context,
-                            on_reasoning_event=on_reasoning_event,
-                            reasoning_label="Final answer",
-                            should_cancel=should_cancel,
-                        )
-                        assistant_message = self._coerce_assistant_message(forced_payload)
-                        forced_tool_calls_raw = list(assistant_message.get("tool_calls") or [])
-                        _, portal_tool_calls = _split_portal_tool_calls(forced_tool_calls_raw)
-                        if portal_tool_calls:
-                            portal_block_stream.ingest_tool_calls(portal_tool_calls)
-                        next_tool_calls = []
-                        _mark_answer_started()
-                        transcript.append(
-                            {
-                                "role": "assistant",
-                                "content": assistant_message.get("content"),
-                            }
-                        )
-                        tool_phase_assistant_message = assistant_message
-                        raw_content = assistant_message.get("content")
-                        if isinstance(raw_content, str) and raw_content.strip():
-                            single_pass_candidate = raw_content.strip()
-                        break
                     tools_for_iteration = self.tool_definitions
                     excluded_tools: set[str] = set()
                     if table_only_workflow:
@@ -2500,9 +2233,6 @@ class McpOrchestratorService:
                             next_args = dict(raw_next_args) if isinstance(raw_next_args, Mapping) else {}
                             next_args.pop("__ui", None)
                             next_args.pop("spinner_text", None)
-                            if next_name == "table_aggregate":
-                                next_args = dict(next_args)
-                                self._apply_table_column_hint(next_args, tool_context)
                             next_signatures.append(self._tool_signature(next_name, next_args))
 
                         if next_signatures and all(sig in seen_tool_signatures for sig in next_signatures):
@@ -2807,7 +2537,6 @@ class McpOrchestratorService:
         _status_event("stream_complete", "")
 
         self._log_turn_metrics(conversation, tool_context)
-        self._persist_table_cache(conversation, tool_context)
         self._persist_seen_items(conversation, tool_context)
         return {
             "assistant_message": normalized_assistant_msg,
@@ -2911,8 +2640,6 @@ class McpOrchestratorService:
                 diagnostics["preplan"] = dict(getattr(tool_context, "preplan") or {})
             if getattr(tool_context, "verification", None):
                 diagnostics["verification"] = dict(getattr(tool_context, "verification") or {})
-            if getattr(tool_context, "table_aggregate_rows", None):
-                diagnostics["table_aggregate_rows"] = list(getattr(tool_context, "table_aggregate_rows"))
             if trace_entries:
                 tool_metrics: dict[str, dict[str, float | int]] = {}
                 for entry in trace_entries:
@@ -3515,7 +3242,7 @@ class McpOrchestratorService:
         if not parsed:
             return None
         route = str(parsed.get("route") or "").strip().lower()
-        if route and route not in {"search", "read", "answer", "dataset", "list_tables"}:
+        if route and route not in {"search", "read", "answer"}:
             route = ""
         tools = parsed.get("tools")
         tool_list: list[str] = []
@@ -3614,14 +3341,7 @@ class McpOrchestratorService:
 
     @staticmethod
     def _is_knowledge_tool(name: str) -> bool:
-        return name in {
-            "search_knowledge",
-            "read_knowledge",
-            "read_document",
-            "table_aggregate",
-            "dataset_query",
-            "query_dataset",
-        }
+        return name in {"search_knowledge", "read_knowledge"}
 
     @staticmethod
     def _tool_schema_name(tool_def: Mapping[str, object]) -> str | None:
@@ -4265,93 +3985,6 @@ class McpOrchestratorService:
             effective_query = requested_query
             if effective_query:
                 out["effective_query"] = self._clip_text(effective_query, 260)
-            return out
-
-        if normalized == "read_document":
-            out = {"status": status}
-            for key in ("total_chars", "max_chars", "max_chars_allowed"):
-                if key in tool_result:
-                    try:
-                        out[key] = int(tool_result.get(key) or 0)
-                    except (TypeError, ValueError):
-                        pass
-            for key in ("error_code", "error"):
-                value = tool_result.get(key)
-                if isinstance(value, str) and value.strip():
-                    out[key] = self._clip_text(value.strip(), 120)
-            contents = tool_result.get("contents")
-            if isinstance(contents, list):
-                out["contents_count"] = len(contents)
-                preview: list[dict[str, object]] = []
-                for item in contents[:6]:
-                    if not isinstance(item, Mapping):
-                        continue
-                    entry: dict[str, object] = {}
-                    item_id = str(item.get("id") or "").strip()
-                    if item_id:
-                        entry["id"] = item_id
-                    title = item.get("title")
-                    if isinstance(title, str) and title.strip():
-                        entry["title"] = self._clip_text(title.strip(), 140)
-                    item_type = item.get("type")
-                    if isinstance(item_type, str) and item_type.strip():
-                        entry["type"] = item_type.strip()
-                    try:
-                        entry["chars"] = int(item.get("chars") or 0)
-                    except (TypeError, ValueError):
-                        pass
-                    entry["complete"] = bool(item.get("complete"))
-                    entry["truncated"] = bool(item.get("truncated"))
-                    artifact_id = item.get("artifact_id")
-                    if isinstance(artifact_id, str) and artifact_id.strip():
-                        entry["artifact_id"] = artifact_id.strip()
-                    cursor_used_fp = _cursor_fingerprint(item.get("cursor_used"))
-                    if cursor_used_fp:
-                        entry["cursor_used"] = cursor_used_fp
-                    next_cursor_fp = _cursor_fingerprint(item.get("next_cursor"))
-                    if next_cursor_fp:
-                        entry["next_cursor"] = next_cursor_fp
-                    if entry:
-                        preview.append(entry)
-                if preview:
-                    out["contents_preview"] = preview
-            read = tool_result.get("read")
-            if isinstance(read, list):
-                out["read_count"] = len(read)
-                read_preview: list[dict[str, object]] = []
-                for item in read[:8]:
-                    if not isinstance(item, Mapping):
-                        continue
-                    entry: dict[str, object] = {}
-                    item_id = str(item.get("id") or "").strip()
-                    if item_id:
-                        entry["id"] = item_id
-                    status_value = item.get("status")
-                    if isinstance(status_value, str) and status_value.strip():
-                        entry["status"] = status_value.strip()
-                    try:
-                        entry["chars"] = int(item.get("chars") or 0)
-                    except (TypeError, ValueError):
-                        pass
-                    artifact_id = item.get("artifact_id")
-                    if isinstance(artifact_id, str) and artifact_id.strip():
-                        entry["artifact_id"] = artifact_id.strip()
-                    if entry:
-                        read_preview.append(entry)
-                if read_preview:
-                    out["read_preview"] = read_preview
-            deferred = tool_result.get("deferred")
-            if isinstance(deferred, list):
-                out["deferred_count"] = len(deferred)
-            errors = tool_result.get("errors")
-            if isinstance(errors, list):
-                out["errors_count"] = len(errors)
-            throttle_notice = tool_result.get("throttle_notice")
-            if isinstance(throttle_notice, Mapping):
-                out["throttle_notice"] = dict(throttle_notice)
-            budget = tool_result.get("budget")
-            if isinstance(budget, Mapping):
-                out["budget"] = dict(budget)
             return out
 
         if normalized == "read_knowledge":
@@ -5318,268 +4951,51 @@ class McpOrchestratorService:
 
     @staticmethod
     def _record_knowledge_outputs(context: ToolExecutionContext, tool_result: Mapping[str, object]) -> None:
-        tool_name = str(tool_result.get("tool") or "").strip() if isinstance(tool_result, Mapping) else ""
-        engine = str(tool_result.get("engine") or "").strip() if isinstance(tool_result, Mapping) else ""
-        tool_diagnostics = tool_result.get("diagnostics") if isinstance(tool_result.get("diagnostics"), Mapping) else {}
-        evidence_raw = tool_result.get("evidence")
-        evidence = evidence_raw if isinstance(evidence_raw, Mapping) else {}
-        table_aggregate_snippet_seen = False
-        snippets = tool_result.get("snippets") if isinstance(tool_result, Mapping) else None
+        tool_name = str(tool_result.get("tool") or "").strip()
+
         if tool_name == "search_knowledge":
             refs_raw = tool_result.get("refs")
             if not isinstance(refs_raw, list):
                 refs_raw = tool_result.get("results")
             if isinstance(refs_raw, list):
-                context.set_recent_search_refs([ref for ref in refs_raw if isinstance(ref, Mapping)])
-        if tool_name == "read_knowledge" and isinstance(evidence_raw, list):
-            # Agentic read_knowledge: evidence is a list of canonical payloads.
-            for item in evidence_raw[:20]:
-                if not isinstance(item, Mapping):
-                    continue
-                content_id = item.get("id")
-                title = item.get("title") or "Knowledge"
-                content_type = str(item.get("type") or "").strip().lower()
-                truncated = bool(item.get("truncated"))
-                upload_id = item.get("document_id") if item.get("document_id") not in {None, ""} else None
-                coverage_entry = {
-                    "id": content_id,
-                    "title": title,
-                    "label": title,
-                    "read_state": "partial" if truncated else "full",
-                    "coverage": (),
-                    "search_stage": "read_knowledge",
-                    "chunk_id": content_id,
-                    "upload_id": upload_id,
-                    "page_mode": None,
-                    "is_table_chunk": content_type == "table",
-                    "suppress_in_prompt": False,
-                }
-                context.add_coverage_entry(coverage_entry)
-        if tool_name == "read_knowledge":
-            snippets = evidence.get("snippets")
-        if isinstance(snippets, list):
-            for entry in snippets:
-                if isinstance(entry, Mapping):
-                    context.add_knowledge_result(entry)
-                    coverage_entry = {
-                        "id": entry.get("id"),
-                        "title": entry.get("title") or entry.get("public_label") or "Knowledge",
-                        "label": entry.get("public_label") or entry.get("title") or "Knowledge",
-                        "read_state": entry.get("read_state"),
-                        "coverage": entry.get("coverage") if isinstance(entry.get("coverage"), (list, tuple)) else (),
-                        "search_stage": entry.get("search_stage"),
-                        "chunk_id": entry.get("chunk_id"),
-                        "upload_id": entry.get("upload_id"),
-                        "page_mode": entry.get("page_mode"),
-                        "is_table_chunk": entry.get("is_table_chunk"),
-                        "suppress_in_prompt": bool(entry.get("suppress_in_prompt")),
-                    }
-                    context.add_coverage_entry(coverage_entry)
-                    source_diagnostics = (
-                        entry.get("source_diagnostics") if isinstance(entry.get("source_diagnostics"), Mapping) else {}
-                    )
-                    if source_diagnostics.get("table_aggregate") and entry.get("upload_id"):
-                        table_aggregate_snippet_seen = True
-                        structured_tables = entry.get("structured_tables") or entry.get("structuredTables") or ()
-                        first_table = None
-                        if isinstance(structured_tables, Sequence) and structured_tables:
-                            first_candidate = structured_tables[0]
-                            if isinstance(first_candidate, Mapping):
-                                first_table = first_candidate
-                        table_details = {
-                            "snippet_id": entry.get("id"),
-                            "upload_id": entry.get("upload_id"),
-                            "table_order_index": source_diagnostics.get("table_order_index"),
-                            "row_index": source_diagnostics.get("table_row_index"),
-                            "sheet_name": source_diagnostics.get("table_sheet_name"),
-                            "columns": first_table.get("columns") if isinstance(first_table, Mapping) else None,
-                            "row_total": source_diagnostics.get("table_row_total") or entry.get("row_total"),
-                            "row_total_display": source_diagnostics.get("table_row_total_display") or entry.get("row_total_display"),
-                            "snippet": McpOrchestratorService._snapshot_snippet(entry),
-                        }
-                        context.table_aggregate_rows.append({k: v for k, v in table_details.items() if v is not None})
-                        McpOrchestratorService._suppress_table_previews(
-                            context,
-                            upload_id=str(entry.get("upload_id")),
-                        )
-                        McpOrchestratorService._mark_upload_as_satisfied(
-                            context,
-                            upload_id=str(entry.get("upload_id")),
-                        )
-                        read_entry = {
-                            "id": entry.get("id") or entry.get("chunk_id"),
-                            "label": entry.get("public_label") or entry.get("title") or "Table aggregate",
-                            "mode": "table_aggregate",
-                            "table_order_index": source_diagnostics.get("table_order_index"),
-                            "row_index": source_diagnostics.get("table_row_index"),
-                        }
-                        context.add_knowledge_read({k: v for k, v in read_entry.items() if v is not None})
-        elif tool_name == "read_document":
-            # Agentic read_document responses carry `contents[]` (not legacy snippets).
-            # Keep the coverage ledger usable for final-answer prompts without
-            # forcing content-heavy snippet payloads back into the tool envelope.
-            contents = tool_result.get("contents") if isinstance(tool_result, Mapping) else None
-            if isinstance(contents, list):
-                for item in contents[:20]:
-                    if not isinstance(item, Mapping):
-                        continue
-                    content_id = item.get("id")
-                    title = item.get("title") or "Knowledge"
-                    content_type = str(item.get("type") or "").strip().lower()
-                    truncated = bool(item.get("truncated"))
-                    coverage_entry = {
-                        "id": content_id,
-                        "title": title,
-                        "label": title,
-                        "read_state": "partial" if truncated else "full",
-                        "coverage": (),
-                        "search_stage": "read_document",
-                        "chunk_id": content_id,
-                        "upload_id": None,
-                        "page_mode": None,
-                        "is_table_chunk": content_type == "table",
-                        "suppress_in_prompt": False,
-                    }
-                    context.add_coverage_entry(coverage_entry)
+                refs = [ref for ref in refs_raw if isinstance(ref, Mapping)]
+                context.set_recent_search_refs(refs)
+                for ref in refs:
+                    context.add_knowledge_result(ref)
+            return
 
-        if tool_name == "read_knowledge" and engine in {"table_preview", "file_dataset", "db_preview"}:
-            document_id = str(tool_result.get("document_id") or tool_diagnostics.get("resolved_upload_id") or "").strip()
-            status_value = str(tool_result.get("status") or "").strip().lower() or "ok"
-            if document_id and status_value == "ok":
-                McpOrchestratorService._suppress_table_previews(context, upload_id=document_id)
-                McpOrchestratorService._mark_upload_as_satisfied(context, upload_id=document_id)
+        if tool_name != "read_knowledge":
+            return
 
-            rows = evidence.get("rows")
-            if isinstance(rows, list) and rows:
-                for row in rows[:20]:
-                    if not isinstance(row, Mapping):
-                        continue
-                    table_order_index = row.get("table_order_index")
-                    row_index = row.get("row_index")
-                    sheet_name = row.get("sheet_name")
-                    snippet_id = f"read-knowledge:{engine}:{document_id}:{table_order_index}:{row_index}"
-                    cells = row.get("cells") if isinstance(row.get("cells"), list) else []
-                    cells_out = [
-                        {"column": cell.get("column"), "value": cell.get("value")}
-                        for cell in cells[:8]
-                        if isinstance(cell, Mapping)
-                    ]
-                    contributions = row.get("contributions") if isinstance(row.get("contributions"), list) else []
-                    contributions_out = [
-                        {"column": entry.get("column"), "value": entry.get("value"), "display": entry.get("display")}
-                        for entry in contributions[:25]
-                        if isinstance(entry, Mapping)
-                    ]
-                    if engine == "table_preview":
-                        table_details = {
-                            "snippet_id": snippet_id,
-                            "upload_id": document_id or None,
-                            "table_order_index": table_order_index,
-                            "row_index": row_index,
-                            "sheet_name": sheet_name,
-                            "row_total": row.get("row_total"),
-                            "row_total_display": row.get("row_total_display"),
-                            "cells": cells_out or None,
-                            "contributions": contributions_out or None,
-                        }
-                        context.table_aggregate_rows.append({k: v for k, v in table_details.items() if v is not None})
-                    read_entry = {
-                        "id": snippet_id,
-                        "label": f"Row {row_index}" if row_index is not None else "Table row",
-                        "mode": "tabular_query",
-                        "table_order_index": table_order_index,
-                        "row_index": row_index,
-                    }
-                    context.add_knowledge_read({k: v for k, v in read_entry.items() if v is not None})
-            elif document_id:
-                context.add_knowledge_read(
-                    {
-                        "id": f"read-knowledge:{engine}:{document_id}",
-                        "label": "Tabular query",
-                        "mode": "tabular_query",
-                    }
-                )
+        evidence_raw = tool_result.get("evidence")
+        if not isinstance(evidence_raw, list):
+            evidence_raw = tool_result.get("contents")
+        if not isinstance(evidence_raw, list):
+            return
 
-        # table_aggregate no longer returns snippet-shaped results; derive compact diagnostics from rows instead.
-        if tool_name == "table_aggregate" and not table_aggregate_snippet_seen:
-            status_value = str(tool_result.get("status") or "").strip().lower()
-            document_id = str(tool_result.get("document_id") or "").strip()
-            rows = tool_result.get("rows") if isinstance(tool_result, Mapping) else None
-            if document_id and status_value == "ok":
-                McpOrchestratorService._suppress_table_previews(context, upload_id=document_id)
-                McpOrchestratorService._mark_upload_as_satisfied(context, upload_id=document_id)
-
-            if isinstance(rows, list) and rows:
-                for row in rows[:20]:
-                    if not isinstance(row, Mapping):
-                        continue
-                    table_order_index = row.get("table_order_index")
-                    row_index = row.get("row_index")
-                    sheet_name = row.get("sheet_name")
-                    snippet_id = f"table-aggregate:{document_id}:{table_order_index}:{row_index}"
-                    cells = row.get("cells") if isinstance(row.get("cells"), list) else []
-                    cells_out = [
-                        {"column": cell.get("column"), "value": cell.get("value")}
-                        for cell in cells[:8]
-                        if isinstance(cell, Mapping)
-                    ]
-                    contributions = row.get("contributions") if isinstance(row.get("contributions"), list) else []
-                    contributions_out = [
-                        {"column": entry.get("column"), "value": entry.get("value"), "display": entry.get("display")}
-                        for entry in contributions[:25]
-                        if isinstance(entry, Mapping)
-                    ]
-                    table_details = {
-                        "snippet_id": snippet_id,
-                        "upload_id": document_id or None,
-                        "table_order_index": table_order_index,
-                        "row_index": row_index,
-                        "sheet_name": sheet_name,
-                        "row_total": row.get("row_total"),
-                        "row_total_display": row.get("row_total_display"),
-                        "cells": cells_out or None,
-                        "contributions": contributions_out or None,
-                    }
-                    context.table_aggregate_rows.append({k: v for k, v in table_details.items() if v is not None})
-                    read_entry = {
-                        "id": snippet_id,
-                        "label": f"Table row {row_index}" if row_index is not None else "Table row",
-                        "mode": "table_aggregate",
-                        "table_order_index": table_order_index,
-                        "row_index": row_index,
-                    }
-                    context.add_knowledge_read({k: v for k, v in read_entry.items() if v is not None})
-            elif document_id and status_value == "ok":
-                context.add_knowledge_read(
-                    {
-                        "id": f"table-aggregate:{document_id}",
-                        "label": "Table aggregate",
-                        "mode": "table_aggregate",
-                    }
-                )
-        reads = tool_result.get("knowledge_reads") if isinstance(tool_result, Mapping) else None
-        if not isinstance(reads, list):
-            reads = (
-                tool_diagnostics.get("knowledge_reads")
-                if isinstance(tool_diagnostics.get("knowledge_reads"), list)
-                else None
-            )
-        if isinstance(reads, list):
-            for read in reads:
-                if isinstance(read, Mapping):
-                    context.add_knowledge_read(read)
-        warnings = tool_result.get("ingestion_warnings") if isinstance(tool_result, Mapping) else None
-        if not isinstance(warnings, list):
-            warnings = (
-                tool_diagnostics.get("ingestion_warnings")
-                if isinstance(tool_diagnostics.get("ingestion_warnings"), list)
-                else None
-            )
-        if isinstance(warnings, list):
-            for warning in warnings:
-                if isinstance(warning, Mapping):
-                    context.add_ingestion_warning(warning)
-
+        # Canonical evidence items (agentic v2).
+        for item in evidence_raw[:50]:
+            if not isinstance(item, Mapping):
+                continue
+            content_id = item.get("id")
+            title = item.get("title") or item.get("label") or "Knowledge"
+            content_type = str(item.get("type") or "").strip().lower()
+            truncated = bool(item.get("truncated"))
+            upload_id = item.get("document_id") if item.get("document_id") not in {None, ""} else None
+            coverage_entry = {
+                "id": content_id,
+                "title": title,
+                "label": title,
+                "read_state": "partial" if truncated else "full",
+                "coverage": (),
+                "search_stage": "read_knowledge",
+                "chunk_id": content_id,
+                "upload_id": upload_id,
+                "page_mode": None,
+                "is_table_chunk": content_type == "table",
+                "suppress_in_prompt": False,
+            }
+            context.add_coverage_entry(coverage_entry)
     @staticmethod
     def _suppress_table_previews(context: ToolExecutionContext, upload_id: str) -> None:
         if not upload_id:
@@ -5681,147 +5097,6 @@ class McpOrchestratorService:
         return normalized
 
     @staticmethod
-    def _table_aggregate_cache_key(arguments: Mapping[str, object]) -> tuple | None:
-        document_id = str(arguments.get("document_id") or "").strip()
-        if not document_id:
-            return None
-
-        def _norm(value: object) -> str | None:
-            if value is None:
-                return None
-            text = str(value).strip()
-            return text.lower() or None
-
-        match_column = _norm(arguments.get("match_column"))
-        match_value = _norm(arguments.get("match_value"))
-        raw_match_values = arguments.get("match_values")
-        if isinstance(raw_match_values, str):
-            match_iter: Sequence[object] = [raw_match_values]
-        elif isinstance(raw_match_values, Sequence):
-            match_iter = raw_match_values
-        else:
-            match_iter = ()
-        match_values: tuple[str, ...] = tuple(
-            value
-            for value in (_norm(entry) for entry in match_iter)
-            if value
-        )
-        if match_value and match_value not in match_values:
-            match_values = match_values + (match_value,)
-        normalized_columns = tuple(
-            value
-            for value in (
-                _norm(entry) for entry in arguments.get("columns") or ()
-            )
-            if value
-        )
-        query = _norm(arguments.get("query"))
-        sheet_name = _norm(arguments.get("sheet_name"))
-        table_index = arguments.get("table_order_index")
-        try:
-            table_index_norm = int(table_index) if table_index is not None else None
-        except (TypeError, ValueError):
-            table_index_norm = None
-        row_limit = arguments.get("max_rows")
-        try:
-            row_limit_norm = int(row_limit) if row_limit is not None else None
-        except (TypeError, ValueError):
-            row_limit_norm = None
-        mode = _norm(arguments.get("mode"))
-        value_column = _norm(arguments.get("value_column"))
-        return (
-            document_id,
-            match_column,
-            match_values,
-            normalized_columns,
-            query,
-            sheet_name,
-            table_index_norm,
-            row_limit_norm,
-            mode,
-            value_column,
-        )
-
-    def _apply_table_column_hint(self, arguments: MutableMapping[str, object], context: ToolExecutionContext) -> None:
-        document_id = str(arguments.get("document_id") or "").strip()
-        if not document_id:
-            return
-        raw_columns = arguments.get("columns")
-        normalized = self._normalized_column_entries(raw_columns)
-        if normalized:
-            context.table_column_filters[document_id] = normalized
-            arguments["columns"] = list(normalized)
-            return
-        cached_columns = context.table_column_filters.get(document_id)
-        if cached_columns:
-            arguments["columns"] = list(cached_columns)
-
-    @staticmethod
-    def _record_table_column_hint(arguments: Mapping[str, object], context: ToolExecutionContext, tool_result: Mapping[str, object]) -> None:
-        document_id = str(arguments.get("document_id") or "").strip()
-        if not document_id:
-            return
-        raw_columns = arguments.get("columns")
-        normalized = McpOrchestratorService._normalized_column_entries(raw_columns)
-        if normalized:
-            context.table_column_filters[document_id] = normalized
-            return
-        rows = tool_result.get("rows") if isinstance(tool_result, Mapping) else None
-        if document_id not in context.table_column_filters and isinstance(rows, list):
-            first_row = rows[0] if rows else None
-            if isinstance(first_row, Mapping):
-                cells = first_row.get("cells") if isinstance(first_row.get("cells"), list) else []
-                columns = []
-                for cell in cells:
-                    if not isinstance(cell, Mapping):
-                        continue
-                    col_name = cell.get("column")
-                    if isinstance(col_name, str) and col_name.strip():
-                        columns.append(col_name.strip())
-                if columns:
-                    context.table_column_filters[document_id] = columns[:200]
-
-    @staticmethod
-    def _cache_table_result(context: ToolExecutionContext, cache_key: tuple, payload: Mapping[str, object], limit: int = 4) -> None:
-        context.table_result_cache[cache_key] = copy.deepcopy(payload)
-        context.table_result_cache_dirty.add(cache_key)
-        while len(context.table_result_cache) > limit:
-            first_key = next(iter(context.table_result_cache))
-            context.table_result_cache.pop(first_key, None)
-            context.table_result_cache_dirty.discard(first_key)
-
-    @staticmethod
-    def _table_cache_entries(conversation: Conversation) -> list[dict[str, object]]:
-        metadata = conversation.metadata or {}
-        cache_entries = metadata.get("mcp_table_cache") if isinstance(metadata, Mapping) else None
-        if not isinstance(cache_entries, list):
-            return []
-        return [entry for entry in cache_entries if isinstance(entry, Mapping)]
-
-    def _hydrate_table_result_cache(self, conversation: Conversation, context: ToolExecutionContext) -> None:
-        cached_entries = self._table_cache_entries(conversation)
-        if not cached_entries:
-            return
-        hydrated = 0
-        for entry in cached_entries[:8]:
-            cache_key = self._deserialize_table_cache_key(entry.get("cache_key"))
-            cached_result = entry.get("result")
-            if not cache_key or not isinstance(cached_result, Mapping):
-                continue
-            context.table_result_cache[cache_key] = copy.deepcopy(cached_result)
-            hydrated += 1
-        if hydrated:
-            structured_log(
-                "mcp",
-                "cache.table_result_hydrate",
-                {"entries": hydrated},
-                indent=1,
-                context={
-                    "conversation": conversation.id,
-                    "business": conversation.business_profile_id,
-                },
-                logger_obj=logger,
-            )
 
     def _hydrate_seen_items(self, conversation: Conversation, context: ToolExecutionContext) -> None:
         """Load previously-shown chunk/row IDs and document context from conversation metadata.
@@ -6055,384 +5330,7 @@ class McpOrchestratorService:
         return max(0, limit - used)
 
     @staticmethod
-    def _extract_structure_upload_ids(tool_result: Mapping[str, object]) -> list[str]:
-        snippets = tool_result.get("snippets")
-        if not isinstance(snippets, list):
-            results = tool_result.get("refs")
-            if not isinstance(results, list):
-                results = tool_result.get("results")
-            if not isinstance(results, list):
-                return []
-            upload_ids: list[str] = []
-            for result in results:
-                if not isinstance(result, Mapping):
-                    continue
-                kind = str(result.get("kind") or "").strip().lower()
-                is_table = str(result.get("type") or "").strip().lower() == "table" or kind.startswith("table")
-                if not is_table:
-                    continue
-                upload_id = str(result.get("document_id") or "").strip()
-                if upload_id:
-                    upload_ids.append(upload_id)
-            return upload_ids
-        upload_ids: list[str] = []
-        for snippet in snippets:
-            if not isinstance(snippet, Mapping):
-                continue
-            is_table = bool(
-                snippet.get("is_table_chunk")
-                or snippet.get("structured_table_count")
-                or snippet.get("table_read_only")
-            )
-            if not is_table:
-                continue
-            upload_id = str(snippet.get("upload_id") or "").strip()
-            if upload_id:
-                upload_ids.append(upload_id)
-        return upload_ids
 
-    def _inject_document_structures(
-        self,
-        *,
-        conversation: Conversation,
-        tool_context: ToolExecutionContext,
-        transcript: list[Mapping[str, object]],
-        document_ids: Sequence[str],
-        attributes: Sequence[str] | None = None,
-        auto_fetch_enabled: bool = False,
-        auto_fetch_max_rows: int = 200,
-        auto_fetch_max_tables: int = 3,
-    ) -> int:
-        if not document_ids:
-            return 0
-        tool_calls: list[dict[str, object]] = []
-        tool_messages: list[dict[str, object]] = []
-        auto_fetch_calls: list[dict[str, object]] = []
-        auto_fetch_messages: list[dict[str, object]] = []
-        limits = self._prompt_compaction_limits()
-        numeric_attributes = self._numeric_attribute_tokens(attributes or ())
-        for document_id in document_ids:
-            if not document_id:
-                continue
-            call_id = f"auto_structure_{uuid.uuid4().hex[:8]}"
-            arguments = {"document_id": document_id, "include_row_labels": True}
-            tool_calls.append(
-                {
-                    "id": call_id,
-                    "type": "function",
-                    "function": {
-                        "name": "get_document_structure",
-                        "arguments": json.dumps(arguments, ensure_ascii=False),
-                    },
-                }
-            )
-            call_start = time.perf_counter()
-            try:
-                tool_result = mcp_tools.execute_tool(
-                    "get_document_structure",
-                    arguments,
-                    conversation=conversation,
-                    context=tool_context,
-                )
-            except ToolConstraintError as exc:
-                tool_result = self._constraint_error_payload("get_document_structure", exc)
-            call_duration_ms = (time.perf_counter() - call_start) * 1000.0
-
-            result_keys = sorted(tool_result.keys()) if isinstance(tool_result, Mapping) else []
-            status = tool_result.get("status") if isinstance(tool_result, Mapping) else None
-            error_code = tool_result.get("error_code") if isinstance(tool_result, Mapping) else None
-            hint = tool_result.get("hint") if isinstance(tool_result, Mapping) else None
-            tool_context.add_tool_trace(
-                {
-                    "tool": "get_document_structure",
-                    "arguments": arguments,
-                    "result_keys": result_keys,
-                    "status": status,
-                    "error_code": error_code,
-                    "hint": hint,
-                    "duration_ms": int(call_duration_ms),
-                    "origin": "auto",
-                }
-            )
-            if isinstance(tool_result, Mapping):
-                prompt_tool_result = self._compact_tool_payload_for_prompt(
-                    "get_document_structure",
-                    tool_result,
-                    **limits,
-                )
-            else:
-                prompt_tool_result = {
-                    "tool": "get_document_structure",
-                    "result": self._clip_text(tool_result, 2000) if tool_result is not None else None,
-                    "prompt_compact": True,
-                }
-            tool_messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": call_id,
-                    "name": "get_document_structure",
-                    "content": json.dumps(prompt_tool_result, ensure_ascii=False),
-                }
-            )
-            if (
-                auto_fetch_enabled
-                and numeric_attributes
-                and isinstance(tool_result, Mapping)
-                and str(tool_result.get("status") or "").strip().lower() == "ok"
-            ):
-                fetch_calls, fetch_messages = self._auto_fetch_table_rows(
-                    conversation=conversation,
-                    tool_context=tool_context,
-                    transcript=transcript,
-                    document_id=document_id,
-                    structure_result=tool_result,
-                    attribute_tokens=sorted(numeric_attributes),
-                    max_rows=auto_fetch_max_rows,
-                    max_tables=auto_fetch_max_tables,
-                )
-                if fetch_calls:
-                    auto_fetch_calls.extend(fetch_calls)
-                    auto_fetch_messages.extend(fetch_messages)
-
-        if tool_calls:
-            assistant_turn: dict[str, object] = {"role": "assistant", "content": "", "tool_calls": tool_calls}
-            if self._deepseek_reasoner_tool_loop_enabled():
-                assistant_turn["reasoning_content"] = ""
-            transcript.append(assistant_turn)
-            transcript.extend(tool_messages)
-        if auto_fetch_calls:
-            assistant_turn: dict[str, object] = {"role": "assistant", "content": "", "tool_calls": auto_fetch_calls}
-            if self._deepseek_reasoner_tool_loop_enabled():
-                assistant_turn["reasoning_content"] = ""
-            transcript.append(assistant_turn)
-            transcript.extend(auto_fetch_messages)
-        return len(tool_calls)
-
-    def _auto_fetch_table_rows(
-        self,
-        *,
-        conversation: Conversation,
-        tool_context: ToolExecutionContext,
-        transcript: list[Mapping[str, object]],
-        document_id: str,
-        structure_result: Mapping[str, object],
-        attribute_tokens: Sequence[str],
-        max_rows: int,
-        max_tables: int,
-    ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
-        tables = structure_result.get("tables")
-        if not isinstance(tables, list) or not tables:
-            return ([], [])
-        tool_calls: list[dict[str, object]] = []
-        tool_messages: list[dict[str, object]] = []
-        limits = self._prompt_compaction_limits()
-        candidates: list[dict[str, object]] = []
-        for table in tables:
-            if not isinstance(table, Mapping):
-                continue
-            columns = table.get("columns")
-            if not isinstance(columns, list) or not columns:
-                continue
-            try:
-                row_count = int(table.get("row_count") or 0)
-            except (TypeError, ValueError):
-                row_count = 0
-            if row_count <= 0 or row_count > max_rows:
-                continue
-            matched_columns = self._match_attribute_columns(columns, attribute_tokens)
-            if not matched_columns:
-                continue
-            row_label_column = columns[0] if columns else None
-            columns_out: list[str] = []
-            if isinstance(row_label_column, str) and row_label_column.strip():
-                columns_out.append(row_label_column)
-            for col in matched_columns:
-                if col not in columns_out:
-                    columns_out.append(col)
-            if not columns_out:
-                continue
-            table_order_index = table.get("order_index")
-            sheet_name = table.get("sheet_name")
-            candidates.append(
-                {
-                    "columns": columns_out,
-                    "row_count": row_count,
-                    "table_order_index": table_order_index,
-                    "sheet_name": sheet_name,
-                }
-            )
-
-        if not candidates:
-            return ([], [])
-
-        for candidate in candidates[: max(1, max_tables)]:
-            call_id = f"auto_fetch_{uuid.uuid4().hex[:8]}"
-            arguments: dict[str, object] = {
-                "document_id": document_id,
-                "columns": candidate["columns"],
-                "max_rows": candidate["row_count"],
-            }
-            table_order_index = candidate.get("table_order_index")
-            if table_order_index is not None:
-                arguments["table_order_index"] = table_order_index
-            sheet_name = candidate.get("sheet_name")
-            if isinstance(sheet_name, str) and sheet_name.strip():
-                arguments["sheet_name"] = sheet_name
-            tool_calls.append(
-                {
-                    "id": call_id,
-                    "type": "function",
-                    "function": {
-                        "name": "table_aggregate",
-                        "arguments": json.dumps(arguments, ensure_ascii=False),
-                    },
-                }
-            )
-            call_start = time.perf_counter()
-            try:
-                tool_result = mcp_tools.execute_tool(
-                    "table_aggregate",
-                    arguments,
-                    conversation=conversation,
-                    context=tool_context,
-                )
-            except ToolConstraintError as exc:
-                tool_result = self._constraint_error_payload("table_aggregate", exc)
-            call_duration_ms = (time.perf_counter() - call_start) * 1000.0
-
-            result_keys = sorted(tool_result.keys()) if isinstance(tool_result, Mapping) else []
-            status = tool_result.get("status") if isinstance(tool_result, Mapping) else None
-            error_code = tool_result.get("error_code") if isinstance(tool_result, Mapping) else None
-            hint = tool_result.get("hint") if isinstance(tool_result, Mapping) else None
-            tool_context.add_tool_trace(
-                {
-                    "tool": "table_aggregate",
-                    "arguments": arguments,
-                    "result_keys": result_keys,
-                    "status": status,
-                    "error_code": error_code,
-                    "hint": hint,
-                    "duration_ms": int(call_duration_ms),
-                    "origin": "auto",
-                }
-            )
-            if isinstance(tool_result, Mapping):
-                self._record_knowledge_outputs(tool_context, tool_result)
-                if str(tool_result.get("status") or "").strip().lower() == "ok":
-                    resolved_id = str(tool_result.get("document_id") or "").strip()
-                    if resolved_id:
-                        self._satisfy_transcript_snippets(transcript, resolved_id, tool_context)
-                prompt_tool_result = self._compact_tool_payload_for_prompt(
-                    "table_aggregate",
-                    tool_result,
-                    **limits,
-                )
-            else:
-                prompt_tool_result = {
-                    "tool": "table_aggregate",
-                    "result": self._clip_text(tool_result, 2000) if tool_result is not None else None,
-                    "prompt_compact": True,
-                }
-            tool_messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": call_id,
-                    "name": "table_aggregate",
-                    "content": json.dumps(prompt_tool_result, ensure_ascii=False),
-                }
-            )
-        return (tool_calls, tool_messages)
-
-
-    def _persist_table_cache(self, conversation: Conversation, context: ToolExecutionContext) -> None:
-        dirty_keys = getattr(context, "table_result_cache_dirty", set())
-        if not dirty_keys:
-            return
-        metadata = conversation.metadata or {}
-        cache_entries = self._table_cache_entries(conversation)
-        cache_map: dict[tuple, dict[str, object]] = {}
-        for existing in cache_entries:
-            cache_key = self._deserialize_table_cache_key(existing.get("cache_key"))
-            if not cache_key:
-                continue
-            cache_map[cache_key] = dict(existing)
-        changed = False
-        for key in dirty_keys:
-            payload = context.table_result_cache.get(key)
-            serialized_key = self._serialize_table_cache_key(key)
-            if not payload or not serialized_key:
-                continue
-            cache_map[key] = {
-                "cache_key": serialized_key,
-                "result": self._snapshot_table_result(payload),
-                "document_id": key[0],
-                "match_column": key[1],
-                "match_values": list(key[2] or ()),
-                "columns": list(key[3] or ()),
-                "updated_at": timezone.now().isoformat(),
-            }
-            changed = True
-        if not changed:
-            return
-        ordered = sorted(cache_map.values(), key=lambda item: item.get("updated_at") or "", reverse=True)[:20]
-        new_metadata = dict(metadata)
-        new_metadata["mcp_table_cache"] = ordered
-        conversation.metadata = new_metadata
-        conversation.save(update_fields=["metadata"])
-        context.table_result_cache_dirty.clear()
-
-    @staticmethod
-    def _snapshot_snippet(snippet: Mapping[str, object]) -> dict[str, object]:
-        try:
-            return json.loads(json.dumps(snippet, default=str))
-        except Exception:
-            return dict(snippet)
-
-    @staticmethod
-    def _snapshot_table_result(result: Mapping[str, object]) -> dict[str, object]:
-        try:
-            return json.loads(json.dumps(result, default=str))
-        except Exception:
-            return dict(result)
-
-    @staticmethod
-    def _serialize_table_cache_key(cache_key: tuple | None) -> Mapping[str, object] | None:
-        if not cache_key:
-            return None
-        if len(cache_key) != len(TABLE_CACHE_KEY_FIELDS):
-            return None
-        payload: dict[str, object] = {}
-        for index, field in enumerate(TABLE_CACHE_KEY_FIELDS):
-            value = cache_key[index]
-            if field in {"match_values", "columns"}:
-                payload[field] = list(value or ())
-            else:
-                payload[field] = value
-        return payload
-
-    @staticmethod
-    def _deserialize_table_cache_key(serialized: object) -> tuple | None:
-        if serialized is None:
-            return None
-        if isinstance(serialized, Sequence) and not isinstance(serialized, (str, bytes, bytearray)):
-            if len(serialized) != len(TABLE_CACHE_KEY_FIELDS):
-                return None
-            return tuple(serialized)
-        if not isinstance(serialized, Mapping):
-            return None
-        values: list[object] = []
-        for field in TABLE_CACHE_KEY_FIELDS:
-            value = serialized.get(field)
-            if field in {"match_values", "columns"}:
-                if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-                    values.append(tuple(value))
-                else:
-                    values.append(tuple())
-            else:
-                values.append(value)
-        return tuple(values)
-
-    @staticmethod
     def _coerce_assistant_message(payload: dict | None) -> dict[str, object]:
         """
         Normalize the provider payload into an assistant-style message dict.
@@ -6569,12 +5467,7 @@ class McpOrchestratorService:
         lines.append(f"Current question: {_trim(current)}")
 
         if context:
-            cache_keys = getattr(context, "table_result_cache", {}) or {}
-            doc_ids = {str(key[0]) for key in cache_keys.keys() if isinstance(key, tuple) and key}
-            doc_ids = {doc for doc in doc_ids if doc}
-            if doc_ids:
-                short_docs = ", ".join(doc[:8] + "…" for doc in list(doc_ids)[:2])
-                lines.append(f"Known table docs: {short_docs} (reuse if relevant).")
+            pass
 
         bullets = "\n".join(f"- {line}" for line in lines if line)
         return (
@@ -6646,45 +5539,6 @@ class McpOrchestratorService:
                     parts.append(f"max_chars={_clean(max_chars, 10)}")
                 detail = ", ".join(parts)
                 lines.append(f"- read_knowledge({detail}) -> {status or 'done'}")
-                continue
-
-            if tool_name == "read_document":
-                doc_id = args.get("document_id") or ""
-                ids = args.get("ids") or []
-                pages = args.get("pages") or []
-                mode = args.get("mode") or ""
-                max_chars = args.get("max_chars")
-                parts: list[str] = []
-                if ids:
-                    parts.append(f"ids={_clean_list(ids)}")
-                if doc_id:
-                    parts.append(f"document_id={_clean(doc_id, 40)}")
-                if pages:
-                    parts.append(f"pages={_clean_list(pages, limit_items=5, per_item=12)}")
-                if mode:
-                    parts.append(f"mode={_clean(mode, 20)}")
-                if max_chars is not None:
-                    parts.append(f"max_chars={_clean(max_chars, 10)}")
-                detail = ", ".join(parts)
-                lines.append(f"- read_document({detail}) -> {status or 'done'}")
-                continue
-
-            if tool_name == "get_document_structure":
-                doc_id = args.get("document_id") or ""
-                lines.append(f"- get_document_structure(document_id={_clean(doc_id, 40)}) -> {status or 'done'}")
-                continue
-
-            if tool_name == "table_aggregate":
-                doc_id = args.get("document_id") or ""
-                match_col = args.get("match_column") or ""
-                match_vals = args.get("match_values") or args.get("match_value") or ""
-                lines.append(
-                    "- table_aggregate("
-                    f"document_id={_clean(doc_id, 40)}, "
-                    f"match_column={_clean(match_col, 60)}, "
-                    f"match_values={_clean_list(match_vals)}"
-                    f") -> {status or 'done'}"
-                )
                 continue
 
             lines.append(f"- {tool_name} -> {status or 'done'}")
@@ -8033,177 +6887,7 @@ class McpOrchestratorService:
             compact["prompt_compact"] = True
             return compact
 
-        if normalized_name == "read_document":
-            raw_contents = payload.get("contents")
-            if isinstance(raw_contents, list):
-                for key in (
-                    "document_id",
-                    "mode",
-                    "page",
-                    "pages",
-                    "total_chars",
-                    "max_chars",
-                    "max_chars_allowed",
-                    "truncated_ids",
-                    "read",
-                    "deferred",
-                    "errors",
-                    "requested_max_chars",
-                ):
-                    if key not in payload:
-                        continue
-                    value = payload.get(key)
-                    if value is None:
-                        continue
-                    if isinstance(value, str) and not value.strip():
-                        continue
-                    if isinstance(value, (list, tuple, set, dict)) and not value:
-                        continue
-                    if key == "errors" and isinstance(value, list):
-                        errors_out: list[dict[str, object]] = []
-                        for err in value[:6]:
-                            if not isinstance(err, Mapping):
-                                continue
-                            err_entry: dict[str, object] = {}
-                            if err.get("id"):
-                                err_entry["id"] = err.get("id")
-                            if err.get("error"):
-                                err_entry["error"] = self._clip_text(str(err.get("error")), 200)
-                            if err_entry:
-                                errors_out.append(err_entry)
-                        if errors_out:
-                            compact["errors"] = errors_out
-                        continue
-                    if key == "deferred" and isinstance(value, list):
-                        deferred_out: list[dict[str, object]] = []
-                        for item in value[:12]:
-                            if not isinstance(item, Mapping):
-                                continue
-                            out: dict[str, object] = {}
-                            if item.get("id"):
-                                out["id"] = item.get("id")
-                            if item.get("chars") is not None:
-                                out["chars"] = item.get("chars")
-                            if item.get("reason"):
-                                out["reason"] = item.get("reason")
-                            if item.get("suggested_max_chars") is not None:
-                                out["suggested_max_chars"] = item.get("suggested_max_chars")
-                            hint = item.get("hint")
-                            if isinstance(hint, str) and hint.strip():
-                                out["hint"] = self._clip_text(hint.strip(), 260)
-                            if out:
-                                deferred_out.append(out)
-                        if deferred_out:
-                            compact["deferred"] = deferred_out
-                        continue
-                    if key == "read" and isinstance(value, list):
-                        read_out: list[dict[str, object]] = []
-                        for item in value[:12]:
-                            if not isinstance(item, Mapping):
-                                continue
-                            out: dict[str, object] = {}
-                            if item.get("id"):
-                                out["id"] = item.get("id")
-                            if item.get("status"):
-                                out["status"] = item.get("status")
-                            if item.get("chars") is not None:
-                                out["chars"] = item.get("chars")
-                            next_cursor = item.get("next_cursor")
-                            if isinstance(next_cursor, str) and next_cursor.strip():
-                                # Cursors must be preserved exactly (no clipping), otherwise continuation breaks.
-                                out["next_cursor"] = next_cursor.strip()
-                            artifact_id = item.get("artifact_id")
-                            if isinstance(artifact_id, str) and artifact_id.strip():
-                                out["artifact_id"] = artifact_id.strip()
-                            prompt_view = item.get("prompt_view")
-                            if isinstance(prompt_view, Mapping) and prompt_view:
-                                out["prompt_view"] = self._compact_action_payload_for_prompt(
-                                    prompt_view,
-                                    max_string_chars=1200,
-                                    max_keys=24,
-                                    max_list_items=10,
-                                    max_nested_keys=12,
-                                )
-                            if out:
-                                read_out.append(out)
-                        if read_out:
-                            compact["read"] = read_out
-                        continue
-                    compact[key] = value
-                contents_out: list[dict[str, object]] = []
-                for item in raw_contents[: max(1, max_snippets)]:
-                    if not isinstance(item, Mapping):
-                        continue
-                    entry: dict[str, object] = {}
-                    for key in ("id", "title", "type", "truncated", "cursor_used", "next_cursor", "complete", "artifact_id"):
-                        value = item.get(key)
-                        if value is None:
-                            continue
-                        if isinstance(value, str) and not value.strip():
-                            continue
-                        entry[key] = value
-                    content = item.get("content")
-                    if isinstance(content, str) and content:
-                        # Preserve leading newlines (prepend_sep) for cursor continuation correctness.
-                        entry["content"] = self._clip_text(content, self._tool_output_max_chars())
-                    if entry:
-                        contents_out.append(entry)
-                compact["contents"] = contents_out
-                compact["prompt_compact"] = True
-                return compact
 
-        if normalized_name == "get_document_structure":
-            document_in = payload.get("document")
-            if isinstance(document_in, Mapping):
-                document_out: dict[str, object] = {}
-                for key in ("document_id", "display_name"):
-                    value = document_in.get(key)
-                    if isinstance(value, str) and value.strip():
-                        document_out[key] = value.strip()
-                if document_out:
-                    compact["document"] = document_out
-            table_limit = max(1, int(max_snippets))
-            row_label_limit = max(1, int(max_rows))
-            column_limit = max(1, int(max_cells_exact))
-            tables_in = payload.get("tables")
-            tables_out: list[dict[str, object]] = []
-            if isinstance(tables_in, list):
-                for table in tables_in[:table_limit]:
-                    if not isinstance(table, Mapping):
-                        continue
-                    table_out: dict[str, object] = {}
-                    for key in ("table_id", "title", "order_index", "row_count", "column_count", "sheet_name"):
-                        value = table.get(key)
-                        if value is None:
-                            continue
-                        if isinstance(value, str) and not value.strip():
-                            continue
-                        table_out[key] = value
-                    columns = table.get("columns")
-                    if isinstance(columns, list) and columns:
-                        table_out["columns"] = [str(col) for col in columns[:column_limit] if str(col).strip()]
-                    row_labels = table.get("row_labels")
-                    if isinstance(row_labels, list) and row_labels:
-                        trimmed_labels = [str(label) for label in row_labels[:row_label_limit] if str(label).strip()]
-                        if trimmed_labels:
-                            table_out["row_labels"] = trimmed_labels
-                            if len(row_labels) > len(trimmed_labels):
-                                table_out["labels_truncated"] = True
-                    labels_shown = table.get("labels_shown")
-                    if isinstance(labels_shown, int) and labels_shown >= 0:
-                        table_out["labels_shown"] = labels_shown
-                    if table.get("labels_truncated") is True:
-                        table_out["labels_truncated"] = True
-                    if table_out:
-                        tables_out.append(table_out)
-            compact["tables"] = tables_out
-            for key in ("total_tables", "total_items"):
-                value = payload.get(key)
-                if value is None:
-                    continue
-                compact[key] = value
-            compact["prompt_compact"] = True
-            return compact
 
         if normalized_name == "read_knowledge":
             # Agentic contract (Phase 2): evidence is a list of canonical payloads.
@@ -8446,179 +7130,6 @@ class McpOrchestratorService:
             compact["prompt_compact"] = True
             return compact
 
-        if normalized_name == "read_document":
-            for key in ("document_id", "page", "mode", "mode_downgraded", "token_budget", "throttle_notice"):
-                if key in payload:
-                    value = payload.get(key)
-                    # Handle both hashable (str, int) and unhashable (dict) values
-                    if value is not None and value != "":
-                        compact[key] = value
-            raw_snippets = payload.get("snippets")
-            snippets_out = []
-            if isinstance(raw_snippets, list):
-                for entry in raw_snippets[: max(1, max_snippets)]:
-                    if not isinstance(entry, Mapping):
-                        continue
-                    snippets_out.append(
-                        self._compact_snippet_for_prompt(
-                            entry,
-                            include_content=True,
-                            content_chars=snippet_content_chars,
-                        )
-                    )
-            compact["snippets"] = snippets_out
-            compact["prompt_compact"] = True
-            return compact
-
-        if normalized_name == "table_aggregate":
-            for key in (
-                "document_id",
-                "mode",
-                "query",
-                "match_column",
-                "match_value",
-                "match_values",
-                "value_column",
-                "sheet_name",
-                "columns",
-                "match_count",
-                "total",
-                "display_total",
-                "throttle_notice",
-            ):
-                if key not in payload:
-                    continue
-                value = payload.get(key)
-                if value is None:
-                    continue
-                if isinstance(value, str) and not value.strip():
-                    continue
-                if isinstance(value, (list, tuple, set, dict)) and not value:
-                    continue
-                compact[key] = value
-            raw_rows = payload.get("rows")
-            rows_out: list[dict[str, object]] = []
-            if isinstance(raw_rows, list):
-                for row in raw_rows[: max(1, max_rows)]:
-                    if not isinstance(row, Mapping):
-                        continue
-                    row_payload: dict[str, object] = {}
-                    for key in (
-                        "row_index",
-                        "table_order_index",
-                        "sheet_name",
-                        "row_total",
-                        "row_total_display",
-                        "contribution_count",
-                    ):
-                        if key in row and row.get(key) not in {None, ""}:
-                            row_payload[key] = row.get(key)
-                    cells = row.get("cells")
-                    if isinstance(cells, list) and cells:
-                        row_payload["cells"] = [
-                            {"column": cell.get("column"), "value": cell.get("value")}
-                            for cell in cells[:8]
-                            if isinstance(cell, Mapping)
-                        ]
-                    contributions = row.get("contributions")
-                    if isinstance(contributions, list) and contributions:
-                        row_payload["contributions"] = [
-                            {"column": entry.get("column"), "display": entry.get("display"), "value": entry.get("value")}
-                            for entry in contributions[: max(1, max_contributions)]
-                            if isinstance(entry, Mapping)
-                        ]
-                    rows_out.append(row_payload)
-            compact["rows"] = rows_out
-            compact["prompt_compact"] = True
-            return compact
-
-        if normalized_name == "dataset_query":
-            for key in (
-                "document_id",
-                "sheet_name",
-                "sheet_index",
-                "query",
-                "filters",
-                "select_columns",
-                "sort_by",
-                "sort_direction",
-                "offset",
-                "limit",
-                "match_count",
-                "total_matches",
-                "aggregate_result",
-                "throttle_notice",
-            ):
-                if key not in payload:
-                    continue
-                value = payload.get(key)
-                if value is None:
-                    continue
-                if isinstance(value, str) and not value.strip():
-                    continue
-                if isinstance(value, (list, tuple, set, dict)) and not value:
-                    continue
-                compact[key] = value
-            if "dataset" in payload and isinstance(payload.get("dataset"), Mapping):
-                compact["dataset"] = payload.get("dataset")
-            raw_rows = payload.get("rows")
-            rows_out: list[dict[str, object]] = []
-            if isinstance(raw_rows, list):
-                for row in raw_rows[: max(1, max_rows)]:
-                    if not isinstance(row, Mapping):
-                        continue
-                    row_payload: dict[str, object] = {}
-                    if "row_index" in row and row.get("row_index") not in {None, ""}:
-                        row_payload["row_index"] = row.get("row_index")
-                    cells = row.get("cells")
-                    if isinstance(cells, list) and cells:
-                        row_payload["cells"] = [
-                            {"column": cell.get("column"), "value": cell.get("value")}
-                            for cell in cells[:12]
-                            if isinstance(cell, Mapping)
-                        ]
-                    if row_payload:
-                        rows_out.append(row_payload)
-            compact["rows"] = rows_out
-            compact["prompt_compact"] = True
-            return compact
-
-        if normalized_name == "list_tables":
-            for key in ("query", "limit"):
-                if key in payload and payload.get(key) not in {None, ""}:
-                    compact[key] = payload.get(key)
-            raw_results = payload.get("results")
-            results_out: list[dict[str, object]] = []
-            if isinstance(raw_results, list):
-                for result in raw_results[: max(1, max_snippets)]:
-                    if not isinstance(result, Mapping):
-                        continue
-                    entry: dict[str, object] = {}
-                    for key in ("upload_id", "document_id", "display_name", "table_count", "updated_at"):
-                        if key in result and result.get(key) not in {None, ""}:
-                            entry[key] = result.get(key)
-                    sheet_names = result.get("sheet_names")
-                    if isinstance(sheet_names, list) and sheet_names:
-                        entry["sheet_names"] = [str(name) for name in sheet_names[:6] if name]
-                    raw_tables = result.get("tables")
-                    if isinstance(raw_tables, list) and raw_tables:
-                        tables_out: list[dict[str, object]] = []
-                        for table in raw_tables[:5]:
-                            if not isinstance(table, Mapping):
-                                continue
-                            table_entry: dict[str, object] = {}
-                            for key in ("table_id", "order_index", "title", "sheet_name", "column_count"):
-                                if key in table and table.get(key) not in {None, ""}:
-                                    table_entry[key] = table.get(key)
-                            if table_entry:
-                                tables_out.append(table_entry)
-                        if tables_out:
-                            entry["tables"] = tables_out
-                    if entry:
-                        results_out.append(entry)
-            compact["results"] = results_out
-            compact["prompt_compact"] = True
-            return compact
 
         # Handle email tools to ensure results reach the LLM
         if normalized_name == "email_search":
@@ -8721,7 +7232,7 @@ class McpOrchestratorService:
                 snippets_out.append(
                     self._compact_snippet_for_prompt(
                         entry,
-                        include_content=normalized_name == "read_document",
+                        include_content=False,
                         content_chars=snippet_content_chars,
                     )
                 )
@@ -10408,223 +8919,3 @@ class McpOrchestratorService:
         except Exception:
             args_json = str(arguments)
         return f"{tool_name}:{args_json}"
-
-    @staticmethod
-    def _read_document_signature(
-        arguments: Mapping[str, object],
-        result: Mapping[str, object] | None = None,
-    ) -> str | None:
-        refs = arguments.get("refs")
-        if isinstance(refs, list) and refs:
-            cleaned_refs: list[str] = []
-            for entry in refs:
-                if not isinstance(entry, Mapping):
-                    continue
-                item_id = str(entry.get("id") or entry.get("ref") or "").strip()
-                if not item_id:
-                    continue
-                cursor = entry.get("cursor")
-                cursor_str = str(cursor).strip() if isinstance(cursor, str) and cursor.strip() else ""
-                if cursor_str:
-                    digest = hashlib.sha256(cursor_str.encode("utf-8")).hexdigest()[:12]
-                    cleaned_refs.append(f"{item_id}@{digest}")
-                else:
-                    cleaned_refs.append(item_id)
-            if cleaned_refs:
-                max_chars = arguments.get("max_chars")
-                mode = arguments.get("mode")
-                return f"refs:{'|'.join(cleaned_refs)}:mode{mode}:max{max_chars}"
-
-        items = arguments.get("items")
-        if isinstance(items, list) and items:
-            cleaned_items: list[str] = []
-            for entry in items:
-                if not isinstance(entry, Mapping):
-                    continue
-                item_id = str(entry.get("id") or "").strip()
-                if not item_id:
-                    continue
-                cursor = entry.get("cursor")
-                cursor_str = str(cursor).strip() if isinstance(cursor, str) and cursor.strip() else ""
-                if cursor_str:
-                    digest = hashlib.sha256(cursor_str.encode("utf-8")).hexdigest()[:12]
-                    cleaned_items.append(f"{item_id}@{digest}")
-                else:
-                    cleaned_items.append(item_id)
-            if cleaned_items:
-                max_chars = arguments.get("max_chars")
-                mode = arguments.get("mode")
-                return f"items:{'|'.join(cleaned_items)}:mode{mode}:max{max_chars}"
-
-        ids = arguments.get("ids")
-        if isinstance(ids, list) and ids:
-            cleaned_ids = [str(value).strip() for value in ids if str(value).strip()]
-            if cleaned_ids:
-                max_chars = arguments.get("max_chars")
-                mode = arguments.get("mode")
-                return f"ids:{'|'.join(cleaned_ids)}:mode{mode}:max{max_chars}"
-
-        doc_id = str(arguments.get("document_id") or (result or {}).get("document_id") or "").strip()
-        if not doc_id:
-            return None
-
-        mode = str((result or {}).get("mode") or arguments.get("mode") or "").strip().lower()
-        if not mode:
-            mode = "excerpt"
-
-        pages: list[int] = []
-
-        def _add_page(value: object) -> None:
-            try:
-                pages.append(max(1, int(value)))
-            except (TypeError, ValueError):
-                return
-
-        result_pages = (result or {}).get("pages")
-        if isinstance(result_pages, list):
-            for value in result_pages:
-                _add_page(value)
-        else:
-            pages_arg = arguments.get("pages")
-            if isinstance(pages_arg, list):
-                for value in pages_arg:
-                    _add_page(value)
-            if not pages:
-                page_arg = arguments.get("page")
-                if page_arg is not None:
-                    _add_page(page_arg)
-            if not pages:
-                offset_value = arguments.get("offset")
-                if offset_value is not None:
-                    try:
-                        pages.append(max(1, int(offset_value) + 1))
-                    except (TypeError, ValueError):
-                        pass
-        if not pages:
-            pages = [1]
-        pages = sorted(set(pages))
-
-        neighbor_value = arguments.get("neighbor_window") or arguments.get("chunk_neighbor")
-        try:
-            neighbor = int(neighbor_value)
-        except (TypeError, ValueError):
-            neighbor = 1
-        neighbor = max(0, min(3, neighbor))
-
-        page_key = ",".join(str(page) for page in pages)
-        return f"{doc_id}:{mode}:{page_key}:n{neighbor}"
-
-    def _adaptive_routing_policy(
-        self,
-        name: str,
-        args: Mapping[str, object],
-        conv: Conversation,
-        status_callback: Callable[[str, str | None, Mapping[str, object] | None], None] | None = None,
-    ) -> tuple[str, Mapping[str, object]]:
-        """
-        Pillar 2: Adaptive Server-Side Routing.
-        Intercepts tool calls to check if the target resource matches the tool's expected kind.
-        Auto-repairs obvious mismatches (dataset query on PDF -> read document).
-        """
-        
-        # Helper to check if upload is dataset
-        def _is_dataset(up_id: str) -> bool:
-            try:
-                uid = uuid.UUID(str(up_id).strip())
-                # Enforce tenant isolation
-                up = KnowledgeUpload.objects.filter(
-                    id=uid, 
-                    business_profile=conv.business_profile
-                ).only("ingestion_metadata").first()
-                
-                if not up:
-                    return False
-                    
-                meta = up.ingestion_metadata or {}
-                # Broaden detection: explicit dataset mode OR tabular format
-                if meta.get("dataset", {}).get("enabled"):
-                    return True
-                    
-                fmt = str(meta.get("format") or "").lower().strip()
-                return fmt in {"csv", "tsv", "xls", "xlsx", "jsonl"}
-                
-            except ValueError:
-                return False
-
-        # In agentic mode, read_document is deprecated; repairs should prefer read_knowledge.
-        try:
-            feature_state = FeatureFlagService.snapshot(conv.business_profile)
-            new_contract_enabled = bool(getattr(settings, "MCP_NEW_CONTRACT_ENABLED", True))
-            rag_agentic_enabled = bool(getattr(feature_state, "rag_agentic_mode", False)) and new_contract_enabled
-        except Exception:
-            rag_agentic_enabled = False
-
-        if name == "query_dataset":
-            doc_id = args.get("dataset_id") or args.get("document_id")
-            if doc_id and not _is_dataset(str(doc_id)):
-                # Mismatch: query_dataset on a non-dataset (Document)
-                # Repair: Switch to read_knowledge in agentic mode, otherwise read_document.
-                if rag_agentic_enabled:
-                    new_args: dict[str, object] = {
-                        "refs": [{"id": str(doc_id)}],
-                        "max_chars": int(args.get("max_chars") or 12000),
-                    }
-                    if status_callback:
-                        status_callback("routing.repair", "Auto-correcting: Reading knowledge instead of querying dataset")
-                    return "read_knowledge", new_args
-
-                new_args = dict(args)
-                new_args["document_id"] = doc_id
-                new_args["page"] = 1  # Fallback
-                new_args["mode"] = "full_page"  # Assume deep read for broad query
-                
-                # Log the repair
-                if status_callback:
-                    status_callback("routing.repair", "Auto-correcting: Reading document instead of querying dataset")
-                return "read_document", new_args
-
-        if name == "read_document":
-            doc_id = args.get("document_id")
-            if doc_id and _is_dataset(str(doc_id)):
-                # Mismatch: read_document on a Dataset
-                # Repair: Switch to query_dataset
-                # We can't easily map 'page' to a query, but we can try a preview.
-                new_args = dict(args)
-                new_args["dataset_id"] = doc_id
-                if "query" not in new_args:
-                    new_args["limit"] = 5  # Preview
-
-                if status_callback:
-                    status_callback("routing.repair", "Auto-correcting: Querying dataset instead of reading document")
-                return "query_dataset", new_args
-
-            if rag_agentic_enabled:
-                # Repair deprecated read_document calls to read_knowledge.
-                max_chars = args.get("max_chars") or 12000
-                refs: list[dict[str, object]] = []
-                raw_items = args.get("items")
-                if isinstance(raw_items, list):
-                    for item in raw_items:
-                        if not isinstance(item, Mapping):
-                            continue
-                        item_id = str(item.get("id") or "").strip()
-                        if not item_id:
-                            continue
-                        ref_entry: dict[str, object] = {"id": item_id}
-                        cursor = item.get("cursor")
-                        if isinstance(cursor, str) and cursor.strip():
-                            ref_entry["cursor"] = cursor.strip()
-                        refs.append(ref_entry)
-                else:
-                    raw_ids = args.get("ids")
-                    if isinstance(raw_ids, list):
-                        refs = [{"id": str(val).strip()} for val in raw_ids if str(val).strip()]
-                    elif doc_id:
-                        refs = [{"id": str(doc_id).strip()}]
-                if refs:
-                    new_args = {"refs": refs, "max_chars": int(max_chars)}
-                    if status_callback:
-                        status_callback("routing.repair", "Auto-correcting: read_document -> read_knowledge")
-                    return "read_knowledge", new_args
-        
-        return name, args

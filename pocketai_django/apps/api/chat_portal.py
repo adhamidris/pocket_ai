@@ -525,7 +525,6 @@ def _serialize_debug_tools_payload(stream_context: StreamingTurnContext) -> dict
     knowledge_reads_raw = None
     search_history_raw = None
     coverage_ledger_raw = None
-    table_rows_raw = None
     llm_usage_raw = getattr(stream_context, "llm_usage", None)
     prompt_budget_raw = None
     if tool_context is not None:
@@ -534,7 +533,6 @@ def _serialize_debug_tools_payload(stream_context: StreamingTurnContext) -> dict
         knowledge_reads_raw = getattr(tool_context, "knowledge_reads", None)
         search_history_raw = getattr(tool_context, "search_history", None)
         coverage_ledger_raw = getattr(tool_context, "coverage_ledger", None)
-        table_rows_raw = getattr(tool_context, "table_aggregate_rows", None)
         prompt_budget_raw = getattr(tool_context, "prompt_budget_entries", None)
     if tool_trace_raw is None:
         tool_trace_raw = getattr(stream_context, "tool_trace", None)
@@ -573,12 +571,6 @@ def _serialize_debug_tools_payload(stream_context: StreamingTurnContext) -> dict
             if isinstance(entry, Mapping):
                 coverage_ledger.append(_json_safe_debug(entry, depth=2, string_limit=200, list_limit=12))
 
-    table_aggregate_rows: list[object] = []
-    if isinstance(table_rows_raw, (list, tuple)):
-        for entry in table_rows_raw[:12]:
-            if isinstance(entry, Mapping):
-                table_aggregate_rows.append(_json_safe_debug(entry, depth=3, string_limit=200, list_limit=12))
-
     llm_usage = _serialize_llm_usage(llm_usage_raw if isinstance(llm_usage_raw, Mapping) else None)
     context_budget = _serialize_context_budget()
 
@@ -594,7 +586,6 @@ def _serialize_debug_tools_payload(stream_context: StreamingTurnContext) -> dict
         and not knowledge_reads
         and not search_history
         and not coverage_ledger
-        and not table_aggregate_rows
         and not prompt_budget
         and not llm_usage
         and not context_budget
@@ -606,7 +597,6 @@ def _serialize_debug_tools_payload(stream_context: StreamingTurnContext) -> dict
         "knowledge_results": knowledge_results,
         "knowledge_reads": knowledge_reads,
         "coverage_ledger": coverage_ledger,
-        "table_aggregate_rows": table_aggregate_rows,
         "prompt_budget": prompt_budget,
         "context_budget": context_budget,
         "usage": llm_usage,
@@ -703,7 +693,6 @@ def _tool_activity_present(stream_context: StreamingTurnContext | None) -> bool:
         "knowledge_results",
         "knowledge_reads",
         "coverage_ledger",
-        "table_aggregate_rows",
     )
     for attr in signal_attrs:
         values = getattr(tool_context, attr, None)
@@ -717,13 +706,7 @@ def _tool_activity_present(stream_context: StreamingTurnContext | None) -> bool:
 # Tools that purely retrieve knowledge (no CRM side effects)
 _KNOWLEDGE_ONLY_TOOLS = frozenset({
     "search_knowledge",
-    "read_document",
     "read_knowledge",
-    "get_document_structure",
-    "table_aggregate",
-    "dataset_query",
-    "query_dataset",
-    "list_tables",
 })
 
 # CRM tools that need planner for action extraction

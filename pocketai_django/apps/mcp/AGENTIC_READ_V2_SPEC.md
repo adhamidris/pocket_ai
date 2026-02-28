@@ -3,8 +3,7 @@
 NOTE (2026-02-02)
 -----------------
 This spec documents the current **refs-first** agentic read contract used in MCP.
-The LLM calls **`read_knowledge`**, not `read_document`, when agentic v2 is enabled.
-`read_document` remains implemented for non-agentic/legacy flows and is **deprecated** in agentic mode.
+The LLM calls **`read_knowledge`** when agentic v2 is enabled.
 
 See also: `apps/mcp/AGENTIC_EVIDENCE_REFS_V1_SPEC.md`
 

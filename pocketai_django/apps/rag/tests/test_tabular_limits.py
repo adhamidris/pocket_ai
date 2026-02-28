@@ -21,7 +21,7 @@ class TabularRateLimitHardeningTests(SimpleTestCase):
             with self.assertRaises(ToolRateLimitExceeded):
                 enforce_tool_rate_limit(
                     business_profile=business,
-                    tool="dataset_query",
+                    tool="search_knowledge",
                     rate_limit=limit,
                 )
 
@@ -33,6 +33,6 @@ class TabularRateLimitHardeningTests(SimpleTestCase):
             with self.assertRaises(ToolRateLimitExceeded):
                 enforce_tool_rate_limit(
                     business_profile=business,
-                    tool="dataset_query",
+                    tool="search_knowledge",
                     rate_limit=limit,
                 )

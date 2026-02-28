@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 TRACER = otel_trace.get_tracer(__name__)
 
 PLACEHOLDER_TOOL_PATTERN = re.compile(
-    r"\b(search_knowledge|read_knowledge|read_document|table_aggregate|dataset_query|list_tables|create_case|update_case_details)\b",
+    r"\b(search_knowledge|read_knowledge|create_case|update_case_details)\b",
     re.IGNORECASE,
 )
 
@@ -167,7 +167,6 @@ def is_investigative_filler_with_level(sentence: str, *, filter_level: str = "fr
     # Only treat phrases that risk leaking internal mechanics as filler; allow human-style chatter.
     hard_patterns = (
         r"\bsearch_knowledge\b",
-        r"\bread_document\b",
         r"\bupdate_case\b",
         r"\bcreate_case\b",
         r"\btool[_\s-]?call\b",

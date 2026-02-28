@@ -46,7 +46,7 @@ class SearchBudgetExceeded(ToolConstraintError):
 
 
 class ReadBudgetExceeded(ToolConstraintError):
-    """Raised when read_knowledge/read_document calls per turn exceed the limit (future/agentic enforcement)."""
+    """Raised when read_knowledge calls per turn exceed the limit (future/agentic enforcement)."""
 
 
 @dataclasses.dataclass
@@ -111,7 +111,6 @@ class ToolExecutionContext:
     mcp_gateway_catalog: dict[str, dict[str, object]] = dataclasses.field(default_factory=dict)
     coverage_ledger: list[dict[str, object]] = dataclasses.field(default_factory=list)
     audit_event_fingerprints: set[tuple[str, str, str]] = dataclasses.field(default_factory=set)
-    table_aggregate_rows: list[dict[str, object]] = dataclasses.field(default_factory=list)
     table_row_cache: dict[str, list[dict[str, object]]] = dataclasses.field(default_factory=dict)
     search_history: list[dict[str, object]] = dataclasses.field(default_factory=list)
     search_cache: dict[Tuple[str, int, str, str | None, str | None], dict[str, object]] = dataclasses.field(default_factory=dict)
@@ -120,9 +119,6 @@ class ToolExecutionContext:
     # read_knowledge calls can reuse exact IDs instead of guessing.
     recent_search_refs: list[dict[str, object]] = dataclasses.field(default_factory=list)
     recent_search_refs_updated: bool = False
-    table_column_filters: dict[str, list[str]] = dataclasses.field(default_factory=dict)
-    table_result_cache: dict[tuple, dict[str, object]] = dataclasses.field(default_factory=dict)
-    table_result_cache_dirty: set[tuple] = dataclasses.field(default_factory=set)
     # Search-time text-group manifests keyed by upload_id.
     # Used by read_knowledge v2 to resolve grouped document anchors into
     # bounded chunk windows around matched regions.
@@ -248,7 +244,7 @@ class ToolExecutionContext:
 
     def reserve_read(self) -> None:
         """
-        Track a read_knowledge/read_document call against the per-turn read budget.
+        Track a read_knowledge call against the per-turn read budget.
 
         Layer 2 uses this only for budgeting visibility (tool responses). Enforcement
         can be enabled later without changing the budget contract.

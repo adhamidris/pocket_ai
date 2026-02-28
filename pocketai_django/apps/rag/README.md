@@ -22,10 +22,8 @@ Directory Map
   Drift and retrieval quality sampling + evaluation run persistence.
 - evaluation/
   Harness and fixtures for regression evaluation (golden sets).
-- dataset_router.py
-  Identifier-to-dataset routing using dataset key indexes (read-only).
 - tabular_limits.py
-  Shared policy limits for dataset/table tool calls.
+  Shared tool rate limiting helper.
 - table_semantics.py
   Column-name normalization + heuristics for total columns.
 - table_lookup.py

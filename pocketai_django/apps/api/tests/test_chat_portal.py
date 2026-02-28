@@ -699,7 +699,6 @@ class ChatPortalDebugSerializationTests(TestCase):
                 knowledge_reads=[],
                 search_history=[],
                 coverage_ledger=[],
-                table_aggregate_rows=[],
                 prompt_budget_entries=[],
             ),
         )

@@ -18,7 +18,7 @@ Directory Map
 - prompts.py
   System prompt builder + transcript assembly rules for MCP.
 - tools.py
-  Tool schemas + handlers (knowledge search/read, datasets, email, gateway, PDFs).
+  Tool schemas + handlers (knowledge search/read, email, gateway, PDFs).
 - types.py
   Shared types/exceptions + ToolExecutionContext.
 - sanitizer.py
@@ -36,8 +36,7 @@ Key Flows
 
 2) Knowledge lookup (agentic default)
    `search_knowledge` returns metadata-only refs (`refs[]`), then the model
-   calls `read_knowledge(refs[], max_chars=...)` to fetch evidence. Dataset/table
-   tools are implemented server-side but are **not LLM-facing** in agentic mode.
+   calls `read_knowledge(refs[], max_chars=...)` to fetch evidence.
 
 3) Safety limits
    Budgets and rate limits enforce safe tool usage.
@@ -58,13 +57,6 @@ Workflow tools:
 - Portal output (deprecated): `portal_emit_blocks` (disabled for portal turns; portal streams **server-built blocks**)
 - Input control: `request_user_input`, `create_agent_request`
 - PDF utilities: `pdf_generate`, `pdf_merge`, `pdf_extract_pages`, `pdf_extract_text`
-
-Legacy / Backend-only tools (not LLM-facing in agentic mode)
-------------------------------------------------------------
-- `read_document`, `list_tables`, `query_dataset`, `table_aggregate`
-- `get_document_structure`
-- CRM actions (`create_case`, `update_case_*`, `create_customer`, `create_lead`, `create_appointment`)
-  These are produced via the planner JSON pass, not tool calls.
 
 Tool Schema Reference
 ---------------------

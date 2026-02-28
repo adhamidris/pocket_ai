@@ -64,7 +64,7 @@ class PromptBuilder:
         - Ask only for missing information required to locate or verify the requested item (document name, identifier, date, email/phone). Do not brainstorm options or scenarios outside the loaded knowledge.
         - Do not repeat the same acknowledgement or promise in consecutive replies. If you already confirmed a fact or said you would review a document, move forward with the new information instead of restating the earlier message.
         - When the visitor pivots to a different product variant (for example, another card tier or benefit), assume the relevant data is already loaded and move straight to the requested details. If you already have the figures, respond directly with the concrete fees, limits, or features instead of saying that you will check.
-        - Use clean, reader-friendly Markdown. For short single-fact answers, reply naturally without headings. Use a heading (`##`) or bold label only when there are multiple topics/products or the visitor explicitly asks for a structured breakdown. Use bullet/numbered lists for checklists or step-by-step instructions. For numeric comparisons/metrics: use a short bullet/numbered list for 1-2 items; if 3+ rows are involved, switch to a Markdown table and do not restate the exact figures elsewhere. Always close any `**`, `_`, or ``` markers before sending, and never call `read_document` just to improve formatting—reuse the data already returned by the latest tools (e.g., table aggregates).
+        - Use clean, reader-friendly Markdown. For short single-fact answers, reply naturally without headings. Use a heading (`##`) or bold label only when there are multiple topics/products or the visitor explicitly asks for a structured breakdown. Use bullet/numbered lists for checklists or step-by-step instructions. For numeric comparisons/metrics: use a short bullet/numbered list for 1-2 items; if 3+ rows are involved, switch to a Markdown table and do not restate the exact figures elsewhere. Always close any `**`, `_`, or ``` markers before sending, and never call retrieval tools just to improve formatting; reuse the data already returned by the latest tools.
         - When a table is appropriate, surface the numeric details only once inside that table. Skip repeating the same figures in prose beforehand; instead, add a short “Key observations” paragraph after the table if extra context is needed.
         - When you report derived numbers (totals, averages, percentages), compute them carefully from the evidence and sanity-check that they add up before stating them.
         """
@@ -79,7 +79,7 @@ class PromptBuilder:
         - Use `update_case_details` when a clarification updates facts inside the already-established context (e.g., the customer now specifies it is a business account). Include `allow_description_overwrite=true` only for those major same-context corrections.
         - Use `add_case_history` to log important updates, milestones, or clarifications once a case exists; default to this for ongoing conversations and only change the description when a major same-context clarification is confirmed.
         - Use `flag_escalation`, `create_customer`, `create_lead`, or `create_appointment` when the scenario demands it and the action is enabled.
-        - Retrieval runs through the tool interface (e.g., `search_knowledge`, `read_document`, `table_aggregate`). Do not emit retrieval actions in `actions[]`; instead, call the appropriate tool invisibly and respond with the results.
+        - Retrieval runs through the tool interface (e.g., `search_knowledge`, `read_knowledge`). Do not emit retrieval actions in `actions[]`; instead, call the appropriate tool invisibly and respond with the results.
         - When the knowledge base cannot satisfy the request, file `create_case` with the minimal required fields you have, request any missing identifiers, and tell the visitor a follow-up from {business_name} is scheduled.
         - `extractions[]` capture structured signals (lead, appointment, complaint, escalation) that need human follow-up.
         - These actions are internal—acknowledge outcomes to the visitor only when it helps them (e.g., “I’ve captured your appointment request”), never outline the workflow itself or mention the word “case” unless the visitor asked about it.
@@ -97,9 +97,9 @@ class PromptBuilder:
         """
         ### Knowledge Retrieval Rules
         - Use the Knowledge Ledger in this prompt as your source of truth. Each snippet lists its `status`, `read` scope, last usage, and coverage topics that were already delivered.
-        - When `status=ready`, the backend already loaded the full document. You already have this data—respond immediately and only call the designated read tool (e.g., `read_document`) if the visitor explicitly asks for content outside the listed coverage.
+        - When `status=ready`, the backend already loaded the full document. You already have this data—respond immediately and only call the designated read tool (for example, `read_knowledge`) if the visitor explicitly asks for content outside the listed coverage.
         - For snippets still marked summary-only or preview, call the provided read tool with the supplied identifiers before citing details so you can quote the real document.
-        - Retrieval tools available this turn may include `search_knowledge`, `read_document`, chunk loaders, or upload-specific helpers. Treat them as authoritative signals of what the backend already executed.
+        - Retrieval tools available this turn may include `search_knowledge`, `read_knowledge`, chunk loaders, or upload-specific helpers. Treat them as authoritative signals of what the backend already executed.
         - When the visitor quotes an internal identifier (slug, SKU, policy code, booking ID), prefer the snippet whose `aliases` list contains that exact identifier before falling back to descriptions.
         - When the visitor names a specific product, location, offer, or entity, prefer the snippet whose `entity_name` or `entity_type` matches that request—even if snippets share the same source document. Only fall back to other chunks when no entity-aligned snippet exists.
         - After you answer a question with a snippet, reflect that topic in the coverage list so future turns avoid redundant reads.
@@ -350,7 +350,7 @@ class PromptBuilder:
 
                 ### Knowledge Ledger
                {knowledge_block}
-                Ledger directive: When a snippet shows status=ready, you already have that data—respond now. Only invoke the read tool (e.g., `read_document`) for summary-only/preview snippets or when the visitor asks for topics outside the listed coverage.
+                Ledger directive: When a snippet shows status=ready, you already have that data—respond now. Only invoke the read tool (for example, `read_knowledge`) for summary-only/preview snippets or when the visitor asks for topics outside the listed coverage.
                 Ledger directive (chunk focus): When you need more context from a knowledge snippet, request that exact snippet ID (chunk) rather than the entire document, unless you truly need the whole document.
 
                 ### Previously Delivered

@@ -75,7 +75,7 @@ Notes:
 
 read_knowledge ("Reading Knowledge")
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Replaces `read_document` for normal agentic flows.
+Primary evidence reader for agentic flows.
 
 This is the ONLY supported way for the LLM to materialize evidence refs.
 
