@@ -156,14 +156,14 @@ full output out-of-band and returns:
 Implementation preference:
 - Reuse `apps.mcp.models.McpToolOutputArtifact` for local knowledge artifacts.
 - Best-effort retention controls:
-  - `MCP_READ_DOCUMENT_ARTIFACT_RETENTION_DAYS`
-  - `MCP_READ_DOCUMENT_ARTIFACT_MAX_PER_CONVERSATION`
+  - `MCP_READ_KNOWLEDGE_ARTIFACT_RETENTION_DAYS`
+  - `MCP_READ_KNOWLEDGE_ARTIFACT_MAX_PER_CONVERSATION`
 
 Budgets / Interactions
 ----------------------
 Key constraint layering:
 - `MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS` is a safety backstop.
-- `MCP_READ_DOCUMENT_MAX_CHARS_MARGIN` reserves JSON overhead so read segments fit.
+- `MCP_READ_KNOWLEDGE_MAX_CHARS_MARGIN` reserves JSON overhead so read segments fit.
 - `RAG_MAX_CHAR_BUDGET_PER_TURN` / `RAG_MAX_CHAR_BUDGET_PER_MINUTE` limit throughput.
 
 Agentic read v2 should be designed so prompt-side truncation is rare-to-zero:

@@ -40,8 +40,7 @@ HTTP POST /api/...
       ├─ apps/llm/ai_prompt_builder.py   # System prompt construction
       ├─ apps/mcp/tools.py               # Tool implementations dispatched per tool call
       │    ├─ search_knowledge           →  apps/rag/ai_orchestrator.py (KnowledgeSearchService)
-      │    ├─ read_document              →  apps/knowledge/documents.py
-      │    ├─ search_tables              →  apps/rag/ai_orchestrator.py
+      │    ├─ read_knowledge             →  apps/mcp/tools.py (agentic read v2)
       │    ├─ send_email / read_email    →  apps/integrations/gmail.py or microsoft_graph.py
       │    ├─ calendar tools             →  apps/integrations/google_calendar_api.py
       │    ├─ drive tools                →  apps/integrations/google_drive.py

@@ -21,7 +21,7 @@ Agentic v2 is enabled when:
 The LLM-facing read tool is:
 - `read_knowledge(refs=[{id,cursor?}...], max_chars=...)`
 
-Legacy knobs (`read_document` pages/modes) are **not** part of the agentic v2 contract.
+Legacy knobs (page/mode selection) are **not** part of the agentic v2 contract.
 
 ## Tool Set (LLM-facing, agentic mode)
 
@@ -37,7 +37,7 @@ Workflow tools (agentic mode allowlist):
 - Gateway tools: `mcp_search_tools`, `mcp_call_tool`
 
 **Not LLM‑facing in agentic mode:**
-- `list_tables`, `query_dataset`, `read_document` (legacy/non‑agentic only)
+- Any other knowledge/dataset tools beyond `search_knowledge` + `read_knowledge`
 - CRM tools (`create_case`, `update_case_*`, `create_customer`, `create_lead`, `create_appointment`)  
   These are produced via the planner JSON pass, not tool calls.
 
@@ -58,4 +58,4 @@ Workflow tools (agentic mode allowlist):
 
 ## Archived Prompt Snapshots
 
-Older prompt snapshots were moved to `docs/archive/prompts/` to avoid confusion.
+Older prompt snapshots were removed from the repo to avoid confusion.

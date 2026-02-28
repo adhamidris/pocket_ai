@@ -12,7 +12,7 @@
 3. Fix “entity drift” (wrong document/table) for noisy queries:
    - Make lexical retrieval robust to extra/generic words (avoid strict “all tokens must match” failure modes).
    - Preserve and prioritize “anchor tokens” from the visitor message (e.g., product name, plan name, SKU).
-   - Avoid calling dataset-only tools (like `list_tables`) for PDF uploads; rely on document table chunks instead.
+   - Avoid dataset-only tooling for PDF uploads; rely on document table chunks instead.
 3. Add missing observability:
    - Break down retrieval timing so “where did 300s go?” is attributable (table context, DB waits, rerank, etc.).
 4. Make caching production-like:

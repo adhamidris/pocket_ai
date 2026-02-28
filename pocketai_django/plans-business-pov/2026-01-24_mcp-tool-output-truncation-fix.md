@@ -1,8 +1,8 @@
 # MCP Tool Output Truncation Fix (Prompt Compaction)
 
 ## Plan
-1. Reproduce the failure where `read_document` tool outputs exceed `MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS` and collapse into metadata-only JSON (`truncated=true`, `prompt_compact=true`) with no usable content.
-2. Ensure knowledge tools (`search_knowledge`, `read_document`, table/dataset tools) are compacted into a stable, bounded prompt view that preserves IDs + a content preview.
+1. Reproduce the failure where `read_knowledge` tool outputs exceed `MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS` and collapse into metadata-only JSON (`truncated=true`, `prompt_compact=true`) with no usable content.
+2. Ensure knowledge tools (`search_knowledge`, `read_knowledge`) are compacted into a stable, bounded prompt view that preserves IDs + a content preview.
 3. Improve the tool-message truncation fallback to shrink large JSON while keeping a minimal content preview instead of dropping the payload entirely.
 4. Add regression coverage for “oversized tool message still includes content preview”.
 5. Validate via targeted MCP tests and a real conversation replay/log inspection.

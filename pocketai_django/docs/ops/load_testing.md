@@ -39,12 +39,8 @@ Tool rate limits (per business/tenant):
 - `MCP_DISABLE_TOOL_RATE_LIMITS` (set `true` for CI load tests to avoid throttling skew)
 - `MCP_SEARCH_KNOWLEDGE_CALLS_PER_MINUTE`
 - `MCP_READ_KNOWLEDGE_CALLS_PER_MINUTE`
-- `MCP_LIST_TABLES_CALLS_PER_MINUTE`
-- `MCP_DATASET_QUERY_CALLS_PER_MINUTE`
-- `MCP_TABLE_AGGREGATE_CALLS_PER_MINUTE`
 
-Note: dataset/table tool limits above are **backend/legacy-only**. In agentic mode the LLM-facing
-toolset is `search_knowledge` + `read_knowledge` (datasets are handled server-side).
+Note: In agentic mode the LLM-facing toolset is `search_knowledge` + `read_knowledge`.
 
 Orchestrator hard caps:
 - `MCP_MAX_TOOL_ITERATIONS`

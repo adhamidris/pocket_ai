@@ -110,10 +110,11 @@ Browser renders streaming answer
 
 ---
 
-## Scenario C — Tables / datasets (legacy only)
+## Scenario C — Tables (agentic)
 
-In agentic mode, the LLM does **not** see `list_tables`, `query_dataset`, or `table_aggregate`.  
-Those tools remain implemented for **non‑agentic/legacy** workflows and internal testing.
+In agentic mode, tables are read via `read_knowledge`:
+- The initial read returns `columns` + `rows` plus `row_offset` / `rows_shown` / `total_rows`.
+- The model can continue by calling `read_knowledge` again with `row_start` + `row_limit` to page through rows.
 
 ---
 

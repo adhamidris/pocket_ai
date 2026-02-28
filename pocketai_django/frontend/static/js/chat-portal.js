@@ -10254,16 +10254,15 @@ class ChatPortalClient {
     }
 
     const payload = debugTools && typeof debugTools === "object" ? debugTools : {};
-    const toolTrace = Array.isArray(payload.tool_trace) ? payload.tool_trace : [];
-    const searchHistory = Array.isArray(payload.search_history) ? payload.search_history : [];
-	    const results = Array.isArray(payload.knowledge_results) ? payload.knowledge_results : [];
-	    const reads = Array.isArray(payload.knowledge_reads) ? payload.knowledge_reads : [];
-	    const coverage = Array.isArray(payload.coverage_ledger) ? payload.coverage_ledger : [];
-	    const tableRows = Array.isArray(payload.table_aggregate_rows) ? payload.table_aggregate_rows : [];
-	    const promptBudget = Array.isArray(payload.prompt_budget) ? payload.prompt_budget : [];
-    const exactIoTrace = toolTrace.filter(
-      (item) => item && typeof item === "object" && (item.llm_request || item.llm_response),
-    );
+	    const toolTrace = Array.isArray(payload.tool_trace) ? payload.tool_trace : [];
+	    const searchHistory = Array.isArray(payload.search_history) ? payload.search_history : [];
+		    const results = Array.isArray(payload.knowledge_results) ? payload.knowledge_results : [];
+		    const reads = Array.isArray(payload.knowledge_reads) ? payload.knowledge_reads : [];
+		    const coverage = Array.isArray(payload.coverage_ledger) ? payload.coverage_ledger : [];
+		    const promptBudget = Array.isArray(payload.prompt_budget) ? payload.prompt_budget : [];
+	    const exactIoTrace = toolTrace.filter(
+	      (item) => item && typeof item === "object" && (item.llm_request || item.llm_response),
+	    );
 	    const usage = this.getUsagePayload(payload);
 	    const contextBudget = this.getContextBudgetPayload(payload);
     const roundTokens = this.getRoundTokenCountFromUsage(usage);
@@ -10518,12 +10517,12 @@ class ChatPortalClient {
       return section;
     };
 
-	    if (!toolTrace.length && !promptBudget.length && !searchHistory.length && !results.length && !reads.length && !coverage.length && !tableRows.length) {
-	      const empty = document.createElement("div");
-	      empty.className = "text-[11px] text-muted-foreground";
-	      empty.textContent = "No tool activity recorded for this response.";
-	      container.appendChild(empty);
-	    }
+		    if (!toolTrace.length && !promptBudget.length && !searchHistory.length && !results.length && !reads.length && !coverage.length) {
+		      const empty = document.createElement("div");
+		      empty.className = "text-[11px] text-muted-foreground";
+		      empty.textContent = "No tool activity recorded for this response.";
+		      container.appendChild(empty);
+		    }
 
 	    if (promptBudget.length) {
 	      container.appendChild(
@@ -10664,21 +10663,10 @@ class ChatPortalClient {
       );
     }
 
-    if (tableRows.length) {
-      container.appendChild(
-        buildSection("Table Rows", tableRows, (item, idx) => {
-          const label = item && item.label ? String(item.label) : "";
-          const rowIndex = item && typeof item.row_index !== "undefined" ? `row ${item.row_index}` : "";
-          const fallback = `Row ${idx + 1}`;
-          return [label || fallback, rowIndex].filter(Boolean).join(" • ");
-        }),
-      );
-    }
-
-    root.appendChild(container);
-    debugEl.appendChild(root);
-    this.updateTokenTotalDisplays(totalTokens);
-  }
+	    root.appendChild(container);
+	    debugEl.appendChild(root);
+	    this.updateTokenTotalDisplays(totalTokens);
+	  }
 
   renderBufferToHtml(buffer) {
     return this.renderBufferToHtmlWithMode(buffer, { mode: "markdown" });

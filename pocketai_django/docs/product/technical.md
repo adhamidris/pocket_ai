@@ -88,7 +88,7 @@ Typical “knowledge question”:
 1. `search_knowledge` (batched `queries[]` variants)
 2. Targeted read depending on source type:
    - `read_knowledge` for document/chunk reads (agentic v2 refs)
-   - Dataset/table operations are handled server‑side; the LLM does **not** receive `list_tables`, `query_dataset`, or `table_aggregate` in agentic mode.
+   - Dataset/table operations are handled server‑side; the LLM only uses `search_knowledge` + `read_knowledge` in agentic mode.
 3. Final answer (tools disabled in the final pass when possible)
 
 ### Tool budgets and policies
@@ -163,7 +163,7 @@ Verified lookup is a capability that tenants can enable:
 - Once verified, retrieval may be scoped to matching records/uploads and may expose allowed fields.
 
 Current repo behavior:
-- Tabular tools (`query_dataset` / `dataset_query`) enforce “verified lookup required” when sensitive columns (PII) are requested. These tools are **not exposed** in agentic mode.
+- Sensitive tabular content is protected behind verified lookup when required; agentic mode does not expose any dataset/table query tools to the LLM.
 - Unstructured/document snippets are additionally protected with best-effort PII pattern masking before tool evidence is returned to the LLM (configurable via `MCP_TEXT_PII_REDACTION_*`).
 
 Portal verification API (for the public web widget):

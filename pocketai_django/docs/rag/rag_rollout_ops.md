@@ -44,7 +44,7 @@ part of `BusinessProfile.save` keeps it versioned alongside the tenant record.
   stable for `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` and
   avoid warning noise from upstream changes.
 - Agentic mode (default) limits LLM tools to `search_knowledge` → `read_knowledge`.
-- Table/dataset tools (`list_tables`, `query_dataset`, `table_aggregate`) remain implemented for non‑agentic/legacy flows but are not LLM‑facing in agentic mode.
+- Agentic mode does not expose any other knowledge/dataset tools beyond `search_knowledge` + `read_knowledge`.
 
 ### Embedding Model Changes (Multilingual)
 

@@ -219,7 +219,7 @@ class McpConnectionGatingTests(SimpleTestCase):
 # ---------------------------------------------------------------------------
 
 class RepeatReadDetectionTests(SimpleTestCase):
-    @override_settings(MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS=12000, MCP_READ_DOCUMENT_MAX_CHARS_MARGIN=800)
+    @override_settings(MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS=12000, MCP_READ_KNOWLEDGE_MAX_CHARS_MARGIN=800)
     def test_repeat_read_same_ref_returns_already_read(self) -> None:
         """Re-reading the same ref ID without a cursor in the same turn should be blocked."""
         conversation = SimpleNamespace(
@@ -243,7 +243,7 @@ class RepeatReadDetectionTests(SimpleTestCase):
         self.assertEqual(result["error_code"], "already_read")
         self.assertIn("already read", result.get("hint", "").lower())
 
-    @override_settings(MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS=12000, MCP_READ_DOCUMENT_MAX_CHARS_MARGIN=800)
+    @override_settings(MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS=12000, MCP_READ_KNOWLEDGE_MAX_CHARS_MARGIN=800)
     def test_cursor_continuation_of_same_ref_succeeds(self) -> None:
         """A cursor-continuation read of the same ref should NOT be blocked."""
         conversation = SimpleNamespace(
@@ -269,7 +269,7 @@ class RepeatReadDetectionTests(SimpleTestCase):
         # Should NOT be "already_read" — it should proceed past the gate.
         self.assertNotEqual(result.get("status"), "already_read")
 
-    @override_settings(MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS=12000, MCP_READ_DOCUMENT_MAX_CHARS_MARGIN=800)
+    @override_settings(MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS=12000, MCP_READ_KNOWLEDGE_MAX_CHARS_MARGIN=800)
     def test_mixed_refs_filters_already_read(self) -> None:
         """When some refs are already read and some are new, only new ones proceed."""
         conversation = SimpleNamespace(

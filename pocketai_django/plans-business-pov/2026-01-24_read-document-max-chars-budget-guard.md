@@ -1,9 +1,9 @@
-# Agentic `read_document` Max Chars Budget Guard
+# Agentic `read_knowledge` Max Chars Budget Guard
 
 ## Plan
-1. Compute a prompt-safe `max_chars_allowed` for agentic `read_document(ids=...)` using: per-turn remaining character budget, `RAG_MAX_INLINE_KNOWLEDGE_CHARS`, and `MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS` (minus a safety margin for JSON escaping/overhead).
+1. Compute a prompt-safe `max_chars_allowed` for agentic `read_knowledge(refs=...)` using: per-turn remaining character budget, `RAG_MAX_INLINE_KNOWLEDGE_CHARS`, and `MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS` (minus a safety margin for JSON escaping/overhead).
 2. When the LLM requests `max_chars` above `max_chars_allowed`, return a `constraint_error` with `error_code=max_chars_exceeded`, `max_chars_allowed`, and a clear retry hint.
-3. Ensure prompt compaction for agentic `read_document` does not silently shrink content below what the tool returned (bounded by the prompt-safe limit).
+3. Ensure prompt compaction for agentic `read_knowledge` does not silently shrink content below what the tool returned (bounded by the prompt-safe limit).
 4. Add regression tests to prevent reintroducing “guess and retry” behavior.
 
 ## Business POV

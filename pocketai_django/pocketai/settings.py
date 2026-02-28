@@ -888,20 +888,42 @@ MCP_PROMPT_TABLE_MAX_CELLS_EXACT = int(os.getenv("MCP_PROMPT_TABLE_MAX_CELLS_EXA
 # MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS: Hard cap on any single tool output message injected into the LLM prompt.
 # This is a safety backstop; Phase 1 will replace this with out-of-band tool artifacts + prompt_view.
 MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS = int(os.getenv("MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS", "25000"))
-# MCP_READ_DOCUMENT_MAX_CHARS_MARGIN: Safety margin to keep read_document JSON outputs under MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS.
-MCP_READ_DOCUMENT_MAX_CHARS_MARGIN = int(os.getenv("MCP_READ_DOCUMENT_MAX_CHARS_MARGIN", "1500"))
-# MCP_READ_DOCUMENT_ARTIFACT_RETENTION_DAYS: Retain local read_document tool-output artifacts for this many days.
+# MCP_READ_KNOWLEDGE_MAX_CHARS_MARGIN: Safety margin to keep read_knowledge JSON outputs under MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS.
+# Backwards-compatible: falls back to MCP_READ_DOCUMENT_MAX_CHARS_MARGIN env var if set.
 try:
-    MCP_READ_DOCUMENT_ARTIFACT_RETENTION_DAYS = int(os.getenv("MCP_READ_DOCUMENT_ARTIFACT_RETENTION_DAYS", "30"))
+    MCP_READ_KNOWLEDGE_MAX_CHARS_MARGIN = int(
+        (os.getenv("MCP_READ_KNOWLEDGE_MAX_CHARS_MARGIN") or "").strip()
+        or os.getenv("MCP_READ_DOCUMENT_MAX_CHARS_MARGIN", "1500")
+    )
 except (TypeError, ValueError):
-    MCP_READ_DOCUMENT_ARTIFACT_RETENTION_DAYS = 30
-MCP_READ_DOCUMENT_ARTIFACT_RETENTION_DAYS = max(1, min(365, MCP_READ_DOCUMENT_ARTIFACT_RETENTION_DAYS))
-# MCP_READ_DOCUMENT_ARTIFACT_MAX_PER_CONVERSATION: Keep at most N local read_document artifacts per conversation.
+    MCP_READ_KNOWLEDGE_MAX_CHARS_MARGIN = 1500
+MCP_READ_KNOWLEDGE_MAX_CHARS_MARGIN = max(0, MCP_READ_KNOWLEDGE_MAX_CHARS_MARGIN)
+# Compatibility alias (avoid breaking any older code/configs that still reference this name).
+MCP_READ_DOCUMENT_MAX_CHARS_MARGIN = MCP_READ_KNOWLEDGE_MAX_CHARS_MARGIN
+
+# MCP_READ_KNOWLEDGE_ARTIFACT_RETENTION_DAYS: Retain local tool-output artifacts for this many days.
+# Backwards-compatible: falls back to MCP_READ_DOCUMENT_ARTIFACT_RETENTION_DAYS env var if set.
 try:
-    MCP_READ_DOCUMENT_ARTIFACT_MAX_PER_CONVERSATION = int(os.getenv("MCP_READ_DOCUMENT_ARTIFACT_MAX_PER_CONVERSATION", "200"))
+    MCP_READ_KNOWLEDGE_ARTIFACT_RETENTION_DAYS = int(
+        (os.getenv("MCP_READ_KNOWLEDGE_ARTIFACT_RETENTION_DAYS") or "").strip()
+        or os.getenv("MCP_READ_DOCUMENT_ARTIFACT_RETENTION_DAYS", "30")
+    )
 except (TypeError, ValueError):
-    MCP_READ_DOCUMENT_ARTIFACT_MAX_PER_CONVERSATION = 200
-MCP_READ_DOCUMENT_ARTIFACT_MAX_PER_CONVERSATION = max(0, min(5000, MCP_READ_DOCUMENT_ARTIFACT_MAX_PER_CONVERSATION))
+    MCP_READ_KNOWLEDGE_ARTIFACT_RETENTION_DAYS = 30
+MCP_READ_KNOWLEDGE_ARTIFACT_RETENTION_DAYS = max(1, min(365, MCP_READ_KNOWLEDGE_ARTIFACT_RETENTION_DAYS))
+MCP_READ_DOCUMENT_ARTIFACT_RETENTION_DAYS = MCP_READ_KNOWLEDGE_ARTIFACT_RETENTION_DAYS
+
+# MCP_READ_KNOWLEDGE_ARTIFACT_MAX_PER_CONVERSATION: Keep at most N local artifacts per conversation.
+# Backwards-compatible: falls back to MCP_READ_DOCUMENT_ARTIFACT_MAX_PER_CONVERSATION env var if set.
+try:
+    MCP_READ_KNOWLEDGE_ARTIFACT_MAX_PER_CONVERSATION = int(
+        (os.getenv("MCP_READ_KNOWLEDGE_ARTIFACT_MAX_PER_CONVERSATION") or "").strip()
+        or os.getenv("MCP_READ_DOCUMENT_ARTIFACT_MAX_PER_CONVERSATION", "200")
+    )
+except (TypeError, ValueError):
+    MCP_READ_KNOWLEDGE_ARTIFACT_MAX_PER_CONVERSATION = 200
+MCP_READ_KNOWLEDGE_ARTIFACT_MAX_PER_CONVERSATION = max(0, min(5000, MCP_READ_KNOWLEDGE_ARTIFACT_MAX_PER_CONVERSATION))
+MCP_READ_DOCUMENT_ARTIFACT_MAX_PER_CONVERSATION = MCP_READ_KNOWLEDGE_ARTIFACT_MAX_PER_CONVERSATION
 
 # Stage transcript windowing (raw messages kept verbatim in each provider call).
 # These are *message* limits (not tokens) and apply after tool-call anchoring.
@@ -1282,73 +1304,6 @@ except (TypeError, ValueError):
     DATASET_MODE_SAMPLE_ROWS = 20
 # DATASET_STORAGE_FORMAT: On-disk format for dataset storage ("csv_gz", etc).
 DATASET_STORAGE_FORMAT = os.getenv("DATASET_STORAGE_FORMAT", "csv_gz").strip() or "csv_gz"
-# DATASET_QUERY_ENGINE: Dataset query engine ("duckdb"|"python"|"auto").
-DATASET_QUERY_ENGINE = (os.getenv("DATASET_QUERY_ENGINE", "duckdb") or "duckdb").strip().lower() or "duckdb"
-if DATASET_QUERY_ENGINE not in {"duckdb", "python", "auto"}:
-    DATASET_QUERY_ENGINE = "duckdb"
-try:
-    # DATASET_QUERY_MAX_SECONDS: Time budget (seconds) for dataset queries.
-    DATASET_QUERY_MAX_SECONDS = float(os.getenv("DATASET_QUERY_MAX_SECONDS", "2.5"))
-except (TypeError, ValueError):
-    DATASET_QUERY_MAX_SECONDS = 2.5
-if DATASET_QUERY_MAX_SECONDS <= 0:
-    DATASET_QUERY_MAX_SECONDS = 2.5
-try:
-    # DATASET_QUERY_MAX_SORT_WINDOW: Max rows considered for sorting before truncation.
-    DATASET_QUERY_MAX_SORT_WINDOW = int(os.getenv("DATASET_QUERY_MAX_SORT_WINDOW", "500"))
-except (TypeError, ValueError):
-    DATASET_QUERY_MAX_SORT_WINDOW = 500
-if DATASET_QUERY_MAX_SORT_WINDOW < 50:
-    DATASET_QUERY_MAX_SORT_WINDOW = 50
-try:
-    # DATASET_QUERY_DEFAULT_COLUMNS: Default number of columns returned when caller does not specify.
-    DATASET_QUERY_DEFAULT_COLUMNS = int(os.getenv("DATASET_QUERY_DEFAULT_COLUMNS", "8"))
-except (TypeError, ValueError):
-    DATASET_QUERY_DEFAULT_COLUMNS = 8
-if DATASET_QUERY_DEFAULT_COLUMNS < 3:
-    DATASET_QUERY_DEFAULT_COLUMNS = 3
-try:
-    # DATASET_QUERY_CELL_VALUE_CHARS: Max characters per cell value returned in dataset evidence.
-    DATASET_QUERY_CELL_VALUE_CHARS = int(os.getenv("DATASET_QUERY_CELL_VALUE_CHARS", "160"))
-except (TypeError, ValueError):
-    DATASET_QUERY_CELL_VALUE_CHARS = 160
-if DATASET_QUERY_CELL_VALUE_CHARS < 40:
-    DATASET_QUERY_CELL_VALUE_CHARS = 40
-try:
-    # DATASET_QUERY_MAX_GROUPS: Max groups returned for group-by aggregates.
-    DATASET_QUERY_MAX_GROUPS = int(os.getenv("DATASET_QUERY_MAX_GROUPS", "5000"))
-except (TypeError, ValueError):
-    DATASET_QUERY_MAX_GROUPS = 5000
-if DATASET_QUERY_MAX_GROUPS < 100:
-    DATASET_QUERY_MAX_GROUPS = 100
-try:
-    # DATASET_QUERY_MAX_ROWS_RETURNED: Max rows returned for dataset queries.
-    DATASET_QUERY_MAX_ROWS_RETURNED = int(os.getenv("DATASET_QUERY_MAX_ROWS_RETURNED", "50"))
-except (TypeError, ValueError):
-    DATASET_QUERY_MAX_ROWS_RETURNED = 50
-if DATASET_QUERY_MAX_ROWS_RETURNED < 1:
-    DATASET_QUERY_MAX_ROWS_RETURNED = 1
-if DATASET_QUERY_MAX_ROWS_RETURNED > 50:
-    DATASET_QUERY_MAX_ROWS_RETURNED = 50
-try:
-    # DATASET_QUERY_MAX_COLUMNS_RETURNED: Max columns returned for dataset queries.
-    DATASET_QUERY_MAX_COLUMNS_RETURNED = int(os.getenv("DATASET_QUERY_MAX_COLUMNS_RETURNED", "12"))
-except (TypeError, ValueError):
-    DATASET_QUERY_MAX_COLUMNS_RETURNED = 12
-if DATASET_QUERY_MAX_COLUMNS_RETURNED < 3:
-    DATASET_QUERY_MAX_COLUMNS_RETURNED = 3
-if DATASET_QUERY_MAX_COLUMNS_RETURNED > 50:
-    DATASET_QUERY_MAX_COLUMNS_RETURNED = 50
-try:
-    # DATASET_QUERY_MAX_COLUMNS_RETURNED_EXACT: Higher cap for exact-match dataset responses.
-    DATASET_QUERY_MAX_COLUMNS_RETURNED_EXACT = int(os.getenv("DATASET_QUERY_MAX_COLUMNS_RETURNED_EXACT", "50"))
-except (TypeError, ValueError):
-    DATASET_QUERY_MAX_COLUMNS_RETURNED_EXACT = 50
-if DATASET_QUERY_MAX_COLUMNS_RETURNED_EXACT < DATASET_QUERY_MAX_COLUMNS_RETURNED:
-    DATASET_QUERY_MAX_COLUMNS_RETURNED_EXACT = DATASET_QUERY_MAX_COLUMNS_RETURNED
-if DATASET_QUERY_MAX_COLUMNS_RETURNED_EXACT > 50:
-    DATASET_QUERY_MAX_COLUMNS_RETURNED_EXACT = 50
-
 # Dataset key indexing (routing layer for many datasets).
 # DATASET_KEY_INDEX_ENABLED: Enable Bloom-filter style key index generation for datasets.
 DATASET_KEY_INDEX_ENABLED = os.getenv("DATASET_KEY_INDEX_ENABLED", "true").lower() in {"1", "true", "yes"}
@@ -1399,24 +1354,6 @@ except (TypeError, ValueError):
     DATASET_KEY_INDEX_MAX_MATCHES_PER_UPLOAD = 8
 DATASET_KEY_INDEX_MAX_MATCHES_PER_UPLOAD = max(1, min(50, DATASET_KEY_INDEX_MAX_MATCHES_PER_UPLOAD))
 try:
-    # TABLE_AGGREGATE_MAX_ROWS_RETURNED: Hard cap for table_aggregate rows returned to the model.
-    TABLE_AGGREGATE_MAX_ROWS_RETURNED = int(os.getenv("TABLE_AGGREGATE_MAX_ROWS_RETURNED", "200"))
-except (TypeError, ValueError):
-    TABLE_AGGREGATE_MAX_ROWS_RETURNED = 200
-if TABLE_AGGREGATE_MAX_ROWS_RETURNED < 1:
-    TABLE_AGGREGATE_MAX_ROWS_RETURNED = 1
-if TABLE_AGGREGATE_MAX_ROWS_RETURNED > 200:
-    TABLE_AGGREGATE_MAX_ROWS_RETURNED = 200
-try:
-    # TABLE_AGGREGATE_MAX_COLUMNS_RETURNED: Hard cap for table_aggregate columns returned to the model.
-    TABLE_AGGREGATE_MAX_COLUMNS_RETURNED = int(os.getenv("TABLE_AGGREGATE_MAX_COLUMNS_RETURNED", "50"))
-except (TypeError, ValueError):
-    TABLE_AGGREGATE_MAX_COLUMNS_RETURNED = 50
-if TABLE_AGGREGATE_MAX_COLUMNS_RETURNED < 3:
-    TABLE_AGGREGATE_MAX_COLUMNS_RETURNED = 3
-if TABLE_AGGREGATE_MAX_COLUMNS_RETURNED > 200:
-    TABLE_AGGREGATE_MAX_COLUMNS_RETURNED = 200
-try:
     # MCP_TOOL_RATE_LIMIT_WINDOW_SECONDS: Window size (seconds) for per-tool rate limiting.
     MCP_TOOL_RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("MCP_TOOL_RATE_LIMIT_WINDOW_SECONDS", "60"))
 except (TypeError, ValueError):
@@ -1426,20 +1363,6 @@ if MCP_TOOL_RATE_LIMIT_WINDOW_SECONDS < 10:
 if MCP_TOOL_RATE_LIMIT_WINDOW_SECONDS > 600:
     MCP_TOOL_RATE_LIMIT_WINDOW_SECONDS = 600
 try:
-    # MCP_DATASET_QUERY_CALLS_PER_MINUTE: Per-tenant rate limit for dataset queries.
-    MCP_DATASET_QUERY_CALLS_PER_MINUTE = int(os.getenv("MCP_DATASET_QUERY_CALLS_PER_MINUTE", "30"))
-except (TypeError, ValueError):
-    MCP_DATASET_QUERY_CALLS_PER_MINUTE = 30
-if MCP_DATASET_QUERY_CALLS_PER_MINUTE < 0:
-    MCP_DATASET_QUERY_CALLS_PER_MINUTE = 0
-try:
-    # MCP_TABLE_AGGREGATE_CALLS_PER_MINUTE: Per-tenant rate limit for table_aggregate calls.
-    MCP_TABLE_AGGREGATE_CALLS_PER_MINUTE = int(os.getenv("MCP_TABLE_AGGREGATE_CALLS_PER_MINUTE", "60"))
-except (TypeError, ValueError):
-    MCP_TABLE_AGGREGATE_CALLS_PER_MINUTE = 60
-if MCP_TABLE_AGGREGATE_CALLS_PER_MINUTE < 0:
-    MCP_TABLE_AGGREGATE_CALLS_PER_MINUTE = 0
-try:
     # MCP_SEARCH_KNOWLEDGE_CALLS_PER_MINUTE: Per-tenant rate limit for search_knowledge calls.
     MCP_SEARCH_KNOWLEDGE_CALLS_PER_MINUTE = int(os.getenv("MCP_SEARCH_KNOWLEDGE_CALLS_PER_MINUTE", "120"))
 except (TypeError, ValueError):
@@ -1447,19 +1370,12 @@ except (TypeError, ValueError):
 if MCP_SEARCH_KNOWLEDGE_CALLS_PER_MINUTE < 0:
     MCP_SEARCH_KNOWLEDGE_CALLS_PER_MINUTE = 0
 try:
-    # MCP_READ_KNOWLEDGE_CALLS_PER_MINUTE: Per-tenant rate limit for read_knowledge/read_document calls.
+    # MCP_READ_KNOWLEDGE_CALLS_PER_MINUTE: Per-tenant rate limit for read_knowledge calls.
     MCP_READ_KNOWLEDGE_CALLS_PER_MINUTE = int(os.getenv("MCP_READ_KNOWLEDGE_CALLS_PER_MINUTE", "120"))
 except (TypeError, ValueError):
     MCP_READ_KNOWLEDGE_CALLS_PER_MINUTE = 120
 if MCP_READ_KNOWLEDGE_CALLS_PER_MINUTE < 0:
     MCP_READ_KNOWLEDGE_CALLS_PER_MINUTE = 0
-try:
-    # MCP_LIST_TABLES_CALLS_PER_MINUTE: Per-tenant rate limit for list_tables calls.
-    MCP_LIST_TABLES_CALLS_PER_MINUTE = int(os.getenv("MCP_LIST_TABLES_CALLS_PER_MINUTE", "120"))
-except (TypeError, ValueError):
-    MCP_LIST_TABLES_CALLS_PER_MINUTE = 120
-if MCP_LIST_TABLES_CALLS_PER_MINUTE < 0:
-    MCP_LIST_TABLES_CALLS_PER_MINUTE = 0
 
 # MCP_DISABLE_TOOL_RATE_LIMITS: Disable cache-backed tool rate limits (useful for CI/load tests).
 MCP_DISABLE_TOOL_RATE_LIMITS = os.getenv("MCP_DISABLE_TOOL_RATE_LIMITS", "false").lower() in {"1", "true", "yes"}
@@ -1474,7 +1390,7 @@ MCP_UNCAPPED_LIMITS = os.getenv("MCP_UNCAPPED_LIMITS", "false").lower() in {"1",
 # falls back to legacy prompt + tool behaviors.
 MCP_NEW_CONTRACT_ENABLED = os.getenv("MCP_NEW_CONTRACT_ENABLED", "true").lower() in {"1", "true", "yes"}
 # MCP_AGENTIC_READ_V2_ENABLED: Gate the simplified agentic read contract:
-# `read_document(items=[{id,cursor?}...], max_chars=...)` with tool-selected retrieval
+# `read_knowledge(refs=[{id,cursor?}...], max_chars=...)` with tool-selected retrieval
 # + deterministic continuation. This is intentionally separate from MCP_NEW_CONTRACT_ENABLED
 # so we can roll out V2 read behavior gradually.
 MCP_AGENTIC_READ_V2_ENABLED = os.getenv("MCP_AGENTIC_READ_V2_ENABLED", "false").lower() in {"1", "true", "yes"}
@@ -1495,7 +1411,7 @@ except (TypeError, ValueError):
 if MCP_MAX_SEARCHES_PER_TURN < 0:
     MCP_MAX_SEARCHES_PER_TURN = 0
 try:
-    # MCP_MAX_READS_PER_TURN: Limit read_document calls per user message (0 disables limit).
+    # MCP_MAX_READS_PER_TURN: Limit read_knowledge calls per user message (0 disables limit).
     # This is primarily used for LLM-visible budgeting; enforcement is optional.
     MCP_MAX_READS_PER_TURN = int(os.getenv("MCP_MAX_READS_PER_TURN", "10"))
 except (TypeError, ValueError):
@@ -1503,25 +1419,9 @@ except (TypeError, ValueError):
 if MCP_MAX_READS_PER_TURN < 0:
     MCP_MAX_READS_PER_TURN = 0
 
-# MCP_ENFORCE_READ_BUDGET: When enabled, read_document calls beyond MCP_MAX_READS_PER_TURN
+# MCP_ENFORCE_READ_BUDGET: When enabled, read_knowledge calls beyond MCP_MAX_READS_PER_TURN
 # raise a constraint error. Default is off (budget is still tracked in tool responses).
 MCP_ENFORCE_READ_BUDGET = os.getenv("MCP_ENFORCE_READ_BUDGET", "false").lower() in {"1", "true", "yes"}
-try:
-    # MCP_READ_DOCUMENT_REPEAT_LIMIT: Force-final after repeating the same read_document signature this many times.
-    MCP_READ_DOCUMENT_REPEAT_LIMIT = int(os.getenv("MCP_READ_DOCUMENT_REPEAT_LIMIT", "2"))
-except (TypeError, ValueError):
-    MCP_READ_DOCUMENT_REPEAT_LIMIT = 2
-if MCP_READ_DOCUMENT_REPEAT_LIMIT < 0:
-    MCP_READ_DOCUMENT_REPEAT_LIMIT = 0
-MCP_READ_DOCUMENT_REPEAT_LIMIT = min(1000, MCP_READ_DOCUMENT_REPEAT_LIMIT)
-try:
-    # MCP_READ_DOCUMENT_THROTTLE_LIMIT: Force-final after hitting throttled read_document responses this many times.
-    MCP_READ_DOCUMENT_THROTTLE_LIMIT = int(os.getenv("MCP_READ_DOCUMENT_THROTTLE_LIMIT", "2"))
-except (TypeError, ValueError):
-    MCP_READ_DOCUMENT_THROTTLE_LIMIT = 2
-if MCP_READ_DOCUMENT_THROTTLE_LIMIT < 0:
-    MCP_READ_DOCUMENT_THROTTLE_LIMIT = 0
-MCP_READ_DOCUMENT_THROTTLE_LIMIT = min(1000, MCP_READ_DOCUMENT_THROTTLE_LIMIT)
 
 # MCP enumeration flow controls.
 MCP_ENUMERATION_AUTO_STRUCTURE_ENABLED = os.getenv("MCP_ENUMERATION_AUTO_STRUCTURE_ENABLED", "true").lower() in {"1", "true", "yes"}
@@ -1601,26 +1501,6 @@ if MCP_SLO_READ_KNOWLEDGE_WARN_MS < 0:
     MCP_SLO_READ_KNOWLEDGE_WARN_MS = 0
 if MCP_SLO_READ_KNOWLEDGE_WARN_MS > 120_000:
     MCP_SLO_READ_KNOWLEDGE_WARN_MS = 120_000
-
-try:
-    # MCP_SLO_TABLE_AGGREGATE_WARN_MS: Log warning when table_aggregate exceeds this duration (ms).
-    MCP_SLO_TABLE_AGGREGATE_WARN_MS = int(os.getenv("MCP_SLO_TABLE_AGGREGATE_WARN_MS", "1200"))
-except (TypeError, ValueError):
-    MCP_SLO_TABLE_AGGREGATE_WARN_MS = 1200
-if MCP_SLO_TABLE_AGGREGATE_WARN_MS < 0:
-    MCP_SLO_TABLE_AGGREGATE_WARN_MS = 0
-if MCP_SLO_TABLE_AGGREGATE_WARN_MS > 120_000:
-    MCP_SLO_TABLE_AGGREGATE_WARN_MS = 120_000
-
-try:
-    # MCP_SLO_DATASET_QUERY_WARN_MS: Log warning when dataset query exceeds this duration (ms).
-    MCP_SLO_DATASET_QUERY_WARN_MS = int(os.getenv("MCP_SLO_DATASET_QUERY_WARN_MS", "1500"))
-except (TypeError, ValueError):
-    MCP_SLO_DATASET_QUERY_WARN_MS = 1500
-if MCP_SLO_DATASET_QUERY_WARN_MS < 0:
-    MCP_SLO_DATASET_QUERY_WARN_MS = 0
-if MCP_SLO_DATASET_QUERY_WARN_MS > 120_000:
-    MCP_SLO_DATASET_QUERY_WARN_MS = 120_000
 
 try:
     # MCP_SLO_TURN_WARN_MS: Log warning when a full MCP turn exceeds this duration (ms).

@@ -194,12 +194,18 @@ try:
 except (TypeError, ValueError):  # pragma: no cover - defensive
     _PROMPT_TOOL_OUTPUT_MAX_CHARS = 12000
 try:
-    _READ_DOCUMENT_MAX_CHARS_MARGIN = int(getattr(settings, "MCP_READ_DOCUMENT_MAX_CHARS_MARGIN", 800) or 800)
+    # Prefer the read_knowledge-specific knob, but retain the historical read_document name
+    # as a backwards-compatible alias.
+    _READ_KNOWLEDGE_MAX_CHARS_MARGIN = int(
+        getattr(settings, "MCP_READ_KNOWLEDGE_MAX_CHARS_MARGIN", None)
+        or getattr(settings, "MCP_READ_DOCUMENT_MAX_CHARS_MARGIN", 800)
+        or 800
+    )
 except (TypeError, ValueError):  # pragma: no cover - defensive
-    _READ_DOCUMENT_MAX_CHARS_MARGIN = 800
-_READ_DOCUMENT_SAFE_PROMPT_MAX_CHARS = max(500, _PROMPT_TOOL_OUTPUT_MAX_CHARS - max(0, _READ_DOCUMENT_MAX_CHARS_MARGIN))
-READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX = max(500, min(20000, _READ_DOCUMENT_SAFE_PROMPT_MAX_CHARS))
-READ_DOCUMENT_MAX_CHARS_SCHEMA_DEFAULT = max(500, min(8000, READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX))
+    _READ_KNOWLEDGE_MAX_CHARS_MARGIN = 800
+_READ_KNOWLEDGE_SAFE_PROMPT_MAX_CHARS = max(500, _PROMPT_TOOL_OUTPUT_MAX_CHARS - max(0, _READ_KNOWLEDGE_MAX_CHARS_MARGIN))
+READ_KNOWLEDGE_MAX_CHARS_SCHEMA_MAX = max(500, min(20000, _READ_KNOWLEDGE_SAFE_PROMPT_MAX_CHARS))
+READ_KNOWLEDGE_MAX_CHARS_SCHEMA_DEFAULT = max(500, min(8000, READ_KNOWLEDGE_MAX_CHARS_SCHEMA_MAX))
 
 try:
     _MCP_PROMPT_MAX_SNIPPETS = int(getattr(settings, "MCP_PROMPT_MAX_SNIPPETS", 4) or 4)
@@ -1579,8 +1585,8 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
                 "type": "integer",
                 "description": "Maximum total characters to return across all refs (bounded by server caps).",
                 "minimum": 500,
-                "maximum": READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX,
-                "default": READ_DOCUMENT_MAX_CHARS_SCHEMA_DEFAULT,
+                "maximum": READ_KNOWLEDGE_MAX_CHARS_SCHEMA_MAX,
+                "default": READ_KNOWLEDGE_MAX_CHARS_SCHEMA_DEFAULT,
             },
         },
         required=("refs", "max_chars"),
@@ -3665,15 +3671,15 @@ def _convert_to_agentic_search_response(
             getattr(
                 settings,
                 "MCP_AGENTIC_TEXT_CHUNK_GROUP_MAX_CHARS",
-                int(READ_DOCUMENT_MAX_CHARS_SCHEMA_DEFAULT) * 3,
+                int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_DEFAULT) * 3,
             )
-            or int(READ_DOCUMENT_MAX_CHARS_SCHEMA_DEFAULT) * 3
+            or int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_DEFAULT) * 3
         )
     except (TypeError, ValueError):
-        text_chunk_group_max_chars = int(READ_DOCUMENT_MAX_CHARS_SCHEMA_DEFAULT) * 3
+        text_chunk_group_max_chars = int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_DEFAULT) * 3
     text_chunk_group_max_chars = max(
-        int(READ_DOCUMENT_MAX_CHARS_SCHEMA_DEFAULT),
-        min(int(READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX) * 4, int(text_chunk_group_max_chars)),
+        int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_DEFAULT),
+        min(int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_MAX) * 4, int(text_chunk_group_max_chars)),
     )
     hybrid_preview_max_items = 10
     hybrid_preview_chars_cap = min(preview_chars_cap, 400) if preview_chars_cap else 0
@@ -3795,7 +3801,7 @@ def _convert_to_agentic_search_response(
         if limit_hint:
             char_estimate_local = max(
                 char_estimate_local,
-                min(limit_hint, int(READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX)),
+                min(limit_hint, int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_MAX)),
             )
         if bool(snippet.get("is_table_chunk")):
             row_count = (
@@ -3825,7 +3831,7 @@ def _convert_to_agentic_search_response(
         max_chars_allowed_int = max(1, int(max_chars_allowed))
 
         if estimate <= 0:
-            return min(int(READ_DOCUMENT_MAX_CHARS_SCHEMA_DEFAULT), max_chars_allowed_int)
+            return min(int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_DEFAULT), max_chars_allowed_int)
 
         # +20% headroom + a small constant for JSON/table framing overhead.
         suggested = int(estimate * 1.2) + 200
@@ -4012,7 +4018,7 @@ def _convert_to_agentic_search_response(
 
         suggested_max_chars = _suggest_max_chars_for_estimate(
             char_estimate,
-            max_chars_allowed=int(READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX),
+            max_chars_allowed=int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_MAX),
         )
         if content_type == "table":
             suggested_max_chars = _suggest_table_read_chars(
@@ -4020,7 +4026,7 @@ def _convert_to_agentic_search_response(
                 row_count=row_count,
                 column_count=column_count,
                 char_estimate_local=char_estimate,
-                max_chars_allowed=int(READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX),
+                max_chars_allowed=int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_MAX),
             )
 
         # EvidenceRef fields
@@ -4079,7 +4085,7 @@ def _convert_to_agentic_search_response(
                 char_estimate = group_char_estimate
                 suggested_max_chars = _suggest_max_chars_for_estimate(
                     char_estimate,
-                    max_chars_allowed=int(READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX),
+                    max_chars_allowed=int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_MAX),
                 )
 
         coverage_hint: dict[str, object] = {}
@@ -4340,7 +4346,7 @@ def _convert_to_agentic_search_response(
                 total_suggested += int(read_hint.get("suggested_max_chars") or 0)
             except (TypeError, ValueError):
                 continue
-        max_chars_allowed = int(READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX)
+        max_chars_allowed = int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_MAX)
         agentic_response["read_budget_hint"] = {
             "total_suggested_max_chars": min(total_suggested, max_chars_allowed),
             "max_chars_allowed": max_chars_allowed,
@@ -4573,7 +4579,7 @@ def _search_knowledge_handler(
                 total_suggested += int(read_hint.get("suggested_max_chars") or 0)
             except (TypeError, ValueError):
                 continue
-        max_chars_allowed = int(READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX)
+        max_chars_allowed = int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_MAX)
         return {
             "total_suggested_max_chars": min(int(total_suggested), int(max_chars_allowed)),
             "max_chars_allowed": int(max_chars_allowed),
@@ -6634,7 +6640,10 @@ def _agentic_read_v2_handler(
     except (TypeError, ValueError):
         prompt_output_limit = 12000
     try:
-        raw_safety_margin = getattr(settings, "MCP_READ_DOCUMENT_MAX_CHARS_MARGIN", 800)
+        raw_safety_margin = (
+            getattr(settings, "MCP_READ_KNOWLEDGE_MAX_CHARS_MARGIN", None)
+            or getattr(settings, "MCP_READ_DOCUMENT_MAX_CHARS_MARGIN", 800)
+        )
         safety_margin = int(raw_safety_margin if raw_safety_margin is not None else 800)
     except (TypeError, ValueError):
         safety_margin = 800
@@ -6686,15 +6695,15 @@ def _agentic_read_v2_handler(
             getattr(
                 settings,
                 "MCP_AGENTIC_TEXT_CHUNK_GROUP_MAX_CHARS",
-                int(READ_DOCUMENT_MAX_CHARS_SCHEMA_DEFAULT) * 3,
+                int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_DEFAULT) * 3,
             )
-            or int(READ_DOCUMENT_MAX_CHARS_SCHEMA_DEFAULT) * 3
+            or int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_DEFAULT) * 3
         )
     except (TypeError, ValueError):
-        text_group_max_chars = int(READ_DOCUMENT_MAX_CHARS_SCHEMA_DEFAULT) * 3
+        text_group_max_chars = int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_DEFAULT) * 3
     text_group_max_chars = max(
-        int(READ_DOCUMENT_MAX_CHARS_SCHEMA_DEFAULT),
-        min(int(READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX) * 4, int(text_group_max_chars)),
+        int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_DEFAULT),
+        min(int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_MAX) * 4, int(text_group_max_chars)),
     )
 
     try:
@@ -8473,13 +8482,19 @@ def _agentic_read_v2_handler(
     # ---------------------------------------------------------------------
 
     try:
-        artifact_retention_days = int(getattr(settings, "MCP_READ_DOCUMENT_ARTIFACT_RETENTION_DAYS", 30) or 30)
+        artifact_retention_days = int(
+            getattr(settings, "MCP_READ_KNOWLEDGE_ARTIFACT_RETENTION_DAYS", None)
+            or getattr(settings, "MCP_READ_DOCUMENT_ARTIFACT_RETENTION_DAYS", 30)
+            or 30
+        )
     except (TypeError, ValueError):
         artifact_retention_days = 30
     artifact_retention_days = max(1, min(365, artifact_retention_days))
     try:
         artifact_max_per_conversation = int(
-            getattr(settings, "MCP_READ_DOCUMENT_ARTIFACT_MAX_PER_CONVERSATION", 200) or 200
+            getattr(settings, "MCP_READ_KNOWLEDGE_ARTIFACT_MAX_PER_CONVERSATION", None)
+            or getattr(settings, "MCP_READ_DOCUMENT_ARTIFACT_MAX_PER_CONVERSATION", 200)
+            or 200
         )
     except (TypeError, ValueError):
         artifact_max_per_conversation = 200

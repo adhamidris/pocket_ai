@@ -33,8 +33,8 @@ Deliverable: `search_knowledge` output is smaller/cleaner, and stable across rep
 
 ---
 
-### Phase 2 — Replace `read_document` with `read_knowledge` ("Reading Knowledge") (3–7 days)
-- Introduce `read_knowledge(refs=[{ref, cursor?}], max_chars=..., mode=...)` and deprecate/remove `read_document`.
+### Phase 2 — Implement `read_knowledge` ("Reading Knowledge") (3–7 days)
+- Implement `read_knowledge(refs=[{ref, cursor?}], max_chars=..., mode=...)`.
 - Implement canonical reads per ref type:
   - Text: excerpt around anchor (bounded).
   - Tables: structured rows/columns (lossless), plus an optional compact rendering only when it is guaranteed complete (no knowledge loss).
@@ -67,7 +67,7 @@ Deliverable: fewer wasted tool calls, less irrelevant evidence, and consistent b
 
 ### Phase 4 — Remove / Sunset Legacy Paths That Create Noise (2–7 days)
 - Deprecate “content-heavy `search_knowledge` snippets” in agentic mode.
-- Remove `read_document` from the normal agentic workflow (replace with `read_knowledge` only).
+- Ensure the normal agentic workflow uses `read_knowledge` only.
 - Ensure tables are represented canonically via `read_knowledge` (structured rows/columns), not large table-markdown chunks.
 
 Deliverable: a single clear way to retrieve evidence, with minimal duplication and stable budgets.
