@@ -2235,6 +2235,15 @@ def _coerce_str(value: object) -> str:
     return str(value)
 
 
+def _coerce_int(value: object) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _normalize_priority(raw: object) -> str | None:
     if raw is None:
         return None
@@ -4047,17 +4056,23 @@ def _convert_to_agentic_search_response(
                 continue
             chunk_indices: set[int] = set()
             page_numbers: set[int] = set()
-            chunk_ids: list[str] = []
+            # Track best score per chunk index so we can build stable anchor windows.
+            chunk_anchor_scores: dict[int, float] = {}
             best_score: float | None = None
             total_char_estimate = 0
 
             for snippet in group_snippets:
-                chunk_id = str(snippet.get("chunk_id") or snippet.get("id") or "").strip()
-                if chunk_id:
-                    chunk_ids.append(chunk_id)
                 chunk_index = _coerce_int(snippet.get("chunk_index"))
                 if chunk_index is not None and chunk_index >= 0:
                     chunk_indices.add(chunk_index)
+                    try:
+                        raw_score = snippet.get("confidence_score")
+                        score_val = float(raw_score) if raw_score is not None else 0.0
+                    except (TypeError, ValueError):
+                        score_val = 0.0
+                    prior = chunk_anchor_scores.get(int(chunk_index))
+                    if prior is None or score_val > float(prior):
+                        chunk_anchor_scores[int(chunk_index)] = float(score_val)
                 page_number = _coerce_int(snippet.get("page_number"))
                 if page_number is not None and page_number >= 1:
                     page_numbers.add(page_number)
@@ -4078,16 +4093,49 @@ def _convert_to_agentic_search_response(
             if sorted_chunk_indices:
                 chunk_range = [int(sorted_chunk_indices[0]), int(sorted_chunk_indices[-1])]
 
+            # Build up to two anchors that cover distinct hit clusters (gap >= 4).
+            anchors: list[int] = []
+            if sorted_chunk_indices:
+                clusters: list[list[int]] = []
+                current_cluster: list[int] = []
+                prev_idx: int | None = None
+                for idx in sorted_chunk_indices:
+                    if prev_idx is None or (int(idx) - int(prev_idx)) < 4:
+                        current_cluster.append(int(idx))
+                    else:
+                        if current_cluster:
+                            clusters.append(current_cluster)
+                        current_cluster = [int(idx)]
+                    prev_idx = int(idx)
+                if current_cluster:
+                    clusters.append(current_cluster)
+
+                anchor_candidates: list[tuple[float, int]] = []
+                for cluster in clusters:
+                    # Highest score wins; tie-breaker is the lowest chunk index.
+                    best_idx = min(
+                        cluster,
+                        key=lambda chunk_idx: (
+                            -float(chunk_anchor_scores.get(int(chunk_idx), 0.0)),
+                            int(chunk_idx),
+                        ),
+                    )
+                    anchor_candidates.append((float(chunk_anchor_scores.get(int(best_idx), 0.0)), int(best_idx)))
+                anchor_candidates.sort(key=lambda item: (-float(item[0]), int(item[1])))
+                anchors = [int(idx) for _score, idx in anchor_candidates[:2]]
+
             text_chunk_groups[upload_id] = {
                 "upload_id": upload_id,
                 "chunk_count": int(text_chunk_upload_counts.get(upload_id, 0)),
-                "chunk_ids": chunk_ids[:100],
                 "chunk_indices": sorted_chunk_indices[:100],
                 "chunk_range": chunk_range,
                 "pages": sorted_page_numbers[:50],
                 "best_score": best_score,
                 "char_estimate": min(int(total_char_estimate), int(text_chunk_group_max_chars)),
             }
+            if anchors:
+                text_chunk_groups[upload_id]["matched_chunk_index"] = int(anchors[0])
+                text_chunk_groups[upload_id]["anchors"] = [{"chunk_index": int(idx)} for idx in anchors]
 
     promote_text_grouping = bool(
         text_chunk_grouping_enabled and bool(text_chunk_groups)
@@ -4310,14 +4358,9 @@ def _convert_to_agentic_search_response(
                 promoted_upload_ids.add(canonical_upload_id)
                 ref_id = canonical_upload_id
                 if isinstance(text_group, Mapping):
-                    promoted_text_group_manifests[canonical_upload_id] = {
+                    manifest: dict[str, object] = {
                         "upload_id": canonical_upload_id,
                         "chunk_count": int(_coerce_int(text_group.get("chunk_count")) or 0),
-                        "chunk_ids": [
-                            str(chunk_id_value)
-                            for chunk_id_value in (text_group.get("chunk_ids") or [])
-                            if str(chunk_id_value).strip()
-                        ][:100],
                         "chunk_indices": [
                             int(parsed)
                             for parsed in (
@@ -4336,6 +4379,13 @@ def _convert_to_agentic_search_response(
                         "best_score": text_group.get("best_score"),
                         "char_estimate": int(_coerce_int(text_group.get("char_estimate")) or 0),
                     }
+                    parsed_matched = _coerce_int(text_group.get("matched_chunk_index"))
+                    if parsed_matched is not None and parsed_matched >= 0:
+                        manifest["matched_chunk_index"] = int(parsed_matched)
+                    raw_anchors = text_group.get("anchors")
+                    if isinstance(raw_anchors, list) and raw_anchors:
+                        manifest["anchors"] = list(raw_anchors)[:5]
+                    promoted_text_group_manifests[canonical_upload_id] = manifest
 
         if not ref_id:
             continue
@@ -7052,10 +7102,36 @@ def _agentic_read_v2_handler(
         if chunk_range is None:
             return None
 
-        chunk_ids: list[str] = []
-        raw_chunk_ids = raw_manifest.get("chunk_ids")
-        if isinstance(raw_chunk_ids, list):
-            chunk_ids = [str(chunk_id).strip() for chunk_id in raw_chunk_ids if str(chunk_id).strip()][:100]
+        anchors: list[int] = []
+        raw_anchors = raw_manifest.get("anchors")
+        if isinstance(raw_anchors, list):
+            for entry in raw_anchors:
+                if isinstance(entry, Mapping):
+                    parsed = _coerce_int(entry.get("chunk_index"))
+                else:
+                    parsed = _coerce_int(entry)
+                if parsed is None or parsed < 0:
+                    continue
+                anchors.append(int(parsed))
+        if anchors:
+            seen_chunks: set[int] = set()
+            anchors = [idx for idx in anchors if (idx not in seen_chunks and not seen_chunks.add(idx))]
+
+        matched_chunk_index = _coerce_int(raw_manifest.get("matched_chunk_index"))
+        if matched_chunk_index is None:
+            matched_chunk_index = -1
+        if matched_chunk_index < 0:
+            if anchors:
+                matched_chunk_index = int(anchors[0])
+            else:
+                matched_chunk_index = -1
+
+        if matched_chunk_index >= 0:
+            if matched_chunk_index in anchors:
+                anchors = [matched_chunk_index] + [idx for idx in anchors if idx != matched_chunk_index]
+            else:
+                anchors = [matched_chunk_index] + anchors
+        anchors = anchors[:5]
 
         pages: list[int] = []
         raw_pages = raw_manifest.get("pages")
@@ -7082,9 +7158,10 @@ def _agentic_read_v2_handler(
         return {
             "upload_id": str(upload_id),
             "chunk_count": max(0, chunk_count),
-            "chunk_ids": chunk_ids,
             "chunk_indices": chunk_indices,
             "chunk_range": chunk_range,
+            "matched_chunk_index": int(matched_chunk_index) if matched_chunk_index >= 0 else None,
+            "anchors": list(anchors),
             "pages": pages[:50],
             "char_estimate": max(0, char_estimate),
             "best_score": raw_manifest.get("best_score"),
@@ -7708,6 +7785,67 @@ def _agentic_read_v2_handler(
         anchor_used = False
         fallback_used = False
         anchor_start_row = int(start_row_index)
+
+        def _anchor_db_row_index_to_visible_row_start(db_row_index: int) -> int:
+            """
+            Convert a table row index coming from search-time diagnostics (DB row_index,
+            which may include ingestion header/section header rows) into a row_start
+            for read_knowledge paging (visible body rows only).
+            """
+            try:
+                raw_idx = int(db_row_index)
+            except (TypeError, ValueError):
+                return 0
+            if raw_idx < 0:
+                return 0
+            try:
+                table_uuid = uuid.UUID(str(table_id))
+            except (TypeError, ValueError):
+                # If table_id isn't a UUID, best-effort: treat as already-visible index.
+                return max(0, raw_idx)
+
+            non_header_q = models.Q(metadata__row_type__isnull=True) | ~models.Q(
+                metadata__row_type__in=["header", "section_header"]
+            )
+
+            base_qs = KnowledgeUploadTableRow.objects.filter(
+                table_id=table_uuid,
+                table__upload_id=upload_id,
+                table__upload__business_profile=business_profile,
+                table__upload__status=KnowledgeStatus.ACTIVE,
+            )
+
+            # Prefer anchoring on the first visible row at/after the requested DB row index.
+            target = (
+                base_qs.filter(non_header_q, row_index__gte=raw_idx)
+                .order_by("row_index")
+                .only("row_index")
+                .first()
+            )
+            if target is None:
+                # Fall back to the closest visible row at/before the index.
+                target = (
+                    base_qs.filter(non_header_q, row_index__lte=raw_idx)
+                    .order_by("-row_index")
+                    .only("row_index")
+                    .first()
+                )
+            if target is None:
+                return 0
+
+            try:
+                target_db_idx = int(getattr(target, "row_index", 0) or 0)
+            except (TypeError, ValueError):
+                target_db_idx = raw_idx
+
+            try:
+                visible_before = int(
+                    base_qs.filter(non_header_q, row_index__lt=int(target_db_idx)).count()
+                )
+            except Exception:
+                visible_before = max(0, raw_idx)
+            return max(0, int(visible_before))
+
         if use_anchor and anchor_start_row <= 0:
             manifest = _load_table_anchor_manifest(ref_id=item_id, table_id=table_id)
             if isinstance(manifest, Mapping):
@@ -7728,7 +7866,8 @@ def _agentic_read_v2_handler(
                     anchor_rows = [row for row in anchor_rows if (row not in seen_rows and not seen_rows.add(row))]
                     anchor_used = True
                     for row_idx in anchor_rows[:2]:
-                        anchor_start_row = max(0, int(row_idx) - 1)
+                        visible_row_start = _anchor_db_row_index_to_visible_row_start(int(row_idx))
+                        anchor_start_row = max(0, int(visible_row_start) - 1)
                         table_payload, cursor_out, complete = _read_tabular_rows_segment_facts(
                             item_id=item_id,
                             upload_id=upload_id,
@@ -8311,15 +8450,6 @@ def _agentic_read_v2_handler(
 
                     range_start = int(chunk_range[0])
                     range_end = int(chunk_range[1])
-                    window_start = max(0, range_start - int(text_group_neighbor_chunks))
-                    window_end = max(window_start, range_end + int(text_group_neighbor_chunks))
-                    if (window_end - window_start + 1) > int(text_group_max_window_chunks):
-                        window_start = max(0, range_start - int(text_group_neighbor_chunks))
-                        window_end = int(window_start + int(text_group_max_window_chunks) - 1)
-                        if window_end < range_end:
-                            range_window = int(text_group_max_window_chunks)
-                            window_end = int(range_end)
-                            window_start = max(0, int(window_end - range_window + 1))
 
                     grouped_budget_cap = min(
                         int(per_item_budget),
@@ -8328,17 +8458,95 @@ def _agentic_read_v2_handler(
                     )
                     grouped_budget_cap = max(200, grouped_budget_cap)
                     text_group_window_reads += 1
+                    max_window_chunks = max(1, int(text_group_max_window_chunks))
+                    neighbor_chunks = max(0, int(text_group_neighbor_chunks))
 
-                    content_text, cursor_out, complete = _read_chunk_window_segment(
-                        item_id=item_id,
-                        upload_id=upload_id,
-                        start_index=int(window_start),
-                        end_index=int(window_end),
-                        current_index=int(window_start),
-                        start_offset=0,
-                        budget_chars=grouped_budget_cap,
-                        business_profile=business,
-                    )
+                    def _compute_window_for_anchor(anchor_idx: int) -> tuple[int, int]:
+                        core_span = (2 * neighbor_chunks) + 1
+                        if core_span >= max_window_chunks:
+                            start = int(anchor_idx) - int(max_window_chunks // 2)
+                            end = int(start + max_window_chunks - 1)
+                        else:
+                            remaining = int(max_window_chunks - core_span)
+                            extra_left = int(remaining // 2)
+                            extra_right = int(remaining - extra_left)
+                            start = int(anchor_idx) - neighbor_chunks - extra_left
+                            end = int(anchor_idx) + neighbor_chunks + extra_right
+                        if start < 0:
+                            end += -start
+                            start = 0
+                        if end < start:
+                            end = start
+                        return int(start), int(end)
+
+                    def _compute_window_for_range() -> tuple[int, int]:
+                        start = max(0, range_start - neighbor_chunks)
+                        end = max(start, range_end + neighbor_chunks)
+                        if (end - start + 1) > max_window_chunks:
+                            start = max(0, range_start - neighbor_chunks)
+                            end = int(start + max_window_chunks - 1)
+                            if end < range_end:
+                                end = int(range_end)
+                                start = max(0, int(end - max_window_chunks + 1))
+                        return int(start), int(end)
+
+                    # Prefer narrow windows around matched chunk anchors (up to 2) to avoid
+                    # missing far-apart clusters under the max-window cap. Fall back to a
+                    # chunk_range-derived window when anchors don't yield content.
+                    content_text = ""
+                    cursor_out = None
+                    complete = True
+                    window_start = 0
+                    window_end = 0
+
+                    anchors_to_try: list[int] = []
+                    anchor_candidates = text_group_manifest.get("anchors")
+                    if isinstance(anchor_candidates, list):
+                        for entry in anchor_candidates:
+                            parsed = _coerce_int(entry)
+                            if parsed is None or parsed < 0:
+                                continue
+                            anchors_to_try.append(int(parsed))
+                    if anchors_to_try:
+                        seen_anchor_chunks: set[int] = set()
+                        anchors_to_try = [
+                            idx
+                            for idx in anchors_to_try
+                            if (idx not in seen_anchor_chunks and not seen_anchor_chunks.add(idx))
+                        ]
+
+                    for anchor_idx in anchors_to_try[:2]:
+                        candidate_start, candidate_end = _compute_window_for_anchor(int(anchor_idx))
+                        candidate_text, candidate_cursor, candidate_complete = _read_chunk_window_segment(
+                            item_id=item_id,
+                            upload_id=upload_id,
+                            start_index=int(candidate_start),
+                            end_index=int(candidate_end),
+                            current_index=int(candidate_start),
+                            start_offset=0,
+                            budget_chars=grouped_budget_cap,
+                            business_profile=business,
+                        )
+                        if isinstance(candidate_text, str) and candidate_text.strip():
+                            content_text = candidate_text
+                            cursor_out = candidate_cursor
+                            complete = candidate_complete
+                            window_start, window_end = int(candidate_start), int(candidate_end)
+                            break
+
+                    if not (isinstance(content_text, str) and content_text.strip()):
+                        window_start, window_end = _compute_window_for_range()
+                        content_text, cursor_out, complete = _read_chunk_window_segment(
+                            item_id=item_id,
+                            upload_id=upload_id,
+                            start_index=int(window_start),
+                            end_index=int(window_end),
+                            current_index=int(window_start),
+                            start_offset=0,
+                            budget_chars=grouped_budget_cap,
+                            business_profile=business,
+                        )
+
                     payload["text"] = content_text
                     evidence_kind = "document_context"
                     next_cursor = cursor_out.get("cursor") if cursor_out else None

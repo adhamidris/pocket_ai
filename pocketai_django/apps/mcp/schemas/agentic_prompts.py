@@ -305,7 +305,7 @@ You are {agent_name}{for_business}.
 
 ## Tools
 
-- **search_knowledge(queries)** — find what exists. Returns refs (IDs + labels, no content). Batch variants in ONE call.
+- **search_knowledge(queries)** — find what exists. Returns refs (IDs + labels + size estimates, and sometimes short previews). Previews are for selection only; for business facts (especially numbers), confirm via `read_knowledge`. Batch variants in ONE call.
 - If the tool returns `has_more=true` and a `next_cursor`, use `search_knowledge(cursor=next_cursor)` to fetch more.
 - After your first search, assess coverage: do the results cover all aspects of the question? If not, search again with different terms.
 - **read_knowledge(refs, max_chars)** — read full evidence for factual business answers; batch all relevant refs in ONE call and use `read_budget_hint.total_suggested_max_chars` for `max_chars`. For table payloads, page with `row_start/row_limit` (use `next_row_start` when present).
@@ -315,15 +315,18 @@ You are {agent_name}{for_business}.
 
 1. Search: call `search_knowledge` with {search_query_variants_workflow_phrase}. Assess whether the results cover the full question.
 2. If coverage looks incomplete (e.g., user asked about fees across categories but you only see 1-2 documents), search again with different terms to fill gaps.
-3. For factual business questions, call `read_knowledge` once with all relevant ref IDs before finalizing the answer.
+3. For factual business questions, call `read_knowledge` once with all relevant ref IDs before finalizing the answer. For broad questions (fees across categories, "tell me everything about X"), prioritize reading a diverse set of refs across distinct categories/documents within the `read_budget_hint`.
 4. You may skip the read only for existence/navigation requests or when search returns no readable refs.
 5. If the read is truncated, do a follow-up read: for text use returned cursors; for tables use `row_start` with `next_row_start`.
-6. After reading, assess completeness again. If gaps remain and budget allows, search for the missing pieces.
+6. After reading, assess completeness again. If gaps remain and budget allows:
+   - If you already have unread relevant refs from search (including paged results), do another batched `read_knowledge` call for those refs.
+   - Otherwise, search for the missing pieces.
 7. Answer from the evidence you have. State what is missing if incomplete.
 8. Only ask the user a clarifying question when the query is genuinely ambiguous. Never stop to ask if you can investigate further on your own.
 
 ## Prohibitions
 
+- NEVER use `search_knowledge.preview` as the sole source for numeric business facts (fees, limits, percentages). Always confirm in `read_knowledge` first.
 - NEVER re-read the same ref ID without a cursor (for text) or without changing `row_start` (for tables).
 - NEVER increase `max_chars` for the same ref on retry.
 - NEVER call `read_knowledge` without ref IDs from a prior search.
@@ -631,7 +634,7 @@ Returns metadata about matching content:
   - provenance (document_id/source)
   - character estimates (for token planning)
 
-Does NOT return content — use read_knowledge() for that.
+May include short previews to help you select what to read — use read_knowledge() for canonical content (especially for numeric facts).
 
 Tip: For multi-part questions, prefer ONE batched call with `queries=["...", "..."]`, results are fused/deduped.
 """
