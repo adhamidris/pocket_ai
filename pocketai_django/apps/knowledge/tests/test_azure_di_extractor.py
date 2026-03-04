@@ -188,6 +188,59 @@ class AzureDocumentIntelligenceExtractorTests(SimpleTestCase):
         self.assertEqual(issues, [])
         self.assertEqual(meta.get("table_count"), 1)
 
+    def test_extract_tables_does_not_overwrite_value_cells_with_spanning_labels(self) -> None:
+        """
+        Regression: Azure DI can emit broad-span label cells (e.g. "Annual Fees")
+        whose spans overlap value columns. If we write them after the values, we
+        lose the numeric/value evidence and the table becomes unreadable.
+        """
+        extractor = AzureDocumentIntelligenceExtractor(endpoint="https://example.test", key="secret")
+        analyze_result = {
+            "pages": [],
+            "tables": [
+                {
+                    "caption": "Fees Table",
+                    "rowCount": 2,
+                    "columnCount": 2,
+                    "cells": [
+                        # Value cell first (row 1, col 1)
+                        {
+                            "rowIndex": 1,
+                            "columnIndex": 1,
+                            "rowSpan": 1,
+                            "columnSpan": 1,
+                            "content": "EGP 200",
+                            "kind": "",
+                        },
+                        # Spanning label cell later (row 1, spans both columns)
+                        {
+                            "rowIndex": 1,
+                            "columnIndex": 0,
+                            "rowSpan": 1,
+                            "columnSpan": 2,
+                            "content": "Annual Fees",
+                            "kind": "",
+                        },
+                    ],
+                }
+            ],
+        }
+
+        with mock.patch.object(
+            extractor,
+            "_analyze_document",
+            return_value=(analyze_result, [], {"status": "succeeded"}),
+        ):
+            tables, issues, meta = extractor.extract_tables(self.path)
+
+        self.assertEqual(issues, [])
+        self.assertEqual(meta.get("table_count"), 1)
+        self.assertEqual(len(tables), 1)
+        self.assertEqual(len(tables[0].rows), 2)
+
+        # The per-column value must survive the spanning label write.
+        self.assertEqual(tables[0].rows[1].cells[1].raw_text, "EGP 200")
+
     def test_derive_table_title_handles_mapping_title_without_crashing(self) -> None:
         table_payload = TablePayload(
             order_index=1,

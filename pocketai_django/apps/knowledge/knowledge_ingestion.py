@@ -2064,6 +2064,13 @@ class AzureDocumentIntelligenceExtractor:
                 # update column_span in cell_lookup.
                 span = len(overlapping)
                 for oc in overlapping:
+                    # Only fill empty targets (or identical values). Never overwrite
+                    # an already-populated cell because it likely contains a
+                    # per-column value (e.g. "EGP 200") that should trump a
+                    # broad-span label.
+                    existing_value = grid[r][oc]
+                    if existing_value and str(existing_value).strip() and str(existing_value).strip() != str(value).strip():
+                        continue
                     grid[r][oc] = value
                     existing_meta = cell_lookup.get((r, oc)) or {}
                     cell_lookup[(r, oc)] = {
@@ -2752,6 +2759,54 @@ class AzureDocumentIntelligenceExtractor:
             grid: list[list[str]] = [["" for _ in range(col_count)] for _ in range(row_count)]
             cell_lookup: dict[tuple[int, int], dict[str, Any]] = {}
 
+            def _cell_value_signal(text: str) -> int:
+                """
+                Prefer value-like cells over label-like cells when spans overlap.
+
+                Azure DI can emit broad-span "labels" (e.g. "Annual Fees") whose
+                geometry overlaps value columns. If we write labels after values,
+                the grid becomes unreadable (no numeric/value evidence). This
+                signal is intentionally conservative and generic.
+                """
+                sample = str(text or "").strip()
+                if not sample:
+                    return 0
+                if _column_numeric_signal(sample):
+                    return 3
+                lowered = sample.strip().lower()
+                if lowered in {"free", "no fees", "no fee", "n/a", "na", "--", "-"}:
+                    return 2
+                return 0
+
+            def _cell_priority(text: str, meta: Mapping[str, Any]) -> tuple[int, int, int]:
+                value_score = _cell_value_signal(text)
+                try:
+                    span_area = int(meta.get("row_span") or 1) * int(meta.get("column_span") or 1)
+                except (TypeError, ValueError):
+                    span_area = 1
+                span_score = -max(1, span_area)  # smaller span wins on ties
+                kind = str(meta.get("kind") or "").strip().lower()
+                kind_score = -1 if kind in {"columnheader", "rowheader"} else 0
+                return (value_score, span_score, kind_score)
+
+            def _should_write_cell(
+                *,
+                existing_text: str,
+                existing_meta: Mapping[str, Any] | None,
+                new_text: str,
+                new_meta: Mapping[str, Any],
+            ) -> bool:
+                new_text = str(new_text or "").strip()
+                if not new_text:
+                    return False
+                existing_text = str(existing_text or "").strip()
+                if not existing_text:
+                    return True
+                if existing_text == new_text:
+                    return False
+                existing_meta = existing_meta or {}
+                return _cell_priority(new_text, new_meta) > _cell_priority(existing_text, existing_meta)
+
             for cell in cells:
                 try:
                     r_idx = int(cell.get("rowIndex") or 0)
@@ -2767,16 +2822,26 @@ class AzureDocumentIntelligenceExtractor:
                     cell_confidences.append(float(confidence))
                 if kind in {"columnheader", "rowheader"}:
                     header_rows.add(r_idx)
+                regions = cell.get("boundingRegions") or []
                 for rr in range(r_idx, min(r_idx + row_span, row_count)):
                     for cc in range(c_idx, min(c_idx + col_span, col_count)):
-                        grid[rr][cc] = content
-                        cell_lookup[(rr, cc)] = {
+                        new_meta = {
                             "row_span": row_span,
                             "column_span": col_span,
                             "kind": kind,
                             "confidence": confidence,
-                            "regions": cell.get("boundingRegions") or [],
+                            "regions": regions,
                         }
+                        existing_meta = cell_lookup.get((rr, cc)) or {}
+                        if not _should_write_cell(
+                            existing_text=grid[rr][cc],
+                            existing_meta=existing_meta,
+                            new_text=content,
+                            new_meta=new_meta,
+                        ):
+                            continue
+                        grid[rr][cc] = content
+                        cell_lookup[(rr, cc)] = new_meta
 
             column_schema: list[str] = []
             header_row_indices = sorted(header_rows)
@@ -5766,8 +5831,14 @@ class KnowledgeIngestionService:
                 or signals.get("valid_thru")
             ):
                 quality = max(0.0, quality - 0.4)
+            # Align with read_knowledge: "visible body rows" exclude header + section_header.
             data_rows = len(
-                [row for row in table.rows if (row.metadata or {}).get("row_type") != "header"]
+                [
+                    row
+                    for row in (table.rows or [])
+                    if str((row.metadata or {}).get("row_type") or "").strip().lower()
+                    not in {"header", "section_header"}
+                ]
             )
             weight = 1.0 + (min(5, data_rows) / 5.0)
             total_score += quality * weight
@@ -5794,7 +5865,12 @@ class KnowledgeIngestionService:
         valid_bbox_count = 0
         for table in tables:
             data_rows = len(
-                [row for row in (table.rows or []) if (row.metadata or {}).get("row_type") != "header"]
+                [
+                    row
+                    for row in (table.rows or [])
+                    if str((row.metadata or {}).get("row_type") or "").strip().lower()
+                    not in {"header", "section_header"}
+                ]
             )
             data_rows_per_table.append(data_rows)
             if data_rows <= 2:
@@ -6001,7 +6077,8 @@ class KnowledgeIngestionService:
         return [
             row
             for row in (table.rows or [])
-            if str((row.metadata or {}).get("row_type") or "").strip().lower() != "header"
+            if str((row.metadata or {}).get("row_type") or "").strip().lower()
+            not in {"header", "section_header"}
         ]
 
     def _table_column_count(self, table: TablePayload) -> int:
@@ -6503,53 +6580,79 @@ class KnowledgeIngestionService:
 
                 # Crop extracts can be partial on dense PDFs. If the first candidate is rejected,
                 # run a single full-page retry before final rejection.
+                #
+                # However, not every guardrail rejection is likely to be fixed by switching to
+                # a full-page render. Only retry when the rejection indicates missing coverage
+                # (rows/schema/values/scope), or when this repair was triggered by misalignment.
                 if not accepted and render_mode == "crop":
-                    retry_bytes = self._render_full_page(path, int(table.page_number))
-                    if retry_bytes:
-                        attempted_modes.append("full_page")
+                    retry_reasons = set(diagnostics.get("rejection_reasons") or [])
+                    coverage_retry_reasons = {
+                        "row_coverage_regression",
+                        "schema_coverage_regression",
+                        "value_coverage_regression",
+                        "scope_row_regression",
+                        "scope_quality_regression",
+                    }
+                    should_retry_full_page = bool(retry_reasons & coverage_retry_reasons) or (
+                        repair_reason == "misalignment"
+                    )
+                    if not should_retry_full_page:
                         logger.info(
-                            "table.vlm.retry_full_page_after_guardrail_rejection table=%s page=%s reasons=%s",
+                            "table.vlm.skip_full_page_retry_after_guardrail_rejection table=%s page=%s reasons=%s",
                             table.order_index,
                             table.page_number,
-                            ",".join(diagnostics.get("rejection_reasons") or []),
+                            ",".join(sorted(retry_reasons)),
                         )
-                        retry_payload = self._run_vlm_table_repair(
-                            client,
-                            retry_bytes,
-                            render_mode="full_page",
-                            table_hint=table_hint,
-                        )
-                        if retry_payload:
-                            retry_table = self._table_payload_from_vlm(
-                                payload=retry_payload,
-                                order_index=table.order_index,
-                                page_number=int(table.page_number),
-                                bbox=table.bbox,
-                                title=table.title,
-                                section_heading=table.section_heading,
-                                source_metadata=table.metadata,
+                        # Fall through to rejection handling below.
+                    else:
+                        retry_bytes = self._render_full_page(path, int(table.page_number))
+                        if retry_bytes:
+                            attempted_modes.append("full_page")
+                            logger.info(
+                                "table.vlm.retry_full_page_after_guardrail_rejection table=%s page=%s reasons=%s",
+                                table.order_index,
+                                table.page_number,
+                                ",".join(diagnostics.get("rejection_reasons") or []),
                             )
-                            if retry_table:
-                                retry_accepted, retry_diagnostics, retry_guarded_table = self._evaluate_vlm_guardrails(
-                                    baseline=table,
-                                    candidate=retry_table,
+                            retry_payload = self._run_vlm_table_repair(
+                                client,
+                                retry_bytes,
+                                render_mode="full_page",
+                                table_hint=table_hint,
+                            )
+                            if retry_payload:
+                                retry_table = self._table_payload_from_vlm(
+                                    payload=retry_payload,
+                                    order_index=table.order_index,
+                                    page_number=int(table.page_number),
+                                    bbox=table.bbox,
+                                    title=table.title,
+                                    section_heading=table.section_heading,
+                                    source_metadata=table.metadata,
                                 )
-                                retry_record = {
-                                    "order_index": table.order_index,
-                                    "page_number": table.page_number,
-                                    "reason": repair_reason,
-                                    "render_mode": "full_page_retry",
-                                    **retry_diagnostics,
-                                }
-                                meta.setdefault("guardrail_diagnostics", []).append(retry_record)
-                                if retry_accepted:
-                                    accepted = True
-                                    diagnostics = retry_diagnostics
-                                    guarded_table = retry_guarded_table
-                                    render_mode = "full_page_retry"
-                                else:
-                                    diagnostics = retry_diagnostics
-                                    render_mode = "full_page_retry"
+                                if retry_table:
+                                    retry_accepted, retry_diagnostics, retry_guarded_table = (
+                                        self._evaluate_vlm_guardrails(
+                                            baseline=table,
+                                            candidate=retry_table,
+                                        )
+                                    )
+                                    retry_record = {
+                                        "order_index": table.order_index,
+                                        "page_number": table.page_number,
+                                        "reason": repair_reason,
+                                        "render_mode": "full_page_retry",
+                                        **retry_diagnostics,
+                                    }
+                                    meta.setdefault("guardrail_diagnostics", []).append(retry_record)
+                                    if retry_accepted:
+                                        accepted = True
+                                        diagnostics = retry_diagnostics
+                                        guarded_table = retry_guarded_table
+                                        render_mode = "full_page_retry"
+                                    else:
+                                        diagnostics = retry_diagnostics
+                                        render_mode = "full_page_retry"
 
                 if not accepted:
                     meta["rejected"] += 1
@@ -9458,6 +9561,14 @@ class KnowledgeIngestionService:
         rows = table_payload.rows or []
         page_number = table_payload.page_number or 0
         order_index = table_payload.order_index or 0
+
+        def _row_type(row: Any) -> str:
+            meta = row.metadata if isinstance(getattr(row, "metadata", None), Mapping) else {}
+            return str(meta.get("row_type") or "").strip().lower()
+
+        # "Readable" rows must match read_knowledge's visible-row filter.
+        readable_rows = [row for row in rows if _row_type(row) not in {"header", "section_header"}]
+        section_header_rows = [row for row in rows if _row_type(row) == "section_header"]
         
         # Heuristic 1: Nonsense column names
         nonsense_patterns = [
@@ -9496,11 +9607,11 @@ class KnowledgeIngestionService:
             signals['spaced_characters'] = True
             penalties += 4
         
-        # Heuristic 3: Row/column consistency
+        # Heuristic 3: Row/column consistency (use readable rows only).
         row_lengths: list[int] = []
         non_empty_cells = 0
         expected_columns = len(column_schema)
-        for row in rows:
+        for row in readable_rows:
             cell_list = list(row.cells or [])
             row_lengths.append(len(cell_list))
             for cell in cell_list:
@@ -9511,7 +9622,7 @@ class KnowledgeIngestionService:
         if rows and expected_columns:
             matching = sum(1 for length in row_lengths if length == expected_columns)
             row_consistency = matching / max(1, len(row_lengths))
-            fill_ratio = non_empty_cells / max(1, expected_columns * len(rows))
+            fill_ratio = non_empty_cells / max(1, expected_columns * max(1, len(readable_rows)))
             signals["row_consistency"] = round(row_consistency, 2)
             signals["cell_fill_ratio"] = round(fill_ratio, 2)
             if row_consistency < 0.6:
@@ -9568,11 +9679,18 @@ class KnowledgeIngestionService:
                 signals['unique_ratio'] = round(unique_values / len(cell_values), 2)
                 penalties += 2
         
-        # Heuristic 6: Too few data rows
-        data_row_count = len([r for r in rows if not (r.metadata or {}).get('row_type') == 'header'])
+        # Heuristic 6: Too few readable rows (header + section_header excluded).
+        data_row_count = len(readable_rows)
         if data_row_count < 2:
             signals['insufficient_rows'] = True
             penalties += 2
+
+        # Heuristic 6b: No readable rows at all.
+        # If our postprocess classified everything as section_header/header, the
+        # table will be unreadable at runtime (read_knowledge excludes them).
+        if not readable_rows and section_header_rows:
+            signals["no_readable_rows"] = True
+            penalties += 5
         
         # Heuristic 7: Header/footer position (first/last page)
         if page_number == 1 and order_index == 0:
@@ -9608,7 +9726,7 @@ class KnowledgeIngestionService:
         # Detects when header cells are empty but corresponding data cells have values
         # This is a common Azure DI extraction error for complex tables
         if header_cells and rows:
-            data_rows_for_check = [r for r in rows if (r.metadata or {}).get("row_type") != "header"][:5]
+            data_rows_for_check = readable_rows[:5]
             empty_header_with_data: list[int] = []
             
             for col_idx, header_val in enumerate(header_cells):
