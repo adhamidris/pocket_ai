@@ -1479,9 +1479,8 @@ class KnowledgeSearchService:
                 diagnostics=dict(alias_result.diagnostics or {}),
                 short_circuit=False,
             )
-        auto_decision_contract = self._derive_auto_decision_contract(
-            requires_clarification=bool(classification.requires_clarification) if classification else False,
-        )
+        # Agentic RAG: do not surface "needs clarification" contracts. Always proceed best-effort.
+        auto_decision_contract = self._derive_auto_decision_contract(requires_clarification=False)
         diagnostics: dict[str, object] = {
             "original_query": traits.original,
             "normalized_query": traits.normalized,
@@ -1519,8 +1518,11 @@ class KnowledgeSearchService:
             "intent_fallback_used": bool(classification.fallback_used) if classification else False,
             "intent_fallback_attempted": bool(table_context.get("intent_fallback_attempted")),
             "intent_fallback_applied": bool(table_context.get("intent_fallback_applied")),
-            "intent_requires_clarification": bool(classification.requires_clarification) if classification else False,
-            "intent_clarification_question": (
+            # Keep the classifier signal for debugging, but do not turn it into a blocking clarification.
+            "intent_requires_clarification": False,
+            "intent_clarification_question": "",
+            "intent_classifier_requires_clarification": bool(classification.requires_clarification) if classification else False,
+            "intent_classifier_clarification_question": (
                 classification.clarification_question if classification else ""
             ),
             "tenant_lexicon_entity_terms_count": int(table_context.get("tenant_lexicon_entity_terms_count") or 0),
@@ -1554,42 +1556,16 @@ class KnowledgeSearchService:
             diagnostics["strategy_comprehensive"] = strategy_result.hints.comprehensive_intent
             diagnostics["strategy_applied_limit"] = limit
 
+        # Agentic RAG should not block on "clarification". Keep the signal for diagnostics,
+        # but continue retrieval and answer best-effort with available evidence.
         if classification and classification.requires_clarification and not traits.is_identifier_like:
-            diagnostics["path"] = "clarification"
-            diagnostics["reason"] = "low_intent_confidence"
-            diagnostics["snippet_count"] = 0
-            diagnostics["total_duration_ms"] = self._duration_ms(overall_start)
-            clarification_cache_key = self._result_cache_key(
-                business_profile=business_profile,
-                traits=traits,
-                limit=limit,
-                alias_result=alias_result,
-                table_context=table_context,
-                feature_state=feature_state,
-                identifier_filter=identifier_filter,
-                allowed_upload_ids=allowed_upload_ids,
-                allowed_explicit_upload_ids=allowed_explicit_upload_ids,
-            )
-            result_obj = KnowledgeSearchResult(
-                snippets=tuple(),
-                status="needs_clarification",
-                diagnostics=diagnostics,
-            )
-            self._result_cache_set(clarification_cache_key, result_obj, limit=limit)
-            self._session_cache_set(session_cache, clarification_cache_key, result_obj, limit=limit)
-            self._record_retrieval_event(
-                business_profile=business_profile,
-                traits=traits,
-                alias_result=alias_result,
-                result=result_obj,
-                feature_state=feature_state,
-            )
-            self._log_search_summary(
-                business_profile=business_profile,
-                request_id=request_id,
-                result=result_obj,
-            )
-            return result_obj
+            diagnostics.setdefault("clarification_suggested", True)
+            diagnostics.setdefault("clarification_reason", "low_intent_confidence")
+            if classification.clarification_question:
+                diagnostics.setdefault(
+                    "clarification_question",
+                    classification.clarification_question,
+                )
         
         cache_key = self._result_cache_key(
             business_profile=business_profile,
@@ -1606,9 +1582,50 @@ class KnowledgeSearchService:
         if session_cache is not None:
             cached_result = self._session_cache_get(session_cache, cache_key)
             if cached_result:
+                cached_status = str(cached_result.status or "").strip().lower() or "not_found"
+                if cached_status == "needs_clarification":
+                    # Ignore stale clarification cache entries; agentic mode should proceed best-effort.
+                    cached_result = None
+                else:
+                    cached_diag = dict(cached_result.diagnostics or {})
+                    cached_diag["cache_hit"] = True
+                    cached_diag["cache_scope"] = "session"
+                    cached_diag["request_id"] = str(request_id)
+                    cached_diag["total_duration_ms"] = self._duration_ms(overall_start)
+                    snippets = cached_result.snippets[:limit]
+                    snippets, collapse_diag = self._collapse_snippets_by_evidence_group(
+                        snippets,
+                        query_text=traits.normalized or traits.original or query,
+                        tokens=traits.tokens,
+                        limit=limit,
+                    )
+                    cached_diag.update(collapse_diag)
+                    cached_diag["snippet_count"] = len(snippets)
+                    result_obj = KnowledgeSearchResult(
+                        snippets=snippets,
+                        status=cached_status,
+                        diagnostics=cached_diag,
+                    )
+                    self._record_retrieval_event(
+                        business_profile=business_profile,
+                        traits=traits,
+                        alias_result=alias_result,
+                        result=result_obj,
+                        feature_state=feature_state,
+                    )
+                    self._log_search_summary(
+                        business_profile=business_profile,
+                        request_id=request_id,
+                        result=result_obj,
+                    )
+                    return result_obj
+        cached_result = self._result_cache_get(cache_key)
+        if cached_result:
+            cached_status = str(cached_result.status or "").strip().lower() or "not_found"
+            if cached_status != "needs_clarification":
                 cached_diag = dict(cached_result.diagnostics or {})
                 cached_diag["cache_hit"] = True
-                cached_diag["cache_scope"] = "session"
+                cached_diag["cache_scope"] = "business"
                 cached_diag["request_id"] = str(request_id)
                 cached_diag["total_duration_ms"] = self._duration_ms(overall_start)
                 snippets = cached_result.snippets[:limit]
@@ -1622,9 +1639,10 @@ class KnowledgeSearchService:
                 cached_diag["snippet_count"] = len(snippets)
                 result_obj = KnowledgeSearchResult(
                     snippets=snippets,
-                    status=cached_result.status,
+                    status=cached_status,
                     diagnostics=cached_diag,
                 )
+                self._session_cache_set(session_cache, cache_key, result_obj, limit=limit)
                 self._record_retrieval_event(
                     business_profile=business_profile,
                     traits=traits,
@@ -1638,41 +1656,6 @@ class KnowledgeSearchService:
                     result=result_obj,
                 )
                 return result_obj
-        cached_result = self._result_cache_get(cache_key)
-        if cached_result:
-            cached_diag = dict(cached_result.diagnostics or {})
-            cached_diag["cache_hit"] = True
-            cached_diag["cache_scope"] = "business"
-            cached_diag["request_id"] = str(request_id)
-            cached_diag["total_duration_ms"] = self._duration_ms(overall_start)
-            snippets = cached_result.snippets[:limit]
-            snippets, collapse_diag = self._collapse_snippets_by_evidence_group(
-                snippets,
-                query_text=traits.normalized or traits.original or query,
-                tokens=traits.tokens,
-                limit=limit,
-            )
-            cached_diag.update(collapse_diag)
-            cached_diag["snippet_count"] = len(snippets)
-            result_obj = KnowledgeSearchResult(
-                snippets=snippets,
-                status=cached_result.status,
-                diagnostics=cached_diag,
-            )
-            self._session_cache_set(session_cache, cache_key, result_obj, limit=limit)
-            self._record_retrieval_event(
-                business_profile=business_profile,
-                traits=traits,
-                alias_result=alias_result,
-                result=result_obj,
-                feature_state=feature_state,
-            )
-            self._log_search_summary(
-                business_profile=business_profile,
-                request_id=request_id,
-                result=result_obj,
-            )
-            return result_obj
         if alias_result.short_circuit and alias_result.hits:
             chunk_ids = [hit.chunk_id for hit in alias_result.hits[: max(limit, self.alias_result_cap)]]
             neighbor = max(1, self.alias_neighbor_window)
@@ -1962,52 +1945,9 @@ class KnowledgeSearchService:
         diagnostics.update(auto_arbitration_diag)
         table_intent = bool(auto_arbitration_diag.get("auto_arbitration_table_intent", table_intent))
 
-        if bool(auto_arbitration_diag.get("auto_arbitration_needs_clarification")) and not traits.is_identifier_like:
-            categories, top_categories = self._scope_categories_for_contract(
-                scope_summary=scope_summary,
-            )
-            clarification_question, table_evidence_label, text_evidence_label = (
-                self._build_auto_ambiguity_clarification_question(
-                    hits=chunk_hits,
-                    query_tokens=traits.tokens,
-                )
-            )
-            diagnostics["path"] = "clarification"
-            diagnostics["reason"] = "auto_source_ambiguity"
-            diagnostics["intent_requires_clarification"] = True
-            diagnostics["intent_clarification_question"] = clarification_question
-            diagnostics["auto_arbitration_table_evidence_label"] = table_evidence_label
-            diagnostics["auto_arbitration_text_evidence_label"] = text_evidence_label
-            diagnostics["categories"] = list(categories)
-            diagnostics["top_categories"] = list(top_categories)
-            diagnostics.setdefault("clarification_ui_mode", "text")
-            diagnostics["snippet_count"] = 0
-            diagnostics["total_duration_ms"] = self._duration_ms(overall_start)
-            diagnostics["auto_decision_contract"] = self._derive_auto_decision_contract(
-                scoring_diagnostics=diagnostics,
-                requires_clarification=True,
-                scope_summary=scope_summary,
-            )
-            result_obj = KnowledgeSearchResult(
-                snippets=tuple(),
-                status="needs_clarification",
-                diagnostics=diagnostics,
-            )
-            self._result_cache_set(cache_key, result_obj, limit=limit)
-            self._session_cache_set(session_cache, cache_key, result_obj, limit=limit)
-            self._record_retrieval_event(
-                business_profile=business_profile,
-                traits=traits,
-                alias_result=alias_result,
-                result=result_obj,
-                feature_state=feature_state,
-            )
-            self._log_search_summary(
-                business_profile=business_profile,
-                request_id=request_id,
-                result=result_obj,
-            )
-            return result_obj
+        # NOTE: `auto_arbitration_needs_clarification` is intentionally ignored in agentic mode.
+        # We proceed with the best-effort route and allow later fusion (e.g. parallel table search)
+        # to reconcile table/text evidence without pausing the conversation.
 
         chunk_hits, _context_hits, route_diag = self._route_chunk_hits(
             chunk_hits,
@@ -2018,7 +1958,7 @@ class KnowledgeSearchService:
         diagnostics["auto_decision_contract"] = self._derive_auto_decision_contract(
             route_diagnostics=route_diag,
             scoring_diagnostics=diagnostics,
-            requires_clarification=bool(classification.requires_clarification) if classification else False,
+            requires_clarification=False,
             scope_summary=scope_summary,
         )
         diagnostics["chunk_candidate_count"] = len(chunk_hits)
@@ -9194,10 +9134,12 @@ class KnowledgeSearchService:
         )
 
         if ambiguous:
-            decision = "clarification"
+            # Agentic mode: do not ask the user to choose table-only vs text-only.
+            # Fall back to the existing hint and let fusion/parallel search reconcile evidence.
+            decision = "tie_fallback_to_hint"
             resolved_table_intent = bool(table_intent_hint)
-            reason = "score_margin_ambiguous"
-            needs_clarification = True
+            reason = "score_margin_ambiguous_fallback_to_hint"
+            needs_clarification = False
         elif table_score > text_score and margin >= self.auto_mode_margin_threshold:
             decision = "table"
             resolved_table_intent = True
@@ -9619,18 +9561,12 @@ class KnowledgeSearchService:
                 table_context=table_context,
             )
             if detected_conflict:
+                # Conflicts should be non-blocking in agentic RAG. Keep evidence, mark the conflict,
+                # and let the assistant explain uncertainty or present both values if needed.
                 conflict_payload = dict(detected_conflict)
                 updated_diagnostics["conflict_detected"] = True
                 updated_diagnostics["conflict_context"] = conflict_payload
-                updated_diagnostics["path"] = "clarification"
                 updated_diagnostics["reason"] = "conflicting_evidence"
-                updated_diagnostics["intent_requires_clarification"] = True
-                updated_diagnostics["intent_clarification_question"] = self._build_conflict_clarification_question(
-                    conflict_payload
-                )
-                updated_status = "needs_clarification"
-                updated_snippets = tuple()
-                updated_diagnostics["snippet_count"] = 0
 
         no_result_reason = None
         if updated_status == "not_found":
@@ -9640,10 +9576,7 @@ class KnowledgeSearchService:
             )
             updated_diagnostics["no_result_reason"] = no_result_reason
 
-        requires_clarification = bool(
-            updated_status == "needs_clarification"
-            or updated_diagnostics.get("intent_requires_clarification")
-        )
+        requires_clarification = bool(updated_status == "needs_clarification")
         scope_summary = (
             updated_diagnostics.get("scope_summary")
             if isinstance(updated_diagnostics.get("scope_summary"), Mapping)

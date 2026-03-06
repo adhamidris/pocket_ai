@@ -8,18 +8,18 @@ This repo contains:
 MCP is the only active orchestrator path (legacy orchestration is deprecated).
 
 Status:
-- Platform is **beta**.
-- Voice stack is implemented but **dev-only**.
+- Platform is in **beta / launch preparation**.
+- Voice stack exists in the repo, but its rollout status should be verified in `pocketai_django/README.md` and current env flags before assuming it is active.
 
 ## Django (pocketai_django)
 
 ```sh
 cd pocketai_django
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python manage.py migrate
-python manage.py runserver 127.0.0.1:3000
+python3 -m venv .venv
+. .venv/bin/activate
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python manage.py migrate
+.venv/bin/python manage.py runserver 127.0.0.1:3000
 ```
 
 ### Local dev workers (sub-agents + voice calls)
@@ -30,7 +30,7 @@ Docs index: `pocketai_django/docs/README.md` (voice docs are **dev-only**).
 
 ## Django LLM configuration
 
-The Django-side AI orchestration loads API credentials from the repository-level `.env`. Add entries such as `DEEPSEEK_API_KEY` or `OPENAI_API_KEY` there before running `python manage.py runserver`.
+The Django-side AI orchestration loads API credentials from the repository-level `.env`. Add entries such as `DEEPSEEK_API_KEY` or `OPENAI_API_KEY` there before running `.venv/bin/python manage.py runserver`.
 
 To confirm that Django can see your key (and that heuristics won’t run), execute:
 

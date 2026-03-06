@@ -183,13 +183,12 @@ class KnowledgeSearchServicePhaseSixSemanticsTests(SimpleTestCase):
             table_blocked=False,
         )
 
-        self.assertEqual(status, "needs_clarification")
-        self.assertFalse(refined_snippets)
+        self.assertEqual(status, "ok")
+        self.assertEqual(refined_snippets, snippets)
         self.assertTrue(bool(diagnostics.get("conflict_detected")))
         self.assertEqual(str(diagnostics.get("reason") or ""), "conflicting_evidence")
-        self.assertIn("conflicting values", str(diagnostics.get("intent_clarification_question") or "").lower())
         contract = diagnostics.get("auto_decision_contract") or {}
-        self.assertTrue(bool(contract.get("needs_clarification")))
+        self.assertFalse(bool(contract.get("needs_clarification")))
         self.assertTrue(bool(contract.get("conflict_detected")))
 
     @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
@@ -381,8 +380,9 @@ class KnowledgeSearchServiceAutoArbitrationTests(SimpleTestCase):
             },
             table_intent_hint=True,
         )
-        self.assertEqual(arbitration["auto_arbitration_decision"], "clarification")
-        self.assertTrue(arbitration["auto_arbitration_needs_clarification"])
+        self.assertEqual(arbitration["auto_arbitration_decision"], "tie_fallback_to_hint")
+        self.assertFalse(arbitration["auto_arbitration_needs_clarification"])
+        self.assertTrue(arbitration["auto_arbitration_table_intent"])
 
     @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
     def test_dynamic_ambiguity_question_uses_table_and_text_evidence_labels(self, _build_embeddings) -> None:
@@ -1298,7 +1298,7 @@ class KnowledgeSearchServiceClarificationTests(TestCase):
         )
 
     @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
-    def test_low_confidence_intent_returns_needs_clarification(self, _build_embeddings) -> None:
+    def test_low_confidence_intent_does_not_block_with_needs_clarification(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         classification = QueryClassification(
             intent=QueryIntent.EXPLORATORY,
@@ -1339,30 +1339,27 @@ class KnowledgeSearchServiceClarificationTests(TestCase):
             mock.patch.object(service, "_table_query_context", return_value=table_context),
             mock.patch.object(service, "_business_has_tables", return_value=False),
             mock.patch.object(service, "search_by_alias", return_value=AliasSearchResult(tuple(), {})),
-            mock.patch.object(service, "_chunk_hits") as chunk_hits,
+            mock.patch.object(service, "_chunk_hits", return_value=tuple()) as chunk_hits,
         ):
             result = service.search(
                 business_profile=self.business,
                 query="show me what to do",
             )
 
-        self.assertEqual(result.status, "needs_clarification")
+        self.assertEqual(result.status, "not_found")
         self.assertFalse(result.snippets)
-        self.assertEqual(result.diagnostics.get("path"), "clarification")
-        self.assertEqual(
-            result.diagnostics.get("intent_clarification_question"),
-            "Do you want one specific record or a full list?",
-        )
+        self.assertTrue(bool(result.diagnostics.get("clarification_suggested")))
+        self.assertEqual(result.diagnostics.get("clarification_reason"), "low_intent_confidence")
+        self.assertEqual(result.diagnostics.get("clarification_question"), "Do you want one specific record or a full list?")
         auto_contract = result.diagnostics.get("auto_decision_contract") or {}
-        self.assertEqual(auto_contract.get("decision"), "clarification")
-        self.assertTrue(auto_contract.get("needs_clarification"))
+        self.assertFalse(auto_contract.get("needs_clarification"))
         self.assertEqual(auto_contract.get("table_score"), 0.0)
         self.assertEqual(auto_contract.get("text_score"), 0.0)
         self.assertEqual(auto_contract.get("margin"), 0.0)
-        chunk_hits.assert_not_called()
+        chunk_hits.assert_called()
 
     @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
-    def test_ambiguous_auto_scores_return_needs_clarification_before_route(self, _build_embeddings) -> None:
+    def test_ambiguous_auto_scores_do_not_block_with_needs_clarification(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         classification = QueryClassification(
             intent=QueryIntent.SPECIFIC_LOOKUP,
@@ -1403,6 +1400,7 @@ class KnowledgeSearchServiceClarificationTests(TestCase):
             mock.patch.object(service, "_business_has_tables", return_value=True),
             mock.patch.object(service, "search_by_alias", return_value=AliasSearchResult(tuple(), {})),
             mock.patch.object(service, "_chunk_hits", return_value=tuple()),
+            mock.patch.object(service, "_table_search_snippets", return_value=tuple()),
             mock.patch.object(
                 service,
                 "_score_auto_mode_candidates",
@@ -1416,124 +1414,24 @@ class KnowledgeSearchServiceClarificationTests(TestCase):
                     "auto_score_margin": 0.05,
                 },
             ),
-            mock.patch.object(service, "_route_chunk_hits") as route_chunk_hits,
+            mock.patch.object(
+                service,
+                "_route_chunk_hits",
+                return_value=(tuple(), tuple(), {"index_route": "empty", "index_route_table_hits": 0, "index_route_text_hits": 0}),
+            ) as route_chunk_hits,
         ):
             result = service.search(
                 business_profile=self.business,
                 query="gold card details",
             )
 
-        self.assertEqual(result.status, "needs_clarification")
+        self.assertNotEqual(result.status, "needs_clarification")
         self.assertFalse(result.snippets)
-        self.assertEqual(result.diagnostics.get("path"), "clarification")
-        self.assertEqual(result.diagnostics.get("reason"), "auto_source_ambiguity")
-        self.assertTrue(result.diagnostics.get("intent_requires_clarification"))
-        self.assertIn(
-            "table-only",
-            str(result.diagnostics.get("intent_clarification_question") or "").lower(),
-        )
+        self.assertNotEqual(result.diagnostics.get("auto_arbitration_decision"), "clarification")
+        self.assertFalse(bool(result.diagnostics.get("auto_arbitration_needs_clarification")))
         auto_contract = result.diagnostics.get("auto_decision_contract") or {}
-        self.assertEqual(auto_contract.get("decision"), "clarification")
-        self.assertTrue(auto_contract.get("needs_clarification"))
-        route_chunk_hits.assert_not_called()
-
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
-    def test_ambiguous_auto_scores_emit_dynamic_evidence_labels(self, _build_embeddings) -> None:
-        service = KnowledgeSearchService()
-        classification = QueryClassification(
-            intent=QueryIntent.SPECIFIC_LOOKUP,
-            confidence=0.83,
-            reasoning="clear intent",
-            retrieval_hints={},
-            requires_clarification=False,
-            clarification_question="",
-        )
-        table_context = {
-            "has_intent": True,
-            "comprehensive_intent": False,
-            "query_classification": classification,
-            "intent_fallback_attempted": False,
-            "intent_fallback_applied": False,
-            "matched_columns": {"fee"},
-            "matched_columns_query": {"fee"},
-            "matched_columns_tokens": {"fee"},
-            "matched_columns_specific": {"fee"},
-            "matched_row_labels": set(),
-            "matched_keywords": set(),
-            "numeric_intent": False,
-            "available_columns": {"fee"},
-            "semantic_columns": set(),
-            "matched_column_count": 1,
-            "query_tokens": {"gold", "fee", "benefits"},
-            "specific_tokens": {"gold", "fee"},
-            "table_dominant": True,
-            "table_upload_ratio": 0.7,
-            "table_count": 2,
-            "table_uploads": 1,
-            "allow_generic": True,
-            "tenant_lexicon_entity_terms_count": 0,
-            "tenant_lexicon_attribute_terms_count": 0,
-        }
-        table_chunk = mock.Mock()
-        table_chunk.metadata = {
-            "index_type": "table",
-            "is_table_chunk": True,
-            "table_title": "Card fees",
-            "row_label": "Gold card",
-        }
-        table_chunk.content = "[Table] Card fees\nplan: Gold card\nannual fee: 199"
-        text_chunk = mock.Mock()
-        text_chunk.metadata = {"index_type": "text", "section_heading": "Benefits"}
-        text_chunk.content = "Gold card benefits include airport lounge access and cashback rewards."
-        chunk_hits = (
-            ChunkResult(
-                chunk=table_chunk,
-                source_stage="unit",
-                rerank_score=0.74,
-                lexical_score=0.62,
-                diagnostics={"specific_match_tokens": ("gold", "fee")},
-            ),
-            ChunkResult(
-                chunk=text_chunk,
-                source_stage="unit",
-                rerank_score=0.71,
-                lexical_score=0.65,
-            ),
-        )
-        with (
-            mock.patch.object(service, "_table_query_context", return_value=table_context),
-            mock.patch.object(service, "_business_has_tables", return_value=True),
-            mock.patch.object(service, "search_by_alias", return_value=AliasSearchResult(tuple(), {})),
-            mock.patch.object(service, "_chunk_hits", return_value=chunk_hits),
-            mock.patch.object(
-                service,
-                "_score_auto_mode_candidates",
-                return_value={
-                    "auto_score_version": "v2",
-                    "auto_score_sample_size": 2,
-                    "auto_score_table_hits": 2,
-                    "auto_score_text_hits": 2,
-                    "auto_table_score": 0.66,
-                    "auto_text_score": 0.6,
-                    "auto_score_margin": 0.06,
-                },
-            ),
-            mock.patch.object(service, "_route_chunk_hits") as route_chunk_hits,
-        ):
-            result = service.search(
-                business_profile=self.business,
-                query="gold card details and benefits",
-            )
-
-        self.assertEqual(result.status, "needs_clarification")
-        self.assertIn("gold", str(result.diagnostics.get("intent_clarification_question") or "").lower())
-        self.assertIn("benefits", str(result.diagnostics.get("intent_clarification_question") or "").lower())
-        self.assertEqual(result.diagnostics.get("auto_arbitration_table_evidence_label"), "gold")
-        self.assertIn(
-            "gold card benefits",
-            str(result.diagnostics.get("auto_arbitration_text_evidence_label") or "").lower(),
-        )
-        route_chunk_hits.assert_not_called()
+        self.assertFalse(auto_contract.get("needs_clarification"))
+        route_chunk_hits.assert_called()
 
 class KnowledgeSearchServicePhaseSixValidationTests(TestCase):
     def setUp(self) -> None:

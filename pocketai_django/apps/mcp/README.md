@@ -35,8 +35,8 @@ Key Flows
    -> final answer (no extra narration between tool calls).
 
 2) Knowledge lookup (agentic default)
-   `search_knowledge` returns metadata-only refs (`refs[]`), then the model
-   calls `read_knowledge(refs[], max_chars=...)` to fetch evidence.
+   `search_knowledge` returns refs with compact previews/read hints (`refs[]`),
+   then the model calls `read_knowledge(refs[], max_chars=...)` to fetch canonical evidence.
 
 3) Safety limits
    Budgets and rate limits enforce safe tool usage.
@@ -143,7 +143,7 @@ Debugging Bad Answers (Quick Checklist)
 2) Verify identifiers:
    - Ensure identifier gating isn’t blocking access (constraint errors / required keys).
 3) Check disambiguation:
-   - If `status=disambiguation_required`, the assistant must ask a clarifying question.
+   - Clarification-like diagnostics may still appear for compatibility, but the portal runtime should prefer best-effort evidence over blocking on a clarification turn.
 4) Inspect partial reads:
    - If `status=partial` with `deferred`, re-read only the deferred ids (use `cursor`).
 5) Validate routing:

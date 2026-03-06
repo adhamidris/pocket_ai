@@ -185,17 +185,16 @@ Runtime contract notes (verified from code):
 - `KnowledgeSearchService` reads `RAG_NON_QUERYABLE_TABLE_FORMATS` at init and applies it via `_filter_queryable_table_uploads`.
 - `read_knowledge` can auto-fallback from table preview to text read for document uploads when table result is `not_found` with zero evaluated rows and no strong table signal.
 - Row expansion in `KnowledgeSearchService._expand_table_rows` prefers shard-local row chunks when a matched table summary chunk includes `table_row_shard_index`.
-- `KnowledgeSearchService.search` now emits `diagnostics.auto_decision_contract` with Point #3 contract keys (`table_score`, `text_score`, `margin`, `decision`, `needs_clarification`) plus additive diagnostics (`scope_summary`, `categories`, `top_categories`, `clarification_ui_mode`, `conflict_detected`, `no_result_reason`). `scope_summary` is computed from pre-clip fused candidates and includes `total_matches`, `distinct_docs`, `category_counts`, and `is_broad_scope` so breadth detection is independent of snippet/prompt clipping.
-- Phase-6 runtime semantics are active in `_search_inner` finalization:
-  - conflicting top table evidence for the same segment/category upgrades `status` to `needs_clarification`, sets `diagnostics.reason=conflicting_evidence`, `conflict_detected=true`, and emits a dynamic `intent_clarification_question`.
-  - `status=not_found` now emits one normalized `no_result_reason`: `not_found`, `not_applicable_to_segment`, or `insufficient_evidence`.
-- `apps/mcp/tools.py::_search_knowledge_handler` now preserves clarification-worthy status across batched/fused runs: if any run yields `needs_clarification`, final tool status remains `needs_clarification` even when other runs return snippets. Diagnostics include `final_status_source_index` and `final_status_source_query`.
+- `KnowledgeSearchService.search` emits `diagnostics.auto_decision_contract` with scoring fields (`table_score`, `text_score`, `margin`, `decision`) plus additive diagnostics (`scope_summary`, `categories`, `top_categories`, `clarification_ui_mode`, `conflict_detected`, `no_result_reason`, `needs_clarification`). `scope_summary` is computed from pre-clip fused candidates and includes `total_matches`, `distinct_docs`, `category_counts`, and `is_broad_scope` so breadth detection is independent of snippet/prompt clipping.
+- Current portal semantics are best-effort agentic retrieval:
+  - conflicting or ambiguous evidence may still appear in diagnostics, but portal `search_knowledge` should prefer returning evidence/previews instead of surfacing a blocking clarification state;
+  - `status=not_found` emits one normalized `no_result_reason`: `not_found`, `not_applicable_to_segment`, or `insufficient_evidence`.
+- `apps/mcp/tools.py::_search_knowledge_handler` now normalizes clarification-like search outcomes into best-effort portal behavior: if evidence exists, tool output should continue with readable refs/previews; if no evidence exists, it should degrade to `not_found` instead of blocking on `needs_clarification`.
 - Agentic prompt source of truth is `apps/mcp/schemas/agentic_prompts.py` (selected via `build_model_specific_prompt` when `rag_agentic_mode=true` and `MCP_AGENTIC_READ_V2_ENABLED=true`). Do not rely on non-agentic fallback hints in `apps/mcp/prompts.py` for runtime behavior.
 - `apps/mcp/tools.py::_search_hint` now reads `diagnostics.no_result_reason` and returns reason-specific operator guidance instead of a generic not-found hint.
-- Scope clarification is text-only (`clarification_ui_mode=text`) and no longer uses selector-tool payload flows.
-- Ambiguous auto-arbitration clarification is now evidence-aware: `intent_clarification_question` is generated from current table/text hits and diagnostics expose `auto_arbitration_table_evidence_label` / `auto_arbitration_text_evidence_label` when available.
+- Scope/clarification-related fields remain diagnostic only unless a specific feature explicitly consumes them.
 - `_route_chunk_hits` now follows a single authoritative source path (`table_primary*` vs `text_primary`) with table-specific refinement only; legacy cross-mode fallback route branches were merged to align with auto arbitration decisions.
-- CI now includes explicit blocking gates for phase-7 scenarios in `.github/workflows/deploy.yml`: broad-query clarification, specific/multi-category direct resolution, clarification follow-up resolution (`all` + ask-categories), ambiguity retry (remain in clarification until user selects scope), non-selector payload sanitization, conflict/no-result semantics, and legacy payload compatibility under additive diagnostics.
+- CI coverage includes ambiguity/no-result semantics and compatibility checks around additive diagnostics.
 
 ---
 

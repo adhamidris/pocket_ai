@@ -7,8 +7,8 @@ This app owns retrieval logic: embedding generation, query analysis, ranking,
 and evaluation for knowledge search. It is the "librarian" layer that selects
 the right evidence; ingestion/storage live in apps/knowledge.
 
-When MCP is enabled, RAG is used by the tool-based orchestrator (apps/mcp).
-The legacy orchestrator in this app remains as a fallback.
+The active chat/runtime path uses MCP (`apps/mcp`). The legacy orchestrator
+in this app is retained only as historical/reference code unless explicitly reintroduced.
 
 Directory Map
 -------------
@@ -39,11 +39,11 @@ Key Flows
 ---------
 1) MCP retrieval (primary path)
    apps/mcp/tools.py -> KnowledgeSearchService (ai_orchestrator.py)
-   -> vector + lexical + alias blending -> snippets returned to MCP.
+   -> vector + lexical + alias blending -> refs/previews returned to MCP.
 
-2) Legacy retrieval (fallback)
-   AiOrchestratorService (ai_orchestrator.py) builds a prompt directly using
-   PromptBuilder and returns an answer without the tool loop.
+2) Legacy retrieval (historical only)
+   Legacy orchestrator code is kept for reference under `legacy_backup/` and
+   should not be treated as an active runtime path unless explicitly restored.
 
 3) Embedding lifecycle
    apps/knowledge/knowledge_ingestion.py calls build_embedding_service()
@@ -52,12 +52,12 @@ Key Flows
 Quick Start (Dev)
 ----------------
 - Warm embeddings cache:
-  `python manage.py warm_embeddings`
+  `.venv/bin/python manage.py warm_embeddings`
 - Run RAG eval harness (example):
-  `python manage.py run_rag_eval --set=fees-credit-cards --export=var/logs/rag_eval_fees.json`
+  `.venv/bin/python manage.py run_rag_eval --set=fees-credit-cards --export=var/logs/rag_eval_fees.json`
 - (Optional) Azure AI Search index:
-  - Ensure index: `python manage.py azure_search_ensure_index`
-  - Backfill a tenant: `python manage.py azure_search_backfill --business-id <uuid>`
+  - Ensure index: `.venv/bin/python manage.py azure_search_ensure_index`
+  - Backfill a tenant: `.venv/bin/python manage.py azure_search_backfill --business-id <uuid>`
 
 ASCII Flow (MCP Path)
 ---------------------

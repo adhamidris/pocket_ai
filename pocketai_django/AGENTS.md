@@ -5,11 +5,11 @@ This repo is a multi-tenant B2B SaaS. Your job is to ship production-ready chang
 ## Read first
 - `README.md`
 - `codebase_roadmap.md` — read this before touching any existing engine or path. It maps every runtime flow, background worker, core module, and external dependency in the system.
-- RAG runtime contract note (must preserve for backward compatibility):
-  - `KnowledgeSearchService.search` diagnostics include `auto_decision_contract` with additive fields `scope_summary`, `categories`, `top_categories`, `clarification_ui_mode`, `conflict_detected`, and `no_result_reason`.
+- RAG runtime contract note (current portal behavior):
+  - `KnowledgeSearchService.search` diagnostics may still include additive `auto_decision_contract` fields such as `scope_summary`, `categories`, `top_categories`, `clarification_ui_mode`, `conflict_detected`, `no_result_reason`, and `needs_clarification` for compatibility/debugging.
   - Valid `no_result_reason` values are exactly: `not_found`, `not_applicable_to_segment`, `insufficient_evidence`.
-  - If evidence conflicts for the same segment/category, runtime should emit `status=needs_clarification` with `reason=conflicting_evidence` and an evidence-aware `intent_clarification_question`.
-  - Scope clarification is text-only. Tool payloads must not require or emit selector-style clarification keys, and `clarification_ui_mode` should resolve to `text` when clarification is needed.
+  - In the active agentic portal runtime, retrieval is best-effort: do not block the tool path on `needs_clarification` if evidence can be returned.
+  - `search_knowledge` refs may include compact previews and read hints; do not assume ids-only metadata.
 
 ## Django and .venv location
 - Repo app root: `/pocketai_django/`
@@ -37,9 +37,7 @@ When proposing a plan or implementation, if it involves a component that is like
 - Don’t rush implementations. If requirements are unclear, **interview/clarify first**, then propose a solid plan that covers edge cases.
 - Think “production-first”: avoid designs that only work because of dev quirks (e.g., `LocMemCache`, single-process assumptions).
 - **Multi-agent work**: Other agents may be working in this repo concurrently. If you notice unrelated diffs, do **not** revert/restore them as “cleanup” — keep your changes tightly scoped to your task and leave unrelated edits alone.
-- When initiating a plan, also write a **business POV** for that plan:
-  - Include 2–5 realistic scenarios and the expected user experience (what improves, what might regress, how success is measured).
-  - Save it under `plans-business-pov/` and include the **plan** followed by the **business POV**.
+- When presenting a plan, include a short **business POV** in your response whenever the change materially affects user experience, risk, or rollout. Do not create repo plan files unless the owner explicitly asks for them.
 
 ## Core invariants (do not break)
 - **Tenant isolation**: no cross-tenant reads/writes, including caches and background jobs.

@@ -26,7 +26,7 @@ Legacy knobs (page/mode selection) are **not** part of the agentic v2 contract.
 ## Tool Set (LLM-facing, agentic mode)
 
 Primary knowledge tools:
-- `search_knowledge` — hybrid search, returns refs (IDs only)
+- `search_knowledge` — hybrid search, returns refs plus compact previews/read hints for planning; previews are aids, not canonical evidence
 - `read_knowledge` — reads canonical evidence by ref
 - `search_conversation_files`, `read_conversation_file` — chat‑uploaded files
 

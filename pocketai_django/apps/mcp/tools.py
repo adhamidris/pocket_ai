@@ -6356,36 +6356,21 @@ def _search_knowledge_handler(
             return ""
         return str(run.get("status") or "").strip().lower()
 
-    status_source_run: Mapping[str, object] = primary_run
-    conflict_source_run = next(
-        (
-            run
-            for run in runs
-            if _extract_conflict_detected(
-                run.get("diagnostics") if isinstance(run.get("diagnostics"), Mapping) else {}
-            )
-        ),
-        None,
+    # Agentic RAG should not block on "needs_clarification". Always return best-effort evidence
+    # (if any) and let the assistant handle ambiguity/conflicts in the response.
+    status_source_run: Mapping[str, object] = next(
+        (run for run in runs if _normalized_run_status(run) == "ok"),
+        primary_run,
     )
-    clarification_source_run = next(
-        (run for run in runs if _normalized_run_status(run) == "needs_clarification"),
-        None,
-    )
-    if clarification_source_run is not None:
-        final_status = "needs_clarification"
-        status_source_run = clarification_source_run
-    elif conflict_source_run is not None:
-        final_status = "needs_clarification"
-        status_source_run = conflict_source_run
-    elif page_snippets:
+    if page_snippets:
         final_status = "ok"
-        status_source_run = next(
-            (run for run in runs if _normalized_run_status(run) == "ok"),
-            primary_run,
-        )
     else:
         non_default_status_run = next(
-            (run for run in runs if _normalized_run_status(run) not in {"", "not_found"}),
+            (
+                run
+                for run in runs
+                if _normalized_run_status(run) not in {"", "not_found", "needs_clarification"}
+            ),
             None,
         )
         if non_default_status_run is not None:
@@ -6394,15 +6379,8 @@ def _search_knowledge_handler(
         else:
             status_source_run = runs[-1]
             final_status = _normalized_run_status(status_source_run) or "not_found"
-
-    status_diag = status_source_run.get("diagnostics") if isinstance(status_source_run.get("diagnostics"), Mapping) else {}
-    status_reason = str(status_diag.get("reason") or "").strip().lower()
-    if final_status == "needs_clarification" and (
-        status_reason == "conflicting_evidence" or _extract_conflict_detected(status_diag)
-    ):
-        # Avoid sending conflicting snippets in the same payload; force clarification first.
-        page_snippets = []
-        completeness["shown"] = 0
+            if final_status == "needs_clarification":
+                final_status = "not_found"
 
     for snippet in page_snippets:
         context.add_knowledge_result(snippet)
@@ -6433,20 +6411,6 @@ def _search_knowledge_handler(
     except ValueError:
         diag["final_status_source_index"] = 0
     diag["final_status_source_query"] = status_source_run.get("query")
-    if final_status == "needs_clarification":
-        if _extract_conflict_detected(diag):
-            diag.setdefault("reason", "conflicting_evidence")
-            diag.setdefault("intent_requires_clarification", True)
-        clarification_question = str(diag.get("intent_clarification_question") or "").strip()
-        if not clarification_question:
-            for run in runs:
-                run_diag = run.get("diagnostics")
-                if not isinstance(run_diag, Mapping):
-                    continue
-                candidate = str(run_diag.get("intent_clarification_question") or "").strip()
-                if candidate:
-                    diag["intent_clarification_question"] = candidate
-                    break
     if final_status == "not_found":
         no_result_reason = _extract_no_result_reason(diag)
         if not no_result_reason:

@@ -5,18 +5,18 @@ This is the Django backend + web portal for PocketAI (Chat Portal, RAG, ingestio
 Status highlights:
 - MCP orchestrator only (legacy orchestration is deprecated).
 - Agentic read v2 is enabled via `MCP_AGENTIC_READ_V2_ENABLED=true` in the root `.env`.
-- Voice stack is production-capable (Twilio + Telnyx, Deepgram STT, Deepgram/ElevenLabs TTS, post-call processing).
-- Platform is launching to production.
+- The platform is in beta / launch preparation.
+- Voice stack is present in the repo, but rollout mode should be verified against current product docs and env flags before assuming active production use.
 
 ## Quickstart
 
 ```sh
 cd pocketai_django
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python manage.py migrate
-python manage.py runserver 127.0.0.1:3000
+python3 -m venv .venv
+. .venv/bin/activate
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python manage.py migrate
+.venv/bin/python manage.py runserver 127.0.0.1:3000
 ```
 
 ## Running tests
@@ -25,15 +25,14 @@ Use Django's test runner (same as CI):
 
 ```sh
 cd pocketai_django
-source .venv/bin/activate
-python manage.py test --noinput
+.venv/bin/python manage.py test --noinput
 ```
 
 Targeted runs:
 
 ```sh
-python manage.py test apps.rag --noinput
-python manage.py test apps.mcp.tests.test_mcp_tools --noinput
+.venv/bin/python manage.py test apps.rag --noinput
+.venv/bin/python manage.py test apps.mcp.tests.test_mcp_tools --noinput
 ```
 
 ## Local dev processes (Portal + Ingestion + Sub-agents + Voice Calls)

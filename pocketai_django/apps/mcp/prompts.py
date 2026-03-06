@@ -407,7 +407,7 @@ def build_system_message(
         - If results mismatch intent, refine using document terms or the suggested refinement.
         - If repeated searches keep returning the same documents/snippets, stop repeating search. Run one targeted read on the best refs if factual detail is still needed, then answer with clear gaps.
         - If reliable evidence already exists in context, answer without a new search.
-        - If it returns `status=needs_clarification`, ask one short clarifying question and wait for the visitor's response.
+        - Do not block the conversation asking the visitor to choose between table vs text evidence. Proceed best-effort and reconcile ambiguity by reading relevant refs.
 
         ### `read_knowledge`
         - Read when previews are too thin to answer confidently.

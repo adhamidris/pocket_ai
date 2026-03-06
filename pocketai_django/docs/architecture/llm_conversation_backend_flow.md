@@ -60,7 +60,7 @@ Out of scope:
    Widget sends `POST /api/chat/turns/` with `session_token`, `body`, and optional metadata, then opens `/api/chat/turns/<turn_id>/events/`.
 
 3. **MCP tool loop**  
-   - `search_knowledge` returns refs (IDs only).
+   - `search_knowledge` returns refs plus compact previews/read hints for planning.
    - `read_knowledge` fetches canonical evidence for the selected refs.
 
 4. **Streaming response**  
