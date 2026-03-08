@@ -72,7 +72,6 @@ from apps.knowledge.dataset_key_index import (
 )
 from apps.rag.embeddings import LocalEmbeddingService, build_embedding_service, EmbeddingProviderError
 from apps.accounts.feature_flags import FeatureFlagService
-from apps.knowledge.privacy import redact_mapping_preview
 from apps.rag.quality_monitor import QualityMonitor
 from apps.rag.rag_logging import structured_log
 from apps.rag.table_semantics import normalize_column_name
@@ -12110,7 +12109,7 @@ class KnowledgeIngestionService:
                             for i in range(len(column_schema))
                             if visible_mask[i]
                         }
-                        sample_visible_rows.append(redact_mapping_preview(row_preview))
+                        sample_visible_rows.append(row_preview)
 
                     if key_index_enabled and not key_indexes and len(sample_rows) >= sample_target:
                         suggested_preview = self._suggest_dataset_key_columns(column_schema=column_schema, sample_rows=sample_rows)
@@ -12573,7 +12572,7 @@ class KnowledgeIngestionService:
                             for i in range(len(column_schema))
                             if visible_mask[i]
                         }
-                        sample_visible_rows.append(redact_mapping_preview(row_preview))
+                        sample_visible_rows.append(row_preview)
 
                     if key_index_enabled and not sheet_key_indexes and len(sample_rows) >= sample_target:
                         suggested_preview = self._suggest_dataset_key_columns(column_schema=column_schema, sample_rows=sample_rows)
@@ -13028,7 +13027,7 @@ class KnowledgeIngestionService:
                             for i in range(len(column_schema))
                             if visible_mask[i]
                         }
-                        sample_visible_rows.append(redact_mapping_preview(row_preview))
+                        sample_visible_rows.append(row_preview)
 
             try:
                 dataset_size = dataset_path.stat().st_size
@@ -13272,7 +13271,7 @@ class KnowledgeIngestionService:
                     for i in range(len(column_schema))
                     if visible_mask[i]
                 }
-                sample_visible_rows.append(redact_mapping_preview(row_preview))
+                sample_visible_rows.append(row_preview)
             if len(preview_rows) >= preview_row_cap:
                 break
 

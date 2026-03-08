@@ -965,43 +965,7 @@ LOG_VERBOSITY_FILE = os.getenv("LOG_VERBOSITY_FILE", "verbose").strip().lower()
 if LOG_VERBOSITY_FILE not in {"minimal", "standard", "verbose"}:
     LOG_VERBOSITY_FILE = "verbose"
 
-# Tabular prompt safety: apply per-upload column privacy + PII masking before tool
-# results are stored/re-injected into prompts.
-# MCP_TABULAR_PRIVACY_ENABLED: Enforce per-upload allow/deny/mask column policies for tabular evidence.
-MCP_TABULAR_PRIVACY_ENABLED = os.getenv("MCP_TABULAR_PRIVACY_ENABLED", "true").lower() in {"1", "true", "yes"}
-# MCP_TABULAR_PII_REDACTION_ENABLED: Mask PII-like values in tabular evidence (best-effort).
-MCP_TABULAR_PII_REDACTION_ENABLED = os.getenv("MCP_TABULAR_PII_REDACTION_ENABLED", "true").lower() in {"1", "true", "yes"}
-# Verified lookup mode: require a verified conversation context before returning
-# tabular PII fields (addresses/phones/emails/etc) from tools like read_knowledge.
-# MCP_VERIFIED_LOOKUP_ENABLED: Enable verified-lookup gating for sensitive tabular outputs.
-MCP_VERIFIED_LOOKUP_ENABLED = os.getenv("MCP_VERIFIED_LOOKUP_ENABLED", "true").lower() in {"1", "true", "yes"}
-# MCP_VERIFIED_LOOKUP_REQUIRE_FOR_PII: Require verification when the request touches sensitive (PII) columns.
-MCP_VERIFIED_LOOKUP_REQUIRE_FOR_PII = os.getenv("MCP_VERIFIED_LOOKUP_REQUIRE_FOR_PII", "true").lower() in {"1", "true", "yes"}
-# MCP_VERIFIED_LOOKUP_ALLOW_CUSTOMER_MATCH: Treat authenticated customer sessions as verified (bypass OTP where applicable).
-MCP_VERIFIED_LOOKUP_ALLOW_CUSTOMER_MATCH = os.getenv("MCP_VERIFIED_LOOKUP_ALLOW_CUSTOMER_MATCH", "true").lower() in {"1", "true", "yes"}
-# MCP_TEXT_PII_REDACTION_ENABLED: Mask common PII patterns in unstructured snippet text before returning evidence to the LLM.
-MCP_TEXT_PII_REDACTION_ENABLED = os.getenv("MCP_TEXT_PII_REDACTION_ENABLED", "true").lower() in {"1", "true", "yes"}
-# MCP_TEXT_PII_REDACTION_ALLOW_VERIFIED: Allow unredacted unstructured text when verified (keep false until identity scoping exists).
-MCP_TEXT_PII_REDACTION_ALLOW_VERIFIED = os.getenv("MCP_TEXT_PII_REDACTION_ALLOW_VERIFIED", "false").lower() in {"1", "true", "yes"}
-
-# Portal verification (OTP) tuning.
-try:
-    # PORTAL_VERIFICATION_OTP_TTL_SECONDS: OTP validity window (seconds).
-    PORTAL_VERIFICATION_OTP_TTL_SECONDS = int(os.getenv("PORTAL_VERIFICATION_OTP_TTL_SECONDS", "600"))
-except (TypeError, ValueError):
-    PORTAL_VERIFICATION_OTP_TTL_SECONDS = 600
-try:
-    # PORTAL_VERIFICATION_RESEND_COOLDOWN_SECONDS: Minimum wait before issuing another OTP (seconds).
-    PORTAL_VERIFICATION_RESEND_COOLDOWN_SECONDS = int(os.getenv("PORTAL_VERIFICATION_RESEND_COOLDOWN_SECONDS", "30"))
-except (TypeError, ValueError):
-    PORTAL_VERIFICATION_RESEND_COOLDOWN_SECONDS = 30
-try:
-    # PORTAL_VERIFICATION_MAX_ATTEMPTS: Maximum invalid attempts before requiring a new OTP.
-    PORTAL_VERIFICATION_MAX_ATTEMPTS = int(os.getenv("PORTAL_VERIFICATION_MAX_ATTEMPTS", "5"))
-except (TypeError, ValueError):
-    PORTAL_VERIFICATION_MAX_ATTEMPTS = 5
-# PORTAL_VERIFICATION_DEBUG_RETURN_CODE: Return OTP in API responses for local/dev testing (never enable in prod).
-PORTAL_VERIFICATION_DEBUG_RETURN_CODE = os.getenv("PORTAL_VERIFICATION_DEBUG_RETURN_CODE", "false").lower() in {"1", "true", "yes"}
+# NOTE: PII masking + verified lookup + OTP verification were removed (legacy customer-service mode).
 # MCP prompt/context governor. Defaults are conservative to avoid provider context overflows.
 # MCP_CONTEXT_GOVERNOR_ENABLED: Enable prompt/token budget enforcement across tool outputs.
 MCP_CONTEXT_GOVERNOR_ENABLED = os.getenv("MCP_CONTEXT_GOVERNOR_ENABLED", "true").lower() in {"1", "true", "yes"}

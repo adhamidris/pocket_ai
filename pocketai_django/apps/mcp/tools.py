@@ -80,7 +80,7 @@ from apps.rag.ai_orchestrator import (
     KNOWLEDGE_READ_STATE_PREVIEW,
 )
 from apps.knowledge.knowledge_access import apply_customer_visible_chunks, apply_customer_visible_uploads
-from apps.knowledge.privacy import column_suggests_pii, redact_free_text, redact_value_for_preview, sha256_hex
+from apps.knowledge.privacy import sha256_hex
 from apps.rag.rag_logging import structured_log
 from apps.core.logging_utils import log_start, log_success, log_warning, log_performance, LogEmoji
 from apps.rag.tabular_limits import ToolRateLimit, enforce_tool_rate_limit
@@ -164,8 +164,6 @@ DEFAULT_MAX_SEARCH_QUERY_VARIANTS = 1
 MCP_LOG_PII_DEFAULT = False
 MCP_LOG_SNIPPET_PREVIEWS_DEFAULT = False
 MCP_LOG_FULL_SNIPPET_CONTENT_DEFAULT = False
-MCP_TEXT_PII_REDACTION_DEFAULT = True
-MCP_TEXT_PII_REDACTION_ALLOW_VERIFIED_DEFAULT = False
 
 
 def _search_query_variant_limit() -> int:
@@ -265,36 +263,6 @@ def _mcp_log_snippet_previews_enabled() -> bool:
 
 def _mcp_log_full_snippet_content_enabled() -> bool:
     return bool(getattr(settings, "MCP_LOG_FULL_SNIPPET_CONTENT", MCP_LOG_FULL_SNIPPET_CONTENT_DEFAULT))
-
-
-def _text_pii_redaction_enabled() -> bool:
-    return bool(getattr(settings, "MCP_TEXT_PII_REDACTION_ENABLED", MCP_TEXT_PII_REDACTION_DEFAULT))
-
-
-def _text_pii_redaction_allow_verified() -> bool:
-    return bool(getattr(settings, "MCP_TEXT_PII_REDACTION_ALLOW_VERIFIED", MCP_TEXT_PII_REDACTION_ALLOW_VERIFIED_DEFAULT))
-
-
-def _should_redact_text_pii(conversation: Conversation) -> bool:
-    """
-    Decide whether to redact PII patterns from unstructured snippet text.
-
-    Default is conservative: redact always (unstructured docs can contain many
-    identities and we cannot safely scope them to a single verified subject yet).
-    """
-
-    if not _text_pii_redaction_enabled():
-        return False
-    if not _text_pii_redaction_allow_verified():
-        return True
-    policy = _verified_lookup_policy(conversation)
-    if not bool(policy.get("enabled")):
-        return True
-    verified, _source = _conversation_is_verified_for_lookup(
-        conversation,
-        allow_customer_match=bool(policy.get("allow_customer_match")),
-    )
-    return not verified
 
 
 def _log_safe_text_fields(field: str, value: str | None) -> dict[str, object]:
@@ -2676,38 +2644,13 @@ def _sanitize_snippet_payloads_for_prompt(
 ) -> list[dict[str, object]]:
     if not snippet_payloads:
         return []
-    redact_text = _should_redact_text_pii(conversation)
-    needs_copy = redact_text
-    if not needs_copy:
-        for payload in snippet_payloads:
-            if isinstance(payload, Mapping) and "identifiers" in payload:
-                needs_copy = True
-                break
-    if not needs_copy:
-        return [dict(payload) for payload in snippet_payloads if isinstance(payload, Mapping)]
-
-    redacted_keys = ("title", "public_label", "summary", "content", "truncation_note")
-    redacted_list_keys = ("pageSummaries", "aliases", "topic_hints")
-
     sanitized: list[dict[str, object]] = []
     for payload in snippet_payloads:
         if not isinstance(payload, Mapping):
             continue
         out = dict(payload)
-        # Never pass extracted identifier values to the LLM; they may contain PII.
+        # Never pass extracted identifier values to the LLM; they can leak user data.
         out.pop("identifiers", None)
-        if redact_text:
-            for key in redacted_keys:
-                value = out.get(key)
-                if isinstance(value, str) and value:
-                    out[key] = redact_free_text(value)
-            for key in redacted_list_keys:
-                value = out.get(key)
-                if isinstance(value, list):
-                    out[key] = [
-                        redact_free_text(item) if isinstance(item, str) and item else item
-                        for item in value
-                    ]
         sanitized.append(out)
     return sanitized
 
@@ -2899,406 +2842,6 @@ def _should_force_exact_identifier_match(column: object, value: object) -> bool:
     return False
 
 
-def _tabular_privacy_enabled() -> bool:
-    return bool(getattr(settings, "MCP_TABULAR_PRIVACY_ENABLED", True))
-
-
-def _tabular_pii_redaction_enabled() -> bool:
-    return bool(getattr(settings, "MCP_TABULAR_PII_REDACTION_ENABLED", True))
-
-
-def _verified_lookup_policy(conversation: Conversation) -> dict[str, object]:
-    """
-    Resolve verified-lookup policy.
-
-    Global defaults come from settings, but tenants can override via
-    BusinessProfile.metadata["verified_lookup"] (or "verified_lookup_policy").
-    """
-
-    enabled = bool(getattr(settings, "MCP_VERIFIED_LOOKUP_ENABLED", True))
-    require_for_pii = bool(getattr(settings, "MCP_VERIFIED_LOOKUP_REQUIRE_FOR_PII", True))
-    allow_customer_match = bool(getattr(settings, "MCP_VERIFIED_LOOKUP_ALLOW_CUSTOMER_MATCH", True))
-
-    business = getattr(conversation, "business_profile", None)
-    meta = getattr(business, "metadata", None) if business else None
-    if isinstance(meta, Mapping):
-        cfg = meta.get("verified_lookup") or meta.get("verified_lookup_policy") or {}
-        if isinstance(cfg, Mapping):
-            if cfg.get("enabled") is not None:
-                enabled = bool(cfg.get("enabled"))
-            if cfg.get("require_for_pii") is not None:
-                require_for_pii = bool(cfg.get("require_for_pii"))
-            if cfg.get("requireForPii") is not None:
-                require_for_pii = bool(cfg.get("requireForPii"))
-            if cfg.get("allow_customer_match") is not None:
-                allow_customer_match = bool(cfg.get("allow_customer_match"))
-            if cfg.get("allowCustomerMatch") is not None:
-                allow_customer_match = bool(cfg.get("allowCustomerMatch"))
-
-    return {
-        "enabled": enabled,
-        "require_for_pii": require_for_pii,
-        "allow_customer_match": allow_customer_match,
-    }
-
-
-def _conversation_is_verified_for_lookup(
-    conversation: Conversation,
-    *,
-    allow_customer_match: bool,
-) -> tuple[bool, str | None]:
-    metadata = conversation.metadata if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
-    marker = metadata.get("verified_lookup") if isinstance(metadata, Mapping) else None
-    if marker is True:
-        return True, "metadata_flag"
-    if isinstance(marker, Mapping):
-        status = str(marker.get("status") or marker.get("state") or "").strip().lower()
-        if status in {"verified", "ok", "passed"}:
-            return True, "metadata_status"
-        if marker.get("verified") is True:
-            return True, "metadata_verified"
-    if allow_customer_match and getattr(conversation, "customer_id", None):
-        return True, "customer_match"
-    return False, None
-
-
-def _column_is_sensitive(column: str) -> bool:
-    return bool(column_suggests_pii(column) or _column_suggests_person_name(column))
-
-
-def _extract_requested_columns(table_args: Mapping[str, object]) -> list[str]:
-    columns: list[str] = []
-
-    def _push(value: object) -> None:
-        text = _coerce_str(value).strip()
-        if text and text not in columns:
-            columns.append(text)
-
-    for key in ("select_columns", "columns"):
-        raw = table_args.get(key)
-        if isinstance(raw, (list, tuple)):
-            for entry in raw[:100]:
-                _push(entry)
-
-    for key in ("match_column", "sort_by", "value_column"):
-        if key in table_args:
-            _push(table_args.get(key))
-
-    aggregate = table_args.get("aggregate") if isinstance(table_args.get("aggregate"), Mapping) else None
-    if aggregate:
-        _push(aggregate.get("column"))
-        _push(aggregate.get("group_by"))
-        _push(aggregate.get("groupBy"))
-
-    filters = table_args.get("filters")
-    if isinstance(filters, list):
-        for entry in filters[:50]:
-            if not isinstance(entry, Mapping):
-                continue
-            _push(entry.get("column"))
-
-    return columns
-
-
-def _normalize_column_set(values: object) -> set[str]:
-    if values is None:
-        return set()
-    if isinstance(values, str):
-        values = [part.strip() for part in values.split(",")]
-    if not isinstance(values, (list, tuple, set)):
-        return set()
-    out: set[str] = set()
-    for value in values:
-        normalized = _normalize_column_name(_coerce_str(value))
-        if normalized:
-            out.add(normalized)
-    return out
-
-
-def _resolve_tabular_column_policy(upload: KnowledgeUpload) -> dict[str, object]:
-    """
-    Resolve per-upload column privacy rules for tabular outputs.
-
-    Returns a dict with:
-      - allow: optional set[str] of normalized column names (shared allowlist)
-      - deny: set[str] of normalized column names (internal/excluded)
-      - force_mask: set[str] of normalized column names (business policy)
-    """
-
-    allow: set[str] = set()
-    deny: set[str] = set()
-    force_mask: set[str] = set()
-
-    ingestion_meta = upload.ingestion_metadata if isinstance(getattr(upload, "ingestion_metadata", None), Mapping) else {}
-    column_privacy = ingestion_meta.get("column_privacy") if isinstance(ingestion_meta, Mapping) else None
-    if isinstance(column_privacy, Mapping):
-        allow |= _normalize_column_set(column_privacy.get("shared_columns"))
-        deny |= _normalize_column_set(column_privacy.get("internal_only_columns"))
-        deny |= _normalize_column_set(column_privacy.get("excluded_columns"))
-
-    upload_meta = upload.metadata if isinstance(getattr(upload, "metadata", None), Mapping) else {}
-    table_privacy = upload_meta.get("table_privacy") if isinstance(upload_meta, Mapping) else None
-    if isinstance(table_privacy, Mapping):
-        allow |= _normalize_column_set(table_privacy.get("shared_columns"))
-        deny |= _normalize_column_set(table_privacy.get("internal_only_columns"))
-        deny |= _normalize_column_set(table_privacy.get("excluded_columns"))
-        deny |= _normalize_column_set(table_privacy.get("sensitive_columns"))
-
-    business = getattr(upload, "business_profile", None)
-    if business and hasattr(business, "table_privacy_policy"):
-        try:
-            policy = business.table_privacy_policy() or {}
-        except Exception:
-            policy = {}
-        if isinstance(policy, Mapping):
-            force_mask |= _normalize_column_set(policy.get("required_columns"))
-
-    return {"allow": allow or None, "deny": deny, "force_mask": force_mask}
-
-
-def _column_suggests_person_name(column: str) -> bool:
-    normalized = _normalize_column_name(column)
-    if not normalized or "name" not in normalized:
-        return False
-    # Avoid masking business/entity labels like vendor/branch/product names.
-    if any(token in normalized for token in ("vendor", "branch", "product", "material", "item")):
-        return False
-    if any(token in normalized for token in ("first name", "last name", "full name")):
-        return True
-    if any(token in normalized for token in ("customer", "client", "contact", "user", "person", "employee")):
-        return True
-    return False
-
-
-def _redact_person_name(value: object) -> str:
-    text = _coerce_str(value).strip()
-    if not text:
-        return ""
-    # Keep the first character as a hint without leaking the full name.
-    return text[:1] + "…"
-
-
-def _mask_cell_value(value: object, *, column_name: str) -> str:
-    if not _tabular_pii_redaction_enabled():
-        return _coerce_str(value)
-    if _column_suggests_person_name(column_name):
-        return _redact_person_name(value)
-    return redact_value_for_preview(value, column_name=column_name)
-
-
-def _column_allowed(column_norm: str, *, allow: set[str] | None, deny: set[str]) -> bool:
-    if not column_norm:
-        return False
-    if allow is not None and column_norm not in allow:
-        return False
-    if column_norm in deny:
-        return False
-    return True
-
-
-def _column_should_mask(column: str, *, column_norm: str, force_mask: set[str]) -> bool:
-    if not column_norm:
-        return False
-    if column_norm in force_mask:
-        return True
-    if column_suggests_pii(column):
-        return True
-    if _column_suggests_person_name(column):
-        return True
-    return False
-
-
-def _sanitize_tabular_rows_for_prompt(
-    rows: Sequence[Mapping[str, object]],
-    *,
-    upload: KnowledgeUpload,
-    verified: bool,
-    strict_pii: bool,
-) -> list[dict[str, object]]:
-    if not _tabular_privacy_enabled():
-        return [dict(row) for row in rows if isinstance(row, Mapping)]
-
-    policy = _resolve_tabular_column_policy(upload)
-    allow = policy.get("allow") if isinstance(policy.get("allow"), set) else None
-    deny = policy.get("deny") if isinstance(policy.get("deny"), set) else set()
-    force_mask = policy.get("force_mask") if isinstance(policy.get("force_mask"), set) else set()
-
-    sanitized: list[dict[str, object]] = []
-    for row in rows:
-        if not isinstance(row, Mapping):
-            continue
-        row_out = dict(row)
-        # Avoid leaking full row concatenations; the model should rely on cells.
-        row_out.pop("row_text", None)
-
-        cells_in = row.get("cells") if isinstance(row.get("cells"), list) else []
-        cells_out: list[dict[str, object]] = []
-        for cell in cells_in:
-            if not isinstance(cell, Mapping):
-                continue
-            column = _coerce_str(cell.get("column")).strip()
-            if not column:
-                continue
-            column_norm = _normalize_column_name(column)
-            if not _column_allowed(column_norm, allow=allow, deny=deny):
-                continue
-            always_mask = column_norm in force_mask
-            sensitive = _column_is_sensitive(column)
-            cell_out = dict(cell)
-            if strict_pii:
-                if not verified and (always_mask or sensitive):
-                    continue
-                if always_mask:
-                    if "raw_text" in cell_out:
-                        cell_out["raw_text"] = _mask_cell_value(cell_out.get("raw_text"), column_name=column)
-                        if "normalized_value" in cell_out:
-                            cell_out["normalized_value"] = _normalize_column_name(cell_out.get("raw_text"))
-                        if "numeric" in cell_out:
-                            cell_out["numeric"] = None
-                    if "value" in cell_out:
-                        cell_out["value"] = _mask_cell_value(cell_out.get("value"), column_name=column)
-                    cell_out["masked"] = True
-            elif always_mask or sensitive:
-                if "raw_text" in cell_out:
-                    cell_out["raw_text"] = _mask_cell_value(cell_out.get("raw_text"), column_name=column)
-                    if "normalized_value" in cell_out:
-                        cell_out["normalized_value"] = _normalize_column_name(cell_out.get("raw_text"))
-                    if "numeric" in cell_out:
-                        cell_out["numeric"] = None
-                if "value" in cell_out:
-                    cell_out["value"] = _mask_cell_value(cell_out.get("value"), column_name=column)
-                cell_out["masked"] = True
-            cells_out.append(cell_out)
-        row_out["cells"] = cells_out
-
-        contributions_in = row.get("contributions") if isinstance(row.get("contributions"), list) else []
-        if contributions_in:
-            contributions_out: list[dict[str, object]] = []
-            for entry in contributions_in:
-                if not isinstance(entry, Mapping):
-                    continue
-                column = _coerce_str(entry.get("column")).strip()
-                if not column:
-                    continue
-                column_norm = _normalize_column_name(column)
-                if not _column_allowed(column_norm, allow=allow, deny=deny):
-                    continue
-                entry_out = dict(entry)
-                always_mask = column_norm in force_mask
-                sensitive = _column_is_sensitive(column)
-                if strict_pii:
-                    if not verified and (always_mask or sensitive):
-                        continue
-                    if always_mask:
-                        entry_out["value"] = _mask_cell_value(entry_out.get("value"), column_name=column)
-                        entry_out["display"] = _mask_cell_value(
-                            entry_out.get("display") or entry_out.get("value"), column_name=column
-                        )
-                        entry_out["masked"] = True
-                elif always_mask or sensitive:
-                    entry_out["value"] = _mask_cell_value(entry_out.get("value"), column_name=column)
-                    entry_out["display"] = _mask_cell_value(
-                        entry_out.get("display") or entry_out.get("value"), column_name=column
-                    )
-                    entry_out["masked"] = True
-                contributions_out.append(entry_out)
-            row_out["contributions"] = contributions_out
-
-        sanitized.append(row_out)
-    return sanitized
-
-
-def _sanitize_dataset_aggregate_for_prompt(
-    aggregate_result: Mapping[str, object],
-    *,
-    upload: KnowledgeUpload,
-    verified: bool,
-    strict_pii: bool,
-) -> dict[str, object]:
-    if not aggregate_result:
-        return {}
-    if not _tabular_privacy_enabled():
-        return dict(aggregate_result)
-
-    policy = _resolve_tabular_column_policy(upload)
-    allow = policy.get("allow") if isinstance(policy.get("allow"), set) else None
-    deny = policy.get("deny") if isinstance(policy.get("deny"), set) else set()
-    force_mask = policy.get("force_mask") if isinstance(policy.get("force_mask"), set) else set()
-
-    out = dict(aggregate_result)
-    op = _coerce_str(out.get("operation")).strip().lower()
-    if op != "group_by":
-        return out
-    group_by = _coerce_str(out.get("group_by")).strip()
-    group_norm = _normalize_column_name(group_by)
-    if not group_by:
-        return out
-    if not _column_allowed(group_norm, allow=allow, deny=deny):
-        out["groups"] = []
-        out["redacted"] = True
-        return out
-
-    always_mask = group_norm in force_mask
-    sensitive = _column_is_sensitive(group_by)
-    if strict_pii:
-        if not verified and (always_mask or sensitive):
-            out["groups"] = []
-            out["redacted"] = True
-            return out
-        if always_mask:
-            groups_in = out.get("groups") if isinstance(out.get("groups"), list) else []
-            groups_out: list[dict[str, object]] = []
-            for entry in groups_in:
-                if not isinstance(entry, Mapping):
-                    continue
-                entry_out = dict(entry)
-                entry_out["value"] = _mask_cell_value(entry_out.get("value"), column_name=group_by)
-                entry_out["masked"] = True
-                groups_out.append(entry_out)
-            out["groups"] = groups_out
-        return out
-
-    if always_mask or sensitive:
-        groups_in = out.get("groups") if isinstance(out.get("groups"), list) else []
-        groups_out: list[dict[str, object]] = []
-        for entry in groups_in:
-            if not isinstance(entry, Mapping):
-                continue
-            entry_out = dict(entry)
-            entry_out["value"] = _mask_cell_value(entry_out.get("value"), column_name=group_by)
-            entry_out["masked"] = True
-            groups_out.append(entry_out)
-        out["groups"] = groups_out
-    return out
-
-
-def _parse_numeric_value(value: str | None) -> float | None:
-    if not isinstance(value, str):
-        return None
-    text = value.strip()
-    if not text:
-        return None
-    cleaned = re.sub(r"[^\d\-,\.]", "", text)
-    cleaned = cleaned.replace(",", "")
-    if not cleaned or cleaned in {"-", ".", "-.", "-"}:
-        return None
-    try:
-        return float(cleaned)
-    except ValueError:
-        return None
-
-
-def _format_numeric_display(value: float | None, raw: str | None = None) -> str | None:
-    if isinstance(raw, str) and raw.strip():
-        return raw.strip()
-    if value is None:
-        return None
-    rounded = round(value)
-    if abs(value - rounded) < 1e-6:
-        return f"{rounded:,}"
-    return f"{value:,.2f}".rstrip("0").rstrip(".")
-
-
 def _total_column_priority(value: object) -> int:
     normalized = _normalize_column_name(value)
     if not normalized:
@@ -3467,7 +3010,7 @@ def _log_snippet_payloads(
             "read_required_reasons": payload.get("read_required_reasons"),
             "is_table_chunk": bool(payload.get("is_table_chunk")),
             "score": payload.get("score"),
-            "preview": redact_free_text(preview) if preview and not include_pii else preview,
+            "preview": preview,
             "preview_sha256": preview_hash,
             "preview_len": preview_len,
         }
@@ -6945,7 +6488,6 @@ def _agentic_read_v2_handler(
     except (TypeError, ValueError, AttributeError):
         business_uuid = None
     business = getattr(conversation, "business_profile", None)
-    redact_text = _should_redact_text_pii(conversation)
 
     def _upload_title(upload: KnowledgeUpload | None) -> str:
         if not upload:
@@ -6959,7 +6501,7 @@ def _agentic_read_v2_handler(
             or str(getattr(upload, "id", "") or "")
         )
         title_text = str(title or "").strip() or "Untitled"
-        return redact_free_text(title_text) if redact_text else title_text
+        return title_text
 
     def _cursor_payload_base(*, item_id: str, kind: str) -> dict[str, object]:
         exp = int(time.time()) + _AGENTIC_READ_CURSOR_V2_TTL_SECONDS
@@ -7433,8 +6975,6 @@ def _agentic_read_v2_handler(
             break
 
         content_out = "".join(out_parts)
-        if redact_text and content_out:
-            content_out = redact_free_text(content_out)
         cursor_str = _sign_agentic_read_cursor_v2(cursor_next) if cursor_next else None
         return content_out, ({"cursor": cursor_str} if cursor_str else None), complete
 
@@ -7651,8 +7191,6 @@ def _agentic_read_v2_handler(
                 except (TypeError, ValueError):
                     continue
                 text = str(getattr(cell, "raw_text", "") or "")
-                if redact_text and text:
-                    text = redact_free_text(text)
                 cell_lookup[idx] = text
 
             if index_offset is None:
@@ -7953,8 +7491,6 @@ def _agentic_read_v2_handler(
             break
 
         content_out = "".join(out_parts)
-        if redact_text and content_out:
-            content_out = redact_free_text(content_out)
         cursor_str = _sign_agentic_read_cursor_v2(cursor_next) if cursor_next else None
         return content_out, ({"cursor": cursor_str} if cursor_str else None), complete
 
@@ -8293,7 +7829,7 @@ def _agentic_read_v2_handler(
                 if not table_title:
                     order_index = getattr(table_obj, "order_index", None)
                     table_title = f"Table {order_index}" if order_index else "Table"
-                title = redact_free_text(table_title) if redact_text else table_title
+                title = table_title
 
                 grouped_table_ref_count = row_table_ref_counts.get(str(table_id), 0)
                 expand_to_table_context = bool(
@@ -8345,7 +7881,7 @@ def _agentic_read_v2_handler(
                 if not table_title:
                     order_index = getattr(table_record, "order_index", None)
                     table_title = f"Table {order_index}" if order_index else "Table"
-                title = redact_free_text(table_title) if redact_text else table_title
+                title = table_title
 
                 if row_start is not None or row_limit is not None:
                     table_payload, _cursor_out, complete = _read_tabular_rows_segment_facts(
@@ -8575,7 +8111,7 @@ def _agentic_read_v2_handler(
                         table_title = (table_obj.title or table_obj.section_heading or "").strip()
                         if not table_title:
                             table_title = f"Table {table_obj.order_index}" if table_obj.order_index else "Table"
-                        title = redact_free_text(table_title) if redact_text else table_title
+                        title = table_title
                 except Exception:
                     pass
 
@@ -8624,7 +8160,7 @@ def _agentic_read_v2_handler(
                         table_title = (table_obj.title or table_obj.section_heading or "").strip()
                         if not table_title:
                             table_title = f"Table {table_obj.order_index}" if table_obj.order_index else "Table"
-                        title = redact_free_text(table_title) if redact_text else table_title
+                        title = table_title
                 except Exception:
                     pass
                 if row_start is not None or row_limit is not None:

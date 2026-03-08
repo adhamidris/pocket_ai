@@ -53,7 +53,7 @@ Ingestion:
 - EMBED_* settings (embedding model/provider)
 
 Privacy:
-- MCP_TABULAR_PRIVACY_ENABLED / MCP_TABULAR_PII_REDACTION_ENABLED
+- Legacy PII masking / verified lookup knobs were removed (this deployment is knowledge-RAG only).
 - DATASET_KEY_INDEX_ALLOW_SENSITIVE
 
 Examples

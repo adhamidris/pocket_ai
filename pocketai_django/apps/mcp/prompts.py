@@ -572,34 +572,8 @@ def _conversation_memory_note(
     if not has_structured and summary_max_chars > 0:
         summary = sanitize_text((conversation.summary or "").strip())
         summary = _clip(summary, summary_max_chars) if summary else ""
-    identifiers = metadata.get("customer_identifiers") or metadata.get("identifiers") or {}
-    pinned_lines: list[str] = []
-    if isinstance(identifiers, Mapping):
-        cleaned_items: list[tuple[str, str]] = []
-        for raw_key, raw_value in identifiers.items():
-            key = str(raw_key).strip()
-            value = str(raw_value).strip() if raw_value is not None else ""
-            value = " ".join(value.replace("\r", " ").replace("\n", " ").split())
-            if not key or not value:
-                continue
-            cleaned_items.append((key, value))
-        for key, value in sorted(cleaned_items, key=lambda item: item[0]):
-            if pin_max_items <= 0:
-                break
-            if len(pinned_lines) >= pin_max_items:
-                break
-            pinned_lines.append(f"- {key}: {_clip(value, pin_value_chars)}")
 
-    locked = metadata.get("locked_identifier") if isinstance(metadata.get("locked_identifier"), Mapping) else None
-    locked_key = str(locked.get("key") or "").strip() if locked else ""
-    locked_value = str(locked.get("value") or "").strip() if locked else ""
-    locked_value = " ".join(locked_value.replace("\r", " ").replace("\n", " ").split())
-    if locked_key and locked_value:
-        lock_line = f"- session_lock: {locked_key}={_clip(locked_value, pin_value_chars)}"
-        if lock_line not in pinned_lines:
-            pinned_lines.insert(0, lock_line)
-
-    if not (summary or has_structured) and not pinned_lines:
+    if not (summary or has_structured):
         return None
 
     sections: list[str] = [
@@ -623,8 +597,6 @@ def _conversation_memory_note(
         )
     if summary:
         sections.append("<memory_summary>\n" + summary + "\n</memory_summary>")
-    if pinned_lines:
-        sections.append("<pinned_identifiers>\n" + "\n".join(pinned_lines) + "\n</pinned_identifiers>")
     return "\n\n".join(sections).strip()
 
 
@@ -1200,11 +1172,8 @@ def build_planner_messages(
         "Your job is to propose backend actions and structured extractions "
         "based on a customer conversation and the AI assistant's final reply."
     )
-    if builder:
-        system_sections.append(PLANNER_CRM_RULES)
-        system_sections.append(builder.CUSTOMER_RULES)
-    else:
-        system_sections.append(PLANNER_CRM_RULES)
+    # This project is now focused on knowledge-RAG (no customer record linking / CRM actions).
+    # Keep postflight limited to verification + structured extraction only.
 
     system_sections.append(VERIFICATION_OUTPUT_HINT)
     system_sections.append(

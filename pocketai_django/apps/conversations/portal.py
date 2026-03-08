@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import dataclasses
-import re
 import uuid
 from datetime import datetime, timedelta
 from typing import Iterable, Sequence
@@ -16,7 +15,6 @@ from pocketai.language import normalize_language_code
 from apps.accounts.models import (
     AgentProfile,
     BusinessProfile,
-    _normalize_identifier_token,
 )
 from apps.knowledge.models import KnowledgeFeedbackCase
 from apps.conversations.content_blocks import ensure_assistant_text_blocks
@@ -207,12 +205,6 @@ class ChatPortalService:
                 conversation=conversation,
                 language=selected_ui_language,
             )
-            if sender == ConversationSender.CUSTOMER:
-                metadata_updated = self._capture_customer_identifiers(
-                    conversation=conversation,
-                    body=body,
-                    message_metadata=metadata,
-                ) or metadata_updated
             self._touch_conversation_after_message(conversation, message, metadata_updated=metadata_updated)
         return self._serialize_message(message)
 
@@ -658,82 +650,6 @@ class ChatPortalService:
             return False
         updated_meta = dict(convo_meta)
         updated_meta["ui_language"] = normalized
-        conversation.metadata = updated_meta
-        return True
-
-    def _capture_customer_identifiers(self, *, conversation, body: str, message_metadata: dict | None) -> bool:
-        """
-        Extract lightweight identifiers (email/phone/id) from the message and merge into conversation metadata.
-        """
-
-        convo_meta = conversation.metadata if isinstance(getattr(conversation, "metadata", None), dict) else {}
-        existing_identifiers = convo_meta.get("customer_identifiers") or convo_meta.get("identifiers") or {}
-        if not isinstance(existing_identifiers, dict):
-            existing_identifiers = {}
-        identifiers = dict(existing_identifiers)
-        locked_identifier = convo_meta.get("locked_identifier") if isinstance(convo_meta, dict) else None
-        captured_new: list[tuple[str, str]] = []
-
-        def _set_identifier(key: str, value: str) -> None:
-            nonlocal identifiers
-            normalized_key = _normalize_identifier_token(key) or key
-            clean_value = (value or "").strip()
-            if not normalized_key or not clean_value:
-                return
-            if locked_identifier and isinstance(locked_identifier, dict):
-                locked_key = locked_identifier.get("key")
-                locked_value = locked_identifier.get("value")
-                if locked_key == normalized_key and locked_value and locked_value != clean_value:
-                    # Ignore conflicting values for the locked key; keep the original lock.
-                    return
-            if normalized_key not in identifiers:
-                identifiers[normalized_key] = clean_value
-                captured_new.append((normalized_key, clean_value))
-
-        # Merge identifiers passed explicitly via message metadata.
-        meta_identifiers = None
-        if isinstance(message_metadata, dict):
-            meta_identifiers = message_metadata.get("customer_identifiers") or message_metadata.get("identifiers")
-        if isinstance(meta_identifiers, dict):
-            for key, value in meta_identifiers.items():
-                _set_identifier(str(key), str(value))
-
-        text = body or ""
-        # Email addresses
-        for email in re.findall(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", text):
-            _set_identifier("email", email)
-
-        # Phone numbers (loose match; strip non-digits to validate length).
-        for phone_raw in re.findall(r"(\+?\d[\d\s\-\(\)]{7,})", text):
-            digits = re.sub(r"\D", "", phone_raw)
-            if 10 <= len(digits) <= 15:
-                _set_identifier("phone", phone_raw)
-
-        # Labeled IDs (ticket/case/customer/account/user/order).
-        for match in re.finditer(r"(?i)(ticket|case|order|customer|account|user|external)\s*(?:id|number|no|#)?\s*[:\-]?\s*([A-Za-z0-9\-_]+)", text):
-            label = (match.group(1) or "").lower()
-            value = match.group(2) or ""
-            if not value:
-                continue
-            if label in {"ticket", "case", "order", "external"}:
-                _set_identifier("external_id", value)
-            elif label in {"customer", "account", "user"}:
-                _set_identifier("customer_id", value)
-
-        if identifiers == existing_identifiers:
-            return False
-
-        updated_meta = dict(convo_meta)
-        updated_meta["customer_identifiers"] = identifiers
-        if not locked_identifier and captured_new:
-            lock_key, lock_value = captured_new[0]
-            updated_meta["locked_identifier"] = {
-                "key": lock_key,
-                "value": lock_value,
-                "locked_at": timezone.now().isoformat(),
-            }
-        elif locked_identifier:
-            updated_meta["locked_identifier"] = locked_identifier
         conversation.metadata = updated_meta
         return True
 

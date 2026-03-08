@@ -20,7 +20,6 @@ from apps.knowledge.models import (
     KnowledgeUploadUrl,
 )
 from apps.knowledge.documents import CsvPreviewError, preview_csv_upload
-from apps.knowledge.privacy import redact_tabular_preview
 
 logger = logging.getLogger(__name__)
 
@@ -207,13 +206,6 @@ def _preflight_file(upload: KnowledgeUpload, file_detail: KnowledgeUploadFile) -
 
     if fmt in {"csv", "tsv"}:
         metrics.update(_preflight_csv_like(absolute_path, fmt, warnings))
-        try:
-            columns = metrics.get("columns") if isinstance(metrics.get("columns"), list) else []
-            preview_rows = metrics.get("preview_rows") if isinstance(metrics.get("preview_rows"), list) else []
-            if columns and preview_rows:
-                metrics["preview_rows"] = redact_tabular_preview(columns=columns, rows=preview_rows)
-        except Exception:  # pragma: no cover - preflight must not fail on redaction
-            pass
         limits = _table_limits_snapshot(upload)
         metrics.update(_table_size_warnings(metrics, limits, warnings, recommendations))
         return {

@@ -163,17 +163,8 @@ Verified lookup is a capability that tenants can enable:
 - Once verified, retrieval may be scoped to matching records/uploads and may expose allowed fields.
 
 Current repo behavior:
-- Sensitive tabular content is protected behind verified lookup when required; agentic mode does not expose any dataset/table query tools to the LLM.
-- Unstructured/document snippets are additionally protected with best-effort PII pattern masking before tool evidence is returned to the LLM (configurable via `MCP_TEXT_PII_REDACTION_*`).
-
-Portal verification API (for the public web widget):
-- `POST /api/chat/portal/verify/status/` — whether the session is already verified
-- `POST /api/chat/portal/verify/start/` — start an OTP challenge (email/phone)
-- `POST /api/chat/portal/verify/confirm/` — confirm OTP and mark the conversation as verified
-
-Env knobs:
-- `MCP_VERIFIED_LOOKUP_ENABLED`, `MCP_VERIFIED_LOOKUP_REQUIRE_FOR_PII`, `MCP_VERIFIED_LOOKUP_ALLOW_CUSTOMER_MATCH`
-- `PORTAL_VERIFICATION_OTP_TTL_SECONDS`, `PORTAL_VERIFICATION_RESEND_COOLDOWN_SECONDS`, `PORTAL_VERIFICATION_MAX_ATTEMPTS`
+- This deployment is knowledge-RAG (bank fees/policies), not customer-service identity lookups.
+- The legacy “verified lookup / OTP / PII masking” stack was removed to avoid masking legitimate bank contact details (emails/phones) in answers/evidence.
 
 ---
 

@@ -67,7 +67,6 @@ from apps.rag.query_classifier import QueryClassifier, QueryClassification, Quer
 from apps.rag.rag_logging import structured_log
 from apps.conversations.response_blocks import normalize_response_blocks
 from apps.conversations.rich_blocks import coerce_block_event
-from apps.knowledge.privacy import redact_free_text
 from apps.integrations.email_accounts import ensure_fresh_email_credentials
 from apps.integrations.email_policy import evaluate_email_send_policy
 from apps.integrations.gmail import GmailApiError, gmail_get_draft_headers
@@ -6005,7 +6004,7 @@ class McpOrchestratorService:
             return False
         if text.startswith("Conversation memory"):
             return True
-        return "<memory_summary>" in text or "<pinned_identifiers>" in text
+        return "<memory_summary>" in text
 
     def _estimate_prompt_breakdown(
         self,
@@ -8186,7 +8185,6 @@ class McpOrchestratorService:
             if isinstance(raw, list):
                 for item in raw:
                     text = sanitize_text(str(item or "").strip())
-                    text = redact_free_text(text).strip()
                     if not text:
                         continue
                     if item_max_chars:
@@ -8239,30 +8237,6 @@ class McpOrchestratorService:
         max_decisions = max(0, self._safe_int_setting(getattr(settings, "MCP_MEMORY_V2_DECISIONS_MAX_ITEMS", 6), 6))
         turn_max_chars = self._safe_int_setting(getattr(settings, "MCP_MEMORY_TURN_MAX_CHARS", 1200), 1200)
 
-        metadata = conversation.metadata if isinstance(conversation.metadata, Mapping) else {}
-        identifiers = metadata.get("customer_identifiers") or metadata.get("identifiers") or {}
-        pinned_lines: list[str] = []
-        if isinstance(identifiers, Mapping):
-            cleaned_items: list[tuple[str, str]] = []
-            for raw_key, raw_value in identifiers.items():
-                key = str(raw_key).strip()
-                value = str(raw_value).strip() if raw_value is not None else ""
-                value = " ".join(value.replace("\r", " ").replace("\n", " ").split())
-                if not key or not value:
-                    continue
-                cleaned_items.append((key, value))
-            pin_max_items = max(0, self._safe_int_setting(getattr(settings, "MCP_MEMORY_PIN_MAX_ITEMS", 6), 6))
-            pin_value_chars = self._safe_int_setting(getattr(settings, "MCP_MEMORY_PIN_VALUE_CHARS", 80), 80)
-            for key, value in sorted(cleaned_items, key=lambda item: item[0])[:pin_max_items or None]:
-                pinned_lines.append(f"- {key}: {self._clip_text(value, pin_value_chars) if pin_value_chars else value}")
-
-        locked = metadata.get("locked_identifier") if isinstance(metadata.get("locked_identifier"), Mapping) else None
-        if locked and locked.get("key") and locked.get("value"):
-            locked_key = str(locked.get("key") or "").strip()
-            locked_val = " ".join(str(locked.get("value") or "").replace("\r", " ").replace("\n", " ").split()).strip()
-            if locked_key and locked_val:
-                pinned_lines.insert(0, f"- session_lock: {locked_key}={self._clip_text(locked_val, 80)}")
-
         system_message = (
             "You maintain STRUCTURED memory for an AI support agent.\n"
             "This memory is injected as READ-ONLY context for future turns.\n"
@@ -8279,8 +8253,6 @@ class McpOrchestratorService:
         )
 
         user_sections: list[str] = []
-        if pinned_lines:
-            user_sections.append("Pinned identifiers (authoritative):\n" + "\n".join(pinned_lines))
         if isinstance(existing_memory, Mapping) and existing_memory:
             safe_existing = {
                 "facts": existing_memory.get("facts") if isinstance(existing_memory.get("facts"), list) else [],
