@@ -39,4 +39,5 @@ gha-creds-*.json
 # User requested ignores
 /var
 /cib/
+/documents/
 final.txt

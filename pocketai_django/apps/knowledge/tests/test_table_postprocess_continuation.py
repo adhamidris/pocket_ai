@@ -49,6 +49,25 @@ class TablePostprocessContinuationTests(SimpleTestCase):
             rows=rows,
         )
 
+    def _table_with_meta(
+        self,
+        rows: list[TableRowPayload],
+        *,
+        order_index: int,
+        title: str,
+        section_heading: str,
+        bbox: dict[str, float],
+    ) -> TablePayload:
+        return TablePayload(
+            order_index=order_index,
+            title=title,
+            section_heading=section_heading,
+            page_number=1,
+            bbox=bbox,
+            column_schema=["monthly_transaction_amount", "atm_withdrawal_fees", "disbursement_fees"],
+            rows=rows,
+        )
+
     def test_postprocess_stitches_descriptor_continuation_across_adjacent_rows(self) -> None:
         service = KnowledgeIngestionService(enable_ocr=False)
         rows = [
@@ -168,4 +187,122 @@ class TablePostprocessContinuationTests(SimpleTestCase):
         self.assertEqual(self._cell_text(row, 3), "20%")
         self.assertEqual(self._cell_text(row, 4), "30%")
         self.assertEqual(self._cell_text(row, 5), "40%")
+        self.assertEqual(int(meta.get("value_fragment_stitched_cells") or 0), 0)
+
+    def test_postprocess_keeps_distinct_same_schema_tables_on_same_page(self) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        corporate_rows = [
+            self._make_row(0, ["Monthly Transaction Amount", "ATM Withdrawal Fees", "Disbursement Fees"], row_type="header"),
+            self._make_row(1, ["From 1 to 100 transactions", "No fees", "EGP 10"]),
+            self._make_row(2, ["From 101 to 500 transactions", "No fees", "EGP 9"]),
+            self._make_row(3, ["From 501 to 1000 transactions", "No fees", "EGP 8"]),
+            self._make_row(4, ["1000+ transactions", "No fees", "EGP 7"]),
+        ]
+        payroll_rows = [
+            self._make_row(0, ["Monthly Transaction Amount", "ATM Withdrawal Fees", "Disbursement Fees"], row_type="header"),
+            self._make_row(1, ["From 1 to 100 transactions", "No fees", "EGP 7"]),
+            self._make_row(2, ["From 101 to 500 transactions", "No fees", "EGP 6"]),
+            self._make_row(3, ["From 501 to 1000 transactions", "No fees", "EGP 5"]),
+            self._make_row(4, ["1000+ transactions", "No fees", "EGP 4"]),
+        ]
+        corporate = self._table_with_meta(
+            corporate_rows,
+            order_index=1,
+            title="Corporate Disbursement Pricing",
+            section_heading="Corporate Disbursement Pricing",
+            bbox={"x0": 50.0, "y0": 100.0, "x1": 550.0, "y1": 280.0},
+        )
+        payroll = self._table_with_meta(
+            payroll_rows,
+            order_index=2,
+            title="Smart Wallet Payroll Disbursement Pricing",
+            section_heading="Smart Wallet Payroll Disbursement Pricing",
+            bbox={"x0": 50.0, "y0": 320.0, "x1": 550.0, "y1": 500.0},
+        )
+
+        processed, issues, meta = service._postprocess_tables([corporate, payroll])
+
+        self.assertEqual(len(processed), 2)
+        self.assertEqual(int(meta.get("deduped_tables") or 0), 0)
+        self.assertFalse(any(issue.code == "table_duplicate_suppressed" for issue in issues))
+
+    def test_postprocess_dedupes_overlapping_same_heading_tables(self) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        rows = [
+            self._make_row(0, ["Monthly Transaction Amount", "ATM Withdrawal Fees", "Disbursement Fees"], row_type="header"),
+            self._make_row(1, ["From 1 to 100 transactions", "No fees", "EGP 10"]),
+            self._make_row(2, ["From 101 to 500 transactions", "No fees", "EGP 9"]),
+            self._make_row(3, ["From 501 to 1000 transactions", "No fees", "EGP 8"]),
+            self._make_row(4, ["1000+ transactions", "No fees", "EGP 7"]),
+        ]
+        first = self._table_with_meta(
+            rows,
+            order_index=1,
+            title="Corporate Disbursement Pricing",
+            section_heading="Corporate Disbursement Pricing",
+            bbox={"x0": 50.0, "y0": 100.0, "x1": 550.0, "y1": 280.0},
+        )
+        second = self._table_with_meta(
+            rows,
+            order_index=2,
+            title="Corporate Disbursement Pricing",
+            section_heading="Corporate Disbursement Pricing",
+            bbox={"x0": 60.0, "y0": 110.0, "x1": 560.0, "y1": 290.0},
+        )
+
+        processed, issues, meta = service._postprocess_tables([first, second])
+
+        self.assertEqual(len(processed), 1)
+        self.assertEqual(int(meta.get("deduped_tables") or 0), 1)
+        suppressed = [issue for issue in issues if issue.code == "table_duplicate_suppressed"]
+        self.assertEqual(len(suppressed), 1)
+        self.assertEqual((suppressed[0].details or {}).get("reason"), "heading_match")
+
+    def test_postprocess_does_not_stitch_tiered_pricing_rows(self) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        rows = [
+            self._make_row(0, ["Monthly Transaction Amount", "ATM Withdrawal Fees", "Disbursement Fees"], row_type="header"),
+            self._make_row(1, ["From 1 to 100 transactions", "No fees", "EGP 10"]),
+            self._make_row(2, ["From 101 to 500 transactions", "No fees", "EGP 9"]),
+            self._make_row(3, ["From 501 to 1000 transactions", "No fees", "EGP 8"]),
+            self._make_row(4, ["1000+ transactions", "No fees", "EGP 7"]),
+        ]
+        table = self._table_with_meta(
+            rows,
+            order_index=1,
+            title="Corporate Disbursement Pricing",
+            section_heading="Corporate Disbursement Pricing",
+            bbox={"x0": 50.0, "y0": 100.0, "x1": 550.0, "y1": 280.0},
+        )
+
+        processed, issues, meta = service._postprocess_tables([table])
+
+        self.assertEqual(len(processed), 1)
+        table_after = processed[0]
+        self.assertEqual(int(meta.get("row_continuation_stitched_pairs") or 0), 0)
+        self.assertFalse(any(issue.code == "table_row_continuation_stitched" for issue in issues))
+        row_one = next(row for row in table_after.rows if row.row_index == 1)
+        row_two = next(row for row in table_after.rows if row.row_index == 2)
+        self.assertEqual(self._cell_text(row_one, 0), "From 1 to 100 transactions")
+        self.assertEqual(self._cell_text(row_two, 0), "From 101 to 500 transactions")
+
+    def test_postprocess_does_not_merge_complete_value_states_across_columns(self) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        rows = [
+            self._make_row(0, ["Monthly Transaction Amount", "ATM Withdrawal Fees", "Disbursement Fees"], row_type="header"),
+            self._make_row(1, ["From 1 to 100 transactions", "No fees", "EGP 10"]),
+        ]
+        table = self._table_with_meta(
+            rows,
+            order_index=1,
+            title="Corporate Disbursement Pricing",
+            section_heading="Corporate Disbursement Pricing",
+            bbox={"x0": 50.0, "y0": 100.0, "x1": 550.0, "y1": 180.0},
+        )
+
+        processed, _issues, meta = service._postprocess_tables([table])
+
+        row = next(r for r in processed[0].rows if r.row_index == 1)
+        self.assertEqual(self._cell_text(row, 1), "No fees")
+        self.assertEqual(self._cell_text(row, 2), "EGP 10")
         self.assertEqual(int(meta.get("value_fragment_stitched_cells") or 0), 0)

@@ -31,7 +31,36 @@ from apps.mcp.orchestrator import McpOrchestratorService
 from apps.rag.evaluation.token_matching import tokens_check
 
 
-BASELINE_PATH = Path(os.environ.get("BENCH_BASELINE_PATH", "var/logs/cib_qa_e2e_eval_evidence_full.json"))
+def resolve_default_baseline_path() -> Path:
+    """
+    Pick a single, stable baseline to compare against to avoid report confusion.
+
+    Priority:
+      1) Explicit BENCH_BASELINE_PATH
+      2) "latest baseline" symlink: var/logs/cib_qa_e2e_eval_evidence_full.BASELINE.json
+      3) Legacy baseline: var/logs/cib_qa_e2e_eval_evidence_full.json
+    """
+
+    env_path = os.environ.get("BENCH_BASELINE_PATH", "").strip()
+    if env_path:
+        return Path(env_path)
+
+    logs_dir = Path("var/logs")
+    symlink = logs_dir / "cib_qa_e2e_eval_evidence_full.BASELINE.json"
+    if symlink.exists():
+        return symlink
+
+    legacy = logs_dir / "cib_qa_e2e_eval_evidence_full.json"
+    if legacy.exists():
+        return legacy
+
+    raise FileNotFoundError(
+        "No benchmark baseline found. Set BENCH_BASELINE_PATH or create "
+        "var/logs/cib_qa_e2e_eval_evidence_full.BASELINE.json."
+    )
+
+
+BASELINE_PATH = resolve_default_baseline_path()
 RUN_ID = os.environ.get("BENCH_RUN_ID") or datetime.now().strftime("%Y%m%d-%H%M%S")
 OUT_JSON = Path(f"var/logs/cib_qa_e2e_eval_evidence_full_post_refactor_{RUN_ID}.json")
 OUT_MD = Path(f"var/logs/cib_qa_e2e_eval_evidence_full_post_refactor_{RUN_ID}.md")
@@ -301,6 +330,7 @@ if RESUME_JSON:
                 )
 
 print(f"START run_id={RUN_ID} resumed={len(results)}", flush=True)
+print(f"USING baseline={BASELINE_PATH}", flush=True)
 
 for idx, item in enumerate(qa_items, start=1):
     item_id = str(item.get("id") or "").strip()
@@ -507,4 +537,3 @@ print(
     ),
     flush=True,
 )
-

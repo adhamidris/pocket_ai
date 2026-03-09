@@ -3044,6 +3044,220 @@ class GeometryTableReconstructor:
             return True
         return False
 
+    @staticmethod
+    def _merge_fragment_text(left: str, right: str) -> str:
+        left_text = str(left or "").strip()
+        right_text = str(right or "").strip()
+        if not left_text:
+            return right_text
+        if not right_text:
+            return left_text
+        if left_text == right_text:
+            return left_text
+        if right_text in left_text:
+            return left_text
+        if left_text in right_text:
+            return right_text
+        if left_text.endswith(("+", "/", "-", "(")):
+            return f"{left_text} {right_text}".strip()
+        return f"{left_text} {right_text}".strip()
+
+    @staticmethod
+    def _row_texts(row: TableRowPayload, column_count: int) -> list[str]:
+        texts = [""] * max(0, column_count)
+        for cell in (row.cells or []):
+            if 0 <= cell.column_index < len(texts):
+                texts[cell.column_index] = str(cell.raw_text or "").strip()
+        return texts
+
+    def _row_non_empty_columns(self, texts: Sequence[str]) -> list[int]:
+        return [idx for idx, text in enumerate(texts) if str(text or "").strip()]
+
+    def _leading_descriptor_text(self, texts: Sequence[str]) -> str:
+        return " ".join(str(texts[idx] or "").strip() for idx in range(min(2, len(texts))) if str(texts[idx] or "").strip()).strip()
+
+    @staticmethod
+    def _looks_like_range_descriptor(text: str) -> bool:
+        candidate = str(text or "").strip().lower()
+        if not candidate:
+            return False
+        return bool(
+            re.search(r"\b(?:from|to|up to|above|below|over|under)\b", candidate)
+            or re.search(r"\d+\s*\+\b", candidate)
+        )
+
+    @staticmethod
+    def _looks_like_value_continuation(text: str) -> bool:
+        candidate = str(text or "").strip()
+        if not candidate:
+            return False
+        lowered = candidate.lower()
+        if candidate.endswith(("+", "/", "-", "(")):
+            return True
+        if lowered.startswith(("+", "correspondent", "courier", "swift", "telex", "fees", "max.", "min.")):
+            return True
+        if re.search(r"\b(?:correspondent|courier|swift|telex)\b", lowered):
+            return True
+        if re.search(r"\bmin\.?\b", lowered) and "max" not in lowered:
+            return True
+        return False
+
+    def _is_descriptor_only_fragment_row(self, texts: Sequence[str]) -> bool:
+        non_empty = self._row_non_empty_columns(texts)
+        if not non_empty:
+            return False
+        if any(idx >= 2 for idx in non_empty):
+            return False
+        joined = self._leading_descriptor_text(texts)
+        if not joined:
+            return False
+        if self._mostly_numeric_or_amount(joined):
+            return False
+        return len(re.findall(r"\w+", joined)) <= 6
+
+    def _has_complementary_value_fragments(self, current_texts: Sequence[str], next_texts: Sequence[str]) -> bool:
+        value_columns = range(2, min(len(current_texts), len(next_texts)))
+        for idx in value_columns:
+            current = str(current_texts[idx] or "").strip()
+            nxt = str(next_texts[idx] or "").strip()
+            if current and nxt and (
+                self._looks_like_value_continuation(current) or self._looks_like_value_continuation(nxt)
+            ):
+                return True
+            if current and not nxt and self._looks_like_value_continuation(current):
+                return True
+            if nxt and not current and self._looks_like_value_continuation(nxt):
+                return True
+        return False
+
+    def _rows_should_merge_logically(self, current: TableRowPayload, nxt: TableRowPayload, column_count: int) -> bool:
+        current_texts = self._row_texts(current, column_count)
+        next_texts = self._row_texts(nxt, column_count)
+        current_non_empty = self._row_non_empty_columns(current_texts)
+        next_non_empty = self._row_non_empty_columns(next_texts)
+        if not current_non_empty or not next_non_empty:
+            return False
+
+        current_descriptor = self._leading_descriptor_text(current_texts)
+        next_descriptor = self._leading_descriptor_text(next_texts)
+
+        if self._looks_like_range_descriptor(current_descriptor) and self._looks_like_range_descriptor(next_descriptor):
+            return False
+
+        # Descriptor-only continuation lines should attach to the nearest logical row.
+        if self._is_descriptor_only_fragment_row(current_texts) and self._is_descriptor_only_fragment_row(next_texts):
+            return True
+        if current_descriptor and self._is_descriptor_only_fragment_row(next_texts):
+            return True
+
+        # Value continuation rows are common in dense tariff tables where the fee formula wraps
+        # across the next physical line while the descriptor stays on the first line.
+        next_descriptor_only = self._is_descriptor_only_fragment_row(next_texts)
+        if current_descriptor and (not next_descriptor or next_descriptor_only):
+            if self._has_complementary_value_fragments(current_texts, next_texts):
+                return True
+
+        return False
+
+    def _merge_geometry_rows(
+        self,
+        current: TableRowPayload,
+        nxt: TableRowPayload,
+        column_count: int,
+    ) -> TableRowPayload:
+        current_cells = {cell.column_index: cell for cell in (current.cells or [])}
+        next_cells = {cell.column_index: cell for cell in (nxt.cells or [])}
+        merged_cells: list[TableCellPayload] = []
+        merged_bboxes: list[dict[str, Any]] = []
+
+        for col_idx in range(column_count):
+            current_cell = current_cells.get(col_idx)
+            next_cell = next_cells.get(col_idx)
+            current_text = str(current_cell.raw_text if current_cell else "").strip()
+            next_text = str(next_cell.raw_text if next_cell else "").strip()
+            merged_text = self._merge_fragment_text(current_text, next_text)
+            current_bbox = current_cell.bbox if current_cell else {}
+            next_bbox = next_cell.bbox if next_cell else {}
+            merged_bbox = _union_bbox([bbox for bbox in [current_bbox, next_bbox] if bbox and any(bbox.values())])
+            if any(merged_bbox.values()):
+                merged_bboxes.append(merged_bbox)
+            column_key = (
+                current_cell.column_key
+                if current_cell is not None
+                else next_cell.column_key
+                if next_cell is not None
+                else f"column_{col_idx+1}"
+            )
+            span_count = int((current_cell.metadata or {}).get("span_count") or 0) + int((next_cell.metadata or {}).get("span_count") or 0)
+            metadata = {"span_count": span_count}
+            if current_text and next_text and merged_text != current_text:
+                metadata["logical_row_merged"] = True
+            merged_cells.append(
+                TableCellPayload(
+                    row_index=current.row_index,
+                    column_index=col_idx,
+                    column_key=column_key,
+                    raw_text=merged_text,
+                    normalized_value=TableDetector._normalize_cell_value(merged_text),
+                    bbox=merged_bbox,
+                    confidence=None,
+                    metadata=metadata,
+                )
+            )
+
+        merged_meta = dict(current.metadata or {})
+        merged_meta["geometry_logical_row_merged"] = True
+        merged_meta["geometry_merged_row_count"] = int(merged_meta.get("geometry_merged_row_count") or 1) + int((nxt.metadata or {}).get("geometry_merged_row_count") or 1)
+        merged_bbox = _union_bbox([bbox for bbox in [current.bbox, nxt.bbox] if bbox and any(bbox.values())] + merged_bboxes)
+        merged_raw = " | ".join(str(cell.raw_text or "").strip() for cell in merged_cells)
+        return TableRowPayload(
+            row_index=current.row_index,
+            page_number=current.page_number,
+            bbox=merged_bbox,
+            raw_text=merged_raw,
+            metadata=merged_meta,
+            cells=merged_cells,
+        )
+
+    def _normalize_geometry_logical_rows(self, rows: list[TableRowPayload], column_count: int) -> tuple[list[TableRowPayload], int]:
+        if not rows:
+            return rows, 0
+        merged_rows: list[TableRowPayload] = [rows[0]]
+        merged_pairs = 0
+        for nxt in rows[1:]:
+            current = merged_rows[-1]
+            if self._rows_should_merge_logically(current, nxt, column_count):
+                merged_rows[-1] = self._merge_geometry_rows(current, nxt, column_count)
+                merged_pairs += 1
+            else:
+                merged_rows.append(nxt)
+        normalized_rows: list[TableRowPayload] = []
+        for idx, row in enumerate(merged_rows, start=1):
+            normalized_cells = [
+                TableCellPayload(
+                    row_index=idx,
+                    column_index=cell.column_index,
+                    column_key=cell.column_key,
+                    raw_text=cell.raw_text,
+                    normalized_value=cell.normalized_value,
+                    bbox=cell.bbox,
+                    confidence=cell.confidence,
+                    metadata=cell.metadata,
+                )
+                for cell in (row.cells or [])
+            ]
+            normalized_rows.append(
+                TableRowPayload(
+                    row_index=idx,
+                    page_number=row.page_number,
+                    bbox=row.bbox,
+                    raw_text=row.raw_text,
+                    metadata=row.metadata,
+                    cells=normalized_cells,
+                )
+            )
+        return normalized_rows, merged_pairs
+
     # ---- Build tables for a single page ----
         # ---- Build tables for a single page ----
         # ---- Build tables for a single page ----
@@ -3260,6 +3474,41 @@ class GeometryTableReconstructor:
                 )
                 next_row_idx += 1
 
+            logical_merge_pairs = 0
+            if table_rows:
+                header_rows = [row for row in table_rows if str((row.metadata or {}).get("row_type") or "").strip().lower() == "header"]
+                data_rows = [row for row in table_rows if str((row.metadata or {}).get("row_type") or "").strip().lower() != "header"]
+                normalized_data_rows, logical_merge_pairs = self._normalize_geometry_logical_rows(
+                    data_rows,
+                    len(schema),
+                )
+                if header_rows:
+                    header_row = header_rows[0]
+                    normalized_header_cells = [
+                        TableCellPayload(
+                            row_index=0,
+                            column_index=cell.column_index,
+                            column_key=cell.column_key,
+                            raw_text=cell.raw_text,
+                            normalized_value=cell.normalized_value,
+                            bbox=cell.bbox,
+                            confidence=cell.confidence,
+                            metadata=cell.metadata,
+                        )
+                        for cell in (header_row.cells or [])
+                    ]
+                    normalized_header = TableRowPayload(
+                        row_index=0,
+                        page_number=header_row.page_number,
+                        bbox=header_row.bbox,
+                        raw_text=header_row.raw_text,
+                        metadata=header_row.metadata,
+                        cells=normalized_header_cells,
+                    )
+                    table_rows = [normalized_header, *normalized_data_rows]
+                else:
+                    table_rows = normalized_data_rows
+
             table_payload = TablePayload(
                 order_index=order_index,
                 title=page_layout.section_heading if getattr(page_layout, "section_heading", "") else f"Table {order_index}",
@@ -3268,7 +3517,12 @@ class GeometryTableReconstructor:
                 bbox=_union_bbox([row.bbox for row in table_rows]) if table_rows else {"x0": 0.0, "y0": 0.0, "x1": 0.0, "y1": 0.0},
                 column_schema=schema,
                 data_dictionary={},
-                metadata={"detected_via": "geometry", "col_bins": anchor_bins, "start_row_idx": start_row_idx},
+                metadata={
+                    "detected_via": "geometry",
+                    "col_bins": anchor_bins,
+                    "start_row_idx": start_row_idx,
+                    "geometry_logical_row_merged_pairs": logical_merge_pairs,
+                },
                 rows=table_rows,
             )
             tables.append(table_payload)
@@ -4874,17 +5128,53 @@ class KnowledgeIngestionService:
                         rows=annotated_rows,
                     )
 
+        chunking_pages = list(layout_result.pages)
+
+        # Canonical table reconstruction (ingestion-time):
+        # - reconstruct gridless pseudo-tables from aligned page blocks
+        # - attach orphan/residual blocks into the most likely cell
+        canonical_reconstruction_meta: dict[str, Any] = {}
+        if format_hint == "pdf" and chunking_pages:
+            try:
+                from apps.knowledge.canonical_table_reconstruction import CanonicalTableReconstructor
+
+                reconstructor = CanonicalTableReconstructor(
+                    PageLayout=PageLayout,
+                    PageBlockPayload=PageBlockPayload,
+                    TablePayload=TablePayload,
+                    TableRowPayload=TableRowPayload,
+                    TableCellPayload=TableCellPayload,
+                )
+                chunking_pages, tables, recon_meta, _recon_issues = reconstructor.run(
+                    pages=chunking_pages,
+                    tables=tables,
+                )
+                if recon_meta.reconstructed_tables or recon_meta.attached_blocks:
+                    canonical_reconstruction_meta = {
+                        "reconstructed_tables": recon_meta.reconstructed_tables,
+                        "reconstructed_rows": recon_meta.reconstructed_rows,
+                        "attached_blocks": recon_meta.attached_blocks,
+                        "attached_cells": recon_meta.attached_cells,
+                        "consumed_blocks": recon_meta.consumed_blocks,
+                        "modified_tables": recon_meta.modified_tables,
+                        "details": recon_meta.details,
+                    }
+            except Exception as exc:
+                logger.warning("canonical_table_reconstruction.failed upload=%s err=%s", upload.id, exc)
+
         postprocess_meta: dict[str, Any] = {}
         if tables:
             tables, postprocess_issues, postprocess_meta = self._postprocess_tables(tables)
             issues.extend(postprocess_issues)
 
-
-
         ingest_config = self._table_ingest_config(upload)
-        tables, table_metrics, limit_issues, table_summary = self._apply_table_limits(tables, upload=upload, config=ingest_config)
+        tables, table_metrics, limit_issues, table_summary = self._apply_table_limits(
+            tables,
+            upload=upload,
+            config=ingest_config,
+        )
         issues = issues + limit_issues
-        chunking_pages = list(layout_result.pages)
+
         table_text_overlap_filter_meta: dict[str, Any] = {}
         if (
             format_hint == "pdf"
@@ -4896,6 +5186,7 @@ class KnowledgeIngestionService:
                 chunking_pages,
                 tables,
             )
+
         pdf_baseline_metrics: dict[str, Any] = {}
         if format_hint == "pdf":
             pdf_baseline_metrics = self._build_pdf_table_baseline_metrics(
@@ -4941,7 +5232,7 @@ class KnowledgeIngestionService:
                 "candidate_counts": {key: len(val) for key, val in candidates.items()},
                 "candidate_scores": selection_meta.get("scores", {}),
             }
-            extraction_meta["selection_mode"] = "candidate_scorer_v2"
+            extraction_meta["selection_mode"] = str(selection_meta.get("selection_mode") or "candidate_scorer_v2")
             extraction_meta["runtime_flags"] = table_runtime_flags
             candidate_metrics = selection_meta.get("metrics")
             if isinstance(candidate_metrics, Mapping):
@@ -4959,6 +5250,11 @@ class KnowledgeIngestionService:
                 "heuristic_override_fallback_fragmentation": selection_meta.get(
                     "heuristic_override_fallback_fragmentation"
                 ),
+                "region_blend_applied": selection_meta.get("region_blend_applied"),
+                "region_blend_document_selected": selection_meta.get("region_blend_document_selected"),
+                "region_blend_extractors_used": selection_meta.get("region_blend_extractors_used"),
+                "region_blend_region_count": selection_meta.get("region_blend_region_count"),
+                "region_blend_regions": selection_meta.get("region_blend_regions"),
             }
             selector_debug = {key: value for key, value in selector_debug.items() if value is not None}
             if selector_debug:
@@ -4975,13 +5271,15 @@ class KnowledgeIngestionService:
                 extraction_meta["table_postprocess"] = postprocess_meta
             if table_text_overlap_filter_meta:
                 extraction_meta["table_text_overlap_filter"] = table_text_overlap_filter_meta
+            if canonical_reconstruction_meta:
+                extraction_meta["canonical_table_reconstruction"] = canonical_reconstruction_meta
             metadata["table_extraction"] = extraction_meta
         elif format_hint == "docx":
             extraction_meta = {
                 "selected_extractor": selected_extractor,
                 "candidate_counts": {key: len(val) for key, val in candidates.items()},
                 "candidate_scores": selection_meta.get("scores", {}),
-                "selection_mode": "candidate_scorer_v2",
+                "selection_mode": str(selection_meta.get("selection_mode") or "candidate_scorer_v2"),
             }
             if docx_meta:
                 extraction_meta["docx"] = docx_meta
@@ -5998,6 +6296,145 @@ class KnowledgeIngestionService:
         )
         return selected, diag
 
+    def _table_region_candidate_score(self, table: TablePayload) -> float:
+        assessment = self._assess_table_quality(table)
+        quality = float(assessment.get("quality_score") or 0.0)
+        structure_conf = self._get_table_structure_confidence(table)
+        confidence = float(structure_conf if isinstance(structure_conf, (int, float)) else 0.0)
+        return round(quality * confidence, 4)
+
+    def _extractor_is_primary_table_candidate(self, extractor_name: str) -> bool:
+        normalized = str(extractor_name or "").strip().lower()
+        return bool(normalized) and not normalized.startswith("heuristic")
+
+    def _table_region_membership_score(self, left: TablePayload, right: TablePayload) -> float:
+        overlap_ratio = self._table_region_overlap_ratio(left, right)
+        left_bbox = self._normalize_bbox(left.bbox)
+        right_bbox = self._normalize_bbox(right.bbox)
+        if not left_bbox or not right_bbox:
+            return overlap_ratio
+
+        ix0 = max(left_bbox["x0"], right_bbox["x0"])
+        iy0 = max(left_bbox["y0"], right_bbox["y0"])
+        ix1 = min(left_bbox["x1"], right_bbox["x1"])
+        iy1 = min(left_bbox["y1"], right_bbox["y1"])
+        if ix1 <= ix0 or iy1 <= iy0:
+            return overlap_ratio
+
+        intersection = (ix1 - ix0) * (iy1 - iy0)
+        left_area = self._bbox_area(left_bbox)
+        right_area = self._bbox_area(right_bbox)
+        containment = max(
+            intersection / max(left_area, 1.0),
+            intersection / max(right_area, 1.0),
+        )
+        return max(overlap_ratio, containment)
+
+    def _select_table_candidates_by_region(
+        self,
+        candidates: Mapping[str, list[TablePayload]],
+        *,
+        document_selected: str,
+    ) -> tuple[str, list[TablePayload], dict[str, Any]] | None:
+        region_items: list[dict[str, Any]] = []
+        for extractor_name, tables in candidates.items():
+            for table in tables:
+                bbox = self._normalize_bbox(table.bbox)
+                if not bbox:
+                    continue
+                region_items.append(
+                    {
+                        "extractor": extractor_name,
+                        "table": table,
+                        "page": int(table.page_number or 0),
+                        "bbox": bbox,
+                        "region_score": self._table_region_candidate_score(table),
+                        "data_rows": len(
+                            [
+                                row
+                                for row in (table.rows or [])
+                                if str((row.metadata or {}).get("row_type") or "").strip().lower()
+                                not in {"header", "section_header"}
+                            ]
+                        ),
+                    }
+                )
+        if len(region_items) < 2:
+            return None
+
+        regions: list[list[dict[str, Any]]] = []
+        for item in sorted(
+            region_items,
+            key=lambda entry: (
+                entry["page"],
+                float(entry["bbox"]["y0"]),
+                float(entry["bbox"]["x0"]),
+                entry["extractor"],
+            ),
+        ):
+            matched_region: list[dict[str, Any]] | None = None
+            for region in regions:
+                if region[0]["page"] != item["page"]:
+                    continue
+                if any(
+                    self._table_region_membership_score(member["table"], item["table"]) >= 0.35
+                    for member in region
+                ):
+                    matched_region = region
+                    break
+            if matched_region is None:
+                regions.append([item])
+            else:
+                matched_region.append(item)
+
+        blended_tables: list[TablePayload] = []
+        region_choices: list[dict[str, Any]] = []
+        chosen_extractors: list[str] = []
+
+        for region_index, region in enumerate(regions, start=1):
+            primary_region = [
+                entry for entry in region if self._extractor_is_primary_table_candidate(entry["extractor"])
+            ]
+            candidate_pool = primary_region or region
+            best = max(
+                candidate_pool,
+                key=lambda entry: (entry["region_score"], entry["data_rows"], entry["extractor"]),
+            )
+            blended_tables.append(best["table"])
+            chosen_extractors.append(best["extractor"])
+            region_choices.append(
+                {
+                    "region_index": region_index,
+                    "page_number": best["page"],
+                    "selected_extractor": best["extractor"],
+                    "selected_order_index": best["table"].order_index,
+                    "selected_score": best["region_score"],
+                    "candidate_extractors": [entry["extractor"] for entry in region],
+                    "primary_candidate_extractors": [entry["extractor"] for entry in primary_region],
+                    "heuristic_only_region": not primary_region,
+                }
+            )
+
+        unique_extractors = sorted(set(chosen_extractors))
+        if len(unique_extractors) <= 1:
+            return None
+
+        blended_tables.sort(
+            key=lambda table: (
+                int(table.page_number or 0),
+                float((self._normalize_bbox(table.bbox) or {}).get("y0", 0.0)),
+                table.order_index,
+            )
+        )
+        return "auto:region_blend", blended_tables, {
+            "selection_mode": "candidate_region_blend_v1",
+            "region_blend_applied": True,
+            "region_blend_document_selected": document_selected,
+            "region_blend_extractors_used": unique_extractors,
+            "region_blend_region_count": len(regions),
+            "region_blend_regions": region_choices,
+        }
+
     def _table_runtime_flags(self, upload: KnowledgeUpload | None) -> dict[str, Any]:
         business = getattr(upload, "business_profile", None) if upload else None
         feature_state = FeatureFlagService.snapshot(business)
@@ -6063,13 +6500,24 @@ class KnowledgeIngestionService:
                 "heuristic_override_applied": False,
                 "heuristic_override_reason": "preferred_extractor",
             }
-
-        return selected, candidates.get(selected, []), {
+        selection_meta: dict[str, Any] = {
             "scores": scores,
             "metrics": metrics,
             "selection_mode": "candidate_scorer_v2",
             **override_diag,
         }
+
+        if preferred in {"", "auto"}:
+            region_blend = self._select_table_candidates_by_region(
+                candidates,
+                document_selected=selected,
+            )
+            if region_blend is not None:
+                blended_name, blended_tables, region_meta = region_blend
+                selection_meta.update(region_meta)
+                return blended_name, blended_tables, selection_meta
+
+        return selected, candidates.get(selected, []), selection_meta
 
     @staticmethod
     def _table_data_rows(table: TablePayload) -> list[TableRowPayload]:
@@ -9631,6 +10079,62 @@ class KnowledgeIngestionService:
                 signals["sparse_table"] = True
                 penalties += 1
 
+        # Heuristic 3b: logical-row fragmentation.
+        # Penalize tables whose rows are structurally "consistent" but semantically shattered
+        # into many tiny descriptor/value fragments across adjacent rows.
+        def _leading_text(row: Any) -> str:
+            values: list[str] = []
+            for cell in list(row.cells or [])[:2]:
+                value = str(cell.raw_text or "").strip()
+                if value:
+                    values.append(value)
+            return " ".join(values).strip()
+
+        def _non_empty_texts(row: Any) -> list[str]:
+            return [str(cell.raw_text or "").strip() for cell in (row.cells or []) if str(cell.raw_text or "").strip()]
+
+        descriptor_fragment_rows = 0
+        value_fragment_rows = 0
+        fragmented_streak = 0
+        fragment_row_sequences = 0
+        for row in readable_rows:
+            non_empty = _non_empty_texts(row)
+            leading = _leading_text(row)
+            non_empty_count = len(non_empty)
+            has_numeric = any(self._has_numeric_table_signal(text) for text in non_empty)
+            descriptor_fragment = (
+                0 < non_empty_count <= 2
+                and bool(leading)
+                and not has_numeric
+                and len(re.findall(r"\w+", leading)) <= 5
+            )
+            value_fragment = any(
+                text.endswith(("+", "/", "-"))
+                or text.lower().startswith(("correspondent", "courier", "max.", "min.", "+"))
+                for text in non_empty
+            )
+            if descriptor_fragment:
+                descriptor_fragment_rows += 1
+            if value_fragment:
+                value_fragment_rows += 1
+            if descriptor_fragment or value_fragment:
+                fragmented_streak += 1
+                if fragmented_streak == 2:
+                    fragment_row_sequences += 1
+            else:
+                fragmented_streak = 0
+
+        if len(readable_rows) >= 6 and (
+            descriptor_fragment_rows >= 3
+            or value_fragment_rows >= 3
+            or fragment_row_sequences >= 2
+        ):
+            signals["fragmented_logical_rows"] = True
+            signals["descriptor_fragment_rows"] = descriptor_fragment_rows
+            signals["value_fragment_rows"] = value_fragment_rows
+            signals["fragment_row_sequences"] = fragment_row_sequences
+            penalties += 3
+
         # Heuristic 4: Header confidence
         header_cells = None
         for row in rows:
@@ -9796,10 +10300,44 @@ class KnowledgeIngestionService:
         }
 
     @staticmethod
+    def _looks_like_tier_descriptor(value: str) -> bool:
+        sample = str(value or "").strip().lower()
+        if not sample:
+            return False
+        if not re.search(r"\d", sample):
+            return False
+        if sample.startswith("from "):
+            return True
+        if sample.startswith("up to ") or sample.startswith("upto "):
+            return True
+        if sample.startswith("less than ") or sample.startswith("more than "):
+            return True
+        if sample.startswith("below ") or sample.startswith("above "):
+            return True
+        if sample.endswith("+") or " - " in sample or " – " in sample:
+            return True
+        return False
+
+    @staticmethod
     def _value_fragment_connector_tokens() -> set[str]:
         return {
             "and", "or", "with", "without", "minimum", "maximum", "max", "min",
             "no", "up", "to", "from", "per", "each", "equivalent",
+        }
+
+    @staticmethod
+    def _is_complete_value_state(value: str) -> bool:
+        sample = str(value or "").strip().lower()
+        if not sample:
+            return False
+        normalized = re.sub(r"\s+", " ", sample)
+        return normalized in {
+            "free",
+            "no fee",
+            "no fees",
+            "waived",
+            "n/a",
+            "na",
         }
 
     @staticmethod
@@ -9837,6 +10375,10 @@ class KnowledgeIngestionService:
         values = [value for value in values if value]
         pair_count = len(values)
         numeric_value_count = sum(1 for value in values if _column_numeric_signal(value))
+        # Numeric-dense single-cell rows (fee formulas / min-max / multiple values) are meaningful
+        # even if only one column is populated. Count numeric-like tokens so such rows don't get
+        # suppressed by the row-signal filter.
+        currency_signal_token_count = sum(len(_TABLE_NUMERIC_SIGNAL_TOKEN_RE.findall(value)) for value in values)
         keyword_value_count = sum(1 for value in values if self._table_row_has_value_keyword(value))
         scope_column_count = len(list(inferred_scope_columns or []))
         observed_value_column_count = len(list(observed_value_columns or []))
@@ -9861,6 +10403,7 @@ class KnowledgeIngestionService:
         diagnostics = {
             "pair_count": int(pair_count),
             "numeric_value_count": int(numeric_value_count),
+            "currency_signal_token_count": int(currency_signal_token_count),
             "keyword_value_count": int(keyword_value_count),
             "scope_column_count": int(scope_column_count),
             "observed_value_column_count": int(observed_value_column_count),
@@ -9872,6 +10415,8 @@ class KnowledgeIngestionService:
     def _is_prefix_value_fragment(self, value: str) -> bool:
         sample = self._table_cell_text(value)
         if not sample:
+            return False
+        if self._is_complete_value_state(sample):
             return False
         if self._fragment_has_numeric_signal(sample):
             return False
@@ -10039,6 +10584,8 @@ class KnowledgeIngestionService:
             if len(prev_words) < 3 or len(curr_words) > 8:
                 continue
             if re.search(r"[.!?:;]\s*$", prev_desc):
+                continue
+            if self._looks_like_tier_descriptor(prev_desc) and self._looks_like_tier_descriptor(curr_desc):
                 continue
 
             first_curr_token = re.sub(r"[^a-z0-9]+", "", curr_words[0].lower())
@@ -10380,6 +10927,67 @@ class KnowledgeIngestionService:
             return True
         return False
 
+    def _table_dedupe_heading_key(self, table: TablePayload) -> str:
+        meta = table.metadata if isinstance(table.metadata, Mapping) else {}
+        candidates = [
+            str(table.section_heading or ""),
+            str(meta.get("derived_section_heading") or ""),
+            str(table.title or ""),
+        ]
+        for candidate in candidates:
+            normalized = self._normalize_evidence_phrase(candidate)
+            if normalized:
+                return normalized
+        return ""
+
+    def _table_region_overlap_ratio(self, left: TablePayload, right: TablePayload) -> float:
+        left_bbox = self._normalize_bbox(left.bbox)
+        right_bbox = self._normalize_bbox(right.bbox)
+        if not left_bbox or not right_bbox:
+            return 0.0
+
+        ix0 = max(left_bbox["x0"], right_bbox["x0"])
+        iy0 = max(left_bbox["y0"], right_bbox["y0"])
+        ix1 = min(left_bbox["x1"], right_bbox["x1"])
+        iy1 = min(left_bbox["y1"], right_bbox["y1"])
+        if ix1 <= ix0 or iy1 <= iy0:
+            return 0.0
+
+        intersection = (ix1 - ix0) * (iy1 - iy0)
+        union = self._bbox_area(left_bbox) + self._bbox_area(right_bbox) - intersection
+        if union <= 0.0:
+            return 0.0
+        return intersection / union
+
+    def _tables_are_duplicate_candidates(
+        self,
+        left: TablePayload,
+        right: TablePayload,
+        *,
+        left_labels: set[str],
+        right_labels: set[str],
+    ) -> tuple[bool, dict[str, Any]]:
+        overlap = 0.0
+        if left_labels and right_labels:
+            overlap = len(left_labels & right_labels) / max(1, len(left_labels | right_labels))
+        if overlap < self.table_dedupe_min_overlap:
+            return False, {"overlap": round(overlap, 3), "reason": "label_overlap_below_threshold"}
+
+        left_heading = self._table_dedupe_heading_key(left)
+        right_heading = self._table_dedupe_heading_key(right)
+        headings_match = bool(left_heading and right_heading and left_heading == right_heading)
+        region_overlap = self._table_region_overlap_ratio(left, right)
+        same_region = region_overlap >= 0.3
+
+        is_duplicate = headings_match or same_region
+        reason = "heading_match" if headings_match else ("region_overlap" if same_region else "distinct_region_or_heading")
+        return is_duplicate, {
+            "overlap": round(overlap, 3),
+            "region_overlap": round(region_overlap, 3),
+            "headings_match": headings_match,
+            "reason": reason,
+        }
+
     def _apply_schema_override(
         self,
         table: TablePayload,
@@ -10499,8 +11107,13 @@ class KnowledgeIngestionService:
                         for idx, existing in enumerate(deduped):
                             if len(existing.column_schema) != len(table.column_schema):
                                 continue
-                            overlap = _jaccard(labels, dedupe_labels[idx])
-                            if overlap >= self.table_dedupe_min_overlap:
+                            is_duplicate, dedupe_diag = self._tables_are_duplicate_candidates(
+                                existing,
+                                table,
+                                left_labels=dedupe_labels[idx],
+                                right_labels=labels,
+                            )
+                            if is_duplicate:
                                 meta["deduped_tables"] += 1
                                 if quality > dedupe_quality[idx]:
                                     deduped[idx] = table
@@ -10513,7 +11126,7 @@ class KnowledgeIngestionService:
                                         description="Duplicate table suppressed based on row-label overlap.",
                                         page_number=page_number,
                                         table_order_index=table.order_index,
-                                        details={"overlap": round(overlap, 3)},
+                                        details=dedupe_diag,
                                     )
                                 )
                                 merged = True
@@ -11025,6 +11638,9 @@ class KnowledgeIngestionService:
                 if block.block_type in skip_types:
                     continue
                 block_meta = block.metadata if isinstance(block.metadata, dict) else {}
+                if block_meta.get("canonical_consumed_by_table"):
+                    # Canonical table reconstruction already absorbed this block into a table cell.
+                    continue
                 if block_meta.get("is_decorative") or block_meta.get("region_role") == "decorative":
                     continue
                 text = self._sanitize_text(block.text).strip()

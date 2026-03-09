@@ -31,9 +31,11 @@ from apps.knowledge.models import (
     KnowledgeUploadText,
 )
 from apps.knowledge.knowledge_ingestion import (
+    GeometryTableReconstructor,
     KnowledgeIngestionService,
     PageBlockPayload,
     PageLayout,
+    TableCellPayload,
     TablePayload,
     TableRowPayload,
 )
@@ -971,6 +973,113 @@ class KnowledgeIngestionChunkingTests(SimpleTestCase):
 
         self.assertEqual(selected, "heuristic")
         self.assertFalse(diag.get("heuristic_override_applied"))
+
+
+class GeometryLogicalRowReconstructionTests(SimpleTestCase):
+    def _row(self, row_index: int, values: list[str]) -> TableRowPayload:
+        cells = [
+            TableCellPayload(
+                row_index=row_index,
+                column_index=idx,
+                column_key=f"column_{idx+1}",
+                raw_text=value,
+                bbox={"x0": float(idx * 10), "y0": float(row_index * 10), "x1": float((idx * 10) + 8), "y1": float((row_index * 10) + 8)},
+                metadata={"span_count": 1},
+            )
+            for idx, value in enumerate(values)
+        ]
+        return TableRowPayload(
+            row_index=row_index,
+            page_number=1,
+            bbox={"x0": 0.0, "y0": float(row_index * 10), "x1": 100.0, "y1": float((row_index * 10) + 8)},
+            raw_text=" | ".join(values),
+            metadata={"row_type": "data"},
+            cells=cells,
+        )
+
+    def _table(self, rows: list[TableRowPayload]) -> TablePayload:
+        header = TableRowPayload(
+            row_index=0,
+            page_number=1,
+            raw_text="Service | Tariff | Prime | Plus | Wealth | Exclusive | Private",
+            metadata={"row_type": "header"},
+            cells=[
+                TableCellPayload(row_index=0, column_index=idx, column_key=f"column_{idx+1}", raw_text=value)
+                for idx, value in enumerate(["Service", "Tariff", "Prime", "Plus", "Wealth", "Exclusive", "Private"])
+            ],
+        )
+        return TablePayload(
+            order_index=1,
+            title="Geometry candidate",
+            section_heading="",
+            page_number=1,
+            bbox={"x0": 0.0, "y0": 0.0, "x1": 100.0, "y1": 100.0},
+            column_schema=["service", "tariff", "prime", "plus", "wealth", "exclusive", "private"],
+            data_dictionary={},
+            metadata={"detected_via": "geometry"},
+            rows=[header, *rows],
+        )
+
+    def test_geometry_logical_row_merge_combines_descriptor_fragments(self) -> None:
+        reconstructor = GeometryTableReconstructor()
+        rows = [
+            self._row(1, ["", "Cheques Drawn", "", "", "", "", ""]),
+            self._row(2, ["", "on CIB Branches", "", "", "", "", ""]),
+            self._row(3, ["Collection of", "", "Min. USD 10 /", "Min. USD 10 /", "", "50% Discount", "50% Discount"]),
+            self._row(4, ["", "", "Max. USD 100", "Max. USD 100", "10 / Max. USD", "+", "+"]),
+        ]
+
+        normalized, merged_pairs = reconstructor._normalize_geometry_logical_rows(rows, 7)
+
+        self.assertEqual(merged_pairs, 2)
+        self.assertEqual(len(normalized), 2)
+        first = [cell.raw_text for cell in normalized[0].cells]
+        second = [cell.raw_text for cell in normalized[1].cells]
+        self.assertEqual(first[1], "Cheques Drawn on CIB Branches")
+        self.assertEqual(second[0], "Collection of")
+        self.assertIn("Min. USD 10 / Max. USD 100", second[2])
+        self.assertTrue(normalized[0].metadata.get("geometry_logical_row_merged"))
+
+    def test_geometry_logical_row_merge_does_not_collapse_complete_tier_rows(self) -> None:
+        reconstructor = GeometryTableReconstructor()
+        rows = [
+            self._row(1, ["From 1 to 100 transactions", "No fees", "EGP 10"]),
+            self._row(2, ["From 101 to 500 transactions", "No fees", "EGP 9"]),
+        ]
+
+        normalized, merged_pairs = reconstructor._normalize_geometry_logical_rows(rows, 3)
+
+        self.assertEqual(merged_pairs, 0)
+        self.assertEqual(len(normalized), 2)
+        self.assertEqual([cell.raw_text for cell in normalized[0].cells], ["From 1 to 100 transactions", "No fees", "EGP 10"])
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_quality_scoring_penalizes_fragmented_geometry_rows(self, _build_embeddings) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+
+        fragmented = self._table(
+            [
+                self._row(1, ["", "Cheques Drawn", "", "", "", "", ""]),
+                self._row(2, ["", "on CIB Branches", "", "", "", "", ""]),
+                self._row(3, ["Collection of", "", "Min. USD 10 /", "Min. USD 10 /", "", "50% Discount", "50% Discount"]),
+                self._row(4, ["", "", "Max. USD 100", "Max. USD 100", "10 / Max. USD", "+", "+"]),
+                self._row(5, ["Cheques favor of", "FCY Cheques Outside", "+", "+", "100 +", "Correspondent", "Correspondent"]),
+                self._row(6, ["CIB's Customers", "CBE Clearing House", "Correspondent Fees", "Correspondent Fees", "Courier Fees", "50% Discount", "50% Discount"]),
+            ]
+        )
+        clean = self._table(
+            [
+                self._row(1, ["Cheques Drawn on CIB Branches", "", "", "", "Free", "", ""]),
+                self._row(2, ["LCY Cheques Inside CBE Clearing House (ATM Deposit: waived 50%)", "", "EGP 20", "EGP 20", "EGP 20", "Free", "Free"]),
+                self._row(3, ["Collection of Cheques favor of CIB's Customers (Normal Collection)", "LCY Checks Outside CBE Clearing House (ATM Deposit: waived 50% from Commission)", "0.2% Min.EGP 20 / Max. EGP 400 + Correspondent Fees + Courier Fees", "0.2% Min.EGP 20 / Max. EGP 400 + Correspondent Fees + Courier Fees", "0.2% Min. EGP 20/Max. EGP 400 + Correspondent Fees + Courier Fees", "50% Discount + Correspondent Fees + Courier Fees", "50% Discount + Correspondent Fees + Courier Fees"]),
+            ]
+        )
+
+        fragmented_quality = service._assess_table_quality(fragmented)
+        clean_quality = service._assess_table_quality(clean)
+
+        self.assertTrue(fragmented_quality["signals"].get("fragmented_logical_rows"))
+        self.assertLess(fragmented_quality["quality_score"], clean_quality["quality_score"])
 
 
 class KnowledgeIngestionJsonTests(TestCase):
