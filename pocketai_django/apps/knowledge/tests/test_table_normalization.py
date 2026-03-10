@@ -7,6 +7,7 @@ from django.test import SimpleTestCase, override_settings
 from apps.knowledge.table_normalization import (
     NormalizedSheet,
     SheetNormalizationDiagnostics,
+    SpreadsheetRowInput,
     TableNormalizationPolicy,
     normalize_sheet_rows,
     resolve_normalization_policy,
@@ -64,6 +65,56 @@ class TableNormalizationTests(SimpleTestCase):
         self.assertEqual(normalized.rows, [["1", "value"], ["2", ""]])
         self.assertEqual(normalized.diagnostics.columns_trimmed, 1)
 
+    def test_normalize_sheet_rows_drops_hidden_zero_heavy_spreadsheet_rows(self) -> None:
+        policy = TableNormalizationPolicy(
+            enabled=True,
+            null_tokens=set(),
+            drop_empty_columns=True,
+            sheet_whitelist=set(),
+            sheet_blacklist=set(),
+            policy_version="v1",
+        )
+        normalized = normalize_sheet_rows(
+            [
+                SpreadsheetRowInput(values=["Code", "Amount", "Match"], row_index=1, hidden=False),
+                SpreadsheetRowInput(values=["E-1", 1250, 0], row_index=2, hidden=False),
+                SpreadsheetRowInput(values=[0, 0, 0], row_index=3, hidden=True),
+                SpreadsheetRowInput(values=[0, 0, 0], row_index=4, hidden=True),
+            ],
+            sheet_name="Equipment",
+            policy=policy,
+        )
+        self.assertEqual(normalized.rows, [["E-1", "1250", "0"]])
+        self.assertEqual(len(normalized.row_metadata), 1)
+        self.assertEqual(normalized.row_metadata[0].source_row_index, 2)
+        self.assertEqual(normalized.diagnostics.hidden_rows_dropped, 2)
+
+    def test_normalize_sheet_rows_drops_scaffold_columns(self) -> None:
+        policy = TableNormalizationPolicy(
+            enabled=True,
+            null_tokens=set(),
+            drop_empty_columns=True,
+            sheet_whitelist=set(),
+            sheet_blacklist=set(),
+            policy_version="v1",
+        )
+        normalized = normalize_sheet_rows(
+            [
+                SpreadsheetRowInput(
+                    values=["Name", "SANDBOX AREA - rough work only"],
+                    row_index=1,
+                    hidden=False,
+                ),
+                SpreadsheetRowInput(values=["Alpha", ""], row_index=2, hidden=False),
+                SpreadsheetRowInput(values=["Beta", "0"], row_index=3, hidden=False),
+            ],
+            sheet_name="Sheet1",
+            policy=policy,
+        )
+        self.assertEqual(normalized.column_schema, ["Name"])
+        self.assertEqual(normalized.rows, [["Alpha"], ["Beta"]])
+        self.assertEqual(normalized.diagnostics.scaffold_columns_trimmed, 1)
+
     @override_settings(INGEST_NORMALIZE_TABLES=True)
     def test_policy_resolution_honors_upload_overrides(self) -> None:
         upload_meta = {"table_policy": {"enable_normalization": False, "drop_empty_columns": False}}
@@ -111,3 +162,28 @@ class TableNormalizationTests(SimpleTestCase):
         self.assertEqual(summary["columns_trimmed"]["total"], 3)
         self.assertEqual(summary["tokens_replaced"], 3)
         self.assertEqual(summary["empty_sheets_skipped"], ["Two"])
+
+    def test_summarize_normalization_includes_spreadsheet_row_drop_buckets(self) -> None:
+        policy = TableNormalizationPolicy(
+            enabled=True,
+            null_tokens={"null"},
+            drop_empty_columns=True,
+            sheet_whitelist=set(),
+            sheet_blacklist=set(),
+            policy_version="v1",
+        )
+        diagnostics = [
+            SheetNormalizationDiagnostics(
+                sheet_name="One",
+                rows_dropped=4,
+                hidden_rows_dropped=2,
+                zero_heavy_rows_dropped=1,
+                placeholder_rows_dropped=1,
+                scaffold_columns_trimmed=1,
+            )
+        ]
+        summary = summarize_normalization(policy, diagnostics)
+        self.assertEqual(summary["hidden_rows_dropped"]["total"], 2)
+        self.assertEqual(summary["zero_heavy_rows_dropped"]["total"], 1)
+        self.assertEqual(summary["placeholder_rows_dropped"]["total"], 1)
+        self.assertEqual(summary["scaffold_columns_trimmed"]["total"], 1)

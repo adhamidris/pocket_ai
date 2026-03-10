@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import math
+import re
 from typing import Any, Iterable, Mapping, Sequence
 
 from django.conf import settings
@@ -21,6 +22,27 @@ DEFAULT_NULL_TOKENS = {
 
 TRACER = otel_trace.get_tracer(__name__)
 
+ZERO_LIKE_TOKENS = {
+    "0",
+    "0.0",
+    "0.00",
+    "0%",
+    "0.0%",
+    "0.00%",
+    "$0",
+    "$0.0",
+    "$0.00",
+}
+PLACEHOLDER_ROW_PATTERNS = (
+    re.compile(r"^\s*select\b", re.IGNORECASE),
+    re.compile(r"^\s*insert\b", re.IGNORECASE),
+)
+SCAFFOLD_PATTERNS = (
+    re.compile(r"\bsandbox\b", re.IGNORECASE),
+    re.compile(r"\brough work\b", re.IGNORECASE),
+)
+IDENTIFIER_LIKE_RE = re.compile(r"^[A-Za-z]{1,8}-\d+[A-Za-z0-9-]*$")
+
 
 def _canonical(value: str) -> str:
     return value.strip().lower()
@@ -37,6 +59,11 @@ class TableNormalizationPolicy:
     drop_empty_columns: bool = True
     sheet_whitelist: set[str] = field(default_factory=set)
     sheet_blacklist: set[str] = field(default_factory=set)
+    drop_hidden_template_rows: bool = True
+    drop_zero_heavy_rows: bool = True
+    drop_placeholder_rows: bool = True
+    drop_scaffold_rows: bool = True
+    drop_scaffold_columns: bool = True
     policy_version: str = "v1"
 
 
@@ -46,8 +73,27 @@ class SheetNormalizationDiagnostics:
     rows_dropped: int = 0
     columns_trimmed: int = 0
     tokens_replaced: int = 0
+    hidden_rows_dropped: int = 0
+    zero_heavy_rows_dropped: int = 0
+    placeholder_rows_dropped: int = 0
+    scaffold_rows_dropped: int = 0
+    scaffold_columns_trimmed: int = 0
     skipped: bool = False
     skip_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class SpreadsheetRowInput:
+    values: Sequence[Any]
+    row_index: int | None = None
+    hidden: bool = False
+
+
+@dataclass(frozen=True)
+class NormalizedRowMetadata:
+    source_row_index: int | None = None
+    hidden: bool = False
+    row_kind: str = "data"
 
 
 @dataclass
@@ -56,6 +102,7 @@ class NormalizedSheet:
     column_schema: list[str]
     rows: list[list[str]]
     diagnostics: SheetNormalizationDiagnostics
+    row_metadata: list[NormalizedRowMetadata] = field(default_factory=list)
 
 
 def resolve_normalization_policy(upload: Any | None) -> TableNormalizationPolicy:
@@ -134,6 +181,52 @@ def resolve_normalization_policy(upload: Any | None) -> TableNormalizationPolicy
         if not enabled:
             drop_empty_columns = False
 
+        drop_hidden_template_rows = bool(
+            upload_policy.get(
+                "drop_hidden_template_rows",
+                business_policy.get(
+                    "drop_hidden_template_rows",
+                    getattr(settings, "INGEST_NORMALIZATION_DROP_HIDDEN_TEMPLATE_ROWS", True),
+                ),
+            )
+        )
+        drop_zero_heavy_rows = bool(
+            upload_policy.get(
+                "drop_zero_heavy_rows",
+                business_policy.get(
+                    "drop_zero_heavy_rows",
+                    getattr(settings, "INGEST_NORMALIZATION_DROP_ZERO_HEAVY_ROWS", True),
+                ),
+            )
+        )
+        drop_placeholder_rows = bool(
+            upload_policy.get(
+                "drop_placeholder_rows",
+                business_policy.get(
+                    "drop_placeholder_rows",
+                    getattr(settings, "INGEST_NORMALIZATION_DROP_PLACEHOLDER_ROWS", True),
+                ),
+            )
+        )
+        drop_scaffold_rows = bool(
+            upload_policy.get(
+                "drop_scaffold_rows",
+                business_policy.get(
+                    "drop_scaffold_rows",
+                    getattr(settings, "INGEST_NORMALIZATION_DROP_SCAFFOLD_ROWS", True),
+                ),
+            )
+        )
+        drop_scaffold_columns = bool(
+            upload_policy.get(
+                "drop_scaffold_columns",
+                business_policy.get(
+                    "drop_scaffold_columns",
+                    getattr(settings, "INGEST_NORMALIZATION_DROP_SCAFFOLD_COLUMNS", True),
+                ),
+            )
+        )
+
         if span.is_recording():
             span.set_attribute("ingest.table.enabled", enabled)
             span.set_attribute("ingest.table.whitelist", len(whitelist))
@@ -145,6 +238,11 @@ def resolve_normalization_policy(upload: Any | None) -> TableNormalizationPolicy
             drop_empty_columns=drop_empty_columns,
             sheet_whitelist=whitelist,
             sheet_blacklist=blacklist,
+            drop_hidden_template_rows=drop_hidden_template_rows,
+            drop_zero_heavy_rows=drop_zero_heavy_rows,
+            drop_placeholder_rows=drop_placeholder_rows,
+            drop_scaffold_rows=drop_scaffold_rows,
+            drop_scaffold_columns=drop_scaffold_columns,
             policy_version=str(policy_version or "v1"),
         )
 
@@ -159,7 +257,7 @@ def sheet_is_allowed(sheet_name: str, policy: TableNormalizationPolicy) -> bool:
 
 
 def normalize_sheet_rows(
-    raw_rows: Sequence[Sequence[Any]] | Iterable[Sequence[Any]],
+    raw_rows: Sequence[Sequence[Any] | SpreadsheetRowInput] | Iterable[Sequence[Any] | SpreadsheetRowInput],
     *,
     sheet_name: str,
     policy: TableNormalizationPolicy,
@@ -167,9 +265,11 @@ def normalize_sheet_rows(
     with TRACER.start_as_current_span("ingest.table.normalize_sheet") as span:
         diagnostics = SheetNormalizationDiagnostics(sheet_name=sheet_name)
         normalized_rows: list[list[str]] = []
+        row_metadata: list[NormalizedRowMetadata] = []
 
         for raw_row in raw_rows:
-            normalized_row, replaced, has_values = _normalize_row(raw_row, policy)
+            row_input = _coerce_row_input(raw_row)
+            normalized_row, replaced, has_values = _normalize_row(row_input.values, policy)
             diagnostics.tokens_replaced += replaced
             if not normalized_row:
                 continue
@@ -179,14 +279,47 @@ def normalize_sheet_rows(
             if normalized_rows and not has_values:
                 diagnostics.rows_dropped += 1
                 continue
+            if normalized_rows:
+                row_kind = _classify_spreadsheet_row(normalized_row, row_input, policy)
+                if row_kind == "hidden_template_row":
+                    diagnostics.rows_dropped += 1
+                    diagnostics.hidden_rows_dropped += 1
+                    continue
+                if row_kind == "default_zero_row":
+                    diagnostics.rows_dropped += 1
+                    diagnostics.zero_heavy_rows_dropped += 1
+                    continue
+                if row_kind == "placeholder_row":
+                    diagnostics.rows_dropped += 1
+                    diagnostics.placeholder_rows_dropped += 1
+                    continue
+                if row_kind == "scaffold_row":
+                    diagnostics.rows_dropped += 1
+                    diagnostics.scaffold_rows_dropped += 1
+                    continue
+            else:
+                row_kind = "header"
             normalized_rows.append(normalized_row)
+            row_metadata.append(
+                NormalizedRowMetadata(
+                    source_row_index=row_input.row_index,
+                    hidden=bool(row_input.hidden),
+                    row_kind=row_kind,
+                )
+            )
 
         if not normalized_rows:
             diagnostics.skipped = True
             diagnostics.skip_reason = diagnostics.skip_reason or "empty"
             if span.is_recording():
                 span.set_attribute("ingest.table.skipped", True)
-            return NormalizedSheet(sheet_name=sheet_name, column_schema=[], rows=[], diagnostics=diagnostics)
+            return NormalizedSheet(
+                sheet_name=sheet_name,
+                column_schema=[],
+                rows=[],
+                row_metadata=[],
+                diagnostics=diagnostics,
+            )
 
         header = normalized_rows[0]
         data_rows = normalized_rows[1:]
@@ -201,6 +334,13 @@ def normalize_sheet_rows(
             should_drop = False
             if policy.drop_empty_columns and not header_value and not any(column_values):
                 should_drop = True
+            if (
+                not should_drop
+                and policy.drop_scaffold_columns
+                and _is_scaffold_column(header_value, column_values)
+            ):
+                should_drop = True
+                diagnostics.scaffold_columns_trimmed += 1
             if should_drop:
                 diagnostics.columns_trimmed += 1
                 continue
@@ -215,8 +355,10 @@ def normalize_sheet_rows(
             return NormalizedSheet(sheet_name=sheet_name, column_schema=[], rows=[], diagnostics=diagnostics)
 
         trimmed_rows: list[list[str]] = []
-        for row in data_rows:
+        trimmed_row_metadata: list[NormalizedRowMetadata] = []
+        for meta, row in zip(row_metadata[1:], data_rows):
             trimmed_rows.append([row[idx] if idx < len(row) else "" for idx in columns_to_keep])
+            trimmed_row_metadata.append(meta)
 
         diagnostics.skipped = False
         diagnostics.skip_reason = None
@@ -229,6 +371,7 @@ def normalize_sheet_rows(
             sheet_name=sheet_name,
             column_schema=column_schema,
             rows=trimmed_rows,
+            row_metadata=trimmed_row_metadata,
             diagnostics=diagnostics,
         )
 
@@ -251,11 +394,37 @@ def summarize_normalization(policy: TableNormalizationPolicy, diagnostics: Seque
                 item.sheet_name: item.rows_dropped for item in diagnostics if item.rows_dropped
             },
         }
+    for key, attr in (
+        ("hidden_rows_dropped", "hidden_rows_dropped"),
+        ("zero_heavy_rows_dropped", "zero_heavy_rows_dropped"),
+        ("placeholder_rows_dropped", "placeholder_rows_dropped"),
+        ("scaffold_rows_dropped", "scaffold_rows_dropped"),
+    ):
+        total = sum(int(getattr(item, attr, 0) or 0) for item in diagnostics)
+        if total:
+            summary[key] = {
+                "total": total,
+                "by_sheet": {
+                    item.sheet_name: int(getattr(item, attr, 0) or 0)
+                    for item in diagnostics
+                    if int(getattr(item, attr, 0) or 0)
+                },
+            }
     if total_columns:
         summary["columns_trimmed"] = {
             "total": total_columns,
             "by_sheet": {
                 item.sheet_name: item.columns_trimmed for item in diagnostics if item.columns_trimmed
+            },
+        }
+    total_scaffold_columns = sum(item.scaffold_columns_trimmed for item in diagnostics)
+    if total_scaffold_columns:
+        summary["scaffold_columns_trimmed"] = {
+            "total": total_scaffold_columns,
+            "by_sheet": {
+                item.sheet_name: item.scaffold_columns_trimmed
+                for item in diagnostics
+                if item.scaffold_columns_trimmed
             },
         }
     if total_tokens:
@@ -290,6 +459,157 @@ def _normalize_row(row: Sequence[Any], policy: TableNormalizationPolicy) -> tupl
             has_values = True
         normalized.append(normalized_value)
     return normalized, replaced_tokens, has_values
+
+
+def _coerce_row_input(raw_row: Sequence[Any] | SpreadsheetRowInput) -> SpreadsheetRowInput:
+    if isinstance(raw_row, SpreadsheetRowInput):
+        return raw_row
+    return SpreadsheetRowInput(values=raw_row)
+
+
+def _classify_spreadsheet_row(
+    normalized_row: Sequence[str],
+    row_input: SpreadsheetRowInput,
+    policy: TableNormalizationPolicy,
+) -> str:
+    if not isinstance(row_input, SpreadsheetRowInput):
+        return "data"
+
+    features = _spreadsheet_row_features(normalized_row)
+    if not features["non_empty_values"]:
+        return "empty"
+
+    if (
+        policy.drop_scaffold_rows
+        and features["scaffold_count"] > 0
+        and not features["has_identifier_like_value"]
+        and features["numeric_count"] == 0
+    ):
+        return "scaffold_row"
+
+    if (
+        policy.drop_hidden_template_rows
+        and row_input.hidden
+        and not features["has_identifier_like_value"]
+        and features["low_information"]
+    ):
+        return "hidden_template_row"
+
+    if (
+        policy.drop_zero_heavy_rows
+        and features["zero_heavy"]
+        and not features["has_identifier_like_value"]
+        and features["long_text_count"] == 0
+    ):
+        return "default_zero_row"
+
+    if (
+        policy.drop_placeholder_rows
+        and features["placeholder_only"]
+        and not features["has_identifier_like_value"]
+        and features["numeric_count"] == 0
+    ):
+        return "placeholder_row"
+
+    return "data"
+
+
+def _spreadsheet_row_features(normalized_row: Sequence[str]) -> dict[str, Any]:
+    non_empty_values = [str(value).strip() for value in normalized_row if str(value or "").strip()]
+    zero_like_count = sum(1 for value in non_empty_values if _is_zero_like(value))
+    placeholder_count = sum(1 for value in non_empty_values if _looks_like_placeholder(value))
+    scaffold_count = sum(1 for value in non_empty_values if _looks_like_scaffold(value))
+    numeric_count = sum(1 for value in non_empty_values if _looks_numeric(value))
+    long_text_count = sum(1 for value in non_empty_values if len(value) >= 24)
+    has_identifier_like_value = any(_looks_like_identifier_value(value) for value in non_empty_values)
+    non_empty_count = len(non_empty_values)
+    zero_ratio = (zero_like_count / float(non_empty_count)) if non_empty_count else 0.0
+    placeholder_only = bool(non_empty_values) and (placeholder_count + scaffold_count) == non_empty_count
+    low_information = (
+        non_empty_count > 0
+        and (
+            zero_ratio >= 0.75
+            or placeholder_only
+            or (scaffold_count > 0 and numeric_count == 0)
+        )
+    )
+    return {
+        "non_empty_values": non_empty_values,
+        "zero_like_count": zero_like_count,
+        "placeholder_count": placeholder_count,
+        "scaffold_count": scaffold_count,
+        "numeric_count": numeric_count,
+        "long_text_count": long_text_count,
+        "has_identifier_like_value": has_identifier_like_value,
+        "zero_heavy": non_empty_count >= 4 and zero_ratio >= 0.75,
+        "placeholder_only": placeholder_only,
+        "low_information": low_information,
+    }
+
+
+def _looks_numeric(value: str) -> bool:
+    candidate = value.strip().replace(",", "")
+    if not candidate:
+        return False
+    if candidate.endswith("%"):
+        candidate = candidate[:-1]
+    if candidate.startswith("$"):
+        candidate = candidate[1:]
+    try:
+        float(candidate)
+    except ValueError:
+        return False
+    return True
+
+
+def _is_zero_like(value: str) -> bool:
+    candidate = _canonical(value)
+    if candidate in ZERO_LIKE_TOKENS:
+        return True
+    if _looks_numeric(candidate):
+        try:
+            cleaned = candidate.rstrip("%").lstrip("$")
+            return float(cleaned) == 0.0
+        except ValueError:
+            return False
+    return False
+
+
+def _looks_like_identifier_value(value: str) -> bool:
+    candidate = value.strip()
+    if not candidate:
+        return False
+    return bool(IDENTIFIER_LIKE_RE.fullmatch(candidate))
+
+
+def _looks_like_placeholder(value: str) -> bool:
+    candidate = value.strip()
+    if not candidate:
+        return False
+    return any(pattern.search(candidate) for pattern in PLACEHOLDER_ROW_PATTERNS)
+
+
+def _looks_like_scaffold(value: str) -> bool:
+    candidate = value.strip()
+    if not candidate:
+        return False
+    return any(pattern.search(candidate) for pattern in SCAFFOLD_PATTERNS)
+
+
+def _is_scaffold_column(header_value: str, column_values: Sequence[str]) -> bool:
+    if not _looks_like_scaffold(header_value):
+        return False
+    meaningful_values = 0
+    for value in column_values:
+        cleaned = str(value or "").strip()
+        if not cleaned:
+            continue
+        if _looks_like_scaffold(cleaned) or _is_zero_like(cleaned):
+            continue
+        meaningful_values += 1
+        if meaningful_values >= 2:
+            return False
+    return True
 
 
 def _normalize_cell_value(value: Any, policy: TableNormalizationPolicy) -> tuple[str, bool, bool]:

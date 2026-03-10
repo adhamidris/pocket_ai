@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import deque
+from collections import Counter, deque
 import base64
 import csv
 import gzip
@@ -79,6 +79,7 @@ from core.tenancy import tenant_context
 from apps.core.logging_utils import log_start, log_success, log_progress, log_warning, log_error, LogEmoji
 from apps.knowledge.table_normalization import (
     NormalizedSheet,
+    SpreadsheetRowInput,
     SheetNormalizationDiagnostics,
     normalize_sheet_rows,
     resolve_normalization_policy,
@@ -122,6 +123,25 @@ _TABLE_ROW_VALUE_KEYWORD_RE = re.compile(
     r"\b(?:free|discount|waived?|commission|fee|fees|charge|charges|min(?:imum)?|max(?:imum)?|equivalent)\b",
     flags=re.IGNORECASE,
 )
+_SPREADSHEET_INSTRUCTION_SHEET_RE = re.compile(r"\b(?:instructions?|guidance|notes?|help)\b", flags=re.IGNORECASE)
+_SPREADSHEET_PLACEHOLDER_CELL_RE = re.compile(
+    r"^\s*(?:select\b|insert\b)\s*",
+    flags=re.IGNORECASE,
+)
+_SPREADSHEET_CONTROL_CELL_RE = re.compile(r"^(?:yes|no|true|false|n/?a|none)$", flags=re.IGNORECASE)
+_SPREADSHEET_MASKED_PLACEHOLDER_RE = re.compile(r"^#{4,}$")
+_SPREADSHEET_SUMMARY_ROW_RE = re.compile(
+    r"\b(?:total|totals|summary|grand total)\b",
+    flags=re.IGNORECASE,
+)
+_SPREADSHEET_ZERO_LIKE_RE = re.compile(r"^(?:0|0\.0+|0%)$")
+_SPREADSHEET_PURE_NUMBER_RE = re.compile(r"^[+-]?\d[\d,]*(?:\.\d+)?%?$")
+_SPREADSHEET_RECORD_ID_RE = re.compile(r"^[A-Za-z]{1,8}-\d+[A-Za-z0-9-]*$")
+_SPREADSHEET_REFERENCE_SHEET_RE = re.compile(
+    r"\b(?:lists?|lookup|lookups|options?|choices|reference|references|validation)\b",
+    flags=re.IGNORECASE,
+)
+_SPREADSHEET_INSTRUCTION_TOKEN_RE = re.compile(r"\b(?:instructions?|guidance|notes?|comment|comments?)\b", flags=re.IGNORECASE)
 
 
 def _column_numeric_signal(text: str) -> bool:
@@ -3903,6 +3923,69 @@ class KnowledgeIngestionService:
         self.pdf_table_text_overlap_filter_enabled = bool(
             getattr(settings, "RAG_PDF_TABLE_TEXT_OVERLAP_FILTER_ENABLED", True)
         )
+        self.pdf_table_promotion_gate_enabled = bool(
+            getattr(settings, "RAG_PDF_TABLE_PROMOTION_GATE_ENABLED", True)
+        )
+        self.pdf_table_recurring_scaffold_min_repeats = max(
+            2,
+            int(getattr(settings, "RAG_PDF_TABLE_RECURRING_SCAFFOLD_MIN_REPEATS", 5)),
+        )
+        self.pdf_table_paragraph_long_cell_words = max(
+            6,
+            int(getattr(settings, "RAG_PDF_TABLE_PARAGRAPH_LONG_CELL_WORDS", 12)),
+        )
+        self.pdf_table_paragraph_long_cell_ratio = float(
+            getattr(settings, "RAG_PDF_TABLE_PARAGRAPH_LONG_CELL_RATIO", 0.35)
+        )
+        if not (0.0 <= self.pdf_table_paragraph_long_cell_ratio <= 1.0):
+            self.pdf_table_paragraph_long_cell_ratio = 0.35
+        self.pdf_table_paragraph_min_rows = max(
+            2,
+            int(getattr(settings, "RAG_PDF_TABLE_PARAGRAPH_MIN_ROWS", 3)),
+        )
+        self.pdf_table_leading_blank_row_limit = max(
+            1,
+            int(getattr(settings, "RAG_PDF_TABLE_LEADING_BLANK_ROW_LIMIT", 2)),
+        )
+        self.pdf_page_chrome_suppression_enabled = bool(
+            getattr(settings, "RAG_PDF_PAGE_CHROME_SUPPRESSION_ENABLED", True)
+        )
+        self.pdf_page_chrome_min_repeats = max(
+            2,
+            int(getattr(settings, "RAG_PDF_PAGE_CHROME_MIN_REPEATS", 3)),
+        )
+        self.pdf_page_chrome_top_ratio = float(
+            getattr(settings, "RAG_PDF_PAGE_CHROME_TOP_RATIO", 0.16)
+        )
+        if not (0.0 <= self.pdf_page_chrome_top_ratio <= 1.0):
+            self.pdf_page_chrome_top_ratio = 0.16
+        self.pdf_page_chrome_bottom_ratio = float(
+            getattr(settings, "RAG_PDF_PAGE_CHROME_BOTTOM_RATIO", 0.12)
+        )
+        if not (0.0 <= self.pdf_page_chrome_bottom_ratio <= 1.0):
+            self.pdf_page_chrome_bottom_ratio = 0.12
+        self.pdf_page_chrome_max_words = max(
+            4,
+            int(getattr(settings, "RAG_PDF_PAGE_CHROME_MAX_WORDS", 24)),
+        )
+        self.pdf_table_micro_fragment_min_columns = max(
+            4,
+            int(getattr(settings, "RAG_PDF_TABLE_MICRO_FRAGMENT_MIN_COLUMNS", 8)),
+        )
+        self.pdf_table_micro_fragment_short_cell_ratio = float(
+            getattr(settings, "RAG_PDF_TABLE_MICRO_FRAGMENT_SHORT_CELL_RATIO", 0.45)
+        )
+        if not (0.0 <= self.pdf_table_micro_fragment_short_cell_ratio <= 1.0):
+            self.pdf_table_micro_fragment_short_cell_ratio = 0.45
+        self.pdf_table_bridge_max_rows = max(
+            1,
+            int(getattr(settings, "RAG_PDF_TABLE_BRIDGE_MAX_ROWS", 4)),
+        )
+        self.pdf_table_bridge_long_cell_ratio = float(
+            getattr(settings, "RAG_PDF_TABLE_BRIDGE_LONG_CELL_RATIO", 0.5)
+        )
+        if not (0.0 <= self.pdf_table_bridge_long_cell_ratio <= 1.0):
+            self.pdf_table_bridge_long_cell_ratio = 0.5
         self.pdf_table_text_overlap_min_ratio = float(
             getattr(settings, "RAG_PDF_TABLE_TEXT_OVERLAP_MIN_RATIO", 0.55)
         )
@@ -5167,6 +5250,11 @@ class KnowledgeIngestionService:
             tables, postprocess_issues, postprocess_meta = self._postprocess_tables(tables)
             issues.extend(postprocess_issues)
 
+        table_promotion_meta: dict[str, Any] = {}
+        if format_hint == "pdf" and tables:
+            tables, table_promotion_meta, promotion_issues = self._apply_pdf_table_promotion_gate(tables)
+            issues.extend(promotion_issues)
+
         ingest_config = self._table_ingest_config(upload)
         tables, table_metrics, limit_issues, table_summary = self._apply_table_limits(
             tables,
@@ -5269,6 +5357,8 @@ class KnowledgeIngestionService:
                 extraction_meta["table_repairs"] = repair_meta
             if postprocess_meta:
                 extraction_meta["table_postprocess"] = postprocess_meta
+            if table_promotion_meta:
+                extraction_meta["table_promotion"] = table_promotion_meta
             if table_text_overlap_filter_meta:
                 extraction_meta["table_text_overlap_filter"] = table_text_overlap_filter_meta
             if canonical_reconstruction_meta:
@@ -5334,9 +5424,29 @@ class KnowledgeIngestionService:
         issues: list[IssuePayload] = []
         merged_regions_total = 0
         header_rows_total = 0
+        compacted_blank_rows_total = 0
+        section_rows_total = 0
+        series_columns_total = 0
 
         for order_index, table in enumerate(document.tables, start=1):
             key_grid, text_by_key, span_by_key = self._docx_table_grid(table)
+            key_grid, span_by_key, grid_meta = self._docx_compact_table_grid(
+                key_grid,
+                text_by_key,
+                span_by_key,
+            )
+            provisional_header_rows = self._docx_detect_header_rows(key_grid, text_by_key)
+            key_grid, text_by_key, span_by_key, collapse_meta = self._docx_collapse_helper_columns(
+                key_grid,
+                text_by_key,
+                span_by_key,
+                provisional_header_rows,
+            )
+            key_grid, text_by_key, span_by_key, series_meta = self._docx_normalize_sparse_series_columns(
+                key_grid,
+                text_by_key,
+                span_by_key,
+            )
             row_count = len(key_grid)
             col_count = max((len(row) for row in key_grid), default=0)
             if row_count <= 0 or col_count <= 0:
@@ -5353,8 +5463,14 @@ class KnowledgeIngestionService:
 
             header_rows = self._docx_detect_header_rows(key_grid, text_by_key)
             header_row_set = set(header_rows)
+            section_rows = self._docx_detect_section_rows(key_grid, text_by_key, header_row_set)
+            section_row_set = set(section_rows)
             if header_rows:
                 header_rows_total += len(header_rows)
+            compacted_blank_rows_total += int(grid_meta.get("removed_blank_rows") or 0)
+            if section_rows:
+                section_rows_total += len(section_rows)
+            series_columns_total += int(series_meta.get("merged_columns") or 0)
 
             column_schema: list[str] = []
             for col_idx in range(col_count):
@@ -5364,7 +5480,9 @@ class KnowledgeIngestionService:
                     key = key_grid[row_idx][col_idx] if col_idx < len(key_grid[row_idx]) else None
                     if key is None:
                         continue
-                    label = self._sanitize_text(text_by_key.get(key, "")).strip()
+                    label = self._docx_canonicalize_header_label(
+                        self._sanitize_text(text_by_key.get(key, "")).strip()
+                    )
                     if not label:
                         continue
                     dedupe_key = re.sub(r"\s+", " ", label).strip().lower()
@@ -5373,19 +5491,51 @@ class KnowledgeIngestionService:
                     seen_labels.add(dedupe_key)
                     labels.append(label)
                 merged_label = " | ".join(labels).strip()
-                column_schema.append(self.table_detector._normalize_header_cell(merged_label, col_idx))
+                column_schema.append(self._docx_normalize_column_key(merged_label, col_idx))
 
             if not any(column_schema):
                 column_schema = [f"column_{idx + 1}" for idx in range(col_count)]
+            else:
+                column_schema = self._docx_refine_grouped_column_schema(
+                    column_schema,
+                    key_grid,
+                    text_by_key,
+                    header_rows,
+                )
 
             table_rows: list[TableRowPayload] = []
             merged_regions = 0
             for row_idx, row_keys in enumerate(key_grid):
+                row_type = "data"
+                if row_idx in header_row_set:
+                    row_type = "header"
+                elif row_idx in section_row_set:
+                    row_type = "section_header"
+
+                initial_row_values = [
+                    self._sanitize_text(
+                        text_by_key.get(row_keys[col_idx], "")
+                        if col_idx < len(row_keys) and row_keys[col_idx] is not None
+                        else ""
+                    ).strip()
+                    for col_idx in range(col_count)
+                ]
+                repeated_section_label = ""
+                repeated_section_col_idx: int | None = None
+                if row_type == "section_header":
+                    repeated_section_label, repeated_section_col_idx = self._docx_repeated_row_label_info(
+                        initial_row_values
+                    )
+
                 row_cells: list[TableCellPayload] = []
                 row_values: list[str] = []
                 for col_idx in range(col_count):
                     key = row_keys[col_idx] if col_idx < len(row_keys) else None
                     raw_text = self._sanitize_text(text_by_key.get(key, "") if key is not None else "").strip()
+                    if repeated_section_label and raw_text:
+                        canonical_cell = self._docx_canonicalize_header_label(raw_text)
+                        if canonical_cell.strip().lower() == repeated_section_label.strip().lower():
+                            raw_text = repeated_section_label if col_idx == repeated_section_col_idx else ""
                     row_values.append(raw_text)
                     cell_metadata: dict[str, Any] = {}
                     if key is not None:
@@ -5419,10 +5569,12 @@ class KnowledgeIngestionService:
                         )
                     )
 
-                row_metadata: dict[str, Any] = {"row_type": "header" if row_idx in header_row_set else "data"}
+                row_metadata: dict[str, Any] = {"row_type": row_type}
                 if row_idx in header_row_set:
                     row_metadata["header_source"] = "docx_detected"
                     row_metadata["header_level"] = header_rows.index(row_idx) + 1
+                elif row_idx in section_row_set:
+                    row_metadata["section_source"] = "docx_detected"
                 table_rows.append(
                     TableRowPayload(
                         row_index=row_idx,
@@ -5443,9 +5595,18 @@ class KnowledgeIngestionService:
                 "row_count": row_count,
                 "column_count": col_count,
                 "header_rows": list(header_rows),
+                "section_rows": list(section_rows),
                 "merged_regions": merged_regions,
                 "structure_confidence": 0.95,
             }
+            if grid_meta.get("removed_blank_rows"):
+                table_metadata["blank_rows_compacted"] = int(grid_meta.get("removed_blank_rows") or 0)
+            if collapse_meta.get("removed_columns"):
+                table_metadata["helper_columns_removed"] = int(collapse_meta.get("removed_columns") or 0)
+            if collapse_meta.get("merged_columns"):
+                table_metadata["helper_columns_merged"] = int(collapse_meta.get("merged_columns") or 0)
+            if series_meta.get("merged_columns"):
+                table_metadata["series_columns_merged"] = int(series_meta.get("merged_columns") or 0)
             if filename:
                 table_metadata["filename"] = filename
             if section_heading:
@@ -5471,7 +5632,10 @@ class KnowledgeIngestionService:
             "enabled": True,
             "table_count": len(tables),
             "header_rows_detected": header_rows_total,
+            "section_rows_detected": section_rows_total,
+            "blank_rows_compacted": compacted_blank_rows_total,
             "merged_regions": merged_regions_total,
+            "series_columns_merged": series_columns_total,
         }
         return tables, issues, meta
 
@@ -5548,6 +5712,713 @@ class KnowledgeIngestionService:
         return key_grid, text_by_key, span_by_key
 
     @staticmethod
+    def _docx_compact_table_grid(
+        key_grid: Sequence[Sequence[int | None]],
+        text_by_key: Mapping[int, str],
+        span_by_key: Mapping[int, Mapping[str, int]],
+    ) -> tuple[list[list[int | None]], dict[int, dict[str, int]], dict[str, Any]]:
+        if not key_grid:
+            return [], {}, {"removed_blank_rows": 0}
+
+        compacted_grid: list[list[int | None]] = []
+        positions_by_key: dict[int, list[tuple[int, int]]] = {}
+        removed_blank_rows = 0
+
+        for row in key_grid:
+            has_readable_value = any(
+                key is not None and str(text_by_key.get(key, "")).strip()
+                for key in row
+            )
+            if not has_readable_value:
+                removed_blank_rows += 1
+                continue
+            new_row = list(row)
+            new_row_index = len(compacted_grid)
+            compacted_grid.append(new_row)
+            for col_idx, key in enumerate(new_row):
+                if key is None:
+                    continue
+                positions_by_key.setdefault(key, []).append((new_row_index, col_idx))
+
+        if not compacted_grid:
+            return [], {}, {"removed_blank_rows": removed_blank_rows}
+
+        compacted_spans: dict[int, dict[str, int]] = {}
+        for key, positions in positions_by_key.items():
+            prior_span = span_by_key.get(key) or {}
+            row_start = min(pos[0] for pos in positions)
+            row_end = max(pos[0] for pos in positions)
+            col_start = min(pos[1] for pos in positions)
+            col_end = max(pos[1] for pos in positions)
+            compacted_spans[key] = {
+                "row_start": row_start,
+                "row_end": row_end,
+                "col_start": col_start,
+                "col_end": col_end,
+                "row_span": (row_end - row_start) + 1,
+                "column_span": int(prior_span.get("column_span") or ((col_end - col_start) + 1)),
+            }
+
+        return compacted_grid, compacted_spans, {"removed_blank_rows": removed_blank_rows}
+
+    @staticmethod
+    def _docx_cell_is_helper_token(value: str) -> bool:
+        sample = str(value or "").strip()
+        if not sample:
+            return False
+        if re.fullmatch(r"[$€£¥₹]", sample):
+            return True
+        if sample in {"(", ")", "[", "]"}:
+            return True
+        return False
+
+    @staticmethod
+    def _docx_combine_cell_texts(parts: Sequence[str]) -> str:
+        cleaned = [str(part or "").strip() for part in parts if str(part or "").strip()]
+        if not cleaned:
+            return ""
+        combined = cleaned[0]
+        currency_tokens = {"$", "€", "£", "¥", "₹"}
+        for part in cleaned[1:]:
+            if not combined:
+                combined = part
+                continue
+            if part in {")", "]", "%"}:
+                combined = combined.rstrip() + part
+                continue
+            if part in {"(", "["}:
+                combined = combined.rstrip() + part
+                continue
+            if combined.endswith(tuple(currency_tokens)) or combined.endswith(("(", "[")):
+                combined = combined.rstrip() + part
+                continue
+            combined = combined.rstrip() + " " + part
+        return combined.strip()
+
+    @staticmethod
+    def _docx_collapse_repeated_sequence(parts: Sequence[str]) -> list[str]:
+        items = [str(part or "").strip() for part in parts if str(part or "").strip()]
+        size = len(items)
+        if size <= 1:
+            return items
+        for chunk_size in range(1, (size // 2) + 1):
+            if size % chunk_size != 0:
+                continue
+            chunk = items[:chunk_size]
+            if chunk * (size // chunk_size) == items:
+                return chunk
+        return items
+
+    @staticmethod
+    def _docx_canonicalize_header_label(label: str) -> str:
+        cleaned = re.sub(r"\s+", " ", str(label or "").strip())
+        if not cleaned:
+            return ""
+        tokens = cleaned.split(" ")
+        collapsed = KnowledgeIngestionService._docx_collapse_repeated_sequence(tokens)
+        return " ".join(collapsed).strip()
+
+    @staticmethod
+    def _docx_repeated_row_label_info(values: Sequence[str]) -> tuple[str, int | None]:
+        normalized: list[tuple[int, str, str]] = []
+        for idx, value in enumerate(values):
+            raw = str(value or "").strip()
+            if not raw:
+                continue
+            canonical = KnowledgeIngestionService._docx_canonicalize_header_label(raw)
+            if not canonical:
+                continue
+            normalized.append((idx, canonical, canonical.strip().lower()))
+        if len(normalized) < 2:
+            return "", None
+        lowered = {entry[2] for entry in normalized if entry[2]}
+        if len(lowered) != 1:
+            return "", None
+        first_idx, first_label, _ = normalized[0]
+        return first_label, first_idx
+
+    @staticmethod
+    def _docx_normalize_column_key(label: str, index: int) -> str:
+        normalized = TableDetector._normalize_header_cell(label, index)
+        parts = [part for part in str(normalized or "").split("_") if part]
+        collapsed = KnowledgeIngestionService._docx_collapse_repeated_sequence(parts)
+        if collapsed:
+            normalized = "_".join(collapsed)
+        return normalized or f"column_{index + 1}"
+
+    @staticmethod
+    def _docx_column_key_looks_period_like(key: str) -> bool:
+        sample = str(key or "").strip().lower()
+        if not sample or sample.startswith("column_"):
+            return False
+        if re.fullmatch(r"(?:19|20)\d{2}", sample):
+            return True
+        if re.fullmatch(r"\d{1,2}_\d{2,4}", sample):
+            return True
+        if re.fullmatch(r"(?:q[1-4]|[1-4]q)(?:_(?:fy)?(?:19|20)?\d{2,4})?", sample):
+            return True
+        if "thereafter" in sample:
+            return True
+        return bool(
+            re.search(r"(?:19|20)\d{2}", sample)
+            and re.search(
+                r"\b(?:year|years|quarter|quarters|month|months|ended|ending|june|march|september|december)\b",
+                sample.replace("_", " "),
+            )
+        )
+
+    @staticmethod
+    def _docx_column_key_is_generic(key: str) -> bool:
+        return bool(re.fullmatch(r"column_\d+", str(key or "").strip().lower()))
+
+    @classmethod
+    def _docx_refine_grouped_column_schema(
+        cls,
+        column_schema: Sequence[str],
+        key_grid: Sequence[Sequence[int | None]],
+        text_by_key: Mapping[int, str],
+        header_rows: Sequence[int],
+    ) -> list[str]:
+        schema = list(column_schema or [])
+        if not schema or not key_grid:
+            return schema
+
+        row_count = len(key_grid)
+        header_row_set = set(header_rows)
+
+        def _value_at(row_idx: int, col_idx: int) -> str:
+            if row_idx >= row_count:
+                return ""
+            row = key_grid[row_idx]
+            if col_idx >= len(row):
+                return ""
+            key = row[col_idx]
+            if key is None:
+                return ""
+            return str(text_by_key.get(key, "")).strip()
+
+        profiles: list[dict[str, Any]] = []
+        for col_idx, key in enumerate(schema):
+            data_values = [
+                _value_at(row_idx, col_idx)
+                for row_idx in range(row_count)
+                if row_idx not in header_row_set and _value_at(row_idx, col_idx)
+            ]
+            helper_only = bool(data_values) and all(cls._docx_cell_is_helper_token(value) for value in data_values)
+            substantive = any(
+                value
+                and not cls._docx_cell_is_helper_token(value)
+                and (_column_numeric_signal(value) or re.search(r"[A-Za-z\u0600-\u06FF]", value))
+                for value in data_values
+            )
+            profiles.append(
+                {
+                    "key": str(key or "").strip(),
+                    "data_count": len(data_values),
+                    "helper_only": helper_only,
+                    "substantive": substantive,
+                    "period_like": cls._docx_column_key_looks_period_like(str(key or "").strip()),
+                    "generic": cls._docx_column_key_is_generic(str(key or "").strip()),
+                }
+            )
+
+        refined = list(schema)
+        for col_idx, profile in enumerate(profiles):
+            key = profile["key"]
+            if not key or not profile["period_like"] or profile["data_count"] <= 0:
+                continue
+            if col_idx + 1 >= len(profiles):
+                continue
+            right = profiles[col_idx + 1]
+            right_key = str(right["key"] or "").strip()
+            if (
+                right_key
+                and not right["period_like"]
+                and not right["generic"]
+                and not right["helper_only"]
+                and right["data_count"] == 0
+            ):
+                refined[col_idx] = cls._docx_normalize_column_key(f"{right_key} {key}", col_idx)
+
+        for col_idx, profile in enumerate(profiles[:-1]):
+            key = str(refined[col_idx] or "").strip()
+            next_key = str(refined[col_idx + 1] or "").strip()
+            if not key or key != next_key or not cls._docx_column_key_looks_period_like(key):
+                continue
+            next_profile = profiles[col_idx + 1]
+            if profile["helper_only"] and next_profile["substantive"]:
+                refined[col_idx] = cls._docx_normalize_column_key(f"helper {key}", col_idx)
+            elif next_profile["helper_only"] and profile["substantive"]:
+                refined[col_idx + 1] = cls._docx_normalize_column_key(f"helper {key}", col_idx + 1)
+
+        return refined
+
+    @staticmethod
+    def _docx_value_looks_like_period_label(value: str) -> bool:
+        sample = KnowledgeIngestionService._docx_canonicalize_header_label(str(value or "").strip())
+        if not sample:
+            return False
+        lowered = sample.lower()
+        if re.fullmatch(r"(?:19|20)\d{2}", lowered):
+            return True
+        if re.fullmatch(r"\d{1,2}/\d{2,4}", lowered):
+            return True
+        if re.fullmatch(r"(?:q[1-4]|[1-4]q)(?:\s*(?:fy)?\s*(?:19|20)?\d{2,4})?", lowered):
+            return True
+        if re.fullmatch(
+            r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*[\s\-]+(?:19|20)\d{2}",
+            lowered,
+        ):
+            return True
+        if (
+            re.search(r"\b(?:year|years|quarter|quarters|month|months|ended|ending)\b", lowered)
+            and re.search(r"(?:19|20)\d{2}", lowered)
+        ):
+            return True
+        return False
+
+    @staticmethod
+    def _docx_normalize_sparse_series_columns(
+        key_grid: Sequence[Sequence[int | None]],
+        text_by_key: Mapping[int, str],
+        span_by_key: Mapping[int, Mapping[str, int]],
+    ) -> tuple[list[list[int | None]], dict[int, str], dict[int, dict[str, int]], dict[str, int]]:
+        if not key_grid:
+            return [], dict(text_by_key), dict(span_by_key), {"merged_columns": 0}
+
+        row_count = len(key_grid)
+        column_count = max((len(row) for row in key_grid), default=0)
+        if row_count < 2 or column_count < 4:
+            return list(map(list, key_grid)), dict(text_by_key), {int(key): dict(value) for key, value in span_by_key.items()}, {"merged_columns": 0}
+
+        def _value_at(row_idx: int, col_idx: int) -> str:
+            if row_idx >= row_count:
+                return ""
+            row = key_grid[row_idx]
+            if col_idx >= len(row):
+                return ""
+            key = row[col_idx]
+            if key is None:
+                return ""
+            return str(text_by_key.get(key, "")).strip()
+
+        series_row_idx: int | None = None
+        for candidate_row_idx in range(min(2, row_count)):
+            row_values = [_value_at(candidate_row_idx, col_idx) for col_idx in range(column_count)]
+            non_empty_values = [value for value in row_values if value]
+            if len(non_empty_values) < 3:
+                continue
+            period_like_count = sum(
+                1 for value in non_empty_values if KnowledgeIngestionService._docx_value_looks_like_period_label(value)
+            )
+            if period_like_count < max(2, int(math.ceil(len(non_empty_values) * 0.6))):
+                continue
+            duplicate_pairs = 0
+            for col_idx in range(1, column_count - 1):
+                current_value = KnowledgeIngestionService._docx_canonicalize_header_label(row_values[col_idx])
+                next_value = KnowledgeIngestionService._docx_canonicalize_header_label(row_values[col_idx + 1])
+                if (
+                    current_value
+                    and next_value
+                    and current_value == next_value
+                    and KnowledgeIngestionService._docx_value_looks_like_period_label(current_value)
+                ):
+                    duplicate_pairs += 1
+            if duplicate_pairs >= 2:
+                series_row_idx = candidate_row_idx
+                break
+
+        if series_row_idx is None:
+            return list(map(list, key_grid)), dict(text_by_key), {int(key): dict(value) for key, value in span_by_key.items()}, {"merged_columns": 0}
+
+        actions = ["keep"] * column_count
+        merge_targets: dict[int, int] = {}
+        data_row_count = max(1, row_count - (series_row_idx + 1))
+
+        for col_idx in range(1, column_count - 1):
+            current_label = KnowledgeIngestionService._docx_canonicalize_header_label(_value_at(series_row_idx, col_idx))
+            next_label = KnowledgeIngestionService._docx_canonicalize_header_label(_value_at(series_row_idx, col_idx + 1))
+            if (
+                not current_label
+                or not next_label
+                or current_label != next_label
+                or not KnowledgeIngestionService._docx_value_looks_like_period_label(current_label)
+            ):
+                continue
+
+            left_values = [_value_at(row_idx, col_idx) for row_idx in range(series_row_idx + 1, row_count)]
+            right_values = [_value_at(row_idx, col_idx + 1) for row_idx in range(series_row_idx + 1, row_count)]
+            left_non_empty = sum(1 for value in left_values if value)
+            right_non_empty = sum(1 for value in right_values if value)
+            if left_non_empty == right_non_empty:
+                continue
+
+            if left_non_empty < right_non_empty:
+                sparse_idx, data_idx = col_idx, col_idx + 1
+                sparse_non_empty, data_non_empty = left_non_empty, right_non_empty
+            else:
+                sparse_idx, data_idx = col_idx + 1, col_idx
+                sparse_non_empty, data_non_empty = right_non_empty, left_non_empty
+
+            if sparse_non_empty > 1:
+                continue
+            if data_non_empty < max(2, int(math.ceil(data_row_count * 0.5))):
+                continue
+            actions[sparse_idx] = "merge"
+            merge_targets[sparse_idx] = data_idx
+
+        if not merge_targets:
+            return list(map(list, key_grid)), dict(text_by_key), {int(key): dict(value) for key, value in span_by_key.items()}, {"merged_columns": 0}
+
+        groups: dict[int, list[int]] = {}
+        for col_idx, action in enumerate(actions):
+            if action == "merge":
+                target_idx = merge_targets.get(col_idx)
+                if target_idx is None:
+                    continue
+                groups.setdefault(target_idx, []).append(col_idx)
+                groups[target_idx].append(target_idx)
+                continue
+            groups.setdefault(col_idx, []).append(col_idx)
+
+        ordered_targets = [col_idx for col_idx, action in enumerate(actions) if action == "keep"]
+        new_key_grid: list[list[int | None]] = []
+        new_text_by_key: dict[int, str] = {}
+        positions_by_key: dict[int, list[tuple[int, int]]] = {}
+        next_synthetic_key = -1
+
+        for row_idx in range(row_count):
+            new_row: list[int | None] = []
+            for out_col_idx, target_idx in enumerate(ordered_targets):
+                source_indices = sorted(set(groups.get(target_idx, [target_idx])))
+                parts: list[str] = []
+                source_keys: list[int] = []
+                for source_idx in source_indices:
+                    if source_idx >= len(key_grid[row_idx]):
+                        continue
+                    key = key_grid[row_idx][source_idx]
+                    if key is None:
+                        continue
+                    source_keys.append(int(key))
+                    value = str(text_by_key.get(key, "")).strip()
+                    if value:
+                        parts.append(value)
+
+                combined = KnowledgeIngestionService._docx_combine_cell_texts(parts)
+                if row_idx == series_row_idx:
+                    combined = KnowledgeIngestionService._docx_canonicalize_header_label(combined)
+                if not combined:
+                    new_row.append(None)
+                    continue
+
+                if len(source_keys) == 1 and combined == str(text_by_key.get(source_keys[0], "")).strip():
+                    key_to_use = source_keys[0]
+                else:
+                    key_to_use = next_synthetic_key
+                    next_synthetic_key -= 1
+                new_text_by_key[key_to_use] = combined
+                positions_by_key.setdefault(key_to_use, []).append((row_idx, out_col_idx))
+                new_row.append(key_to_use)
+            new_key_grid.append(new_row)
+
+        new_span_by_key: dict[int, dict[str, int]] = {}
+        for key, positions in positions_by_key.items():
+            row_start = min(pos[0] for pos in positions)
+            row_end = max(pos[0] for pos in positions)
+            col_start = min(pos[1] for pos in positions)
+            col_end = max(pos[1] for pos in positions)
+            prior_span = span_by_key.get(key) or {}
+            new_span_by_key[key] = {
+                "row_start": row_start,
+                "row_end": row_end,
+                "col_start": col_start,
+                "col_end": col_end,
+                "row_span": int(prior_span.get("row_span") or ((row_end - row_start) + 1)),
+                "column_span": int(prior_span.get("column_span") or ((col_end - col_start) + 1)),
+            }
+
+        return new_key_grid, new_text_by_key, new_span_by_key, {
+            "merged_columns": len(merge_targets),
+        }
+
+    @staticmethod
+    def _docx_collapse_helper_columns(
+        key_grid: Sequence[Sequence[int | None]],
+        text_by_key: Mapping[int, str],
+        span_by_key: Mapping[int, Mapping[str, int]],
+        header_rows: Sequence[int],
+    ) -> tuple[list[list[int | None]], dict[int, str], dict[int, dict[str, int]], dict[str, int]]:
+        if not key_grid:
+            return [], dict(text_by_key), dict(span_by_key), {"removed_columns": 0, "merged_columns": 0}
+
+        row_count = len(key_grid)
+        column_count = max((len(row) for row in key_grid), default=0)
+        if column_count <= 0:
+            return list(map(list, key_grid)), dict(text_by_key), dict(span_by_key), {"removed_columns": 0, "merged_columns": 0}
+
+        header_row_set = set(header_rows)
+
+        def _value_at(row_idx: int, col_idx: int) -> str:
+            if row_idx >= row_count:
+                return ""
+            row = key_grid[row_idx]
+            if col_idx >= len(row):
+                return ""
+            key = row[col_idx]
+            if key is None:
+                return ""
+            return str(text_by_key.get(key, "")).strip()
+
+        column_profiles: list[dict[str, Any]] = []
+        for col_idx in range(column_count):
+            all_values = [_value_at(row_idx, col_idx) for row_idx in range(row_count)]
+            non_empty_values = [value for value in all_values if value]
+            header_values = [_value_at(row_idx, col_idx) for row_idx in range(row_count) if row_idx in header_row_set]
+            header_values = [value for value in header_values if value]
+            data_values = [_value_at(row_idx, col_idx) for row_idx in range(row_count) if row_idx not in header_row_set]
+            data_values = [value for value in data_values if value]
+            header_fingerprint = tuple(
+                re.sub(r"\s+", " ", value).strip().lower()
+                for value in header_values
+                if value.strip()
+            )
+            column_profiles.append(
+                {
+                    "all_values": non_empty_values,
+                    "header_values": header_values,
+                    "data_values": data_values,
+                    "header_fingerprint": header_fingerprint,
+                    "helper_only_data": bool(data_values)
+                    and all(KnowledgeIngestionService._docx_cell_is_helper_token(value) for value in data_values),
+                    "substantive_data": any(
+                        value
+                        and not KnowledgeIngestionService._docx_cell_is_helper_token(value)
+                        and (
+                            _column_numeric_signal(value)
+                            or re.search(r"[A-Za-z\u0600-\u06FF]", value)
+                        )
+                        for value in data_values
+                    ),
+                }
+            )
+
+        actions = ["keep"] * column_count
+        merge_targets: dict[int, int] = {}
+
+        for col_idx, profile in enumerate(column_profiles):
+            all_values = profile["all_values"]
+            data_values = profile["data_values"]
+            header_fingerprint = profile["header_fingerprint"]
+
+            if not all_values:
+                actions[col_idx] = "drop"
+                continue
+
+            if not data_values and not header_fingerprint:
+                actions[col_idx] = "drop"
+                continue
+
+            if not data_values and header_fingerprint:
+                prev_fingerprint = column_profiles[col_idx - 1]["header_fingerprint"] if col_idx > 0 else ()
+                next_fingerprint = column_profiles[col_idx + 1]["header_fingerprint"] if col_idx + 1 < column_count else ()
+                if header_fingerprint == prev_fingerprint or header_fingerprint == next_fingerprint:
+                    actions[col_idx] = "drop"
+                    continue
+
+            if not profile["helper_only_data"]:
+                continue
+
+            helper_values = {value for value in data_values if value}
+            prefer_right = helper_values <= {"$", "€", "£", "¥", "₹", "(", "["}
+            prefer_left = helper_values <= {")", "]"}
+
+            target_idx: int | None = None
+            candidate_indices: list[int] = []
+            if prefer_left and col_idx > 0:
+                candidate_indices.append(col_idx - 1)
+            if prefer_right and col_idx + 1 < column_count:
+                candidate_indices.append(col_idx + 1)
+            if not candidate_indices:
+                if col_idx + 1 < column_count:
+                    candidate_indices.append(col_idx + 1)
+                if col_idx > 0:
+                    candidate_indices.append(col_idx - 1)
+
+            for candidate_idx in candidate_indices:
+                if actions[candidate_idx] == "drop":
+                    continue
+                if column_profiles[candidate_idx]["substantive_data"]:
+                    target_idx = candidate_idx
+                    break
+            if target_idx is None:
+                continue
+            actions[col_idx] = "merge"
+            merge_targets[col_idx] = target_idx
+
+        groups: dict[int, list[int]] = {}
+        for col_idx, action in enumerate(actions):
+            if action == "drop":
+                continue
+            if action == "merge":
+                target_idx = merge_targets.get(col_idx)
+                if target_idx is None or actions[target_idx] == "drop":
+                    actions[col_idx] = "drop"
+                    continue
+                groups.setdefault(target_idx, []).append(col_idx)
+                continue
+            groups.setdefault(col_idx, []).append(col_idx)
+
+        for target_idx, source_indices in list(groups.items()):
+            unique_sources = sorted(set(source_indices + [target_idx]))
+            groups[target_idx] = unique_sources
+
+        ordered_targets = [col_idx for col_idx, action in enumerate(actions) if action == "keep"]
+        if len(ordered_targets) == column_count and not any(action != "keep" for action in actions):
+            return (
+                [list(row) for row in key_grid],
+                dict(text_by_key),
+                {int(key): dict(value) for key, value in span_by_key.items()},
+                {"removed_columns": 0, "merged_columns": 0},
+            )
+
+        new_key_grid: list[list[int | None]] = []
+        new_text_by_key: dict[int, str] = {}
+        positions_by_key: dict[int, list[tuple[int, int]]] = {}
+        next_synthetic_key = -1
+
+        for row_idx in range(row_count):
+            new_row: list[int | None] = []
+            for out_col_idx, target_idx in enumerate(ordered_targets):
+                source_indices = groups.get(target_idx, [target_idx])
+                parts: list[str] = []
+                source_keys: list[int] = []
+                for source_idx in source_indices:
+                    if source_idx >= len(key_grid[row_idx]):
+                        continue
+                    key = key_grid[row_idx][source_idx]
+                    if key is None:
+                        continue
+                    value = str(text_by_key.get(key, "")).strip()
+                    if value:
+                        parts.append(value)
+                    source_keys.append(int(key))
+
+                combined = KnowledgeIngestionService._docx_combine_cell_texts(parts)
+                if row_idx in header_row_set:
+                    combined = KnowledgeIngestionService._docx_canonicalize_header_label(combined)
+                if not combined:
+                    new_row.append(None)
+                    continue
+
+                if len(source_keys) == 1 and combined == str(text_by_key.get(source_keys[0], "")).strip():
+                    key_to_use = source_keys[0]
+                else:
+                    key_to_use = next_synthetic_key
+                    next_synthetic_key -= 1
+                new_text_by_key[key_to_use] = combined
+                positions_by_key.setdefault(key_to_use, []).append((row_idx, out_col_idx))
+                new_row.append(key_to_use)
+            new_key_grid.append(new_row)
+
+        new_span_by_key: dict[int, dict[str, int]] = {}
+        for key, positions in positions_by_key.items():
+            if key in span_by_key and key >= 0:
+                prior_span = span_by_key.get(key) or {}
+                row_start = min(pos[0] for pos in positions)
+                row_end = max(pos[0] for pos in positions)
+                col_start = min(pos[1] for pos in positions)
+                col_end = max(pos[1] for pos in positions)
+                new_span_by_key[key] = {
+                    "row_start": row_start,
+                    "row_end": row_end,
+                    "col_start": col_start,
+                    "col_end": col_end,
+                    "row_span": int(prior_span.get("row_span") or ((row_end - row_start) + 1)),
+                    "column_span": int(prior_span.get("column_span") or ((col_end - col_start) + 1)),
+                }
+                continue
+            row_start = min(pos[0] for pos in positions)
+            row_end = max(pos[0] for pos in positions)
+            col_start = min(pos[1] for pos in positions)
+            col_end = max(pos[1] for pos in positions)
+            new_span_by_key[key] = {
+                "row_start": row_start,
+                "row_end": row_end,
+                "col_start": col_start,
+                "col_end": col_end,
+                "row_span": (row_end - row_start) + 1,
+                "column_span": (col_end - col_start) + 1,
+            }
+
+        removed_columns = sum(1 for action in actions if action == "drop")
+        merged_columns = sum(1 for action in actions if action == "merge")
+        return new_key_grid, new_text_by_key, new_span_by_key, {
+            "removed_columns": removed_columns,
+            "merged_columns": merged_columns,
+        }
+
+    @staticmethod
+    def _docx_row_has_financial_data_signal(values: Sequence[str]) -> bool:
+        for value in values:
+            sample = str(value or "").strip()
+            if not sample:
+                continue
+            if "$" in sample or "%" in sample:
+                return True
+            if re.search(r"\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b", sample):
+                return True
+            if re.search(r"\(\s*\d", sample):
+                return True
+        return False
+
+    @staticmethod
+    def _docx_row_looks_like_header_band(values: Sequence[str]) -> bool:
+        non_empty = [
+            KnowledgeIngestionService._docx_canonicalize_header_label(str(value or "").strip())
+            for value in values
+            if str(value or "").strip()
+        ]
+        if not non_empty:
+            return False
+        if KnowledgeIngestionService._docx_row_has_financial_data_signal(non_empty):
+            return False
+
+        short_cell_ratio = sum(
+            1
+            for value in non_empty
+            if len(re.findall(r"\w+", value)) <= 4 and len(value) <= 40
+        ) / float(max(1, len(non_empty)))
+        if short_cell_ratio < 0.6:
+            return False
+
+        lowered = [value.lower() for value in non_empty]
+        period_or_header_terms = sum(
+            1
+            for value in lowered
+            if re.search(
+                r"\b(year|years|ended|ending|quarter|quarters|fiscal|period|periods|date|dates|record|payment|declaration|month|months|june|march|september|december|thereafter)\b",
+                value,
+            )
+        )
+        explicit_year_cells = sum(
+            1
+            for value in non_empty
+            if re.fullmatch(r"(?:19|20)\d{2}", value)
+        )
+        period_label_cells = sum(
+            1
+            for value in non_empty
+            if KnowledgeIngestionService._docx_value_looks_like_period_label(value)
+        )
+        if explicit_year_cells >= max(1, len(non_empty) // 2):
+            return True
+        if period_label_cells >= max(2, int(math.ceil(len(non_empty) * 0.6))):
+            return True
+        if len(non_empty) == 1 and period_or_header_terms > 0:
+            return True
+        return period_or_header_terms > 0
+
+    @staticmethod
     def _docx_detect_header_rows(
         key_grid: Sequence[Sequence[int | None]],
         text_by_key: Mapping[int, str],
@@ -5573,27 +6444,102 @@ class KnowledgeIngestionService:
                 "numeric_ratio": float(numeric_count) / total,
             }
 
-        probe_rows = min(3, row_count)
+        probe_rows = min(4, row_count)
         header_rows: list[int] = []
         for row_idx in range(probe_rows):
+            values = [
+                str(text_by_key.get(key, "")).strip()
+                for key in key_grid[row_idx]
+                if key is not None and str(text_by_key.get(key, "")).strip()
+            ]
             stats = _row_features(key_grid[row_idx])
+            header_band = KnowledgeIngestionService._docx_row_looks_like_header_band(values)
             if stats["non_empty"] <= 0:
                 if row_idx == 0:
                     continue
                 break
             looks_header = stats["alpha_ratio"] >= 0.5 and stats["numeric_ratio"] <= 0.5
             if row_idx == 0:
-                if looks_header or stats["numeric_ratio"] < 0.8:
+                if looks_header or header_band or stats["numeric_ratio"] < 0.8:
                     header_rows.append(row_idx)
                 continue
-            if looks_header and header_rows:
+            multi_value_header = looks_header and len(values) >= 2
+            if (multi_value_header or header_band) and header_rows:
                 header_rows.append(row_idx)
                 continue
             break
 
         if len(header_rows) >= row_count:
             header_rows = header_rows[: max(1, row_count - 1)]
+        if header_rows:
+            next_idx = header_rows[-1] + 1
+            if next_idx < row_count - 1 and next_idx not in header_rows:
+                next_values = [
+                    str(text_by_key.get(key, "")).strip()
+                    for key in key_grid[next_idx]
+                    if key is not None and str(text_by_key.get(key, "")).strip()
+                ]
+                if (
+                    len(next_values) == 1
+                    and KnowledgeIngestionService._docx_value_looks_like_period_label(next_values[0])
+                    and not KnowledgeIngestionService._docx_row_has_financial_data_signal(next_values)
+                ):
+                    following_stats = _row_features(key_grid[next_idx + 1])
+                    if following_stats["non_empty"] >= 1:
+                        header_rows.append(next_idx)
         return header_rows
+
+    @staticmethod
+    def _docx_detect_section_rows(
+        key_grid: Sequence[Sequence[int | None]],
+        text_by_key: Mapping[int, str],
+        header_row_set: set[int],
+    ) -> list[int]:
+        row_count = len(key_grid)
+        if row_count <= 2:
+            return []
+
+        def _non_empty_values(row_idx: int) -> list[str]:
+            return [
+                str(text_by_key.get(key, "")).strip()
+                for key in key_grid[row_idx]
+                if key is not None and str(text_by_key.get(key, "")).strip()
+            ]
+
+        section_rows: list[int] = []
+        for row_idx in range(row_count):
+            if row_idx in header_row_set:
+                continue
+            values = _non_empty_values(row_idx)
+            repeated_label, _ = KnowledgeIngestionService._docx_repeated_row_label_info(values)
+            if len(values) != 1 and not repeated_label:
+                continue
+            label = repeated_label or values[0]
+            normalized = label.strip().lower()
+            if not normalized:
+                continue
+            if re.search(r"\d", normalized) and not KnowledgeIngestionService._docx_value_looks_like_period_label(label):
+                continue
+            if normalized in {"total", "subtotal", "totals"}:
+                continue
+            if len(re.findall(r"\w+", label)) > 10 or len(label) > 80:
+                continue
+            prev_counts = [
+                len(_non_empty_values(candidate))
+                for candidate in range(max(0, row_idx - 2), row_idx)
+                if candidate not in header_row_set
+            ]
+            next_counts = [
+                len(_non_empty_values(candidate))
+                for candidate in range(row_idx + 1, min(row_count, row_idx + 3))
+                if candidate not in header_row_set
+            ]
+            if not next_counts:
+                continue
+            prev_supports_section = max(prev_counts, default=0) >= 2 or not prev_counts
+            if prev_supports_section and max(next_counts, default=0) >= 2:
+                section_rows.append(row_idx)
+        return section_rows
 
     @staticmethod
     def _normalize_bbox(raw_bbox: Mapping[str, Any] | None) -> dict[str, float] | None:
@@ -5818,6 +6764,35 @@ class KnowledgeIngestionService:
         if _TABLE_NUMBER_WITH_UNIT_RE.search(normalized):
             return True
         return False
+
+    @staticmethod
+    def _pdf_cell_looks_placeholder(text: str) -> bool:
+        normalized = re.sub(r"\s+", " ", str(text or "")).strip()
+        if not normalized:
+            return False
+        if re.search(r"[_\.]{3,}|[□☐☑]", normalized):
+            return True
+        lowered = normalized.lower()
+        if re.search(r"\bpage\s+\d+\s+of\s+\d+\b", lowered):
+            return True
+        if "rev." in lowered or lowered.startswith("rev "):
+            return True
+        return False
+
+    @staticmethod
+    def _pdf_cell_looks_label_like(text: str) -> bool:
+        normalized = re.sub(r"\s+", " ", str(text or "")).strip()
+        if not normalized:
+            return False
+        if normalized.endswith(":"):
+            return True
+        words = [word for word in re.findall(r"[A-Za-z]+", normalized) if word]
+        if not words:
+            return False
+        if len(words) > 8:
+            return False
+        uppercase_ratio = sum(1 for word in words if word.isupper()) / len(words)
+        return uppercase_ratio >= 0.75
 
     def _build_pdf_table_baseline_metrics(
         self,
@@ -6303,6 +7278,27 @@ class KnowledgeIngestionService:
         confidence = float(structure_conf if isinstance(structure_conf, (int, float)) else 0.0)
         return round(quality * confidence, 4)
 
+    def _table_region_candidate_rank(
+        self,
+        table: TablePayload,
+    ) -> tuple[int, int, float, int, str, str, list[str]]:
+        assessment = self._assess_table_quality(table)
+        candidate_class, decision, reasons = self._classify_pdf_table_candidate(
+            table,
+            assessment,
+            recurrence_stats=None,
+        )
+        region_score = self._table_region_candidate_score(table)
+        data_rows = len(self._pdf_table_readable_rows(table))
+        class_rank = {
+            "strong_table": 3,
+            "weak_table": 2,
+            "layout_fragment": 1,
+            "recurring_scaffold": 0,
+        }.get(candidate_class, 0)
+        keep_rank = 1 if decision == "keep" else 0
+        return keep_rank, class_rank, region_score, data_rows, candidate_class, decision, reasons
+
     def _extractor_is_primary_table_candidate(self, extractor_name: str) -> bool:
         normalized = str(extractor_name or "").strip().lower()
         return bool(normalized) and not normalized.startswith("heuristic")
@@ -6342,21 +7338,22 @@ class KnowledgeIngestionService:
                 bbox = self._normalize_bbox(table.bbox)
                 if not bbox:
                     continue
+                keep_rank, class_rank, region_score, data_rows, candidate_class, decision, reasons = (
+                    self._table_region_candidate_rank(table)
+                )
                 region_items.append(
                     {
                         "extractor": extractor_name,
                         "table": table,
                         "page": int(table.page_number or 0),
                         "bbox": bbox,
-                        "region_score": self._table_region_candidate_score(table),
-                        "data_rows": len(
-                            [
-                                row
-                                for row in (table.rows or [])
-                                if str((row.metadata or {}).get("row_type") or "").strip().lower()
-                                not in {"header", "section_header"}
-                            ]
-                        ),
+                        "region_score": region_score,
+                        "data_rows": data_rows,
+                        "keep_rank": keep_rank,
+                        "class_rank": class_rank,
+                        "candidate_class": candidate_class,
+                        "candidate_decision": decision,
+                        "candidate_reasons": reasons,
                     }
                 )
         if len(region_items) < 2:
@@ -6390,6 +7387,8 @@ class KnowledgeIngestionService:
         blended_tables: list[TablePayload] = []
         region_choices: list[dict[str, Any]] = []
         chosen_extractors: list[str] = []
+        chosen_region_entries: list[dict[str, Any]] = []
+        document_selected_region_entries: list[dict[str, Any] | None] = []
 
         for region_index, region in enumerate(regions, start=1):
             primary_region = [
@@ -6398,10 +7397,35 @@ class KnowledgeIngestionService:
             candidate_pool = primary_region or region
             best = max(
                 candidate_pool,
-                key=lambda entry: (entry["region_score"], entry["data_rows"], entry["extractor"]),
+                key=lambda entry: (
+                    entry["keep_rank"],
+                    entry["class_rank"],
+                    entry["region_score"],
+                    entry["data_rows"],
+                    entry["extractor"],
+                ),
+            )
+            document_selected_pool = [
+                entry for entry in region if str(entry["extractor"] or "").strip().lower() == document_selected
+            ]
+            document_best = (
+                max(
+                    document_selected_pool,
+                    key=lambda entry: (
+                        entry["keep_rank"],
+                        entry["class_rank"],
+                        entry["region_score"],
+                        entry["data_rows"],
+                        entry["extractor"],
+                    ),
+                )
+                if document_selected_pool
+                else None
             )
             blended_tables.append(best["table"])
             chosen_extractors.append(best["extractor"])
+            chosen_region_entries.append(best)
+            document_selected_region_entries.append(document_best)
             region_choices.append(
                 {
                     "region_index": region_index,
@@ -6409,6 +7433,9 @@ class KnowledgeIngestionService:
                     "selected_extractor": best["extractor"],
                     "selected_order_index": best["table"].order_index,
                     "selected_score": best["region_score"],
+                    "selected_class": best["candidate_class"],
+                    "selected_decision": best["candidate_decision"],
+                    "selected_reasons": best["candidate_reasons"],
                     "candidate_extractors": [entry["extractor"] for entry in region],
                     "primary_candidate_extractors": [entry["extractor"] for entry in primary_region],
                     "heuristic_only_region": not primary_region,
@@ -6416,7 +7443,14 @@ class KnowledgeIngestionService:
             )
 
         unique_extractors = sorted(set(chosen_extractors))
-        if len(unique_extractors) <= 1:
+        document_selected_gap_improved = any(
+            chosen.get("candidate_decision") == "keep"
+            and (document_best is None or document_best.get("candidate_decision") != "keep")
+            for chosen, document_best in zip(chosen_region_entries, document_selected_region_entries)
+        )
+        if len(unique_extractors) <= 1 and unique_extractors and unique_extractors[0] == document_selected:
+            return None
+        if not document_selected_gap_improved:
             return None
 
         blended_tables.sort(
@@ -8026,6 +9060,527 @@ class KnowledgeIngestionService:
         report["upload_id"] = str(upload.id)
         report["business_profile_id"] = str(upload.business_profile_id)
         return report
+
+    def _pdf_table_readable_rows(self, table: TablePayload) -> list[TableRowPayload]:
+        readable: list[TableRowPayload] = []
+        for row in table.rows or []:
+            meta = row.metadata if isinstance(row.metadata, Mapping) else {}
+            row_type = str(meta.get("row_type") or "").strip().lower()
+            if row_type in {"header", "section_header"}:
+                continue
+            readable.append(row)
+        return readable
+
+    def _normalize_table_signature_text(self, text: str) -> str:
+        cleaned = self._sanitize_text(text or "").strip().lower()
+        if not cleaned:
+            return ""
+        cleaned = re.sub(r"[_\.\-]{2,}", " ", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned)
+        return cleaned[:240]
+
+    def _table_row_signature(self, table: TablePayload, row_offset: int = 0) -> str:
+        readable_rows = self._pdf_table_readable_rows(table)
+        if row_offset < 0 or row_offset >= len(readable_rows):
+            return ""
+        row = readable_rows[row_offset]
+        values: list[str] = []
+        for cell in row.cells or []:
+            raw = str(cell.raw_text or "").strip()
+            if raw:
+                values.append(raw)
+            if len(values) >= 3:
+                break
+        return self._normalize_table_signature_text(" | ".join(values))
+
+    def _table_row_prefix_signature(
+        self,
+        table: TablePayload,
+        row_offset: int = 0,
+        *,
+        max_tokens: int = 8,
+    ) -> str:
+        readable_rows = self._pdf_table_readable_rows(table)
+        if row_offset < 0 or row_offset >= len(readable_rows):
+            return ""
+        row = readable_rows[row_offset]
+        values: list[str] = []
+        for cell in row.cells or []:
+            raw = str(cell.raw_text or "").strip()
+            if raw:
+                values.append(raw)
+            if len(values) >= 2:
+                break
+        if not values:
+            return ""
+        text = self._normalize_table_signature_text(" ".join(values))
+        if not text:
+            return ""
+        tokens = [token for token in text.split() if len(token) > 1 and token not in {"|"}]
+        return " ".join(tokens[:max_tokens]).strip()
+
+    def _table_effective_column_count(self, table: TablePayload) -> int:
+        occupied: set[int] = set()
+        for row in self._pdf_table_readable_rows(table):
+            for cell in row.cells or []:
+                if str(cell.raw_text or "").strip():
+                    occupied.add(int(cell.column_index))
+        if occupied:
+            return len(occupied)
+        return max(0, len(table.column_schema or []))
+
+    def _build_pdf_table_recurrence_stats(self, tables: Sequence[TablePayload]) -> dict[str, Counter[str]]:
+        first_rows = Counter()
+        second_rows = Counter()
+        first_row_prefixes = Counter()
+        second_row_prefixes = Counter()
+        for table in tables:
+            first_sig = self._table_row_signature(table, 0)
+            second_sig = self._table_row_signature(table, 1)
+            first_prefix = self._table_row_prefix_signature(table, 0)
+            second_prefix = self._table_row_prefix_signature(table, 1)
+            if first_sig:
+                first_rows[first_sig] += 1
+            if second_sig:
+                second_rows[second_sig] += 1
+            if first_prefix:
+                first_row_prefixes[first_prefix] += 1
+            if second_prefix:
+                second_row_prefixes[second_prefix] += 1
+        return {
+            "first_rows": first_rows,
+            "second_rows": second_rows,
+            "first_row_prefixes": first_row_prefixes,
+            "second_row_prefixes": second_row_prefixes,
+        }
+
+    def _normalize_page_chrome_token(self, token: str) -> str:
+        cleaned = self._sanitize_text(token or "").strip().lower()
+        if not cleaned:
+            return ""
+        cleaned = re.sub(r"[_\.\-]{2,}", " ", cleaned)
+        cleaned = re.sub(r"\b[a-z]*\d+[a-z0-9/\-]*\b", "#", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned)
+        return cleaned
+
+    def _page_chrome_tokens(self, text: str) -> list[str]:
+        raw_tokens = re.findall(r"\S+", self._sanitize_text(text or ""))
+        normalized: list[str] = []
+        for token in raw_tokens:
+            cleaned = self._normalize_page_chrome_token(token)
+            if cleaned:
+                normalized.append(cleaned)
+        return normalized
+
+    def _page_chrome_position(
+        self,
+        bbox: Mapping[str, Any] | None,
+        *,
+        page_height: float | None,
+        page_region: str | None = None,
+    ) -> str | None:
+        normalized_region = str(page_region or "").strip().lower()
+        if normalized_region in {"header", "footer"}:
+            return normalized_region
+        if not bbox or not page_height:
+            return None
+        y0 = float(bbox.get("y0") or 0.0)
+        y1 = float(bbox.get("y1") or 0.0)
+        if y1 <= page_height * self.pdf_page_chrome_top_ratio:
+            return "header"
+        if y0 >= page_height * (1.0 - self.pdf_page_chrome_bottom_ratio):
+            return "footer"
+        return None
+
+    def _build_pdf_page_chrome_stats(self, pages: Sequence[PageLayout]) -> dict[str, Counter[str]]:
+        stats: dict[str, Counter[str]] = {"header_prefix": Counter(), "footer_suffix": Counter()}
+        if not self.pdf_page_chrome_suppression_enabled:
+            return stats
+
+        header_prefix_pages: dict[str, set[int]] = {}
+        footer_suffix_pages: dict[str, set[int]] = {}
+        min_tokens = 2
+        max_tokens = max(min_tokens, self.pdf_page_chrome_max_words)
+
+        for page in pages:
+            for block in page.blocks or []:
+                if block.block_type in {
+                    KnowledgeBlockType.TABLE,
+                    KnowledgeBlockType.IMAGE,
+                    KnowledgeBlockType.FIGURE,
+                    KnowledgeBlockType.OTHER,
+                }:
+                    continue
+                block_meta = block.metadata if isinstance(block.metadata, dict) else {}
+                if block_meta.get("is_decorative"):
+                    continue
+                position = self._page_chrome_position(
+                    block.bbox,
+                    page_height=(page.height or None),
+                    page_region=block_meta.get("page_region"),
+                )
+                if not position:
+                    continue
+                tokens = self._page_chrome_tokens(block.text)
+                if len(tokens) < min_tokens:
+                    continue
+                upper = min(len(tokens), max_tokens)
+                if position == "header":
+                    for size in range(min_tokens, upper + 1):
+                        sig = " ".join(tokens[:size]).strip()
+                        if sig:
+                            header_prefix_pages.setdefault(sig, set()).add(int(page.page_number))
+                elif position == "footer":
+                    for size in range(min_tokens, upper + 1):
+                        sig = " ".join(tokens[-size:]).strip()
+                        if sig:
+                            footer_suffix_pages.setdefault(sig, set()).add(int(page.page_number))
+
+        stats["header_prefix"] = Counter(
+            {sig: len(page_numbers) for sig, page_numbers in header_prefix_pages.items()}
+        )
+        stats["footer_suffix"] = Counter(
+            {sig: len(page_numbers) for sig, page_numbers in footer_suffix_pages.items()}
+        )
+        return stats
+
+    @staticmethod
+    def _trim_leading_token_count(text: str, token_count: int) -> str:
+        if token_count <= 0:
+            return text
+        matches = list(re.finditer(r"\S+", text or ""))
+        if token_count >= len(matches):
+            return ""
+        start = matches[token_count].start()
+        return (text or "")[start:].lstrip()
+
+    @staticmethod
+    def _trim_trailing_token_count(text: str, token_count: int) -> str:
+        if token_count <= 0:
+            return text
+        matches = list(re.finditer(r"\S+", text or ""))
+        if token_count >= len(matches):
+            return ""
+        end = matches[-token_count - 1].end()
+        return (text or "")[:end].rstrip()
+
+    def _suppress_pdf_page_chrome(
+        self,
+        text: str,
+        *,
+        bbox: Mapping[str, Any] | None,
+        page_height: float | None,
+        page_region: str | None,
+        chrome_stats: Mapping[str, Counter[str]] | None,
+    ) -> tuple[str, dict[str, Any]]:
+        diagnostics: dict[str, Any] = {}
+        if not self.pdf_page_chrome_suppression_enabled or not chrome_stats:
+            return text, diagnostics
+        position = self._page_chrome_position(bbox, page_height=page_height, page_region=page_region)
+        if position not in {"header", "footer"}:
+            return text, diagnostics
+        tokens = self._page_chrome_tokens(text)
+        min_tokens = 2
+        if len(tokens) < min_tokens:
+            return text, diagnostics
+
+        max_tokens = min(len(tokens), max(min_tokens, self.pdf_page_chrome_max_words))
+        trimmed = text
+
+        if position == "header":
+            counter = chrome_stats.get("header_prefix") or Counter()
+            best_size = 0
+            best_sig = ""
+            for size in range(max_tokens, min_tokens - 1, -1):
+                sig = " ".join(tokens[:size]).strip()
+                if sig and int(counter.get(sig, 0)) >= self.pdf_page_chrome_min_repeats:
+                    best_size = size
+                    best_sig = sig
+                    break
+            if best_size:
+                trimmed = self._trim_leading_token_count(trimmed, best_size)
+                diagnostics = {
+                    "position": "header",
+                    "trimmed_tokens": best_size,
+                    "signature": best_sig[:120],
+                }
+        elif position == "footer":
+            counter = chrome_stats.get("footer_suffix") or Counter()
+            best_size = 0
+            best_sig = ""
+            for size in range(max_tokens, min_tokens - 1, -1):
+                sig = " ".join(tokens[-size:]).strip()
+                if sig and int(counter.get(sig, 0)) >= self.pdf_page_chrome_min_repeats:
+                    best_size = size
+                    best_sig = sig
+                    break
+            if best_size:
+                trimmed = self._trim_trailing_token_count(trimmed, best_size)
+                diagnostics = {
+                    "position": "footer",
+                    "trimmed_tokens": best_size,
+                    "signature": best_sig[:120],
+                }
+
+        return trimmed.strip(), diagnostics
+
+    def _classify_pdf_table_candidate(
+        self,
+        table: TablePayload,
+        assessment: Mapping[str, Any],
+        recurrence_stats: Mapping[str, Counter[str]] | None = None,
+    ) -> tuple[str, str, list[str]]:
+        signals = assessment.get("signals") if isinstance(assessment, Mapping) else {}
+        if not isinstance(signals, Mapping):
+            signals = {}
+        quality = float(assessment.get("quality_score") or 0.0) if isinstance(assessment, Mapping) else 0.0
+        effective_columns = int(signals.get("effective_column_count") or self._table_effective_column_count(table))
+        reasons: list[str] = []
+        first_sig = self._table_row_signature(table, 0)
+        second_sig = self._table_row_signature(table, 1)
+        first_prefix = self._table_row_prefix_signature(table, 0)
+        second_prefix = self._table_row_prefix_signature(table, 1)
+        recurring_first = 0
+        recurring_second = 0
+        recurring_first_prefix = 0
+        recurring_second_prefix = 0
+        if recurrence_stats:
+            recurring_first = int((recurrence_stats.get("first_rows") or {}).get(first_sig, 0)) if first_sig else 0
+            recurring_second = int((recurrence_stats.get("second_rows") or {}).get(second_sig, 0)) if second_sig else 0
+            recurring_first_prefix = (
+                int((recurrence_stats.get("first_row_prefixes") or {}).get(first_prefix, 0))
+                if first_prefix
+                else 0
+            )
+            recurring_second_prefix = (
+                int((recurrence_stats.get("second_row_prefixes") or {}).get(second_prefix, 0))
+                if second_prefix
+                else 0
+            )
+        recurring_signal = max(
+            recurring_first,
+            recurring_second,
+            recurring_first_prefix,
+            recurring_second_prefix,
+        )
+        data_row_count = len(self._pdf_table_readable_rows(table))
+
+        recurring_scaffold = (
+            effective_columns <= 2
+            and recurring_signal >= self.pdf_table_recurring_scaffold_min_repeats
+            and (
+                bool(signals.get("nonsense_columns"))
+                or float(signals.get("header_confidence") or 0.0) == 0.0
+                or quality < 0.9
+                or data_row_count <= 12
+            )
+        )
+        if recurring_scaffold:
+            reasons.append("recurring_scaffold")
+            return "recurring_scaffold", "suppress", reasons
+
+        paragraph_like = bool(signals.get("paragraph_like_table"))
+        fragment_like = bool(signals.get("fragmented_logical_rows"))
+        micro_fragment = bool(signals.get("micro_fragment_table"))
+        bridge_like = bool(signals.get("bridge_like_table"))
+        low_structure = bool(signals.get("low_structure_table"))
+        compact_banner = bool(signals.get("compact_banner_table"))
+        header_paragraph_like = bool(signals.get("header_paragraph_like"))
+        leading_blank_rows = int(signals.get("leading_blank_rows") or 0)
+        scaffold_row_ratio = float(signals.get("scaffold_row_ratio") or 0.0)
+        placeholder_cell_ratio = float(signals.get("placeholder_cell_ratio") or 0.0)
+        multi_cell_row_ratio = float(signals.get("multi_cell_row_ratio") or 0.0)
+        value_row_ratio = float(signals.get("value_row_ratio") or 0.0)
+        header_confidence = float(signals.get("header_confidence") or 0.0)
+
+        if micro_fragment:
+            reasons.append("micro_fragment_table")
+            return "layout_fragment", "suppress", reasons
+
+        if data_row_count <= 0 or bool(signals.get("no_readable_rows")):
+            reasons.append("no_readable_rows")
+            return "layout_fragment", "suppress", reasons
+
+        if header_paragraph_like and data_row_count <= 3:
+            reasons.append("header_paragraph_like")
+            return "layout_fragment", "suppress", reasons
+
+        if paragraph_like and (quality <= 0.8 or bool(signals.get("nonsense_columns"))):
+            reasons.append("paragraph_like_table")
+            if fragment_like:
+                reasons.append("fragmented_logical_rows")
+            return "layout_fragment", "suppress", reasons
+
+        if bridge_like:
+            reasons.append("bridge_like_table")
+            if fragment_like:
+                reasons.append("fragmented_logical_rows")
+            if bool(signals.get("nonsense_columns")):
+                reasons.append("nonsense_columns")
+            return "layout_fragment", "suppress", reasons
+
+        if low_structure:
+            reasons.append("low_structure_table")
+            if paragraph_like:
+                reasons.append("paragraph_like_table")
+            return "layout_fragment", "suppress", reasons
+
+        if compact_banner:
+            reasons.append("compact_banner_table")
+            if bool(signals.get("nonsense_columns")):
+                reasons.append("nonsense_columns")
+            return "layout_fragment", "suppress", reasons
+
+        if (
+            effective_columns >= 4
+            and scaffold_row_ratio >= 0.85
+            and placeholder_cell_ratio >= 0.45
+        ):
+            reasons.append("form_scaffold_table")
+            return "layout_fragment", "suppress", reasons
+
+        matrix_like_keep = (
+            data_row_count >= 2
+            and effective_columns >= 3
+            and multi_cell_row_ratio >= 0.5
+            and value_row_ratio >= 0.25
+            and scaffold_row_ratio < 0.85
+        )
+        narrow_factual_keep = (
+            data_row_count >= 3
+            and effective_columns == 2
+            and multi_cell_row_ratio >= 0.75
+            and value_row_ratio >= 0.4
+            and scaffold_row_ratio < 0.75
+            and placeholder_cell_ratio < 0.4
+            and not header_paragraph_like
+        )
+        sparse_grid_keep = (
+            data_row_count >= 2
+            and effective_columns >= 3
+            and header_confidence >= 0.5
+            and not header_paragraph_like
+            and float(signals.get("structured_row_ratio") or 0.0) >= 0.5
+            and scaffold_row_ratio <= 0.5
+        )
+        keep_evidence = matrix_like_keep or narrow_factual_keep or sparse_grid_keep
+
+        if bool(signals.get("insufficient_rows")) and not keep_evidence:
+            reasons.append("insufficient_rows")
+            return "weak_table", "suppress", reasons
+
+        single_row_bridge = (
+            data_row_count <= 2
+            and effective_columns >= 3
+            and (
+                float(signals.get("long_cell_ratio") or 0.0) >= 0.3
+                or int(signals.get("max_cell_word_count") or 0) >= 18
+            )
+            and float(signals.get("short_cell_ratio") or 0.0) >= 0.2
+            and quality < 0.85
+        )
+        if single_row_bridge:
+            reasons.append("single_row_bridge")
+            return "layout_fragment", "suppress", reasons
+
+        if leading_blank_rows >= self.pdf_table_leading_blank_row_limit and bool(signals.get("column_misalignment")):
+            reasons.extend(["leading_blank_rows", "column_misalignment"])
+            return "layout_fragment", "suppress", reasons
+
+        if quality < 0.6 and (fragment_like or bool(signals.get("nonsense_columns"))):
+            if fragment_like:
+                reasons.append("fragmented_logical_rows")
+            if signals.get("nonsense_columns"):
+                reasons.append("nonsense_columns")
+            return "weak_table", "suppress", reasons
+
+        if not keep_evidence:
+            reasons.append("insufficient_keep_evidence")
+            return "weak_table", "suppress", reasons
+
+        if quality < 0.75:
+            reasons.append("low_quality_table")
+            return "weak_table", "suppress", reasons
+
+        return "strong_table", "keep", reasons
+
+    def _apply_pdf_table_promotion_gate(
+        self,
+        tables: Sequence[TablePayload],
+    ) -> tuple[list[TablePayload], dict[str, Any], list[IssuePayload]]:
+        if not tables:
+            return [], {"enabled": bool(self.pdf_table_promotion_gate_enabled), "input_tables": 0}, []
+        if not self.pdf_table_promotion_gate_enabled:
+            return list(tables), {"enabled": False, "input_tables": len(tables), "kept_tables": len(tables)}, []
+
+        recurrence_stats = self._build_pdf_table_recurrence_stats(tables)
+        kept: list[TablePayload] = []
+        issues: list[IssuePayload] = []
+        class_counts: Counter[str] = Counter()
+        suppressed_examples: list[dict[str, Any]] = []
+
+        for table in tables:
+            assessment = self._assess_table_quality(table)
+            candidate_class, decision, reasons = self._classify_pdf_table_candidate(
+                table,
+                assessment,
+                recurrence_stats=recurrence_stats,
+            )
+            class_counts[candidate_class] += 1
+            metadata = dict(table.metadata or {})
+            metadata["promotion_class"] = candidate_class
+            metadata["promotion_decision"] = decision
+            if reasons:
+                metadata["promotion_reasons"] = reasons
+            updated = TablePayload(
+                order_index=table.order_index,
+                title=table.title,
+                section_heading=table.section_heading,
+                page_number=table.page_number,
+                bbox=table.bbox,
+                column_schema=table.column_schema,
+                data_dictionary=table.data_dictionary,
+                metadata=metadata,
+                rows=table.rows,
+            )
+            if decision == "keep":
+                kept.append(updated)
+                continue
+
+            if len(suppressed_examples) < 8:
+                suppressed_examples.append(
+                    {
+                        "order_index": table.order_index,
+                        "page_number": table.page_number,
+                        "class": candidate_class,
+                        "reasons": reasons,
+                        "title": table.title,
+                    }
+                )
+            issues.append(
+                IssuePayload(
+                    code="pdf_table_suppressed",
+                    severity=KnowledgeIssueSeverity.INFO.value,
+                    description=(
+                        f"Suppressed low-value PDF table candidate ({candidate_class}) "
+                        f"for page {table.page_number or '?'}."
+                    ),
+                    page_number=table.page_number,
+                    table_order_index=table.order_index,
+                    details={"class": candidate_class, "reasons": reasons},
+                )
+            )
+
+        metadata = {
+            "enabled": True,
+            "input_tables": len(tables),
+            "kept_tables": len(kept),
+            "suppressed_tables": max(0, len(tables) - len(kept)),
+            "class_counts": dict(class_counts),
+        }
+        if suppressed_examples:
+            metadata["suppressed_examples"] = suppressed_examples
+        return kept, metadata, issues
 
     def _build_chunks(
         self,
@@ -9723,38 +11278,144 @@ class KnowledgeIngestionService:
         alias_hygiene: bool = False,
     ) -> list[dict[str, Any]]:
         payloads: list[dict[str, Any]] = []
+        compact_groups: dict[tuple[str, str, str], list[tuple[int, Mapping[str, Any]]]] = {}
+        compact_roles = {"summary", "form_like"}
         for index, entity in enumerate(entities):
-            attributes = entity.get("attributes") or {}
-            columns = entity.get("columns") or []
-            alias_list = list(entity.get("aliases") or [])
-            entity_type = entity.get("entity_type") or "record"
-            entity_name = entity.get("entity_name") or f"{entity_type.title()} {index + 1}"
-            lines = [f"{entity_type.title()}: {entity_name}"]
-            for column in columns[:16]:
-                value = attributes.get(column)
-                if value:
-                    lines.append(f"- {column}: {value}")
+            table_meta = entity.get("table_metadata")
+            sheet_role = ""
+            sheet_name = ""
+            table_title = ""
+            if isinstance(table_meta, dict):
+                sheet_role = str(table_meta.get("sheet_role") or "")
+                sheet_name = str(table_meta.get("sheet_name") or "")
+                table_title = str(table_meta.get("table_title") or "")
+            if sheet_role in compact_roles:
+                compact_groups.setdefault((sheet_role, sheet_name, table_title), []).append((index, entity))
+                continue
+            payloads.append(
+                self._build_single_entity_segment_payload(
+                    entity,
+                    entity_index=index,
+                    alias_hygiene=alias_hygiene,
+                )
+            )
+        for (sheet_role, sheet_name, table_title), grouped_entities in compact_groups.items():
+            payloads.extend(
+                self._build_compact_spreadsheet_entity_payloads(
+                    grouped_entities,
+                    sheet_role=sheet_role,
+                    sheet_name=sheet_name,
+                    table_title=table_title,
+                    alias_hygiene=alias_hygiene,
+                )
+            )
+        return payloads
+
+    def _build_single_entity_segment_payload(
+        self,
+        entity: Mapping[str, Any],
+        *,
+        entity_index: int,
+        alias_hygiene: bool = False,
+    ) -> dict[str, Any]:
+        attributes = entity.get("attributes") or {}
+        columns = entity.get("columns") or []
+        alias_list = list(entity.get("aliases") or [])
+        entity_type = entity.get("entity_type") or "record"
+        entity_name = entity.get("entity_name") or f"{entity_type.title()} {entity_index + 1}"
+        lines = [f"{entity_type.title()}: {entity_name}"]
+        for column in columns[:16]:
+            value = attributes.get(column)
+            if value:
+                lines.append(f"- {column}: {value}")
+        text = "\n".join(lines).strip()
+        text, inline_aliases = self._inject_identifiers_into_text(text, alias_hygiene=alias_hygiene)
+        combined_aliases = alias_list[:]
+        for alias in inline_aliases:
+            if alias and alias not in combined_aliases:
+                combined_aliases.append(alias)
+        metadata: dict[str, Any] = {
+            "strategy": entity.get("chunk_strategy") or "json_entity",
+            "index_type": "entity",
+            "entity_type": entity_type,
+            "entity_name": entity_name,
+            "entity_business": entity.get("entity_business"),
+            "entity_index": entity.get("entity_index", entity_index),
+            "visibility": entity.get("visibility") or entity.get("entity_visibility"),
+        }
+        table_meta = entity.get("table_metadata")
+        if isinstance(table_meta, dict):
+            metadata["table_metadata"] = table_meta
+            metadata["sheet_role"] = table_meta.get("sheet_role")
+            metadata["sheet_name"] = table_meta.get("sheet_name")
+            metadata["table_title"] = table_meta.get("table_title")
+        metadata.update(self._alias_metadata(combined_aliases))
+        return {"text": text, "metadata": metadata}
+
+    def _build_compact_spreadsheet_entity_payloads(
+        self,
+        entities: Sequence[tuple[int, Mapping[str, Any]]],
+        *,
+        sheet_role: str,
+        sheet_name: str,
+        table_title: str,
+        alias_hygiene: bool = False,
+    ) -> list[dict[str, Any]]:
+        compact_payloads: list[dict[str, Any]] = []
+        if not entities:
+            return compact_payloads
+
+        shard_size = 8 if sheet_role == "form_like" else 10
+        label = table_title or sheet_name or "Spreadsheet Sheet"
+        for shard_index in range(0, len(entities), shard_size):
+            shard = entities[shard_index : shard_index + shard_size]
+            first_payload = shard[0][1]
+            lines = [f"{sheet_role.replace('_', ' ').title()}: {label}"]
+            alias_values: list[str] = []
+            entity_names: list[str] = []
+            for _, entity in shard:
+                attributes = entity.get("attributes") or {}
+                columns = entity.get("columns") or []
+                entity_name = str(entity.get("entity_name") or "").strip() or "Row"
+                entity_names.append(entity_name)
+                detail_parts = [entity_name]
+                for column in columns[:6]:
+                    value = str(attributes.get(column) or "").strip()
+                    if value:
+                        detail_parts.append(f"{column}: {value}")
+                lines.append(f"- {' | '.join(detail_parts)}")
+                for alias in entity.get("aliases") or []:
+                    cleaned = str(alias or "").strip()
+                    if cleaned and cleaned not in alias_values:
+                        alias_values.append(cleaned)
+
             text = "\n".join(lines).strip()
             text, inline_aliases = self._inject_identifiers_into_text(text, alias_hygiene=alias_hygiene)
-            combined_aliases = alias_list[:]
             for alias in inline_aliases:
-                if alias and alias not in combined_aliases:
-                    combined_aliases.append(alias)
+                if alias and alias not in alias_values:
+                    alias_values.append(alias)
+
             metadata: dict[str, Any] = {
-                "strategy": entity.get("chunk_strategy") or "json_entity",
+                "strategy": "table_entity_compact",
                 "index_type": "entity",
-                "entity_type": entity_type,
-                "entity_name": entity_name,
-                "entity_business": entity.get("entity_business"),
-                "entity_index": entity.get("entity_index", index),
-                "visibility": entity.get("visibility") or entity.get("entity_visibility"),
+                "entity_type": first_payload.get("entity_type") or "record",
+                "entity_name": label,
+                "entity_business": first_payload.get("entity_business"),
+                "visibility": first_payload.get("visibility") or first_payload.get("entity_visibility"),
+                "sheet_role": sheet_role,
+                "sheet_name": sheet_name,
+                "table_title": table_title,
+                "table_entity_compact": True,
+                "entity_names": entity_names,
+                "entity_count": len(shard),
+                "compact_shard_index": (shard_index // shard_size) + 1,
             }
-            table_meta = entity.get("table_metadata")
+            table_meta = first_payload.get("table_metadata")
             if isinstance(table_meta, dict):
                 metadata["table_metadata"] = table_meta
-            metadata.update(self._alias_metadata(combined_aliases))
-            payloads.append({"text": text, "metadata": metadata})
-        return payloads
+            metadata.update(self._alias_metadata(alias_values))
+            compact_payloads.append({"text": text, "metadata": metadata})
+        return compact_payloads
 
     def _persist_entities(
         self,
@@ -9774,18 +11435,35 @@ class KnowledgeIngestionService:
         for entity in entities:
             idx = entity.get("entity_index")
             chunk = chunk_by_index.get(idx) if isinstance(idx, int) else None
+            raw_entity_type = entity.get("entity_type") or ""
+            raw_entity_name = entity.get("entity_name") or ""
+            raw_primary_label = raw_entity_name or raw_entity_type or ""
+            entity_type = self._clamp_model_field_text(KnowledgeEntity, "entity_type", raw_entity_type)
+            entity_name = self._clamp_model_field_text(KnowledgeEntity, "entity_name", raw_entity_name)
+            primary_label = self._clamp_model_field_text(
+                KnowledgeEntity,
+                "primary_label",
+                raw_primary_label,
+            )
+            entity_metadata = {
+                "attributes": entity.get("attributes"),
+                "columns": entity.get("columns"),
+                "table_metadata": entity.get("table_metadata"),
+            }
+            if raw_entity_type and raw_entity_type != entity_type:
+                entity_metadata["entity_type_truncated"] = raw_entity_type
+            if raw_entity_name and raw_entity_name != entity_name:
+                entity_metadata["entity_name_truncated"] = raw_entity_name
+            if raw_primary_label and raw_primary_label != primary_label:
+                entity_metadata["primary_label_truncated"] = raw_primary_label
             entity_model = KnowledgeEntity(
                 business_profile=business,
                 upload=upload,
                 chunk_id=chunk.id if chunk else None,
-                entity_type=entity.get("entity_type") or "",
-                entity_name=entity.get("entity_name") or "",
-                primary_label=entity.get("entity_name") or entity.get("entity_type") or "",
-                metadata={
-                    "attributes": entity.get("attributes"),
-                    "columns": entity.get("columns"),
-                    "table_metadata": entity.get("table_metadata"),
-                },
+                entity_type=entity_type,
+                entity_name=entity_name,
+                primary_label=primary_label,
+                metadata=entity_metadata,
             )
             entity_models.append(entity_model)
         KnowledgeEntity.objects.bulk_create(entity_models, batch_size=200)
@@ -10001,7 +11679,7 @@ class KnowledgeIngestionService:
         """
         signals: dict[str, Any] = {}
         penalties = 0
-        max_penalties = 14
+        max_penalties = 18
         
         # Get table data
         column_schema = table_payload.column_schema or []
@@ -10016,6 +11694,9 @@ class KnowledgeIngestionService:
         # "Readable" rows must match read_knowledge's visible-row filter.
         readable_rows = [row for row in rows if _row_type(row) not in {"header", "section_header"}]
         section_header_rows = [row for row in rows if _row_type(row) == "section_header"]
+
+        effective_columns = self._table_effective_column_count(table_payload)
+        signals["effective_column_count"] = effective_columns
         
         # Heuristic 1: Nonsense column names
         nonsense_patterns = [
@@ -10079,6 +11760,125 @@ class KnowledgeIngestionService:
                 signals["sparse_table"] = True
                 penalties += 1
 
+        # Heuristic 3c: long prose cells inside narrow tables.
+        non_empty_texts: list[str] = []
+        long_cell_count = 0
+        short_cell_count = 0
+        max_cell_word_count = 0
+        paragraph_like_rows = 0
+        structured_rows = 0
+        multi_cell_rows = 0
+        value_rows = 0
+        scaffold_rows = 0
+        placeholder_cells = 0
+        for row in readable_rows:
+            row_has_long_cell = False
+            row_texts: list[str] = []
+            compact_cell_count = 0
+            label_like_cells = 0
+            row_placeholder_cells = 0
+            row_has_numeric = False
+            for cell in row.cells or []:
+                raw_text = str(cell.raw_text or "").strip()
+                if not raw_text:
+                    continue
+                row_texts.append(raw_text)
+                non_empty_texts.append(raw_text)
+                word_count = len(re.findall(r"\w+", raw_text))
+                max_cell_word_count = max(max_cell_word_count, word_count)
+                if self._pdf_cell_looks_placeholder(raw_text):
+                    placeholder_cells += 1
+                    row_placeholder_cells += 1
+                if self._pdf_cell_looks_label_like(raw_text):
+                    label_like_cells += 1
+                if self._has_numeric_table_signal(raw_text):
+                    row_has_numeric = True
+                if word_count <= 2 or len(raw_text) <= 10:
+                    short_cell_count += 1
+                if 0 < word_count <= 6 and len(raw_text) <= 40:
+                    compact_cell_count += 1
+                if word_count >= self.pdf_table_paragraph_long_cell_words:
+                    long_cell_count += 1
+                    row_has_long_cell = True
+            if row_has_long_cell:
+                paragraph_like_rows += 1
+            populated_cell_count = len(row_texts)
+            if populated_cell_count:
+                if populated_cell_count >= 2:
+                    multi_cell_rows += 1
+                row_has_value_evidence = (
+                    (row_has_numeric or compact_cell_count >= 2)
+                    and row_placeholder_cells < populated_cell_count
+                    and label_like_cells < populated_cell_count
+                    and not row_has_long_cell
+                )
+                if row_has_value_evidence:
+                    value_rows += 1
+                if (
+                    row_has_numeric
+                    or populated_cell_count >= 3
+                    or (
+                        populated_cell_count >= 2
+                        and compact_cell_count >= 2
+                        and label_like_cells < populated_cell_count
+                    )
+                ):
+                    structured_rows += 1
+                if (
+                    populated_cell_count == 1
+                    or row_has_long_cell
+                    or row_placeholder_cells > 0
+                    or label_like_cells >= populated_cell_count
+                ):
+                    scaffold_rows += 1
+        long_cell_ratio = long_cell_count / max(1, len(non_empty_texts))
+        short_cell_ratio = short_cell_count / max(1, len(non_empty_texts))
+        signals["long_cell_ratio"] = round(long_cell_ratio, 2)
+        signals["short_cell_ratio"] = round(short_cell_ratio, 2)
+        signals["max_cell_word_count"] = max_cell_word_count
+        signals["paragraph_like_rows"] = paragraph_like_rows
+        data_row_count = len(readable_rows)
+        structured_row_ratio = structured_rows / max(1, data_row_count)
+        scaffold_row_ratio = scaffold_rows / max(1, data_row_count)
+        placeholder_cell_ratio = placeholder_cells / max(1, len(non_empty_texts))
+        multi_cell_row_ratio = multi_cell_rows / max(1, data_row_count)
+        value_row_ratio = value_rows / max(1, data_row_count)
+        signals["structured_row_ratio"] = round(structured_row_ratio, 2)
+        signals["scaffold_row_ratio"] = round(scaffold_row_ratio, 2)
+        signals["placeholder_cell_ratio"] = round(placeholder_cell_ratio, 2)
+        signals["multi_cell_row_ratio"] = round(multi_cell_row_ratio, 2)
+        signals["value_row_ratio"] = round(value_row_ratio, 2)
+        if (
+            effective_columns <= 2
+            and len(readable_rows) >= self.pdf_table_paragraph_min_rows
+            and long_cell_ratio >= self.pdf_table_paragraph_long_cell_ratio
+        ):
+            signals["paragraph_like_table"] = True
+            penalties += 3
+        if (
+            effective_columns >= self.pdf_table_micro_fragment_min_columns
+            and short_cell_ratio >= self.pdf_table_micro_fragment_short_cell_ratio
+            and len(readable_rows) >= self.pdf_table_paragraph_min_rows
+        ):
+            signals["micro_fragment_table"] = True
+            penalties += 4
+
+        # Heuristic 3d: leading blank rows often indicate layout fragments or fake tables.
+        leading_blank_rows = 0
+        for row in rows:
+            row_cells = list(row.cells or [])
+            populated = sum(1 for cell in row_cells if str(cell.raw_text or "").strip())
+            if populated == 0:
+                leading_blank_rows += 1
+                continue
+            if populated <= 1 and all(len(str(cell.raw_text or "").strip()) <= 2 for cell in row_cells if str(cell.raw_text or "").strip()):
+                leading_blank_rows += 1
+                continue
+            break
+        signals["leading_blank_rows"] = leading_blank_rows
+        if leading_blank_rows >= self.pdf_table_leading_blank_row_limit:
+            penalties += 2
+
         # Heuristic 3b: logical-row fragmentation.
         # Penalize tables whose rows are structurally "consistent" but semantically shattered
         # into many tiny descriptor/value fragments across adjacent rows.
@@ -10137,10 +11937,28 @@ class KnowledgeIngestionService:
 
         # Heuristic 4: Header confidence
         header_cells = None
-        for row in rows:
-            if (row.metadata or {}).get("row_type") == "header":
-                header_cells = [str(cell.raw_text or "") for cell in (row.cells or [])]
-                break
+        header_rows = [row for row in rows if str((row.metadata or {}).get("row_type") or "").strip().lower() == "header"]
+        header_column_coverage: list[str] = []
+        if header_rows:
+            max_header_columns = max(len(list(row.cells or [])) for row in header_rows)
+            header_column_coverage = []
+            for col_idx in range(max_header_columns):
+                labels: list[str] = []
+                seen_labels: set[str] = set()
+                for row in header_rows:
+                    row_cells = list(row.cells or [])
+                    if col_idx >= len(row_cells):
+                        continue
+                    label = str(row_cells[col_idx].raw_text or "").strip()
+                    if not label:
+                        continue
+                    dedupe_key = re.sub(r"\s+", " ", label).strip().lower()
+                    if dedupe_key in seen_labels:
+                        continue
+                    seen_labels.add(dedupe_key)
+                    labels.append(label)
+                header_column_coverage.append(" | ".join(labels).strip())
+            header_cells = [str(cell.raw_text or "") for cell in (header_rows[0].cells or [])]
         if header_cells:
             joined = " ".join(header_cells).strip()
             alnum = [c for c in joined if c.isalnum()]
@@ -10151,6 +11969,13 @@ class KnowledgeIngestionService:
             digit_ratio = digits / max(1, len(alnum))
             alpha_ratio = letters / max(1, len(alnum))
             length_ratio = sum(1 for cell in header_cells if len(cell.strip()) >= 3) / max(1, len(header_cells))
+            header_word_counts = [len(re.findall(r"\w+", str(cell or ""))) for cell in header_cells if str(cell or "").strip()]
+            header_long_cells = sum(
+                1
+                for cell in header_cells
+                if len(re.findall(r"\w+", str(cell or ""))) >= max(10, self.pdf_table_paragraph_long_cell_words)
+                or len(str(cell or "").strip()) >= 80
+            )
             header_confidence = 0.0
             if non_numeric_ratio >= 0.6:
                 header_confidence += 0.4
@@ -10161,11 +11986,36 @@ class KnowledgeIngestionService:
             if length_ratio >= 0.5:
                 header_confidence += 0.1
             signals["header_confidence"] = round(min(header_confidence, 1.0), 2)
+            if header_long_cells > 0 and header_word_counts:
+                long_ratio = header_long_cells / max(1, len(header_word_counts))
+                avg_words = sum(header_word_counts) / float(len(header_word_counts))
+                if long_ratio >= 0.5 or avg_words >= 10.0:
+                    signals["header_paragraph_like"] = True
             if header_confidence < 0.3:
                 penalties += 1
         else:
             signals["header_confidence"] = 0.0
             penalties += 1
+        if (
+            effective_columns <= 3
+            and data_row_count <= 12
+            and structured_row_ratio <= 0.45
+            and scaffold_row_ratio >= 0.5
+        ):
+            signals["low_structure_table"] = True
+            penalties += 3
+        if (
+            effective_columns <= 3
+            and 0 < data_row_count <= 4
+            and bool(signals.get("nonsense_columns"))
+            and float(signals.get("header_confidence") or 0.0) == 0.0
+            and multi_cell_row_ratio >= 0.8
+            and structured_row_ratio >= 0.8
+            and scaffold_row_ratio >= 0.5
+            and placeholder_cell_ratio >= 0.2
+        ):
+            signals["compact_banner_table"] = True
+            penalties += 3
 
         # Heuristic 5: Repeating patterns
         cell_values: list[str] = []
@@ -10183,10 +12033,25 @@ class KnowledgeIngestionService:
                 penalties += 2
         
         # Heuristic 6: Too few readable rows (header + section_header excluded).
-        data_row_count = len(readable_rows)
         if data_row_count < 2:
             signals['insufficient_rows'] = True
             penalties += 2
+
+        if (
+            0 < data_row_count <= self.pdf_table_bridge_max_rows
+            and effective_columns <= 3
+            and (
+                long_cell_ratio >= self.pdf_table_bridge_long_cell_ratio
+                or max_cell_word_count >= max(10, self.pdf_table_paragraph_long_cell_words - 2)
+            )
+            and (
+                max_cell_word_count >= (self.pdf_table_paragraph_long_cell_words * 2)
+                or float(signals.get("header_confidence") or 0.0) == 0.0
+                or bool(signals.get("nonsense_columns"))
+            )
+        ):
+            signals["bridge_like_table"] = True
+            penalties += 3
 
         # Heuristic 6b: No readable rows at all.
         # If our postprocess classified everything as section_header/header, the
@@ -10228,11 +12093,11 @@ class KnowledgeIngestionService:
         # Heuristic 9: Column misalignment detection
         # Detects when header cells are empty but corresponding data cells have values
         # This is a common Azure DI extraction error for complex tables
-        if header_cells and rows:
+        if header_column_coverage and rows:
             data_rows_for_check = readable_rows[:5]
             empty_header_with_data: list[int] = []
             
-            for col_idx, header_val in enumerate(header_cells):
+            for col_idx, header_val in enumerate(header_column_coverage):
                 header_empty = not str(header_val or "").strip()
                 if header_empty:
                     # Check if any data rows have values in this column
@@ -10242,7 +12107,12 @@ class KnowledgeIngestionService:
                             if cell.column_index == col_idx:
                                 cell_text = str(cell.raw_text or "").strip()
                                 if cell_text and len(cell_text) > 2:
-                                    empty_header_with_data.append(col_idx)
+                                    if not self._quality_misalignment_is_legitimate(
+                                        col_idx=col_idx,
+                                        header_column_coverage=header_column_coverage,
+                                        data_rows=data_rows_for_check,
+                                    ):
+                                        empty_header_with_data.append(col_idx)
                                     break
                         if col_idx in empty_header_with_data:
                             break
@@ -11619,6 +13489,7 @@ class KnowledgeIngestionService:
         anchor_limit = 12
         heading_limit = 6
         segments: list[dict[str, Any]] = []
+        chrome_stats = self._build_pdf_page_chrome_stats(pages)
 
         def _dedupe(values: Sequence[str], limit: int) -> list[str]:
             seen: set[str] = set()
@@ -11644,6 +13515,20 @@ class KnowledgeIngestionService:
                 if block_meta.get("is_decorative") or block_meta.get("region_role") == "decorative":
                     continue
                 text = self._sanitize_text(block.text).strip()
+                chrome_trimmed, chrome_meta = self._suppress_pdf_page_chrome(
+                    text,
+                    bbox=(block.bbox or {}),
+                    page_height=(page.height or None),
+                    page_region=block_meta.get("page_region"),
+                    chrome_stats=chrome_stats,
+                )
+                if chrome_trimmed != text:
+                    text = chrome_trimmed
+                if chrome_meta:
+                    block_meta = dict(block_meta)
+                    block_meta["page_chrome_trimmed"] = True
+                    block_meta["page_chrome_position"] = chrome_meta.get("position")
+                    block_meta["page_chrome_trimmed_tokens"] = int(chrome_meta.get("trimmed_tokens") or 0)
                 if not text:
                     continue
                 anchor = block_meta.get("anchor") or f"p{page.page_number}-b{block.order_index}"
@@ -12900,6 +14785,8 @@ class KnowledgeIngestionService:
         order_index: int,
         sheet_name: str,
         sheet_index: int | None,
+        sheet_hidden: bool,
+        sheet_role: str,
         file_detail: KnowledgeUploadFile,
         source_label: str,
         content_type: str,
@@ -12908,6 +14795,11 @@ class KnowledgeIngestionService:
         column_schema = normalized.column_schema
         table_rows: list[TableRowPayload] = []
         for row_idx, values in enumerate(normalized.rows, start=1):
+            row_meta = (
+                normalized.row_metadata[row_idx - 1]
+                if row_idx - 1 < len(normalized.row_metadata)
+                else None
+            )
             cells: list[TableCellPayload] = []
             formatted: list[str] = []
             for col_idx, column_key in enumerate(column_schema):
@@ -12926,7 +14818,13 @@ class KnowledgeIngestionService:
                     row_index=row_idx,
                     page_number=sheet_index,
                     raw_text="\t".join(formatted),
-                    metadata={"source": source_label, "sheet": sheet_name},
+                    metadata={
+                        "source": source_label,
+                        "sheet": sheet_name,
+                        "source_row_index": getattr(row_meta, "source_row_index", None),
+                        "hidden": bool(getattr(row_meta, "hidden", False)),
+                        "row_kind": getattr(row_meta, "row_kind", "data"),
+                    },
                     cells=cells,
                 )
             )
@@ -12939,6 +14837,9 @@ class KnowledgeIngestionService:
             metadata={
                 "source": source_label,
                 "sheet_name": sheet_name,
+                "sheet_hidden": bool(sheet_hidden),
+                "sheet_role": sheet_role,
+                "is_decorative": sheet_role == "reference_hidden",
                 "filename": file_detail.filename,
             },
             rows=table_rows,
@@ -12957,10 +14858,15 @@ class KnowledgeIngestionService:
                     block_type=KnowledgeBlockType.TABLE,
                     order_index=order_index,
                     text=preview,
-                    metadata={"source": source_label, "sheet": sheet_name},
+                    metadata={
+                        "source": source_label,
+                        "sheet": sheet_name,
+                        "sheet_role": sheet_role,
+                        "is_decorative": sheet_role == "reference_hidden",
+                    },
                 )
             ],
-            metadata={"sheet_name": sheet_name},
+            metadata={"sheet_name": sheet_name, "sheet_role": sheet_role},
         )
         return table, page_layout
 
@@ -12974,7 +14880,12 @@ class KnowledgeIngestionService:
         if load_workbook is None:
             raise KnowledgeIngestionError("XLSX ingestion requires the openpyxl package.")
         try:
-            workbook = load_workbook(filename=path, read_only=True, data_only=True)
+            # Spreadsheet-template normalization needs row visibility metadata
+            # (e.g. hidden filler rows), which openpyxl does not expose on
+            # ReadOnlyWorksheet. Load the workbook normally on the non-dataset
+            # XLSX path so normalization can make deterministic keep/drop
+            # decisions before indexing.
+            workbook = load_workbook(filename=path, read_only=False, data_only=True)
         except Exception as exc:
             raise KnowledgeIngestionError(f"Unable to open XLSX file: {exc}") from exc
 
@@ -13010,21 +14921,31 @@ class KnowledgeIngestionService:
         ]
         tables: list[TablePayload] = []
         pages: list[PageLayout] = []
+        sheet_role_counts: dict[str, int] = {}
         order_index = 1
         for sheet_idx, sheet_name, sheet in allowed_sheets:
             normalized = normalize_sheet_rows(
-                sheet.iter_rows(values_only=True),
+                self._iter_xlsx_rows_with_metadata(sheet),
                 sheet_name=sheet_name,
                 policy=policy,
             )
             diagnostics.append(normalized.diagnostics)
             if normalized.diagnostics.skipped:
                 continue
+            sheet_hidden = getattr(sheet, "sheet_state", "visible") != "visible"
+            sheet_role = self._classify_spreadsheet_sheet_role(
+                sheet_name=sheet_name,
+                sheet_hidden=sheet_hidden,
+                normalized=normalized,
+            )
+            sheet_role_counts[sheet_role] = sheet_role_counts.get(sheet_role, 0) + 1
             table, page_layout = self._build_table_from_normalized_sheet(
                 normalized,
                 order_index=order_index,
                 sheet_name=sheet_name,
                 sheet_index=sheet_idx,
+                sheet_hidden=sheet_hidden,
+                sheet_role=sheet_role,
                 file_detail=file_detail,
                 source_label="xlsx",
                 content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -13065,6 +14986,7 @@ class KnowledgeIngestionService:
             "table_count": len(tables),
             "table_truncation": table_metrics,
             "table_stats": table_stats,
+            "spreadsheet_sheet_roles": sheet_role_counts,
         }
         if normalization_summary:
             metadata["normalization"] = normalization_summary
@@ -13078,6 +15000,156 @@ class KnowledgeIngestionService:
             issues=limit_issues,
             entities=table_entities,
         )
+
+    @staticmethod
+    def _iter_xlsx_rows_with_metadata(sheet: Any) -> Iterable[SpreadsheetRowInput]:
+        for row_idx, row in enumerate(sheet.iter_rows(values_only=True), start=1):
+            row_dimension = None
+            try:
+                row_dimension = sheet.row_dimensions.get(row_idx)
+            except Exception:
+                row_dimension = None
+            hidden = bool(getattr(row_dimension, "hidden", False))
+            yield SpreadsheetRowInput(values=row, row_index=row_idx, hidden=hidden)
+
+    def _classify_spreadsheet_sheet_role(
+        self,
+        *,
+        sheet_name: str,
+        sheet_hidden: bool,
+        normalized: NormalizedSheet,
+    ) -> str:
+        name = str(sheet_name or "").strip()
+        if sheet_hidden and _SPREADSHEET_REFERENCE_SHEET_RE.search(name):
+            return "reference_hidden"
+        if _SPREADSHEET_INSTRUCTION_SHEET_RE.search(name):
+            return "instructional"
+        if _SPREADSHEET_SUMMARY_ROW_RE.search(name):
+            return "summary"
+        if sheet_hidden:
+            return "reference_hidden"
+
+        rows = normalized.rows or []
+        if not rows:
+            return "unknown"
+
+        record_id_hits = 0
+        transactional_record_rows = 0
+        narrative_rows = 0
+        summary_hits = 0
+        form_like_rows = 0
+        for row in rows[:100]:
+            values = [str(value or "").strip() for value in row if str(value or "").strip()]
+            if not values:
+                continue
+            descriptor = values[0]
+            if _SPREADSHEET_RECORD_ID_RE.fullmatch(descriptor):
+                record_id_hits += 1
+            row_text = " ".join(values)
+            if _SPREADSHEET_SUMMARY_ROW_RE.search(row_text):
+                summary_hits += 1
+            if len(values) <= 2 and sum(len(value.split()) for value in values) >= 6:
+                narrative_rows += 1
+            if self._spreadsheet_row_looks_transactional_record(values):
+                transactional_record_rows += 1
+            if self._spreadsheet_row_looks_form_like(values):
+                form_like_rows += 1
+
+        if record_id_hits > 0:
+            return "transactional"
+        if transactional_record_rows >= max(3, min(12, math.ceil(len(rows) * 0.3))) and transactional_record_rows > form_like_rows:
+            return "transactional"
+        if summary_hits > 0 and summary_hits >= max(narrative_rows, form_like_rows):
+            return "summary"
+        if narrative_rows >= max(3, len(rows) // 3):
+            return "instructional"
+        if form_like_rows >= max(2, min(8, math.ceil(len(rows) * 0.25))):
+            return "form_like"
+        return "unknown"
+
+    def _spreadsheet_row_looks_guidance(self, values: Sequence[str]) -> bool:
+        cleaned = [str(value or "").strip() for value in values if str(value or "").strip()]
+        if not cleaned:
+            return False
+
+        joined = " ".join(cleaned)
+        word_count = len(joined.split())
+        numeric_like_count = sum(
+            1
+            for value in cleaned
+            if _SPREADSHEET_RECORD_ID_RE.fullmatch(value) or _TABLE_NUMBER_LIKE_RE.search(value)
+        )
+        long_text_cells = sum(1 for value in cleaned if len(value.split()) >= 8)
+        has_instruction_token = any(_SPREADSHEET_INSTRUCTION_TOKEN_RE.search(value) for value in cleaned)
+        if has_instruction_token and numeric_like_count == 0:
+            return True
+        return word_count >= 18 and numeric_like_count <= 1 and long_text_cells >= 1 and len(cleaned) <= 3
+
+    def _spreadsheet_row_looks_form_like(self, values: Sequence[str]) -> bool:
+        cleaned = [str(value or "").strip() for value in values if str(value or "").strip()]
+        if len(cleaned) < 2 or len(cleaned) > 6:
+            return False
+        if any(_SPREADSHEET_RECORD_ID_RE.fullmatch(value) for value in cleaned):
+            return False
+        if self._spreadsheet_row_looks_guidance(cleaned):
+            return False
+
+        text_like_count = 0
+        numeric_like_count = 0
+        control_like_count = 0
+        total_words = 0
+        for value in cleaned:
+            total_words += len(value.split())
+            if self._spreadsheet_value_is_control(value):
+                control_like_count += 1
+                continue
+            if _TABLE_NUMBER_LIKE_RE.search(value):
+                numeric_like_count += 1
+                continue
+            text_like_count += 1
+
+        if control_like_count >= len(cleaned) - 1:
+            return False
+        if text_like_count >= 1 and numeric_like_count >= 1:
+            return True
+        if text_like_count >= 2 and total_words <= 24:
+            return True
+        return False
+
+    def _spreadsheet_row_looks_transactional_record(self, values: Sequence[str]) -> bool:
+        cleaned = [str(value or "").strip() for value in values if str(value or "").strip()]
+        if len(cleaned) < 5:
+            return False
+        if any(_SPREADSHEET_RECORD_ID_RE.fullmatch(value) for value in cleaned):
+            return True
+        if self._spreadsheet_row_looks_guidance(cleaned):
+            return False
+
+        zero_like_count = sum(1 for value in cleaned if _SPREADSHEET_ZERO_LIKE_RE.fullmatch(value))
+        control_like_count = sum(1 for value in cleaned if self._spreadsheet_value_is_control(value))
+        if control_like_count >= 2:
+            return False
+        if zero_like_count >= max(2, len(cleaned) // 2):
+            return False
+
+        substantive_text_count = 0
+        numeric_like_count = 0
+        long_text_count = 0
+        for value in cleaned:
+            if _SPREADSHEET_ZERO_LIKE_RE.fullmatch(value) or self._spreadsheet_value_is_control(value):
+                continue
+            if _TABLE_NUMBER_LIKE_RE.search(value):
+                numeric_like_count += 1
+                continue
+            substantive_text_count += 1
+            if len(value.split()) >= 2 or len(value) >= 16:
+                long_text_count += 1
+
+        if substantive_text_count < 3:
+            return False
+        if numeric_like_count >= 1:
+            return True
+        return long_text_count >= 2 and substantive_text_count >= 4
 
     def _extract_xlsx_dataset_mode(
         self,
@@ -15508,6 +17580,9 @@ class KnowledgeIngestionService:
             return ""
         lines: list[str] = []
         for table in tables:
+            sheet_role = str((table.metadata or {}).get("sheet_role") or "")
+            if sheet_role == "reference_hidden":
+                continue
             visible_columns = table.column_schema
             if rules:
                 visible_columns = [col for col in table.column_schema if not self._column_is_sensitive(col, rules)]
@@ -15518,7 +17593,14 @@ class KnowledgeIngestionService:
             header_line = "\t".join(visible_columns)
             if header_line.strip():
                 lines.append(header_line)
-            for row in table.rows[:row_limit]:
+            effective_row_limit = row_limit
+            if sheet_role == "instructional":
+                effective_row_limit = min(row_limit, 3)
+            elif sheet_role == "summary":
+                effective_row_limit = min(row_limit, 4)
+            elif sheet_role == "form_like":
+                effective_row_limit = min(row_limit, 4)
+            for row in table.rows[:effective_row_limit]:
                 attributes = self._row_attributes_from_table(row, table.column_schema)
                 if rules and self._row_is_internal(attributes, rules):
                     continue
@@ -15538,16 +17620,36 @@ class KnowledgeIngestionService:
         entities: list[dict[str, Any]] = []
         business_name = getattr(business_profile, "name", None)
         alias_hygiene = False
+        spreadsheet_stats = {
+            "kept": 0,
+            "skipped": 0,
+            "hidden_sheet": 0,
+            "instruction_sheet": 0,
+            "low_value": 0,
+            "header_row": 0,
+        }
         if upload and getattr(upload, "business_profile", None):
             alias_hygiene = FeatureFlagService.snapshot(upload.business_profile).rag_alias_hygiene
         rules = self._table_privacy_rules(upload)
         for table_idx, table in enumerate(tables):
             entity_type = self._derive_table_entity_type(table, table_idx)
             column_schema = table.column_schema or []
+            spreadsheet_context = self._build_spreadsheet_entity_context(table, column_schema)
             for row in table.rows:
                 entity_index = len(entities)
                 attributes = self._row_attributes_from_table(row, column_schema)
                 if self._row_is_internal(attributes, rules):
+                    continue
+                should_create, skip_reason = self._should_create_table_row_entity(
+                    table=table,
+                    row=row,
+                    attributes=attributes,
+                    spreadsheet_context=spreadsheet_context,
+                )
+                if not should_create:
+                    if skip_reason:
+                        spreadsheet_stats["skipped"] += 1
+                        spreadsheet_stats[skip_reason] = spreadsheet_stats.get(skip_reason, 0) + 1
                     continue
                 visible_columns = [
                     column for column in column_schema if not self._column_is_sensitive(column, rules)
@@ -15581,6 +17683,7 @@ class KnowledgeIngestionService:
                     "table_title": table.title,
                     "section_heading": table.section_heading,
                     "sheet_name": (table.metadata or {}).get("sheet_name"),
+                    "sheet_role": (table.metadata or {}).get("sheet_role"),
                     "row_index": row.row_index,
                 }
                 entities.append(
@@ -15600,7 +17703,185 @@ class KnowledgeIngestionService:
                         "entity_index": entity_index,
                     }
                 )
+                if self._table_uses_spreadsheet_entity_gate(table):
+                    spreadsheet_stats["kept"] += 1
+        if self._table_entity_stats_active(spreadsheet_stats):
+            logger.info(
+                "ingest.spreadsheet_entities kept=%s skipped=%s hidden_sheet=%s instruction_sheet=%s header_row=%s low_value=%s",
+                spreadsheet_stats["kept"],
+                spreadsheet_stats["skipped"],
+                spreadsheet_stats["hidden_sheet"],
+                spreadsheet_stats["instruction_sheet"],
+                spreadsheet_stats["header_row"],
+                spreadsheet_stats["low_value"],
+            )
         return entities
+
+    @staticmethod
+    def _table_entity_stats_active(stats: Mapping[str, int]) -> bool:
+        return any(int(stats.get(key, 0) or 0) for key in ("kept", "skipped"))
+
+    @staticmethod
+    def _table_uses_spreadsheet_entity_gate(table: TablePayload) -> bool:
+        source = str((table.metadata or {}).get("source") or "").lower()
+        return source == "xlsx"
+
+    def _should_create_table_row_entity(
+        self,
+        *,
+        table: TablePayload,
+        row: TableRowPayload,
+        attributes: Mapping[str, str],
+        spreadsheet_context: Mapping[str, Any] | None = None,
+    ) -> tuple[bool, str | None]:
+        row_meta = row.metadata if isinstance(row.metadata, Mapping) else {}
+        row_kind = str(row_meta.get("row_kind") or "").strip().lower()
+        row_type = str(row_meta.get("row_type") or "").strip().lower()
+        if row_kind == "header" or row_type in {"header", "section_header"}:
+            return False, "header_row"
+        if not self._table_uses_spreadsheet_entity_gate(table):
+            return True, None
+        return self._should_create_spreadsheet_row_entity(
+            table=table,
+            row=row,
+            attributes=attributes,
+            spreadsheet_context=spreadsheet_context,
+        )
+
+    @staticmethod
+    def _normalize_spreadsheet_signal_value(value: str) -> str:
+        return re.sub(r"\s+", " ", str(value or "").strip().lower())
+
+    @staticmethod
+    def _spreadsheet_value_is_control(value: str) -> bool:
+        sample = str(value or "").strip()
+        return bool(
+            _SPREADSHEET_PLACEHOLDER_CELL_RE.match(sample)
+            or _SPREADSHEET_CONTROL_CELL_RE.fullmatch(sample)
+            or _SPREADSHEET_MASKED_PLACEHOLDER_RE.fullmatch(sample)
+        )
+
+    @staticmethod
+    def _spreadsheet_value_is_non_default_numeric(value: str) -> bool:
+        sample = str(value or "").strip()
+        return bool(_SPREADSHEET_PURE_NUMBER_RE.fullmatch(sample) and not _SPREADSHEET_ZERO_LIKE_RE.fullmatch(sample))
+
+    def _build_spreadsheet_entity_context(
+        self,
+        table: TablePayload,
+        column_schema: Sequence[str],
+    ) -> Mapping[str, Any] | None:
+        if not self._table_uses_spreadsheet_entity_gate(table):
+            return None
+        repeated_text_counts: Counter[str] = Counter()
+        rows = table.rows or []
+        for row in rows:
+            attributes = self._row_attributes_from_table(row, column_schema)
+            seen_text_values: set[str] = set()
+            for raw_value in attributes.values():
+                value = str(raw_value or "").strip()
+                if not value:
+                    continue
+                if self._spreadsheet_value_is_non_default_numeric(value):
+                    continue
+                if _SPREADSHEET_ZERO_LIKE_RE.fullmatch(value):
+                    continue
+                if self._spreadsheet_value_is_control(value):
+                    continue
+                if _SPREADSHEET_RECORD_ID_RE.fullmatch(value):
+                    continue
+                seen_text_values.add(self._normalize_spreadsheet_signal_value(value))
+            repeated_text_counts.update(seen_text_values)
+        row_count = max(len(rows), 1)
+        boilerplate_threshold = max(3, math.ceil(row_count * 0.2))
+        boilerplate_texts = {
+            value for value, count in repeated_text_counts.items() if count >= boilerplate_threshold
+        }
+        return {
+            "boilerplate_texts": boilerplate_texts,
+            "row_count": row_count,
+            "boilerplate_threshold": boilerplate_threshold,
+        }
+
+    def _should_create_spreadsheet_row_entity(
+        self,
+        *,
+        table: TablePayload,
+        row: TableRowPayload,
+        attributes: Mapping[str, str],
+        spreadsheet_context: Mapping[str, Any] | None = None,
+    ) -> tuple[bool, str | None]:
+        table_meta = table.metadata or {}
+        row_meta = row.metadata or {}
+        sheet_role = str(table_meta.get("sheet_role") or "")
+        if sheet_role == "reference_hidden" or bool(table_meta.get("sheet_hidden")):
+            return False, "hidden_sheet"
+        if sheet_role == "instructional":
+            return False, "instruction_sheet"
+
+        values = [str(value or "").strip() for value in attributes.values() if str(value or "").strip()]
+        if not values:
+            return False, "low_value"
+
+        descriptor = values[0]
+        zero_like_count = sum(1 for value in values if _SPREADSHEET_ZERO_LIKE_RE.fullmatch(value))
+        placeholder_count = sum(1 for value in values if _SPREADSHEET_PLACEHOLDER_CELL_RE.match(value))
+        control_count = sum(1 for value in values if self._spreadsheet_value_is_control(value))
+        identifier_like = bool(values and _SPREADSHEET_RECORD_ID_RE.fullmatch(values[0]))
+        summary_like = any(_SPREADSHEET_SUMMARY_ROW_RE.search(value) for value in values)
+        guidance_like = self._spreadsheet_row_looks_guidance(values)
+        meaningful_values = [
+            value
+            for value in values
+            if not _SPREADSHEET_ZERO_LIKE_RE.fullmatch(value)
+            and not self._spreadsheet_value_is_control(value)
+        ]
+        boilerplate_texts = set((spreadsheet_context or {}).get("boilerplate_texts") or [])
+        substantive_text_values: list[str] = []
+        substantive_text_norms: set[str] = set()
+        substantive_long_text_count = 0
+        substantive_numeric_count = 0
+        for value in meaningful_values:
+            if self._spreadsheet_value_is_non_default_numeric(value):
+                substantive_numeric_count += 1
+                continue
+            normalized = self._normalize_spreadsheet_signal_value(value)
+            if normalized in boilerplate_texts:
+                continue
+            if normalized in substantive_text_norms:
+                continue
+            substantive_text_norms.add(normalized)
+            substantive_text_values.append(value)
+            if len(value) >= 24 or len(value.split()) >= 4:
+                substantive_long_text_count += 1
+        if guidance_like:
+            return False, "low_value"
+        if identifier_like or summary_like:
+            return True, None
+        if sheet_role == "summary":
+            if substantive_numeric_count >= 1 or len(substantive_text_values) >= 2:
+                return True, None
+            return False, "low_value"
+        if not identifier_like and placeholder_count >= 1 and zero_like_count >= 2 and len(substantive_text_values) <= 1 and substantive_numeric_count == 0:
+            return False, "low_value"
+        if _SPREADSHEET_PLACEHOLDER_CELL_RE.match(descriptor) and zero_like_count >= 2 and placeholder_count >= 1:
+            return False, "low_value"
+        if placeholder_count >= 1 and zero_like_count >= 3 and len(meaningful_values) <= 3:
+            return False, "low_value"
+        if len(values) >= 5 and zero_like_count >= max(3, len(values) // 2) and len(meaningful_values) <= 2:
+            return False, "low_value"
+        if row_meta.get("row_kind") in {"default_zero_row", "placeholder_row", "scaffold_row"}:
+            return False, "low_value"
+        if _SPREADSHEET_PLACEHOLDER_CELL_RE.match(descriptor) and len(meaningful_values) <= 3:
+            return False, "low_value"
+        if sheet_role == "transactional" and substantive_numeric_count == 0:
+            if substantive_long_text_count >= 1:
+                return True, None
+            if len(substantive_text_values) < 3:
+                return False, "low_value"
+        if control_count >= 2 and zero_like_count >= 2 and substantive_numeric_count == 0 and len(substantive_text_values) <= 1:
+            return False, "low_value"
+        return True, None
 
     @staticmethod
     def _derive_table_entity_type(table: TablePayload, index: int) -> str:
@@ -15662,7 +17943,30 @@ class KnowledgeIngestionService:
                 key = f"column_{cell.column_index + 1}"
             value = (cell.raw_text or "").strip()
             if value:
-                attributes[key] = value
+                existing = attributes.get(key, "")
+                if existing and existing != value:
+                    if self._docx_cell_is_helper_token(existing):
+                        attributes[key] = self._docx_combine_cell_texts([existing, value])
+                    elif self._docx_cell_is_helper_token(value):
+                        attributes[key] = self._docx_combine_cell_texts([existing, value])
+                    elif existing in value:
+                        attributes[key] = value
+                    elif value in existing:
+                        attributes[key] = existing
+                    else:
+                        attributes[key] = value
+                else:
+                    attributes[key] = value
+        for idx, column in enumerate(column_schema):
+            normalized = column.strip() if isinstance(column, str) else ""
+            if normalized.startswith("helper_"):
+                base_key = normalized[len("helper_") :].strip()
+                helper_value = attributes.get(normalized, "")
+                if base_key and helper_value and self._docx_cell_is_helper_token(helper_value):
+                    base_value = attributes.get(base_key, "")
+                    if base_value:
+                        attributes[base_key] = self._docx_combine_cell_texts([helper_value, base_value])
+                        attributes[normalized] = ""
         # include columns with no explicit cell entry to preserve schema ordering
         for idx, column in enumerate(column_schema):
             normalized = column.strip() if isinstance(column, str) else ""
@@ -15670,6 +17974,48 @@ class KnowledgeIngestionService:
                 normalized = f"column_{idx + 1}"
             attributes.setdefault(normalized, "")
         return attributes
+
+    @staticmethod
+    def _column_values_for_quality_rows(rows: Sequence[Any], col_idx: int) -> list[str]:
+        values: list[str] = []
+        for row in rows:
+            for cell in list(getattr(row, "cells", None) or []):
+                if int(getattr(cell, "column_index", -1)) != col_idx:
+                    continue
+                cell_text = str(getattr(cell, "raw_text", "") or "").strip()
+                if cell_text:
+                    values.append(cell_text)
+        return values
+
+    @classmethod
+    def _quality_misalignment_is_legitimate(
+        cls,
+        *,
+        col_idx: int,
+        header_column_coverage: Sequence[str],
+        data_rows: Sequence[Any],
+    ) -> bool:
+        values = cls._column_values_for_quality_rows(data_rows, col_idx)
+        if not values:
+            return False
+        labeled_other_columns = sum(
+            1 for idx, value in enumerate(header_column_coverage) if idx != col_idx and str(value or "").strip()
+        )
+        if labeled_other_columns <= 0:
+            return False
+
+        text_like = sum(
+            1
+            for value in values
+            if re.search(r"[A-Za-z\u0600-\u06FF]", value)
+        )
+        numeric_like = sum(1 for value in values if _column_numeric_signal(value) or cls._docx_cell_is_helper_token(value))
+
+        if col_idx == 0 and text_like >= max(2, int(math.ceil(len(values) * 0.6))):
+            return True
+        if len(header_column_coverage) <= 2 and numeric_like >= max(2, int(math.ceil(len(values) * 0.6))):
+            return True
+        return False
 
     def _row_model_attributes(
         self,
@@ -16013,6 +18359,11 @@ class KnowledgeIngestionService:
         if len(text) > max_length:
             return text[:max_length]
         return text
+
+    @staticmethod
+    def _clamp_model_field_text(model_cls: Any, field_name: str, value: Any) -> str:
+        max_length = getattr(model_cls._meta.get_field(field_name), "max_length", 0) or 0
+        return KnowledgeIngestionService._clamp_text(value, max_length)
 
     @staticmethod
     def _build_summary(content: str, limit: int = 500) -> str:

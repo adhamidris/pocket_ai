@@ -1,0 +1,164 @@
+{
+  "label": "pdf_portfolio_v1",
+  "entries": [
+    {
+      "filename": "opwdd_informational_contract_template.pdf",
+      "document_shape": "text_first_contract",
+      "expected_table_mode": "none",
+      "confidence": "high",
+      "notes": "Recurring scaffold and form-like pseudo-tables should suppress."
+    },
+    {
+      "filename": "wichita_sample_rfp.pdf",
+      "document_shape": "text_first_rfp",
+      "expected_table_mode": "none",
+      "confidence": "high",
+      "notes": "Instruction and attachment fragments should suppress."
+    },
+    {
+      "filename": "sba_sample_marketing_plan.pdf",
+      "document_shape": "text_first_narrative",
+      "expected_table_mode": "none",
+      "confidence": "high"
+    },
+    {
+      "filename": "kentucky_standard_invoice.pdf",
+      "document_shape": "blank_invoice_template",
+      "expected_table_mode": "none",
+      "confidence": "high",
+      "notes": "Blank transactional grid should remain text-first until form modeling is intentionally added."
+    },
+    {
+      "filename": "irs_form_w9_2024.pdf",
+      "document_shape": "fillable_tax_form",
+      "expected_table_mode": "none",
+      "confidence": "high"
+    },
+    {
+      "filename": "uscis_form_i9.pdf",
+      "document_shape": "fillable_identity_form",
+      "expected_table_mode": "none",
+      "confidence": "high"
+    },
+    {
+      "filename": "maine_substitute_w9_vendor_authorization_form.pdf",
+      "document_shape": "fillable_vendor_form",
+      "expected_table_mode": "none",
+      "confidence": "high"
+    },
+    {
+      "filename": "washington_employee_supplier_registration_form.pdf",
+      "document_shape": "fillable_registration_form",
+      "expected_table_mode": "none",
+      "confidence": "high"
+    },
+    {
+      "filename": "montana_vendor_invoice_fillable.pdf",
+      "document_shape": "fillable_invoice_form",
+      "expected_table_mode": "none",
+      "confidence": "high"
+    },
+    {
+      "filename": "New International Limits for Debit and Credit Cards - E.pdf",
+      "document_shape": "bullet_notice",
+      "expected_table_mode": "none",
+      "confidence": "high"
+    },
+    {
+      "filename": "salesforce_q4_fy21_earnings_presentation.pdf",
+      "document_shape": "presentation_financial_tables",
+      "expected_table_mode": "range",
+      "min_table_count": 1,
+      "max_table_count": 4,
+      "confidence": "high"
+    },
+    {
+      "filename": "Cheques-EN.pdf",
+      "document_shape": "tariff_matrix_multi_page",
+      "expected_table_mode": "range",
+      "min_table_count": 3,
+      "max_table_count": 6,
+      "confidence": "high"
+    },
+    {
+      "filename": "CIB-Account-EN.pdf",
+      "document_shape": "tariff_matrix_single_page",
+      "expected_table_mode": "range",
+      "min_table_count": 2,
+      "max_table_count": 4,
+      "confidence": "high"
+    },
+    {
+      "filename": "CIB-Customer Service-EN.pdf",
+      "document_shape": "tariff_matrix_single_page",
+      "expected_table_mode": "range",
+      "min_table_count": 1,
+      "max_table_count": 2,
+      "confidence": "high"
+    },
+    {
+      "filename": "CIB-Loans-EN.pdf",
+      "document_shape": "tariff_matrix_single_page",
+      "expected_table_mode": "range",
+      "min_table_count": 1,
+      "max_table_count": 2,
+      "confidence": "high"
+    },
+    {
+      "filename": "CIB-Remittance-EN.pdf",
+      "document_shape": "tariff_matrix_single_page",
+      "expected_table_mode": "range",
+      "min_table_count": 1,
+      "max_table_count": 2,
+      "confidence": "high"
+    },
+    {
+      "filename": "CIB-Teller EN.pdf",
+      "document_shape": "tariff_matrix_single_page",
+      "expected_table_mode": "range",
+      "min_table_count": 1,
+      "max_table_count": 2,
+      "confidence": "high"
+    },
+    {
+      "filename": "Debit and Prepaid Fees and Charges EN.pdf",
+      "document_shape": "tariff_matrix_single_page",
+      "expected_table_mode": "range",
+      "min_table_count": 2,
+      "max_table_count": 4,
+      "confidence": "high"
+    },
+    {
+      "filename": "Smart Wallet.pdf",
+      "document_shape": "tariff_matrix_multi_section",
+      "expected_table_mode": "range",
+      "min_table_count": 2,
+      "max_table_count": 4,
+      "confidence": "high"
+    },
+    {
+      "filename": "Trade Bills EN.pdf",
+      "document_shape": "tariff_matrix_single_page",
+      "expected_table_mode": "range",
+      "min_table_count": 1,
+      "max_table_count": 2,
+      "confidence": "high"
+    },
+    {
+      "filename": "Mortgage.pdf",
+      "document_shape": "fee_schedule",
+      "expected_table_mode": "range",
+      "min_table_count": 1,
+      "max_table_count": 2,
+      "confidence": "high"
+    },
+    {
+      "filename": "alternative-channelsen.pdf",
+      "document_shape": "service_matrix",
+      "expected_table_mode": "range",
+      "min_table_count": 1,
+      "max_table_count": 2,
+      "confidence": "high"
+    }
+  ]
+}

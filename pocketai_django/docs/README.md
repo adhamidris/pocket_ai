@@ -12,6 +12,7 @@
 - `mcp/` — MCP connector beta checklist + validation plan
 - `rag/` — RAG rollout + ops (Azure Search optional)
 - `ingestion/` — ingestion + normalization
+- `ingestion_snapshots/` — reproducible ingestion snapshots, comparisons, and curated benchmark expectation files
 - `integrations/` — integrations APIs + email connectors (live)
 - `ops/` — QA + load testing
 - `ops/mcp_grouped_retrieval_observability.md` — grouped retrieval telemetry dashboard/query templates

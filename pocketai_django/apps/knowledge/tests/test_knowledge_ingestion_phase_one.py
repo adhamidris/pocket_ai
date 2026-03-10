@@ -974,6 +974,83 @@ class KnowledgeIngestionChunkingTests(SimpleTestCase):
         self.assertEqual(selected, "heuristic")
         self.assertFalse(diag.get("heuristic_override_applied"))
 
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_auto_selection_region_blend_prefers_keepable_region_candidate_over_document_winner(
+        self,
+        _build_embeddings,
+    ) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+
+        azure_page_one = TablePayload(
+            order_index=11,
+            title="Azure page 1",
+            section_heading="",
+            page_number=1,
+            bbox={"x0": 10.0, "y0": 10.0, "x1": 300.0, "y1": 220.0},
+            rows=[TableRowPayload(row_index=1, page_number=1, raw_text="azure-p1", metadata={"row_type": "data"})],
+            metadata={"detected_via": "azure:layout"},
+        )
+        geometry_page_one = TablePayload(
+            order_index=12,
+            title="Geometry page 1",
+            section_heading="",
+            page_number=1,
+            bbox={"x0": 12.0, "y0": 12.0, "x1": 302.0, "y1": 222.0},
+            rows=[TableRowPayload(row_index=1, page_number=1, raw_text="geometry-p1", metadata={"row_type": "data"})],
+            metadata={"detected_via": "geometry"},
+        )
+        azure_page_two = TablePayload(
+            order_index=21,
+            title="Azure page 2",
+            section_heading="",
+            page_number=2,
+            bbox={"x0": 15.0, "y0": 20.0, "x1": 310.0, "y1": 250.0},
+            rows=[TableRowPayload(row_index=1, page_number=2, raw_text="azure-p2", metadata={"row_type": "data"})],
+            metadata={"detected_via": "azure:layout"},
+        )
+        geometry_page_two = TablePayload(
+            order_index=22,
+            title="Geometry page 2",
+            section_heading="",
+            page_number=2,
+            bbox={"x0": 14.0, "y0": 18.0, "x1": 308.0, "y1": 248.0},
+            rows=[TableRowPayload(row_index=1, page_number=2, raw_text="geometry-p2", metadata={"row_type": "data"})],
+            metadata={"detected_via": "geometry"},
+        )
+
+        candidates = {
+            "azure:layout": [azure_page_one, azure_page_two],
+            "geometry": [geometry_page_one, geometry_page_two],
+        }
+        region_ranks = {
+            11: (0, 2, 0.95, 6, "weak_table", "suppress", ["insufficient_keep_evidence"]),
+            12: (1, 3, 0.6, 3, "strong_table", "keep", []),
+            21: (0, 1, 0.5, 4, "layout_fragment", "suppress", ["low_structure_table"]),
+            22: (0, 2, 0.55, 4, "weak_table", "suppress", ["insufficient_keep_evidence"]),
+        }
+
+        def _score_table_set(tables: list[TablePayload]) -> float:
+            if tables is candidates["azure:layout"]:
+                return 10.0
+            return 5.0
+
+        with (
+            mock.patch.object(service, "_score_table_set", side_effect=_score_table_set),
+            mock.patch.object(
+                service,
+                "_table_region_candidate_rank",
+                side_effect=lambda table: region_ranks[table.order_index],
+            ),
+        ):
+            selected, tables, diag = service._select_table_candidates(candidates)
+
+        self.assertEqual(selected, "auto:region_blend")
+        self.assertEqual([table.order_index for table in tables], [12, 22])
+        self.assertEqual(diag.get("region_blend_document_selected"), "azure:layout")
+        self.assertEqual(diag.get("region_blend_extractors_used"), ["geometry"])
+        self.assertEqual(diag.get("region_blend_regions")[0].get("selected_decision"), "keep")
+        self.assertEqual(diag.get("region_blend_regions")[0].get("selected_class"), "strong_table")
+
 
 class GeometryLogicalRowReconstructionTests(SimpleTestCase):
     def _row(self, row_index: int, values: list[str]) -> TableRowPayload:
@@ -1018,6 +1095,37 @@ class GeometryLogicalRowReconstructionTests(SimpleTestCase):
             data_dictionary={},
             metadata={"detected_via": "geometry"},
             rows=[header, *rows],
+        )
+
+    def _narrow_row(self, row_index: int, values: list[str]) -> TableRowPayload:
+        cells = [
+            TableCellPayload(
+                row_index=row_index,
+                column_index=idx,
+                column_key=f"column_{idx+1}",
+                raw_text=value,
+            )
+            for idx, value in enumerate(values)
+        ]
+        return TableRowPayload(
+            row_index=row_index,
+            page_number=1,
+            raw_text=" | ".join(values),
+            metadata={"row_type": "data"},
+            cells=cells,
+        )
+
+    def _narrow_table(self, rows: list[TableRowPayload], *, order_index: int = 1) -> TablePayload:
+        return TablePayload(
+            order_index=order_index,
+            title=f"Narrow {order_index}",
+            section_heading="",
+            page_number=1,
+            bbox={"x0": 0.0, "y0": 0.0, "x1": 100.0, "y1": 100.0},
+            column_schema=["column_1", "column_2"],
+            data_dictionary={},
+            metadata={"detected_via": "geometry"},
+            rows=rows,
         )
 
     def test_geometry_logical_row_merge_combines_descriptor_fragments(self) -> None:
@@ -1080,6 +1188,727 @@ class GeometryLogicalRowReconstructionTests(SimpleTestCase):
 
         self.assertTrue(fragmented_quality["signals"].get("fragmented_logical_rows"))
         self.assertLess(fragmented_quality["quality_score"], clean_quality["quality_score"])
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_quality_scoring_flags_paragraph_like_tables(self, _build_embeddings) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        paragraph_like = self._narrow_table(
+            [
+                self._narrow_row(1, ["Agency Code: 51___", "Contract Number: ________"]),
+                self._narrow_row(
+                    2,
+                    [
+                        "Department Code: 3660___ __________ DDSOO consideration herein. this contract. services for two consecutive weeks.",
+                        "Amendment Number: ________",
+                    ],
+                ),
+                self._narrow_row(
+                    3,
+                    [
+                        "This agreement may be amended pursuant to agreement of the parties and all related statutory approvals and notice periods applicable under state law.",
+                        "The contractor shall comply with all laws, rules, ordinances and reporting obligations described in the agreement.",
+                    ],
+                ),
+            ],
+            order_index=9,
+        )
+
+        quality = service._assess_table_quality(paragraph_like)
+
+        self.assertTrue(quality["signals"].get("paragraph_like_table"))
+        self.assertGreaterEqual(int(quality["signals"].get("paragraph_like_rows") or 0), 2)
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_quality_scoring_flags_low_structure_pdf_tables(self, _build_embeddings) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        low_structure = TablePayload(
+            order_index=10,
+            title="Admin header",
+            section_heading="",
+            page_number=2,
+            bbox={"x0": 0.0, "y0": 0.0, "x1": 100.0, "y1": 100.0},
+            column_schema=["column_1", "column_2", "column_3"],
+            data_dictionary={},
+            metadata={"detected_via": "geometry"},
+            rows=[
+                TableRowPayload(
+                    row_index=0,
+                    page_number=2,
+                    raw_text="DIVISION OF ACCOUNTS | Rev. | Page 2 of 2",
+                    metadata={"row_type": "header"},
+                    cells=[
+                        TableCellPayload(row_index=0, column_index=0, column_key="column_1", raw_text="DIVISION OF ACCOUNTS"),
+                        TableCellPayload(row_index=0, column_index=1, column_key="column_2", raw_text="Rev."),
+                        TableCellPayload(row_index=0, column_index=2, column_key="column_3", raw_text="Page 2 of 2"),
+                    ],
+                ),
+                self._row(1, ["STANDARD INVOICE", "Page", "of 2"]),
+                self._row(2, ["QUANTITY", "AMOUNT - SUBTOTAL - $", ""]),
+                self._row(
+                    3,
+                    [
+                        "Submit invoice to billing address shown on contract immediately upon completing shipment of all items per contract.",
+                        "",
+                        "",
+                    ],
+                ),
+            ],
+        )
+
+        quality = service._assess_table_quality(low_structure)
+
+        self.assertTrue(quality["signals"].get("low_structure_table"))
+        self.assertLessEqual(float(quality["signals"].get("structured_row_ratio") or 1.0), 0.45)
+        self.assertGreaterEqual(float(quality["signals"].get("scaffold_row_ratio") or 0.0), 0.5)
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_pdf_table_promotion_gate_suppresses_recurring_scaffold_but_keeps_useful_table(
+        self,
+        _build_embeddings,
+    ) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        scaffold_one = self._narrow_table(
+            [
+                self._narrow_row(1, ["Agency Code: 51___", "Contract Number: ________"]),
+                self._narrow_row(2, ["Department Code: 3660___ __________ DDSOO", "Amendment Number: ________"]),
+                self._narrow_row(3, ["Placeholder body", "Placeholder body"]),
+            ],
+            order_index=1,
+        )
+        scaffold_two = self._narrow_table(
+            [
+                self._narrow_row(1, ["Agency Code: 51___", "Contract Number: ________"]),
+                self._narrow_row(2, ["Department Code: 3660___ __________ DDSOO", "Amendment Number: ________"]),
+                self._narrow_row(3, ["Another body", "Another body"]),
+            ],
+            order_index=2,
+        )
+        scaffold_three = self._narrow_table(
+            [
+                self._narrow_row(1, ["Agency Code: 51___", "Contract Number: ________"]),
+                self._narrow_row(2, ["Department Code: 3660___ __________ DDSOO", "Amendment Number: ________"]),
+                self._narrow_row(3, ["Yet another body", "Yet another body"]),
+            ],
+            order_index=3,
+        )
+        scaffold_four = self._narrow_table(
+            [
+                self._narrow_row(1, ["Agency Code: 51___", "Contract Number: ________"]),
+                self._narrow_row(2, ["Department Code: 3660___ __________ DDSOO", "Amendment Number: ________"]),
+                self._narrow_row(3, ["More repeated body", "More repeated body"]),
+            ],
+            order_index=4,
+        )
+        scaffold_five = self._narrow_table(
+            [
+                self._narrow_row(1, ["Agency Code: 51___", "Contract Number: ________"]),
+                self._narrow_row(2, ["Department Code: 3660___ __________ DDSOO", "Amendment Number: ________"]),
+                self._narrow_row(3, ["Final repeated body", "Final repeated body"]),
+            ],
+            order_index=5,
+        )
+        useful_toc = TablePayload(
+            order_index=6,
+            title="TOC",
+            section_heading="",
+            page_number=2,
+            bbox={"x0": 0.0, "y0": 0.0, "x1": 100.0, "y1": 100.0},
+            column_schema=["section", "title", "page"],
+            data_dictionary={},
+            metadata={"detected_via": "geometry"},
+            rows=[
+                TableRowPayload(
+                    row_index=0,
+                    page_number=2,
+                    raw_text="1.01 | THE PREMISES | 5",
+                    metadata={"row_type": "header"},
+                    cells=[
+                        TableCellPayload(row_index=0, column_index=0, column_key="section", raw_text="Section"),
+                        TableCellPayload(row_index=0, column_index=1, column_key="title", raw_text="Title"),
+                        TableCellPayload(row_index=0, column_index=2, column_key="page", raw_text="Page"),
+                    ],
+                ),
+                self._row(1, ["1.01", "THE PREMISES (OCT 2024)", "5"]),
+                self._row(2, ["1.02", "EXPRESS APPURTENANT RIGHTS", "5"]),
+            ],
+        )
+
+        kept, meta, issues = service._apply_pdf_table_promotion_gate(
+            [scaffold_one, scaffold_two, scaffold_three, scaffold_four, scaffold_five, useful_toc]
+        )
+
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(kept[0].order_index, 6)
+        self.assertEqual(meta.get("suppressed_tables"), 5)
+        self.assertEqual(meta.get("class_counts", {}).get("recurring_scaffold"), 5)
+        self.assertTrue(any(issue.code == "pdf_table_suppressed" for issue in issues))
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_page_blocks_trim_repeated_page_chrome_but_keep_body_text(
+        self,
+        _build_embeddings,
+    ) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+
+        def _page(page_number: int, body: str) -> PageLayout:
+            return PageLayout(
+                page_number=page_number,
+                width=800.0,
+                height=1000.0,
+                rotation=0,
+                text_density=0.4,
+                has_ocr_content=False,
+                content_type="text",
+                blocks=[
+                    PageBlockPayload(
+                        block_type=KnowledgeBlockType.PARAGRAPH,
+                        order_index=0,
+                        text=(
+                            f"Contract Number: ________ __________ DDSOO Amendment Number:________ "
+                            f"B-{page_number} {body}"
+                        ),
+                        bbox={"x0": 0.0, "y0": 0.0, "x1": 700.0, "y1": 40.0},
+                        metadata={"anchor": f"p{page_number}-b0", "page_region": "header"},
+                    )
+                ],
+            )
+
+        pages = [
+            _page(1, "The contractor shall comply with all reporting obligations described herein."),
+            _page(2, "The parties may amend the agreement subject to notice and approval requirements."),
+            _page(3, "The state reserves all remedies available under law and contract."),
+        ]
+
+        segments = service._build_text_segments_from_blocks(pages, chunk_chars=400, overlap=0)
+
+        self.assertEqual(len(segments), 3)
+        rendered = "\n".join(segment["text"] for segment in segments)
+        self.assertNotIn("Contract Number:", rendered)
+        self.assertNotIn("DDSOO Amendment Number", rendered)
+        self.assertIn("reporting obligations described herein", rendered)
+        self.assertIn("state reserves all remedies available", rendered)
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_page_blocks_trim_short_repeated_page_chrome_prefixes(
+        self,
+        _build_embeddings,
+    ) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+
+        def _page(page_number: int, body: str) -> PageLayout:
+            return PageLayout(
+                page_number=page_number,
+                width=800.0,
+                height=1000.0,
+                rotation=0,
+                text_density=0.4,
+                has_ocr_content=False,
+                content_type="text",
+                blocks=[
+                    PageBlockPayload(
+                        block_type=KnowledgeBlockType.PARAGRAPH,
+                        order_index=0,
+                        text=f"Contract Number: ________ B-{page_number} {body}",
+                        bbox={"x0": 0.0, "y0": 0.0, "x1": 700.0, "y1": 40.0},
+                        metadata={"anchor": f"p{page_number}-b0", "page_region": "header"},
+                    )
+                ],
+            )
+
+        pages = [
+            _page(1, "The contractor shall comply with all reporting obligations described herein."),
+            _page(2, "The parties may amend the agreement subject to notice and approval requirements."),
+            _page(3, "The state reserves all remedies available under law and contract."),
+        ]
+
+        segments = service._build_text_segments_from_blocks(pages, chunk_chars=400, overlap=0)
+
+        self.assertEqual(len(segments), 3)
+        rendered = "\n".join(segment["text"] for segment in segments)
+        self.assertNotIn("Contract Number:", rendered)
+        self.assertIn("reporting obligations described herein", rendered)
+        self.assertIn("state reserves all remedies available", rendered)
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_pdf_table_promotion_gate_suppresses_micro_fragment_and_bridge_tables(
+        self,
+        _build_embeddings,
+    ) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+
+        micro_fragment = TablePayload(
+            order_index=7,
+            title="Micro Fragment",
+            section_heading="",
+            page_number=1,
+            bbox={"x0": 0.0, "y0": 0.0, "x1": 100.0, "y1": 100.0},
+            column_schema=[f"column_{idx}" for idx in range(8)],
+            data_dictionary={},
+            metadata={"detected_via": "geometry"},
+            rows=[
+                self._row(1, ["This", "ex", "a", "m", "ple", "mar", "ketin", "g"]),
+                self._row(2, ["J", "&", "K", "Auto", "Re", "pa", "ir", "1"]),
+                self._row(3, ["Dri", "vers", "on", "the", "near", "by", "high", "way"]),
+            ],
+        )
+
+        bridge_table = self._narrow_table(
+            [
+                self._narrow_row(
+                    1,
+                    [
+                        "At minimum, three professional references with email addresses and telephone numbers.",
+                        "Attachment C",
+                    ],
+                ),
+                self._narrow_row(
+                    2,
+                    [
+                        "The response must clearly address evaluation criteria, costs, qualifications, and implementation.",
+                        "Attachment D",
+                    ],
+                ),
+            ],
+            order_index=8,
+        )
+
+        useful_toc = TablePayload(
+            order_index=9,
+            title="TOC",
+            section_heading="",
+            page_number=2,
+            bbox={"x0": 0.0, "y0": 0.0, "x1": 100.0, "y1": 100.0},
+            column_schema=["section", "title", "page"],
+            data_dictionary={},
+            metadata={"detected_via": "geometry"},
+            rows=[
+                TableRowPayload(
+                    row_index=0,
+                    page_number=2,
+                    raw_text="1.01 | THE PREMISES | 5",
+                    metadata={"row_type": "header"},
+                    cells=[
+                        TableCellPayload(row_index=0, column_index=0, column_key="section", raw_text="Section"),
+                        TableCellPayload(row_index=0, column_index=1, column_key="title", raw_text="Title"),
+                        TableCellPayload(row_index=0, column_index=2, column_key="page", raw_text="Page"),
+                    ],
+                ),
+                self._row(1, ["1.01", "THE PREMISES (OCT 2024)", "5"]),
+                self._row(2, ["1.02", "EXPRESS APPURTENANT RIGHTS", "5"]),
+                self._row(3, ["1.03", "RENT AND OTHER CONSIDERATION", "5"]),
+            ],
+        )
+
+        kept, meta, _issues = service._apply_pdf_table_promotion_gate(
+            [micro_fragment, bridge_table, useful_toc]
+        )
+
+        self.assertEqual([table.order_index for table in kept], [9])
+        self.assertEqual(meta.get("suppressed_tables"), 2)
+        self.assertEqual(meta.get("class_counts", {}).get("strong_table"), 1)
+        self.assertGreaterEqual(meta.get("class_counts", {}).get("layout_fragment", 0), 2)
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_pdf_table_promotion_gate_suppresses_low_structure_pseudo_tables(self, _build_embeddings) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+
+        narrative_pseudo = TablePayload(
+            order_index=10,
+            title="Narrative split",
+            section_heading="",
+            page_number=3,
+            bbox={"x0": 0.0, "y0": 0.0, "x1": 100.0, "y1": 100.0},
+            column_schema=["column_1", "column_2", "column_3"],
+            data_dictionary={},
+            metadata={"detected_via": "geometry"},
+            rows=[
+                self._row(
+                    1,
+                    [
+                        "Acquire a solution meeting the parameters, conditions, and mandatory requirements presented in the document.",
+                        "AND",
+                        "one electronic copy",
+                    ],
+                ),
+                self._row(2, ["(PDF or Word) on a flash drive with any supplementary materials to: Purchasing Manager", "", ""]),
+                self._row(3, ["12th Floor City Hall", "", ""]),
+                self._row(4, ["455 N. Main", "", ""]),
+            ],
+        )
+        admin_header = TablePayload(
+            order_index=11,
+            title="Admin header",
+            section_heading="",
+            page_number=2,
+            bbox={"x0": 0.0, "y0": 0.0, "x1": 100.0, "y1": 100.0},
+            column_schema=["column_1", "column_2", "column_3"],
+            data_dictionary={},
+            metadata={"detected_via": "geometry"},
+            rows=[
+                TableRowPayload(
+                    row_index=0,
+                    page_number=2,
+                    raw_text="DIVISION OF ACCOUNTS | Rev. | Page 2 of 2",
+                    metadata={"row_type": "header"},
+                    cells=[
+                        TableCellPayload(row_index=0, column_index=0, column_key="column_1", raw_text="DIVISION OF ACCOUNTS"),
+                        TableCellPayload(row_index=0, column_index=1, column_key="column_2", raw_text="Rev."),
+                        TableCellPayload(row_index=0, column_index=2, column_key="column_3", raw_text="Page 2 of 2"),
+                    ],
+                ),
+                self._row(1, ["STANDARD INVOICE", "Page", "of 2"]),
+                self._row(2, ["QUANTITY", "AMOUNT - SUBTOTAL - $", ""]),
+                self._row(
+                    3,
+                    [
+                        "Submit invoice to billing address shown on contract immediately upon completing shipment of all items per contract.",
+                        "",
+                        "",
+                    ],
+                ),
+            ],
+        )
+        useful_toc = TablePayload(
+            order_index=12,
+            title="TOC",
+            section_heading="",
+            page_number=2,
+            bbox={"x0": 0.0, "y0": 0.0, "x1": 100.0, "y1": 100.0},
+            column_schema=["section", "title", "page"],
+            data_dictionary={},
+            metadata={"detected_via": "geometry"},
+            rows=[
+                TableRowPayload(
+                    row_index=0,
+                    page_number=2,
+                    raw_text="Section | Title | Page",
+                    metadata={"row_type": "header"},
+                    cells=[
+                        TableCellPayload(row_index=0, column_index=0, column_key="section", raw_text="Section"),
+                        TableCellPayload(row_index=0, column_index=1, column_key="title", raw_text="Title"),
+                        TableCellPayload(row_index=0, column_index=2, column_key="page", raw_text="Page"),
+                    ],
+                ),
+                self._row(1, ["1.01", "THE PREMISES", "5"]),
+                self._row(2, ["1.02", "EXPRESS APPURTENANT RIGHTS", "5"]),
+                self._row(3, ["1.03", "RENT AND OTHER CONSIDERATION", "5"]),
+            ],
+        )
+
+        kept, meta, _issues = service._apply_pdf_table_promotion_gate(
+            [narrative_pseudo, admin_header, useful_toc]
+        )
+
+        self.assertEqual([table.order_index for table in kept], [12])
+        self.assertEqual(meta.get("suppressed_tables"), 2)
+        self.assertGreaterEqual(meta.get("class_counts", {}).get("layout_fragment", 0), 2)
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_pdf_table_promotion_gate_suppresses_compact_banner_pseudo_tables(self, _build_embeddings) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+
+        compact_banner = TablePayload(
+            order_index=12,
+            title="Invoice banner",
+            section_heading="",
+            page_number=1,
+            bbox={"x0": 0.0, "y0": 0.0, "x1": 100.0, "y1": 100.0},
+            column_schema=["column_1", "column_2", "column_3"],
+            data_dictionary={},
+            metadata={"detected_via": "azure_di"},
+            rows=[
+                self._row(0, ["KENTUCKY TRANSPORTATION CABINET TC 31-519", "10/2015 Rev.", "TC 31-519"]),
+                self._row(
+                    1,
+                    ["DIVISION OF ACCOUNTS STANDARD INVOICE Page 1 of 2", "Rev.", "10/2015"],
+                ),
+                self._row(2, ["STANDARD INVOICE", "Page", "1 of 2"]),
+            ],
+        )
+        useful_toc = TablePayload(
+            order_index=13,
+            title="TOC",
+            section_heading="",
+            page_number=2,
+            bbox={"x0": 0.0, "y0": 0.0, "x1": 100.0, "y1": 100.0},
+            column_schema=["section", "title", "page"],
+            data_dictionary={},
+            metadata={"detected_via": "geometry"},
+            rows=[
+                TableRowPayload(
+                    row_index=0,
+                    page_number=2,
+                    raw_text="Section | Title | Page",
+                    metadata={"row_type": "header"},
+                    cells=[
+                        TableCellPayload(row_index=0, column_index=0, column_key="section", raw_text="Section"),
+                        TableCellPayload(row_index=0, column_index=1, column_key="title", raw_text="Title"),
+                        TableCellPayload(row_index=0, column_index=2, column_key="page", raw_text="Page"),
+                    ],
+                ),
+                self._row(1, ["1.01", "THE PREMISES", "5"]),
+                self._row(2, ["1.02", "EXPRESS APPURTENANT RIGHTS", "5"]),
+                self._row(3, ["1.03", "RENT AND OTHER CONSIDERATION", "5"]),
+            ],
+        )
+
+        compact_quality = service._assess_table_quality(compact_banner)
+        self.assertTrue(compact_quality["signals"].get("compact_banner_table"))
+
+        kept, meta, _issues = service._apply_pdf_table_promotion_gate([compact_banner, useful_toc])
+
+        self.assertEqual([table.order_index for table in kept], [13])
+        self.assertEqual(meta.get("suppressed_tables"), 1)
+        self.assertGreaterEqual(meta.get("class_counts", {}).get("layout_fragment", 0), 1)
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_pdf_table_promotion_gate_requires_positive_keep_evidence(self, _build_embeddings) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+
+        contact_banner = TablePayload(
+            order_index=13,
+            title="Contact banner",
+            section_heading="",
+            page_number=1,
+            bbox={"x0": 0.0, "y0": 0.0, "x1": 100.0, "y1": 100.0},
+            column_schema=["column_1", "column_2", "column_3"],
+            data_dictionary={},
+            metadata={"detected_via": "geometry"},
+            rows=[
+                TableRowPayload(
+                    row_index=0,
+                    page_number=1,
+                    raw_text="Purchasing Department | th | Floor",
+                    metadata={"row_type": "header"},
+                    cells=[
+                        TableCellPayload(row_index=0, column_index=0, column_key="column_1", raw_text="Purchasing Department City of Wichita, Kansas City Hall, 455 N Main 12th Floor"),
+                        TableCellPayload(row_index=0, column_index=1, column_key="column_2", raw_text="th"),
+                        TableCellPayload(row_index=0, column_index=2, column_key="column_3", raw_text="Floor"),
+                    ],
+                ),
+                self._row(1, ["316-268-4636 https://ep.wichita.gov Melinda Walker - Purchasing Manager", "Proposers shall not", ""]),
+            ],
+        )
+        attachment_block = TablePayload(
+            order_index=14,
+            title="Attachment block",
+            section_heading="",
+            page_number=7,
+            bbox={"x0": 0.0, "y0": 0.0, "x1": 100.0, "y1": 100.0},
+            column_schema=["column_1", "column_2"],
+            data_dictionary={},
+            metadata={"detected_via": "geometry"},
+            rows=[
+                TableRowPayload(
+                    row_index=0,
+                    page_number=7,
+                    raw_text="Long attachment instruction | Attachment A",
+                    metadata={"row_type": "header"},
+                    cells=[
+                        TableCellPayload(
+                            row_index=0,
+                            column_index=0,
+                            column_key="column_1",
+                            raw_text=(
+                                "2. The names of the staff members who will be available for work on the contract, "
+                                "including a listing of their work experience (Attachment A). 3. The firm's relevant "
+                                "experience, notably experience working with government agencies (Attachment B)."
+                            ),
+                        ),
+                        TableCellPayload(row_index=0, column_index=1, column_key="column_2", raw_text="(Attachment A)."),
+                    ],
+                ),
+                self._row(1, ["At minimum,", "three (3)"]),
+                self._row(2, ["provided in this RFP.", "information for each requirement as listed herein."]),
+            ],
+        )
+        useful_grid = TablePayload(
+            order_index=15,
+            title="Invoice lines",
+            section_heading="",
+            page_number=1,
+            bbox={"x0": 0.0, "y0": 0.0, "x1": 100.0, "y1": 100.0},
+            column_schema=["item", "description", "quantity", "unit", "unit_price", "amount"],
+            data_dictionary={},
+            metadata={"detected_via": "geometry"},
+            rows=[
+                TableRowPayload(
+                    row_index=0,
+                    page_number=1,
+                    raw_text="ITEM # | DESCRIPTION | QUANTITY | UNIT | UNIT PRICE | AMOUNT",
+                    metadata={"row_type": "header"},
+                    cells=[
+                        TableCellPayload(row_index=0, column_index=0, column_key="item", raw_text="ITEM #"),
+                        TableCellPayload(row_index=0, column_index=1, column_key="description", raw_text="DESCRIPTION"),
+                        TableCellPayload(row_index=0, column_index=2, column_key="quantity", raw_text="QUANTITY"),
+                        TableCellPayload(row_index=0, column_index=3, column_key="unit", raw_text="UNIT"),
+                        TableCellPayload(row_index=0, column_index=4, column_key="unit_price", raw_text="UNIT PRICE"),
+                        TableCellPayload(row_index=0, column_index=5, column_key="amount", raw_text="AMOUNT"),
+                    ],
+                ),
+                self._row(1, ["1", "Road salt", "10", "EA", "$4.50", "$45.00"]),
+                self._row(2, ["2", "Safety cones", "6", "EA", "$12.00", "$72.00"]),
+            ],
+        )
+
+        kept, meta, _issues = service._apply_pdf_table_promotion_gate(
+            [contact_banner, attachment_block, useful_grid]
+        )
+
+        self.assertEqual([table.order_index for table in kept], [15])
+        self.assertEqual(meta.get("suppressed_tables"), 2)
+        self.assertGreaterEqual(
+            (meta.get("class_counts", {}).get("weak_table", 0))
+            + (meta.get("class_counts", {}).get("layout_fragment", 0)),
+            2,
+        )
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_pdf_table_promotion_gate_keeps_fillable_transactional_grid(self, _build_embeddings) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+
+        fillable_grid = TablePayload(
+            order_index=16,
+            title="Invoice grid",
+            section_heading="",
+            page_number=1,
+            bbox={"x0": 0.0, "y0": 0.0, "x1": 100.0, "y1": 100.0},
+            column_schema=["column_1", "column_2", "column_3"],
+            data_dictionary={},
+            metadata={"detected_via": "geometry"},
+            rows=[
+                TableRowPayload(
+                    row_index=0,
+                    page_number=1,
+                    raw_text="DIVISION OF ACCOUNTS STANDARD INVOICE Page 1 of 2 | 10/2015 Rev. | 10/2015",
+                    metadata={"row_type": "header"},
+                    cells=[
+                        TableCellPayload(row_index=0, column_index=0, column_key="column_1", raw_text="DIVISION OF ACCOUNTS STANDARD INVOICE Page 1 of 2"),
+                        TableCellPayload(row_index=0, column_index=1, column_key="column_2", raw_text="10/2015 Rev."),
+                        TableCellPayload(row_index=0, column_index=2, column_key="column_3", raw_text="10/2015"),
+                    ],
+                ),
+                self._row(1, ["STANDARD INVOICE CITY", "Page ZIP", "of 2"]),
+                self._row(2, ["QUANTITY TITLE DATE", "", "AMOUNT -"]),
+            ],
+        )
+        admin_followup = TablePayload(
+            order_index=17,
+            title="Admin continuation",
+            section_heading="",
+            page_number=2,
+            bbox={"x0": 0.0, "y0": 0.0, "x1": 100.0, "y1": 100.0},
+            column_schema=["column_1", "column_2", "column_3"],
+            data_dictionary={},
+            metadata={"detected_via": "geometry"},
+            rows=[
+                TableRowPayload(
+                    row_index=0,
+                    page_number=2,
+                    raw_text="DIVISION OF ACCOUNTS | Rev. | Page 2 of 2",
+                    metadata={"row_type": "header"},
+                    cells=[
+                        TableCellPayload(row_index=0, column_index=0, column_key="column_1", raw_text="DIVISION OF ACCOUNTS"),
+                        TableCellPayload(row_index=0, column_index=1, column_key="column_2", raw_text="Rev."),
+                        TableCellPayload(row_index=0, column_index=2, column_key="column_3", raw_text="Page 2 of 2"),
+                    ],
+                ),
+                self._row(1, ["STANDARD INVOICE 2", "Page", "of 2"]),
+                self._row(2, ["QUANTITY", "", "AMOUNT - SUBTOTAL - $"]),
+                self._row(3, ["Submit invoice to billing address shown on contract immediately upon completing shipment of all items per agreement.", "", ""]),
+            ],
+        )
+
+        kept, meta, _issues = service._apply_pdf_table_promotion_gate([fillable_grid, admin_followup])
+
+        self.assertEqual([table.order_index for table in kept], [16])
+        self.assertEqual(meta.get("suppressed_tables"), 1)
+        self.assertEqual((kept[0].metadata or {}).get("promotion_class"), "strong_table")
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_pdf_table_promotion_gate_suppresses_prefix_recurrent_scaffolds_and_single_row_bridges(
+        self,
+        _build_embeddings,
+    ) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+
+        recurring_tables = [
+            self._narrow_table(
+                [
+                    self._narrow_row(
+                        1,
+                        [f"Agency Code: 51___ Department Code: 3660___ __________ DDSOO {suffix}", "Contract Number: ________"],
+                    ),
+                    self._narrow_row(2, ["Amendment Number: ________", ""]),
+                    self._narrow_row(3, [body, ""]),
+                ],
+                order_index=index,
+            )
+            for index, suffix, body in [
+                (1, "B.", "Placeholder body"),
+                (2, "", "Another body"),
+                (3, "F.", "Yet another body"),
+                (4, "I.", "More repeated body"),
+                (5, "X.", "Final repeated body"),
+            ]
+        ]
+
+        single_row_bridge = TablePayload(
+            order_index=6,
+            title="Attachment-style bridge",
+            section_heading="",
+            page_number=7,
+            bbox={"x0": 0.0, "y0": 0.0, "x1": 100.0, "y1": 100.0},
+            column_schema=["column_1", "column_2", "column_3"],
+            data_dictionary={},
+            metadata={"detected_via": "geometry"},
+            rows=[
+                self._row(
+                    1,
+                    [
+                        "1. Acquire a solution meeting the parameters, conditions, and mandatory requirements presented in the document. Submit one original and one electronic copy with all supplementary materials.",
+                        "AND",
+                        "one electronic copy",
+                    ],
+                ),
+            ],
+        )
+
+        useful_toc = TablePayload(
+            order_index=7,
+            title="TOC",
+            section_heading="",
+            page_number=2,
+            bbox={"x0": 0.0, "y0": 0.0, "x1": 100.0, "y1": 100.0},
+            column_schema=["section", "title", "page"],
+            data_dictionary={},
+            metadata={"detected_via": "geometry"},
+            rows=[
+                TableRowPayload(
+                    row_index=0,
+                    page_number=2,
+                    raw_text="1.01 | THE PREMISES | 5",
+                    metadata={"row_type": "header"},
+                    cells=[
+                        TableCellPayload(row_index=0, column_index=0, column_key="section", raw_text="Section"),
+                        TableCellPayload(row_index=0, column_index=1, column_key="title", raw_text="Title"),
+                        TableCellPayload(row_index=0, column_index=2, column_key="page", raw_text="Page"),
+                    ],
+                ),
+                self._row(1, ["1.01", "THE PREMISES (OCT 2024)", "5"]),
+                self._row(2, ["1.02", "EXPRESS APPURTENANT RIGHTS", "5"]),
+                self._row(3, ["1.03", "RENT AND OTHER CONSIDERATION", "5"]),
+            ],
+        )
+
+        kept, meta, _issues = service._apply_pdf_table_promotion_gate(
+            [*recurring_tables, single_row_bridge, useful_toc]
+        )
+
+        self.assertEqual([table.order_index for table in kept], [7])
+        self.assertEqual(meta.get("suppressed_tables"), 6)
+        self.assertGreaterEqual(meta.get("class_counts", {}).get("recurring_scaffold", 0), 5)
+        self.assertGreaterEqual(meta.get("class_counts", {}).get("layout_fragment", 0), 1)
 
 
 class KnowledgeIngestionJsonTests(TestCase):
@@ -1366,6 +2195,42 @@ class KnowledgeIngestionSpreadsheetTests(TestCase):
         self.assertGreater(KnowledgeEntity.objects.filter(upload=upload).count(), 0)
         self.assertGreater(KnowledgeAlias.objects.filter(entity__upload=upload).count(), 0)
 
+    def test_persist_entities_clamps_overlong_entity_fields(self):
+        upload = KnowledgeUpload.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            source_type=KnowledgeSourceType.FILE,
+            status=KnowledgeStatus.PENDING,
+            display_name="Long Entity Spreadsheet",
+        )
+
+        service = KnowledgeIngestionService(media_root=Path(self._media_root))
+        long_entity_type = "t" * 180
+        long_entity_name = "invoice-row-" + ("x" * 400)
+        service._persist_entities(
+            upload,
+            entities=[
+                {
+                    "entity_index": 0,
+                    "entity_type": long_entity_type,
+                    "entity_name": long_entity_name,
+                    "attributes": {"description": "x" * 512},
+                    "columns": ["description"],
+                    "table_metadata": {"source": "spreadsheet"},
+                    "aliases": [],
+                }
+            ],
+            chunks=[],
+        )
+
+        entity = KnowledgeEntity.objects.get(upload=upload)
+        self.assertEqual(len(entity.entity_type), 120)
+        self.assertEqual(len(entity.entity_name), 255)
+        self.assertEqual(len(entity.primary_label), 255)
+        self.assertEqual(entity.metadata.get("entity_type_truncated"), long_entity_type)
+        self.assertEqual(entity.metadata.get("entity_name_truncated"), long_entity_name)
+        self.assertEqual(entity.metadata.get("primary_label_truncated"), long_entity_name)
+
     def test_detect_format_prefers_csv_over_text_content_type(self):
         upload = KnowledgeUpload.objects.create(
             business_profile=self.business,
@@ -1519,6 +2384,353 @@ class KnowledgeIngestionSpreadsheetTests(TestCase):
         self.assertEqual(table_stats.get("row_cap"), 2)
         self.assertEqual(table_stats.get("row_tier"), "small")
         self.assertFalse(table_stats.get("partial_index"))
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_xlsx_ingestion_drops_hidden_template_rows_and_scaffold_columns(self, _build_embeddings):
+        if Workbook is None:
+            self.skipTest("openpyxl not installed")
+        upload = KnowledgeUpload.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            source_type=KnowledgeSourceType.FILE,
+            status=KnowledgeStatus.PENDING,
+            display_name="Invoice Template XLSX",
+        )
+        storage_path = Path("uploads/invoice-template.xlsx")
+        target_path = Path(self._media_root) / storage_path
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Equipment"
+        sheet.append(["Code", "Amount", "SANDBOX AREA - rough work only"])
+        sheet.append(["E-1", 1250, ""])
+        sheet.append([0, 0, 0])
+        sheet.row_dimensions[3].hidden = True
+        workbook.save(target_path)
+        KnowledgeUploadFile.objects.create(
+            upload=upload,
+            filename="invoice-template.xlsx",
+            storage_path=str(storage_path),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            size_bytes=target_path.stat().st_size,
+        )
+
+        service = KnowledgeIngestionService(media_root=Path(self._media_root))
+        extraction = service._extract_upload(upload)
+        service._persist_extraction(upload, extraction)
+        upload.refresh_from_db()
+
+        table = KnowledgeUploadTable.objects.get(upload=upload)
+        self.assertEqual(table.column_schema, ["Code", "Amount"])
+        rows = list(KnowledgeUploadTableRow.objects.filter(table=table).order_by("row_index"))
+        self.assertEqual(len(rows), 1)
+        row_cells = list(rows[0].cells.order_by("column_index").values_list("raw_text", flat=True))
+        self.assertEqual(row_cells, ["E-1", "1250"])
+        self.assertEqual(KnowledgeEntity.objects.filter(upload=upload).count(), 1)
+        normalization = upload.ingestion_metadata.get("normalization") or {}
+        self.assertEqual((normalization.get("hidden_rows_dropped") or {}).get("total"), 1)
+        self.assertEqual((normalization.get("scaffold_columns_trimmed") or {}).get("total"), 1)
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_xlsx_entity_promotion_keeps_real_rows_and_skips_template_rows(self, _build_embeddings):
+        if Workbook is None:
+            self.skipTest("openpyxl not installed")
+        upload = KnowledgeUpload.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            source_type=KnowledgeSourceType.FILE,
+            status=KnowledgeStatus.PENDING,
+            display_name="Invoice Entity Filtering XLSX",
+        )
+        storage_path = Path("uploads/invoice-entities.xlsx")
+        target_path = Path(self._media_root) / storage_path
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        workbook = Workbook()
+
+        instructions = workbook.active
+        instructions.title = "Instructions"
+        instructions.append(["Template Version", "09/23/25"])
+        instructions.append(["Workbook Instructions", "Fill all required fields"])
+
+        subs = workbook.create_sheet("Subs & Vendors")
+        subs.append(["Reference", "Name", "Amount", "Approval"])
+        subs.append(["S-1", "Alpha Security, Inc.", 19382.36, "Yes"])
+        subs.append(["Vendor 2", 0, 0, "Select Yes or No"])
+
+        lists = workbook.create_sheet("Lists")
+        lists.sheet_state = "hidden"
+        lists.append(["Choices"])
+        lists.append(["Select Yes or No"])
+        lists.append(["Approved"])
+
+        workbook.save(target_path)
+        KnowledgeUploadFile.objects.create(
+            upload=upload,
+            filename="invoice-entities.xlsx",
+            storage_path=str(storage_path),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            size_bytes=target_path.stat().st_size,
+        )
+
+        service = KnowledgeIngestionService(media_root=Path(self._media_root))
+        extraction = service._extract_upload(upload)
+        service._persist_extraction(upload, extraction)
+
+        entities = list(KnowledgeEntity.objects.filter(upload=upload).values_list("entity_name", flat=True))
+        self.assertEqual(entities, ["S-1"])
+        self.assertFalse(
+            KnowledgeEntity.objects.filter(upload=upload, entity_name__icontains="Instructions").exists()
+        )
+        self.assertFalse(
+            KnowledgeEntity.objects.filter(upload=upload, entity_name__icontains="Vendor 2").exists()
+        )
+        self.assertFalse(
+            KnowledgeEntity.objects.filter(upload=upload, entity_name__icontains="Select Yes or No").exists()
+        )
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_xlsx_sheet_roles_shape_representation(self, _build_embeddings):
+        if Workbook is None:
+            self.skipTest("openpyxl not installed")
+        upload = KnowledgeUpload.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            source_type=KnowledgeSourceType.FILE,
+            status=KnowledgeStatus.PENDING,
+            display_name="Spreadsheet Sheet Roles XLSX",
+        )
+        storage_path = Path("uploads/sheet-roles.xlsx")
+        target_path = Path(self._media_root) / storage_path
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        workbook = Workbook()
+
+        instructions = workbook.active
+        instructions.title = "Instructions"
+        instructions.append(["Template Version", "09/23/25"])
+        instructions.append(["Workbook Instructions", "Fill all required fields"])
+
+        cover = workbook.create_sheet("Payment Cover")
+        cover.append(["Field", "Value", "Notes"])
+        cover.append(["Organization Name", "Acme Labs", ""])
+        cover.append(["Agreement Number", "EPC-19-000", ""])
+        cover.append(["Billing Contact", "ops@acme.test", "Primary contact"])
+
+        summary = workbook.create_sheet("Invoice Summary")
+        summary.append(["Category", "Amount", "Balance"])
+        summary.append(["Direct Labor", 0, 0])
+        summary.append(["Grand Totals", 1000, 200])
+
+        equipment = workbook.create_sheet("Equipment")
+        equipment.append(["Reference", "Description", "Amount"])
+        equipment.append(["Worksheet Specific Instructions", "Document your purchase", ""])
+        equipment.append(["E-1", "Heat Pump", 5500])
+
+        lists = workbook.create_sheet("Lists")
+        lists.sheet_state = "hidden"
+        lists.append(["Choices"])
+        lists.append(["Select Yes or No"])
+
+        workbook.save(target_path)
+        KnowledgeUploadFile.objects.create(
+            upload=upload,
+            filename="sheet-roles.xlsx",
+            storage_path=str(storage_path),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            size_bytes=target_path.stat().st_size,
+        )
+
+        service = KnowledgeIngestionService(media_root=Path(self._media_root))
+        extraction = service._extract_upload(upload)
+        service._persist_extraction(upload, extraction)
+        upload.refresh_from_db()
+
+        tables = {table.title: table for table in KnowledgeUploadTable.objects.filter(upload=upload)}
+        self.assertEqual(tables["Instructions"].metadata.get("sheet_role"), "instructional")
+        self.assertEqual(tables["Payment Cover"].metadata.get("sheet_role"), "form_like")
+        self.assertEqual(tables["Invoice Summary"].metadata.get("sheet_role"), "summary")
+        self.assertEqual(tables["Equipment"].metadata.get("sheet_role"), "transactional")
+        if "Lists" in tables:
+            self.assertEqual(tables["Lists"].metadata.get("sheet_role"), "reference_hidden")
+            self.assertTrue(tables["Lists"].metadata.get("is_decorative"))
+
+        entities = list(KnowledgeEntity.objects.filter(upload=upload).values_list("entity_name", flat=True))
+        self.assertIn("Grand Totals", entities)
+        self.assertIn("E-1", entities)
+        self.assertNotIn("Workbook Instructions", entities)
+        self.assertNotIn("Direct Labor", entities)
+        self.assertNotIn("Worksheet Specific Instructions", entities)
+        self.assertFalse(
+            KnowledgeEntity.objects.filter(upload=upload, entity_name__icontains="Select Yes or No").exists()
+        )
+
+        chunks = list(KnowledgeUploadChunk.objects.filter(upload=upload))
+        compact_chunks = [
+            chunk for chunk in chunks if isinstance(chunk.metadata, dict) and chunk.metadata.get("table_entity_compact")
+        ]
+        self.assertTrue(compact_chunks)
+        self.assertTrue(
+            any(chunk.metadata.get("sheet_name") == "Payment Cover" for chunk in compact_chunks)
+        )
+        self.assertTrue(
+            any(chunk.metadata.get("sheet_role") == "summary" for chunk in compact_chunks)
+        )
+        self.assertTrue(
+            any(
+                isinstance(chunk.metadata, dict)
+                and chunk.metadata.get("sheet_name") == "Equipment"
+                and not chunk.metadata.get("table_entity_compact")
+                and chunk.metadata.get("entity_name") == "E-1"
+                for chunk in chunks
+            )
+        )
+
+        metadata = upload.ingestion_metadata or {}
+        role_counts = metadata.get("spreadsheet_sheet_roles") or {}
+        self.assertEqual(role_counts.get("instructional"), 1)
+        self.assertEqual(role_counts.get("form_like"), 1)
+        self.assertEqual(role_counts.get("summary"), 1)
+        self.assertEqual(role_counts.get("transactional"), 1)
+        if "Lists" in tables:
+            self.assertEqual(role_counts.get("reference_hidden"), 1)
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_xlsx_entity_promotion_skips_blank_transactional_slots_with_repeated_boilerplate(self, _build_embeddings):
+        if Workbook is None:
+            self.skipTest("openpyxl not installed")
+        upload = KnowledgeUpload.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            source_type=KnowledgeSourceType.FILE,
+            status=KnowledgeStatus.PENDING,
+            display_name="Spreadsheet Transactional Payload XLSX",
+        )
+        storage_path = Path("uploads/transactional-payload.xlsx")
+        target_path = Path(self._media_root) / storage_path
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        workbook = Workbook()
+
+        sheet = workbook.active
+        sheet.title = "Transactions"
+        sheet.append(["Reference", "Agreement", "Organization", "Amount", "Approval", "Share"])
+        sheet.append(["R-1", "Agreement 2026", "Org A", 1250, "Yes", 100])
+        sheet.append(["Row Slot 2", "Agreement 2026", "Org A", 0, "Select Yes or No", 0])
+        sheet.append(["Row Slot 3", "Agreement 2026", "Org A", 0, "Select Yes or No", 0])
+        sheet.append(["Row Slot 4", "Agreement 2026", "Org A", 0, "Select Yes or No", 0])
+
+        workbook.save(target_path)
+        KnowledgeUploadFile.objects.create(
+            upload=upload,
+            filename="transactional-payload.xlsx",
+            storage_path=str(storage_path),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            size_bytes=target_path.stat().st_size,
+        )
+
+        service = KnowledgeIngestionService(media_root=Path(self._media_root))
+        extraction = service._extract_upload(upload)
+        service._persist_extraction(upload, extraction)
+
+        entities = list(KnowledgeEntity.objects.filter(upload=upload).values_list("entity_name", flat=True))
+        self.assertEqual(entities, ["R-1"])
+        self.assertFalse(
+            KnowledgeEntity.objects.filter(upload=upload, entity_name__icontains="Row Slot 2").exists()
+        )
+        self.assertFalse(
+            KnowledgeEntity.objects.filter(upload=upload, entity_name__icontains="Select Yes or No").exists()
+        )
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_xlsx_repeated_multifield_rows_without_ids_stay_transactional(self, _build_embeddings):
+        if Workbook is None:
+            self.skipTest("openpyxl not installed")
+        upload = KnowledgeUpload.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            source_type=KnowledgeSourceType.FILE,
+            status=KnowledgeStatus.PENDING,
+            display_name="Applied Jobs XLSX",
+        )
+        storage_path = Path("uploads/applied-jobs.xlsx")
+        target_path = Path(self._media_root) / storage_path
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        workbook = Workbook()
+
+        sheet = workbook.active
+        sheet.title = "Sheet1"
+        sheet.append(
+            [
+                "Job Title",
+                "Company Name",
+                "Date Applied",
+                "Application Deadline",
+                "Location",
+                "Application Status",
+                "Notes",
+            ]
+        )
+        sheet.append(
+            [
+                "AVP Relationship Manager",
+                "Michael Page",
+                "2024-04-29",
+                "2 Weeks",
+                "UAE",
+                "Under Review",
+                "Summary for Phone Interview",
+            ]
+        )
+        sheet.append(
+            [
+                "Customer Success Team Leader",
+                "Foodics",
+                "2024-04-29",
+                "",
+                "KSA",
+                "Under Review",
+                "Phone Interview",
+            ]
+        )
+        sheet.append(
+            [
+                "Customer Service Manager",
+                "Nine Star Properties",
+                "2024-04-29",
+                "",
+                "UAE",
+                "Applied",
+                "Strong fit",
+            ]
+        )
+
+        workbook.save(target_path)
+        KnowledgeUploadFile.objects.create(
+            upload=upload,
+            filename="applied-jobs.xlsx",
+            storage_path=str(storage_path),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            size_bytes=target_path.stat().st_size,
+        )
+
+        service = KnowledgeIngestionService(media_root=Path(self._media_root))
+        extraction = service._extract_upload(upload)
+        service._persist_extraction(upload, extraction)
+        upload.refresh_from_db()
+
+        table = KnowledgeUploadTable.objects.get(upload=upload, title="Sheet1")
+        self.assertEqual(table.metadata.get("sheet_role"), "transactional")
+
+        entities = list(KnowledgeEntity.objects.filter(upload=upload).values_list("entity_name", flat=True))
+        self.assertIn("AVP Relationship Manager", entities)
+        self.assertIn("Customer Success Team Leader", entities)
+        self.assertIn("Customer Service Manager", entities)
+
+        compact_chunks = list(
+            KnowledgeUploadChunk.objects.filter(
+                upload=upload,
+                metadata__table_entity_compact=True,
+            )
+        )
+        self.assertFalse(compact_chunks)
 
 
 class DeriveTableTitleTests(SimpleTestCase):
