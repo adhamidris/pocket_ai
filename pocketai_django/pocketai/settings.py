@@ -869,11 +869,13 @@ MCP_AGENTIC_SEARCH_PREVIEWS_ENABLED = os.getenv("MCP_AGENTIC_SEARCH_PREVIEWS_ENA
 MCP_AGENTIC_SEARCH_PREVIEWS_HYBRID_ENABLED = os.getenv("MCP_AGENTIC_SEARCH_PREVIEWS_HYBRID_ENABLED", "false").lower() in {"1", "true", "yes"}
 # MCP prompt-safe tool output limits (evidence packets sent back to the LLM).
 # MCP_PROMPT_MAX_SNIPPETS: Max snippet evidence items returned to the model per tool call.
-MCP_PROMPT_MAX_SNIPPETS = int(os.getenv("MCP_PROMPT_MAX_SNIPPETS", "4"))
+# Default is intentionally higher than the earlier 4-item cap now that table-row
+# hits are no longer collapsed into a single promoted table ref.
+MCP_PROMPT_MAX_SNIPPETS = int(os.getenv("MCP_PROMPT_MAX_SNIPPETS", "10"))
 # MCP_SEARCH_KNOWLEDGE_DEFAULT_LIMIT: Server-side fallback when `search_knowledge.limit`
 # is omitted by the caller (LLMs sometimes assume schema defaults are enforced).
 # This is clamped to MCP_PROMPT_MAX_SNIPPETS since the model will never see more than that.
-MCP_SEARCH_KNOWLEDGE_DEFAULT_LIMIT = int(os.getenv("MCP_SEARCH_KNOWLEDGE_DEFAULT_LIMIT", "5"))
+MCP_SEARCH_KNOWLEDGE_DEFAULT_LIMIT = int(os.getenv("MCP_SEARCH_KNOWLEDGE_DEFAULT_LIMIT", "10"))
 MCP_SEARCH_KNOWLEDGE_DEFAULT_LIMIT = max(1, min(MCP_SEARCH_KNOWLEDGE_DEFAULT_LIMIT, MCP_PROMPT_MAX_SNIPPETS))
 # MCP_PROMPT_SNIPPET_CONTENT_CHARS: Max characters of snippet content included in tool output.
 MCP_PROMPT_SNIPPET_CONTENT_CHARS = int(os.getenv("MCP_PROMPT_SNIPPET_CONTENT_CHARS", "1200"))

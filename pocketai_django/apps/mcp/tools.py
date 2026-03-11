@@ -3255,6 +3255,10 @@ def _convert_to_agentic_search_response(
         source = str(snippet.get("source") or "").strip().lower()
         return stage in {"table_direct", "table_blended"} or source == "table_direct"
 
+    def _looks_like_chunk_label(value: object) -> bool:
+        text = str(value or "").strip().lower()
+        return bool(text and "chunk " in text)
+
     def _anchor_key(snippet: Mapping[str, object]) -> str:
         """Canonical dedupe key for EvidenceRefs (avoid duplicates across search stages)."""
         diagnostics = snippet.get("source_diagnostics") if isinstance(snippet.get("source_diagnostics"), Mapping) else {}
@@ -3508,12 +3512,11 @@ def _convert_to_agentic_search_response(
                 int(est_cols),
             )
 
-    promoted_table_candidates: set[str] = {
-        str(table_id)
-        for table_id, count in table_row_ref_counts.items()
-        if int(count) >= 2
-    }
-    promote_table_context = bool(promoted_table_candidates)
+    # Table-row promotion is intentionally disabled on the active path.
+    # We keep distinct row refs visible to the model instead of collapsing
+    # semantically different row hits into one table-level winner.
+    promoted_table_candidates: set[str] = set()
+    promote_table_context = False
     promoted_table_ids: set[str] = set()
     precomputed_table_anchor_manifests: dict[str, dict[str, object]] = {}
 
@@ -3873,6 +3876,31 @@ def _convert_to_agentic_search_response(
 
         ref_id = chunk_id
         if promote_table_ref and canonical_table_id:
+            promoted_title = ""
+            for candidate in (
+                diagnostics.get("table_title"),
+                diagnostics.get("section_heading"),
+            ):
+                candidate_text = str(candidate or "").strip()
+                if candidate_text:
+                    promoted_title = candidate_text
+                    break
+            if promoted_title:
+                label_parts = []
+                if isinstance(entity_name, str) and entity_name.strip():
+                    normalized_entity_name = entity_name.strip()
+                    if normalized_entity_name.lower() != promoted_title.lower():
+                        label_parts.append(normalized_entity_name)
+                label_parts.append(promoted_title)
+                label = " — ".join(label_parts) if label_parts else promoted_title
+            elif _looks_like_chunk_label(title):
+                order_index = _coerce_int(diagnostics.get("table_order_index"))
+                fallback_title = f"Table {order_index}" if order_index is not None and order_index >= 0 else "Table"
+                label_parts = []
+                if isinstance(entity_name, str) and entity_name.strip():
+                    label_parts.append(entity_name.strip())
+                label_parts.append(fallback_title)
+                label = " — ".join(label_parts)
             if canonical_table_id not in promoted_table_anchor_manifests:
                 manifest = precomputed_table_anchor_manifests.get(canonical_table_id)
                 if isinstance(manifest, Mapping):
@@ -3992,14 +4020,29 @@ def _convert_to_agentic_search_response(
             ref_item["why"] = why[:3]
         if promote_table_ref and isinstance(coverage_hint, dict):
             matched_row_index: int | None = None
+            anchor_row_indexes: list[int] = []
             if canonical_table_id:
                 manifest = precomputed_table_anchor_manifests.get(canonical_table_id)
                 if isinstance(manifest, Mapping):
                     matched_row_index = _coerce_int(manifest.get("matched_row_index"))
+                    raw_anchors = manifest.get("anchors")
+                    if isinstance(raw_anchors, list):
+                        for entry in raw_anchors:
+                            parsed = _coerce_int(entry.get("row_index")) if isinstance(entry, Mapping) else _coerce_int(entry)
+                            if parsed is None or parsed < 0:
+                                continue
+                            anchor_row_indexes.append(int(parsed))
             if matched_row_index is None:
                 matched_row_index = _coerce_int(coverage_hint.get("row_index"))
             if matched_row_index is not None:
                 coverage_hint["matched_row_index"] = int(matched_row_index)
+            if anchor_row_indexes:
+                seen_anchor_rows: set[int] = set()
+                coverage_hint["anchor_row_indexes"] = [
+                    row_index_value
+                    for row_index_value in anchor_row_indexes
+                    if not (row_index_value in seen_anchor_rows or seen_anchor_rows.add(row_index_value))
+                ][:5]
             coverage_hint.pop("row_index", None)
         if coverage_hint:
             ref_item["coverage_hint"] = coverage_hint
@@ -5926,7 +5969,7 @@ def _search_knowledge_handler(
                 final_status = "not_found"
 
     for snippet in page_snippets:
-        context.add_knowledge_result(snippet)
+        context.add_retrieval_candidate(snippet)
 
     metrics = _log_tool_metrics(
         tool="search_knowledge",
@@ -7273,6 +7316,165 @@ def _agentic_read_v2_handler(
                 return True
         return False
 
+    def _table_payload_size(table_payload: Mapping[str, object]) -> int:
+        try:
+            return len(json.dumps(dict(table_payload), ensure_ascii=False, default=str))
+        except Exception:
+            return 0
+
+    def _merge_table_anchor_payloads(
+        *,
+        base_payload: Mapping[str, object],
+        incoming_payload: Mapping[str, object],
+        budget_chars: int,
+        selection_mode: str,
+    ) -> tuple[dict[str, object], int, bool]:
+        merged_columns = list(base_payload.get("columns") or incoming_payload.get("columns") or [])
+        if not merged_columns:
+            merged_columns = list(incoming_payload.get("columns") or [])
+
+        base_rows_raw = base_payload.get("rows")
+        incoming_rows_raw = incoming_payload.get("rows")
+        base_rows = [list(row) for row in base_rows_raw] if isinstance(base_rows_raw, list) else []
+        incoming_rows = [list(row) for row in incoming_rows_raw] if isinstance(incoming_rows_raw, list) else []
+
+        merged: dict[str, object] = {
+            "type": "table",
+            "table_id": str(base_payload.get("table_id") or incoming_payload.get("table_id") or ""),
+            "columns": merged_columns,
+            "rows": [],
+            "row_offset": min(
+                max(0, _coerce_int(base_payload.get("row_offset")) or 0),
+                max(0, _coerce_int(incoming_payload.get("row_offset")) or 0),
+            ),
+            "rows_shown": 0,
+            "total_rows": max(
+                max(0, _coerce_int(base_payload.get("total_rows")) or 0),
+                max(0, _coerce_int(incoming_payload.get("total_rows")) or 0),
+            ),
+            "selection_mode": selection_mode,
+        }
+
+        merged_rows: list[list[str]] = []
+        seen_rows: set[tuple[str, ...]] = set()
+        for row in [*base_rows, *incoming_rows]:
+            normalized_row = tuple(str(cell or "") for cell in row)
+            if normalized_row in seen_rows:
+                continue
+            candidate_rows = [*merged_rows, list(row)]
+            candidate_payload = dict(merged)
+            candidate_payload["rows"] = candidate_rows
+            candidate_payload["rows_shown"] = len(candidate_rows)
+            if _table_payload_size(candidate_payload) > max(0, int(budget_chars)):
+                merged["rows"] = merged_rows
+                merged["rows_shown"] = len(merged_rows)
+                if (
+                    int(merged["row_offset"]) + len(merged_rows)
+                ) < int(merged.get("total_rows") or 0):
+                    merged["next_row_start"] = int(merged["row_offset"]) + len(merged_rows)
+                return merged, max(0, len(merged_rows) - len(base_rows)), True
+            merged_rows = candidate_rows
+            seen_rows.add(normalized_row)
+
+        merged["rows"] = merged_rows
+        merged["rows_shown"] = len(merged_rows)
+        if (
+            int(merged["row_offset"]) + len(merged_rows)
+        ) < int(merged.get("total_rows") or 0):
+            merged["next_row_start"] = int(merged["row_offset"]) + len(merged_rows)
+        return merged, max(0, len(merged_rows) - len(base_rows)), False
+
+    def _table_db_row_index_to_visible_row_start(
+        *,
+        table_id: str,
+        upload_id: str,
+        business_profile,
+        db_row_index: int,
+    ) -> int:
+        """
+        Convert a stored table row index into a visible `row_start` offset.
+
+        The visible table body excludes header / section-header rows, so row refs
+        and anchor reads must normalize DB row indexes before paging facts.
+        """
+        try:
+            raw_idx = int(db_row_index)
+        except (TypeError, ValueError):
+            return 0
+        if raw_idx < 0:
+            return 0
+        try:
+            table_uuid = uuid.UUID(str(table_id))
+        except (TypeError, ValueError):
+            return max(0, raw_idx)
+
+        non_header_q = models.Q(metadata__row_type__isnull=True) | ~models.Q(
+            metadata__row_type__in=["header", "section_header"]
+        )
+
+        base_qs = KnowledgeUploadTableRow.objects.filter(
+            table_id=table_uuid,
+            table__upload_id=upload_id,
+            table__upload__business_profile=business_profile,
+            table__upload__status=KnowledgeStatus.ACTIVE,
+        )
+
+        target = (
+            base_qs.filter(non_header_q, row_index__gte=raw_idx)
+            .order_by("row_index")
+            .only("row_index")
+            .first()
+        )
+        if target is None:
+            target = (
+                base_qs.filter(non_header_q, row_index__lte=raw_idx)
+                .order_by("-row_index")
+                .only("row_index")
+                .first()
+            )
+        if target is None:
+            return 0
+
+        try:
+            target_db_idx = int(getattr(target, "row_index", 0) or 0)
+        except (TypeError, ValueError):
+            target_db_idx = raw_idx
+
+        try:
+            visible_before = int(
+                base_qs.filter(non_header_q, row_index__lt=int(target_db_idx)).count()
+            )
+        except Exception:
+            visible_before = max(0, raw_idx)
+        return max(0, int(visible_before))
+
+    def _read_exact_table_row(
+        *,
+        item_id: str,
+        upload_id: str,
+        table_id: str,
+        db_row_index: int,
+        budget_chars: int,
+        business_profile,
+    ) -> tuple[dict[str, object], bool]:
+        visible_row_start = _table_db_row_index_to_visible_row_start(
+            table_id=table_id,
+            upload_id=upload_id,
+            business_profile=business_profile,
+            db_row_index=db_row_index,
+        )
+        table_payload, _cursor_out, complete = _read_tabular_rows_segment_facts(
+            item_id=item_id,
+            upload_id=upload_id,
+            table_id=table_id,
+            start_row_index=visible_row_start,
+            budget_chars=budget_chars,
+            max_rows=1,
+            business_profile=business_profile,
+            selection_mode="row_ref",
+        )
+        return table_payload, complete
+
     def _read_tabular_rows_with_anchor(
         *,
         item_id: str,
@@ -7287,66 +7489,6 @@ def _agentic_read_v2_handler(
         anchor_used = False
         fallback_used = False
         anchor_start_row = int(start_row_index)
-
-        def _anchor_db_row_index_to_visible_row_start(db_row_index: int) -> int:
-            """
-            Convert a table row index coming from search-time diagnostics (DB row_index,
-            which may include ingestion header/section header rows) into a row_start
-            for read_knowledge paging (visible body rows only).
-            """
-            try:
-                raw_idx = int(db_row_index)
-            except (TypeError, ValueError):
-                return 0
-            if raw_idx < 0:
-                return 0
-            try:
-                table_uuid = uuid.UUID(str(table_id))
-            except (TypeError, ValueError):
-                # If table_id isn't a UUID, best-effort: treat as already-visible index.
-                return max(0, raw_idx)
-
-            non_header_q = models.Q(metadata__row_type__isnull=True) | ~models.Q(
-                metadata__row_type__in=["header", "section_header"]
-            )
-
-            base_qs = KnowledgeUploadTableRow.objects.filter(
-                table_id=table_uuid,
-                table__upload_id=upload_id,
-                table__upload__business_profile=business_profile,
-                table__upload__status=KnowledgeStatus.ACTIVE,
-            )
-
-            # Prefer anchoring on the first visible row at/after the requested DB row index.
-            target = (
-                base_qs.filter(non_header_q, row_index__gte=raw_idx)
-                .order_by("row_index")
-                .only("row_index")
-                .first()
-            )
-            if target is None:
-                # Fall back to the closest visible row at/before the index.
-                target = (
-                    base_qs.filter(non_header_q, row_index__lte=raw_idx)
-                    .order_by("-row_index")
-                    .only("row_index")
-                    .first()
-                )
-            if target is None:
-                return 0
-
-            try:
-                target_db_idx = int(getattr(target, "row_index", 0) or 0)
-            except (TypeError, ValueError):
-                target_db_idx = raw_idx
-
-            try:
-                visible_before = int(
-                    base_qs.filter(non_header_q, row_index__lt=int(target_db_idx)).count()
-                )
-            except Exception:
-                visible_before = max(0, raw_idx)
-            return max(0, int(visible_before))
 
         if use_anchor and anchor_start_row <= 0:
             manifest = _load_table_anchor_manifest(ref_id=item_id, table_id=table_id)
@@ -7367,8 +7509,16 @@ def _agentic_read_v2_handler(
                     seen_rows: set[int] = set()
                     anchor_rows = [row for row in anchor_rows if (row not in seen_rows and not seen_rows.add(row))]
                     anchor_used = True
+                    merged_payload: dict[str, object] | None = None
+                    merged_complete = True
+                    merged_anchor_hits = 0
                     for row_idx in anchor_rows[:2]:
-                        visible_row_start = _anchor_db_row_index_to_visible_row_start(int(row_idx))
+                        visible_row_start = _table_db_row_index_to_visible_row_start(
+                            table_id=table_id,
+                            upload_id=upload_id,
+                            business_profile=business_profile,
+                            db_row_index=int(row_idx),
+                        )
                         anchor_start_row = max(0, int(visible_row_start) - 1)
                         table_payload, cursor_out, complete = _read_tabular_rows_segment_facts(
                             item_id=item_id,
@@ -7380,8 +7530,27 @@ def _agentic_read_v2_handler(
                             business_profile=business_profile,
                             selection_mode="anchor_match",
                         )
-                        if _table_payload_is_informative(table_payload):
-                            return table_payload, cursor_out, complete, anchor_used, fallback_used
+                        if not _table_payload_is_informative(table_payload):
+                            merged_complete = False
+                            continue
+                        if merged_payload is None:
+                            merged_payload = dict(table_payload)
+                            merged_complete = bool(complete)
+                            merged_anchor_hits = 1
+                            continue
+                        merged_payload, added_rows, merge_budget_exhausted = _merge_table_anchor_payloads(
+                            base_payload=merged_payload,
+                            incoming_payload=table_payload,
+                            budget_chars=budget_chars,
+                            selection_mode="anchor_merge",
+                        )
+                        if added_rows > 0:
+                            merged_anchor_hits += 1
+                        merged_complete = bool(merged_complete and complete and not merge_budget_exhausted)
+                    if merged_payload is not None and _table_payload_is_informative(merged_payload):
+                        if merged_anchor_hits <= 1:
+                            merged_payload["selection_mode"] = "anchor_match"
+                        return merged_payload, None, merged_complete, anchor_used, fallback_used
                     # Anchors were tried but didn't yield useful rows; fall back.
                     fallback_used = True
 
@@ -7561,34 +7730,6 @@ def _agentic_read_v2_handler(
     deferred: list[dict[str, object]] = []
     errors: list[dict[str, object]] = []
 
-    row_table_ref_counts: Counter[str] = Counter()
-    if business_uuid is not None and ordered_items:
-        candidate_row_ids: list[uuid.UUID] = []
-        for entry in ordered_items:
-            item_id = str(entry.get("id") or "").strip()
-            if not item_id:
-                continue
-            cursor = entry.get("cursor")
-            if isinstance(cursor, str) and cursor.strip():
-                continue
-            try:
-                candidate_row_ids.append(uuid.UUID(item_id))
-            except (TypeError, ValueError):
-                continue
-        if candidate_row_ids:
-            row_pairs = (
-                KnowledgeUploadTableRow.objects.filter(
-                    id__in=candidate_row_ids,
-                    table__upload__business_profile_id=business_uuid,
-                    table__upload__status=KnowledgeStatus.ACTIVE,
-                )
-                .exclude(table__upload__visibility=KnowledgeVisibility.INTERNAL)
-                .values_list("id", "table_id")
-            )
-            for _row_id, table_id in row_pairs:
-                row_table_ref_counts[str(table_id)] += 1
-
-    expanded_row_tables_seen: set[str] = set()
     expanded_upload_reads_seen: set[str] = set()
     successfully_read_ids: set[str] = set()
     text_group_manifest_lookups = 0
@@ -7830,47 +7971,30 @@ def _agentic_read_v2_handler(
                     order_index = getattr(table_obj, "order_index", None)
                     table_title = f"Table {order_index}" if order_index else "Table"
                 title = table_title
-
-                grouped_table_ref_count = row_table_ref_counts.get(str(table_id), 0)
-                expand_to_table_context = bool(
-                    table_id
-                    and grouped_table_ref_count >= 2
-                    and not cursor_payload
-                )
-                if expand_to_table_context and table_id in expanded_row_tables_seen:
-                    read.append(
-                        {
-                            "id": item_id,
-                            "status": "covered",
-                            "chars": 0,
-                            "hint": "Covered by an earlier table context read for this table.",
-                        }
-                    )
-                    continue
-
                 explicit_range = row_start is not None or row_limit is not None
                 if explicit_range:
-                    effective_start_row = int(row_start or 0)
-                    effective_max_rows = row_limit
-                    selection_mode = "row_range"
-                else:
-                    effective_start_row = 0 if expand_to_table_context else row_index
-                    effective_max_rows = None if expand_to_table_context else 1
-                    selection_mode = "row_ref"
+                    errors.append(
+                        {
+                            "id": item_id,
+                            "error_code": "row_ref_range_not_supported",
+                            "hint": (
+                                f"This id is a single table row. Use table id {table_id} "
+                                "with row_start/row_limit to browse table rows."
+                            ),
+                        }
+                    )
+                    read.append({"id": item_id, "status": "error"})
+                    continue
 
-                table_payload, _cursor_out, complete = _read_tabular_rows_segment_facts(
+                table_payload, complete = _read_exact_table_row(
                     item_id=item_id,
                     upload_id=upload_id,
                     table_id=table_id,
-                    start_row_index=effective_start_row,
+                    db_row_index=row_index,
                     budget_chars=per_item_budget,
-                    max_rows=effective_max_rows,
                     business_profile=business,
-                    selection_mode=selection_mode,
                 )
                 payload = table_payload
-                if expand_to_table_context:
-                    expanded_row_tables_seen.add(table_id)
                 # Tables page via row_start/row_limit (no cursors).
                 next_cursor = None
             elif table_record is not None:
@@ -8164,28 +8288,32 @@ def _agentic_read_v2_handler(
                 except Exception:
                     pass
                 if row_start is not None or row_limit is not None:
-                    effective_start_row = int(row_start or 0)
-                    effective_max_rows = row_limit
-                    selection_mode = "row_range"
-                else:
-                    # Default: return a single row for row-chunk refs.
-                    row_index_raw = chunk_meta.get("table_row_index")
-                    try:
-                        effective_start_row = int(row_index_raw) if row_index_raw is not None else 0
-                    except (TypeError, ValueError):
-                        effective_start_row = 0
-                    effective_max_rows = 1
-                    selection_mode = "row_ref"
+                    errors.append(
+                        {
+                            "id": item_id,
+                            "error_code": "row_ref_range_not_supported",
+                            "hint": (
+                                f"This id is a single table row. Use table id {table_id} "
+                                "with row_start/row_limit to browse table rows."
+                            ),
+                        }
+                    )
+                    read.append({"id": item_id, "status": "error"})
+                    continue
 
-                table_payload, _cursor_out, complete = _read_tabular_rows_segment_facts(
+                row_index_raw = chunk_meta.get("table_row_index")
+                try:
+                    row_index_value = int(row_index_raw) if row_index_raw is not None else 0
+                except (TypeError, ValueError):
+                    row_index_value = 0
+
+                table_payload, complete = _read_exact_table_row(
                     item_id=item_id,
                     upload_id=upload_id,
                     table_id=table_id,
-                    start_row_index=effective_start_row,
+                    db_row_index=row_index_value,
                     budget_chars=per_item_budget,
-                    max_rows=effective_max_rows,
                     business_profile=business,
-                    selection_mode=selection_mode,
                 )
                 payload = table_payload
                 # Tables page via row_start/row_limit (no cursors).
@@ -8289,6 +8417,12 @@ def _agentic_read_v2_handler(
         remaining_chars = max(0, remaining_chars - item_chars)
         total_chars += item_chars
 
+        table_more_rows_available = bool(
+            payload_type == "table"
+            and isinstance(payload.get("next_row_start"), (int, float))
+            and not bool(next_cursor)
+        )
+
         evidence_entry: dict[str, object] = {
             "id": item_id,
             "document_id": upload_id,
@@ -8299,8 +8433,12 @@ def _agentic_read_v2_handler(
             "chars": item_chars,
             "complete": bool(complete and not next_cursor),
             # Back-compat: orchestrator coverage ledger expects "truncated" on items.
-            "truncated": bool(not complete or bool(next_cursor)),
+            # For paged table reads, "more rows available" is not the same as a risky
+            # truncation; keep completion false but avoid overstating truncation.
+            "truncated": bool((not complete or bool(next_cursor)) and not table_more_rows_available),
         }
+        if table_more_rows_available:
+            evidence_entry["more_rows_available"] = True
         if isinstance(evidence_coverage_hint, Mapping) and evidence_coverage_hint:
             evidence_entry["coverage_hint"] = dict(evidence_coverage_hint)
         if cursor_used:
@@ -8309,11 +8447,12 @@ def _agentic_read_v2_handler(
         if next_cursor_handle:
             evidence_entry["next_cursor"] = next_cursor_handle
         contents.append(evidence_entry)
+        context.add_read_evidence(evidence_entry)
 
         is_truncated = not complete or bool(next_cursor_handle)
         read_entry: dict[str, object] = {
             "id": item_id,
-            "status": "full" if not is_truncated else "truncated",
+            "status": "full" if not is_truncated else ("more_available" if table_more_rows_available else "truncated"),
             "chars": item_chars,
         }
         if is_truncated:
@@ -8324,7 +8463,10 @@ def _agentic_read_v2_handler(
             if payload_type == "table":
                 next_row_start = payload.get("next_row_start")
                 if isinstance(next_row_start, (int, float)):
-                    hint_parts.append(f"Continue with row_start={int(next_row_start)}.")
+                    if table_more_rows_available:
+                        hint_parts.append(f"More rows available with row_start={int(next_row_start)} if needed.")
+                    else:
+                        hint_parts.append(f"Continue with row_start={int(next_row_start)}.")
                 hint_parts.append(f"Max chars allowed: {int(max_chars_allowed)}.")
             else:
                 hint_parts.append(

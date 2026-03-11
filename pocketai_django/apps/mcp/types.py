@@ -103,6 +103,9 @@ class ToolExecutionContext:
         return self.max_reads_per_turn
     
     ingestion_warnings: list[JsonDict] = dataclasses.field(default_factory=list)
+    retrieval_candidates: list[dict[str, object]] = dataclasses.field(default_factory=list)
+    model_visible_refs: list[dict[str, object]] = dataclasses.field(default_factory=list)
+    read_evidence: list[dict[str, object]] = dataclasses.field(default_factory=list)
     knowledge_results: list[dict[str, object]] = dataclasses.field(default_factory=list)
     knowledge_reads: list[dict[str, object]] = dataclasses.field(default_factory=list)
     tool_trace: list[dict[str, object]] = dataclasses.field(default_factory=list)
@@ -365,6 +368,58 @@ class ToolExecutionContext:
         """Record an ingestion warning so the orchestrator can surface it later."""
 
         self.ingestion_warnings.append(dict(warning))
+
+    def add_retrieval_candidate(self, result: Mapping[str, object]) -> None:
+        entry = dict(result)
+        identity = (
+            str(entry.get("id") or entry.get("chunk_id") or "").strip(),
+            str(entry.get("search_stage") or "").strip(),
+            str(entry.get("upload_id") or "").strip(),
+        )
+        for existing in self.retrieval_candidates:
+            existing_identity = (
+                str(existing.get("id") or existing.get("chunk_id") or "").strip(),
+                str(existing.get("search_stage") or "").strip(),
+                str(existing.get("upload_id") or "").strip(),
+            )
+            if existing_identity == identity:
+                return
+        self.retrieval_candidates.append(entry)
+
+    def add_model_visible_ref(self, result: Mapping[str, object]) -> None:
+        entry = dict(result)
+        identity = (
+            str(entry.get("id") or "").strip(),
+            str(entry.get("document_id") or entry.get("upload_id") or "").strip(),
+            str(entry.get("kind") or entry.get("type") or "").strip(),
+        )
+        for existing in self.model_visible_refs:
+            existing_identity = (
+                str(existing.get("id") or "").strip(),
+                str(existing.get("document_id") or existing.get("upload_id") or "").strip(),
+                str(existing.get("kind") or existing.get("type") or "").strip(),
+            )
+            if existing_identity == identity:
+                return
+        self.model_visible_refs.append(entry)
+        self.knowledge_results.append(dict(entry))
+
+    def add_read_evidence(self, evidence: Mapping[str, object]) -> None:
+        entry = dict(evidence)
+        identity = (
+            str(entry.get("id") or "").strip(),
+            str(entry.get("type") or "").strip(),
+            str(entry.get("next_cursor") or "").strip(),
+        )
+        for existing in self.read_evidence:
+            existing_identity = (
+                str(existing.get("id") or "").strip(),
+                str(existing.get("type") or "").strip(),
+                str(existing.get("next_cursor") or "").strip(),
+            )
+            if existing_identity == identity:
+                return
+        self.read_evidence.append(entry)
 
     def add_knowledge_result(self, result: Mapping[str, object]) -> None:
         self.knowledge_results.append(dict(result))

@@ -88,3 +88,44 @@ class ToolExecutionContextTests(SimpleTestCase):
         context.set_recent_search_refs([])
         self.assertEqual(context.recent_search_refs, [])
         self.assertTrue(context.recent_search_refs_updated)
+
+    def test_evidence_lanes_stay_separate(self) -> None:
+        context = ToolExecutionContext()
+
+        context.add_retrieval_candidate(
+            {
+                "id": "chunk-4",
+                "chunk_id": "chunk-4",
+                "upload_id": "upload-1",
+                "search_stage": "table_row_expansion",
+                "summary": "Assessment Fees = EGP 200 (Paid once)",
+            }
+        )
+        context.add_model_visible_ref(
+            {
+                "id": "table-1",
+                "document_id": "upload-1",
+                "kind": "table_chunk",
+                "label": "CIB-Loans-EN - Table 1",
+            }
+        )
+        context.add_read_evidence(
+            {
+                "id": "table-1",
+                "type": "table",
+                "payload": {"rows": [["Assessment Fees", "EGP 200 (Paid once)"]]},
+            }
+        )
+        context.add_read_evidence(
+            {
+                "id": "table-1",
+                "type": "table",
+                "payload": {"rows": [["Assessment Fees", "EGP 200 (Paid once)"]]},
+            }
+        )
+
+        self.assertEqual(len(context.retrieval_candidates), 1)
+        self.assertEqual(len(context.model_visible_refs), 1)
+        self.assertEqual(len(context.read_evidence), 1)
+        self.assertEqual(len(context.knowledge_results), 1)
+        self.assertEqual(context.knowledge_results[0].get("id"), "table-1")

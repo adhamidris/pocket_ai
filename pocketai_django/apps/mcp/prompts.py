@@ -412,9 +412,10 @@ def build_system_message(
         ### `read_knowledge`
         - Read when previews are too thin to answer confidently.
         - Use the `refs` returned by `search_knowledge` (do not invent IDs).
-        - For tables, page with `row_start` + `row_limit`; if the response includes `next_row_start`, continue from that offset.
+        - For table refs, page with `row_start` + `row_limit`; do not use range paging on single row refs.
+        - If the response includes `next_row_start`, more table rows are available from that offset.
         - Prefer one comprehensive batched read over multiple small reads (extra tool-loop turns can cost more overall).
-        - If existing evidence is sufficient, answer without an extra read.
+        - If existing evidence is sufficient, answer without an extra read. Only page table rows when you still need more evidence.
 
         ### CRM tools
         - Log business inquiries as cases; create leads for product interest; do this silently.

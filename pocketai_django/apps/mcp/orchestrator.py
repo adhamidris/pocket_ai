@@ -988,13 +988,66 @@ class McpOrchestratorService:
             final_separator_pending = False
             _emit_stream_chunks(lambda chunk: _append_chunk(chunk, answer_streamed_chunks), text)
 
-        def _flush_stream_buffer(stage: str, *, filter_override: str | None = None) -> None:
+        def _sanitize_stream_segment(text: str, *, stage: str, filter_override: str | None = None) -> str:
+            nonlocal stream_dropped
+            if not text:
+                return ""
+            effective_filter = filter_override or filter_level
+            cleaned, dropped = sanitize_with_diagnostics(
+                text,
+                conversation=conversation,
+                stage=stage,
+                filter_level=effective_filter,
+            )
+            if dropped:
+                stream_dropped.extend(dropped)
+                if cleaned.strip() == text.strip():
+                    return ""
+            return cleaned
+
+        def _flush_stream_buffer(
+            stage: str,
+            *,
+            filter_override: str | None = None,
+            flush_remainder: bool = False,
+        ) -> None:
             nonlocal stream_buffer
-            trailing = stream_buffer
-            if not trailing:
+            pending = stream_buffer
+            if not pending:
                 return
-            _emit_tokens(trailing)
-            stream_buffer = ""
+            sentences, remainder = extract_sentences(pending)
+            stream_buffer = remainder
+            for sentence, sep in sentences:
+                clean_segment = _sanitize_stream_segment(
+                    f"{sentence}{sep}",
+                    stage=stage,
+                    filter_override=filter_override,
+                )
+                if clean_segment:
+                    _emit_tokens(clean_segment)
+            if flush_remainder and stream_buffer:
+                trailing_clean = _sanitize_stream_segment(
+                    stream_buffer,
+                    stage=stage,
+                    filter_override=filter_override,
+                )
+                stream_buffer = ""
+                if trailing_clean:
+                    _emit_tokens(trailing_clean)
+
+        def _reconcile_streamed_chunks(target: list[str], final_text: str) -> None:
+            normalized_final = str(final_text or "")
+            current_text = "".join(target)
+            if current_text == normalized_final:
+                return
+            if current_text and normalized_final.startswith(current_text):
+                suffix = normalized_final[len(current_text) :]
+                if suffix:
+                    _append_chunk(suffix, target)
+                return
+            target.clear()
+            if normalized_final:
+                _append_chunk(normalized_final, target)
 
         # Phase 1: streaming tool-enabled call. If tool_calls appear, we will
         # fall back to the full tool loop + final-answer path. If no tool_calls
@@ -2318,7 +2371,11 @@ class McpOrchestratorService:
         # No tool calls from the first streaming pass: take single-pass fast path.
         else:
             tool_phase_assistant_message = first_stream_message
-            _flush_stream_buffer("streaming_tools", filter_override=initial_stream_filter_level)
+            _flush_stream_buffer(
+                "streaming_tools",
+                filter_override=initial_stream_filter_level,
+                flush_remainder=False,
+            )
             # Canonical assistant content must come from the provider payload, not
             # streamed deltas. Streamed deltas can be truncated at boundaries.
             single_pass_text = first_content_raw or "".join(first_pass_streamed_chunks).strip()
@@ -2397,6 +2454,7 @@ class McpOrchestratorService:
             streaming_mode = "final"
             if streaming_allowed:
                 answer_streamed_chunks[:] = list(first_pass_streamed_chunks)
+                _reconcile_streamed_chunks(answer_streamed_chunks, clean_single)
             else:
                 answer_streamed_chunks.clear()
                 _emit_final_answer(clean_single)
@@ -2428,7 +2486,7 @@ class McpOrchestratorService:
             )
 
         final_assistant_message = tool_phase_assistant_message or {"role": "assistant"}
-        _flush_stream_buffer("streaming_answer")
+        _flush_stream_buffer("streaming_answer", flush_remainder=False)
         answer_text_raw = ""
         if isinstance(final_assistant_message, Mapping):
             answer_text_raw = str(final_assistant_message.get("content") or "").strip()
@@ -2530,7 +2588,9 @@ class McpOrchestratorService:
         normalized_assistant_msg["content"] = clean_answer_text
         response_blocks = self._extract_response_blocks(normalized_assistant_msg)
         clean_answer_text = str(normalized_assistant_msg.get("content") or clean_answer_text)
-        if not streaming_allowed:
+        if streaming_allowed:
+            _reconcile_streamed_chunks(answer_streamed_chunks, clean_answer_text)
+        else:
             answer_streamed_chunks.clear()
             _emit_final_answer(clean_answer_text)
         _status_event("stream_complete", "")
@@ -2635,6 +2695,9 @@ class McpOrchestratorService:
             diagnostics["coverage_ledger"] = list(getattr(tool_context, "coverage_ledger", ()))
             diagnostics["knowledge_reads"] = list(getattr(tool_context, "knowledge_reads", ()))
             diagnostics["knowledge_results"] = list(getattr(tool_context, "knowledge_results", ()))
+            diagnostics["retrieval_candidates"] = list(getattr(tool_context, "retrieval_candidates", ()))
+            diagnostics["model_visible_refs"] = list(getattr(tool_context, "model_visible_refs", ()))
+            diagnostics["read_evidence"] = list(getattr(tool_context, "read_evidence", ()))
             if getattr(tool_context, "preplan", None):
                 diagnostics["preplan"] = dict(getattr(tool_context, "preplan") or {})
             if getattr(tool_context, "verification", None):
@@ -2865,10 +2928,14 @@ class McpOrchestratorService:
         diagnostics = {
             "llm_strategy": "mcp_tools_stream_planner",
             "knowledge_reads": getattr(tool_context, "knowledge_reads", []),
+            "knowledge_results": getattr(tool_context, "knowledge_results", []),
             "tool_trace": getattr(tool_context, "tool_trace", []),
             "placeholder_response": assistant_message.get("placeholder_thinking")
             or assistant_message.get("placeholder_response"),
             "coverage_ledger": getattr(tool_context, "coverage_ledger", []),
+            "retrieval_candidates": getattr(tool_context, "retrieval_candidates", []),
+            "model_visible_refs": getattr(tool_context, "model_visible_refs", []),
+            "read_evidence": getattr(tool_context, "read_evidence", []),
             "sanitized_sentences": {
                 "count": len(dropped_list),
                 "examples": dropped_list[:3],
@@ -4956,11 +5023,13 @@ class McpOrchestratorService:
             refs_raw = tool_result.get("refs")
             if not isinstance(refs_raw, list):
                 refs_raw = tool_result.get("results")
+            if not isinstance(refs_raw, list):
+                refs_raw = tool_result.get("snippets")
             if isinstance(refs_raw, list):
                 refs = [ref for ref in refs_raw if isinstance(ref, Mapping)]
                 context.set_recent_search_refs(refs)
                 for ref in refs:
-                    context.add_knowledge_result(ref)
+                    context.add_model_visible_ref(ref)
             return
 
         if tool_name != "read_knowledge":
@@ -4976,6 +5045,7 @@ class McpOrchestratorService:
         for item in evidence_raw[:50]:
             if not isinstance(item, Mapping):
                 continue
+            context.add_read_evidence(item)
             content_id = item.get("id")
             title = item.get("title") or item.get("label") or "Knowledge"
             content_type = str(item.get("type") or "").strip().lower()

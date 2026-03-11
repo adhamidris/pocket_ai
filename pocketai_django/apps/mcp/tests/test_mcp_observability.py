@@ -9,6 +9,7 @@ from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSess
 from apps.conversations.models import Conversation
 from apps.mcp import prompts
 from apps.mcp.orchestrator import McpOrchestratorService
+from apps.mcp.types import ToolExecutionContext
 
 
 class _FakeProvider:
@@ -186,6 +187,61 @@ class McpObservabilityTests(TestCase):
         self.assertTrue(streamed)
         self.assertEqual("".join(streamed), context.response_text)
         self.assertEqual("".join(context.streamed_chunks), context.response_text)
+
+    def test_planner_diagnostics_split_evidence_lanes(self) -> None:
+        orchestrator = McpOrchestratorService(agent=self.agent, provider=_FakeProvider())
+        tool_context = ToolExecutionContext()
+        tool_context.add_retrieval_candidate(
+            {
+                "id": "chunk-4",
+                "chunk_id": "chunk-4",
+                "upload_id": "upload-1",
+                "search_stage": "table_row_expansion",
+                "summary": "Assessment Fees = EGP 200 (Paid once)",
+            }
+        )
+        orchestrator._record_knowledge_outputs(
+            tool_context,
+            {
+                "tool": "search_knowledge",
+                "status": "ok",
+                "refs": [
+                    {
+                        "id": "table-1",
+                        "document_id": "upload-1",
+                        "kind": "table_chunk",
+                        "label": "CIB-Loans-EN - Table 1",
+                    }
+                ],
+            },
+        )
+        orchestrator._record_knowledge_outputs(
+            tool_context,
+            {
+                "tool": "read_knowledge",
+                "status": "ok",
+                "evidence": [
+                    {
+                        "id": "table-1",
+                        "document_id": "upload-1",
+                        "title": "CIB-Loans-EN - Table 1",
+                        "type": "table",
+                        "payload": {"rows": [["Assessment Fees", "EGP 200 (Paid once)"]]},
+                    }
+                ],
+            },
+        )
+
+        plan = orchestrator._build_plan_from_assistant(
+            conversation=self.conversation,
+            assistant_message={"content": "The assessment fee is EGP 200 paid once."},
+            tool_context=tool_context,
+        )
+
+        self.assertEqual(len(plan.diagnostics.get("retrieval_candidates") or []), 1)
+        self.assertEqual(len(plan.diagnostics.get("model_visible_refs") or []), 1)
+        self.assertEqual(len(plan.diagnostics.get("read_evidence") or []), 1)
+        self.assertEqual(len(plan.diagnostics.get("knowledge_results") or []), 1)
 
     @patch("apps.mcp.orchestrator.mcp_tools.execute_tool")
     def test_tool_loop_stream_does_not_replay_full_answer(self, execute_tool_mock) -> None:
