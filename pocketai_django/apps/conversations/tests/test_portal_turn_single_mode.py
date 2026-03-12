@@ -148,6 +148,72 @@ class _FakeToolLoopOrchestrator:
         )
 
 
+class _FakeToolLoopTailMismatchOrchestrator:
+    def __init__(self) -> None:
+        self.pre_tool_text = "I'll search for the fee now."
+        self.streamed_final_text = "The assessment fee for personal loans is "
+        self.final_text = "The assessment fee for personal loans is EGP 200 (paid once)."
+
+    def stream_turn(
+        self,
+        *,
+        conversation: Conversation,
+        user_message: str,
+        on_response_text_delta=None,
+        on_status_change=None,
+        on_placeholder_response=None,
+        on_stream_complete=None,
+        on_spinner_update=None,
+        on_tool_event=None,
+        on_block_event=None,
+        on_reasoning_event=None,
+        should_cancel=None,
+        **_kwargs,
+    ):
+        del conversation, user_message, on_placeholder_response, on_spinner_update, on_block_event, on_reasoning_event, should_cancel
+
+        if on_status_change:
+            on_status_change({"code": "thinking"})
+
+        if on_response_text_delta:
+            on_response_text_delta(self.pre_tool_text)
+
+        if on_tool_event:
+            on_tool_event(
+                {
+                    "event_id": "evt_tool_1",
+                    "phase": "started",
+                    "status": "running",
+                    "tool_call_id": "call_tool_1",
+                    "tool_name": "search_knowledge",
+                    "kind": "tool",
+                }
+            )
+            on_tool_event(
+                {
+                    "event_id": "evt_tool_1",
+                    "phase": "finished",
+                    "status": "ok",
+                    "tool_call_id": "call_tool_1",
+                    "tool_name": "search_knowledge",
+                    "kind": "tool",
+                    "duration_ms": 45,
+                    "output": {"status": "ok"},
+                }
+            )
+
+        if on_response_text_delta:
+            on_response_text_delta(self.streamed_final_text)
+
+        if on_stream_complete:
+            on_stream_complete()
+
+        return SimpleNamespace(
+            streamed_chunks=(self.pre_tool_text, self.streamed_final_text),
+            response_text=self.final_text,
+        )
+
+
 class PortalTurnSingleModeTests(TransactionTestCase):
     def setUp(self) -> None:
         super().setUp()
@@ -397,6 +463,27 @@ class PortalTurnSingleModeTests(TransactionTestCase):
         self.assertGreaterEqual(first_text_delta_idx, 0)
         # Pre-tool text streams before tool cards appear.
         self.assertLess(first_text_delta_idx, first_tool_use_idx)
+
+    def test_portal_turn_tool_loop_does_not_replay_final_text_after_stream(self) -> None:
+        turn = PortalTurn.objects.create(
+            conversation=self.conversation,
+            agent_profile=self.agent,
+            status=PortalTurnStatus.STREAMING,
+            user_message="What is the assessment fee for personal loans?",
+        )
+        orchestrator = _FakeToolLoopTailMismatchOrchestrator()
+        runner = PortalTurnRunner(turn=turn, conversation=self.conversation)
+
+        with mock.patch.object(PortalTurnRunner, "_select_orchestrator", return_value=orchestrator):
+            runner.run()
+
+        turn.refresh_from_db()
+        self.assertIsNotNone(turn.message)
+        block_text = extract_text_from_content_blocks(turn.message.content_blocks or [])
+        self.assertEqual(turn.message.body, block_text)
+        self.assertIn(orchestrator.pre_tool_text, block_text)
+        self.assertIn(orchestrator.streamed_final_text.strip(), block_text)
+        self.assertNotIn(orchestrator.final_text, block_text)
 
     @override_settings(PORTAL_DEBUG_TOOL_TRACE=True)
     def test_portal_turn_persists_debug_tools_in_message_metadata(self) -> None:

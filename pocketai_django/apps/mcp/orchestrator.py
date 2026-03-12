@@ -1035,19 +1035,27 @@ class McpOrchestratorService:
                 if trailing_clean:
                     _emit_tokens(trailing_clean)
 
-        def _reconcile_streamed_chunks(target: list[str], final_text: str) -> None:
+        def _log_stream_mismatch(target: list[str], final_text: str, *, stage: str) -> None:
             normalized_final = str(final_text or "")
             current_text = "".join(target)
             if current_text == normalized_final:
                 return
-            if current_text and normalized_final.startswith(current_text):
-                suffix = normalized_final[len(current_text) :]
-                if suffix:
-                    _append_chunk(suffix, target)
-                return
-            target.clear()
-            if normalized_final:
-                _append_chunk(normalized_final, target)
+            structured_log(
+                "mcp",
+                "stream.final_text_mismatch",
+                {
+                    "stage": stage,
+                    "streamed_chars": len(current_text),
+                    "final_chars": len(normalized_final),
+                    "streamed_is_prefix": bool(current_text and normalized_final.startswith(current_text)),
+                    "streamed_empty": not bool(current_text),
+                },
+                context={
+                    "conversation": conversation.id,
+                    "business": conversation.business_profile_id,
+                },
+                logger_obj=logger,
+            )
 
         # Phase 1: streaming tool-enabled call. If tool_calls appear, we will
         # fall back to the full tool loop + final-answer path. If no tool_calls
@@ -2454,7 +2462,7 @@ class McpOrchestratorService:
             streaming_mode = "final"
             if streaming_allowed:
                 answer_streamed_chunks[:] = list(first_pass_streamed_chunks)
-                _reconcile_streamed_chunks(answer_streamed_chunks, clean_single)
+                _log_stream_mismatch(answer_streamed_chunks, clean_single, stage="single_pass")
             else:
                 answer_streamed_chunks.clear()
                 _emit_final_answer(clean_single)
@@ -2589,7 +2597,7 @@ class McpOrchestratorService:
         response_blocks = self._extract_response_blocks(normalized_assistant_msg)
         clean_answer_text = str(normalized_assistant_msg.get("content") or clean_answer_text)
         if streaming_allowed:
-            _reconcile_streamed_chunks(answer_streamed_chunks, clean_answer_text)
+            _log_stream_mismatch(answer_streamed_chunks, clean_answer_text, stage="tool_loop_final")
         else:
             answer_streamed_chunks.clear()
             _emit_final_answer(clean_answer_text)

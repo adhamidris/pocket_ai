@@ -101,6 +101,42 @@ class _ToolLoopFinalStreamProvider:
         return {"message": {"role": "assistant", "content": final}}
 
 
+class _ToolLoopTailMismatchProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def chat(
+        self,
+        messages,
+        *,
+        tools=None,
+        on_stream_delta=None,
+        on_reasoning_delta=None,
+        on_tool_call_start=None,
+        on_tool_call_delta=None,
+        response_format=None,
+        should_cancel=None,
+    ):
+        del messages, tools, on_reasoning_delta, on_tool_call_delta, response_format, should_cancel
+        self.calls += 1
+        if self.calls == 1:
+            tool_call = {
+                "id": "call_search_1",
+                "type": "function",
+                "function": {
+                    "name": "search_knowledge",
+                    "arguments": json.dumps({"queries": ["personal loan assessment fee"]}, ensure_ascii=False),
+                },
+            }
+            if on_tool_call_start:
+                on_tool_call_start(tool_call)
+            return {"message": {"role": "assistant", "content": "", "tool_calls": [tool_call]}}
+        final = "The assessment fee for personal loans is EGP 200 (paid once)."
+        if on_stream_delta:
+            on_stream_delta("The assessment fee for personal loans is ")
+        return {"message": {"role": "assistant", "content": final}}
+
+
 class McpObservabilityTests(TestCase):
     def setUp(self) -> None:
         super().setUp()
@@ -137,7 +173,10 @@ class McpObservabilityTests(TestCase):
             )
 
         self.assertEqual(context.response_text, "The fee is $100 per year.")
-        self.assertEqual(list(context.streamed_chunks), ["The fee is $100 per year."])
+        self.assertEqual(
+            list(context.streamed_chunks),
+            ["I'll check the docs. ", "The fee is $100 per year."],
+        )
 
         plan = orchestrator.finalize_turn(context)
         self.assertEqual(plan.response_text, "The fee is $100 per year.")
@@ -169,7 +208,7 @@ class McpObservabilityTests(TestCase):
         user_payload = final_messages[1]["content"]
         self.assertIn("Latest user message:", user_payload)
 
-    def test_stream_turn_reconciles_missing_stream_suffix(self) -> None:
+    def test_stream_turn_preserves_streamed_text_without_suffix_reconciliation(self) -> None:
         provider = _TailMismatchProvider()
         orchestrator = McpOrchestratorService(agent=self.agent, provider=provider)
         streamed: list[str] = []
@@ -185,8 +224,11 @@ class McpObservabilityTests(TestCase):
             "Summary:\n- Applicable to: All customer segments (Prime, Plus, Wealth, Exclusive Wealth, Private)",
         )
         self.assertTrue(streamed)
-        self.assertEqual("".join(streamed), context.response_text)
-        self.assertEqual("".join(context.streamed_chunks), context.response_text)
+        self.assertEqual(
+            "".join(streamed),
+            "Summary:\n- Applicable to: All customer segments (Prime, Plus, Wealth, Exclusive Wealth, ",
+        )
+        self.assertEqual(tuple(streamed), context.streamed_chunks)
 
     def test_planner_diagnostics_split_evidence_lanes(self) -> None:
         orchestrator = McpOrchestratorService(agent=self.agent, provider=_FakeProvider())
@@ -267,3 +309,28 @@ class McpObservabilityTests(TestCase):
         )
         self.assertEqual("".join(streamed), context.response_text)
         self.assertEqual("".join(context.streamed_chunks), context.response_text)
+
+    @patch("apps.mcp.orchestrator.mcp_tools.execute_tool")
+    def test_tool_loop_preserves_streamed_text_without_final_replay(self, execute_tool_mock) -> None:
+        execute_tool_mock.return_value = {
+            "tool": "search_knowledge",
+            "status": "ok",
+            "snippets": [],
+        }
+        provider = _ToolLoopTailMismatchProvider()
+        orchestrator = McpOrchestratorService(agent=self.agent, provider=provider)
+        streamed: list[str] = []
+
+        context = orchestrator.stream_turn(
+            conversation=self.conversation,
+            user_message="What is the assessment fee for personal loans?",
+            on_response_text_delta=streamed.append,
+        )
+
+        self.assertEqual(provider.calls, 2)
+        self.assertEqual(
+            context.response_text,
+            "The assessment fee for personal loans is EGP 200 (paid once).",
+        )
+        self.assertEqual("".join(streamed), "The assessment fee for personal loans is ")
+        self.assertEqual(tuple(streamed), context.streamed_chunks)
