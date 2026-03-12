@@ -3210,29 +3210,6 @@ def _convert_to_agentic_search_response(
     except (TypeError, ValueError):
         preview_chars_cap = 1200
     preview_chars_cap = max(0, preview_chars_cap)
-    text_chunk_grouping_enabled = bool(
-        getattr(settings, "MCP_AGENTIC_TEXT_CHUNK_GROUPING_ENABLED", True)
-    )
-    try:
-        text_chunk_group_threshold = int(getattr(settings, "MCP_AGENTIC_TEXT_CHUNK_GROUP_THRESHOLD", 2) or 2)
-    except (TypeError, ValueError):
-        text_chunk_group_threshold = 2
-    text_chunk_group_threshold = max(2, text_chunk_group_threshold)
-    try:
-        text_chunk_group_max_chars = int(
-            getattr(
-                settings,
-                "MCP_AGENTIC_TEXT_CHUNK_GROUP_MAX_CHARS",
-                int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_DEFAULT) * 3,
-            )
-            or int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_DEFAULT) * 3
-        )
-    except (TypeError, ValueError):
-        text_chunk_group_max_chars = int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_DEFAULT) * 3
-    text_chunk_group_max_chars = max(
-        int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_DEFAULT),
-        min(int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_MAX) * 4, int(text_chunk_group_max_chars)),
-    )
     hybrid_preview_max_items = 10
     hybrid_preview_chars_cap = min(preview_chars_cap, 400) if preview_chars_cap else 0
     previews_attached = 0
@@ -3584,110 +3561,6 @@ def _convert_to_agentic_search_response(
         if isinstance(manifest, Mapping):
             precomputed_table_anchor_manifests[str(table_id)] = dict(manifest)
 
-    text_chunk_upload_counts: Counter[str] = Counter()
-    text_chunk_upload_snippets: dict[str, list[Mapping[str, object]]] = defaultdict(list)
-    for snippet in planned_snippets:
-        if bool(snippet.get("is_table_chunk")):
-            continue
-        upload_id = str(snippet.get("upload_id") or "").strip()
-        if not upload_id:
-            continue
-        text_chunk_upload_counts[upload_id] += 1
-        text_chunk_upload_snippets[upload_id].append(snippet)
-
-    text_chunk_groups: dict[str, dict[str, object]] = {}
-    if text_chunk_grouping_enabled:
-        for upload_id, group_snippets in text_chunk_upload_snippets.items():
-            if text_chunk_upload_counts.get(upload_id, 0) < text_chunk_group_threshold:
-                continue
-            chunk_indices: set[int] = set()
-            page_numbers: set[int] = set()
-            # Track best score per chunk index so we can build stable anchor windows.
-            chunk_anchor_scores: dict[int, float] = {}
-            best_score: float | None = None
-            total_char_estimate = 0
-
-            for snippet in group_snippets:
-                chunk_index = _coerce_int(snippet.get("chunk_index"))
-                if chunk_index is not None and chunk_index >= 0:
-                    chunk_indices.add(chunk_index)
-                    try:
-                        raw_score = snippet.get("confidence_score")
-                        score_val = float(raw_score) if raw_score is not None else 0.0
-                    except (TypeError, ValueError):
-                        score_val = 0.0
-                    prior = chunk_anchor_scores.get(int(chunk_index))
-                    if prior is None or score_val > float(prior):
-                        chunk_anchor_scores[int(chunk_index)] = float(score_val)
-                page_number = _coerce_int(snippet.get("page_number"))
-                if page_number is not None and page_number >= 1:
-                    page_numbers.add(page_number)
-
-                total_char_estimate += _snippet_char_estimate(snippet)
-                try:
-                    raw_score = snippet.get("confidence_score")
-                    if raw_score is not None:
-                        score = float(raw_score)
-                        if best_score is None or score > best_score:
-                            best_score = score
-                except (TypeError, ValueError):
-                    continue
-
-            sorted_chunk_indices = sorted(chunk_indices)
-            sorted_page_numbers = sorted(page_numbers)
-            chunk_range: list[int] | None = None
-            if sorted_chunk_indices:
-                chunk_range = [int(sorted_chunk_indices[0]), int(sorted_chunk_indices[-1])]
-
-            # Build up to two anchors that cover distinct hit clusters (gap >= 4).
-            anchors: list[int] = []
-            if sorted_chunk_indices:
-                clusters: list[list[int]] = []
-                current_cluster: list[int] = []
-                prev_idx: int | None = None
-                for idx in sorted_chunk_indices:
-                    if prev_idx is None or (int(idx) - int(prev_idx)) < 4:
-                        current_cluster.append(int(idx))
-                    else:
-                        if current_cluster:
-                            clusters.append(current_cluster)
-                        current_cluster = [int(idx)]
-                    prev_idx = int(idx)
-                if current_cluster:
-                    clusters.append(current_cluster)
-
-                anchor_candidates: list[tuple[float, int]] = []
-                for cluster in clusters:
-                    # Highest score wins; tie-breaker is the lowest chunk index.
-                    best_idx = min(
-                        cluster,
-                        key=lambda chunk_idx: (
-                            -float(chunk_anchor_scores.get(int(chunk_idx), 0.0)),
-                            int(chunk_idx),
-                        ),
-                    )
-                    anchor_candidates.append((float(chunk_anchor_scores.get(int(best_idx), 0.0)), int(best_idx)))
-                anchor_candidates.sort(key=lambda item: (-float(item[0]), int(item[1])))
-                anchors = [int(idx) for _score, idx in anchor_candidates[:2]]
-
-            text_chunk_groups[upload_id] = {
-                "upload_id": upload_id,
-                "chunk_count": int(text_chunk_upload_counts.get(upload_id, 0)),
-                "chunk_indices": sorted_chunk_indices[:100],
-                "chunk_range": chunk_range,
-                "pages": sorted_page_numbers[:50],
-                "best_score": best_score,
-                "char_estimate": min(int(total_char_estimate), int(text_chunk_group_max_chars)),
-            }
-            if anchors:
-                text_chunk_groups[upload_id]["matched_chunk_index"] = int(anchors[0])
-                text_chunk_groups[upload_id]["anchors"] = [{"chunk_index": int(idx)} for idx in anchors]
-
-    promote_text_grouping = bool(
-        text_chunk_grouping_enabled and bool(text_chunk_groups)
-    )
-    promoted_upload_ids: set[str] = set()
-    promoted_text_group_manifests: dict[str, dict[str, object]] = {}
     promoted_table_anchor_manifests: dict[str, dict[str, object]] = {}
 
     for snippet in planned_snippets:
@@ -3770,36 +3643,10 @@ def _convert_to_agentic_search_response(
             and promote_table_context
             and canonical_table_id in promoted_table_candidates
         )
-        text_group = text_chunk_groups.get(upload_id) if upload_id else None
-        promote_text_group_ref = bool(
-            content_type == "text"
-            and promote_text_grouping
-            and isinstance(text_group, Mapping)
-        )
         if content_type == "table":
             kind = "table_row" if (diagnostics.get("table_id") and row_index is not None) else "table_chunk"
             if promote_table_ref:
                 kind = "table_chunk"
-        elif promote_text_group_ref:
-            kind = "document_anchor"
-
-        if promote_text_group_ref and isinstance(text_group, Mapping):
-            group_best_score = text_group.get("best_score")
-            try:
-                if group_best_score is not None:
-                    score_val = float(group_best_score)
-            except (TypeError, ValueError):
-                pass
-            try:
-                group_char_estimate = int(text_group.get("char_estimate") or 0)
-            except (TypeError, ValueError):
-                group_char_estimate = 0
-            if group_char_estimate > 0:
-                char_estimate = group_char_estimate
-                suggested_max_chars = _suggest_max_chars_for_estimate(
-                    char_estimate,
-                    max_chars_allowed=int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_MAX),
-                )
 
         coverage_hint: dict[str, object] = {}
         if evidence_group_id:
@@ -3830,42 +3677,6 @@ def _convert_to_agentic_search_response(
                 chunk_index = snippet.get("chunk_index")
                 if isinstance(chunk_index, int):
                     coverage_hint["offset"] = chunk_index
-            if promote_text_group_ref and isinstance(text_group, Mapping):
-                chunk_count = _coerce_int(text_group.get("chunk_count"))
-                if chunk_count is not None and chunk_count > 0:
-                    coverage_hint["chunk_count"] = int(chunk_count)
-
-                chunk_indices = text_group.get("chunk_indices")
-                if isinstance(chunk_indices, list) and chunk_indices:
-                    parsed_indices: list[int] = []
-                    for raw_value in chunk_indices:
-                        parsed = _coerce_int(raw_value)
-                        if parsed is not None and parsed >= 0:
-                            parsed_indices.append(int(parsed))
-                    if parsed_indices:
-                        coverage_hint["chunk_indices"] = parsed_indices[:100]
-
-                chunk_range = text_group.get("chunk_range")
-                if isinstance(chunk_range, list) and len(chunk_range) == 2:
-                    range_start = _coerce_int(chunk_range[0])
-                    range_end = _coerce_int(chunk_range[1])
-                    if (
-                        range_start is not None
-                        and range_end is not None
-                        and range_start >= 0
-                        and range_end >= range_start
-                    ):
-                        coverage_hint["chunk_range"] = [int(range_start), int(range_end)]
-
-                pages = text_group.get("pages")
-                if isinstance(pages, list) and pages:
-                    parsed_pages: list[int] = []
-                    for raw_value in pages:
-                        parsed = _coerce_int(raw_value)
-                        if parsed is not None and parsed >= 1:
-                            parsed_pages.append(int(parsed))
-                    if parsed_pages:
-                        coverage_hint["pages"] = parsed_pages[:50]
 
         read_hint_in = snippet.get("read_hint")
         read_hint_out: dict[str, object] = {"suggested_max_chars": suggested_max_chars}
@@ -3917,47 +3728,6 @@ def _convert_to_agentic_search_response(
                 continue
             promoted_table_ids.add(canonical_table_id)
             ref_id = canonical_table_id
-        if promote_text_group_ref and upload_id:
-            canonical_upload_id = str(upload_id).strip()
-            try:
-                canonical_upload_id = str(uuid.UUID(canonical_upload_id))
-            except (TypeError, ValueError):
-                canonical_upload_id = str(upload_id).strip()
-            if canonical_upload_id:
-                if canonical_upload_id in promoted_upload_ids:
-                    continue
-                promoted_upload_ids.add(canonical_upload_id)
-                ref_id = canonical_upload_id
-                if isinstance(text_group, Mapping):
-                    manifest: dict[str, object] = {
-                        "upload_id": canonical_upload_id,
-                        "chunk_count": int(_coerce_int(text_group.get("chunk_count")) or 0),
-                        "chunk_indices": [
-                            int(parsed)
-                            for parsed in (
-                                _coerce_int(value) for value in (text_group.get("chunk_indices") or [])
-                            )
-                            if parsed is not None and parsed >= 0
-                        ][:100],
-                        "chunk_range": text_group.get("chunk_range"),
-                        "pages": [
-                            int(parsed)
-                            for parsed in (
-                                _coerce_int(value) for value in (text_group.get("pages") or [])
-                            )
-                            if parsed is not None and parsed >= 1
-                        ][:50],
-                        "best_score": text_group.get("best_score"),
-                        "char_estimate": int(_coerce_int(text_group.get("char_estimate")) or 0),
-                    }
-                    parsed_matched = _coerce_int(text_group.get("matched_chunk_index"))
-                    if parsed_matched is not None and parsed_matched >= 0:
-                        manifest["matched_chunk_index"] = int(parsed_matched)
-                    raw_anchors = text_group.get("anchors")
-                    if isinstance(raw_anchors, list) and raw_anchors:
-                        manifest["anchors"] = list(raw_anchors)[:5]
-                    promoted_text_group_manifests[canonical_upload_id] = manifest
-
         if not ref_id:
             continue
         why: list[str] = []
@@ -3971,8 +3741,6 @@ def _convert_to_agentic_search_response(
                 why.append("kind:table_context")
             else:
                 why.append("kind:table")
-        elif promote_text_group_ref:
-            why.append("kind:document_context")
         else:
             why.append("kind:text")
         ref_item: dict[str, object] = {
@@ -4054,14 +3822,6 @@ def _convert_to_agentic_search_response(
             ref_item["partial_index"] = True
         refs.append(ref_item)
 
-    if context is not None and promoted_text_group_manifests:
-        manifest_cache = getattr(context, "text_chunk_group_manifests", None)
-        if isinstance(manifest_cache, dict):
-            for upload_id, manifest in promoted_text_group_manifests.items():
-                manifest_cache[str(upload_id)] = dict(manifest)
-            while len(manifest_cache) > 50:
-                oldest_key = next(iter(manifest_cache))
-                manifest_cache.pop(oldest_key, None)
     if context is not None and promoted_table_anchor_manifests:
         table_manifest_cache = getattr(context, "table_row_anchor_manifests", None)
         if isinstance(table_manifest_cache, dict):
@@ -4208,15 +3968,6 @@ def _convert_to_agentic_search_response(
             "previews_full_enabled": preview_full_enabled,
             "previews_hybrid_enabled": preview_hybrid_enabled,
             "previews_attached_count": previews_attached,
-            "text_grouping_enabled": bool(text_chunk_grouping_enabled),
-            "text_group_threshold": int(text_chunk_group_threshold),
-            "text_group_candidates": len(text_chunk_upload_snippets),
-            "text_group_groups": len(text_chunk_groups),
-            "text_group_promoted_refs": len(promoted_upload_ids),
-            "document_anchor_refs": sum(
-                1 for ref in refs if isinstance(ref, Mapping) and str(ref.get("kind") or "") == "document_anchor"
-            ),
-            "text_group_manifests_cached": len(promoted_text_group_manifests),
             "table_anchor_manifests_cached": len(promoted_table_anchor_manifests),
         },
         context={
@@ -4336,20 +4087,18 @@ def _search_knowledge_handler(
 
     def _extract_agentic_manifests(
         refs: Sequence[Mapping[str, object]],
-    ) -> tuple[dict[str, dict[str, object]], dict[str, dict[str, object]]]:
+    ) -> dict[str, dict[str, object]]:
         """
-        Persist only the manifests needed to resolve document_anchor/table_chunk refs.
+        Persist only the manifests needed to resolve table_chunk refs.
 
         These manifests live on ToolExecutionContext and are populated by
         _convert_to_agentic_search_response. Cursor paging needs them to be
-        present so read_knowledge can hydrate anchors without requiring a re-search.
+        present so read_knowledge can hydrate table anchors without requiring a re-search.
         """
-        text_manifests: dict[str, dict[str, object]] = {}
         table_manifests: dict[str, dict[str, object]] = {}
-        text_cache = getattr(context, "text_chunk_group_manifests", None)
         table_cache = getattr(context, "table_row_anchor_manifests", None)
-        if not isinstance(text_cache, dict) and not isinstance(table_cache, dict):
-            return text_manifests, table_manifests
+        if not isinstance(table_cache, dict):
+            return table_manifests
 
         for ref in refs:
             if not isinstance(ref, Mapping):
@@ -4358,15 +4107,11 @@ def _search_knowledge_handler(
             ref_id = str(ref.get("id") or "").strip()
             if not ref_id:
                 continue
-            if kind == "document_anchor" and isinstance(text_cache, dict):
-                manifest = text_cache.get(ref_id)
-                if isinstance(manifest, Mapping):
-                    text_manifests[ref_id] = dict(manifest)
             if kind == "table_chunk" and isinstance(table_cache, dict):
                 manifest = table_cache.get(ref_id)
                 if isinstance(manifest, Mapping):
                     table_manifests[ref_id] = dict(manifest)
-        return text_manifests, table_manifests
+        return table_manifests
 
     def _enforce_search_rate_limit() -> Mapping[str, object] | None:
         window_seconds = int(getattr(settings, "MCP_TOOL_RATE_LIMIT_WINDOW_SECONDS", 60) or 60)
@@ -4481,15 +4226,8 @@ def _search_knowledge_handler(
                 except (TypeError, ValueError):
                     snippet_total_found_int = None
 
-                # Rehydrate anchor manifests so read_knowledge can resolve document_anchor/table_chunk refs.
-                manifests_text = session.get("text_chunk_group_manifests")
+                # Rehydrate anchor manifests so read_knowledge can resolve table_chunk refs.
                 manifests_table = session.get("table_row_anchor_manifests")
-                if isinstance(manifests_text, Mapping):
-                    cache_value = getattr(context, "text_chunk_group_manifests", None)
-                    if isinstance(cache_value, dict):
-                        for key, value in dict(manifests_text).items():
-                            if isinstance(value, Mapping):
-                                cache_value[str(key)] = dict(value)
                 if isinstance(manifests_table, Mapping):
                     cache_value = getattr(context, "table_row_anchor_manifests", None)
                     if isinstance(cache_value, dict):
@@ -4731,10 +4469,6 @@ def _search_knowledge_handler(
     fanout_budget_ms = max(
         0,
         int(getattr(settings, "MCP_SEARCH_FANOUT_BUDGET_MS", 0) or 0),
-    )
-    rrf_k = max(
-        1,
-        int(getattr(settings, "MCP_SEARCH_FANOUT_RRF_K", 60) or 60),
     )
 
     def _prune_queries(values: Sequence[str]) -> list[str]:
@@ -5053,8 +4787,10 @@ def _search_knowledge_handler(
         intent_override: str | None = None,
         limit_override: int | None = None,
         precomputed_result: object | None = None,
-        allow_auto_refine: bool = True,
     ) -> Mapping[str, object]:
+        # Thin MCP wrapper: execute a single RAG search and translate the result
+        # into MCP's stable tool contract. Retrieval planning, ranking, fusion,
+        # and fallback decisions must remain in apps.rag.ai_orchestrator.
         intent_info = intent_info_override or _query_intent(query_text)
         intent = intent_override or intent_info.get("intent")
         normalized_query = query_text.lower()
@@ -5070,7 +4806,6 @@ def _search_knowledge_handler(
         )
         aggregation_query = any(keyword in normalized_query for keyword in aggregation_keywords)
         limit_for_run = limit_override if limit_override is not None else _effective_limit(requested_limit)
-        is_refined_query = False  # Track if auto-refinement was applied (prevents loops)
         search_cache_key = _search_cache_key(
             query_text,
             limit_for_run,
@@ -5106,112 +4841,24 @@ def _search_knowledge_handler(
         if precomputed_result is not None:
             result = precomputed_result
         else:
-            # Build session_context for conversation-aware ranking
             session_context = {
                 "primary_upload_id": context.primary_upload_id,
                 "referenced_upload_ids": list(context.referenced_upload_ids),
                 "document_context": context.document_context,
             } if context else None
-
-            # =========================================================================
-            # Two-Phase Search (Document Affinity Routing)
-            # =========================================================================
-            # If we have a primary document from previous conversation turns,
-            # first search within that document, then fall back to full search
-            # if insufficient results are found.
-
-            affinity_enabled = str(getattr(settings, "RAG_DOCUMENT_AFFINITY_SEARCH_ENABLED", "true")).lower() in {"1", "true", "yes"}
-            affinity_min_results = int(getattr(settings, "RAG_DOCUMENT_AFFINITY_MIN_RESULTS", 2) or 2)
-            result = None
-
-            if affinity_enabled and context and context.primary_upload_id and context.has_strong_primary_document():
-                try:
-                    primary_uuid = uuid.UUID(context.primary_upload_id)
-                    # Phase 1: Search within primary document only
-                    affinity_upload_ids = [primary_uuid]
-                    # Include explicit upload IDs if they exist
-                    if combined_upload_ids is not None:
-                        # Only search primary doc if it's in the allowed set
-                        if primary_uuid in combined_upload_ids:
-                            affinity_upload_ids = [primary_uuid]
-                        else:
-                            affinity_upload_ids = None  # Primary not in allowed, skip affinity
-
-                    if affinity_upload_ids:
-                        affinity_result = service.search(
-                            business_profile=conversation.business_profile,
-                            query=query_text,
-                            limit=limit_for_run,
-                            identifier_filter=identifier_filter,
-                            allowed_upload_ids=affinity_upload_ids,
-                            allowed_explicit_upload_ids=agent_explicit_upload_ids,
-                            session_context=session_context,
-                        )
-                        # Check if we got enough results from affinity search
-                        affinity_snippet_count = len(getattr(affinity_result, "snippets", []) or [])
-                        if affinity_snippet_count >= affinity_min_results:
-                            result = affinity_result
-                            structured_log(
-                                "mcp",
-                                "search.affinity_hit",
-                                {
-                                    "query": query_text,
-                                    "primary_upload_id": context.primary_upload_id,
-                                    "snippets_found": affinity_snippet_count,
-                                    "limit": limit_for_run,
-                                },
-                                context={"conversation": conversation.id, "business": conversation.business_profile_id},
-                                logger_obj=logger,
-                            )
-                        else:
-                            structured_log(
-                                "mcp",
-                                "search.affinity_fallback",
-                                {
-                                    "query": query_text,
-                                    "primary_upload_id": context.primary_upload_id,
-                                    "affinity_snippets": affinity_snippet_count,
-                                    "min_required": affinity_min_results,
-                                    "reason": "insufficient_results",
-                                },
-                                context={"conversation": conversation.id, "business": conversation.business_profile_id},
-                                logger_obj=logger,
-                            )
-                except (ValueError, TypeError) as e:
-                    # Invalid UUID, skip affinity search
-                    structured_log(
-                        "mcp",
-                        "search.affinity_skip",
-                        {
-                            "query": query_text,
-                            "primary_upload_id": context.primary_upload_id if context else None,
-                            "reason": "invalid_uuid",
-                            "error": str(e)[:100],
-                        },
-                        context={"conversation": conversation.id, "business": conversation.business_profile_id},
-                        logger_obj=logger,
-                        level=logging.WARNING,
-                    )
-
-            # Phase 2: Full search (if affinity didn't return enough results)
-            if result is None:
-                result = service.search(
-                    business_profile=conversation.business_profile,
-                    query=query_text,
-                    limit=limit_for_run,
-                    identifier_filter=identifier_filter,
-                    allowed_upload_ids=combined_upload_ids,
-                    allowed_explicit_upload_ids=agent_explicit_upload_ids,
-                    session_context=session_context,
-                )
+            result = service.search(
+                business_profile=conversation.business_profile,
+                query=query_text,
+                limit=limit_for_run,
+                identifier_filter=identifier_filter,
+                allowed_upload_ids=combined_upload_ids,
+                allowed_explicit_upload_ids=agent_explicit_upload_ids,
+                session_context=session_context,
+            )
         combined_snippets: list[object] = list(getattr(result, "snippets", []) or [])
         snippet_payloads = _serialize_snippets(combined_snippets)
 
-        # =====================================================================
-        # Document Context Tracking (Conversation-Aware RAG)
-        # =====================================================================
-        # Track which documents were referenced in search results for follow-up queries.
-        # This enables query rewriting and document affinity routing.
+        # Track referenced documents so later turns can keep document context.
         doc_context_enabled = str(getattr(settings, "RAG_DOCUMENT_CONTEXT_ENABLED", "true")).lower() in {"1", "true", "yes"}
         if doc_context_enabled:
             for payload in snippet_payloads:
@@ -5304,183 +4951,6 @@ def _search_knowledge_handler(
             limit_value=limit_for_run,
             status=result.status,
         )
-
-        # =====================================================================
-        # Confidence-Gated Retrieval Critique (Phase 2 Agentic RAG)
-        # =====================================================================
-        # Compute confidence score and optionally invoke LLM critique for
-        # low-confidence results. This catches semantic collisions that
-        # parallel table search might miss.
-        confidence_result = None
-        critique_result = None
-        critique_enabled = str(getattr(settings, "RAG_RETRIEVAL_CRITIQUE_ENABLED", "true")).lower() in {"1", "true", "yes"}
-
-        if critique_enabled and snippet_payloads:
-            try:
-                from apps.rag.retrieval_critique import (
-                    get_confidence_scorer,
-                    get_retrieval_critique,
-                )
-
-                scorer = get_confidence_scorer()
-                confidence_result = scorer.compute(
-                    query=query_text,
-                    snippets=snippet_payloads,
-                    diagnostics=dict(result.diagnostics or {}),
-                )
-
-                structured_log(
-                    "mcp",
-                    "search.confidence",
-                    {
-                        "query": query_text[:50],
-                        "score": round(confidence_result.score, 3),
-                        "should_critique": confidence_result.should_critique,
-                        "reasons": confidence_result.reasons[:3],
-                    },
-                    context={
-                        "conversation": conversation.id,
-                        "business": conversation.business_profile_id,
-                    },
-                    logger_obj=logger,
-                )
-
-                # Invoke LLM critique if confidence is low
-                if confidence_result.should_critique:
-                    critique = get_retrieval_critique()
-                    critique_result = critique.evaluate(
-                        query=query_text,
-                        top_results=snippet_payloads[:5],
-                    )
-
-                    structured_log(
-                        "mcp",
-                        "search.critique",
-                        {
-                            "query": query_text[:50],
-                            "verdict": critique_result.verdict,
-                            "confidence": critique_result.confidence,
-                            "explanation": critique_result.explanation[:100],
-                            "suggested_refinement": critique_result.suggested_refinement,
-                        },
-                        context={
-                            "conversation": conversation.id,
-                            "business": conversation.business_profile_id,
-                        },
-                        logger_obj=logger,
-                    )
-
-                    # =============================================================
-                    # Auto-Refinement: Re-search with suggested query if mismatch
-                    # =============================================================
-                    auto_refine_enabled = (
-                        allow_auto_refine
-                        and str(
-                            getattr(settings, "RAG_RETRIEVAL_CRITIQUE_AUTO_REFINE", "true")
-                        ).lower() in {"1", "true", "yes"}
-                    )
-
-                    if (
-                        auto_refine_enabled
-                        and critique_result.verdict == "mismatch"
-                        and critique_result.suggested_refinement
-                        and not is_refined_query  # Prevent infinite loops
-                    ):
-                        refined_query = critique_result.suggested_refinement
-                        structured_log(
-                            "mcp",
-                            "search.auto_refine",
-                            {
-                                "original_query": query_text[:50],
-                                "refined_query": refined_query[:50],
-                                "reason": critique_result.explanation[:100],
-                            },
-                            context={
-                                "conversation": conversation.id,
-                                "business": conversation.business_profile_id,
-                            },
-                            logger_obj=logger,
-                        )
-
-                        # Re-run search with refined query
-                        refined_result = service.search(
-                            business_profile=conversation.business_profile,
-                            query=refined_query,
-                            limit=limit_for_run,
-                            identifier_filter=identifier_filter,
-                            allowed_upload_ids=combined_upload_ids,
-                            allowed_explicit_upload_ids=agent_explicit_upload_ids,
-                            session_context=session_context,
-                        )
-
-                        if refined_result and refined_result.snippets:
-                            refined_snippet_payloads = _serialize_snippets(refined_result.snippets)
-                            for refined_payload in refined_snippet_payloads:
-                                refined_payload["refinement_source"] = "auto_critique"
-
-                            # Sanitize and use refined results
-                            refined_snippet_payloads = _sanitize_snippet_payloads_for_prompt(
-                                refined_snippet_payloads, conversation=conversation
-                            )
-
-                            if refined_snippet_payloads:
-                                # Replace original results with refined ones
-                                original_snippets = snippet_payloads
-                                snippet_payloads = refined_snippet_payloads
-                                result = refined_result
-                                is_refined_query = True
-
-                                structured_log(
-                                    "mcp",
-                                    "search.auto_refine.success",
-                                    {
-                                        "original_count": len(original_snippets),
-                                        "refined_count": len(snippet_payloads),
-                                        "refined_query": refined_query[:50],
-                                    },
-                                    context={
-                                        "conversation": conversation.id,
-                                        "business": conversation.business_profile_id,
-                                    },
-                                    logger_obj=logger,
-                                )
-
-                                # Track refinement in context (Phase 4)
-                                context.track_refinement(
-                                    original_query=query_text,
-                                    refined_query=refined_query,
-                                    reason=critique_result.explanation,
-                                    verdict=critique_result.verdict,
-                                    auto_applied=True,
-                                )
-
-                    # Track non-applied refinement suggestions (when auto-refine disabled or failed)
-                    if (
-                        critique_result.verdict == "mismatch"
-                        and critique_result.suggested_refinement
-                        and not is_refined_query
-                    ):
-                        context.track_refinement(
-                            original_query=query_text,
-                            refined_query=critique_result.suggested_refinement,
-                            reason=critique_result.explanation,
-                            verdict=critique_result.verdict,
-                            auto_applied=False,
-                        )
-
-            except Exception as e:
-                # Critique failure should not block retrieval
-                structured_log(
-                    "mcp",
-                    "search.critique_error",
-                    {"query": query_text[:50], "error": str(e)[:100]},
-                    context={"conversation": conversation.id},
-                    logger_obj=logger,
-                    level=logging.WARNING,
-                )
-
-        # Track refinement in payload
-        refinement_applied = is_refined_query
         result_diagnostics = dict(result.diagnostics or {})
 
         payload = {
@@ -5494,16 +4964,6 @@ def _search_knowledge_handler(
             "diagnostics": result_diagnostics,
             "snippets": snippet_payloads,
         }
-
-        # Add confidence and critique info to payload
-        if confidence_result:
-            payload["retrieval_confidence"] = confidence_result.as_dict()
-        if critique_result:
-            payload["retrieval_critique"] = critique_result.as_dict()
-            if refinement_applied:
-                payload["refinement_applied"] = True
-                payload["original_query"] = query_text
-                payload["refined_query"] = critique_result.suggested_refinement
 
         payload["read_required_summary"] = {
             "any": read_required,
@@ -5681,199 +5141,23 @@ def _search_knowledge_handler(
             return f"id:{identifier}"
         return json.dumps(snippet, sort_keys=True, default=str)
 
-    def _snippet_representation(snippet: Mapping[str, object]) -> str:
-        metadata = snippet.get("metadata") if isinstance(snippet.get("metadata"), Mapping) else {}
-        if bool(snippet.get("is_table_chunk")) or bool(metadata.get("is_table_chunk")):
-            return "table"
-        if str(snippet.get("entity_type") or "").strip():
-            return "json"
-        return "text"
-
-    def _table_match_is_strong(snippet: Mapping[str, object]) -> bool:
-        diagnostics = (
-            snippet.get("source_diagnostics")
-            if isinstance(snippet.get("source_diagnostics"), Mapping)
-            else {}
-        )
-        if bool(diagnostics.get("specific_match_strong")):
-            return True
-        try:
-            specific_count = int(diagnostics.get("specific_match_count") or 0)
-        except (TypeError, ValueError):
-            specific_count = 0
-        try:
-            specific_ratio = float(diagnostics.get("specific_match_ratio") or 0.0)
-        except (TypeError, ValueError):
-            specific_ratio = 0.0
-        return bool(specific_count >= 2 and specific_ratio >= 0.34)
-
-    def _fusion_query_tokens(query_value: object) -> tuple[str, ...]:
-        text = str(query_value or "").strip().lower()
-        if not text:
-            return tuple()
-        normalized = re.sub(r"[^\w%$ ]+", " ", text)
-        normalized = re.sub(r"\s+", " ", normalized).strip()
-        if not normalized:
-            return tuple()
-        stopwords = {
-            "a",
-            "an",
-            "and",
-            "are",
-            "as",
-            "at",
-            "be",
-            "by",
-            "for",
-            "from",
-            "how",
-            "in",
-            "is",
-            "it",
-            "of",
-            "on",
-            "or",
-            "the",
-            "to",
-            "what",
-            "which",
-            "with",
-        }
-        tokens: list[str] = []
-        seen: set[str] = set()
-        for token in normalized.split(" "):
-            if not token:
-                continue
-            if len(token) < 3:
-                continue
-            if token in stopwords:
-                continue
-            if token in seen:
-                continue
-            seen.add(token)
-            tokens.append(token)
-        return tuple(tokens)
-
-    def _fusion_text(snippet: Mapping[str, object]) -> str:
-        for key in ("content", "summary", "preview", "label", "title"):
-            value = snippet.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip().lower()
-        return ""
-
-    def _fusion_token_coverage(snippet: Mapping[str, object], tokens: Sequence[str]) -> float:
-        if not tokens:
-            return 0.0
-        text = _fusion_text(snippet)
-        if not text:
-            return 0.0
-        matches = sum(1 for token in tokens if token and token in text)
-        if matches <= 0:
-            return 0.0
-        return matches / max(1, len(tokens))
-
     if len(runs) > 1:
-        rrf_scores: dict[str, float] = defaultdict(float)
-        fused_scores: dict[str, float] = {}
-        best_payload: dict[str, dict[str, object]] = {}
-        best_rank: dict[str, int] = {}
-        consensus_runs: dict[str, set[int]] = defaultdict(set)
-        coverage_values: dict[str, list[float]] = defaultdict(list)
-        strong_table_votes: dict[str, int] = defaultdict(int)
-        weak_table_votes: dict[str, int] = defaultdict(int)
-        query_tokens_per_run: dict[int, tuple[str, ...]] = {
-            idx: _fusion_query_tokens(run.get("query"))
-            for idx, run in enumerate(runs)
-            if isinstance(run, Mapping)
-        }
-        for run_idx, run in enumerate(runs):
-            run_tokens = query_tokens_per_run.get(run_idx, tuple())
-            for rank, snippet in enumerate(run.get("snippets", []), start=1):
-                key = _snippet_dedupe_key(snippet)
-                rrf_scores[key] += 1.0 / (rrf_k + rank)
-                coverage = _fusion_token_coverage(snippet, run_tokens)
-                if coverage > 0:
-                    consensus_runs[key].add(run_idx)
-                coverage_values[key].append(coverage)
-                if _snippet_representation(snippet) == "table":
-                    if _table_match_is_strong(snippet):
-                        strong_table_votes[key] += 1
-                    else:
-                        weak_table_votes[key] += 1
-                current_best = best_rank.get(key)
-                if current_best is None or rank < current_best:
-                    best_rank[key] = rank
-                    best_payload[key] = snippet
+        fusion = {"method": "concat_dedupe", "runs": len(runs)}
 
-        run_count = max(1, len(runs))
-        for key, score in rrf_scores.items():
-            run_consensus = len(consensus_runs.get(key, set()))
-            consensus_ratio = run_consensus / run_count
-            coverages = coverage_values.get(key, [])
-            coverage_avg = (sum(coverages) / len(coverages)) if coverages else 0.0
-            adjusted = score
-            adjusted += 0.22 * consensus_ratio
-            adjusted += 0.18 * coverage_avg
-            payload = best_payload.get(key) or {}
-            if _snippet_representation(payload) == "table" and strong_table_votes.get(key, 0) <= 0:
-                adjusted -= 0.14
-            fused_scores[key] = adjusted
-
-        ordered = sorted(
-            fused_scores.items(),
-            key=lambda item: (
-                -item[1],
-                -len(consensus_runs.get(item[0], set())),
-                best_rank.get(item[0], 10**9),
-            ),
-        )
-        skipped_weak_table_keys: list[str] = []
-        weak_table_selected = 0
-        weak_table_cap_ratio = float(getattr(settings, "MCP_SEARCH_FUSION_WEAK_TABLE_CAP_RATIO", 0.5) or 0.5)
-        weak_table_cap_ratio = max(0.0, min(1.0, weak_table_cap_ratio))
-        weak_table_cap = None
-        if clip_limit:
-            weak_table_cap = max(1, int(clip_limit * weak_table_cap_ratio))
-        for key, _score in ordered:
-            payload = best_payload.get(key)
-            if payload:
-                is_weak_table = bool(
-                    _snippet_representation(payload) == "table"
-                    and strong_table_votes.get(key, 0) <= 0
-                )
-                if weak_table_cap is not None and is_weak_table and weak_table_selected >= weak_table_cap:
-                    skipped_weak_table_keys.append(key)
-                    continue
-                deduped_snippets.append(payload)
-                if is_weak_table:
-                    weak_table_selected += 1
+    seen_snippets: set[str] = set()
+    # Passive batching only: preserve RAG's ordering and remove exact duplicates.
+    # Do not add MCP-side semantic reranking/fusion here.
+    for run in runs:
+        for snippet in run.get("snippets", []):
+            dedup_key = _snippet_dedupe_key(snippet)
+            if dedup_key in seen_snippets:
+                continue
+            seen_snippets.add(dedup_key)
+            deduped_snippets.append(snippet)
             if clip_limit and len(deduped_snippets) >= clip_limit:
                 break
-        if clip_limit and len(deduped_snippets) < clip_limit and skipped_weak_table_keys:
-            for key in skipped_weak_table_keys:
-                payload = best_payload.get(key)
-                if not payload:
-                    continue
-                deduped_snippets.append(payload)
-                if len(deduped_snippets) >= clip_limit:
-                    break
-        fusion = {"method": "rrf", "k": rrf_k, "runs": len(runs)}
-        if isinstance(fusion, dict):
-            fusion["consensus_weighting"] = True
-            fusion["weak_table_cap"] = weak_table_cap
-    else:
-        seen_snippets: set[str] = set()
-        for run in runs:
-            for snippet in run.get("snippets", []):
-                dedup_key = _snippet_dedupe_key(snippet)
-                if dedup_key in seen_snippets:
-                    continue
-                seen_snippets.add(dedup_key)
-                deduped_snippets.append(snippet)
-                if clip_limit and len(deduped_snippets) >= clip_limit:
-                    break
-            if clip_limit and len(deduped_snippets) >= clip_limit:
-                break
+        if clip_limit and len(deduped_snippets) >= clip_limit:
+            break
 
     results_full = deduped_snippets
     total_found = len(results_full)
@@ -6091,7 +5375,7 @@ def _search_knowledge_handler(
             if pagination_enabled and has_more_refs and refs_full:
                 session_id = str(uuid.uuid4())
                 cache_key = _search_cursor_cache_key(conversation=conversation, session_id=session_id)
-                manifests_text, manifests_table = _extract_agentic_manifests(refs_full)
+                manifests_table = _extract_agentic_manifests(refs_full)
                 completeness_base = agentic_full.get("completeness")
                 completeness_base_out = dict(completeness_base) if isinstance(completeness_base, Mapping) else {}
                 completeness_base_out["refs_total_found"] = int(refs_total_found)
@@ -6108,7 +5392,6 @@ def _search_knowledge_handler(
                         "refs_total_found": int(refs_total_found),
                         "refs": refs_full,
                         "completeness_base": completeness_base_out,
-                        "text_chunk_group_manifests": manifests_text,
                         "table_row_anchor_manifests": manifests_table,
                     },
                     cursor_ttl_seconds,
@@ -6403,38 +5686,6 @@ def _agentic_read_v2_handler(
                 ),
             }
 
-    try:
-        text_group_max_chars = int(
-            getattr(
-                settings,
-                "MCP_AGENTIC_TEXT_CHUNK_GROUP_MAX_CHARS",
-                int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_DEFAULT) * 3,
-            )
-            or int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_DEFAULT) * 3
-        )
-    except (TypeError, ValueError):
-        text_group_max_chars = int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_DEFAULT) * 3
-    text_group_max_chars = max(
-        int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_DEFAULT),
-        min(int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_MAX) * 4, int(text_group_max_chars)),
-    )
-
-    try:
-        text_group_neighbor_chunks = int(
-            getattr(settings, "MCP_AGENTIC_TEXT_CHUNK_GROUP_NEIGHBOR_CHUNKS", 1) or 1
-        )
-    except (TypeError, ValueError):
-        text_group_neighbor_chunks = 1
-    text_group_neighbor_chunks = max(0, min(5, int(text_group_neighbor_chunks)))
-
-    try:
-        text_group_max_window_chunks = int(
-            getattr(settings, "MCP_AGENTIC_TEXT_CHUNK_GROUP_MAX_WINDOW_CHUNKS", 16) or 16
-        )
-    except (TypeError, ValueError):
-        text_group_max_window_chunks = 16
-    text_group_max_window_chunks = max(1, min(200, int(text_group_max_window_chunks)))
-
     # The backend chooses the correct representation and paging strategy.
     # `mode` is intentionally not part of the public agentic contract.
     mode = "auto"
@@ -6614,107 +5865,6 @@ def _agentic_read_v2_handler(
                 cache_value.pop(oldest_handle_value, None)
 
         return handle
-
-    def _load_text_group_manifest(upload_id: str) -> dict[str, object] | None:
-        cache_value = getattr(context, "text_chunk_group_manifests", None)
-        if not isinstance(cache_value, dict):
-            return None
-        raw_manifest = cache_value.get(str(upload_id))
-        if not isinstance(raw_manifest, Mapping):
-            return None
-
-        chunk_indices: list[int] = []
-        raw_indices = raw_manifest.get("chunk_indices")
-        if isinstance(raw_indices, list):
-            for value in raw_indices:
-                try:
-                    parsed = int(value)
-                except (TypeError, ValueError):
-                    continue
-                if parsed >= 0:
-                    chunk_indices.append(parsed)
-        chunk_indices = sorted(set(chunk_indices))
-
-        chunk_range: list[int] | None = None
-        raw_range = raw_manifest.get("chunk_range")
-        if isinstance(raw_range, list) and len(raw_range) == 2:
-            try:
-                range_start = int(raw_range[0])
-                range_end = int(raw_range[1])
-            except (TypeError, ValueError):
-                range_start = -1
-                range_end = -1
-            if range_start >= 0 and range_end >= range_start:
-                chunk_range = [range_start, range_end]
-        if chunk_range is None and chunk_indices:
-            chunk_range = [chunk_indices[0], chunk_indices[-1]]
-        if chunk_range is None:
-            return None
-
-        anchors: list[int] = []
-        raw_anchors = raw_manifest.get("anchors")
-        if isinstance(raw_anchors, list):
-            for entry in raw_anchors:
-                if isinstance(entry, Mapping):
-                    parsed = _coerce_int(entry.get("chunk_index"))
-                else:
-                    parsed = _coerce_int(entry)
-                if parsed is None or parsed < 0:
-                    continue
-                anchors.append(int(parsed))
-        if anchors:
-            seen_chunks: set[int] = set()
-            anchors = [idx for idx in anchors if (idx not in seen_chunks and not seen_chunks.add(idx))]
-
-        matched_chunk_index = _coerce_int(raw_manifest.get("matched_chunk_index"))
-        if matched_chunk_index is None:
-            matched_chunk_index = -1
-        if matched_chunk_index < 0:
-            if anchors:
-                matched_chunk_index = int(anchors[0])
-            else:
-                matched_chunk_index = -1
-
-        if matched_chunk_index >= 0:
-            if matched_chunk_index in anchors:
-                anchors = [matched_chunk_index] + [idx for idx in anchors if idx != matched_chunk_index]
-            else:
-                anchors = [matched_chunk_index] + anchors
-        anchors = anchors[:5]
-
-        pages: list[int] = []
-        raw_pages = raw_manifest.get("pages")
-        if isinstance(raw_pages, list):
-            for value in raw_pages:
-                try:
-                    parsed = int(value)
-                except (TypeError, ValueError):
-                    continue
-                if parsed >= 1:
-                    pages.append(parsed)
-        pages = sorted(set(pages))
-
-        try:
-            chunk_count = int(raw_manifest.get("chunk_count") or 0)
-        except (TypeError, ValueError):
-            chunk_count = 0
-
-        try:
-            char_estimate = int(raw_manifest.get("char_estimate") or 0)
-        except (TypeError, ValueError):
-            char_estimate = 0
-
-        return {
-            "upload_id": str(upload_id),
-            "chunk_count": max(0, chunk_count),
-            "chunk_indices": chunk_indices,
-            "chunk_range": chunk_range,
-            "matched_chunk_index": int(matched_chunk_index) if matched_chunk_index >= 0 else None,
-            "anchors": list(anchors),
-            "pages": pages[:50],
-            "char_estimate": max(0, char_estimate),
-            "best_score": raw_manifest.get("best_score"),
-        }
 
     def _load_table_anchor_manifest(*, ref_id: str, table_id: str | None = None) -> dict[str, object] | None:
         cache_value = getattr(context, "table_row_anchor_manifests", None)
@@ -7730,14 +6880,7 @@ def _agentic_read_v2_handler(
     deferred: list[dict[str, object]] = []
     errors: list[dict[str, object]] = []
 
-    expanded_upload_reads_seen: set[str] = set()
     successfully_read_ids: set[str] = set()
-    text_group_manifest_lookups = 0
-    text_group_manifest_hits = 0
-    text_group_manifest_misses = 0
-    text_group_window_reads = 0
-    text_group_chunk_refs_covered = 0
-    text_group_upload_refs_covered = 0
     table_anchor_manifest_lookups = 0
     table_anchor_manifest_hits = 0
     table_anchor_fallback_reads = 0
@@ -7809,18 +6952,6 @@ def _agentic_read_v2_handler(
         if access_error:
             errors.append(access_error)
             read.append({"id": item_id, "status": "error"})
-            continue
-
-        if chunk_record is not None and upload_id in expanded_upload_reads_seen and not cursor_payload:
-            text_group_chunk_refs_covered += 1
-            read.append(
-                {
-                    "id": item_id,
-                    "status": "covered",
-                    "chars": 0,
-                    "hint": "Covered by an earlier document context read for this upload.",
-                }
-            )
             continue
 
         # Block dataset/spreadsheet reads through read_knowledge (not supported in agentic KB tools).
@@ -8038,189 +7169,39 @@ def _agentic_read_v2_handler(
                 # Tables page via row_start/row_limit (no cursors).
                 next_cursor = None
             elif upload_record is not None and chunk_record is None:
-                text_group_manifest_lookups += 1
-                text_group_manifest = _load_text_group_manifest(upload_id)
-                if text_group_manifest is not None:
-                    text_group_manifest_hits += 1
-                    if upload_id in expanded_upload_reads_seen:
-                        text_group_upload_refs_covered += 1
-                        read.append(
-                            {
-                                "id": item_id,
-                                "status": "covered",
-                                "chars": 0,
-                                "hint": "Covered by an earlier document context read for this upload.",
-                            }
-                        )
-                        continue
-
-                    chunk_range = text_group_manifest.get("chunk_range")
-                    chunk_indices = text_group_manifest.get("chunk_indices")
-                    if (
-                        not isinstance(chunk_range, list)
-                        or len(chunk_range) != 2
-                        or not isinstance(chunk_indices, list)
-                        or not chunk_indices
-                    ):
-                        deferred.append(
-                            {
-                                "id": item_id,
-                                "reason": "manifest_missing",
-                                "hint": "Document grouping metadata expired. Re-run search_knowledge before reading this document anchor.",
-                            }
-                        )
-                        read.append({"id": item_id, "status": "deferred"})
-                        continue
-
-                    range_start = int(chunk_range[0])
-                    range_end = int(chunk_range[1])
-
-                    grouped_budget_cap = min(
-                        int(per_item_budget),
-                        int(max_chars_allowed),
-                        int(text_group_max_chars),
-                    )
-                    grouped_budget_cap = max(200, grouped_budget_cap)
-                    text_group_window_reads += 1
-                    max_window_chunks = max(1, int(text_group_max_window_chunks))
-                    neighbor_chunks = max(0, int(text_group_neighbor_chunks))
-
-                    def _compute_window_for_anchor(anchor_idx: int) -> tuple[int, int]:
-                        core_span = (2 * neighbor_chunks) + 1
-                        if core_span >= max_window_chunks:
-                            start = int(anchor_idx) - int(max_window_chunks // 2)
-                            end = int(start + max_window_chunks - 1)
-                        else:
-                            remaining = int(max_window_chunks - core_span)
-                            extra_left = int(remaining // 2)
-                            extra_right = int(remaining - extra_left)
-                            start = int(anchor_idx) - neighbor_chunks - extra_left
-                            end = int(anchor_idx) + neighbor_chunks + extra_right
-                        if start < 0:
-                            end += -start
-                            start = 0
-                        if end < start:
-                            end = start
-                        return int(start), int(end)
-
-                    def _compute_window_for_range() -> tuple[int, int]:
-                        start = max(0, range_start - neighbor_chunks)
-                        end = max(start, range_end + neighbor_chunks)
-                        if (end - start + 1) > max_window_chunks:
-                            start = max(0, range_start - neighbor_chunks)
-                            end = int(start + max_window_chunks - 1)
-                            if end < range_end:
-                                end = int(range_end)
-                                start = max(0, int(end - max_window_chunks + 1))
-                        return int(start), int(end)
-
-                    # Prefer narrow windows around matched chunk anchors (up to 2) to avoid
-                    # missing far-apart clusters under the max-window cap. Fall back to a
-                    # chunk_range-derived window when anchors don't yield content.
-                    content_text = ""
-                    cursor_out = None
-                    complete = True
-                    window_start = 0
-                    window_end = 0
-
-                    anchors_to_try: list[int] = []
-                    anchor_candidates = text_group_manifest.get("anchors")
-                    if isinstance(anchor_candidates, list):
-                        for entry in anchor_candidates:
-                            parsed = _coerce_int(entry)
-                            if parsed is None or parsed < 0:
-                                continue
-                            anchors_to_try.append(int(parsed))
-                    if anchors_to_try:
-                        seen_anchor_chunks: set[int] = set()
-                        anchors_to_try = [
-                            idx
-                            for idx in anchors_to_try
-                            if (idx not in seen_anchor_chunks and not seen_anchor_chunks.add(idx))
-                        ]
-
-                    for anchor_idx in anchors_to_try[:2]:
-                        candidate_start, candidate_end = _compute_window_for_anchor(int(anchor_idx))
-                        candidate_text, candidate_cursor, candidate_complete = _read_chunk_window_segment(
-                            item_id=item_id,
-                            upload_id=upload_id,
-                            start_index=int(candidate_start),
-                            end_index=int(candidate_end),
-                            current_index=int(candidate_start),
-                            start_offset=0,
-                            budget_chars=grouped_budget_cap,
-                            business_profile=business,
-                        )
-                        if isinstance(candidate_text, str) and candidate_text.strip():
-                            content_text = candidate_text
-                            cursor_out = candidate_cursor
-                            complete = candidate_complete
-                            window_start, window_end = int(candidate_start), int(candidate_end)
-                            break
-
-                    if not (isinstance(content_text, str) and content_text.strip()):
-                        window_start, window_end = _compute_window_for_range()
-                        content_text, cursor_out, complete = _read_chunk_window_segment(
-                            item_id=item_id,
-                            upload_id=upload_id,
-                            start_index=int(window_start),
-                            end_index=int(window_end),
-                            current_index=int(window_start),
-                            start_offset=0,
-                            budget_chars=grouped_budget_cap,
-                            business_profile=business,
-                        )
-
-                    payload["text"] = content_text
-                    evidence_kind = "document_context"
-                    next_cursor = cursor_out.get("cursor") if cursor_out else None
-                    evidence_coverage_hint = {
-                        "chunk_count": int(text_group_manifest.get("chunk_count") or len(chunk_indices)),
-                        "chunk_indices": list(chunk_indices)[:100],
-                        "chunk_range": [int(range_start), int(range_end)],
-                        "window_range": [int(window_start), int(window_end)],
-                    }
-                    pages = text_group_manifest.get("pages")
-                    if isinstance(pages, list) and pages:
-                        evidence_coverage_hint["pages"] = list(pages)[:50]
-                    if isinstance(content_text, str) and content_text:
-                        expanded_upload_reads_seen.add(upload_id)
-                else:
-                    text_group_manifest_misses += 1
-                    # No manifest: degrade gracefully to the existing fallback path.
-                    page_number = 1
+                page_number = 1
+                has_page_blocks = False
+                try:
+                    from apps.knowledge.models import KnowledgeUploadPageBlock
+                    has_page_blocks = KnowledgeUploadPageBlock.objects.filter(
+                        upload_id=upload_id,
+                        page__page_number=page_number,
+                    ).exclude(text="").exists()
+                except Exception:
                     has_page_blocks = False
-                    try:
-                        from apps.knowledge.models import KnowledgeUploadPageBlock
-                        has_page_blocks = KnowledgeUploadPageBlock.objects.filter(
-                            upload_id=upload_id,
-                            page__page_number=page_number,
-                        ).exclude(text="").exists()
-                    except Exception:
-                        has_page_blocks = False
 
-                    if has_page_blocks:
-                        content_text, cursor_out, complete = _read_page_blocks_segment(
-                            item_id=item_id,
-                            upload=upload,  # type: ignore[arg-type]
-                            upload_id=upload_id,
-                            page_number=page_number,
-                            start_order=0,
-                            start_offset=0,
-                            budget_chars=per_item_budget,
-                        )
-                        payload["text"] = content_text
-                        next_cursor = cursor_out.get("cursor") if cursor_out else None
-                    else:
-                        errors.append(
-                            {
-                                "id": item_id,
-                                "error_code": "not_found",
-                                "hint": "No readable content found for that id.",
-                            }
-                        )
-                        read.append({"id": item_id, "status": "error"})
-                        continue
+                if has_page_blocks:
+                    content_text, cursor_out, complete = _read_page_blocks_segment(
+                        item_id=item_id,
+                        upload=upload,  # type: ignore[arg-type]
+                        upload_id=upload_id,
+                        page_number=page_number,
+                        start_order=0,
+                        start_offset=0,
+                        budget_chars=per_item_budget,
+                    )
+                    payload["text"] = content_text
+                    next_cursor = cursor_out.get("cursor") if cursor_out else None
+                else:
+                    errors.append(
+                        {
+                            "id": item_id,
+                            "error_code": "not_found",
+                            "hint": "No readable content found for that id.",
+                        }
+                    )
+                    read.append({"id": item_id, "status": "error"})
+                    continue
             elif mode != "excerpt" and is_table_chunk and table_id and (mode == "table_rows" or table_role not in {"row"}):
                 payload_type = "table"
                 evidence_kind = "table_rows"
@@ -8800,11 +7781,6 @@ def _agentic_read_v2_handler(
         artifact_items = sum(1 for entry in read if isinstance(entry, Mapping) and str(entry.get("status") or "") == "artifact")
         truncated_items = sum(1 for entry in read if isinstance(entry, Mapping) and str(entry.get("status") or "") in {"truncated", "partial"})
         response_chars = _payload_len_with_budget(response)
-        text_group_manifest_hit_rate = (
-            float(text_group_manifest_hits) / float(text_group_manifest_lookups)
-            if text_group_manifest_lookups > 0
-            else None
-        )
         structured_log(
             "mcp",
             "read_knowledge.agentic_v2",
@@ -8819,17 +7795,6 @@ def _agentic_read_v2_handler(
                 "max_chars": int(max_chars),
                 "output_chars": int(response_chars),
                 "output_limit": int(output_limit or 0),
-                "text_group_manifest_lookups": int(text_group_manifest_lookups),
-                "text_group_manifest_hits": int(text_group_manifest_hits),
-                "text_group_manifest_misses": int(text_group_manifest_misses),
-                "text_group_manifest_hit_rate": (
-                    round(float(text_group_manifest_hit_rate), 4)
-                    if text_group_manifest_hit_rate is not None
-                    else None
-                ),
-                "text_group_window_reads": int(text_group_window_reads),
-                "text_group_chunk_refs_covered": int(text_group_chunk_refs_covered),
-                "text_group_upload_refs_covered": int(text_group_upload_refs_covered),
                 "table_anchor_manifest_lookups": int(table_anchor_manifest_lookups),
                 "table_anchor_manifest_hits": int(table_anchor_manifest_hits),
                 "table_anchor_fallback_reads": int(table_anchor_fallback_reads),

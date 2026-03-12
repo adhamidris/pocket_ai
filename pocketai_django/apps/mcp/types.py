@@ -122,10 +122,6 @@ class ToolExecutionContext:
     # read_knowledge calls can reuse exact IDs instead of guessing.
     recent_search_refs: list[dict[str, object]] = dataclasses.field(default_factory=list)
     recent_search_refs_updated: bool = False
-    # Search-time text-group manifests keyed by upload_id.
-    # Used by read_knowledge v2 to resolve grouped document anchors into
-    # bounded chunk windows around matched regions.
-    text_chunk_group_manifests: dict[str, dict[str, object]] = dataclasses.field(default_factory=dict)
     # Search-time table row anchor manifests keyed by promoted table ref id.
     # Used by read_knowledge v2 to start first table reads near matched rows.
     table_row_anchor_manifests: dict[str, dict[str, object]] = dataclasses.field(default_factory=dict)

@@ -103,6 +103,57 @@ class AgenticSearchTableRefTests(SimpleTestCase):
         self.assertNotIn("matched_row_index", first_ref.get("coverage_hint", {}))
         self.assertNotIn("anchor_row_indexes", first_ref.get("coverage_hint", {}))
 
+    def test_text_chunk_hits_remain_distinct_refs_without_document_grouping(self) -> None:
+        upload_id = str(uuid.uuid4())
+        first_chunk_id = str(uuid.uuid4())
+        second_chunk_id = str(uuid.uuid4())
+        legacy_payload = {
+            "tool": "search_knowledge",
+            "status": "ok",
+            "snippets": [
+                {
+                    "id": "snippet-1",
+                    "chunk_id": first_chunk_id,
+                    "upload_id": upload_id,
+                    "title": "Handbook chunk 4",
+                    "public_label": "Handbook chunk 4",
+                    "summary": "Personal loan assessment fees are charged once.",
+                    "content": "Personal loan assessment fees are charged once.",
+                    "search_stage": "semantic",
+                    "confidence_score": 0.82,
+                    "chunk_index": 4,
+                    "page_number": 2,
+                },
+                {
+                    "id": "snippet-2",
+                    "chunk_id": second_chunk_id,
+                    "upload_id": upload_id,
+                    "title": "Handbook chunk 7",
+                    "public_label": "Handbook chunk 7",
+                    "summary": "Assessment fee details and supporting notes.",
+                    "content": "Assessment fee details and supporting notes.",
+                    "search_stage": "semantic",
+                    "confidence_score": 0.79,
+                    "chunk_index": 7,
+                    "page_number": 3,
+                },
+            ],
+            "completeness": {"shown": 2, "total_found": 2},
+        }
+
+        result = tools._convert_to_agentic_search_response(
+            legacy_payload,
+            conversation=SimpleNamespace(id=uuid.uuid4(), business_profile_id=uuid.uuid4()),
+            context=ToolExecutionContext(),
+        )
+
+        refs = result.get("refs") or []
+        self.assertEqual(len(refs), 2)
+        self.assertEqual([ref.get("id") for ref in refs], [first_chunk_id, second_chunk_id])
+        self.assertEqual([ref.get("kind") for ref in refs], ["text_anchor", "text_anchor"])
+        self.assertEqual(refs[0].get("coverage_hint", {}).get("page"), 2)
+        self.assertEqual(refs[1].get("coverage_hint", {}).get("page"), 3)
+
 
 @override_settings(MCP_NEW_CONTRACT_ENABLED=True, MCP_AGENTIC_READ_V2_ENABLED=True)
 class AgenticReadTableAnchorMergeTests(TestCase):

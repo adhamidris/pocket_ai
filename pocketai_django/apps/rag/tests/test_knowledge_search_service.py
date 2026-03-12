@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import time
 import uuid
 from unittest import mock
 
 from django.core.cache import cache
-from django.test import SimpleTestCase, TestCase
+from django.test import SimpleTestCase, TestCase, override_settings
 
 from apps.accounts.models import (
     BusinessProfile,
@@ -333,6 +334,106 @@ class KnowledgeSearchServiceAutoScoringTests(SimpleTestCase):
         self.assertGreater(scores["auto_text_score"], scores["auto_table_score"])
         self.assertGreater(scores["auto_text_semantic_overlap_avg"], 0.0)
         self.assertEqual(scores["auto_score_text_hits"], 1)
+
+
+class KnowledgeSearchServiceRegressionContractTests(SimpleTestCase):
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_public_confidence_ignores_recency_only_inflation(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        upload = mock.Mock()
+        upload.metadata = {}
+        upload.display_name = "Recent Lease"
+        upload.source_name = "File Upload"
+        upload.external_reference = ""
+        upload.ingestion_metadata = {}
+        upload.id = uuid.uuid4()
+        upload.get_source_type_display.return_value = "File Upload"
+        chunk = mock.Mock()
+        chunk.id = uuid.uuid4()
+        chunk.upload = upload
+        chunk.chunk_index = 0
+        chunk.content = "Lease terms and conditions"
+        chunk.metadata = {"index_type": "text"}
+        result = ChunkResult(
+            chunk=chunk,
+            source_stage="hybrid",
+            lexical_score=0.12,
+            recency_score=1.0,
+        )
+
+        snippet = service._chunk_to_snippet(chunk, result=result)
+
+        self.assertEqual(snippet.confidence_score, 0.12)
+
+    @override_settings(RAG_CROSS_ENCODER_TIMEOUT_S=0.02)
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_cross_encoder_timeout_returns_promptly(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+
+        class SlowCrossEncoder:
+            def predict(self, pairs):
+                time.sleep(0.30)
+                return [0.9 for _ in pairs]
+
+        start = time.perf_counter()
+        scores = service._get_cached_cross_encoder_scores(
+            SlowCrossEncoder(),
+            [["assessment fee", "Assessment Fees EGP 200"]],
+        )
+        elapsed = time.perf_counter() - start
+
+        self.assertEqual(scores, [])
+        self.assertLess(elapsed, 0.20)
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_chunk_hits_reuses_free_text_rerank_output(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        business = mock.Mock()
+        business.id = uuid.uuid4()
+        upload = mock.Mock()
+        upload.id = uuid.uuid4()
+        chunk = mock.Mock()
+        chunk.id = uuid.uuid4()
+        chunk.upload = upload
+        chunk.content = "Assessment Fees EGP 200 paid once"
+        chunk.metadata = {"index_type": "text"}
+        candidate = ChunkResult(
+            chunk=chunk,
+            source_stage="hybrid",
+            lexical_score=0.8,
+            rerank_score=0.7,
+        )
+        diagnostics: dict[str, object] = {}
+        traits = service.analyze_query("assessment fee personal loan")
+        hybrid = mock.Mock()
+        hybrid.hits = (candidate,)
+        hybrid.query_vector = None
+        hybrid.diagnostics = {"rerank_duration_ms": 321}
+
+        with (
+            mock.patch.object(service, "_effective_chunk_cap", return_value=2),
+            mock.patch.object(service, "search_free_text", return_value=hybrid),
+            mock.patch.object(service, "_prioritize_token_hits", return_value=[candidate]),
+            mock.patch.object(service, "_rerank_candidates") as rerank_mock,
+            mock.patch.object(service, "_apply_vector_threshold", return_value=[candidate]),
+            mock.patch.object(service, "_build_scope_summary_from_candidates", return_value={"total_matches": 1}),
+            mock.patch.object(service, "_filler_tokens_for_business", return_value=()),
+            mock.patch.object(service, "_mmr_select", return_value=[candidate]),
+        ):
+            hits = service._chunk_hits(
+                business,
+                traits=traits,
+                limit=10,
+                diagnostics=diagnostics,
+                vector_ceiling=0.5,
+                feature_state=mock.Mock(),
+                table_context={},
+            )
+
+        self.assertEqual(hits, (candidate,))
+        rerank_mock.assert_not_called()
+        self.assertEqual(diagnostics.get("rerank_duration_ms"), 321)
+        self.assertTrue(diagnostics.get("chunk_hits_rerank_reused"))
 
 
 class KnowledgeSearchServiceAutoArbitrationTests(SimpleTestCase):
@@ -1570,6 +1671,44 @@ class KnowledgeSearchServicePhaseSixValidationTests(TestCase):
         class_b = context_b["query_classification"]
         self.assertIn("service request", [item.lower() for item in class_a.entity_names])
         self.assertNotIn("service request", [item.lower() for item in class_b.entity_names])
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_table_context_does_not_invoke_llm_intent_fallback(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        traits = service.analyze_query("assessment fee personal loan")
+
+        with (
+            mock.patch.object(service, "_tenant_lexicon_tables_ready", return_value=True),
+            mock.patch.object(service.tenant_lexicon_service, "get_snapshot", return_value={}),
+            mock.patch.object(service, "_table_query_tokens", return_value=({"assessment", "fee", "loan"}, {"assessment", "fee"})),
+            mock.patch.object(service, "_table_columns_for_business", return_value={"fees_charges"}),
+            mock.patch.object(
+                service,
+                "_table_profile_for_business",
+                return_value={
+                    "table_uploads": 1,
+                    "total_uploads": 1,
+                    "table_upload_ratio": 1.0,
+                    "table_count": 1,
+                    "dominant": True,
+                },
+            ),
+            mock.patch.object(service, "_table_row_label_tokens_for_business", return_value={"assessment fees"}),
+            mock.patch(
+                "apps.rag.ai_orchestrator.QueryClassifier.classify",
+                return_value=QueryClassification(
+                    intent=QueryIntent.EXPLORATORY,
+                    confidence=0.2,
+                    reasoning="low confidence heuristic",
+                ),
+            ),
+            mock.patch.object(service.intent_fallback_service, "classify") as fallback_mock,
+        ):
+            context = service._table_query_context(self.business, traits)
+
+        fallback_mock.assert_not_called()
+        self.assertFalse(context.get("intent_fallback_attempted"))
+        self.assertFalse(context.get("intent_fallback_applied"))
 
 
 class KnowledgeSearchServiceResidualRerankTests(TestCase):

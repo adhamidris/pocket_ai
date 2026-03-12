@@ -1290,7 +1290,19 @@ class KnowledgeSearchService:
         session_context: Mapping[str, object] | None = None,
     ) -> KnowledgeSearchResult:
         """
-        Wrapper that runs knowledge retrieval and emits tracing spans for observability.
+        Entry point for retrieval planning and execution.
+
+        Architectural ownership:
+        - Query analysis / rewriting signals live here.
+        - Retrieval strategy selection lives here.
+        - Hybrid candidate generation lives here.
+        - Table routing / blending / fallback lives here.
+        - Fusion and reranking live here.
+
+        MCP should treat this method as the retrieval source of truth and remain
+        a thin tool-contract layer around it. If we ever need explicit batched
+        query search, add that entry point here rather than rebuilding retrieval
+        planning in `apps.mcp.tools`.
         """
 
         traits = traits or self.analyze_query(query, business_profile=business_profile)
@@ -1385,6 +1397,17 @@ class KnowledgeSearchService:
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
         session_context: Mapping[str, object] | None = None,
     ) -> KnowledgeSearchResult:
+        """
+        Core retrieval pipeline.
+
+        This method intentionally owns the "search brain" for knowledge lookup:
+        classification, strategy routing, candidate generation, table-aware
+        branching, fusion, reranking, and fallback arbitration all happen here.
+
+        Keep MCP out of these decisions. MCP should pass queries in, then shape
+        the returned evidence into refs and read contracts without re-ranking or
+        re-planning the retrieval result set.
+        """
         traits = traits or self.analyze_query(query, business_profile=business_profile)
         overall_start = time.perf_counter()
         feature_state = FeatureFlagService.snapshot(business_profile)
@@ -1402,6 +1425,9 @@ class KnowledgeSearchService:
         )
         table_context_ms = int((time.perf_counter() - table_context_start) * 1000.0)
         
+        # Retrieval strategy selection belongs in RAG, not in MCP. MCP may pass
+        # one or more query strings, but the retrieval policy for a given query
+        # must stay centralized in this layer.
         # Execute retrieval strategy based on classified intent (Phase 3)
         classification = table_context.get("query_classification")
         strategy_result = None
@@ -1985,6 +2011,8 @@ class KnowledgeSearchService:
             for hit in chunk_hits[: self.table_chunk_sample_limit]
         )
 
+        # Parallel table search is a retrieval concern. Keep the decision and the
+        # resulting fusion here so MCP does not grow a second retrieval planner.
         # NEW: Parallel table search - run table search alongside vector search, not as fallback
         # This fixes semantic collisions where vector search returns confident but wrong results
         # (e.g., "Withdraw Bills for Collection" matching ATM withdrawal content)
@@ -2074,6 +2102,8 @@ class KnowledgeSearchService:
             diagnostics["table_duration_ms"] = table_duration_ms
 
         if table_snippets:
+            # Fusion ownership stays in RAG. MCP should not try to reconcile
+            # table/vector candidates again after this point.
             # NEW: For parallel table search, use RRF fusion to merge vector + table results
             if is_parallel_table_search and chunk_hits:
                 diagnostics["path"] = "parallel_rrf"
@@ -2393,27 +2423,45 @@ class KnowledgeSearchService:
 
         # Compute scores for uncached pairs
         if uncached_pairs:
-            import concurrent.futures
+            import queue
             from django.conf import settings
 
             timeout_s = float(getattr(settings, "RAG_CROSS_ENCODER_TIMEOUT_S", 3.0))
 
             try:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(cross_encoder.predict, uncached_pairs)
+                result_queue: queue.Queue[tuple[str, object]] = queue.Queue(maxsize=1)
+
+                def _predict_scores() -> None:
                     try:
-                        ce_scores = future.result(timeout=timeout_s)
-                        computed_scores = [float(score) for score in ce_scores]
-                    except concurrent.futures.TimeoutError:
-                        future.cancel()
-                        logger.warning(
-                            "⏱️ Rerank timeout after %.1fs (%d pairs)",
-                            timeout_s,
-                            len(uncached_pairs),
-                        )
-                        # Deterministic timeout fallback: skip CE for this request
-                        # and keep base rerank ordering intact.
-                        return []
+                        result_queue.put(("ok", cross_encoder.predict(uncached_pairs)))
+                    except Exception as exc:  # pragma: no cover - covered via caller fallback
+                        result_queue.put(("error", exc))
+
+                # Use a daemon thread so timeout actually bounds request wall-clock.
+                # A timed-out prediction may still finish in the background, but the
+                # current search request should not block on executor shutdown.
+                worker = threading.Thread(
+                    target=_predict_scores,
+                    name="rag-cross-encoder",
+                    daemon=True,
+                )
+                worker.start()
+                worker.join(timeout=timeout_s)
+                if worker.is_alive():
+                    logger.warning(
+                        "⏱️ Rerank timeout after %.1fs (%d pairs)",
+                        timeout_s,
+                        len(uncached_pairs),
+                    )
+                    # Deterministic timeout fallback: skip CE for this request
+                    # and keep base rerank ordering intact.
+                    return []
+
+                status, payload = result_queue.get_nowait()
+                if status == "error":
+                    raise payload
+                ce_scores = payload
+                computed_scores = [float(score) for score in ce_scores]
             except Exception as exc:
                 logger.warning("❌ Cross-encoder failed: %s", str(exc)[:80])
                 # Deterministic error fallback: avoid poisoning cache with
@@ -2440,6 +2488,37 @@ class KnowledgeSearchService:
                 self._cross_encoder_cache[cache_key] = score
 
         return [r if r is not None else 0.0 for r in results]
+
+    def _public_confidence_score(self, result: ChunkResult | None) -> float | None:
+        """Expose one comparable public relevance signal for prompt-visible snippets.
+
+        Public confidence should reflect retrieval relevance, not freshness or
+        other helper boosts that can make scores incomparable across result
+        types. Keep recency out of the public score.
+        """
+        if result is None:
+            return None
+
+        score_candidates: list[float] = []
+        rerank_score = self._clamp_unit(self._safe_float(getattr(result, "rerank_score", None), default=0.0))
+        if rerank_score > 0.0:
+            score_candidates.append(rerank_score)
+
+        lexical_score = self._clamp_unit(self._safe_float(getattr(result, "lexical_score", None), default=0.0))
+        if lexical_score > 0.0:
+            score_candidates.append(lexical_score)
+
+        alias_score = self._clamp_unit(self._safe_float(getattr(result, "alias_confidence", None), default=0.0))
+        if alias_score > 0.0:
+            score_candidates.append(alias_score)
+
+        vector_distance = getattr(result, "vector_distance", None)
+        if isinstance(vector_distance, (int, float)):
+            vector_score = self._clamp_unit(1.0 - float(vector_distance))
+            if vector_score > 0.0:
+                score_candidates.append(vector_score)
+
+        return max(score_candidates) if score_candidates else 0.0
 
     def search_by_alias(
         self,
@@ -2983,18 +3062,8 @@ class KnowledgeSearchService:
         if not prioritized:
             return tuple()
 
-        reranked, rerank_ms, rerank_diag = self._rerank_candidates(
-            prioritized,
-            hybrid.query_vector if self.embedding_service else None,
-            traits=traits,
-            feature_state=feature_state,
-            table_context=table_context,
-            session_context=session_context,
-        )
-        hybrid.diagnostics["rerank_duration_ms"] = rerank_ms
-        hybrid.diagnostics.update(rerank_diag)
         filtered = self._apply_vector_threshold(
-            reranked,
+            prioritized,
             hybrid.query_vector,
             ceiling=ceiling,
             min_keep=limit,
@@ -3002,6 +3071,7 @@ class KnowledgeSearchService:
         if diagnostics is not None:
             diagnostics["vector_candidates_post_threshold"] = len(filtered)
             diagnostics["scope_candidates_preclip"] = filtered
+            diagnostics["chunk_hits_rerank_reused"] = True
             diagnostics["scope_summary_preclip"] = self._build_scope_summary_from_candidates(
                 filtered,
                 business_profile=business_profile,
@@ -5510,27 +5580,12 @@ class KnowledgeSearchService:
             }
         )
 
+        # Do not invoke an extra LLM on the hot retrieval path for query intent.
+        # The heuristic classifier is good enough for routing, and the main
+        # conversational agent already has a model loop above retrieval.
         fallback_attempted = False
         fallback_applied = False
-        should_try_llm_fallback = bool(
-            has_intent
-            and classification.intent == QueryIntent.EXPLORATORY
-            and classification.confidence < self.intent_llm_fallback_threshold
-        )
-        if should_try_llm_fallback:
-            fallback_attempted = True
-            fallback = self.intent_fallback_service.classify(
-                query=traits.original or traits.normalized or query_text,
-                heuristic=classification,
-                tenant_entity_terms=tenant_entity_terms,
-                tenant_attribute_terms=tenant_attribute_terms,
-                table_columns=tuple(sorted(columns))[:80],
-                row_label_terms=tuple(sorted(row_label_tokens))[:80],
-            )
-            if fallback:
-                classification = fallback
-                fallback_applied = True
-        classification.fallback_used = bool(classification.fallback_used or fallback_applied)
+        classification.fallback_used = bool(classification.fallback_used)
 
         should_require_clarification = bool(
             has_intent
@@ -6524,7 +6579,7 @@ class KnowledgeSearchService:
                     page_number=row.page_number or (table.page.page_number if table.page else None),
                     aliases=tuple(),
                     search_stage="table_direct",
-                    confidence_score=diag.get("similarity"),
+                    confidence_score=self._clamp_unit(self._safe_float(diag.get("similarity"), default=0.0)),
                     truncated=False,
                     source_diagnostics=diag,
                     partial_index=table_truncated,
@@ -6795,20 +6850,7 @@ class KnowledgeSearchService:
             table_hint = f"{table_count} structured {label_name} available via load_document"
 
         source_stage = search_stage or (result.source_stage if result else None)
-        confidence: float | None = None
-        if result:
-            score_candidates: list[float] = []
-            for raw_score in (
-                result.rerank_score,
-                result.lexical_score,
-                result.alias_confidence,
-                result.recency_score,
-            ):
-                try:
-                    score_candidates.append(float(raw_score))
-                except (TypeError, ValueError):
-                    continue
-            confidence = max(score_candidates) if score_candidates else 0.0
+        confidence = self._public_confidence_score(result)
         diagnostics = dict(result.diagnostics) if result else {}
         if result and result.vector_distance is not None:
             diagnostics.setdefault("vector_distance", result.vector_distance)
