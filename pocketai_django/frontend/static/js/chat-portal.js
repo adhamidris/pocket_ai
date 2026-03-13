@@ -1456,6 +1456,13 @@ class ChatPortalClient {
     }
     const wrapper = this.streamingContentBlockEls.get(blockId);
     if (!wrapper) return;
+    if (this.shouldRebuildStreamingTextBlock(wrapper, blockModel)) {
+      const updated = this.updateContentBlockElement(wrapper, blockModel) || wrapper;
+      if (updated && updated !== wrapper) {
+        this.streamingContentBlockEls.set(blockId, updated);
+      }
+      return;
+    }
     ops.forEach((op) => {
       if (!op || typeof op !== "object") return;
       const kind = (op.op || "").toString().trim();
@@ -1482,6 +1489,19 @@ class ChatPortalClient {
         }
       }
     });
+  }
+
+  shouldRebuildStreamingTextBlock(wrapper, blockModel) {
+    if (!wrapper || !blockModel || typeof blockModel !== "object") return false;
+    const type = (blockModel.type || "").toString().trim().toLowerCase();
+    if (!["paragraph", "heading", "list_item"].includes(type)) return false;
+    const payload = blockModel.payload && typeof blockModel.payload === "object" ? blockModel.payload : {};
+    const content = Array.isArray(payload.content) ? payload.content : [];
+    const rawText = this.inlineNodesToText(content);
+    const wrapperIsMarkdown =
+      Boolean(wrapper.dataset && (wrapper.dataset.markdownRichText === "true" || wrapper.dataset.markdownTable === "true"));
+    if (wrapperIsMarkdown) return true;
+    return type !== "list_item" && this.shouldRenderInlineContentAsMarkdown(rawText);
   }
 
   applyBlockOpsToBlockModel(block, ops) {
