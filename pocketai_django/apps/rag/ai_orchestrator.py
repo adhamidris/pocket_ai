@@ -14,6 +14,7 @@ import dataclasses
 import logging
 import uuid
 import threading
+import math
 from datetime import datetime
 from enum import Enum
 from types import SimpleNamespace
@@ -1810,86 +1811,39 @@ class KnowledgeSearchService:
             or table_signal_direct_stage
         )
         if table_intent and not comprehensive_intent and chunk_hits and table_row_expansion_relevant:
-            # Check if parent/preview chunks are present in top candidates
-            parent_preview_present = any(
-                (hit.chunk.metadata or {}).get("table_chunk_role") == "parent" or
-                bool((hit.chunk.metadata or {}).get("is_table_preview"))
-                for hit in chunk_hits[:10]  # Sample first 10 hits
+            expanded_rows = self._expand_table_rows(
+                business_profile,
+                chunk_hits,
+                max_rows_per_table=self.table_row_expansion_limit,
+                query_tokens=traits.tokens,
             )
-            if parent_preview_present:
-                expanded_rows = self._expand_table_rows(
-                    business_profile,
+            if expanded_rows:
+                chunk_hits, merge_diagnostics = self._merge_expanded_table_hits(
                     chunk_hits,
-                    max_rows_per_table=self.table_row_expansion_limit,
+                    expanded_rows,
                     query_tokens=traits.tokens,
                 )
-                if expanded_rows:
-                    # Prioritize row chunks: put expanded rows first, then demote parents
-                    existing_ids = {hit.chunk_id for hit in chunk_hits}
-                    new_rows = [r for r in expanded_rows if r.chunk_id not in existing_ids]
-                    # Separate parent/preview chunks for limiting
-                    parent_chunks = [
-                        hit for hit in chunk_hits
-                        if (hit.chunk.metadata or {}).get("table_chunk_role") == "parent" or
-                           bool((hit.chunk.metadata or {}).get("is_table_preview"))
-                    ]
-                    non_parent_chunks = [
-                        hit for hit in chunk_hits
-                        if not ((hit.chunk.metadata or {}).get("table_chunk_role") == "parent" or
-                                bool((hit.chunk.metadata or {}).get("is_table_preview")))
-                    ]
-                    # Limit parent chunks to context-only (max 2 by default)
-                    limited_parents = parent_chunks[:self.table_row_expansion_max_parent_context]
-
-                    # Split expanded rows by query-token overlap fraction so
-                    # rows matching most query tokens rank above those matching
-                    # only one generic term (e.g. "fees" alone).
-                    _expansion_tokens = tuple(t.lower() for t in traits.tokens if t)
-
-                    def _token_overlap_fraction(hit):
-                        """Return fraction of query tokens present in hit content (0.0–1.0)."""
-                        text = (hit.chunk.content or "").lower()
-                        if not text or not _expansion_tokens:
-                            return 0.0
-                        matches = sum(1 for t in _expansion_tokens if t in text)
-                        return matches / len(_expansion_tokens)
-
-                    # Relevant = overlaps >= 50% of query tokens (strong signal).
-                    # Supplemental = < 50% overlap (weak/generic matches like "fees" alone).
-                    _RELEVANCE_THRESHOLD = 0.5
-                    scored_rows = [(_token_overlap_fraction(r), r) for r in new_rows]
-                    relevant_rows = sorted(
-                        [r for frac, r in scored_rows if frac >= _RELEVANCE_THRESHOLD],
-                        key=lambda r: _token_overlap_fraction(r),
-                        reverse=True,
-                    )
-                    supplemental_rows = [r for frac, r in scored_rows if frac < _RELEVANCE_THRESHOLD]
-
-                    chunk_hits = (
-                        tuple(relevant_rows)
-                        + tuple(non_parent_chunks)
-                        + tuple(supplemental_rows)
-                        + tuple(limited_parents)
-                    )
-                    diagnostics["table_row_expansion"] = len(new_rows)
-                    diagnostics["table_row_expansion_relevant"] = len(relevant_rows)
-                    diagnostics["table_row_expansion_supplemental"] = len(supplemental_rows)
-                    diagnostics["table_parent_limited"] = len(parent_chunks) - len(limited_parents)
-                    _rag_log(
-                        "table.row_expansion",
-                        {
-                            "expanded_rows": len(new_rows),
-                            "relevant_rows": len(relevant_rows),
-                            "supplemental_rows": len(supplemental_rows),
-                            "parent_chunks_limited": len(parent_chunks) - len(limited_parents),
-                            "total_after": len(chunk_hits),
-                        },
-                        indent=1,
-                        context={
-                            "business": business_profile.id,
-                            "request": diagnostics.get("request_id"),
-                        },
-                    )
+                diagnostics["table_row_expansion"] = merge_diagnostics.get("expanded_rows", 0)
+                diagnostics["table_row_expansion_relevant"] = merge_diagnostics.get("relevant_rows", 0)
+                diagnostics["table_row_expansion_supplemental"] = merge_diagnostics.get("supplemental_rows", 0)
+                diagnostics["table_parent_suppressed"] = merge_diagnostics.get("parent_chunks_suppressed", 0)
+                diagnostics["table_parent_limited"] = merge_diagnostics.get("parent_chunks_limited", 0)
+                _rag_log(
+                    "table.row_expansion",
+                    {
+                        "expanded_rows": merge_diagnostics.get("expanded_rows", 0),
+                        "relevant_rows": merge_diagnostics.get("relevant_rows", 0),
+                        "supplemental_rows": merge_diagnostics.get("supplemental_rows", 0),
+                        "parent_chunks_suppressed": merge_diagnostics.get("parent_chunks_suppressed", 0),
+                        "parent_chunks_limited": merge_diagnostics.get("parent_chunks_limited", 0),
+                        "total_after": len(chunk_hits),
+                    },
+                    indent=1,
+                    context={
+                        "business": business_profile.id,
+                        "request": diagnostics.get("request_id"),
+                    },
+                )
         elif table_intent and not comprehensive_intent and chunk_hits:
             diagnostics["table_row_expansion_skipped"] = "query_signal_not_specific"
 
@@ -4344,6 +4298,7 @@ class KnowledgeSearchService:
             table_header_bonus = 0.0
             table_specific_penalty = 0.0
             table_residual_penalty = 0.0
+            table_structural_penalty = 0.0
             is_table_residual = bool(
                 chunk_metadata.get("table_residual")
                 or chunk_metadata.get("content_source") == "table_residual"
@@ -4384,10 +4339,18 @@ class KnowledgeSearchService:
                         specific_tokens=specific_tokens,
                     )
                     cand.diagnostics.update(match_info)
-                    if match_info.get("header_match"):
+                    structural_info = self._table_structural_row_info(cand.chunk)
+                    cand.diagnostics.update(structural_info)
+                    numeric_table_intent = bool(table_context.get("numeric_intent"))
+                    if match_info.get("header_match") and not structural_info.get("structural_row"):
                         table_header_bonus = self.table_header_match_bonus
                     if specific_tokens and not match_info.get("specific_match"):
                         table_specific_penalty = self.table_specific_miss_penalty
+                    if structural_info.get("structural_row") and (specific_tokens or numeric_table_intent):
+                        table_structural_penalty = min(
+                            0.3,
+                            max(self.table_header_match_bonus + 0.12, self.table_specific_miss_penalty * 0.8),
+                        )
 
             text_penalty = 0.0
             if text_penalty_enabled and not chunk_metadata.get("is_table_chunk") and not chunk_metadata.get("is_dataset_card"):
@@ -4457,6 +4420,7 @@ class KnowledgeSearchService:
                 + text_proximity_boost
                 - quality_penalty  # NEW: Subtract quality penalty
                 - table_specific_penalty
+                - table_structural_penalty
                 - text_penalty
                 - table_residual_penalty
             )
@@ -4471,6 +4435,7 @@ class KnowledgeSearchService:
                 "document_continuity_bonus": round(document_continuity_bonus, 4),  # NEW: Include in diagnostics
                 "quality_penalty": round(quality_penalty, 4),  # NEW: Include in diagnostics
                 "table_specific_penalty": round(table_specific_penalty, 4),
+                "table_structural_penalty": round(table_structural_penalty, 4),
                 "text_penalty": round(text_penalty, 4),
                 "table_residual_penalty": round(table_residual_penalty, 4),
                 "text_phrase_boost": round(text_phrase_boost, 4),
@@ -5407,6 +5372,103 @@ class KnowledgeSearchService:
             "specific_token_count": specific_token_count,
             "specific_match_ratio": round(specific_match_ratio, 4),
             "specific_match_strong": specific_match_strong,
+        }
+
+    def _table_structural_row_info(self, chunk: KnowledgeUploadChunk) -> dict[str, object]:
+        metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+        if not metadata.get("is_table_chunk"):
+            return {
+                "structural_row": False,
+                "structural_scope_echo_count": 0,
+                "structural_scope_echo_ratio": 0.0,
+                "structural_pair_count": 0,
+                "structural_pair_echo_count": 0,
+                "structural_pair_echo_ratio": 0.0,
+            }
+
+        def _looks_numeric(sample: str) -> bool:
+            text = str(sample or "").strip()
+            if not text:
+                return False
+            lowered = text.lower()
+            return bool(
+                re.search(r"\d", text)
+                or "%" in text
+                or any(token in lowered for token in ("egp", "usd", "eur", "gbp"))
+            )
+
+        def _normalize_label(sample: str) -> str:
+            return re.sub(r"[^\w]+", "", str(sample or "").strip().lower())
+
+        scope_columns_raw = metadata.get("table_row_scope_dimension_columns") or []
+        scope_columns = [
+            str(value or "").strip()
+            for value in scope_columns_raw
+            if str(value or "").strip()
+        ]
+        content = str(chunk.content or "").lower()
+        scope_echo_count = 0
+        scope_numeric_count = 0
+        for label in scope_columns:
+            marker = f"{label.lower()}:"
+            idx = content.find(marker)
+            if idx == -1:
+                continue
+            tail = content[idx + len(marker):].splitlines()[0].strip()
+            if tail == label.lower():
+                scope_echo_count += 1
+            if _looks_numeric(tail):
+                scope_numeric_count += 1
+        scope_echo_ratio = (
+            float(scope_echo_count) / float(len(scope_columns))
+            if scope_columns
+            else 0.0
+        )
+
+        pair_count = 0
+        pair_echo_count = 0
+        pair_numeric_count = 0
+        for segment in re.split(r"[;\n]+", str(chunk.content or "")):
+            if ":" not in segment:
+                continue
+            key, value = segment.split(":", 1)
+            normalized_key = _normalize_label(key)
+            normalized_value = _normalize_label(value)
+            if not normalized_key or not normalized_value:
+                continue
+            pair_count += 1
+            if normalized_key == normalized_value:
+                pair_echo_count += 1
+            if _looks_numeric(value):
+                pair_numeric_count += 1
+        pair_echo_ratio = (float(pair_echo_count) / float(pair_count)) if pair_count else 0.0
+
+        explicit = metadata.get("table_row_is_structural_context")
+        if explicit is None:
+            has_fee_value = bool(metadata.get("table_row_signal_has_fee_value"))
+            scope_structural = bool(
+                len(scope_columns) >= 3
+                and scope_echo_count >= max(2, int(math.ceil(len(scope_columns) * 0.6)))
+                and scope_numeric_count == 0
+                and not has_fee_value
+            )
+            pair_structural = bool(
+                pair_count >= 3
+                and pair_echo_count >= max(2, int(math.ceil(pair_count * 0.5)))
+                and pair_numeric_count == 0
+                and not has_fee_value
+            )
+            explicit = bool(scope_structural or pair_structural)
+
+        return {
+            "structural_row": bool(explicit),
+            "structural_scope_echo_count": int(scope_echo_count),
+            "structural_scope_numeric_count": int(scope_numeric_count),
+            "structural_scope_echo_ratio": round(float(scope_echo_ratio), 4),
+            "structural_pair_count": int(pair_count),
+            "structural_pair_echo_count": int(pair_echo_count),
+            "structural_pair_numeric_count": int(pair_numeric_count),
+            "structural_pair_echo_ratio": round(float(pair_echo_ratio), 4),
         }
 
     def _table_query_context(
@@ -9811,6 +9873,115 @@ class KnowledgeSearchService:
             parent_hits.append(ChunkResult(chunk=chunk, source_stage="table_parent"))
         return tuple(parent_hits)
 
+    def _table_hit_metadata(self, hit: ChunkResult) -> dict[str, object]:
+        return hit.chunk.metadata if isinstance(hit.chunk.metadata, dict) else {}
+
+    def _table_hit_table_id(self, hit: ChunkResult) -> str:
+        metadata = self._table_hit_metadata(hit)
+        return str(metadata.get("table_id") or "").strip()
+
+    def _is_table_row_hit(self, hit: ChunkResult) -> bool:
+        metadata = self._table_hit_metadata(hit)
+        return bool(metadata.get("is_table_chunk")) and str(metadata.get("table_chunk_role") or "").strip().lower() == "row"
+
+    def _is_table_context_hit(self, hit: ChunkResult) -> bool:
+        metadata = self._table_hit_metadata(hit)
+        role = str(metadata.get("table_chunk_role") or "").strip().lower()
+        return bool(metadata.get("is_table_preview")) or role == "parent"
+
+    def _query_token_overlap_fraction(
+        self,
+        content: str | None,
+        query_tokens: Sequence[str] | None,
+    ) -> float:
+        normalized_tokens = tuple(
+            token.lower()
+            for token in (query_tokens or ())
+            if isinstance(token, str) and token.strip()
+        )
+        text = str(content or "").lower()
+        if not text or not normalized_tokens:
+            return 0.0
+        matches = sum(1 for token in normalized_tokens if token in text)
+        return matches / len(normalized_tokens)
+
+    def _merge_expanded_table_hits(
+        self,
+        chunk_hits: Sequence[ChunkResult],
+        expanded_rows: Sequence[ChunkResult],
+        *,
+        query_tokens: Sequence[str] | None = None,
+    ) -> tuple[tuple[ChunkResult, ...], dict[str, int]]:
+        existing_ids = {hit.chunk_id for hit in chunk_hits}
+        new_rows = [row for row in expanded_rows if row.chunk_id not in existing_ids]
+        if not new_rows:
+            return tuple(chunk_hits), {
+                "expanded_rows": 0,
+                "relevant_rows": 0,
+                "supplemental_rows": 0,
+                "parent_chunks_suppressed": 0,
+                "parent_chunks_limited": 0,
+            }
+
+        parent_chunks = [hit for hit in chunk_hits if self._is_table_context_hit(hit)]
+        non_parent_chunks = [hit for hit in chunk_hits if not self._is_table_context_hit(hit)]
+        seed_row_tables = Counter(
+            self._table_hit_table_id(hit)
+            for hit in non_parent_chunks
+            if self._is_table_row_hit(hit) and self._table_hit_table_id(hit)
+        )
+
+        relevant_rows: list[ChunkResult] = []
+        supplemental_rows: list[ChunkResult] = []
+        for row in new_rows:
+            overlap_fraction = self._query_token_overlap_fraction(row.chunk.content, query_tokens)
+            table_id = self._table_hit_table_id(row)
+            if overlap_fraction >= 0.5 or (table_id and seed_row_tables.get(table_id, 0)):
+                relevant_rows.append(row)
+            else:
+                supplemental_rows.append(row)
+
+        def _row_priority(hit: ChunkResult) -> tuple[int, float, float, float]:
+            table_id = self._table_hit_table_id(hit)
+            return (
+                1 if table_id and seed_row_tables.get(table_id, 0) else 0,
+                self._query_token_overlap_fraction(hit.chunk.content, query_tokens),
+                float(hit.rerank_score or 0.0),
+                float(hit.lexical_score or 0.0),
+            )
+
+        relevant_rows.sort(key=_row_priority, reverse=True)
+        supplemental_rows.sort(key=_row_priority, reverse=True)
+
+        merged_hits = tuple(relevant_rows) + tuple(non_parent_chunks) + tuple(supplemental_rows)
+        row_evidence_by_table = Counter(
+            self._table_hit_table_id(hit)
+            for hit in merged_hits
+            if self._is_table_row_hit(hit) and self._table_hit_table_id(hit)
+        )
+
+        retained_parents: list[ChunkResult] = []
+        parent_chunks_suppressed = 0
+        parent_chunks_limited = 0
+        for parent_hit in parent_chunks:
+            table_id = self._table_hit_table_id(parent_hit)
+            if table_id and row_evidence_by_table.get(table_id, 0) >= 2:
+                parent_chunks_suppressed += 1
+                continue
+            if len(retained_parents) >= self.table_row_expansion_max_parent_context:
+                parent_chunks_limited += 1
+                continue
+            retained_parents.append(parent_hit)
+
+        merged_hits = merged_hits + tuple(retained_parents)
+        return merged_hits, {
+            "expanded_rows": len(new_rows),
+            "relevant_rows": len(relevant_rows),
+            "supplemental_rows": len(supplemental_rows),
+            "parent_chunks_suppressed": parent_chunks_suppressed,
+            "parent_chunks_limited": parent_chunks_limited,
+        }
+
     def _expand_table_rows(
         self,
         business_profile,
@@ -9838,8 +10009,9 @@ class KnowledgeSearchService:
         # Track parent/preview chunks for logging
         parent_count = 0
         preview_count = 0
+        seeded_row_count = 0
         missing_table_id_count = 0
-        best_parent_by_table: dict[str, ChunkResult] = {}
+        best_seed_by_table: dict[str, ChunkResult] = {}
 
         def _result_strength(candidate: ChunkResult) -> float:
             values: list[float] = []
@@ -9857,24 +10029,29 @@ class KnowledgeSearchService:
         
         for hit in hits:
             meta = hit.chunk.metadata if isinstance(hit.chunk.metadata, dict) else {}
+            if not meta.get("is_table_chunk"):
+                continue
             # Identify parent/preview chunks (table discovery)
             is_parent = meta.get("table_chunk_role") == "parent"
             is_preview = bool(meta.get("is_table_preview"))
+            is_row = str(meta.get("table_chunk_role") or "").strip().lower() == "row"
             
             if is_parent:
                 parent_count += 1
             if is_preview:
                 preview_count += 1
+            if is_row:
+                seeded_row_count += 1
                 
-            if is_parent or is_preview:
+            if is_parent or is_preview or is_row:
                 table_id = meta.get("table_id")
                 if table_id:
                     table_id_str = str(table_id)
                     table_ids.add(table_id_str)
-                    existing_best = best_parent_by_table.get(table_id_str)
+                    existing_best = best_seed_by_table.get(table_id_str)
                     if existing_best is None or _result_strength(hit) > _result_strength(existing_best):
-                        best_parent_by_table[table_id_str] = hit
-                else:
+                        best_seed_by_table[table_id_str] = hit
+                elif is_parent or is_preview:
                     # CRITICAL: Parent/preview chunk without table_id
                     missing_table_id_count += 1
                     _rag_log(
@@ -9910,6 +10087,7 @@ class KnowledgeSearchService:
                 "input_hits": len(hits),
                 "parent_chunks": parent_count,
                 "preview_chunks": preview_count,
+                "seed_row_chunks": seeded_row_count,
                 "discovered_tables": len(table_ids),
                 "table_ids": list(table_ids)[:5],  # Sample
                 "missing_table_id_count": missing_table_id_count,
@@ -9923,11 +10101,11 @@ class KnowledgeSearchService:
         row_chunks: list[KnowledgeUploadChunk] = []
         table_shard_hints: dict[str, int] = {}
         for table_id in table_ids:
-            parent_hit = best_parent_by_table.get(table_id)
-            parent_meta = parent_hit.chunk.metadata if parent_hit and isinstance(parent_hit.chunk.metadata, dict) else {}
-            if not isinstance(parent_meta, dict):
+            seed_hit = best_seed_by_table.get(table_id)
+            seed_meta = seed_hit.chunk.metadata if seed_hit and isinstance(seed_hit.chunk.metadata, dict) else {}
+            if not isinstance(seed_meta, dict):
                 continue
-            raw_hint = parent_meta.get("table_row_shard_index")
+            raw_hint = seed_meta.get("table_row_shard_index")
             try:
                 if raw_hint is not None:
                     table_shard_hints[table_id] = int(raw_hint)
@@ -10010,24 +10188,24 @@ class KnowledgeSearchService:
                 continue  # Already in results
             row_meta = chunk.metadata if isinstance(chunk.metadata, dict) else {}
             row_table_id = str(row_meta.get("table_id") or "").strip()
-            parent_hit = best_parent_by_table.get(row_table_id) if row_table_id else None
-            parent_meta = parent_hit.chunk.metadata if parent_hit and isinstance(parent_hit.chunk.metadata, dict) else {}
-            parent_shard = parent_meta.get("table_row_shard_index") if isinstance(parent_meta, dict) else None
+            seed_hit = best_seed_by_table.get(row_table_id) if row_table_id else None
+            seed_meta = seed_hit.chunk.metadata if seed_hit and isinstance(seed_hit.chunk.metadata, dict) else {}
+            parent_shard = seed_meta.get("table_row_shard_index") if isinstance(seed_meta, dict) else None
             row_shard = row_meta.get("table_row_shard_index") if isinstance(row_meta, dict) else None
 
             lexical_score = 0.0
             if normalized_query_tokens:
                 lexical_score = self._lexical_overlap_score(chunk, normalized_query_tokens)
 
-            base_lexical = float(parent_hit.lexical_score) if parent_hit is not None else 0.0
-            base_alias = float(parent_hit.alias_confidence) if parent_hit is not None else 0.0
-            base_recency = float(parent_hit.recency_score) if parent_hit is not None else 0.0
-            base_rerank = float(parent_hit.rerank_score) if parent_hit is not None else 0.0
-            vector_distance = parent_hit.vector_distance if parent_hit is not None else None
-            row_diagnostics = dict(parent_hit.diagnostics) if parent_hit is not None else {}
-            if parent_hit is not None:
-                row_diagnostics["expanded_from_chunk_id"] = str(parent_hit.chunk_id)
-                row_diagnostics["expanded_from_stage"] = str(parent_hit.source_stage)
+            base_lexical = float(seed_hit.lexical_score) if seed_hit is not None else 0.0
+            base_alias = float(seed_hit.alias_confidence) if seed_hit is not None else 0.0
+            base_recency = float(seed_hit.recency_score) if seed_hit is not None else 0.0
+            base_rerank = float(seed_hit.rerank_score) if seed_hit is not None else 0.0
+            vector_distance = seed_hit.vector_distance if seed_hit is not None else None
+            row_diagnostics = dict(seed_hit.diagnostics) if seed_hit is not None else {}
+            if seed_hit is not None:
+                row_diagnostics["expanded_from_chunk_id"] = str(seed_hit.chunk_id)
+                row_diagnostics["expanded_from_stage"] = str(seed_hit.source_stage)
             row_diagnostics["expanded_table_id"] = row_table_id
             if parent_shard is not None:
                 row_diagnostics["expanded_parent_shard"] = parent_shard

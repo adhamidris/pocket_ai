@@ -239,6 +239,92 @@ class KnowledgeIngestionChunkingTests(SimpleTestCase):
         self.assertNotIn("Descriptor A", applies_to)
         self.assertNotIn("Descriptor B", applies_to)
 
+    def test_table_row_chunks_mark_structural_context_rows(self) -> None:
+        class _Manager:
+            def __init__(self, items):
+                self._items = list(items)
+
+            def all(self):
+                return list(self._items)
+
+        class _Cell:
+            def __init__(self, cell_id: str, column_index: int, raw_text: str, column_key: str = ""):
+                self.id = cell_id
+                self.column_index = column_index
+                self.raw_text = raw_text
+                self.column_key = column_key
+
+        class _Row:
+            def __init__(self, row_index: int, metadata: dict[str, object], cells: list[_Cell]):
+                self.row_index = row_index
+                self.metadata = metadata
+                self.cells = _Manager(cells)
+
+        class _Table:
+            def __init__(self, rows: list[_Row]):
+                self.title = "Loan fees"
+                self.order_index = 1
+                self.section_heading = ""
+                self.rows = _Manager(rows)
+
+        header = _Row(
+            0,
+            {"row_type": "header"},
+            [
+                _Cell("h-1", 0, "service"),
+                _Cell("h-2", 1, "fees_charges"),
+                _Cell("h-3", 2, "Prime"),
+                _Cell("h-4", 3, "Plus"),
+                _Cell("h-5", 4, "Wealth"),
+                _Cell("h-6", 5, "Private"),
+            ],
+        )
+        structural = _Row(
+            1,
+            {
+                "row_type": "data",
+                "scope_dimension_columns": ["Prime", "Plus", "Wealth", "Private"],
+                "observed_value_columns": [
+                    "service",
+                    "fees_charges",
+                    "Prime",
+                    "Plus",
+                    "Wealth",
+                    "Private",
+                ],
+            },
+            [
+                _Cell("s-1", 0, "Administration Fees on the total Loan Amount up to 8 years", "service"),
+                _Cell("s-2", 1, "Segment/Product", "fees_charges"),
+                _Cell("s-3", 2, "Prime", "Prime"),
+                _Cell("s-4", 3, "Plus", "Plus"),
+                _Cell("s-5", 4, "Wealth", "Wealth"),
+                _Cell("s-6", 5, "Private", "Private"),
+            ],
+        )
+
+        service = KnowledgeIngestionService(enable_ocr=False)
+        payloads = service._table_row_chunk_payloads(
+            table=_Table([header, structural]),
+            column_map=[
+                ("service", "service", 0),
+                ("fees_charges", "fees_charges", 1),
+                ("Prime", "prime", 2),
+                ("Plus", "plus", 3),
+                ("Wealth", "wealth", 4),
+                ("Private", "private", 5),
+            ],
+            raw_schema=["service", "fees_charges", "prime", "plus", "wealth", "private"],
+            privacy_rules={},
+            base_metadata={"is_table_chunk": True, "table_id": "table-3"},
+            max_rows=10,
+        )
+
+        self.assertEqual(len(payloads), 1)
+        metadata = payloads[0].get("metadata") or {}
+        self.assertTrue(metadata.get("table_row_is_structural_context"))
+        self.assertEqual(metadata.get("table_row_structural_scope_echo_count"), 4)
+
     @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
     def test_pdf_table_overlap_blocks_become_residual_segments_for_coverage(self, _build_embeddings) -> None:
         service = KnowledgeIngestionService(enable_ocr=False)

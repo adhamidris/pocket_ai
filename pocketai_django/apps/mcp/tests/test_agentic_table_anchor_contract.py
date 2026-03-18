@@ -154,6 +154,175 @@ class AgenticSearchTableRefTests(SimpleTestCase):
         self.assertEqual(refs[0].get("coverage_hint", {}).get("page"), 2)
         self.assertEqual(refs[1].get("coverage_hint", {}).get("page"), 3)
 
+    def test_table_chunk_ref_is_suppressed_when_same_table_has_multiple_row_refs(self) -> None:
+        table_id = str(uuid.uuid4())
+        upload_id = str(uuid.uuid4())
+        first_chunk_id = str(uuid.uuid4())
+        second_chunk_id = str(uuid.uuid4())
+        parent_chunk_id = str(uuid.uuid4())
+        legacy_payload = {
+            "tool": "search_knowledge",
+            "status": "ok",
+            "snippets": [
+                {
+                    "id": "row-1",
+                    "chunk_id": first_chunk_id,
+                    "upload_id": upload_id,
+                    "title": "chunk 7",
+                    "public_label": "chunk 7",
+                    "entity_name": "Administration Fees",
+                    "summary": "service: Administration Fees; fees_charges: Secured; fees_charges: 1.75%",
+                    "content": "service: Administration Fees; fees_charges: Secured; fees_charges: 1.75%",
+                    "is_table_chunk": True,
+                    "search_stage": "table_direct",
+                    "confidence_score": 0.82,
+                    "source_diagnostics": {
+                        "table_id": table_id,
+                        "row_index": 7,
+                        "table_total_rows": 22,
+                        "table_column_count": 6,
+                    },
+                },
+                {
+                    "id": "row-2",
+                    "chunk_id": second_chunk_id,
+                    "upload_id": upload_id,
+                    "title": "chunk 8",
+                    "public_label": "chunk 8",
+                    "entity_name": "Administration Fees",
+                    "summary": "service: Administration Fees; fees_charges: Unsecured; fees_charges: 2.00%",
+                    "content": "service: Administration Fees; fees_charges: Unsecured; fees_charges: 2.00%",
+                    "is_table_chunk": True,
+                    "search_stage": "table_direct",
+                    "confidence_score": 0.8,
+                    "source_diagnostics": {
+                        "table_id": table_id,
+                        "row_index": 8,
+                        "table_total_rows": 22,
+                        "table_column_count": 6,
+                    },
+                },
+                {
+                    "id": "parent-1",
+                    "chunk_id": parent_chunk_id,
+                    "upload_id": upload_id,
+                    "title": "chunk 24",
+                    "public_label": "chunk 24",
+                    "entity_name": "Administration Fees",
+                    "summary": "service: Administration Fees on the total Loan Amount up to 8 years",
+                    "content": "service: Administration Fees on the total Loan Amount up to 8 years",
+                    "is_table_chunk": True,
+                    "search_stage": "table_parent",
+                    "confidence_score": 0.95,
+                    "source_diagnostics": {
+                        "table_id": table_id,
+                        "table_total_rows": 22,
+                        "table_column_count": 6,
+                    },
+                },
+            ],
+            "completeness": {"shown": 3, "total_found": 3},
+        }
+
+        result = tools._convert_to_agentic_search_response(
+            legacy_payload,
+            conversation=SimpleNamespace(id=uuid.uuid4(), business_profile_id=uuid.uuid4()),
+            context=ToolExecutionContext(),
+        )
+
+        refs = result.get("refs") or []
+        self.assertEqual([ref.get("id") for ref in refs], [first_chunk_id, second_chunk_id])
+        self.assertEqual([ref.get("kind") for ref in refs], ["table_row", "table_row"])
+
+    def test_batched_search_fusion_uses_global_rank_not_concat_order(self) -> None:
+        runs = [
+            {
+                "query": "first query",
+                "snippets": [
+                    {
+                        "id": "weak-first",
+                        "chunk_id": "weak-first",
+                        "upload_id": "upload-1",
+                        "content": "weak first result",
+                        "confidence_score": 0.35,
+                    },
+                    {
+                        "id": "shared",
+                        "chunk_id": "shared",
+                        "upload_id": "upload-1",
+                        "content": "shared result",
+                        "confidence_score": 0.4,
+                    },
+                ],
+            },
+            {
+                "query": "second query",
+                "snippets": [
+                    {
+                        "id": "strong-second",
+                        "chunk_id": "strong-second",
+                        "upload_id": "upload-2",
+                        "content": "strong later result",
+                        "confidence_score": 0.97,
+                    },
+                    {
+                        "id": "shared",
+                        "chunk_id": "shared",
+                        "upload_id": "upload-1",
+                        "content": "shared result",
+                        "confidence_score": 0.82,
+                    },
+                ],
+            },
+        ]
+
+        fused, fusion = tools._fuse_batched_search_runs(runs, clip_limit=2)
+
+        self.assertEqual(fusion, {"method": "rrf_dedupe", "runs": 2})
+        self.assertEqual([snippet.get("chunk_id") for snippet in fused], ["shared", "strong-second"])
+
+    def test_agentic_refs_are_sorted_by_confidence_before_emission(self) -> None:
+        low_chunk_id = str(uuid.uuid4())
+        high_chunk_id = str(uuid.uuid4())
+        legacy_payload = {
+            "tool": "search_knowledge",
+            "status": "ok",
+            "snippets": [
+                {
+                    "id": "low",
+                    "chunk_id": low_chunk_id,
+                    "upload_id": str(uuid.uuid4()),
+                    "title": "low chunk",
+                    "public_label": "low chunk",
+                    "summary": "lower confidence snippet",
+                    "content": "lower confidence snippet",
+                    "search_stage": "semantic",
+                    "confidence_score": 0.31,
+                },
+                {
+                    "id": "high",
+                    "chunk_id": high_chunk_id,
+                    "upload_id": str(uuid.uuid4()),
+                    "title": "high chunk",
+                    "public_label": "high chunk",
+                    "summary": "higher confidence snippet",
+                    "content": "higher confidence snippet",
+                    "search_stage": "semantic",
+                    "confidence_score": 0.92,
+                },
+            ],
+            "completeness": {"shown": 2, "total_found": 2},
+        }
+
+        result = tools._convert_to_agentic_search_response(
+            legacy_payload,
+            conversation=SimpleNamespace(id=uuid.uuid4(), business_profile_id=uuid.uuid4()),
+            context=ToolExecutionContext(),
+        )
+
+        refs = result.get("refs") or []
+        self.assertEqual([ref.get("id") for ref in refs], [high_chunk_id, low_chunk_id])
+
 
 @override_settings(MCP_NEW_CONTRACT_ENABLED=True, MCP_AGENTIC_READ_V2_ENABLED=True)
 class AgenticReadTableAnchorMergeTests(TestCase):

@@ -3488,6 +3488,11 @@ def _convert_to_agentic_search_response(
                 int(table_estimated_columns.get(canonical_table_id, 0)),
                 int(est_cols),
             )
+    tables_with_multiple_row_refs = {
+        table_id
+        for table_id, count in table_row_ref_counts.items()
+        if int(count) >= 2
+    }
 
     # Table-row promotion is intentionally disabled on the active path.
     # We keep distinct row refs visible to the model instead of collapsing
@@ -3563,7 +3568,29 @@ def _convert_to_agentic_search_response(
 
     promoted_table_anchor_manifests: dict[str, dict[str, object]] = {}
 
-    for snippet in planned_snippets:
+    def _ref_sort_key(snippet: Mapping[str, object]) -> tuple[float, int]:
+        diagnostics = (
+            snippet.get("source_diagnostics")
+            if isinstance(snippet.get("source_diagnostics"), Mapping)
+            else {}
+        )
+        row_index_local = diagnostics.get("row_index")
+        if row_index_local is None:
+            row_index_local = diagnostics.get("table_row_index")
+        is_table_local = bool(snippet.get("is_table_chunk"))
+        if is_table_local and row_index_local is not None:
+            specificity_rank = 0
+        elif not is_table_local:
+            specificity_rank = 1
+        else:
+            specificity_rank = 2
+        try:
+            confidence = float(snippet.get("confidence_score") or 0.0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        return (-confidence, specificity_rank)
+
+    for snippet in sorted(planned_snippets, key=_ref_sort_key):
         
         # Determine type
         is_table = bool(snippet.get("is_table_chunk"))
@@ -3592,6 +3619,13 @@ def _convert_to_agentic_search_response(
         if row_index is None:
             row_index = diagnostics.get("table_row_index")
         canonical_table_id = _canonical_table_id(table_id) if (content_type == "table" and table_id) else ""
+        if (
+            content_type == "table"
+            and canonical_table_id
+            and row_index is None
+            and canonical_table_id in tables_with_multiple_row_refs
+        ):
+            continue
         # Strict one-ref-per-promoted-table: skip chunk-only table refs when the table
         # is already eligible for promotion via row hits (we'll emit the table ref instead).
         if (
@@ -3978,6 +4012,93 @@ def _convert_to_agentic_search_response(
     )
     
     return agentic_response
+
+
+def _fuse_batched_search_runs(
+    runs: Sequence[Mapping[str, object]],
+    *,
+    clip_limit: int | None,
+) -> tuple[list[dict[str, object]], dict[str, object] | None]:
+    def _snippet_dedupe_key(snippet: Mapping[str, object]) -> str:
+        content = snippet.get("content")
+        if isinstance(content, str) and content.strip():
+            return f"content:{sha256_hex(content)}"
+        summary = snippet.get("summary")
+        if isinstance(summary, str) and summary.strip():
+            return f"summary:{sha256_hex(summary)}"
+        identifier = snippet.get("chunk_id") or snippet.get("id") or snippet.get("upload_id")
+        if identifier:
+            return f"id:{identifier}"
+        return json.dumps(snippet, sort_keys=True, default=str)
+
+    if not runs:
+        return [], None
+    if len(runs) == 1:
+        snippets = [
+            dict(snippet)
+            for snippet in runs[0].get("snippets", [])
+            if isinstance(snippet, Mapping)
+        ]
+        if clip_limit:
+            snippets = snippets[:clip_limit]
+        return snippets, None
+
+    fusion = {"method": "rrf_dedupe", "runs": len(runs)}
+    fused: dict[str, dict[str, object]] = {}
+    # Use rank fusion across query variants so later variants can still surface
+    # the best shared evidence before we clip to the outward limit.
+    rrf_k = 60.0
+    for run_index, run in enumerate(runs):
+        snippets = run.get("snippets", [])
+        if not isinstance(snippets, Sequence) or isinstance(snippets, (str, bytes, bytearray)):
+            continue
+        for rank, snippet in enumerate(snippets):
+            if not isinstance(snippet, Mapping):
+                continue
+            dedup_key = _snippet_dedupe_key(snippet)
+            raw_confidence = snippet.get("confidence_score")
+            try:
+                confidence = float(raw_confidence) if raw_confidence is not None else 0.0
+            except (TypeError, ValueError):
+                confidence = 0.0
+            entry = fused.get(dedup_key)
+            rrf_increment = 1.0 / (rrf_k + float(rank) + 1.0)
+            if entry is None:
+                fused[dedup_key] = {
+                    "snippet": dict(snippet),
+                    "rrf_score": rrf_increment,
+                    "best_confidence": confidence,
+                    "best_rank": int(rank),
+                    "best_run_index": int(run_index),
+                }
+                continue
+            entry["rrf_score"] = float(entry.get("rrf_score") or 0.0) + rrf_increment
+            if confidence > float(entry.get("best_confidence") or 0.0):
+                entry["best_confidence"] = confidence
+                entry["snippet"] = dict(snippet)
+                entry["best_rank"] = int(rank)
+                entry["best_run_index"] = int(run_index)
+            elif confidence == float(entry.get("best_confidence") or 0.0):
+                prior_run = int(entry.get("best_run_index") or 0)
+                prior_rank = int(entry.get("best_rank") or 0)
+                if (run_index, rank) < (prior_run, prior_rank):
+                    entry["snippet"] = dict(snippet)
+                    entry["best_rank"] = int(rank)
+                    entry["best_run_index"] = int(run_index)
+
+    ordered_entries = sorted(
+        fused.values(),
+        key=lambda entry: (
+            -float(entry.get("rrf_score") or 0.0),
+            -float(entry.get("best_confidence") or 0.0),
+            int(entry.get("best_run_index") or 0),
+            int(entry.get("best_rank") or 0),
+        ),
+    )
+    if clip_limit is not None:
+        ordered_entries = ordered_entries[:clip_limit]
+    deduped_snippets = [dict(entry["snippet"]) for entry in ordered_entries]
+    return deduped_snippets, fusion
 
 
 def _search_knowledge_handler(
@@ -5126,38 +5247,10 @@ def _search_knowledge_handler(
     primary_run = runs[0]
     limit_cap = primary_run.get("limit_used")
     clip_limit = int(limit_cap) if isinstance(limit_cap, int) and limit_cap > 0 else None
-    deduped_snippets: list[dict[str, object]] = []
-    fusion: dict[str, object] | None = None
-
-    def _snippet_dedupe_key(snippet: Mapping[str, object]) -> str:
-        content = snippet.get("content")
-        if isinstance(content, str) and content.strip():
-            return f"content:{sha256_hex(content)}"
-        summary = snippet.get("summary")
-        if isinstance(summary, str) and summary.strip():
-            return f"summary:{sha256_hex(summary)}"
-        identifier = snippet.get("chunk_id") or snippet.get("id") or snippet.get("upload_id")
-        if identifier:
-            return f"id:{identifier}"
-        return json.dumps(snippet, sort_keys=True, default=str)
-
-    if len(runs) > 1:
-        fusion = {"method": "concat_dedupe", "runs": len(runs)}
-
-    seen_snippets: set[str] = set()
-    # Passive batching only: preserve RAG's ordering and remove exact duplicates.
-    # Do not add MCP-side semantic reranking/fusion here.
-    for run in runs:
-        for snippet in run.get("snippets", []):
-            dedup_key = _snippet_dedupe_key(snippet)
-            if dedup_key in seen_snippets:
-                continue
-            seen_snippets.add(dedup_key)
-            deduped_snippets.append(snippet)
-            if clip_limit and len(deduped_snippets) >= clip_limit:
-                break
-        if clip_limit and len(deduped_snippets) >= clip_limit:
-            break
+    deduped_snippets, fusion = _fuse_batched_search_runs(
+        runs,
+        clip_limit=clip_limit,
+    )
 
     results_full = deduped_snippets
     total_found = len(results_full)

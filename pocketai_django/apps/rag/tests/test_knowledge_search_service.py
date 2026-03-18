@@ -1384,6 +1384,132 @@ class KnowledgeSearchServiceRegressionTests(TestCase):
         }
         self.assertEqual(shards, {2})
 
+    def test_expand_table_rows_can_complete_same_table_from_row_hit(self) -> None:
+        with tenant_context(self.business.id):
+            upload = KnowledgeUpload.objects.create(
+                business_profile=self.business,
+                user=self.user,
+                source_type=KnowledgeSourceType.FILE,
+                status=KnowledgeStatus.ACTIVE,
+                display_name="Overdraft Fees",
+            )
+            table_id = "22222222-3333-4444-5555-666666666666"
+            secured_row = KnowledgeUploadChunk.objects.create(
+                upload=upload,
+                business_profile=self.business,
+                chunk_index=0,
+                content=(
+                    "[Table] Overdraft Fees\n[Row] 0\n"
+                    "Highest monthly debit balance for overdraft (Paid Monthly)\n"
+                    "0.1% of highest closing debit balance for secured overdraft"
+                ),
+                metadata={
+                    "is_table_chunk": True,
+                    "table_chunk_role": "row",
+                    "table_id": table_id,
+                    "table_row_index": 0,
+                },
+            )
+            unsecured_row = KnowledgeUploadChunk.objects.create(
+                upload=upload,
+                business_profile=self.business,
+                chunk_index=1,
+                content=(
+                    "[Table] Overdraft Fees\n[Row] 1\n"
+                    "Highest monthly debit balance for overdraft (Paid Monthly)\n"
+                    "0.15% of highest closing debit balance for revolving unsecured overdraft"
+                ),
+                metadata={
+                    "is_table_chunk": True,
+                    "table_chunk_role": "row",
+                    "table_id": table_id,
+                    "table_row_index": 1,
+                },
+            )
+
+            row_hit = ChunkResult(
+                chunk=secured_row,
+                source_stage="table_direct",
+                lexical_score=0.55,
+                alias_confidence=0.1,
+                rerank_score=0.74,
+            )
+
+            expanded = self.service._expand_table_rows(
+                self.business,
+                [row_hit],
+                max_rows_per_table=10,
+                query_tokens=("overdraft", "secured", "unsecured"),
+            )
+
+        self.assertEqual(len(expanded), 1)
+        self.assertEqual(expanded[0].chunk_id, unsecured_row.id)
+        self.assertEqual(expanded[0].diagnostics.get("expanded_from_stage"), "table_direct")
+
+    def test_merge_expanded_table_hits_suppresses_parent_when_row_coverage_is_sufficient(self) -> None:
+        with tenant_context(self.business.id):
+            upload = KnowledgeUpload.objects.create(
+                business_profile=self.business,
+                user=self.user,
+                source_type=KnowledgeSourceType.FILE,
+                status=KnowledgeStatus.ACTIVE,
+                display_name="Overdraft Fees",
+            )
+            table_id = "33333333-4444-5555-6666-777777777777"
+            parent_chunk = KnowledgeUploadChunk.objects.create(
+                upload=upload,
+                business_profile=self.business,
+                chunk_index=0,
+                content="Table preview for overdraft fee schedule",
+                metadata={
+                    "is_table_chunk": True,
+                    "is_table_preview": True,
+                    "table_chunk_role": "parent",
+                    "table_id": table_id,
+                },
+            )
+            secured_row = KnowledgeUploadChunk.objects.create(
+                upload=upload,
+                business_profile=self.business,
+                chunk_index=1,
+                content="Highest monthly debit balance for overdraft 0.1% secured overdraft",
+                metadata={
+                    "is_table_chunk": True,
+                    "table_chunk_role": "row",
+                    "table_id": table_id,
+                    "table_row_index": 0,
+                },
+            )
+            unsecured_row = KnowledgeUploadChunk.objects.create(
+                upload=upload,
+                business_profile=self.business,
+                chunk_index=2,
+                content="Highest monthly debit balance for overdraft 0.15% revolving unsecured overdraft",
+                metadata={
+                    "is_table_chunk": True,
+                    "table_chunk_role": "row",
+                    "table_id": table_id,
+                    "table_row_index": 1,
+                },
+            )
+
+            merged_hits, merge_diagnostics = self.service._merge_expanded_table_hits(
+                chunk_hits=(
+                    ChunkResult(chunk=parent_chunk, source_stage="hybrid", rerank_score=0.8),
+                    ChunkResult(chunk=secured_row, source_stage="table_direct", rerank_score=0.72),
+                ),
+                expanded_rows=(
+                    ChunkResult(chunk=unsecured_row, source_stage="table_row_expansion", rerank_score=0.66),
+                ),
+                query_tokens=("overdraft", "secured", "unsecured"),
+            )
+
+        merged_ids = {hit.chunk_id for hit in merged_hits}
+        self.assertIn(secured_row.id, merged_ids)
+        self.assertIn(unsecured_row.id, merged_ids)
+        self.assertNotIn(parent_chunk.id, merged_ids)
+        self.assertEqual(merge_diagnostics["parent_chunks_suppressed"], 1)
+
 
 class KnowledgeSearchServiceClarificationTests(TestCase):
     def setUp(self) -> None:
@@ -1914,3 +2040,162 @@ class KnowledgeSearchServiceResidualRerankTests(TestCase):
             "canonical_specific_match_present",
         )
         self.assertEqual(float(residual_breakdown.get("table_residual_rescue_bonus") or 0.0), 0.0)
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_structural_table_rows_are_penalized_for_specific_value_queries(
+        self,
+        _build_embeddings,
+    ) -> None:
+        service = KnowledgeSearchService()
+        traits = service.analyze_query(
+            "secured personal loan administration fee plus segment"
+        )
+
+        with tenant_context(self.business.id):
+            structural_chunk = KnowledgeUploadChunk.objects.create(
+                upload=self.upload,
+                business_profile=self.business,
+                chunk_index=6,
+                content=(
+                    "[Table] Loan fees\n[Row] 6\n"
+                    "service: Administration Fees on the total Loan Amount up to 8 years\n"
+                    "fees_charges: Segment/Product\n"
+                    "Prime: Prime\n"
+                    "Plus: Plus\n"
+                    "Wealth: Wealth\n"
+                    "Private: Private"
+                ),
+                metadata={
+                    "is_table_chunk": True,
+                    "index_type": "table",
+                    "content_source": "table_row",
+                    "table_chunk_role": "row",
+                    "table_id": "table-structural",
+                    "table_row_scope_dimension_columns": ["Prime", "Plus", "Wealth", "Private"],
+                    "table_row_signal_numeric_value_count": 0,
+                    "table_row_signal_value_keyword_count": 0,
+                    "table_row_signal_has_fee_value": False,
+                },
+            )
+            value_chunk = KnowledgeUploadChunk.objects.create(
+                upload=self.upload,
+                business_profile=self.business,
+                chunk_index=7,
+                content=(
+                    "[Table] Loan fees\n[Row] 7\n"
+                    "service: Administration Fees on the total Loan Amount up to 8 years\n"
+                    "fees_charges: Secured\n"
+                    "Prime: 2.00%\n"
+                    "Plus: 1.75%\n"
+                    "Wealth: 1.50%\n"
+                    "Private: 1.25%"
+                ),
+                metadata={
+                    "is_table_chunk": True,
+                    "index_type": "table",
+                    "content_source": "table_row",
+                    "table_chunk_role": "row",
+                    "table_id": "table-structural",
+                    "table_row_scope_dimension_columns": ["Prime", "Plus", "Wealth", "Private"],
+                    "table_row_signal_numeric_value_count": 4,
+                    "table_row_signal_value_keyword_count": 0,
+                    "table_row_signal_has_fee_value": False,
+                },
+            )
+
+        ranked, _, _ = service._rerank_candidates(
+            [
+                ChunkResult(chunk=structural_chunk, source_stage="hybrid", lexical_score=0.6),
+                ChunkResult(chunk=value_chunk, source_stage="hybrid", lexical_score=0.6),
+            ],
+            query_vector=None,
+            traits=traits,
+            table_context={
+                "has_intent": True,
+                "numeric_intent": False,
+                "query_tokens": set(traits.tokens),
+                "specific_tokens": {"secured", "plus", "segment"},
+            },
+        )
+
+        self.assertEqual(ranked[0].chunk_id, value_chunk.id)
+        structural_ranked = next(hit for hit in ranked if hit.chunk_id == structural_chunk.id)
+        structural_breakdown = structural_ranked.diagnostics.get("score_breakdown") or {}
+        self.assertTrue(structural_ranked.diagnostics.get("structural_row"))
+        self.assertGreater(float(structural_breakdown.get("table_structural_penalty") or 0.0), 0.0)
+        self.assertEqual(float(structural_breakdown.get("table_header_bonus") or 0.0), 0.0)
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_structural_table_rows_are_detected_from_content_when_scope_metadata_is_missing(
+        self,
+        _build_embeddings,
+    ) -> None:
+        service = KnowledgeSearchService()
+        traits = service.analyze_query(
+            "secured personal loan administration fee plus segment"
+        )
+
+        with tenant_context(self.business.id):
+            structural_chunk = KnowledgeUploadChunk.objects.create(
+                upload=self.upload,
+                business_profile=self.business,
+                chunk_index=8,
+                content=(
+                    "[Table] Loan fees\n[Row] 8\n"
+                    "service: Service\n"
+                    "prime: Prime\n"
+                    "plus: Plus\n"
+                    "wealth: Wealth\n"
+                    "private: Private"
+                ),
+                metadata={
+                    "is_table_chunk": True,
+                    "index_type": "table",
+                    "content_source": "table_row",
+                    "table_chunk_role": "row",
+                    "table_id": "table-structural-fallback",
+                },
+            )
+            value_chunk = KnowledgeUploadChunk.objects.create(
+                upload=self.upload,
+                business_profile=self.business,
+                chunk_index=9,
+                content=(
+                    "[Table] Loan fees\n[Row] 9\n"
+                    "service: Administration Fees on the total Loan Amount up to 8 years\n"
+                    "fees_charges: Secured\n"
+                    "Prime: 2.00%\n"
+                    "Plus: 1.75%\n"
+                    "Wealth: 1.50%\n"
+                    "Private: 1.25%"
+                ),
+                metadata={
+                    "is_table_chunk": True,
+                    "index_type": "table",
+                    "content_source": "table_row",
+                    "table_chunk_role": "row",
+                    "table_id": "table-structural-fallback",
+                },
+            )
+
+        ranked, _, _ = service._rerank_candidates(
+            [
+                ChunkResult(chunk=structural_chunk, source_stage="hybrid", lexical_score=0.58),
+                ChunkResult(chunk=value_chunk, source_stage="hybrid", lexical_score=0.58),
+            ],
+            query_vector=None,
+            traits=traits,
+            table_context={
+                "has_intent": True,
+                "numeric_intent": False,
+                "query_tokens": set(traits.tokens),
+                "specific_tokens": {"secured", "plus", "segment"},
+            },
+        )
+
+        self.assertEqual(ranked[0].chunk_id, value_chunk.id)
+        structural_ranked = next(hit for hit in ranked if hit.chunk_id == structural_chunk.id)
+        structural_breakdown = structural_ranked.diagnostics.get("score_breakdown") or {}
+        self.assertTrue(structural_ranked.diagnostics.get("structural_row"))
+        self.assertGreater(int(structural_ranked.diagnostics.get("structural_pair_echo_count") or 0), 0)
+        self.assertGreater(float(structural_breakdown.get("table_structural_penalty") or 0.0), 0.0)

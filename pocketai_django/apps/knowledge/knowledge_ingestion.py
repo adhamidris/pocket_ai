@@ -12282,6 +12282,59 @@ class KnowledgeIngestionService:
         }
         return score, diagnostics
 
+    def _table_row_structural_context_profile(
+        self,
+        *,
+        value_by_label: Mapping[str, str],
+        scope_dimension_columns: Sequence[str],
+        fee_value: str,
+        row_signal_diag: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        normalized_scope_labels = [
+            self._table_cell_text(label)
+            for label in scope_dimension_columns or []
+            if self._table_cell_text(label)
+        ]
+        normalized_scope_labels = list(dict.fromkeys(normalized_scope_labels))
+        normalized_lookup = {
+            self._table_cell_text(label): self._table_cell_text(value)
+            for label, value in (value_by_label or {}).items()
+            if self._table_cell_text(label)
+        }
+
+        def _norm(value: str) -> str:
+            return re.sub(r"\s+", " ", str(value or "").strip()).lower()
+
+        scope_echo_count = 0
+        scope_numeric_count = 0
+        for label in normalized_scope_labels:
+            value = normalized_lookup.get(label, "")
+            if value and _norm(value) == _norm(label):
+                scope_echo_count += 1
+            if value and _column_numeric_signal(value):
+                scope_numeric_count += 1
+
+        scope_label_count = len(normalized_scope_labels)
+        scope_echo_ratio = (
+            float(scope_echo_count) / float(scope_label_count)
+            if scope_label_count > 0
+            else 0.0
+        )
+        has_fee_value = bool(self._table_cell_text(fee_value)) or bool(row_signal_diag.get("has_fee_value"))
+        is_structural = bool(
+            scope_label_count >= 3
+            and scope_echo_count >= max(2, int(math.ceil(scope_label_count * 0.6)))
+            and scope_numeric_count == 0
+            and not has_fee_value
+        )
+        return {
+            "is_structural_context": is_structural,
+            "scope_label_count": int(scope_label_count),
+            "scope_echo_count": int(scope_echo_count),
+            "scope_numeric_count": int(scope_numeric_count),
+            "scope_echo_ratio": round(float(scope_echo_ratio), 4),
+        }
+
     def _is_prefix_value_fragment(self, value: str) -> bool:
         sample = self._table_cell_text(value)
         if not sample:
@@ -16954,6 +17007,32 @@ class KnowledgeIngestionService:
         text = re.sub(r"\s+", " ", text).strip()
         return self._normalize_ocr_text(text)
 
+    def _table_subsection_label(self, value: Any) -> str:
+        """
+        Keep subsection labels only when they look like short, title-like context.
+
+        This avoids leaking value-heavy or concatenated row content into every
+        subsequent row chunk via `[SubSection] ...`.
+        """
+        text = self._table_cell_text(value)
+        if not text:
+            return ""
+        word_count = len(re.findall(r"[A-Za-z0-9\u0600-\u06FF]+", text))
+        numeric_like_count = len(
+            [
+                token
+                for token in re.split(r"\s+", text)
+                if token and _column_numeric_signal(token)
+            ]
+        )
+        if len(text) > 80:
+            return ""
+        if word_count > 10:
+            return ""
+        if numeric_like_count >= 2:
+            return ""
+        return text
+
     def _clean_scope_labels(self, values: Any) -> list[str]:
         if not isinstance(values, (list, tuple)):
             return []
@@ -17319,7 +17398,7 @@ class KnowledgeIngestionService:
                     label = self._table_cell_text(cell_lookup.get(idx, ""))
                     if label:
                         break
-                active_subsection = label
+                active_subsection = self._table_subsection_label(label)
                 continue
 
             row_attributes = self._row_model_attributes(row, raw_schema)
@@ -17345,7 +17424,7 @@ class KnowledgeIngestionService:
             # Fallback: detect uniform-value rows not caught by annotation
             unique_values = set(value_by_label.values())
             if len(unique_values) == 1 and len(value_by_label) >= 4:
-                active_subsection = next(iter(unique_values), "")
+                active_subsection = self._table_subsection_label(next(iter(unique_values), ""))
                 continue
             scope_contract = self._resolve_row_scope_contract(
                 row_model_meta=row_model_meta,
@@ -17376,6 +17455,16 @@ class KnowledgeIngestionService:
                 inferred_scope_columns=inferred_scope_columns,
                 observed_value_columns=observed_value_columns,
                 fee_value=fee_value,
+            )
+            structural_row_diag = self._table_row_structural_context_profile(
+                value_by_label=value_by_label,
+                scope_dimension_columns=(
+                    scope_dimension_columns
+                    or row_model_meta.get("scope_dimension_columns")
+                    or inferred_scope_columns
+                ),
+                fee_value=fee_value,
+                row_signal_diag=row_signal_diag,
             )
             if (
                 row_signal_diag["pair_count"] < self.table_row_signal_min_pairs
@@ -17439,6 +17528,21 @@ class KnowledgeIngestionService:
                     ),
                     "table_row_signal_has_fee_value": bool(row_signal_diag["has_fee_value"]),
                     "table_row_signal_score": float(row_signal_diag["score"]),
+                    "table_row_is_structural_context": bool(
+                        structural_row_diag["is_structural_context"]
+                    ),
+                    "table_row_structural_scope_label_count": int(
+                        structural_row_diag["scope_label_count"]
+                    ),
+                    "table_row_structural_scope_echo_count": int(
+                        structural_row_diag["scope_echo_count"]
+                    ),
+                    "table_row_structural_scope_numeric_count": int(
+                        structural_row_diag["scope_numeric_count"]
+                    ),
+                    "table_row_structural_scope_echo_ratio": float(
+                        structural_row_diag["scope_echo_ratio"]
+                    ),
                 }
             )
             payloads.append({"text": text, "metadata": row_meta})

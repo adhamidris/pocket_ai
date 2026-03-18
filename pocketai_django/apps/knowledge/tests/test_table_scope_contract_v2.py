@@ -407,6 +407,80 @@ class SectionHeaderClassificationTests(SimpleTestCase):
         self.assertIn("[SubSection] Foreign Currency Transactions", text)
         self.assertIn("Service: FX Purchase", text)
 
+    def test_noisy_numeric_subsection_is_not_injected_into_row_chunks(self) -> None:
+        class _Manager:
+            def __init__(self, items):
+                self._items = list(items)
+
+            def all(self):
+                return list(self._items)
+
+        class _Cell:
+            def __init__(self, cell_id: str, column_index: int, raw_text: str, column_key: str = ""):
+                self.id = cell_id
+                self.column_index = column_index
+                self.column_key = column_key
+                self.raw_text = raw_text
+
+        class _Row:
+            def __init__(self, row_index, metadata, cells):
+                self.row_index = row_index
+                self.metadata = metadata
+                self.cells = _Manager(cells)
+
+        class _Table:
+            def __init__(self, rows):
+                self.title = "Loan fees"
+                self.order_index = 1
+                self.section_heading = ""
+                self.rows = _Manager(rows)
+
+        noisy_subsection = (
+            "Secured 2.00% 1.75% 1.50% 1.25% 2.00% 2.00% 1.50% 1.75% "
+            "1% up to 8 years loan tenor Liability Letter Issuance Fees EGP 50"
+        )
+        section_row = _Row(
+            row_index=1,
+            metadata={"row_type": "section_header"},
+            cells=[
+                _Cell("s-0", 0, noisy_subsection),
+                _Cell("s-1", 1, noisy_subsection),
+                _Cell("s-2", 2, noisy_subsection),
+                _Cell("s-3", 3, noisy_subsection),
+                _Cell("s-4", 4, noisy_subsection),
+            ],
+        )
+        data_row = _Row(
+            row_index=2,
+            metadata={"row_type": "data"},
+            cells=[
+                _Cell("d-0", 0, "Clearance Letter"),
+                _Cell("d-1", 1, "EGP 200"),
+                _Cell("d-2", 2, "EGP 200"),
+                _Cell("d-3", 3, "EGP 200"),
+            ],
+        )
+        table = _Table([section_row, data_row])
+        service = KnowledgeIngestionService(enable_ocr=False)
+        payloads = service._table_row_chunk_payloads(
+            table=table,
+            column_map=[
+                ("Service", "service", 0),
+                ("Fees / Charges", "fees_charges", 1),
+                ("Fees / Charges", "fees_charges_2", 2),
+                ("Fees / Charges", "fees_charges_3", 3),
+            ],
+            raw_schema=["service", "fees_charges", "fees_charges_2", "fees_charges_3"],
+            privacy_rules={},
+            base_metadata={"is_table_chunk": True, "table_id": "t-3"},
+            max_rows=50,
+        )
+
+        self.assertEqual(len(payloads), 1)
+        text = payloads[0]["text"]
+        self.assertNotIn("[SubSection]", text)
+        self.assertIn("Service: Clearance Letter", text)
+
 
 class TableRowSignalFilterTests(SimpleTestCase):
     class _Manager:

@@ -412,7 +412,9 @@ def build_system_message(
         ### `read_knowledge`
         - Read when previews are too thin to answer confidently.
         - Use the `refs` returned by `search_knowledge` (do not invent IDs).
-        - For table refs, page with `row_start` + `row_limit`; do not use range paging on single row refs.
+        - For table refs, page with `row_start` + `row_limit`.
+        - If a search result has `kind=table_row`, that ID is exact-row only. Never add `row_start` or `row_limit` to it.
+        - Use range paging only with a real table ref. Do not turn a row ref into a browsing ref.
         - If the response includes `next_row_start`, more table rows are available from that offset.
         - Prefer one comprehensive batched read over multiple small reads (extra tool-loop turns can cost more overall).
         - If existing evidence is sufficient, answer without an extra read. Only page table rows when you still need more evidence.

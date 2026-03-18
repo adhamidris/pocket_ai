@@ -84,11 +84,13 @@ Read canonical evidence for specific refs from `search_knowledge.refs[]`.
 - This is the normal step after search for factual business answers (pricing, policy, eligibility, limits, process details), even when previews look good.
 - `refs` is a list of `{{id}}` objects.
   - For text/excerpt continuation: use `{{id,cursor}}` only when the tool returns `next_cursor`.
-  - For table refs: page rows with `{{id,row_start,row_limit}}` (the tool returns `next_row_start` when more rows exist). Do not use range paging on single row refs.
+  - For table refs: page rows with `{{id,row_start,row_limit}}` (the tool returns `next_row_start` when more rows exist).
+  - If a ref has `kind=table_row`, that `id` is exact-row only. Never add `row_start` or `row_limit` to a `table_row` ref.
 - Cursors are opaque tokens returned by the tool; never invent or edit them—pass them back exactly.
 - Batch all relevant refs into ONE call.
 - Set `max_chars` using `read_budget_hint.total_suggested_max_chars` from the search results. For "list all" / large tables, prefer a higher `max_chars` (up to `read_budget_hint.max_chars_allowed`) to avoid repeat reads.
 - For table payloads: use `row_offset/rows_shown/total_rows/next_row_start` and page with `row_start/row_limit` only on table refs when you still need more rows for the answer.
+- A `table_row` ref is not a table browser. If you only have a `table_row` ref, read it as-is or search again for the needed neighboring row/table evidence.
 
 ### initiate_phone_call(phone_number, objective)
 Make an outbound phone call to a customer or contact.
@@ -179,13 +181,15 @@ Read canonical evidence for specific refs from `search_knowledge.refs[]`.
 - This is the normal step after search for factual business answers (pricing, policy, eligibility, limits, process details), even when previews look good.
 - `refs` is a list of `{{id}}` objects.
   - For text/excerpt continuation: use `{{id,cursor}}` only when the tool returns `next_cursor`.
-  - For table refs: page rows with `{{id,row_start,row_limit}}` (the tool returns `next_row_start` when more rows exist). Do not use range paging on single row refs.
+  - For table refs: page rows with `{{id,row_start,row_limit}}` (the tool returns `next_row_start` when more rows exist).
+  - If a ref has `kind=table_row`, that `id` is exact-row only. Never add `row_start` or `row_limit` to a `table_row` ref.
 - Cursors are opaque tokens returned by the tool; never invent or edit them—pass them back exactly.
 - If the tool returns `artifact_id` and a `next_cursor`, treat the returned excerpt as partial; use `next_cursor` to keep reading until complete.
 - You can continue multiple partial refs in ONE call by including multiple `{{id,cursor}}` entries in `refs`.
 - Batch all relevant items into ONE call.
 - Set `max_chars` using `read_budget_hint.total_suggested_max_chars` from the search results. For "list all" / large tables, prefer a higher `max_chars` (up to `read_budget_hint.max_chars_allowed`) to avoid repeat reads.
 - For table payloads: use `row_offset/rows_shown/total_rows/next_row_start` and page with `row_start/row_limit` only on table refs when you still need more rows for the answer.
+- A `table_row` ref is not a table browser. If you only have a `table_row` ref, read it as-is or search again for the needed neighboring row/table evidence.
 
 ### initiate_phone_call(phone_number, objective)
 Make an outbound phone call to a customer or contact.
@@ -310,7 +314,7 @@ You are {agent_name}{for_business}.
 - **search_knowledge(queries)** — find what exists. Returns refs (IDs + labels + size estimates, and sometimes short previews). Previews are for selection only; for business facts (especially numbers), confirm via `read_knowledge`. Batch variants in ONE call.
 - If the tool returns `has_more=true` and a `next_cursor`, use `search_knowledge(cursor=next_cursor)` to fetch more.
 - After your first search, assess coverage: do the results cover all aspects of the question? If not, search again with different terms.
-- **read_knowledge(refs, max_chars)** — read full evidence for factual business answers; batch all relevant refs in ONE call and use `read_budget_hint.total_suggested_max_chars` for `max_chars`. For table refs, page with `row_start/row_limit` (use `next_row_start` when present); do not use range paging on single row refs.
+- **read_knowledge(refs, max_chars)** — read full evidence for factual business answers; batch all relevant refs in ONE call and use `read_budget_hint.total_suggested_max_chars` for `max_chars`. For table refs, page with `row_start/row_limit` (use `next_row_start` when present). If a ref has `kind=table_row`, its `id` is exact-row only and must never be called with `row_start` or `row_limit`.
 - **initiate_phone_call(phone_number, objective)** — make an outbound phone call. Requires E.164 format (e.g., +201234567890) and a short call objective. Optional: `call_type`, `language`, `max_duration_minutes`. Recommended: include `context_items=[...]` for facts/talking points so they are preserved for approvals and the call runtime.
 
 ## Workflow (follow this order)
@@ -371,13 +375,15 @@ Read canonical evidence for specific refs from `search_knowledge.refs[]`.
 - This is the normal step after search for factual business answers (pricing, policy, eligibility, limits, process details), even when previews look good.
 - `refs` is a list of `{{id}}` objects.
   - For text/excerpt continuation: use `{{id,cursor}}` only when the tool returns `next_cursor`.
-  - For table refs: page rows with `{{id,row_start,row_limit}}` (the tool returns `next_row_start` when more rows exist). Do not use range paging on single row refs.
+  - For table refs: page rows with `{{id,row_start,row_limit}}` (the tool returns `next_row_start` when more rows exist).
+  - If a ref has `kind=table_row`, that `id` is exact-row only. Never add `row_start` or `row_limit` to a `table_row` ref.
 - Cursors are opaque tokens returned by the tool; never invent or edit them—pass them back exactly.
 - If the tool returns `artifact_id` and a `next_cursor`, treat the returned excerpt as partial; use `next_cursor` to keep reading until complete.
 - You can continue multiple partial refs in ONE call by including multiple `{{id,cursor}}` entries in `refs`.
 - Batch all relevant items into ONE call.
 - Set `max_chars` using `read_budget_hint.total_suggested_max_chars` from the search results. For "list all" / large tables, prefer a higher `max_chars` (up to `read_budget_hint.max_chars_allowed`) to avoid repeat reads.
 - For table payloads: use `row_offset/rows_shown/total_rows/next_row_start` and page with `row_start/row_limit` only on table refs when you still need more rows for the answer.
+- A `table_row` ref is not a table browser. If you only have a `table_row` ref, read it as-is or search again for the needed neighboring row/table evidence.
 
 ### initiate_phone_call(phone_number, objective)
 Make an outbound phone call to a customer or contact.
@@ -469,13 +475,15 @@ Read canonical evidence for specific refs from `search_knowledge.refs[]`.
 - This is the normal step after search for factual business answers (pricing, policy, eligibility, limits, process details), even when previews look good.
 - `refs` is a list of `{{id}}` objects.
   - For text/excerpt continuation: use `{{id,cursor}}` only when the tool returns `next_cursor`.
-  - For table refs: page rows with `{{id,row_start,row_limit}}` (the tool returns `next_row_start` when more rows exist). Do not use range paging on single row refs.
+  - For table refs: page rows with `{{id,row_start,row_limit}}` (the tool returns `next_row_start` when more rows exist).
+  - If a ref has `kind=table_row`, that `id` is exact-row only. Never add `row_start` or `row_limit` to a `table_row` ref.
 - Cursors are opaque tokens returned by the tool; never invent or edit them—pass them back exactly.
 - If the tool returns `artifact_id` and a `next_cursor`, treat the returned excerpt as partial; use `next_cursor` to keep reading until complete.
 - You can continue multiple partial refs in ONE call by including multiple `{{id,cursor}}` entries in `refs`.
 - Batch all relevant items into ONE call.
 - Set `max_chars` using `read_budget_hint.total_suggested_max_chars` from the search results. For "list all" / large tables, prefer a higher `max_chars` (up to `read_budget_hint.max_chars_allowed`) to avoid repeat reads.
 - For table payloads: use `row_offset/rows_shown/total_rows/next_row_start` and page with `row_start/row_limit` only on table refs when you still need more rows for the answer.
+- A `table_row` ref is not a table browser. If you only have a `table_row` ref, read it as-is or search again for the needed neighboring row/table evidence.
 
 ### initiate_phone_call(phone_number, objective)
 Make an outbound phone call to a customer or contact.
@@ -647,7 +655,7 @@ READ_TOOL_DESCRIPTION = """
 Read full content from the knowledge base by ID.
 
 Arguments:
-- refs: List of `{id}` objects from `search_knowledge.refs[]` (use `{id,cursor}` only when continuing a partial *text* read; for table refs, page with `{id,row_start,row_limit}`; do not use range paging on single row refs)
+- refs: List of `{id}` objects from `search_knowledge.refs[]` (use `{id,cursor}` only when continuing a partial *text* read; for table refs, page with `{id,row_start,row_limit}`. If a ref has `kind=table_row`, its `id` is exact-row only and must never be used with `row_start` or `row_limit`)
 - max_chars: Maximum total characters to return (set higher for list-all or table-heavy answers)
 
 Prefer a single batched call with all refs instead of multiple read_knowledge calls.
