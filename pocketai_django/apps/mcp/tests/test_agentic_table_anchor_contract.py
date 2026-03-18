@@ -323,6 +323,69 @@ class AgenticSearchTableRefTests(SimpleTestCase):
         refs = result.get("refs") or []
         self.assertEqual([ref.get("id") for ref in refs], [high_chunk_id, low_chunk_id])
 
+    def test_exact_table_row_read_hint_is_sized_smaller_than_table_context_hint(self) -> None:
+        table_id = str(uuid.uuid4())
+        row_chunk_id = str(uuid.uuid4())
+        table_chunk_id = str(uuid.uuid4())
+        upload_id = str(uuid.uuid4())
+        legacy_payload = {
+            "tool": "search_knowledge",
+            "status": "ok",
+            "snippets": [
+                {
+                    "id": "row-1",
+                    "chunk_id": row_chunk_id,
+                    "upload_id": upload_id,
+                    "title": "Mortgage.pdf – chunk 8",
+                    "public_label": "Mortgage.pdf – chunk 8",
+                    "summary": "service_type: Reschedule fees; commission_fees: Reschedule fees 2% of the outstanding amount",
+                    "content": "service_type: Reschedule fees; commission_fees: Reschedule fees 2% of the outstanding amount",
+                    "is_table_chunk": True,
+                    "search_stage": "table_direct",
+                    "confidence_score": 0.95,
+                    "source_diagnostics": {
+                        "table_id": table_id,
+                        "row_index": 7,
+                        "table_total_rows": 8,
+                        "table_column_count": 2,
+                    },
+                },
+                {
+                    "id": "table-1",
+                    "chunk_id": table_chunk_id,
+                    "upload_id": upload_id,
+                    "title": "Mortgage.pdf – table preview",
+                    "public_label": "Mortgage.pdf – table preview",
+                    "summary": "Mortgage fees table preview",
+                    "content": "Administrative Fee | Partial early settlement fees | Full early settlement fees | Buyout fees | Registration and mortgage fees & expenses | Late penalty fees | Reschedule fees",
+                    "is_table_chunk": True,
+                    "search_stage": "table_parent",
+                    "confidence_score": 0.62,
+                    "source_diagnostics": {
+                        "table_id": table_id,
+                        "table_total_rows": 8,
+                        "table_column_count": 2,
+                    },
+                },
+            ],
+            "completeness": {"shown": 2, "total_found": 2},
+        }
+
+        result = tools._convert_to_agentic_search_response(
+            legacy_payload,
+            conversation=SimpleNamespace(id=uuid.uuid4(), business_profile_id=uuid.uuid4()),
+            context=ToolExecutionContext(),
+        )
+
+        refs = result.get("refs") or []
+        by_id = {str(ref.get("id")): ref for ref in refs}
+        row_hint = int(((by_id[row_chunk_id].get("read_hint") or {}).get("suggested_max_chars")) or 0)
+        table_hint = int(((by_id[table_chunk_id].get("read_hint") or {}).get("suggested_max_chars")) or 0)
+        self.assertGreater(row_hint, 0)
+        self.assertGreater(table_hint, 0)
+        self.assertLess(row_hint, table_hint)
+        self.assertLess(row_hint, 900)
+
 
 @override_settings(MCP_NEW_CONTRACT_ENABLED=True, MCP_AGENTIC_READ_V2_ENABLED=True)
 class AgenticReadTableAnchorMergeTests(TestCase):
@@ -446,6 +509,7 @@ class AgenticReadTableAnchorMergeTests(TestCase):
         self.assertTrue(any("Assessment Fees" in row and "EGP 200 (Paid once)" in row for row in rendered_rows))
         self.assertTrue(any("Unsecured Personal Loans via Apply Online" in row and "1%" in row for row in rendered_rows))
 
+    @override_settings(MCP_READ_KNOWLEDGE_OVERFLOW_MARGIN=0)
     def test_table_paging_reports_more_available_without_truncated_status(self) -> None:
         result = tools.execute_tool(
             "read_knowledge",
@@ -509,3 +573,171 @@ class AgenticReadTableAnchorMergeTests(TestCase):
         self.assertEqual(len(errors), 1)
         self.assertEqual(errors[0].get("error_code"), "row_ref_range_not_supported")
         self.assertIn(str(self.table.id), str(errors[0].get("hint") or ""))
+
+
+@override_settings(MCP_NEW_CONTRACT_ENABLED=True, MCP_AGENTIC_READ_V2_ENABLED=True)
+class AgenticReadPackingTests(TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.user = User.objects.create(email="packing@example.com", first_name="Packing")
+        self.registration = RegistrationSession.objects.create(user=self.user)
+        self.business = BusinessProfile.objects.create(
+            user=self.user,
+            registration_session=self.registration,
+            name="Packing Co",
+            industry="banking",
+        )
+        self.agent = AgentProfile.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            name="Packing Agent",
+            role="Assistant",
+        )
+        self.conversation = Conversation.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            session_token="packing-session",
+        )
+        self.upload = KnowledgeUpload.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            source_type=KnowledgeSourceType.FILE,
+            status=KnowledgeStatus.ACTIVE,
+            display_name="Mortgage.pdf",
+            ingestion_metadata={"format": "pdf"},
+        )
+        with tenant_context(self.business.id):
+            KnowledgeUploadPage.objects.create(
+                upload=self.upload,
+                page_number=1,
+                width=612.0,
+                height=792.0,
+                content_type="application/pdf",
+                metadata={},
+            )
+            self.table = KnowledgeUploadTable.objects.create(
+                upload=self.upload,
+                title="Mortgage – Table 1",
+                section_heading="Mortgage Fees",
+                order_index=1,
+                column_schema=["service_type", "commission_fees"],
+                metadata={},
+            )
+
+            self.row_chunk_ids: list[str] = []
+            rows = [
+                (
+                    "Administrative Fee (Paid once in advance) 2% of the loan amount",
+                    "2% of the loan amount",
+                ),
+                (
+                    "Partial early settlement fees 7% of the paid amount",
+                    "7% of the paid amount",
+                ),
+                (
+                    "Buyout fees",
+                    "Buyout fees 10% of the outstanding balance",
+                ),
+            ]
+            for row_index, (service, fee) in enumerate(rows):
+                row = KnowledgeUploadTableRow.objects.create(
+                    table=self.table,
+                    row_index=row_index,
+                    raw_text=f"{service} {fee}",
+                    metadata={},
+                )
+                KnowledgeUploadTableCell.objects.create(
+                    table=self.table,
+                    row=row,
+                    column_index=0,
+                    column_key="service_type",
+                    raw_text=service,
+                )
+                KnowledgeUploadTableCell.objects.create(
+                    table=self.table,
+                    row=row,
+                    column_index=1,
+                    column_key="commission_fees",
+                    raw_text=fee,
+                )
+                chunk = KnowledgeUploadChunk.objects.create(
+                    upload=self.upload,
+                    business_profile=self.business,
+                    chunk_index=row_index + 1,
+                    content=f"[Table] Mortgage – Table 1\n[Row] {row_index}\nservice_type: {service}\ncommission_fees: {fee}",
+                    token_count=24,
+                    metadata={
+                        "is_table_chunk": True,
+                        "table_chunk_role": "row",
+                        "table_id": str(self.table.id),
+                        "table_row_index": row_index,
+                    },
+                )
+                self.row_chunk_ids.append(str(chunk.id))
+
+    def test_greedy_packing_reads_top_priority_rows_before_deferring_tail(self) -> None:
+        result = tools.execute_tool(
+            "read_knowledge",
+            {
+                "refs": [{"id": ref_id} for ref_id in self.row_chunk_ids],
+                "max_chars": 700,
+            },
+            conversation=self.conversation,
+            context=ToolExecutionContext(),
+        )
+
+        self.assertEqual(result.get("status"), "truncated")
+        evidence = result.get("evidence") or []
+        self.assertEqual([entry.get("id") for entry in evidence], self.row_chunk_ids[:2])
+        deferred = result.get("deferred") or []
+        self.assertEqual([entry.get("id") for entry in deferred], [self.row_chunk_ids[2]])
+        self.assertEqual(deferred[0].get("reason"), "budget_too_small")
+
+    def test_small_budget_near_miss_uses_overflow_buffer(self) -> None:
+        result = tools.execute_tool(
+            "read_knowledge",
+            {
+                "refs": [{"id": self.row_chunk_ids[0]}],
+                "max_chars": 300,
+            },
+            conversation=self.conversation,
+            context=ToolExecutionContext(),
+        )
+
+        self.assertEqual(result.get("status"), "ok")
+        evidence = result.get("evidence") or []
+        self.assertEqual(len(evidence), 1)
+        self.assertEqual(evidence[0].get("id"), self.row_chunk_ids[0])
+        self.assertGreater(int(result.get("total_chars") or 0), 300)
+
+    @override_settings(MCP_READ_KNOWLEDGE_OVERFLOW_MARGIN=0)
+    def test_budget_deferred_ref_can_retry_with_higher_max_chars_same_turn(self) -> None:
+        context = ToolExecutionContext()
+
+        first = tools.execute_tool(
+            "read_knowledge",
+            {
+                "refs": [{"id": self.row_chunk_ids[0]}],
+                "max_chars": 300,
+            },
+            conversation=self.conversation,
+            context=context,
+        )
+
+        self.assertEqual(first.get("status"), "error")
+        self.assertEqual((first.get("deferred") or [])[0].get("id"), self.row_chunk_ids[0])
+
+        second = tools.execute_tool(
+            "read_knowledge",
+            {
+                "refs": [{"id": self.row_chunk_ids[0]}],
+                "max_chars": 1000,
+            },
+            conversation=self.conversation,
+            context=context,
+        )
+
+        self.assertEqual(second.get("status"), "ok")
+        evidence = second.get("evidence") or []
+        self.assertEqual(len(evidence), 1)
+        self.assertEqual(evidence[0].get("id"), self.row_chunk_ids[0])

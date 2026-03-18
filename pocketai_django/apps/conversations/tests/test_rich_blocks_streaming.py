@@ -30,6 +30,24 @@ def _inline_text(nodes: list[dict[str, object]]) -> str:
 
 
 class RichBlockStreamingTests(SimpleTestCase):
+    def test_chunk_boundary_newline_closes_paragraph_immediately(self) -> None:
+        builder = RichBlockStreamBuilder()
+
+        first_events = builder.feed_text("Administrative Fee - Paid once in advance (2% of the loan amount)\n")
+
+        self.assertEqual(
+            [str(event.get("type") or "").strip().lower() for event in first_events],
+            ["block_start", "block_delta", "block_end"],
+        )
+        self.assertEqual(builder.active_paragraph_id, None)
+
+        second_events = builder.feed_text("Partial Early Settlement Fees - 7% of the paid amount")
+
+        self.assertEqual(
+            [str(event.get("type") or "").strip().lower() for event in second_events],
+            ["block_start", "block_delta"],
+        )
+
     def test_streaming_preserves_bold_markdown_across_chunks(self) -> None:
         builder = RichBlockStreamBuilder()
         builder.feed_text("Based on the fee schedule, the fee for **Traveler")

@@ -57,7 +57,8 @@ class SelectTemplateTests(SimpleTestCase):
 
 class TemplateContentTests(SimpleTestCase):
     def test_deepseek_chat_contains_never_reread(self) -> None:
-        self.assertIn("NEVER re-read", DEEPSEEK_CHAT_SYSTEM_PROMPT)
+        self.assertIn("NEVER re-read the same ref unchanged", DEEPSEEK_CHAT_SYSTEM_PROMPT)
+        self.assertIn("corrected higher `max_chars`", DEEPSEEK_CHAT_SYSTEM_PROMPT)
 
     def test_openai_chat_contains_search_before_answering(self) -> None:
         self.assertIn("Always search the knowledge base", OPENAI_CHAT_SYSTEM_PROMPT)
@@ -72,7 +73,8 @@ class TemplateContentTests(SimpleTestCase):
         )
         self.assertIn("TestBot", prompt)
         self.assertIn("Acme Corp", prompt)
-        self.assertIn("NEVER re-read", prompt)
+        self.assertIn("NEVER re-read the same ref unchanged", prompt)
+        self.assertIn("corrected higher `max_chars`", prompt)
 
     def test_default_template_renders(self) -> None:
         agent = mock.Mock()

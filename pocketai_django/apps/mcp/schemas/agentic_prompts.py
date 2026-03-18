@@ -333,8 +333,8 @@ You are {agent_name}{for_business}.
 ## Prohibitions
 
 - NEVER use `search_knowledge.preview` as the sole source for numeric business facts (fees, limits, percentages). Always confirm in `read_knowledge` first.
-- NEVER re-read the same ref ID without a cursor (for text) or without changing `row_start` (for tables).
-- NEVER increase `max_chars` for the same ref on retry.
+- NEVER re-read the same ref unchanged: for text, only continue with a new cursor; for tables, only continue with a new `row_start`/`row_limit`.
+- If a ref was deferred or truncated because of budget, you may retry with fewer refs or a corrected higher `max_chars`.
 - NEVER call `read_knowledge` without ref IDs from a prior search.
 - NEVER repeat the same search just to "double-check" the ranking; page with `next_cursor` or change the query.
 

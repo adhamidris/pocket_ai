@@ -540,6 +540,8 @@ class RichBlockStreamBuilder:
             events.extend(self._ingest_line_segment(segment, line_ended=True))
         # Tail segment (no newline)
         events.extend(self._ingest_line_segment(parts[-1], line_ended=False))
+        if chunk.endswith("\n"):
+            events.extend(self._close_paragraph_on_chunk_boundary())
         return events
 
     def finalize(self) -> list[dict[str, object]]:
@@ -560,6 +562,23 @@ class RichBlockStreamBuilder:
         events.extend(self._close_paragraph())
         self._close_list()
         return events
+
+    def _close_paragraph_on_chunk_boundary(self) -> list[dict[str, object]]:
+        """
+        Close a streamed paragraph when the provider chunk ends exactly on a newline.
+
+        Without this, the visible break between lines is delayed until the next chunk
+        arrives because paragraph newlines are normally injected only when the next
+        line starts. That creates transient "glued" lines during live streaming.
+        """
+
+        if self.in_code_block:
+            return []
+        if self.pending_line or self.line_kind is not None:
+            return []
+        if not self.active_paragraph_id:
+            return []
+        return self._close_paragraph()
 
     def _reset_line_state(self) -> None:
         self.line_kind = None

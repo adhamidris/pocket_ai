@@ -3316,6 +3316,17 @@ def _convert_to_agentic_search_response(
         except (TypeError, ValueError):
             return None
 
+    def _snippet_row_index(snippet: Mapping[str, object]) -> int | None:
+        diagnostics_local = (
+            snippet.get("source_diagnostics")
+            if isinstance(snippet.get("source_diagnostics"), Mapping)
+            else {}
+        )
+        row_index_local = diagnostics_local.get("row_index")
+        if row_index_local is None:
+            row_index_local = diagnostics_local.get("table_row_index")
+        return _coerce_int(row_index_local)
+
     def _snippet_char_estimate(snippet: Mapping[str, object]) -> int:
         diagnostics_local = (
             snippet.get("source_diagnostics")
@@ -3336,7 +3347,7 @@ def _convert_to_agentic_search_response(
                 char_estimate_local,
                 min(limit_hint, int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_MAX)),
             )
-        if bool(snippet.get("is_table_chunk")):
+        if bool(snippet.get("is_table_chunk")) and _snippet_row_index(snippet) is None:
             row_count = (
                 diagnostics_local.get("table_total_rows")
                 or diagnostics_local.get("table_row_count")
@@ -3377,14 +3388,26 @@ def _convert_to_agentic_search_response(
         row_count: object,
         column_count: object,
         char_estimate_local: int,
+        row_index: object,
         max_chars_allowed: int,
     ) -> int:
         rows = _coerce_int(row_count) or 0
         cols = _coerce_int(column_count) or 0
-        if rows <= 0:
-            return int(base_suggested)
         # Prefer explicit column counts when available; otherwise use a conservative default.
         cols = cols if cols > 0 else 5
+        row_index_int = _coerce_int(row_index)
+        if row_index_int is not None and row_index_int >= 0:
+            estimated_row_payload_chars = max(
+                int(char_estimate_local),
+                int(char_estimate_local + cols * 22 + 180),
+            )
+            tuned = _suggest_max_chars_for_estimate(
+                estimated_row_payload_chars,
+                max_chars_allowed=max_chars_allowed,
+            )
+            return max(500, min(int(max_chars_allowed), int(tuned)))
+        if rows <= 0:
+            return int(base_suggested)
         estimated_table_chars = max(
             int(char_estimate_local),
             int(rows * max(80, cols * 22) + 400),
@@ -3646,6 +3669,7 @@ def _convert_to_agentic_search_response(
                 row_count=row_count,
                 column_count=column_count,
                 char_estimate_local=char_estimate,
+                row_index=row_index,
                 max_chars_allowed=int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_MAX),
             )
 
@@ -5779,6 +5803,13 @@ def _agentic_read_v2_handler(
                 ),
             }
 
+    try:
+        raw_overflow_margin = int(getattr(settings, "MCP_READ_KNOWLEDGE_OVERFLOW_MARGIN", 200) or 0)
+    except (TypeError, ValueError):
+        raw_overflow_margin = 200
+    overflow_margin = max(0, min(int(raw_overflow_margin), max(0, int(max_chars_allowed) - int(max_chars))))
+    overflow_remaining = int(overflow_margin)
+
     # The backend chooses the correct representation and paging strategy.
     # `mode` is intentionally not part of the public agentic contract.
     mode = "auto"
@@ -7001,7 +7032,8 @@ def _agentic_read_v2_handler(
         if row_limit is not None:
             row_limit = max(1, min(200, int(row_limit)))
         cursor_in_resolved = _resolve_cursor_from_handle(cursor_in if isinstance(cursor_in, str) else None)
-        if remaining_chars < 200:
+        effective_remaining_chars = max(0, int(remaining_chars) + int(overflow_remaining))
+        if effective_remaining_chars < 200:
             deferred.append(
                 {
                     "id": item_id,
@@ -7011,9 +7043,10 @@ def _agentic_read_v2_handler(
             )
             continue
 
-        # Share the remaining budget across the remaining items to avoid starving later items.
-        items_left = max(1, len(ordered_items) - idx)
-        per_item_budget = max(200, remaining_chars // items_left)
+        # Greedy packing by priority: let higher-ranked refs consume the remaining
+        # budget instead of forcing an equal-share slice that can starve the first
+        # ref and create avoidable follow-up reads.
+        per_item_budget = max(200, effective_remaining_chars)
 
         cursor_payload: dict[str, object] | None = None
         if isinstance(cursor_in_resolved, str) and cursor_in_resolved.strip():
@@ -7488,6 +7521,9 @@ def _agentic_read_v2_handler(
         except Exception:
             item_chars = 0
 
+        overflow_used = max(0, item_chars - max(0, int(remaining_chars)))
+        if overflow_used:
+            overflow_remaining = max(0, int(overflow_remaining) - int(overflow_used))
         remaining_chars = max(0, remaining_chars - item_chars)
         total_chars += item_chars
 
@@ -7886,6 +7922,8 @@ def _agentic_read_v2_handler(
                 "errors": len(errors),
                 "total_chars": int(total_chars_final),
                 "max_chars": int(max_chars),
+                "overflow_margin": int(overflow_margin),
+                "overflow_used": int(max(0, int(overflow_margin) - int(overflow_remaining))),
                 "output_chars": int(response_chars),
                 "output_limit": int(output_limit or 0),
                 "table_anchor_manifest_lookups": int(table_anchor_manifest_lookups),
