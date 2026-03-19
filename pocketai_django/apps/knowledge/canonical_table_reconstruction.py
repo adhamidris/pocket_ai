@@ -80,6 +80,12 @@ def _bbox_overlap_ratio(a: tuple[float, float, float, float], b: tuple[float, fl
     return max(0.0, min(1.0, inter / denom))
 
 
+def _bbox_width(bbox: tuple[float, float, float, float] | None) -> float:
+    if not bbox:
+        return 0.0
+    return max(0.0, bbox[2] - bbox[0])
+
+
 def _bbox_edge_distance(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> float:
     # 0 if intersect; otherwise Euclidean distance between closest edges.
     dx = 0.0
@@ -717,10 +723,16 @@ class CanonicalTableReconstructor:
                         cb = _bbox_tuple(getattr(cell, "bbox", None))
                         if not cb:
                             continue
+                        cell_text = _clean_text(str(getattr(cell, "raw_text", "") or ""))
+                        cell_meta = getattr(cell, "metadata", None)
+                        cell_meta = cell_meta if isinstance(cell_meta, Mapping) else {}
+                        if not cell_text:
+                            continue
+                        if "has_native_geometry" in cell_meta and not bool(cell_meta.get("has_native_geometry")):
+                            continue
                         cell_ov = _bbox_overlap_ratio(block_bbox, cb)
                         if cell_ov <= 0.0:
                             continue
-                        cell_text = _clean_text(str(getattr(cell, "raw_text", "") or ""))
                         norm_cell = _norm_for_contains(cell_text)
                         superset = bool(norm_cell and norm_cell in norm_block and len(text) >= len(cell_text) + 8)
                         subset = bool(norm_block and norm_block in norm_cell)
@@ -745,6 +757,73 @@ class CanonicalTableReconstructor:
                 if best_row_index is None or best_cell_idx is None:
                     updated_blocks.append(block)
                     continue
+
+                best_row = next(
+                    (
+                        row
+                        for row in (getattr(best_table, "rows", []) or [])
+                        if int(getattr(row, "row_index", 0) or 0) == int(best_row_index)
+                    ),
+                    None,
+                )
+                if best_row is None:
+                    updated_blocks.append(block)
+                    continue
+
+                overlapping_cells: list[tuple[int, float, float]] = []
+                for row_cell in getattr(best_row, "cells", []) or []:
+                    cell_bbox = _bbox_tuple(getattr(row_cell, "bbox", None))
+                    if not cell_bbox:
+                        continue
+                    row_cell_text = _clean_text(str(getattr(row_cell, "raw_text", "") or ""))
+                    row_cell_meta = getattr(row_cell, "metadata", None)
+                    row_cell_meta = row_cell_meta if isinstance(row_cell_meta, Mapping) else {}
+                    if not row_cell_text:
+                        continue
+                    if "has_native_geometry" in row_cell_meta and not bool(row_cell_meta.get("has_native_geometry")):
+                        continue
+                    cell_overlap = _bbox_overlap_ratio(block_bbox, cell_bbox)
+                    if cell_overlap <= 0.0:
+                        continue
+                    overlapping_cells.append(
+                        (
+                            int(getattr(row_cell, "column_index", 0) or 0),
+                            float(cell_overlap),
+                            _bbox_width(cell_bbox),
+                        )
+                    )
+
+                if len(overlapping_cells) >= 2:
+                    strongest_other_overlap = max(
+                        (
+                            overlap
+                            for column_index, overlap, _width in overlapping_cells
+                            if column_index != int(best_cell_idx)
+                        ),
+                        default=0.0,
+                    )
+                    overlap_threshold = max(0.45, strongest_other_overlap - 0.05)
+                    strong_cells = [
+                        entry
+                        for entry in overlapping_cells
+                        if entry[1] >= overlap_threshold
+                    ]
+                    if len(strong_cells) >= 2:
+                        widths = sorted(width for _idx, _ov, width in strong_cells if width > 0.0)
+                        median_width = widths[len(widths) // 2] if widths else 0.0
+                        block_width = _bbox_width(block_bbox)
+                        width_ratio = (
+                            block_width / max(1.0, median_width)
+                            if median_width > 0.0
+                            else 0.0
+                        )
+                        winner_margin = float(best_cell_overlap) - float(strongest_other_overlap)
+                        # A residual block that spans multiple peer cells without a
+                        # clear geometric winner is row-wide context, not a single
+                        # cell completion candidate.
+                        if width_ratio >= 1.6 and winner_margin <= 0.08:
+                            updated_blocks.append(block)
+                            continue
 
                 # Update the target cell text (replace if residual is a strict superset).
                 new_rows: list[Any] = []

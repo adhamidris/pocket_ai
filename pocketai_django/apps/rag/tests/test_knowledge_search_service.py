@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 import uuid
 from contextlib import ExitStack
 from unittest import mock
@@ -365,26 +364,6 @@ class KnowledgeSearchServiceRegressionContractTests(SimpleTestCase):
         snippet = service._chunk_to_snippet(chunk, result=result)
 
         self.assertEqual(snippet.confidence_score, 0.12)
-
-    @override_settings(RAG_CROSS_ENCODER_TIMEOUT_S=0.02)
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
-    def test_cross_encoder_timeout_returns_promptly(self, _build_embeddings) -> None:
-        service = KnowledgeSearchService()
-
-        class SlowCrossEncoder:
-            def predict(self, pairs):
-                time.sleep(0.30)
-                return [0.9 for _ in pairs]
-
-        start = time.perf_counter()
-        scores = service._get_cached_cross_encoder_scores(
-            SlowCrossEncoder(),
-            [["assessment fee", "Assessment Fees EGP 200"]],
-        )
-        elapsed = time.perf_counter() - start
-
-        self.assertEqual(scores, [])
-        self.assertLess(elapsed, 0.20)
 
     @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
     def test_chunk_hits_reuses_free_text_rerank_output(self, _build_embeddings) -> None:
@@ -1122,7 +1101,6 @@ class KnowledgeSearchServiceTableTests(TestCase):
             mock.patch.object(service, "_table_search_snippets", return_value=(table_direct_snippet,)),
             mock.patch.object(service, "_search_chunks", return_value=(vector_table_snippet,)),
             mock.patch.object(service, "_rrf_fusion_snippets", side_effect=_capture_rrf),
-            mock.patch.object(service, "_snippet_rerank", side_effect=lambda snippets, **_: (tuple(snippets), 0)),
         ):
             result = service.search(
                 business_profile=self.business,
@@ -1189,7 +1167,6 @@ class KnowledgeSearchServiceTableTests(TestCase):
             mock.patch.object(service, "_chunk_hits", return_value=(text_hit,)),
             mock.patch.object(service, "_search_chunks", return_value=(text_snippet,)),
             mock.patch.object(service, "_table_search_snippets") as table_search_mock,
-            mock.patch.object(service, "_snippet_rerank", side_effect=lambda snippets, **_: (tuple(snippets), 0)),
         ):
             result = service.search(
                 business_profile=self.business,

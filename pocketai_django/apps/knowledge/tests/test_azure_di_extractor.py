@@ -241,6 +241,161 @@ class AzureDocumentIntelligenceExtractorTests(SimpleTestCase):
         # The per-column value must survive the spanning label write.
         self.assertEqual(tables[0].rows[1].cells[1].raw_text, "EGP 200")
 
+    def test_extract_tables_empty_cells_do_not_inherit_table_bbox(self) -> None:
+        extractor = AzureDocumentIntelligenceExtractor(endpoint="https://example.test", key="secret")
+        analyze_result = {
+            "pages": [],
+            "tables": [
+                {
+                    "caption": "Fees Table",
+                    "rowCount": 2,
+                    "columnCount": 3,
+                    "boundingRegions": [
+                        {"pageNumber": 1, "polygon": [0, 0, 300, 0, 300, 100, 0, 100]}
+                    ],
+                    "cells": [
+                        {
+                            "rowIndex": 0,
+                            "columnIndex": 0,
+                            "content": "Service",
+                            "kind": "columnHeader",
+                            "boundingRegions": [
+                                {"pageNumber": 1, "polygon": [0, 0, 100, 0, 100, 20, 0, 20]}
+                            ],
+                        },
+                        {
+                            "rowIndex": 0,
+                            "columnIndex": 1,
+                            "content": "Tariff",
+                            "kind": "columnHeader",
+                            "boundingRegions": [
+                                {"pageNumber": 1, "polygon": [100, 0, 200, 0, 200, 20, 100, 20]}
+                            ],
+                        },
+                        {
+                            "rowIndex": 0,
+                            "columnIndex": 2,
+                            "content": "Prime",
+                            "kind": "columnHeader",
+                            "boundingRegions": [
+                                {"pageNumber": 1, "polygon": [200, 0, 300, 0, 300, 20, 200, 20]}
+                            ],
+                        },
+                        {
+                            "rowIndex": 1,
+                            "columnIndex": 0,
+                            "content": "Customer Balance Certificate",
+                            "kind": "content",
+                            "boundingRegions": [
+                                {"pageNumber": 1, "polygon": [0, 40, 100, 40, 100, 60, 0, 60]}
+                            ],
+                        },
+                        {
+                            "rowIndex": 1,
+                            "columnIndex": 2,
+                            "content": "EGP 75 / Statement",
+                            "kind": "content",
+                            "boundingRegions": [
+                                {"pageNumber": 1, "polygon": [200, 40, 300, 40, 300, 60, 200, 60]}
+                            ],
+                        },
+                    ],
+                }
+            ],
+        }
+
+        with mock.patch.object(
+            extractor,
+            "_analyze_document",
+            return_value=(analyze_result, [], {"status": "succeeded"}),
+        ):
+            tables, issues, _meta = extractor.extract_tables(self.path)
+
+        self.assertEqual(issues, [])
+        self.assertEqual(len(tables), 1)
+        row = tables[0].rows[1]
+        empty_middle = row.cells[1]
+        self.assertEqual(empty_middle.raw_text, "")
+        self.assertEqual(empty_middle.bbox, {})
+        self.assertFalse(empty_middle.metadata.get("has_native_geometry"))
+        self.assertEqual(empty_middle.metadata.get("geometry_source"), "synthetic_empty")
+
+    def test_extract_tables_row_bbox_uses_union_of_native_cell_bboxes(self) -> None:
+        extractor = AzureDocumentIntelligenceExtractor(endpoint="https://example.test", key="secret")
+        analyze_result = {
+            "pages": [],
+            "tables": [
+                {
+                    "caption": "Fees Table",
+                    "rowCount": 2,
+                    "columnCount": 3,
+                    "boundingRegions": [
+                        {"pageNumber": 1, "polygon": [0, 0, 300, 0, 300, 100, 0, 100]}
+                    ],
+                    "cells": [
+                        {
+                            "rowIndex": 0,
+                            "columnIndex": 0,
+                            "content": "Service",
+                            "kind": "columnHeader",
+                            "boundingRegions": [
+                                {"pageNumber": 1, "polygon": [0, 0, 100, 0, 100, 20, 0, 20]}
+                            ],
+                        },
+                        {
+                            "rowIndex": 0,
+                            "columnIndex": 1,
+                            "content": "Tariff",
+                            "kind": "columnHeader",
+                            "boundingRegions": [
+                                {"pageNumber": 1, "polygon": [100, 0, 200, 0, 200, 20, 100, 20]}
+                            ],
+                        },
+                        {
+                            "rowIndex": 0,
+                            "columnIndex": 2,
+                            "content": "Prime",
+                            "kind": "columnHeader",
+                            "boundingRegions": [
+                                {"pageNumber": 1, "polygon": [200, 0, 300, 0, 300, 20, 200, 20]}
+                            ],
+                        },
+                        {
+                            "rowIndex": 1,
+                            "columnIndex": 0,
+                            "content": "Copy of Document (Per Paper)",
+                            "kind": "content",
+                            "boundingRegions": [
+                                {"pageNumber": 1, "polygon": [10, 40, 110, 40, 110, 60, 10, 60]}
+                            ],
+                        },
+                        {
+                            "rowIndex": 1,
+                            "columnIndex": 2,
+                            "content": "EGP 20 per paper / Max EGP 1000",
+                            "kind": "content",
+                            "boundingRegions": [
+                                {"pageNumber": 1, "polygon": [210, 40, 290, 40, 290, 60, 210, 60]}
+                            ],
+                        },
+                    ],
+                }
+            ],
+        }
+
+        with mock.patch.object(
+            extractor,
+            "_analyze_document",
+            return_value=(analyze_result, [], {"status": "succeeded"}),
+        ):
+            tables, issues, _meta = extractor.extract_tables(self.path)
+
+        self.assertEqual(issues, [])
+        row = tables[0].rows[1]
+        self.assertTrue(row.metadata.get("row_has_native_geometry"))
+        self.assertEqual(row.metadata.get("row_geometry_source"), "native_union")
+        self.assertEqual(row.bbox, {"x0": 10.0, "y0": 40.0, "x1": 290.0, "y1": 60.0})
+
     def test_derive_table_title_handles_mapping_title_without_crashing(self) -> None:
         table_payload = TablePayload(
             order_index=1,

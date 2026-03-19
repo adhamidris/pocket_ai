@@ -2889,6 +2889,7 @@ class AzureDocumentIntelligenceExtractor:
             table_rows: list[TableRowPayload] = []
             for row_idx in range(row_count):
                 row_cells: list[TableCellPayload] = []
+                row_native_bboxes: list[dict[str, float]] = []
                 for col_idx in range(col_count):
                     raw_text = grid[row_idx][col_idx]
                     cell_meta = cell_lookup.get((row_idx, col_idx), {})
@@ -2896,6 +2897,9 @@ class AzureDocumentIntelligenceExtractor:
                         cell_meta.get("regions"),
                         page_unit_scale=page_unit_scale,
                     )
+                    has_native_geometry = bool(cell_bbox)
+                    if cell_bbox:
+                        row_native_bboxes.append(cell_bbox)
                     normalized_value = TableDetector._normalize_cell_value(raw_text)
                     column_key = column_schema[col_idx] if col_idx < len(column_schema) else f"column_{col_idx+1}"
                     row_cells.append(
@@ -2905,24 +2909,31 @@ class AzureDocumentIntelligenceExtractor:
                             column_key=column_key,
                             raw_text=raw_text,
                             normalized_value=normalized_value,
-                            bbox=cell_bbox or table_bbox,
+                            bbox=cell_bbox or {},
                             confidence=cell_meta.get("confidence"),
                             metadata={
                                 "row_span": cell_meta.get("row_span", 1),
                                 "column_span": cell_meta.get("column_span", 1),
                                 "kind": cell_meta.get("kind"),
                                 "page_number": cell_page or page_number,
+                                "has_native_geometry": has_native_geometry,
+                                "geometry_source": "native_region" if has_native_geometry else "synthetic_empty",
                             },
                         )
                     )
                 row_type = "header" if row_idx in header_rows else "data"
+                row_bbox = _union_bbox(row_native_bboxes) if row_native_bboxes else {}
                 table_rows.append(
                     TableRowPayload(
                         row_index=row_idx,
                         page_number=page_number,
-                        bbox=table_bbox,
+                        bbox=row_bbox,
                         raw_text=" | ".join(grid[row_idx]) if row_idx < len(grid) else "",
-                        metadata={"row_type": row_type},
+                        metadata={
+                            "row_type": row_type,
+                            "row_has_native_geometry": bool(row_native_bboxes),
+                            "row_geometry_source": "native_union" if row_native_bboxes else "synthetic_empty",
+                        },
                         cells=row_cells,
                     )
                 )

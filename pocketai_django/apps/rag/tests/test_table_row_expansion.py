@@ -357,23 +357,5 @@ class TableRowExpansionOrderingTest(SimpleTestCase):
         self.assertEqual(score_cheque, 0.0)
         self.assertEqual(score_loan, 0.0)
 
-    # ------------------------------------------------------------------
-    # Fix 1: Cross-encoder enablement
-    # ------------------------------------------------------------------
-
-    def test_cross_encoder_defaults_enabled(self):
-        """Cross-encoder should default to enabled with table-intent skip disabled."""
-        from django.conf import settings
-
-        self.assertTrue(
-            getattr(settings, "RAG_ENABLE_CROSS_ENCODER", False),
-            "RAG_ENABLE_CROSS_ENCODER should default to True",
-        )
-        self.assertFalse(
-            getattr(settings, "RAG_CROSS_ENCODER_AUTO_SKIP_TABLE_INTENT", True),
-            "RAG_CROSS_ENCODER_AUTO_SKIP_TABLE_INTENT should default to False",
-        )
-
-
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -332,6 +332,202 @@ class CanonicalTableReconstructionTests(SimpleTestCase):
         self.assertIn("Correspondent Fees", updated)
         self.assertTrue(out_pages[0].blocks[0].metadata.get("canonical_consumed_by_table"))
 
+    def test_does_not_force_row_wide_block_into_single_cell(self) -> None:
+        table = TablePayload(
+            order_index=1,
+            title="Customer Service Fees",
+            section_heading="",
+            page_number=1,
+            bbox={"x0": 50.0, "y0": 100.0, "x1": 650.0, "y1": 260.0},
+            column_schema=["Service", "Tariff", "Prime", "Plus"],
+            metadata={"detected_via": "azure_di"},
+            rows=[
+                TableRowPayload(
+                    row_index=0,
+                    page_number=1,
+                    bbox={"x0": 50.0, "y0": 140.0, "x1": 650.0, "y1": 180.0},
+                    raw_text="",
+                    metadata={"row_type": "data"},
+                    cells=[
+                        TableCellPayload(
+                            row_index=0,
+                            column_index=0,
+                            column_key="Service",
+                            raw_text="Standing Instruction for External transfer",
+                            bbox={"x0": 60.0, "y0": 140.0, "x1": 220.0, "y1": 180.0},
+                        ),
+                        TableCellPayload(
+                            row_index=0,
+                            column_index=1,
+                            column_key="Tariff",
+                            raw_text="EGP 50 Subscription",
+                            bbox={"x0": 220.0, "y0": 140.0, "x1": 360.0, "y1": 180.0},
+                        ),
+                        TableCellPayload(
+                            row_index=0,
+                            column_index=2,
+                            column_key="Prime",
+                            raw_text="EGP 40 per transaction",
+                            bbox={"x0": 360.0, "y0": 140.0, "x1": 500.0, "y1": 180.0},
+                        ),
+                        TableCellPayload(
+                            row_index=0,
+                            column_index=3,
+                            column_key="Plus",
+                            raw_text="EGP 10 per transaction",
+                            bbox={"x0": 500.0, "y0": 140.0, "x1": 640.0, "y1": 180.0},
+                        ),
+                    ],
+                )
+            ],
+        )
+
+        row_wide_block = PageBlockPayload(
+            block_type=KnowledgeBlockType.PARAGRAPH,
+            order_index=10,
+            text=(
+                "Standing Instruction for External transfer\n"
+                "EGP 50 Subscription\n"
+                "EGP 40 per transaction\n"
+                "EGP 10 per transaction"
+            ),
+            bbox={"x0": 70.0, "y0": 144.0, "x1": 620.0, "y1": 176.0},
+            metadata={},
+        )
+        pages = [
+            PageLayout(
+                page_number=1,
+                width=700.0,
+                height=800.0,
+                rotation=0,
+                text_density=0.01,
+                has_ocr_content=False,
+                content_type="application/pdf",
+                blocks=[row_wide_block],
+                metadata={},
+            )
+        ]
+
+        recon = CanonicalTableReconstructor(
+            PageLayout=PageLayout,
+            PageBlockPayload=PageBlockPayload,
+            TablePayload=TablePayload,
+            TableRowPayload=TableRowPayload,
+            TableCellPayload=TableCellPayload,
+        )
+        out_pages, out_tables, meta, _issues = recon.run(pages=pages, tables=[table])
+
+        self.assertEqual(meta.attached_blocks, 0)
+        self.assertEqual(meta.attached_cells, 0)
+        updated_cells = out_tables[0].rows[0].cells
+        self.assertEqual(updated_cells[0].raw_text, "Standing Instruction for External transfer")
+        self.assertEqual(updated_cells[1].raw_text, "EGP 50 Subscription")
+        self.assertEqual(updated_cells[2].raw_text, "EGP 40 per transaction")
+        self.assertEqual(updated_cells[3].raw_text, "EGP 10 per transaction")
+        self.assertFalse(out_pages[0].blocks[0].metadata.get("canonical_consumed_by_table"))
+
+    def test_does_not_force_multi_value_block_into_single_value_cell(self) -> None:
+        table = TablePayload(
+            order_index=1,
+            title="Customer Service Fees",
+            section_heading="",
+            page_number=1,
+            bbox={"x0": 50.0, "y0": 100.0, "x1": 700.0, "y1": 260.0},
+            column_schema=["Service", "Tariff", "Prime", "Plus", "Wealth"],
+            metadata={"detected_via": "azure_di"},
+            rows=[
+                TableRowPayload(
+                    row_index=0,
+                    page_number=1,
+                    bbox={"x0": 50.0, "y0": 140.0, "x1": 700.0, "y1": 180.0},
+                    raw_text="",
+                    metadata={"row_type": "data"},
+                    cells=[
+                        TableCellPayload(
+                            row_index=0,
+                            column_index=0,
+                            column_key="Service",
+                            raw_text="Standing Instruction for Internal transfer",
+                            bbox={"x0": 60.0, "y0": 140.0, "x1": 240.0, "y1": 180.0},
+                        ),
+                        TableCellPayload(
+                            row_index=0,
+                            column_index=1,
+                            column_key="Tariff",
+                            raw_text="EGP 50 Subscription",
+                            bbox={"x0": 240.0, "y0": 140.0, "x1": 360.0, "y1": 180.0},
+                        ),
+                        TableCellPayload(
+                            row_index=0,
+                            column_index=2,
+                            column_key="Prime",
+                            raw_text="EGP 50 Subscription",
+                            bbox={"x0": 360.0, "y0": 140.0, "x1": 470.0, "y1": 180.0},
+                        ),
+                        TableCellPayload(
+                            row_index=0,
+                            column_index=3,
+                            column_key="Plus",
+                            raw_text="EGP 10 per transaction",
+                            bbox={"x0": 470.0, "y0": 140.0, "x1": 580.0, "y1": 180.0},
+                        ),
+                        TableCellPayload(
+                            row_index=0,
+                            column_index=4,
+                            column_key="Wealth",
+                            raw_text="Free",
+                            bbox={"x0": 580.0, "y0": 140.0, "x1": 680.0, "y1": 180.0},
+                        ),
+                    ],
+                )
+            ],
+        )
+
+        row_wide_values = PageBlockPayload(
+            block_type=KnowledgeBlockType.PARAGRAPH,
+            order_index=11,
+            text=(
+                "EGP 50 Subscription\n"
+                "EGP 10 per transaction\n"
+                "Free\n"
+                "Free\n"
+                "Free"
+            ),
+            bbox={"x0": 250.0, "y0": 144.0, "x1": 670.0, "y1": 176.0},
+            metadata={"table_residual": True},
+        )
+        pages = [
+            PageLayout(
+                page_number=1,
+                width=700.0,
+                height=800.0,
+                rotation=0,
+                text_density=0.01,
+                has_ocr_content=False,
+                content_type="application/pdf",
+                blocks=[row_wide_values],
+                metadata={},
+            )
+        ]
+
+        recon = CanonicalTableReconstructor(
+            PageLayout=PageLayout,
+            PageBlockPayload=PageBlockPayload,
+            TablePayload=TablePayload,
+            TableRowPayload=TableRowPayload,
+            TableCellPayload=TableCellPayload,
+        )
+        out_pages, out_tables, meta, _issues = recon.run(pages=pages, tables=[table])
+
+        self.assertEqual(meta.attached_blocks, 0)
+        self.assertEqual(meta.attached_cells, 0)
+        updated_cells = out_tables[0].rows[0].cells
+        self.assertEqual(updated_cells[1].raw_text, "EGP 50 Subscription")
+        self.assertEqual(updated_cells[2].raw_text, "EGP 50 Subscription")
+        self.assertEqual(updated_cells[3].raw_text, "EGP 10 per transaction")
+        self.assertEqual(updated_cells[4].raw_text, "Free")
+        self.assertFalse(out_pages[0].blocks[0].metadata.get("canonical_consumed_by_table"))
+
     def test_does_not_promote_noisy_three_block_layout(self) -> None:
         blocks = [
             PageBlockPayload(

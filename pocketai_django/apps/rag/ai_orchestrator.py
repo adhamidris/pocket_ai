@@ -13,7 +13,6 @@ import hashlib
 import dataclasses
 import logging
 import uuid
-import threading
 import math
 from datetime import datetime
 from enum import Enum
@@ -614,61 +613,6 @@ class KnowledgeSearchService:
         self.short_query_ann_multiplier = float(getattr(settings, "RAG_SHORT_QUERY_ANN_MULTIPLIER", 3.0))
         self.read_ready_threshold = max(200, int(getattr(settings, "RAG_READY_CHAR_THRESHOLD", 900)))
         self.table_ready_threshold = max(200, int(getattr(settings, "RAG_READY_TABLE_THRESHOLD", 600)))
-        self.cross_encoder_weight = float(getattr(settings, "RAG_CROSS_ENCODER_WEIGHT", 0.6))
-        self._cross_encoder_enabled = bool(getattr(settings, "RAG_ENABLE_CROSS_ENCODER", False))
-        self._cross_encoder_model_name = getattr(
-            settings,
-            "RAG_CROSS_ENCODER_MODEL",
-            "cross-encoder/ms-marco-MiniLM-L-6-v2",
-        )
-        self._cross_encoder_device = getattr(settings, "RAG_CROSS_ENCODER_DEVICE", None)
-        self._cross_encoder_local = threading.local()
-        self._cross_encoder_lock = threading.Lock()
-        self._cross_encoder_failed = False
-        # Cross-encoder score cache for deterministic results
-        # Key: hash of (query, chunk_content), Value: score
-        self._cross_encoder_cache: dict[str, float] = {}
-        self._cross_encoder_cache_max_size = max(
-            100,
-            int(getattr(settings, "RAG_CROSS_ENCODER_CACHE_SIZE", 500)),
-        )
-        raw_cross_encoder_policy = str(getattr(settings, "RAG_CROSS_ENCODER_POLICY", "") or "").strip().lower()
-        if raw_cross_encoder_policy not in {"always", "auto", "off"}:
-            raw_cross_encoder_policy = ""
-        if not self._cross_encoder_enabled:
-            self.cross_encoder_policy = "off"
-        elif raw_cross_encoder_policy:
-            self.cross_encoder_policy = raw_cross_encoder_policy
-        else:
-            self.cross_encoder_policy = (
-                "auto"
-                if bool(getattr(settings, "RAG_USE_MCP_ORCHESTRATOR", False))
-                else "always"
-            )
-        self.cross_encoder_auto_min_tokens = max(
-            0,
-            int(getattr(settings, "RAG_CROSS_ENCODER_AUTO_MIN_TOKENS", 4) or 0),
-        )
-        self.cross_encoder_auto_min_candidates = max(
-            0,
-            int(getattr(settings, "RAG_CROSS_ENCODER_AUTO_MIN_CANDIDATES", 12) or 0),
-        )
-        self.cross_encoder_auto_max_pairs = max(
-            1,
-            int(getattr(settings, "RAG_CROSS_ENCODER_AUTO_MAX_PAIRS", 12) or 0),
-        )
-        self.cross_encoder_auto_max_chars = max(
-            200,
-            int(getattr(settings, "RAG_CROSS_ENCODER_AUTO_MAX_CHARS", 1600) or 0),
-        )
-        self.cross_encoder_auto_skip_table_intent = bool(
-            getattr(settings, "RAG_CROSS_ENCODER_AUTO_SKIP_TABLE_INTENT", True)
-        )
-        self.cross_encoder_auto_margin_skip = float(
-            getattr(settings, "RAG_CROSS_ENCODER_AUTO_MARGIN_SKIP", 0.25) or 0.25
-        )
-        self.rerank_budget_ms = max(0, int(getattr(settings, "RAG_RERANK_BUDGET_MS", 0)))
-        self.snippet_rerank_budget_ms = max(0, int(getattr(settings, "RAG_SNIPPET_RERANK_BUDGET_MS", 0)))
         self.alias_result_cap = max(1, int(getattr(settings, "RAG_ALIAS_RESULTS_LIMIT", 4)))
         self.alias_neighbor_window = max(1, int(getattr(settings, "RAG_ALIAS_NEIGHBOR_WINDOW", 1)))
         self.alias_cache_ttl = max(60, int(getattr(settings, "RAG_ALIAS_CACHE_TTL", 900)))
@@ -698,8 +642,6 @@ class KnowledgeSearchService:
         self.recency_decay_days = float(getattr(settings, "RAG_RECENCY_DECAY_DAYS", 90))
         self.recency_min_floor = float(getattr(settings, "RAG_RECENCY_MIN_FLOOR", 0.05))
         self.recency_bonus_fresh = float(getattr(settings, "RAG_RECENCY_BONUS_FRESH", 0.15))
-        self.snippet_rerank_enabled = bool(getattr(settings, "RAG_SNIPPET_RERANK_ENABLED", True))
-        self.snippet_rerank_pool = max(5, int(getattr(settings, "RAG_SNIPPET_RERANK_POOL", 20)))
         self.evidence_grouping_enabled = bool(getattr(settings, "RAG_EVIDENCE_GROUPING_ENABLED", True))
         self.evidence_conflict_min_overlap = float(
             getattr(settings, "RAG_EVIDENCE_CONFLICT_MIN_OVERLAP", 0.25)
@@ -1694,11 +1636,6 @@ class KnowledgeSearchService:
                     neighbor=neighbor,
             )
             )[:limit]
-            snippets, snippet_ms = self._snippet_rerank(
-                snippets,
-                query_text=traits.normalized or traits.original or query,
-                tokens=traits.tokens,
-            )
             snippets, collapse_diag = self._collapse_snippets_by_evidence_group(
                 snippets,
                 query_text=traits.normalized or traits.original or query,
@@ -1707,7 +1644,6 @@ class KnowledgeSearchService:
             )
             diagnostics["path"] = "alias_exact"
             diagnostics["alias_stage"] = diagnostics.get("alias_stage") or alias_result.diagnostics.get("stage")
-            diagnostics["snippet_rerank_ms"] = snippet_ms
             diagnostics.update(collapse_diag)
             _rag_log(
                 "alias.short_circuit",
@@ -2085,12 +2021,7 @@ class KnowledgeSearchService:
                 )
 
                 # Apply reranking to merged results
-                blended, snippet_ms = self._snippet_rerank(
-                    tuple(rrf_merged[:limit * 2]),  # Rerank top candidates
-                    query_text=traits.normalized or traits.original or query,
-                    tokens=traits.tokens,
-                )
-                blended = list(blended[:limit])
+                blended = list(rrf_merged[:limit])
 
                 # Apply table diversification when strategy requests it
                 if strategy_result and strategy_result.hints.diversify_tables and len(blended) > 1:
@@ -2105,7 +2036,6 @@ class KnowledgeSearchService:
                 )
                 diagnostics.update(collapse_diag)
 
-                diagnostics["snippet_rerank_ms"] = snippet_ms
                 diagnostics["total_duration_ms"] = self._duration_ms(overall_start)
                 diagnostics["snippet_count"] = len(blended)
                 diagnostics["rrf_vector_count"] = len(vector_snippets)
@@ -2162,12 +2092,6 @@ class KnowledgeSearchService:
                         query=traits.normalized or traits.original or query,  # NEW: For query-aware row sampling
                     )
                 )
-            blended, snippet_ms = self._snippet_rerank(
-                tuple(blended),
-                query_text=traits.normalized or traits.original or query,
-                tokens=traits.tokens,
-            )
-
             # Apply table diversification when strategy requests it
             if strategy_result and strategy_result.hints.diversify_tables and len(blended) > 1:
                 blended = self._diversify_table_snippets(blended, limit=limit)
@@ -2181,7 +2105,6 @@ class KnowledgeSearchService:
             )
             diagnostics.update(collapse_diag)
 
-            diagnostics["snippet_rerank_ms"] = snippet_ms
             status = "ok" if blended else "not_found"
             status, blended_snippets, diagnostics = self._apply_phase6_semantics(
                 status=status,
@@ -2220,14 +2143,8 @@ class KnowledgeSearchService:
             )
         )
         if snippets:
-            snippets, snippet_ms = self._snippet_rerank(
-                snippets,
-                query_text=traits.normalized or traits.original or query,
-                tokens=traits.tokens,
-            )
             diagnostics["path"] = diagnostics.get("path") or "hybrid"
             diagnostics.setdefault("table_reason", table_reason)
-            diagnostics["snippet_rerank_ms"] = int(snippet_ms)
             snippets, collapse_diag = self._collapse_snippets_by_evidence_group(
                 snippets,
                 query_text=traits.normalized or traits.original or query,
@@ -2309,141 +2226,6 @@ class KnowledgeSearchService:
             result=result_obj,
         )
         return result_obj
-
-    def _build_cross_encoder(self):
-        if not self._cross_encoder_enabled:
-            return None
-        try:
-            from sentence_transformers import CrossEncoder as CrossEncoderCls
-        except Exception as exc:  # pragma: no cover - optional dependency
-            logger.warning("Cross-encoder reranker requested but sentence_transformers is unavailable (%s).", exc)
-            return None
-        try:
-            return CrossEncoderCls(self._cross_encoder_model_name, device=self._cross_encoder_device)
-        except Exception as exc:  # pragma: no cover - optional dependency
-            logger.warning(
-                "Failed to initialize cross-encoder model=%s error=%s",
-                self._cross_encoder_model_name,
-                exc,
-            )
-            return None
-
-    def _get_cross_encoder(self):
-        if not self._cross_encoder_enabled:
-            return None
-        if self._cross_encoder_failed:
-            return None
-        encoder = getattr(self._cross_encoder_local, "instance", None)
-        if encoder is not None:
-            return encoder
-        with self._cross_encoder_lock:
-            encoder = getattr(self._cross_encoder_local, "instance", None)
-            if encoder is not None:
-                return encoder
-            encoder = self._build_cross_encoder()
-            if encoder is None:
-                self._cross_encoder_failed = True
-                return None
-            self._cross_encoder_local.instance = encoder
-        return encoder
-
-    def _cross_encoder_cache_key(self, query: str, content: str) -> str:
-        """Generate a cache key for cross-encoder scores."""
-        import hashlib
-        combined = f"{query.strip().lower()}|||{content[:500]}"
-        return hashlib.sha256(combined.encode()).hexdigest()[:32]
-
-    def _get_cached_cross_encoder_scores(
-        self,
-        cross_encoder,
-        pairs: list[list[str]],
-    ) -> list[float]:
-        """
-        Get cross-encoder scores with caching for deterministic results.
-
-        Checks the cache first, only computes scores for uncached pairs.
-        """
-        results: list[float | None] = [None] * len(pairs)
-        uncached_indices: list[int] = []
-        uncached_pairs: list[list[str]] = []
-
-        # Check cache for each pair
-        for idx, (query, content) in enumerate(pairs):
-            cache_key = self._cross_encoder_cache_key(query, content)
-            cached_score = self._cross_encoder_cache.get(cache_key)
-            if cached_score is not None:
-                results[idx] = cached_score
-            else:
-                uncached_indices.append(idx)
-                uncached_pairs.append([query, content])
-
-        # Compute scores for uncached pairs
-        if uncached_pairs:
-            import queue
-            from django.conf import settings
-
-            timeout_s = float(getattr(settings, "RAG_CROSS_ENCODER_TIMEOUT_S", 3.0))
-
-            try:
-                result_queue: queue.Queue[tuple[str, object]] = queue.Queue(maxsize=1)
-
-                def _predict_scores() -> None:
-                    try:
-                        result_queue.put(("ok", cross_encoder.predict(uncached_pairs)))
-                    except Exception as exc:  # pragma: no cover - covered via caller fallback
-                        result_queue.put(("error", exc))
-
-                # Use a daemon thread so timeout actually bounds request wall-clock.
-                # A timed-out prediction may still finish in the background, but the
-                # current search request should not block on executor shutdown.
-                worker = threading.Thread(
-                    target=_predict_scores,
-                    name="rag-cross-encoder",
-                    daemon=True,
-                )
-                worker.start()
-                worker.join(timeout=timeout_s)
-                if worker.is_alive():
-                    logger.warning(
-                        "⏱️ Rerank timeout after %.1fs (%d pairs)",
-                        timeout_s,
-                        len(uncached_pairs),
-                    )
-                    # Deterministic timeout fallback: skip CE for this request
-                    # and keep base rerank ordering intact.
-                    return []
-
-                status, payload = result_queue.get_nowait()
-                if status == "error":
-                    raise payload
-                ce_scores = payload
-                computed_scores = [float(score) for score in ce_scores]
-            except Exception as exc:
-                logger.warning("❌ Cross-encoder failed: %s", str(exc)[:80])
-                # Deterministic error fallback: avoid poisoning cache with
-                # synthetic zero scores and fall back to base rerank only.
-                return []
-
-            # Store computed scores in cache and results
-            for i, idx in enumerate(uncached_indices):
-                score = computed_scores[i] if i < len(computed_scores) else 0.0
-                results[idx] = score
-
-                # Cache the computed score
-                query, content = pairs[idx]
-                cache_key = self._cross_encoder_cache_key(query, content)
-
-                # Evict old entries if cache is full
-                if len(self._cross_encoder_cache) >= self._cross_encoder_cache_max_size:
-                    keys_to_remove = list(self._cross_encoder_cache.keys())[
-                        : self._cross_encoder_cache_max_size // 10
-                    ]
-                    for key in keys_to_remove:
-                        self._cross_encoder_cache.pop(key, None)
-
-                self._cross_encoder_cache[cache_key] = score
-
-        return [r if r is not None else 0.0 for r in results]
 
     def _public_confidence_score(self, result: ChunkResult | None) -> float | None:
         """Expose one comparable public relevance signal for prompt-visible snippets.
@@ -2803,7 +2585,6 @@ class KnowledgeSearchService:
                 rerank_ms,
                 tags={
                     "business": str(business_profile.id),
-                    "cross_encoder": bool(rerank_diag.get("rerank_cross_encoder_attempted")),
                 },
             )
             diagnostics = {
@@ -2996,9 +2777,6 @@ class KnowledgeSearchService:
             diagnostics["vector_duration_ms"] = hybrid.diagnostics.get("vector_duration_ms")
             diagnostics["fts_duration_ms"] = hybrid.diagnostics.get("fts_duration_ms")
             diagnostics["rerank_duration_ms"] = hybrid.diagnostics.get("rerank_duration_ms")
-            for key, value in (hybrid.diagnostics or {}).items():
-                if isinstance(key, str) and key.startswith("rerank_cross_encoder_"):
-                    diagnostics[key] = value
             diagnostics["vector_distance_mean"] = hybrid.diagnostics.get("vector_distance_mean")
             diagnostics["vector_distance_min"] = hybrid.diagnostics.get("vector_distance_min")
             diagnostics["vector_distance_max"] = hybrid.diagnostics.get("vector_distance_max")
@@ -4269,20 +4047,13 @@ class KnowledgeSearchService:
                 [],
                 0,
                 {
-                    "rerank_cross_encoder_policy": getattr(self, "cross_encoder_policy", "off"),
-                    "rerank_cross_encoder_attempted": False,
-                    "rerank_cross_encoder_applied": False,
-                    "rerank_cross_encoder_pairs": 0,
-                    "rerank_cross_encoder_skip_reason": "no_candidates",
+                    "table_residual_rescue_applied": False,
+                    "table_residual_rescue_count": 0,
+                    "table_residual_rescue_reason": "no_candidates",
                 },
             )
         start = time.perf_counter()
         rerank_diag: dict[str, object] = {
-            "rerank_cross_encoder_policy": getattr(self, "cross_encoder_policy", "off"),
-            "rerank_cross_encoder_attempted": False,
-            "rerank_cross_encoder_applied": False,
-            "rerank_cross_encoder_pairs": 0,
-            "rerank_cross_encoder_skip_reason": None,
             "table_residual_rescue_applied": False,
             "table_residual_rescue_count": 0,
             "table_residual_rescue_reason": None,
@@ -4549,126 +4320,12 @@ class KnowledgeSearchService:
                 rerank_diag["table_residual_rescue_reason"] = "disabled"
             else:
                 rerank_diag["table_residual_rescue_reason"] = "not_applicable"
-        policy = getattr(self, "cross_encoder_policy", "off")
-        cross_encoder = None
-        head: list[ChunkResult] = []
-        if traits.normalized and policy != "off":
-            should_attempt = True
-            if policy == "auto":
-                try:
-                    token_count = int(getattr(traits, "token_count", 0) or 0)
-                except (TypeError, ValueError):
-                    token_count = 0
-                if getattr(self, "cross_encoder_auto_skip_table_intent", True) and table_intent:
-                    rerank_diag["rerank_cross_encoder_skip_reason"] = "table_intent"
-                    should_attempt = False
-                elif token_count and token_count < getattr(self, "cross_encoder_auto_min_tokens", 0):
-                    rerank_diag["rerank_cross_encoder_skip_reason"] = "short_query"
-                    should_attempt = False
-                elif len(scored) < getattr(self, "cross_encoder_auto_min_candidates", 0):
-                    rerank_diag["rerank_cross_encoder_skip_reason"] = "few_candidates"
-                    should_attempt = False
-                else:
-                    ranked_by_base = sorted(scored, key=lambda item: (item[0], item[1]), reverse=True)
-                    margin_window = min(5, len(ranked_by_base))
-                    base_margin = (
-                        ranked_by_base[0][0] - ranked_by_base[margin_window - 1][0]
-                        if margin_window >= 2
-                        else 0.0
-                    )
-                    rerank_diag["rerank_cross_encoder_base_margin"] = round(float(base_margin), 4)
-                    if base_margin >= getattr(self, "cross_encoder_auto_margin_skip", 0.0):
-                        rerank_diag["rerank_cross_encoder_skip_reason"] = "clear_margin"
-                        should_attempt = False
-                    else:
-                        head = [
-                            item[2]
-                            for item in ranked_by_base[
-                                : min(
-                                    len(ranked_by_base),
-                                    int(getattr(self, "cross_encoder_auto_max_pairs", 1) or 1),
-                                )
-                            ]
-                        ]
-            else:
-                head = [item[2] for item in scored[: self.rerank_pool]]
-
-            if should_attempt:
-                if self.rerank_budget_ms:
-                    elapsed_ms = int((time.perf_counter() - start) * 1000)
-                    if elapsed_ms >= self.rerank_budget_ms:
-                        logger.warning(
-                            "⚠️ Rerank skipped (budget %sms exceeded, elapsed %sms)",
-                            self.rerank_budget_ms,
-                            elapsed_ms,
-                        )
-                        rerank_diag["rerank_cross_encoder_skip_reason"] = "budget_exceeded"
-                        should_attempt = False
-
-            if should_attempt and head:
-                cross_encoder = self._get_cross_encoder()
-                if cross_encoder is None:
-                    rerank_diag["rerank_cross_encoder_skip_reason"] = "unavailable"
-
-        if cross_encoder and head:
-            pairs: list[list[str]] = []
-            if policy == "auto":
-                max_chars = int(getattr(self, "cross_encoder_auto_max_chars", 1600) or 1600)
-                pairs = [[traits.normalized, (hit.chunk.content or "")[:max_chars]] for hit in head]
-            else:
-                pairs = [[traits.normalized, (hit.chunk.content or "")] for hit in head]
-            rerank_diag["rerank_cross_encoder_attempted"] = True
-            rerank_diag["rerank_cross_encoder_pairs"] = len(pairs)
-            try:
-                # Use cached cross-encoder scoring for deterministic results
-                ce_values = self._get_cached_cross_encoder_scores(cross_encoder, pairs)
-            except Exception as exc:  # pragma: no cover - optional dependency
-                    # P0 #5: Graceful fallback on cross-encoder errors (e.g., AlreadyBorrowed)
-                    logger.warning(
-                        "❌ Rerank failed: %s",
-                        str(exc)[:80],
-                    )
-                    _rag_log(
-                        "retrieval.cross_encoder_failures",
-                        {
-                            "error_type": type(exc).__name__,
-                            "error_msg": str(exc)[:200],
-                            "pairs_count": len(pairs),
-                        },
-                        indent=2,
-                    )
-                    # Set failure flag to prevent repeated attempts in this process
-                    self._cross_encoder_failed = True
-                    ce_values = []
-            if not ce_values:
-                rerank_diag["rerank_cross_encoder_skip_reason"] = (
-                    rerank_diag.get("rerank_cross_encoder_skip_reason")
-                    or "timeout_or_error_fallback"
-                )
-            if ce_values:
-                ce_lookup = {
-                    hit.chunk_id: self.cross_encoder_weight * ce_values[idx]
-                    for idx, hit in enumerate(head)
-                    if idx < len(ce_values)
-                }
-                if ce_lookup:
-                    scored = [
-                        (base + ce_lookup.get(hit.chunk_id, 0.0), order, hit)
-                        for base, order, hit in scored
-                    ]
-                    rerank_diag["rerank_cross_encoder_applied"] = True
-                    # Sort by score (desc), then by original index (asc via -idx desc) for stable tie-breaking
-                    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
         # Sort by score (desc), then by original index (asc via -idx desc) for stable tie-breaking
         scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
         reranked = [item[2] for item in scored]
         if tail:
             reranked.extend(tail)
         duration_ms = int((time.perf_counter() - start) * 1000)
-        if rerank_diag.get("rerank_cross_encoder_skip_reason") is None and not rerank_diag.get(
-            "rerank_cross_encoder_attempted"
-        ):
-            rerank_diag["rerank_cross_encoder_skip_reason"] = "not_used"
         return reranked, duration_ms, rerank_diag
 
     @staticmethod
@@ -5060,67 +4717,6 @@ class KnowledgeSearchService:
         if conflict_groups:
             diagnostics["evidence_conflict_groups"] = conflict_groups[:8]
         return tuple(collapsed), diagnostics
-
-    def _snippet_rerank(
-        self,
-        snippets: Sequence[KnowledgeSnippet],
-        *,
-        query_text: str,
-        tokens: tuple[str, ...],
-    ) -> tuple[tuple[KnowledgeSnippet, ...], int]:
-        if not self.snippet_rerank_enabled or len(snippets) <= 1:
-            return tuple(snippets), 0
-        with TRACER.start_as_current_span("knowledge.snippet_rerank") as span:
-            start = time.perf_counter()
-            normalized_query = (query_text or "").strip()
-            head = list(snippets[: self.snippet_rerank_pool])
-            scores: list[tuple[float, int, KnowledgeSnippet]] = []
-            ce_scores: list[float] | None = None
-            cross_encoder = None
-            if getattr(self, "cross_encoder_policy", "off") != "off" and normalized_query:
-                cross_encoder = self._get_cross_encoder()
-            if cross_encoder:
-                if self.snippet_rerank_budget_ms:
-                    elapsed_ms = int((time.perf_counter() - start) * 1000)
-                    if elapsed_ms >= self.snippet_rerank_budget_ms:
-                        logger.warning(
-                            "Cross-encoder snippet rerank skipped: budget_exceeded budget_ms=%s elapsed_ms=%s",
-                            self.snippet_rerank_budget_ms,
-                            elapsed_ms,
-                        )
-                        cross_encoder = None
-            if cross_encoder:
-                pairs = [
-                    [normalized_query, "\n".join(filter(None, [snip.summary, snip.content]))]
-                    for snip in head
-                ]
-                try:  # pragma: no cover - optional dependency
-                    raw = cross_encoder.predict(pairs)
-                    ce_scores = [float(val) for val in raw]
-                except Exception as exc:  # pragma: no cover - optional dependency
-                    logger.warning("Cross-encoder snippet rerank failed: %s", exc)
-                    ce_scores = None
-            for idx, snip in enumerate(head):
-                text = "\n".join(filter(None, [snip.summary, snip.content]))
-                lexical = self._lexical_score_text(text, tokens)
-                ce_score = ce_scores[idx] if ce_scores and idx < len(ce_scores) else 0.0
-                score = ce_score if ce_scores else 0.0
-                score += 0.25 * lexical
-                if not snip.is_table_chunk:
-                    score += self._exact_phrase_boost(text, normalized_query, max_boost=0.35)
-                    score += self._token_proximity_boost(text, tokens, max_boost=0.16)
-                scores.append((score, -idx, snip))
-            # Sort by score (desc), then by original index (asc via -idx desc) for stable tie-breaking
-            scores.sort(key=lambda item: (item[0], item[1]), reverse=True)
-            reranked = [item[2] for item in scores]
-            if len(snippets) > len(head):
-                reranked.extend(snippets[len(head) :])
-            duration_ms = int((time.perf_counter() - start) * 1000)
-            if span.is_recording():
-                span.set_attribute("knowledge.snippet_rerank_head", len(head))
-                span.set_attribute("knowledge.snippet_rerank_ms", duration_ms)
-                span.set_attribute("knowledge.snippet_cross_encoder", bool(cross_encoder))
-            return tuple(reranked), duration_ms
 
     @staticmethod
     def _table_tokenize(value: str) -> set[str]:
@@ -7226,15 +6822,9 @@ class KnowledgeSearchService:
                 "vector_ms": diagnostics.get("vector_duration_ms"),
                 "lexical_ms": diagnostics.get("fts_duration_ms"),
                 "rerank_ms": diagnostics.get("rerank_duration_ms"),
-                "rerank_ce_policy": diagnostics.get("rerank_cross_encoder_policy"),
-                "rerank_ce_attempted": diagnostics.get("rerank_cross_encoder_attempted"),
-                "rerank_ce_applied": diagnostics.get("rerank_cross_encoder_applied"),
-                "rerank_ce_pairs": diagnostics.get("rerank_cross_encoder_pairs"),
-                "rerank_ce_skip": diagnostics.get("rerank_cross_encoder_skip_reason"),
                 "table_ms": diagnostics.get("table_duration_ms"),
                 "table_context_ms": diagnostics.get("table_context_ms"),
                 "table_presence_ms": diagnostics.get("table_presence_ms"),
-                "snippet_rerank_ms": diagnostics.get("snippet_rerank_ms"),
                 "identifier": diagnostics.get("identifier_like"),
                 "alias_stage": diagnostics.get("alias_stage"),
                 "chunk_candidates": diagnostics.get("chunk_candidate_count"),
