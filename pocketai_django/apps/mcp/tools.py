@@ -4044,15 +4044,21 @@ def _fuse_batched_search_runs(
     clip_limit: int | None,
 ) -> tuple[list[dict[str, object]], dict[str, object] | None]:
     def _snippet_dedupe_key(snippet: Mapping[str, object]) -> str:
+        evidence_group_id = str(snippet.get("evidence_group_id") or "").strip()
+        if evidence_group_id:
+            return f"evidence:{evidence_group_id}"
+        chunk_id = str(snippet.get("chunk_id") or snippet.get("id") or "").strip()
+        if chunk_id:
+            return f"chunk:{chunk_id}"
+        upload_id = str(snippet.get("upload_id") or "").strip()
+        if upload_id:
+            return f"upload:{upload_id}"
         content = snippet.get("content")
         if isinstance(content, str) and content.strip():
             return f"content:{sha256_hex(content)}"
         summary = snippet.get("summary")
         if isinstance(summary, str) and summary.strip():
             return f"summary:{sha256_hex(summary)}"
-        identifier = snippet.get("chunk_id") or snippet.get("id") or snippet.get("upload_id")
-        if identifier:
-            return f"id:{identifier}"
         return json.dumps(snippet, sort_keys=True, default=str)
 
     if not runs:

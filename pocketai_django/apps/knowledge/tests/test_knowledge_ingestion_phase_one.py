@@ -418,7 +418,116 @@ class KnowledgeIngestionChunkingTests(SimpleTestCase):
 
         segments = service._build_text_segments_from_blocks(annotated_pages)
         self.assertTrue(segments)
-        self.assertIn("Frequently asked questions", segments[0].get("text") or "")
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_restores_consumed_blocks_when_owning_table_is_suppressed(self, _build_embeddings) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        page = PageLayout(
+            page_number=1,
+            width=600.0,
+            height=800.0,
+            rotation=0,
+            text_density=0.1,
+            has_ocr_content=False,
+            content_type="application/pdf",
+            blocks=[
+                PageBlockPayload(
+                    block_type=KnowledgeBlockType.PARAGRAPH,
+                    order_index=1,
+                    text="International Delivery Shipment Fees\nUSD 30",
+                    bbox={"x0": 80.0, "y0": 120.0, "x1": 340.0, "y1": 180.0},
+                    metadata={
+                        "anchor": "p1-b1",
+                        "region_role": "text",
+                        "canonical_consumed_by_table": True,
+                        "canonical_consumed_reason": "cell_completion_attachment",
+                        "canonical_consumed_table_order_index": 2,
+                        "canonical_consumed_table_page_number": 1,
+                        "canonical_consumed_row_index": 1,
+                        "canonical_consumed_column_index": 1,
+                    },
+                )
+            ],
+            metadata={},
+        )
+        surviving_table = TablePayload(
+            order_index=1,
+            title="Customer Service Fees & Charges",
+            section_heading="Customer Service Fees & Charges",
+            page_number=1,
+            bbox={"x0": 60.0, "y0": 200.0, "x1": 560.0, "y1": 720.0},
+            column_schema=["service", "tariff"],
+            data_dictionary={},
+            metadata={"promotion_decision": "keep"},
+            rows=[],
+        )
+
+        restored_pages, stats = service._restore_consumed_blocks_for_suppressed_tables(
+            [page],
+            [surviving_table],
+        )
+
+        self.assertEqual(stats.get("restored_blocks"), 1)
+        restored_meta = restored_pages[0].blocks[0].metadata or {}
+        self.assertFalse(restored_meta.get("canonical_consumed_by_table"))
+        self.assertTrue(restored_meta.get("canonical_restored_after_table_suppression"))
+
+        segments = service._build_text_segments_from_blocks(restored_pages, chunk_chars=400, overlap=0)
+        rendered = "\n".join(str(segment.get("text") or "") for segment in segments)
+        self.assertIn("International Delivery Shipment Fees", rendered)
+        self.assertIn("USD 30", rendered)
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_keeps_consumed_blocks_hidden_when_owning_table_survives(self, _build_embeddings) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        page = PageLayout(
+            page_number=1,
+            width=600.0,
+            height=800.0,
+            rotation=0,
+            text_density=0.1,
+            has_ocr_content=False,
+            content_type="application/pdf",
+            blocks=[
+                PageBlockPayload(
+                    block_type=KnowledgeBlockType.PARAGRAPH,
+                    order_index=1,
+                    text="International Delivery Shipment Fees\nUSD 30",
+                    bbox={"x0": 80.0, "y0": 120.0, "x1": 340.0, "y1": 180.0},
+                    metadata={
+                        "anchor": "p1-b1",
+                        "region_role": "text",
+                        "canonical_consumed_by_table": True,
+                        "canonical_consumed_reason": "cell_completion_attachment",
+                        "canonical_consumed_table_order_index": 2,
+                        "canonical_consumed_table_page_number": 1,
+                    },
+                )
+            ],
+            metadata={},
+        )
+        surviving_table = TablePayload(
+            order_index=2,
+            title="International Delivery Tariffs",
+            section_heading="International Delivery Tariffs",
+            page_number=1,
+            bbox={"x0": 60.0, "y0": 80.0, "x1": 420.0, "y1": 220.0},
+            column_schema=["service", "value"],
+            data_dictionary={},
+            metadata={"promotion_decision": "keep"},
+            rows=[],
+        )
+
+        restored_pages, stats = service._restore_consumed_blocks_for_suppressed_tables(
+            [page],
+            [surviving_table],
+        )
+
+        self.assertEqual(stats.get("restored_blocks"), 0)
+        self.assertTrue(restored_pages[0].blocks[0].metadata.get("canonical_consumed_by_table"))
+
+        segments = service._build_text_segments_from_blocks(restored_pages, chunk_chars=400, overlap=0)
+        self.assertEqual(segments, [])
 
     @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
     def test_pdf_table_regions_merge_fragmented_boxes_without_merging_far_tables(

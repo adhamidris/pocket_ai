@@ -281,6 +281,50 @@ class AgenticSearchTableRefTests(SimpleTestCase):
         self.assertEqual(fusion, {"method": "rrf_dedupe", "runs": 2})
         self.assertEqual([snippet.get("chunk_id") for snippet in fused], ["shared", "strong-second"])
 
+    def test_fusion_does_not_merge_distinct_chunks_with_identical_content(self) -> None:
+        runs = [
+            {
+                "query": "first query",
+                "snippets": [
+                    {
+                        "id": "cib-chunk",
+                        "chunk_id": "cib-chunk",
+                        "upload_id": "upload-cib",
+                        "content": "International Delivery Shipment Fees",
+                        "confidence_score": 0.95,
+                    },
+                    {
+                        "id": "neighbor-a",
+                        "chunk_id": "neighbor-a",
+                        "upload_id": "upload-other",
+                        "content": "International Delivery Shipment Fees",
+                        "confidence_score": 0.70,
+                    },
+                ],
+            },
+            {
+                "query": "second query",
+                "snippets": [
+                    {
+                        "id": "neighbor-b",
+                        "chunk_id": "neighbor-b",
+                        "upload_id": "upload-other",
+                        "content": "International Delivery Shipment Fees",
+                        "confidence_score": 0.68,
+                    },
+                ],
+            },
+        ]
+
+        fused, fusion = tools._fuse_batched_search_runs(runs, clip_limit=3)
+
+        self.assertEqual(fusion, {"method": "rrf_dedupe", "runs": 2})
+        self.assertEqual([snippet.get("chunk_id") for snippet in fused[:1]], ["cib-chunk"])
+        self.assertEqual(
+            {snippet.get("chunk_id") for snippet in fused},
+            {"cib-chunk", "neighbor-a", "neighbor-b"},
+        )
+
     def test_agentic_refs_are_sorted_by_confidence_before_emission(self) -> None:
         low_chunk_id = str(uuid.uuid4())
         high_chunk_id = str(uuid.uuid4())

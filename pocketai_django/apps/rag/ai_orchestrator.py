@@ -608,6 +608,7 @@ class KnowledgeSearchService:
         )
         self.rerank_pool = max(10, int(getattr(settings, "RAG_RERANK_POOL", 60)))
         self.mmr_lambda = float(getattr(settings, "RAG_MMR_LAMBDA", 0.7))
+        self.mmr_preserve_head = max(0, int(getattr(settings, "RAG_MMR_PRESERVE_HEAD", 3)))
         self.entity_neighbor_min = max(1, int(getattr(settings, "RAG_ENTITY_NEIGHBOR_MIN", 2)))
         self.vector_distance_ceiling = float(getattr(settings, "RAG_VECTOR_DISTANCE_CEILING", 0.5))
         self.short_query_ann_multiplier = float(getattr(settings, "RAG_SHORT_QUERY_ANN_MULTIPLIER", 3.0))
@@ -1974,6 +1975,7 @@ class KnowledgeSearchService:
         should_run_parallel_table = (
             self.parallel_table_search_enabled
             and tables_available
+            and table_intent
             and not table_blocked
             and chunk_hits  # We have vector results (parallel mode, not fallback)
             and table_upload_ratio >= self.parallel_table_min_ratio
@@ -3032,7 +3034,26 @@ class KnowledgeSearchService:
                 query_tokens=traits.tokens,
                 filler_tokens=self._filler_tokens_for_business(business_profile),
             )
-        final = self._mmr_select(filtered, hybrid.query_vector, k=limit, lam=self.mmr_lambda)
+        comprehensive_intent = bool((table_context or {}).get("comprehensive_intent"))
+        preserve_head = 0 if comprehensive_intent else min(self.mmr_preserve_head, limit, len(filtered))
+        if diagnostics is not None:
+            diagnostics["chunk_hits_mmr_preserve_head"] = preserve_head
+            diagnostics["chunk_hits_mmr_applied"] = bool(hybrid.query_vector and len(filtered) > preserve_head)
+        if preserve_head:
+            head = list(filtered[:preserve_head])
+            tail_candidates = filtered[preserve_head:]
+            if hybrid.query_vector and tail_candidates and limit > preserve_head:
+                tail = self._mmr_select(
+                    tail_candidates,
+                    hybrid.query_vector,
+                    k=max(0, limit - preserve_head),
+                    lam=self.mmr_lambda,
+                )
+                final = head + tail
+            else:
+                final = head
+        else:
+            final = self._mmr_select(filtered, hybrid.query_vector, k=limit, lam=self.mmr_lambda)
         return tuple(final)
 
     @staticmethod
@@ -5197,6 +5218,35 @@ class KnowledgeSearchService:
             return True
         return False
 
+    def _is_usable_table_query_column_match(self, column: str | None) -> bool:
+        if not column:
+            return False
+        normalized = normalize_column_name(column)
+        source = (normalized or str(column or "")).strip().lower()
+        if not source:
+            return False
+        if len(source) <= 1:
+            return False
+        tokens = {token for token in self._table_tokenize(source) if token}
+        if tokens and max((len(token) for token in tokens), default=0) <= 1:
+            return False
+        return True
+
+    def _has_strong_row_label_signal(
+        self,
+        *,
+        matched_row_labels: set[str],
+        specific_tokens: set[str],
+    ) -> bool:
+        if not matched_row_labels:
+            return False
+        if len(matched_row_labels) >= 2:
+            return True
+        if not specific_tokens:
+            return False
+        overlap_ratio = len(matched_row_labels) / max(len(specific_tokens), 1)
+        return overlap_ratio > 0.5
+
     def _table_header_tokens(self, table_id: str | uuid.UUID | None) -> set[str]:
         if not table_id:
             return set()
@@ -5591,16 +5641,32 @@ class KnowledgeSearchService:
         # Compute query-specific matching (this MUST be done per-query)
         hints = self._table_column_hints(business_profile)
         semantic_columns = {column for column in columns if any(hint in column for hint in hints)}
-        matched_columns_query = {column for column in columns if column and column in query_text}
+        matched_columns_query_raw = {column for column in columns if column and column in query_text}
+        matched_columns_query = {
+            column for column in matched_columns_query_raw if self._is_usable_table_query_column_match(column)
+        }
         matched_columns_tokens = {column for column in columns if self._column_matches_tokens(column, query_tokens)}
         matched_columns_specific = {column for column in columns if self._column_matches_tokens(column, specific_tokens)}
-        matched_row_labels = {token for token in row_label_tokens if token in tokens}
+        matched_row_labels_raw = {token for token in row_label_tokens if token in tokens}
+        matched_row_labels_specific = {token for token in matched_row_labels_raw if token in specific_tokens}
+        matched_row_labels = (
+            matched_row_labels_specific
+            if self._has_strong_row_label_signal(
+                matched_row_labels=matched_row_labels_specific,
+                specific_tokens=specific_tokens,
+            )
+            else set()
+        )
         matched_columns = matched_columns_query or matched_columns_tokens or semantic_columns
         has_currency_token = bool(tokens & {"egp", "usd", "eur", "gbp", "aed", "sar", "qar", "kwd", "bhd", "omr", "jod"})
         has_percent = "%" in query_text
         numeric_table_intent = bool(traits.has_digits and (has_currency_token or has_percent))
-        # Intent is data-driven (schema/row-label/numeric cues), not keyword-driven.
-        has_intent = bool(matched_columns_query or matched_columns_tokens or matched_row_labels or numeric_table_intent)
+        has_intent_pre_classification = bool(
+            matched_columns_query
+            or matched_columns_specific
+            or matched_row_labels
+            or numeric_table_intent
+        )
 
         # PHASE 1: Use QueryClassifier for intent detection instead of legacy keyword matching.
         # This fixes the bug where "list all credit cards" was marked as non-comprehensive
@@ -5650,7 +5716,7 @@ class KnowledgeSearchService:
         classification.fallback_used = bool(classification.fallback_used)
 
         should_require_clarification = bool(
-            has_intent
+            has_intent_pre_classification
             and classification.intent == QueryIntent.EXPLORATORY
             and classification.confidence < self.intent_clarification_threshold
         )
@@ -5675,6 +5741,30 @@ class KnowledgeSearchService:
         # comprehensive_intent is True for ENUMERATE and AGGREGATE intents
         # These require full table coverage, not just the top-matching rows
         comprehensive_intent = classification.requires_full_coverage()
+        generic_intents = {QueryIntent.ENUMERATE, QueryIntent.AGGREGATE, QueryIntent.COMPARE}
+        generic_column_signal = bool(
+            matched_columns_tokens
+            and table_profile.get("dominant")
+            and classification.intent in generic_intents
+            and classification.confidence >= 0.45
+            and not classification.requires_clarification
+        )
+        # Intent is data-driven, but must be based on meaningful signals.
+        # Generic fee/limit/international tokens across a tenant corpus are too loose.
+        row_label_intent = bool(
+            matched_row_labels
+            and (
+                classification.intent != QueryIntent.EXPLORATORY
+                or len(matched_row_labels) >= self.table_specific_min_match_count
+            )
+        )
+        has_intent = bool(
+            matched_columns_query
+            or matched_columns_specific
+            or row_label_intent
+            or numeric_table_intent
+            or generic_column_signal
+        )
         
         # Also preserve legacy detection for backward compatibility during transition
         legacy_comprehensive_keywords = {"all", "every", "everything", "list", "compare", "comparison", "full", "complete", "entire", "whole", "show"}
@@ -5704,14 +5794,13 @@ class KnowledgeSearchService:
             context={"business": business_profile.id if business_profile else None},
         )
 
-        generic_intents = {QueryIntent.ENUMERATE, QueryIntent.AGGREGATE, QueryIntent.COMPARE}
         allow_generic = bool(
             table_profile.get("dominant")
             and classification.intent in generic_intents
             and classification.confidence >= 0.45
             and not classification.requires_clarification
         )
-        if matched_row_labels and not classification.requires_clarification:
+        if row_label_intent and not classification.requires_clarification:
             allow_generic = True
         return {
             "has_intent": has_intent,
@@ -5726,9 +5815,12 @@ class KnowledgeSearchService:
             "tenant_lexicon_attribute_terms_count": len(tenant_attribute_terms),
             "matched_columns": matched_columns,
             "matched_columns_query": matched_columns_query,
+            "matched_columns_query_raw": matched_columns_query_raw,
             "matched_columns_tokens": matched_columns_tokens,
             "matched_columns_specific": matched_columns_specific,
             "matched_row_labels": matched_row_labels,
+            "matched_row_labels_raw": matched_row_labels_raw,
+            "row_label_intent": row_label_intent,
             "matched_keywords": matched_keywords,
             "numeric_intent": numeric_table_intent,
             "available_columns": columns,
@@ -5741,6 +5833,7 @@ class KnowledgeSearchService:
             "table_count": table_profile.get("table_count"),
             "table_uploads": table_profile.get("table_uploads"),
             "allow_generic": allow_generic,
+            "generic_column_signal": generic_column_signal,
         }
 
     def _table_columns_for_business(

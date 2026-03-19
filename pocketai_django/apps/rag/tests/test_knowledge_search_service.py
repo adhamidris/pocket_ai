@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from contextlib import ExitStack
 from unittest import mock
 
 from django.core.cache import cache
@@ -434,6 +435,71 @@ class KnowledgeSearchServiceRegressionContractTests(SimpleTestCase):
         rerank_mock.assert_not_called()
         self.assertEqual(diagnostics.get("rerank_duration_ms"), 321)
         self.assertTrue(diagnostics.get("chunk_hits_rerank_reused"))
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_chunk_hits_preserves_reranked_head_before_mmr(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        business = mock.Mock()
+        business.id = uuid.uuid4()
+        upload = mock.Mock()
+        upload.id = uuid.uuid4()
+
+        def _candidate(text: str, lexical: float, rerank: float) -> ChunkResult:
+            chunk = mock.Mock()
+            chunk.id = uuid.uuid4()
+            chunk.upload = upload
+            chunk.content = text
+            chunk.metadata = {"index_type": "text"}
+            return ChunkResult(
+                chunk=chunk,
+                source_stage="hybrid",
+                lexical_score=lexical,
+                rerank_score=rerank,
+            )
+
+        top = _candidate("International Delivery Shipment Fees USD 30", 0.9, 1.6)
+        second = _candidate("International transfer fee details", 0.5, 0.8)
+        third = _candidate("International ATM withdrawal fees", 0.4, 0.7)
+        fourth = _candidate("International purchase limits", 0.3, 0.6)
+        candidates = [top, second, third, fourth]
+        diagnostics: dict[str, object] = {}
+        traits = service.analyze_query("International Delivery Shipment Fees")
+        hybrid = mock.Mock()
+        hybrid.hits = tuple(candidates)
+        hybrid.query_vector = [0.1, 0.2, 0.3]
+        hybrid.diagnostics = {"rerank_duration_ms": 111}
+
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(service, "_effective_chunk_cap", return_value=2))
+            stack.enter_context(mock.patch.object(service, "search_free_text", return_value=hybrid))
+            stack.enter_context(mock.patch.object(service, "_prioritize_token_hits", return_value=candidates))
+            stack.enter_context(mock.patch.object(service, "_apply_vector_threshold", return_value=candidates))
+            stack.enter_context(
+                mock.patch.object(
+                    service,
+                    "_build_scope_summary_from_candidates",
+                    return_value={"total_matches": 4},
+                )
+            )
+            stack.enter_context(mock.patch.object(service, "_filler_tokens_for_business", return_value=()))
+            mmr_mock = stack.enter_context(mock.patch.object(service, "_mmr_select", return_value=[fourth]))
+            hits = service._chunk_hits(
+                business,
+                traits=traits,
+                limit=4,
+                diagnostics=diagnostics,
+                vector_ceiling=0.5,
+                feature_state=mock.Mock(),
+                table_context={"comprehensive_intent": False},
+            )
+
+        self.assertEqual(hits[0], top)
+        self.assertEqual(hits[1], second)
+        self.assertEqual(hits[2], third)
+        self.assertEqual(hits[3], fourth)
+        mmr_mock.assert_called_once()
+        self.assertEqual(diagnostics.get("chunk_hits_mmr_preserve_head"), 3)
+        self.assertTrue(diagnostics.get("chunk_hits_mmr_applied"))
 
 
 class KnowledgeSearchServiceAutoArbitrationTests(SimpleTestCase):
@@ -1069,6 +1135,71 @@ class KnowledgeSearchServiceTableTests(TestCase):
         self.assertIsNone(result.diagnostics.get("rrf_context_count"))
         self.assertTrue(captured.get("vector"))
         self.assertTrue(all(snippet.is_table_chunk for snippet in captured.get("vector", [])))
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_parallel_rrf_requires_table_intent(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        with tenant_context(self.business.id):
+            text_chunk = KnowledgeUploadChunk.objects.create(
+                upload=self.upload,
+                business_profile=self.business,
+                chunk_index=10,
+                content="International Delivery Shipment Fees USD 30",
+                metadata={"index_type": "text"},
+            )
+        text_hit = ChunkResult(chunk=text_chunk, source_stage="hybrid")
+        text_snippet = KnowledgeSnippet(
+            id=text_chunk.id,
+            title="CIB-Customer Service-EN.pdf – chunk 0",
+            summary="International Delivery Shipment Fees USD 30",
+            source="File Upload",
+            content="International Delivery Shipment Fees USD 30",
+            upload_id=self.upload.id,
+            chunk_id=text_chunk.id,
+            chunk_index=text_chunk.chunk_index,
+            is_table_chunk=False,
+        )
+        table_context = {
+            "has_intent": False,
+            "comprehensive_intent": False,
+            "query_classification": None,
+            "matched_columns": set(),
+            "matched_columns_query": set(),
+            "matched_columns_tokens": set(),
+            "matched_columns_specific": set(),
+            "matched_row_labels": set(),
+            "matched_keywords": set(),
+            "numeric_intent": False,
+            "available_columns": set(),
+            "semantic_columns": set(),
+            "matched_column_count": 0,
+            "query_tokens": {"international", "delivery", "shipment", "fees"},
+            "specific_tokens": {"international", "delivery", "shipment"},
+            "table_dominant": True,
+            "table_upload_ratio": 1.0,
+            "table_count": 1,
+            "table_uploads": 1,
+            "allow_generic": False,
+        }
+
+        with (
+            mock.patch.object(service, "_table_query_context", return_value=table_context),
+            mock.patch.object(service, "_business_has_tables", return_value=True),
+            mock.patch.object(service, "search_by_alias", return_value=AliasSearchResult(tuple(), {})),
+            mock.patch.object(service, "_chunk_hits", return_value=(text_hit,)),
+            mock.patch.object(service, "_search_chunks", return_value=(text_snippet,)),
+            mock.patch.object(service, "_table_search_snippets") as table_search_mock,
+            mock.patch.object(service, "_snippet_rerank", side_effect=lambda snippets, **_: (tuple(snippets), 0)),
+        ):
+            result = service.search(
+                business_profile=self.business,
+                query="What are the International Delivery Shipment Fees?",
+                limit=5,
+            )
+
+        self.assertEqual(result.status, "ok")
+        self.assertNotEqual(result.diagnostics.get("path"), "parallel_rrf")
+        table_search_mock.assert_not_called()
 
 
 class KnowledgeSearchServiceRegressionTests(TestCase):
@@ -1856,6 +1987,170 @@ class KnowledgeSearchServiceResidualRerankTests(TestCase):
             status=KnowledgeStatus.ACTIVE,
             display_name="Fees",
         )
+
+
+class KnowledgeSearchServiceTableContextGuardrailTests(TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        cache.clear()
+        self.user = User.objects.create(email="table-guardrails@example.com", first_name="Guard")
+        self.registration = RegistrationSession.objects.create(user=self.user)
+        self.business = BusinessProfile.objects.create(
+            user=self.user,
+            registration_session=self.registration,
+            name="Guardrail Co",
+            industry="finance",
+        )
+        self.upload = KnowledgeUpload.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            source_type=KnowledgeSourceType.FILE,
+            status=KnowledgeStatus.ACTIVE,
+            display_name="Guardrail Fees",
+        )
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_table_context_ignores_single_char_columns_and_generic_row_labels_for_specific_lookup(
+        self,
+        _build_embeddings,
+    ) -> None:
+        service = KnowledgeSearchService()
+        traits = service.analyze_query("International Delivery Shipment Fees", business_profile=self.business)
+
+        with (
+            mock.patch.object(service, "_tenant_lexicon_tables_ready", return_value=False),
+            mock.patch.object(
+                service,
+                "_table_query_tokens",
+                return_value=(
+                    {"delivery", "fee", "international", "shipment"},
+                    {"delivery", "international", "shipment"},
+                ),
+            ),
+            mock.patch.object(service, "_table_columns_for_business", return_value={"m", "fees_charges", "types_of_services_fee"}),
+            mock.patch.object(
+                service,
+                "_table_profile_for_business",
+                return_value={
+                    "table_uploads": 3,
+                    "total_uploads": 6,
+                    "table_upload_ratio": 0.5,
+                    "table_count": 4,
+                    "dominant": True,
+                },
+            ),
+            mock.patch.object(service, "_table_row_label_tokens_for_business", return_value={"fee", "international"}),
+            mock.patch(
+                "apps.rag.ai_orchestrator.QueryClassifier.classify",
+                return_value=QueryClassification(
+                    intent=QueryIntent.EXPLORATORY,
+                    confidence=0.92,
+                    reasoning="specific phrase lookup",
+                ),
+            ),
+        ):
+            table_context = service._table_query_context(self.business, traits)
+
+        self.assertFalse(table_context["has_intent"])
+        self.assertEqual(table_context["matched_columns_query"], set())
+        self.assertEqual(table_context["matched_row_labels"], set())
+        self.assertEqual(table_context["matched_columns_query_raw"], {"m"})
+        self.assertEqual(table_context["matched_row_labels_raw"], {"fee", "international"})
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_table_context_keeps_generic_column_signal_for_broad_enumeration_when_tables_dominate(
+        self,
+        _build_embeddings,
+    ) -> None:
+        service = KnowledgeSearchService()
+        traits = service.analyze_query("mortgage fees types", business_profile=self.business)
+
+        with (
+            mock.patch.object(service, "_tenant_lexicon_tables_ready", return_value=False),
+            mock.patch.object(
+                service,
+                "_table_query_tokens",
+                return_value=(
+                    {"mortgage", "fee", "types"},
+                    {"mortgage"},
+                ),
+            ),
+            mock.patch.object(service, "_table_columns_for_business", return_value={"commission_fees"}),
+            mock.patch.object(
+                service,
+                "_table_profile_for_business",
+                return_value={
+                    "table_uploads": 3,
+                    "total_uploads": 4,
+                    "table_upload_ratio": 0.75,
+                    "table_count": 6,
+                    "dominant": True,
+                },
+            ),
+            mock.patch.object(service, "_table_row_label_tokens_for_business", return_value=set()),
+            mock.patch(
+                "apps.rag.ai_orchestrator.QueryClassifier.classify",
+                return_value=QueryClassification(
+                    intent=QueryIntent.ENUMERATE,
+                    confidence=0.88,
+                    reasoning="broad fee listing",
+                ),
+            ),
+        ):
+            table_context = service._table_query_context(self.business, traits)
+
+        self.assertTrue(table_context["has_intent"])
+        self.assertTrue(table_context["generic_column_signal"])
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_table_context_does_not_treat_single_exploratory_row_label_as_table_intent(
+        self,
+        _build_embeddings,
+    ) -> None:
+        service = KnowledgeSearchService()
+        traits = service.analyze_query("international delivery fees", business_profile=self.business)
+
+        with (
+            mock.patch.object(service, "_tenant_lexicon_tables_ready", return_value=False),
+            mock.patch.object(
+                service,
+                "_table_query_tokens",
+                return_value=(
+                    {"delivery", "fee", "international"},
+                    {"delivery", "international"},
+                ),
+            ),
+            mock.patch.object(
+                service,
+                "_table_columns_for_business",
+                return_value={"commission_fees", "fees_charges", "atm_withdrawal_fees"},
+            ),
+            mock.patch.object(
+                service,
+                "_table_profile_for_business",
+                return_value={
+                    "table_uploads": 5,
+                    "total_uploads": 7,
+                    "table_upload_ratio": 0.71,
+                    "table_count": 8,
+                    "dominant": True,
+                },
+            ),
+            mock.patch.object(service, "_table_row_label_tokens_for_business", return_value={"fee", "international"}),
+            mock.patch(
+                "apps.rag.ai_orchestrator.QueryClassifier.classify",
+                return_value=QueryClassification(
+                    intent=QueryIntent.EXPLORATORY,
+                    confidence=0.5,
+                    reasoning="broad mixed-corpus query",
+                ),
+            ),
+        ):
+            table_context = service._table_query_context(self.business, traits)
+
+        self.assertEqual(table_context["matched_row_labels"], set())
+        self.assertFalse(table_context["row_label_intent"])
+        self.assertFalse(table_context["has_intent"])
 
     @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
     def test_table_residual_text_chunks_receive_stronger_penalty_under_table_intent(
