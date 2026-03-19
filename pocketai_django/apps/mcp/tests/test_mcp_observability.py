@@ -15,6 +15,7 @@ from apps.mcp.types import ToolExecutionContext
 class _FakeProvider:
     def __init__(self) -> None:
         self.calls = 0
+        self.model = "deepseek-chat"
 
     def chat(
         self,
@@ -37,6 +38,9 @@ class _FakeProvider:
 
 
 class _TailMismatchProvider:
+    def __init__(self) -> None:
+        self.model = "deepseek-chat"
+
     def chat(
         self,
         messages,
@@ -65,6 +69,7 @@ class _TailMismatchProvider:
 class _ToolLoopFinalStreamProvider:
     def __init__(self) -> None:
         self.calls = 0
+        self.model = "deepseek-chat"
 
     def chat(
         self,
@@ -104,6 +109,7 @@ class _ToolLoopFinalStreamProvider:
 class _ToolLoopTailMismatchProvider:
     def __init__(self) -> None:
         self.calls = 0
+        self.model = "deepseek-chat"
 
     def chat(
         self,

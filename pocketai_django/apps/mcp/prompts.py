@@ -38,8 +38,6 @@ from apps.mcp.sanitizer import sanitize_text
 from apps.accounts.agents import display_tone_label
 from apps.accounts.feature_flags import FeatureFlagService
 from apps.mcp.schemas.agentic_prompts import (
-    build_agentic_system_prompt,
-    build_agentic_system_prompt_v2,
     build_model_specific_prompt,
     get_tone_instruction,
 )
@@ -363,15 +361,14 @@ def build_system_message(
             rules.append(MCP_GATEWAY_AGENTIC_RULES)
         additional_rules_str = "\n\n".join(rule for rule in rules if rule)
         agentic_read_v2_enabled = bool(getattr(settings, "MCP_AGENTIC_READ_V2_ENABLED", False))
-        if agentic_read_v2_enabled:
-            return build_model_specific_prompt(
-                agent,
-                model_id=model_id,
-                business_name=resolved_business_name,
-                additional_rules=additional_rules_str,
+        if not agentic_read_v2_enabled:
+            raise RuntimeError(
+                "Legacy agentic prompt path is disabled. "
+                "Enable MCP_AGENTIC_READ_V2_ENABLED or remove rag_agentic_mode for this conversation."
             )
-        return build_agentic_system_prompt(
+        return build_model_specific_prompt(
             agent,
+            model_id=model_id,
             business_name=resolved_business_name,
             additional_rules=additional_rules_str,
         )

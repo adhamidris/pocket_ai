@@ -41,14 +41,17 @@ class SelectTemplateTests(SimpleTestCase):
     def test_o1(self) -> None:
         self.assertEqual(_select_template("o1"), "openai_reasoning")
 
-    def test_unknown_model(self) -> None:
-        self.assertEqual(_select_template("unknown-model"), "default")
+    def test_unknown_model_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            _select_template("unknown-model")
 
-    def test_none_model(self) -> None:
-        self.assertEqual(_select_template(None), "default")
+    def test_none_model_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            _select_template(None)
 
-    def test_empty_string(self) -> None:
-        self.assertEqual(_select_template(""), "default")
+    def test_empty_string_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            _select_template("")
 
 
 # ---------------------------------------------------------------------------
@@ -76,27 +79,15 @@ class TemplateContentTests(SimpleTestCase):
         self.assertIn("NEVER re-read the same ref unchanged", prompt)
         self.assertIn("corrected higher `max_chars`", prompt)
 
-    def test_default_template_renders(self) -> None:
+    def test_unknown_model_raises(self) -> None:
         agent = mock.Mock()
         agent.name = "TestBot"
-        prompt = build_model_specific_prompt(
-            agent,
-            model_id="unknown-model",
-            business_name="Acme Corp",
-        )
-        self.assertIn("TestBot", prompt)
-        self.assertIn("System Contract", prompt)
-
-    def test_default_template_prefers_read_after_search_for_factual_answers(self) -> None:
-        agent = mock.Mock()
-        agent.name = "TestBot"
-        prompt = build_model_specific_prompt(
-            agent,
-            model_id="unknown-model",
-            business_name="Acme Corp",
-        )
-        self.assertIn("For factual business questions, call `read_knowledge` once", prompt)
-        self.assertIn("Use preview-only answers only for existence/navigation questions", prompt)
+        with self.assertRaises(ValueError):
+            build_model_specific_prompt(
+                agent,
+                model_id="unknown-model",
+                business_name="Acme Corp",
+            )
 
     def test_openai_chat_template_prefers_single_read_pass_for_factual_answers(self) -> None:
         agent = mock.Mock()
@@ -114,10 +105,10 @@ class TemplateContentTests(SimpleTestCase):
         agent.name = "TestBot"
         prompt = build_model_specific_prompt(
             agent,
-            model_id="unknown-model",
+            model_id="deepseek-chat",
             business_name="Acme Corp",
         )
-        self.assertIn("use up to 1 variant/sub-question.", prompt)
+        self.assertIn("with up to 1 query variant.", prompt)
 
     @override_settings(MCP_SEARCH_MAX_QUERY_VARIANTS=3)
     def test_prompt_uses_configured_variant_limit_for_workflow_step(self) -> None:
@@ -187,6 +178,7 @@ class McpConnectionGatingTests(SimpleTestCase):
                 business_name="TestBiz",
                 business_profile=business_profile,
                 has_mcp_connections=False,
+                model_id="deepseek-chat",
             )
         self.assertNotIn("mcp_search_tools", result)
 
@@ -212,6 +204,7 @@ class McpConnectionGatingTests(SimpleTestCase):
                 business_name="TestBiz",
                 business_profile=business_profile,
                 has_mcp_connections=True,
+                model_id="deepseek-chat",
             )
         self.assertIn("mcp_search_tools", result)
 

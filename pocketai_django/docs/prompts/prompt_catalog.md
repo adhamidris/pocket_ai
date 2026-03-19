@@ -7,7 +7,7 @@ orchestrator path used by the chat portal.
 
 - **Agentic system prompts (v2)**: `apps/mcp/schemas/agentic_prompts.py`
   - Per‑model templates (OpenAI/DeepSeek) selected via `build_model_specific_prompt`.
-  - Default fallback uses `AGENTIC_SYSTEM_PROMPT_V2`.
+  - No silent fallback prompt is used. Unsupported or missing model IDs should fail loudly.
 - **MCP wrapper prompts**: `apps/mcp/prompts.py`
   - System message assembly, planner prompt, and final answer prompt.
 - **Legacy prompt builder** (non‑portal): `apps/llm/ai_prompt_builder.py`
