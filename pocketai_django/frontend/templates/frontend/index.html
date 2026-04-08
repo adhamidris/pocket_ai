@@ -16,11 +16,11 @@
   <div class="container mx-auto px-6 pt-24 pb-12 md:pt-28 md:pb-16 relative z-10">
     <div class="hero-layout grid lg:grid-cols-2 gap-12 items-center">
       <div class="hero-copy">
-        <div class="hero-title text-center lg:text-start animate-fade-in">
-          <h1 class="text-5xl lg:text-7xl font-bold text-foreground leading-tight">
+        <div class="hero-title landing-hero-title text-center lg:text-start animate-fade-in">
+          <h1 class="landing-hero-heading text-5xl lg:text-7xl font-bold text-foreground leading-tight">
             {{ page.hero.title_prefix }}
             <span
-              class="flip-words-target text-primary"
+              class="flip-words-target landing-hero-highlight text-primary"
               {% if not CURRENT_LANGUAGE_BIDI %}data-words="{{ page.hero.title_highlight }}"{% endif %}
             >
               {{ page.hero.title_highlight }}

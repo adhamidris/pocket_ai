@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from django.test import SimpleTestCase
 
-from apps.conversations.rich_blocks import RichBlockStreamBuilder
+from apps.conversations.rich_blocks import RichBlockStreamBuilder, rich_blocks_from_text
 
 
 def _paragraph_content(blocks: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -75,3 +75,76 @@ class RichBlockStreamingTests(SimpleTestCase):
 
         bold_text = _inline_text([node for node in content if node.get("marks") == ["bold"]])
         self.assertIn("1% with minimum USD 2", bold_text)
+
+    def test_streaming_promotes_markdown_table_to_table_block(self) -> None:
+        builder = RichBlockStreamBuilder()
+
+        first_events = builder.feed_text("| Account Type | Fee | Maximum Cap |\n")
+        self.assertEqual(first_events, [])
+
+        second_events = builder.feed_text("| --- | --- | --- |\n")
+        self.assertEqual(
+            [str(event.get("type") or "").strip().lower() for event in second_events],
+            ["block_start"],
+        )
+
+        third_events = builder.feed_text("| Plus | EGP 20 per paper | Max EGP 1,000 |\n")
+        self.assertEqual(
+            [str(event.get("type") or "").strip().lower() for event in third_events],
+            ["block_delta"],
+        )
+
+        blocks = builder.snapshot()
+        self.assertEqual(len(blocks), 1)
+        table = blocks[0]
+        self.assertEqual(table["type"], "table")
+        payload = table["payload"]
+        self.assertEqual([col["label"] for col in payload["columns"]], ["Account Type", "Fee", "Maximum Cap"])
+        self.assertEqual(payload["rows"], [{"cells": ["Plus", "EGP 20 per paper", "Max EGP 1,000"]}])
+
+    def test_rich_blocks_from_text_promotes_markdown_table(self) -> None:
+        blocks = rich_blocks_from_text(
+            "\n".join(
+                [
+                    "Copy of Document Fees:",
+                    "| Account Type | Fee per Paper | Maximum Cap |",
+                    "| --- | --- | --- |",
+                    "| Plus | EGP 20 per paper | Max EGP 1,000 |",
+                    "| Private | EGP 5 per paper | Max EGP 250 |",
+                ]
+            )
+        )
+
+        self.assertEqual([block["type"] for block in blocks], ["paragraph", "table"])
+        table = blocks[1]
+        payload = table["payload"]
+        self.assertEqual(len(payload["columns"]), 3)
+        self.assertEqual(len(payload["rows"]), 2)
+        self.assertEqual(payload["rows"][1]["cells"], ["Private", "EGP 5 per paper", "Max EGP 250"])
+
+    def test_streaming_partial_table_header_does_not_leak_paragraph(self) -> None:
+        builder = RichBlockStreamBuilder()
+
+        first_events = builder.feed_text("| Segment")
+        self.assertEqual(first_events, [])
+
+        second_events = builder.feed_text(" | Fee per Paper | Maximum Cap |\n")
+        self.assertEqual(second_events, [])
+
+        third_events = builder.feed_text("| --- | --- | --- |\n")
+        self.assertEqual(
+            [str(event.get("type") or "").strip().lower() for event in third_events],
+            ["block_start"],
+        )
+
+        fourth_events = builder.feed_text("| Plus | EGP 20 per paper | Max EGP 1,000 |\n")
+        self.assertEqual(
+            [str(event.get("type") or "").strip().lower() for event in fourth_events],
+            ["block_delta"],
+        )
+
+        blocks = builder.snapshot()
+        self.assertEqual([block["type"] for block in blocks], ["table"])
+        payload = blocks[0]["payload"]
+        self.assertEqual([col["label"] for col in payload["columns"]], ["Segment", "Fee per Paper", "Maximum Cap"])
+        self.assertEqual(payload["rows"], [{"cells": ["Plus", "EGP 20 per paper", "Max EGP 1,000"]}])

@@ -49,61 +49,54 @@ class KnowledgeSearchServiceAutoDecisionContractTests(SimpleTestCase):
     def test_contract_defaults_to_undecided_without_route(self) -> None:
         contract = KnowledgeSearchService._derive_auto_decision_contract(
             route_diagnostics=None,
-            requires_clarification=False,
+        )
+        self.assertEqual(
+            set(contract),
+            {
+                "table_score",
+                "text_score",
+                "margin",
+                "decision",
+                "scope_summary",
+                "categories",
+                "top_categories",
+                "conflict_detected",
+                "no_result_reason",
+            },
         )
         self.assertEqual(contract["table_score"], 0.0)
         self.assertEqual(contract["text_score"], 0.0)
         self.assertEqual(contract["margin"], 0.0)
         self.assertEqual(contract["decision"], "undecided")
-        self.assertFalse(contract["needs_clarification"])
         self.assertIsNone(contract["scope_summary"])
         self.assertEqual(contract["categories"], [])
         self.assertEqual(contract["top_categories"], [])
-        self.assertIsNone(contract["clarification_ui_mode"])
         self.assertFalse(contract["conflict_detected"])
         self.assertIsNone(contract["no_result_reason"])
 
-    def test_contract_marks_clarification_when_required(self) -> None:
+    def test_contract_uses_route_hit_counts_for_decision(self) -> None:
         contract = KnowledgeSearchService._derive_auto_decision_contract(
             route_diagnostics={"index_route": "text_first", "index_route_table_hits": 1, "index_route_text_hits": 3},
-            requires_clarification=True,
         )
-        self.assertEqual(contract["decision"], "clarification")
-        self.assertTrue(contract["needs_clarification"])
+        self.assertEqual(contract["decision"], "text")
         self.assertEqual(contract["table_score"], 1.0)
         self.assertEqual(contract["text_score"], 3.0)
         self.assertEqual(contract["margin"], 2.0)
-        self.assertEqual(contract["clarification_ui_mode"], "text")
-
-    def test_contract_uses_route_hit_counts_for_decision(self) -> None:
-        contract = KnowledgeSearchService._derive_auto_decision_contract(
-            route_diagnostics={"index_route": "table_specific_first", "index_route_table_hits": 4, "index_route_text_hits": 1},
-            requires_clarification=False,
-        )
-        self.assertEqual(contract["decision"], "table")
-        self.assertFalse(contract["needs_clarification"])
-        self.assertEqual(contract["table_score"], 4.0)
-        self.assertEqual(contract["text_score"], 1.0)
-        self.assertEqual(contract["margin"], 3.0)
 
     def test_contract_marks_low_margin_scored_paths_as_blended(self) -> None:
         contract = KnowledgeSearchService._derive_auto_decision_contract(
             route_diagnostics={"index_route": "table_primary_filtered", "index_route_table_hits": 2, "index_route_text_hits": 2},
             scoring_diagnostics={"auto_table_score": 0.61, "auto_text_score": 0.58, "auto_score_margin": 0.03},
-            requires_clarification=False,
         )
         self.assertEqual(contract["decision"], "blended")
-        self.assertFalse(contract["needs_clarification"])
         self.assertEqual(contract["margin"], 0.03)
 
     def test_contract_prefers_scoring_diagnostics_when_available(self) -> None:
         contract = KnowledgeSearchService._derive_auto_decision_contract(
             route_diagnostics={"index_route": "table_specific_first", "index_route_table_hits": 4, "index_route_text_hits": 1},
             scoring_diagnostics={"auto_table_score": 0.21, "auto_text_score": 0.78, "auto_score_margin": 0.57},
-            requires_clarification=False,
         )
         self.assertEqual(contract["decision"], "text")
-        self.assertFalse(contract["needs_clarification"])
         self.assertEqual(contract["table_score"], 0.21)
         self.assertEqual(contract["text_score"], 0.78)
         self.assertEqual(contract["margin"], 0.57)
@@ -111,8 +104,6 @@ class KnowledgeSearchServiceAutoDecisionContractTests(SimpleTestCase):
     def test_contract_emits_optional_phase1_diagnostics_keys(self) -> None:
         contract = KnowledgeSearchService._derive_auto_decision_contract(
             route_diagnostics={"index_route": "text_primary_filtered", "index_route_table_hits": 1, "index_route_text_hits": 2},
-            scoring_diagnostics={"clarification_ui_mode": "text"},
-            requires_clarification=False,
             scope_summary={
                 "is_broad_scope": True,
                 "distinct_docs": 7,
@@ -145,7 +136,6 @@ class KnowledgeSearchServiceAutoDecisionContractTests(SimpleTestCase):
             contract["top_categories"],
             ["outgoing transfer fees", "loan service fees", "statement fees"],
         )
-        self.assertEqual(contract["clarification_ui_mode"], "text")
         self.assertTrue(contract["conflict_detected"])
         self.assertEqual(contract["no_result_reason"], "insufficient_evidence")
 
@@ -167,7 +157,7 @@ class KnowledgeSearchServicePhaseSixSemanticsTests(SimpleTestCase):
         )
 
     @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
-    def test_apply_phase6_semantics_sets_conflict_clarification(self, _build_embeddings) -> None:
+    def test_apply_phase6_semantics_sets_conflict_metadata(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         traits = service.analyze_query("plus loan service fees")
         snippets = (
@@ -189,7 +179,20 @@ class KnowledgeSearchServicePhaseSixSemanticsTests(SimpleTestCase):
         self.assertTrue(bool(diagnostics.get("conflict_detected")))
         self.assertEqual(str(diagnostics.get("reason") or ""), "conflicting_evidence")
         contract = diagnostics.get("auto_decision_contract") or {}
-        self.assertFalse(bool(contract.get("needs_clarification")))
+        self.assertEqual(
+            set(contract),
+            {
+                "table_score",
+                "text_score",
+                "margin",
+                "decision",
+                "scope_summary",
+                "categories",
+                "top_categories",
+                "conflict_detected",
+                "no_result_reason",
+            },
+        )
         self.assertTrue(bool(contract.get("conflict_detected")))
 
     @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
@@ -495,7 +498,17 @@ class KnowledgeSearchServiceAutoArbitrationTests(SimpleTestCase):
             table_intent_hint=False,
         )
         self.assertEqual(arbitration["auto_arbitration_decision"], "table")
-        self.assertFalse(arbitration["auto_arbitration_needs_clarification"])
+        self.assertEqual(
+            set(arbitration),
+            {
+                "auto_arbitration_version",
+                "auto_arbitration_margin_threshold",
+                "auto_arbitration_min_score",
+                "auto_arbitration_decision",
+                "auto_arbitration_reason",
+                "auto_arbitration_table_intent",
+            },
+        )
         self.assertTrue(arbitration["auto_arbitration_table_intent"])
 
     @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
@@ -511,11 +524,21 @@ class KnowledgeSearchServiceAutoArbitrationTests(SimpleTestCase):
             table_intent_hint=True,
         )
         self.assertEqual(arbitration["auto_arbitration_decision"], "text")
-        self.assertFalse(arbitration["auto_arbitration_needs_clarification"])
+        self.assertEqual(
+            set(arbitration),
+            {
+                "auto_arbitration_version",
+                "auto_arbitration_margin_threshold",
+                "auto_arbitration_min_score",
+                "auto_arbitration_decision",
+                "auto_arbitration_reason",
+                "auto_arbitration_table_intent",
+            },
+        )
         self.assertFalse(arbitration["auto_arbitration_table_intent"])
 
     @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
-    def test_arbitration_marks_ambiguous_scores_for_clarification(self, _build_embeddings) -> None:
+    def test_arbitration_falls_back_to_hint_for_ambiguous_scores(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         arbitration = service._arbitrate_auto_mode(
             scoring_diagnostics={
@@ -527,7 +550,17 @@ class KnowledgeSearchServiceAutoArbitrationTests(SimpleTestCase):
             table_intent_hint=True,
         )
         self.assertEqual(arbitration["auto_arbitration_decision"], "tie_fallback_to_hint")
-        self.assertFalse(arbitration["auto_arbitration_needs_clarification"])
+        self.assertEqual(
+            set(arbitration),
+            {
+                "auto_arbitration_version",
+                "auto_arbitration_margin_threshold",
+                "auto_arbitration_min_score",
+                "auto_arbitration_decision",
+                "auto_arbitration_reason",
+                "auto_arbitration_table_intent",
+            },
+        )
         self.assertTrue(arbitration["auto_arbitration_table_intent"])
 
     @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
@@ -560,7 +593,7 @@ class KnowledgeSearchServiceAutoArbitrationTests(SimpleTestCase):
             rerank_score=0.7,
             lexical_score=0.64,
         )
-        question, table_label, text_label = service._build_auto_ambiguity_clarification_question(
+        question, table_label, text_label = service._build_auto_ambiguity_followup_question(
             hits=(table_hit, text_hit),
             query_tokens=("gold", "fee", "benefits"),
         )
@@ -1619,7 +1652,7 @@ class KnowledgeSearchServiceRegressionTests(TestCase):
         self.assertEqual(merge_diagnostics["parent_chunks_suppressed"], 1)
 
 
-class KnowledgeSearchServiceClarificationTests(TestCase):
+class KnowledgeSearchServiceFollowupTests(TestCase):
     def setUp(self) -> None:
         super().setUp()
         cache.clear()
@@ -1633,15 +1666,15 @@ class KnowledgeSearchServiceClarificationTests(TestCase):
         )
 
     @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
-    def test_low_confidence_intent_does_not_block_with_needs_clarification(self, _build_embeddings) -> None:
+    def test_low_confidence_intent_does_not_block_with_followup_signal(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         classification = QueryClassification(
             intent=QueryIntent.EXPLORATORY,
             confidence=0.28,
             reasoning="low-confidence fallback",
             retrieval_hints={},
-            requires_clarification=True,
-            clarification_question="Do you want one specific record or a full list?",
+            low_confidence_followup=True,
+            followup_question="Do you want one specific record or a full list?",
         )
         table_context = {
             "has_intent": False,
@@ -1683,26 +1716,39 @@ class KnowledgeSearchServiceClarificationTests(TestCase):
 
         self.assertEqual(result.status, "not_found")
         self.assertFalse(result.snippets)
-        self.assertTrue(bool(result.diagnostics.get("clarification_suggested")))
-        self.assertEqual(result.diagnostics.get("clarification_reason"), "low_intent_confidence")
-        self.assertEqual(result.diagnostics.get("clarification_question"), "Do you want one specific record or a full list?")
+        self.assertTrue(bool(result.diagnostics.get("followup_suggested")))
+        self.assertEqual(result.diagnostics.get("followup_reason"), "low_intent_confidence")
+        self.assertEqual(result.diagnostics.get("followup_question"), "Do you want one specific record or a full list?")
         auto_contract = result.diagnostics.get("auto_decision_contract") or {}
-        self.assertFalse(auto_contract.get("needs_clarification"))
+        self.assertEqual(
+            set(auto_contract),
+            {
+                "table_score",
+                "text_score",
+                "margin",
+                "decision",
+                "scope_summary",
+                "categories",
+                "top_categories",
+                "conflict_detected",
+                "no_result_reason",
+            },
+        )
         self.assertEqual(auto_contract.get("table_score"), 0.0)
         self.assertEqual(auto_contract.get("text_score"), 0.0)
         self.assertEqual(auto_contract.get("margin"), 0.0)
         chunk_hits.assert_called()
 
     @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
-    def test_ambiguous_auto_scores_do_not_block_with_needs_clarification(self, _build_embeddings) -> None:
+    def test_ambiguous_auto_scores_do_not_block(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         classification = QueryClassification(
             intent=QueryIntent.SPECIFIC_LOOKUP,
             confidence=0.83,
             reasoning="clear intent",
             retrieval_hints={},
-            requires_clarification=False,
-            clarification_question="",
+            low_confidence_followup=False,
+            followup_question="",
         )
         table_context = {
             "has_intent": True,
@@ -1760,12 +1806,24 @@ class KnowledgeSearchServiceClarificationTests(TestCase):
                 query="gold card details",
             )
 
-        self.assertNotEqual(result.status, "needs_clarification")
+        self.assertEqual(result.status, "not_found")
         self.assertFalse(result.snippets)
-        self.assertNotEqual(result.diagnostics.get("auto_arbitration_decision"), "clarification")
-        self.assertFalse(bool(result.diagnostics.get("auto_arbitration_needs_clarification")))
+        self.assertEqual(result.diagnostics.get("auto_arbitration_decision"), "tie_fallback_to_hint")
         auto_contract = result.diagnostics.get("auto_decision_contract") or {}
-        self.assertFalse(auto_contract.get("needs_clarification"))
+        self.assertEqual(
+            set(auto_contract),
+            {
+                "table_score",
+                "text_score",
+                "margin",
+                "decision",
+                "scope_summary",
+                "categories",
+                "top_categories",
+                "conflict_detected",
+                "no_result_reason",
+            },
+        )
         route_chunk_hits.assert_called()
 
 class KnowledgeSearchServicePhaseSixValidationTests(TestCase):
@@ -1825,7 +1883,7 @@ class KnowledgeSearchServicePhaseSixValidationTests(TestCase):
         self.assertEqual(classification.intent, QueryIntent.AGGREGATE)
         self.assertIn("اجمالي المبيعات", classification.attributes)
         self.assertEqual(table_context.get("tenant_lexicon_attribute_terms_count"), 1)
-        self.assertFalse(table_context.get("requires_clarification"))
+        self.assertFalse(table_context.get("low_confidence_followup"))
 
     @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
     def test_table_context_passes_tenant_id_to_classifier(self, _build_embeddings) -> None:

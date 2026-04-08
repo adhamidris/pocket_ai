@@ -79,8 +79,8 @@ class QueryClassification:
     retrieval_hints: dict = field(default_factory=dict)
     source: str = "heuristic"
     fallback_used: bool = False
-    requires_clarification: bool = False
-    clarification_question: str = ""
+    low_confidence_followup: bool = False
+    followup_question: str = ""
 
     def requires_full_coverage(self) -> bool:
         """Returns True if this query requires retrieving all matching items."""

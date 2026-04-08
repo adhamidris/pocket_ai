@@ -4531,16 +4531,13 @@ def _search_knowledge_handler(
     primary_query = queries[0] if queries else ""
 
     # =========================================================================
-    # DIAGNOSTIC: Log document context state at search start
+    # DIAGNOSTIC: Log search state at search start
     # =========================================================================
     structured_log(
         "mcp",
         "search.context_state",
         {
             "query": primary_query,
-            "primary_upload_id": context.primary_upload_id if context else None,
-            "primary_document_title": context.get_primary_document_title() if context else None,
-            "referenced_upload_ids": list(context.referenced_upload_ids)[:5] if context else [],
             "search_history_count": len(context.search_history) if context else 0,
         },
         context={
@@ -4549,67 +4546,6 @@ def _search_knowledge_handler(
         },
         logger_obj=logger,
     )
-
-    # =========================================================================
-    # Context-Aware Query Rewriting (Conversation-Aware RAG)
-    # =========================================================================
-    # Rewrite follow-up queries to include document context for better retrieval.
-    # Example: "fees for withdrawal" -> "Trade Bills EN: fees for withdrawal"
-    rewrite_result = None
-    rewrite_enabled = str(getattr(settings, "RAG_CONTEXT_QUERY_REWRITE_ENABLED", "true")).lower() in {"1", "true", "yes"}
-    if rewrite_enabled and primary_query and context and context.has_strong_primary_document():
-        try:
-            from apps.rag.query_rewriter import (
-                build_rewrite_context_from_tool_context,
-                get_query_rewriter,
-            )
-
-            rewriter = get_query_rewriter()
-            rewrite_context = build_rewrite_context_from_tool_context(context, conversation=conversation)
-            rewrite_result = rewriter.rewrite(primary_query, rewrite_context)
-
-            if rewrite_result.context_injected:
-                # Replace the first query with the rewritten version.
-                queries[0] = rewrite_result.rewritten_query
-                primary_query = rewrite_result.rewritten_query
-                structured_log(
-                    "mcp",
-                    "search.query_rewrite",
-                    {
-                        "original_query": rewrite_result.original_query,
-                        "rewritten_query": rewrite_result.rewritten_query,
-                        "strategy": rewrite_result.rewrite_strategy,
-                        "confidence": rewrite_result.confidence,
-                        "primary_document": context.primary_upload_id,
-                    },
-                    context={
-                        "conversation": conversation.id,
-                        "business": conversation.business_profile_id,
-                    },
-                    logger_obj=logger,
-                )
-            else:
-                # Log why rewrite was skipped
-                structured_log(
-                    "mcp",
-                    "search.query_rewrite_skipped",
-                    {
-                        "query": primary_query,
-                        "strategy": rewrite_result.rewrite_strategy,
-                        "confidence": rewrite_result.confidence,
-                        "primary_upload_id": context.primary_upload_id if context else None,
-                        "primary_document_title": rewrite_context.primary_document_title,
-                        "has_previous_queries": bool(rewrite_context.previous_queries),
-                    },
-                    context={
-                        "conversation": conversation.id,
-                        "business": conversation.business_profile_id,
-                    },
-                    logger_obj=logger,
-                )
-        except Exception as exc:
-            # Don't fail the search if rewriting fails
-            logger.warning("Query rewriting failed: %s", exc, exc_info=True)
 
     # Fanout variants are controlled via MCP_SEARCH_MAX_QUERY_VARIANTS.
     # Keep this fully env-configurable so operators can tune recall/cost tradeoffs.
@@ -4986,11 +4922,6 @@ def _search_knowledge_handler(
         if precomputed_result is not None:
             result = precomputed_result
         else:
-            session_context = {
-                "primary_upload_id": context.primary_upload_id,
-                "referenced_upload_ids": list(context.referenced_upload_ids),
-                "document_context": context.document_context,
-            } if context else None
             result = service.search(
                 business_profile=conversation.business_profile,
                 query=query_text,
@@ -4998,31 +4929,9 @@ def _search_knowledge_handler(
                 identifier_filter=identifier_filter,
                 allowed_upload_ids=combined_upload_ids,
                 allowed_explicit_upload_ids=agent_explicit_upload_ids,
-                session_context=session_context,
             )
         combined_snippets: list[object] = list(getattr(result, "snippets", []) or [])
         snippet_payloads = _serialize_snippets(combined_snippets)
-
-        # Track referenced documents so later turns can keep document context.
-        doc_context_enabled = str(getattr(settings, "RAG_DOCUMENT_CONTEXT_ENABLED", "true")).lower() in {"1", "true", "yes"}
-        if doc_context_enabled:
-            for payload in snippet_payloads:
-                upload_id = payload.get("upload_id") or payload.get("document_id")
-                if upload_id:
-                    # Extract document title from snippet
-                    title = payload.get("title", "")
-                    if title and " – " in title:
-                        # Format is often "Document Name – chunk N"
-                        title = title.split(" – ")[0].strip()
-                    elif title and " - " in title:
-                        title = title.split(" - ")[0].strip()
-
-                    context.track_document_reference(
-                        upload_id=str(upload_id),
-                        title=title,
-                        stage=payload.get("search_stage", "unknown"),
-                        confidence=payload.get("confidence_score") if isinstance(payload.get("confidence_score"), (int, float)) else None,
-                    )
 
         read_required = False
         read_required_reasons_summary: set[str] = set()
@@ -5343,8 +5252,8 @@ def _search_knowledge_handler(
             return ""
         return str(run.get("status") or "").strip().lower()
 
-    # Agentic RAG should not block on "needs_clarification". Always return best-effort evidence
-    # (if any) and let the assistant handle ambiguity/conflicts in the response.
+    # Agentic RAG should always return best-effort evidence when available and let
+    # the assistant handle ambiguity/conflicts in the response.
     status_source_run: Mapping[str, object] = next(
         (run for run in runs if _normalized_run_status(run) == "ok"),
         primary_run,
@@ -5356,7 +5265,7 @@ def _search_knowledge_handler(
             (
                 run
                 for run in runs
-                if _normalized_run_status(run) not in {"", "not_found", "needs_clarification"}
+                if _normalized_run_status(run) not in {"", "not_found"}
             ),
             None,
         )
@@ -5366,8 +5275,6 @@ def _search_knowledge_handler(
         else:
             status_source_run = runs[-1]
             final_status = _normalized_run_status(status_source_run) or "not_found"
-            if final_status == "needs_clarification":
-                final_status = "not_found"
 
     for snippet in page_snippets:
         context.add_retrieval_candidate(snippet)
@@ -7091,12 +6998,6 @@ def _agentic_read_v2_handler(
             )
             read.append({"id": item_id, "status": "error"})
             continue
-
-        # Track for follow-up context.
-        try:
-            context.track_document_read(upload_id, title=_upload_title(upload))
-        except Exception:
-            pass
 
         payload: dict[str, object] = {"type": "text", "text": ""}
         payload_type = "text"

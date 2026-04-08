@@ -84,7 +84,7 @@
               {% if tab.key == "integrations" %}
               <div class="grid grid-cols-2 sm:grid-cols-3 gap-4 max-w-lg">
                 {% for integration in section.integrations %}
-                <div class="flex items-center justify-center h-14 rounded-xl bg-background/40 border border-border/40">
+                <div class="flex items-center justify-center h-14 rounded-xl bg-background/40">
                   <img src="https://cdn.simpleicons.org/{{ integration.slug }}/9CA3AF" alt="{% blocktrans with name=integration.name %}{{ name }} logo{% endblocktrans %}"
                     class="h-8 w-auto opacity-90" loading="lazy" decoding="async">
                 </div>
@@ -94,7 +94,7 @@
               <div class="grid sm:grid-cols-2 gap-5 max-w-lg">
                 {% for bullet in tab.bullets %}
                 <div
-                  class="flex items-start gap-3 bg-background/40 border border-border/40 rounded-xl p-5 transition-all duration-300 {% if forloop.counter0|divisibleby:2 %}hover:translate-x-[2px]{% else %}hover:-translate-x-[2px]{% endif %}">
+                  class="flex items-start gap-3 bg-background/40 rounded-xl p-5 transition-all duration-300 {% if forloop.counter0|divisibleby:2 %}hover:translate-x-[2px]{% else %}hover:-translate-x-[2px]{% endif %}">
                   <div class="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
                     {% lucide bullet.icon "w-5 h-5 text-primary" %}
                   </div>

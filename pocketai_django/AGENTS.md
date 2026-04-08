@@ -6,9 +6,9 @@ This repo is a multi-tenant B2B SaaS. Your job is to ship production-ready chang
 - `README.md`
 - `codebase_roadmap.md` — read this before touching any existing engine or path. It maps every runtime flow, background worker, core module, and external dependency in the system.
 - RAG runtime contract note (current portal behavior):
-  - `KnowledgeSearchService.search` diagnostics may still include additive `auto_decision_contract` fields such as `scope_summary`, `categories`, `top_categories`, `clarification_ui_mode`, `conflict_detected`, `no_result_reason`, and `needs_clarification` for compatibility/debugging.
+  - `KnowledgeSearchService.search` diagnostics may still include additive `auto_decision_contract` fields such as `scope_summary`, `categories`, `top_categories`, `conflict_detected`, and `no_result_reason` for compatibility/debugging.
   - Valid `no_result_reason` values are exactly: `not_found`, `not_applicable_to_segment`, `insufficient_evidence`.
-  - In the active agentic portal runtime, retrieval is best-effort: do not block the tool path on `needs_clarification` if evidence can be returned.
+  - In the active agentic portal runtime, retrieval is best-effort: return evidence when it exists, otherwise normalize to `not_found`.
   - `search_knowledge` refs may include compact previews and read hints; do not assume ids-only metadata.
 
 ## Django and .venv location

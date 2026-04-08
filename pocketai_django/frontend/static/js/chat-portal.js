@@ -1463,6 +1463,14 @@ class ChatPortalClient {
       }
       return;
     }
+    const wrapperType = wrapper && wrapper.dataset ? (wrapper.dataset.blockType || "").toString().trim().toLowerCase() : "";
+    if (wrapperType === "table" && blockModel && typeof blockModel === "object") {
+      const updated = this.updateStreamingTableBlock(wrapper, blockModel.payload && typeof blockModel.payload === "object" ? blockModel.payload : {});
+      if (updated && updated !== wrapper) {
+        this.streamingContentBlockEls.set(blockId, updated);
+      }
+      return;
+    }
     ops.forEach((op) => {
       if (!op || typeof op !== "object") return;
       const kind = (op.op || "").toString().trim();
@@ -1538,6 +1546,20 @@ class ChatPortalClient {
         if (!text) return;
         const existing = typeof payload.code === "string" ? payload.code : "";
         payload.code = `${existing}${text}`;
+        return;
+      }
+      if (kind === "append_table_row") {
+        const cells = Array.isArray(op.cells) ? op.cells : [];
+        if (!cells.length) return;
+        let rows = Array.isArray(payload.rows) ? payload.rows : [];
+        if (!Array.isArray(payload.rows)) {
+          payload.rows = rows;
+        }
+        const row = { cells: cells.map((cell) => (typeof cell === "string" ? cell : cell == null ? "" : String(cell))) };
+        if (op.rtl === true) {
+          row.rtl = true;
+        }
+        rows.push(row);
       }
     });
   }
@@ -1568,6 +1590,10 @@ class ChatPortalClient {
       if (kind === "append_code") {
         const text = typeof op.text === "string" ? op.text : "";
         total += text.length;
+        return;
+      }
+      if (kind === "append_table_row") {
+        total += 1;
       }
     });
     return total;
@@ -1972,7 +1998,7 @@ class ChatPortalClient {
     const parentId = (block.parent_block_id || block.parentBlockId || "").toString().trim();
     if (parentId && this.streamingContentBlockEls.has(parentId)) {
       const parentEl = this.streamingContentBlockEls.get(parentId);
-      const container = parentEl ? parentEl.querySelector("[data-block-container]") || parentEl : null;
+      const container = this.resolveBlockContainer(parentEl);
       if (container) {
         container.appendChild(el);
       } else {
@@ -7814,7 +7840,7 @@ class ChatPortalClient {
       const parentId = (block.parent_block_id || block.parentBlockId || "").toString().trim();
       if (parentId && blockEls.has(parentId)) {
         const parentEl = blockEls.get(parentId);
-        const container = parentEl ? parentEl.querySelector("[data-block-container]") || parentEl : null;
+        const container = this.resolveBlockContainer(parentEl);
         if (container) {
           container.appendChild(el);
         } else {
@@ -7828,6 +7854,15 @@ class ChatPortalClient {
 
     const visibilityRoot = containerEl.closest ? containerEl.closest("[data-message-id]") || containerEl : containerEl;
     this.updateInlineToolCardsVisibility(visibilityRoot);
+  }
+
+  resolveBlockContainer(blockEl) {
+    if (!blockEl || blockEl.nodeType !== Node.ELEMENT_NODE) return null;
+    if (blockEl.dataset && blockEl.dataset.blockContainer === "true") {
+      return blockEl;
+    }
+    const childContainer = blockEl.querySelector("[data-block-container]");
+    return childContainer || blockEl;
   }
 
   reconcileMessageContentBlocks(messageBodyEl, blocks) {
@@ -8134,7 +8169,7 @@ class ChatPortalClient {
       }
 
       const parentEl = parentId && existingById.has(parentId) ? existingById.get(parentId) : null;
-      const targetContainer = parentEl ? parentEl.querySelector("[data-block-container]") || parentEl : containerEl;
+      const targetContainer = parentEl ? this.resolveBlockContainer(parentEl) : containerEl;
       if (targetContainer && el && el.parentNode !== targetContainer) {
         targetContainer.appendChild(el);
       } else if (targetContainer && el) {
@@ -8154,7 +8189,7 @@ class ChatPortalClient {
       const el = existingById.get(blockId);
       if (!el) return;
       const parentEl = parentId && existingById.has(parentId) ? existingById.get(parentId) : null;
-      const targetContainer = parentEl ? parentEl.querySelector("[data-block-container]") || parentEl : containerEl;
+      const targetContainer = parentEl ? this.resolveBlockContainer(parentEl) : containerEl;
       if (targetContainer) {
         targetContainer.appendChild(el);
       }

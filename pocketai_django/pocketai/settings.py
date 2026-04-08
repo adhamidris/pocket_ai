@@ -624,8 +624,6 @@ RAG_CROSS_ENCODER_CACHE_SIZE = int(os.getenv("RAG_CROSS_ENCODER_CACHE_SIZE", "50
 RAG_SNIPPET_RERANK_POOL = int(os.getenv("RAG_SNIPPET_RERANK_POOL", "20"))
 # RAG_WEIGHT_DOCUMENT_NAME: Fusion weight for document-name matching signal.
 RAG_WEIGHT_DOCUMENT_NAME = float(os.getenv("RAG_WEIGHT_DOCUMENT_NAME", "0.35"))
-# RAG_WEIGHT_DOCUMENT_CONTINUITY: Bonus weight for same-document continuity.
-RAG_WEIGHT_DOCUMENT_CONTINUITY = float(os.getenv("RAG_WEIGHT_DOCUMENT_CONTINUITY", "0.35"))
 
 # -- Recency --
 # RAG_RECENCY_DECAY_DAYS: Half-life days for recency decay curve.
@@ -682,8 +680,8 @@ RAG_PARALLEL_TABLE_RRF_K = int(os.getenv("RAG_PARALLEL_TABLE_RRF_K", "60"))
 # -- Scope / intent --
 # RAG_INTENT_LLM_FALLBACK_THRESHOLD: Confidence below which LLM intent classifier runs.
 RAG_INTENT_LLM_FALLBACK_THRESHOLD = float(os.getenv("RAG_INTENT_LLM_FALLBACK_THRESHOLD", "0.62"))
-# RAG_INTENT_CLARIFICATION_THRESHOLD: Confidence below which clarification is triggered.
-RAG_INTENT_CLARIFICATION_THRESHOLD = float(os.getenv("RAG_INTENT_CLARIFICATION_THRESHOLD", "0.45"))
+# RAG_INTENT_FOLLOWUP_THRESHOLD: Confidence below which a low-confidence follow-up suggestion is attached.
+RAG_INTENT_FOLLOWUP_THRESHOLD = float(os.getenv("RAG_INTENT_FOLLOWUP_THRESHOLD", "0.45"))
 # RAG_AUTO_MODE_MARGIN_THRESHOLD: Min margin between top-two intent scores.
 RAG_AUTO_MODE_MARGIN_THRESHOLD = float(os.getenv("RAG_AUTO_MODE_MARGIN_THRESHOLD", "0.12"))
 # RAG_AUTO_MODE_MIN_SCORE: Min score to accept auto-mode intent selection.

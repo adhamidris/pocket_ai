@@ -14,9 +14,13 @@ BLOCK_LIMIT = 400
 CODE_TEXT_LIMIT = 4000
 
 ALLOWED_LINK_SCHEMES = {"http", "https", "mailto"}
-ALLOWED_BLOCK_TYPES = {"paragraph", "heading", "list", "list_item", "quote", "code_block"}
+ALLOWED_BLOCK_TYPES = {"paragraph", "heading", "list", "list_item", "quote", "code_block", "table"}
 ALLOWED_INLINE_MARKS = {"bold", "italic", "code"}
-ALLOWED_BLOCK_OPS = {"append_inline", "append_code"}
+ALLOWED_BLOCK_OPS = {"append_inline", "append_code", "append_table_row"}
+
+TABLE_CELL_LIMIT = 12
+TABLE_ROW_LIMIT = 60
+TABLE_DIVIDER_CELL_RE = re.compile(r"^:?-{3,}:?$")
 
 
 def new_block_id() -> str:
@@ -305,7 +309,20 @@ def coerce_block(value: object) -> dict[str, object] | None:
     payload_raw = value.get("payload")
     payload = dict(payload_raw) if isinstance(payload_raw, Mapping) else {}
     payload_out: dict[str, object] = {}
-    if block_type == "code_block":
+    if block_type == "table":
+        columns = payload.get("columns", value.get("columns"))
+        rows = payload.get("rows", value.get("rows"))
+        if not isinstance(columns, list) or not columns:
+            return None
+        payload_out["columns"] = copy.deepcopy(columns[:TABLE_CELL_LIMIT])
+        payload_out["rows"] = copy.deepcopy(rows[:TABLE_ROW_LIMIT]) if isinstance(rows, list) else []
+        title = payload.get("title", value.get("title"))
+        if isinstance(title, str) and title.strip():
+            payload_out["title"] = title.strip()
+        note = payload.get("note", value.get("note"))
+        if isinstance(note, str) and note.strip():
+            payload_out["note"] = note.strip()
+    elif block_type == "code_block":
         code_value = payload.get("code", value.get("code"))
         if isinstance(code_value, str) and len(code_value) > CODE_TEXT_LIMIT:
             code_value = code_value[:CODE_TEXT_LIMIT]
@@ -367,6 +384,25 @@ def coerce_block_ops(value: object) -> list[dict[str, object]]:
             if len(text_value) > CODE_TEXT_LIMIT:
                 text_value = text_value[:CODE_TEXT_LIMIT]
             ops_out.append({"op": "append_code", "text": text_value})
+        elif op_type == "append_table_row":
+            cells_raw = entry.get("cells") if entry.get("cells") is not None else entry.get("row")
+            if not isinstance(cells_raw, list):
+                continue
+            cells: list[str] = []
+            for cell in cells_raw[:TABLE_CELL_LIMIT]:
+                if isinstance(cell, str):
+                    cells.append(cell)
+                elif cell is None:
+                    cells.append("")
+                else:
+                    cells.append(str(cell))
+            if not cells:
+                continue
+            row_out: dict[str, object] = {"cells": cells}
+            rtl = entry.get("rtl")
+            if isinstance(rtl, bool):
+                row_out["rtl"] = rtl
+            ops_out.append({"op": "append_table_row", **row_out})
     return ops_out
 
 
@@ -466,6 +502,18 @@ def apply_block_ops(block: dict[str, object], ops: Iterable[Mapping[str, object]
                 continue
             existing = payload.get("code")
             payload["code"] = f"{existing or ''}{text_value}"
+        elif op_type == "append_table_row":
+            cells_raw = op.get("cells")
+            if not isinstance(cells_raw, list) or not cells_raw:
+                continue
+            rows_raw = payload.get("rows")
+            rows: list[dict[str, object]] = list(rows_raw) if isinstance(rows_raw, list) else []
+            row_out: dict[str, object] = {"cells": list(cells_raw[:TABLE_CELL_LIMIT])}
+            rtl = op.get("rtl")
+            if isinstance(rtl, bool):
+                row_out["rtl"] = rtl
+            rows.append(row_out)
+            payload["rows"] = rows[:TABLE_ROW_LIMIT]
     block["payload"] = payload
 
 
@@ -488,6 +536,89 @@ def _make_block(
     return block
 
 
+def _split_markdown_table_cells(line: str) -> list[str]:
+    raw = (line or "").strip()
+    if not raw:
+        return []
+    if raw.startswith("|"):
+        raw = raw[1:]
+    if raw.endswith("|"):
+        raw = raw[:-1]
+    cells = [part.strip() for part in raw.split("|")]
+    return cells[:TABLE_CELL_LIMIT]
+
+
+def _looks_like_markdown_table_line(line: str) -> bool:
+    raw = (line or "").strip()
+    if not raw:
+        return False
+    if raw.startswith(">") or raw.startswith("```"):
+        return False
+    pipe_count = raw.count("|")
+    if pipe_count < 2 and not raw.startswith("|") and not raw.endswith("|"):
+        return False
+    cells = _split_markdown_table_cells(raw)
+    if len(cells) < 2:
+        return False
+    return True
+
+
+def _looks_like_partial_markdown_table_candidate(line: str) -> bool:
+    raw = (line or "").strip()
+    if not raw:
+        return False
+    if raw.startswith(">") or raw.startswith("```"):
+        return False
+    if _looks_like_markdown_table_line(raw):
+        return True
+    # Streamed table headers often arrive as a leading pipe plus an incomplete first cell,
+    # e.g. "| Segment" before the remaining columns arrive in the next chunk.
+    if raw.startswith("|"):
+        return True
+    # Support markdown tables without a leading pipe once at least one separator is visible.
+    if "|" in raw and not raw.endswith((".", "!", "?", ":", ";")):
+        return True
+    return False
+
+
+def _parse_markdown_table_divider(line: str) -> list[str] | None:
+    if not _looks_like_markdown_table_line(line):
+        return None
+    cells = _split_markdown_table_cells(line)
+    if len(cells) < 2:
+        return None
+    alignments: list[str] = []
+    for cell in cells:
+        token = cell.replace(" ", "")
+        if not TABLE_DIVIDER_CELL_RE.match(token):
+            return None
+        if token.startswith(":") and token.endswith(":"):
+            alignments.append("center")
+        elif token.endswith(":"):
+            alignments.append("right")
+        else:
+            alignments.append("left")
+    return alignments
+
+
+def _parse_markdown_table_row(line: str, *, expected_columns: int | None = None) -> list[str] | None:
+    if not _looks_like_markdown_table_line(line):
+        return None
+    if _parse_markdown_table_divider(line) is not None:
+        return None
+    cells = _split_markdown_table_cells(line)
+    if len(cells) < 2:
+        return None
+    if expected_columns is not None:
+        if len(cells) < expected_columns:
+            cells = cells + [""] * (expected_columns - len(cells))
+        elif len(cells) > expected_columns:
+            cells = cells[:expected_columns]
+    if not any(cell for cell in cells):
+        return None
+    return cells
+
+
 class RichBlockStreamBuilder:
     def __init__(self) -> None:
         self.blocks: list[dict[str, object]] = []
@@ -506,6 +637,8 @@ class RichBlockStreamBuilder:
         self.active_quote_id: str | None = None
         self.in_code_block = False
         self.active_code_block_id: str | None = None
+        self.pending_table_header_line: str | None = None
+        self.active_table_id: str | None = None
 
     # Backwards-compatible computed accessors for legacy code paths.
     @property
@@ -547,6 +680,8 @@ class RichBlockStreamBuilder:
     def finalize(self) -> list[dict[str, object]]:
         events: list[dict[str, object]] = []
         events.extend(self._finalize_pending_line())
+        events.extend(self._flush_pending_table_header())
+        self._close_active_table()
         if self.in_code_block and self.active_code_block_id:
             events.append({"type": "block_end", "payload": {"block_id": self.active_code_block_id}})
             self.in_code_block = False
@@ -559,6 +694,8 @@ class RichBlockStreamBuilder:
     def break_flow(self) -> list[dict[str, object]]:
         events: list[dict[str, object]] = []
         events.extend(self._finalize_pending_line(force=True))
+        events.extend(self._flush_pending_table_header())
+        self._close_active_table()
         events.extend(self._close_paragraph())
         self._close_list()
         return events
@@ -585,6 +722,89 @@ class RichBlockStreamBuilder:
         self.line_parent_id = None
         self.line_block_id = None
         self.line_inline_buffer = ""
+
+    def _close_active_table(self) -> None:
+        self.active_table_id = None
+
+    def _table_block(self) -> dict[str, object] | None:
+        if not self.active_table_id:
+            return None
+        block = self.blocks_by_id.get(self.active_table_id)
+        return block if isinstance(block, dict) else None
+
+    def _build_table_payload(
+        self,
+        *,
+        header_cells: list[str],
+        alignments: list[str] | None = None,
+        rows: list[list[str]] | None = None,
+    ) -> dict[str, object]:
+        columns: list[dict[str, object]] = []
+        for idx, cell in enumerate(header_cells[:TABLE_CELL_LIMIT]):
+            column: dict[str, object] = {
+                "key": f"col_{idx}",
+                "label": cell or f"Column {idx + 1}",
+            }
+            if alignments and idx < len(alignments) and alignments[idx] in {"left", "center", "right"}:
+                column["align"] = alignments[idx]
+            columns.append(column)
+        normalized_rows = [{"cells": row[: len(columns)]} for row in (rows or [])[:TABLE_ROW_LIMIT] if row]
+        return {
+            "columns": columns,
+            "rows": normalized_rows,
+        }
+
+    def _start_table_from_lines(self, header_line: str, divider_line: str) -> list[dict[str, object]]:
+        header_cells = _parse_markdown_table_row(header_line)
+        alignments = _parse_markdown_table_divider(divider_line)
+        if not header_cells or not alignments:
+            return []
+        column_count = min(len(header_cells), len(alignments), TABLE_CELL_LIMIT)
+        header_cells = header_cells[:column_count]
+        alignments = alignments[:column_count]
+        self._close_active_table()
+        table_block = self._start_block(
+            "table",
+            self._build_table_payload(header_cells=header_cells, alignments=alignments, rows=[]),
+        )
+        self.active_table_id = str(table_block.get("block_id") or "")
+        return [{"type": "block_start", "payload": {"block": copy.deepcopy(table_block)}}]
+
+    def _append_table_row(self, line: str) -> list[dict[str, object]]:
+        table_block = self._table_block()
+        if not table_block:
+            return []
+        payload = table_block.get("payload")
+        payload_out: dict[str, object] = dict(payload) if isinstance(payload, Mapping) else {}
+        columns = payload_out.get("columns")
+        column_count = len(columns) if isinstance(columns, list) else 0
+        if column_count <= 1:
+            return []
+        row_cells = _parse_markdown_table_row(line, expected_columns=column_count)
+        if not row_cells:
+            return []
+        rows_value = payload_out.get("rows")
+        rows: list[dict[str, object]] = list(rows_value) if isinstance(rows_value, list) else []
+        if len(rows) >= TABLE_ROW_LIMIT:
+            return []
+        row_payload = {"cells": row_cells}
+        rows.append(row_payload)
+        payload_out["rows"] = rows
+        table_block["payload"] = payload_out
+        return [{
+            "type": "block_delta",
+            "payload": {
+                "block_id": str(table_block.get("block_id") or ""),
+                "ops": [{"op": "append_table_row", "cells": row_cells}],
+            },
+        }]
+
+    def _flush_pending_table_header(self) -> list[dict[str, object]]:
+        if not self.pending_table_header_line:
+            return []
+        line = self.pending_table_header_line
+        self.pending_table_header_line = None
+        return self._process_line(line, line_ended=True)
 
     def _append_line_inline_segment(self, segment: str) -> None:
         if not segment:
@@ -863,6 +1083,42 @@ class RichBlockStreamBuilder:
             self._reset_line_state()
             return events
 
+        if not self.in_code_block and not line_ended and not had_context:
+            if self.pending_table_header_line or self.active_table_id:
+                return events
+            if _looks_like_partial_markdown_table_candidate(self.pending_line):
+                return events
+
+        if not self.in_code_block and line_ended:
+            line = self.pending_line.rstrip("\r")
+            if self.active_table_id:
+                row_events = self._append_table_row(line)
+                if row_events:
+                    self.pending_line = ""
+                    self._reset_line_state()
+                    return events + row_events
+                self._close_active_table()
+
+            if self.pending_table_header_line:
+                divider = _parse_markdown_table_divider(line)
+                if divider:
+                    events.extend(self._close_paragraph())
+                    self._close_list()
+                    events.extend(self._start_table_from_lines(self.pending_table_header_line, line))
+                    self.pending_table_header_line = None
+                    self.pending_line = ""
+                    self._reset_line_state()
+                    return events
+                events.extend(self._flush_pending_table_header())
+
+            if _parse_markdown_table_row(line) is not None:
+                events.extend(self._close_paragraph())
+                self._close_list()
+                self.pending_table_header_line = line
+                self.pending_line = ""
+                self._reset_line_state()
+                return events
+
         if not had_context:
             events.extend(self._ensure_line_context(line_ended=line_ended))
 
@@ -897,6 +1153,33 @@ class RichBlockStreamBuilder:
             self.pending_line = ""
             self._reset_line_state()
             return events
+
+        line = self.pending_line.rstrip("\r")
+        if self.active_table_id:
+            row_events = self._append_table_row(line)
+            if row_events:
+                self.pending_line = ""
+                self._reset_line_state()
+                return events + row_events
+            self._close_active_table()
+
+        if self.pending_table_header_line:
+            divider = _parse_markdown_table_divider(line)
+            if divider:
+                events.extend(self._close_paragraph())
+                self._close_list()
+                events.extend(self._start_table_from_lines(self.pending_table_header_line, line))
+                self.pending_table_header_line = None
+                self.pending_line = ""
+                self._reset_line_state()
+                return events
+            events.extend(self._flush_pending_table_header())
+
+        if _parse_markdown_table_row(line) is not None:
+            self.pending_table_header_line = line
+            self.pending_line = ""
+            self._reset_line_state()
+            return events + self._flush_pending_table_header()
 
         events.extend(self._ensure_line_context(line_ended=True))
         if self.line_kind is not None:

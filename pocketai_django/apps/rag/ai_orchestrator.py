@@ -813,13 +813,13 @@ class KnowledgeSearchService:
         )
         if not (0.0 <= self.intent_llm_fallback_threshold <= 1.0):
             self.intent_llm_fallback_threshold = 0.62
-        self.intent_clarification_threshold = float(
-            getattr(settings, "RAG_INTENT_CLARIFICATION_THRESHOLD", 0.45)
+        self.intent_followup_threshold = float(
+            getattr(settings, "RAG_INTENT_FOLLOWUP_THRESHOLD", 0.45)
         )
-        if not (0.0 <= self.intent_clarification_threshold <= 1.0):
-            self.intent_clarification_threshold = 0.45
-        if self.intent_clarification_threshold > self.intent_llm_fallback_threshold:
-            self.intent_clarification_threshold = self.intent_llm_fallback_threshold
+        if not (0.0 <= self.intent_followup_threshold <= 1.0):
+            self.intent_followup_threshold = 0.45
+        if self.intent_followup_threshold > self.intent_llm_fallback_threshold:
+            self.intent_followup_threshold = self.intent_llm_fallback_threshold
         self.auto_mode_margin_threshold = float(
             getattr(settings, "RAG_AUTO_MODE_MARGIN_THRESHOLD", 0.12)
         )
@@ -1231,7 +1231,6 @@ class KnowledgeSearchService:
         identifier_filter: Mapping[str, str] | None = None,
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
-        session_context: Mapping[str, object] | None = None,
     ) -> KnowledgeSearchResult:
         """
         Entry point for retrieval planning and execution.
@@ -1273,7 +1272,6 @@ class KnowledgeSearchService:
                         identifier_filter=identifier_filter,
                         allowed_upload_ids=allowed_upload_ids,
                         allowed_explicit_upload_ids=allowed_explicit_upload_ids,
-                        session_context=session_context,
                     )
 
                 def _apply_db_timeouts() -> None:
@@ -1339,7 +1337,6 @@ class KnowledgeSearchService:
         identifier_filter: Mapping[str, str] | None = None,
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
-        session_context: Mapping[str, object] | None = None,
     ) -> KnowledgeSearchResult:
         """
         Core retrieval pipeline.
@@ -1375,7 +1372,7 @@ class KnowledgeSearchService:
         # Execute retrieval strategy based on classified intent (Phase 3)
         classification = table_context.get("query_classification")
         strategy_result = None
-        if classification and not classification.requires_clarification:
+        if classification and not classification.low_confidence_followup:
             retrieval_context = RetrievalContext(
                 business_profile=business_profile,
                 query=query,
@@ -1404,13 +1401,13 @@ class KnowledgeSearchService:
                 indent=1,
                 context={"business": business_profile.id if business_profile else None},
             )
-        elif classification and classification.requires_clarification:
+        elif classification and classification.low_confidence_followup:
             _rag_log(
-                "strategy.skipped_clarification",
+                "strategy.skipped_followup",
                 {
                     "intent": classification.intent.value,
                     "confidence": round(classification.confidence, 2),
-                    "question": classification.clarification_question,
+                    "question": classification.followup_question,
                 },
                 indent=1,
                 context={"business": business_profile.id if business_profile else None},
@@ -1449,8 +1446,8 @@ class KnowledgeSearchService:
                 diagnostics=dict(alias_result.diagnostics or {}),
                 short_circuit=False,
             )
-        # Agentic RAG: do not surface "needs clarification" contracts. Always proceed best-effort.
-        auto_decision_contract = self._derive_auto_decision_contract(requires_clarification=False)
+        # Agentic RAG: do not surface any blocking follow-up contract. Always proceed best-effort.
+        auto_decision_contract = self._derive_auto_decision_contract()
         diagnostics: dict[str, object] = {
             "original_query": traits.original,
             "normalized_query": traits.normalized,
@@ -1488,12 +1485,12 @@ class KnowledgeSearchService:
             "intent_fallback_used": bool(classification.fallback_used) if classification else False,
             "intent_fallback_attempted": bool(table_context.get("intent_fallback_attempted")),
             "intent_fallback_applied": bool(table_context.get("intent_fallback_applied")),
-            # Keep the classifier signal for debugging, but do not turn it into a blocking clarification.
-            "intent_requires_clarification": False,
-            "intent_clarification_question": "",
-            "intent_classifier_requires_clarification": bool(classification.requires_clarification) if classification else False,
-            "intent_classifier_clarification_question": (
-                classification.clarification_question if classification else ""
+            # Keep the classifier signal for debugging, but do not turn it into a blocking flow.
+            "intent_requires_followup": False,
+            "intent_followup_question": "",
+            "intent_classifier_low_confidence_followup": bool(classification.low_confidence_followup) if classification else False,
+            "intent_classifier_followup_question": (
+                classification.followup_question if classification else ""
             ),
             "tenant_lexicon_entity_terms_count": int(table_context.get("tenant_lexicon_entity_terms_count") or 0),
             "tenant_lexicon_attribute_terms_count": int(table_context.get("tenant_lexicon_attribute_terms_count") or 0),
@@ -1526,15 +1523,15 @@ class KnowledgeSearchService:
             diagnostics["strategy_comprehensive"] = strategy_result.hints.comprehensive_intent
             diagnostics["strategy_applied_limit"] = limit
 
-        # Agentic RAG should not block on "clarification". Keep the signal for diagnostics,
+        # Agentic RAG should not block on low-confidence follow-up suggestions. Keep the signal for diagnostics,
         # but continue retrieval and answer best-effort with available evidence.
-        if classification and classification.requires_clarification and not traits.is_identifier_like:
-            diagnostics.setdefault("clarification_suggested", True)
-            diagnostics.setdefault("clarification_reason", "low_intent_confidence")
-            if classification.clarification_question:
+        if classification and classification.low_confidence_followup and not traits.is_identifier_like:
+            diagnostics.setdefault("followup_suggested", True)
+            diagnostics.setdefault("followup_reason", "low_intent_confidence")
+            if classification.followup_question:
                 diagnostics.setdefault(
-                    "clarification_question",
-                    classification.clarification_question,
+                    "followup_question",
+                    classification.followup_question,
                 )
         
         cache_key = self._result_cache_key(
@@ -1553,49 +1550,11 @@ class KnowledgeSearchService:
             cached_result = self._session_cache_get(session_cache, cache_key)
             if cached_result:
                 cached_status = str(cached_result.status or "").strip().lower() or "not_found"
-                if cached_status == "needs_clarification":
-                    # Ignore stale clarification cache entries; agentic mode should proceed best-effort.
-                    cached_result = None
-                else:
-                    cached_diag = dict(cached_result.diagnostics or {})
-                    cached_diag["cache_hit"] = True
-                    cached_diag["cache_scope"] = "session"
-                    cached_diag["request_id"] = str(request_id)
-                    cached_diag["total_duration_ms"] = self._duration_ms(overall_start)
-                    snippets = cached_result.snippets[:limit]
-                    snippets, collapse_diag = self._collapse_snippets_by_evidence_group(
-                        snippets,
-                        query_text=traits.normalized or traits.original or query,
-                        tokens=traits.tokens,
-                        limit=limit,
-                    )
-                    cached_diag.update(collapse_diag)
-                    cached_diag["snippet_count"] = len(snippets)
-                    result_obj = KnowledgeSearchResult(
-                        snippets=snippets,
-                        status=cached_status,
-                        diagnostics=cached_diag,
-                    )
-                    self._record_retrieval_event(
-                        business_profile=business_profile,
-                        traits=traits,
-                        alias_result=alias_result,
-                        result=result_obj,
-                        feature_state=feature_state,
-                    )
-                    self._log_search_summary(
-                        business_profile=business_profile,
-                        request_id=request_id,
-                        result=result_obj,
-                    )
-                    return result_obj
-        cached_result = self._result_cache_get(cache_key)
-        if cached_result:
-            cached_status = str(cached_result.status or "").strip().lower() or "not_found"
-            if cached_status != "needs_clarification":
+                if cached_status not in {"ok", "not_found"}:
+                    cached_status = "not_found"
                 cached_diag = dict(cached_result.diagnostics or {})
                 cached_diag["cache_hit"] = True
-                cached_diag["cache_scope"] = "business"
+                cached_diag["cache_scope"] = "session"
                 cached_diag["request_id"] = str(request_id)
                 cached_diag["total_duration_ms"] = self._duration_ms(overall_start)
                 snippets = cached_result.snippets[:limit]
@@ -1612,7 +1571,6 @@ class KnowledgeSearchService:
                     status=cached_status,
                     diagnostics=cached_diag,
                 )
-                self._session_cache_set(session_cache, cache_key, result_obj, limit=limit)
                 self._record_retrieval_event(
                     business_profile=business_profile,
                     traits=traits,
@@ -1626,6 +1584,44 @@ class KnowledgeSearchService:
                     result=result_obj,
                 )
                 return result_obj
+        cached_result = self._result_cache_get(cache_key)
+        if cached_result:
+            cached_status = str(cached_result.status or "").strip().lower() or "not_found"
+            if cached_status not in {"ok", "not_found"}:
+                cached_status = "not_found"
+            cached_diag = dict(cached_result.diagnostics or {})
+            cached_diag["cache_hit"] = True
+            cached_diag["cache_scope"] = "business"
+            cached_diag["request_id"] = str(request_id)
+            cached_diag["total_duration_ms"] = self._duration_ms(overall_start)
+            snippets = cached_result.snippets[:limit]
+            snippets, collapse_diag = self._collapse_snippets_by_evidence_group(
+                snippets,
+                query_text=traits.normalized or traits.original or query,
+                tokens=traits.tokens,
+                limit=limit,
+            )
+            cached_diag.update(collapse_diag)
+            cached_diag["snippet_count"] = len(snippets)
+            result_obj = KnowledgeSearchResult(
+                snippets=snippets,
+                status=cached_status,
+                diagnostics=cached_diag,
+            )
+            self._session_cache_set(session_cache, cache_key, result_obj, limit=limit)
+            self._record_retrieval_event(
+                business_profile=business_profile,
+                traits=traits,
+                alias_result=alias_result,
+                result=result_obj,
+                feature_state=feature_state,
+            )
+            self._log_search_summary(
+                business_profile=business_profile,
+                request_id=request_id,
+                result=result_obj,
+            )
+            return result_obj
         if alias_result.short_circuit and alias_result.hits:
             chunk_ids = [hit.chunk_id for hit in alias_result.hits[: max(limit, self.alias_result_cap)]]
             neighbor = max(1, self.alias_neighbor_window)
@@ -1698,7 +1694,6 @@ class KnowledgeSearchService:
             table_context=table_context,
             allowed_upload_ids=allowed_upload_ids,
             allowed_explicit_upload_ids=allowed_explicit_upload_ids,
-            session_context=session_context,
         )
         _rag_log(
             "table.search_decision",
@@ -1862,7 +1857,7 @@ class KnowledgeSearchService:
         diagnostics.update(auto_arbitration_diag)
         table_intent = bool(auto_arbitration_diag.get("auto_arbitration_table_intent", table_intent))
 
-        # NOTE: `auto_arbitration_needs_clarification` is intentionally ignored in agentic mode.
+        # Agentic mode does not surface a blocking follow-up state here.
         # We proceed with the best-effort route and allow later fusion (e.g. parallel table search)
         # to reconcile table/text evidence without pausing the conversation.
 
@@ -1875,7 +1870,6 @@ class KnowledgeSearchService:
         diagnostics["auto_decision_contract"] = self._derive_auto_decision_contract(
             route_diagnostics=route_diag,
             scoring_diagnostics=diagnostics,
-            requires_clarification=False,
             scope_summary=scope_summary,
         )
         diagnostics["chunk_candidate_count"] = len(chunk_hits)
@@ -2371,7 +2365,6 @@ class KnowledgeSearchService:
         table_context: Mapping[str, object] | None = None,
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
-        session_context: Mapping[str, object] | None = None,
     ) -> HybridSearchResult:
         business_id = getattr(business_profile, "id", None) if business_profile else None
         with tenant_context(business_id):
@@ -2385,7 +2378,6 @@ class KnowledgeSearchService:
                 table_context=table_context,
                 allowed_upload_ids=allowed_upload_ids,
                 allowed_explicit_upload_ids=allowed_explicit_upload_ids,
-                session_context=session_context,
             )
 
     def _search_free_text_inner(
@@ -2400,7 +2392,6 @@ class KnowledgeSearchService:
         table_context: Mapping[str, object] | None = None,
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
-        session_context: Mapping[str, object] | None = None,
     ) -> HybridSearchResult:
         with TRACER.start_as_current_span("knowledge.hybrid_search") as span:
             base_qs = self._base_chunk_queryset(
@@ -2578,7 +2569,6 @@ class KnowledgeSearchService:
                 traits=traits,
                 feature_state=feature_state,
                 table_context=table_context,
-                session_context=session_context,
             )
             latency_monitor.observe(
                 "rag.rerank",
@@ -2748,7 +2738,6 @@ class KnowledgeSearchService:
         table_context: Mapping[str, object] | None = None,
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
-        session_context: Mapping[str, object] | None = None,
     ) -> tuple[ChunkResult, ...]:
         alias_result = alias_result or AliasSearchResult(tuple(), {})
         if alias_result.short_circuit and alias_result.hits:
@@ -2768,7 +2757,6 @@ class KnowledgeSearchService:
             table_context=table_context,
             allowed_upload_ids=allowed_upload_ids,
             allowed_explicit_upload_ids=allowed_explicit_upload_ids,
-            session_context=session_context,
         )
         if diagnostics is not None:
             diagnostics["vector_distance_ceiling"] = ceiling
@@ -3188,11 +3176,11 @@ class KnowledgeSearchService:
         classification = table_context.get("query_classification")
         intent_name = "none"
         intent_source = "none"
-        intent_clarification = "0"
+        intent_followup = "0"
         if isinstance(classification, QueryClassification):
             intent_name = classification.intent.value
             intent_source = str(classification.source or "heuristic")
-            intent_clarification = "1" if classification.requires_clarification else "0"
+            intent_followup = "1" if classification.low_confidence_followup else "0"
         normalized_query = (traits.normalized or traits.original or "").strip().lower()
         scope_token = self._upload_scope_token(
             allowed_upload_ids,
@@ -3217,7 +3205,7 @@ class KnowledgeSearchService:
                 "comprehensive" if table_context.get("comprehensive_intent") else "specific",
                 f"intent:{intent_name}",
                 f"intent_source:{intent_source}",
-                f"intent_clarify:{intent_clarification}",
+                f"intent_followup:{intent_followup}",
                 "hybrid" if feature_state.hybrid_search else "lexical_only",
                 "alias_on" if feature_state.alias_lookup else "alias_off",
                 "alias_short" if alias_result and alias_result.short_circuit else "alias_none",
@@ -4040,7 +4028,6 @@ class KnowledgeSearchService:
         traits: QueryTraits,
         feature_state: FeatureState | None = None,
         table_context: Mapping[str, object] | None = None,
-        session_context: Mapping[str, object] | None = None,
     ) -> tuple[list[ChunkResult], int, dict[str, object]]:
         if not candidates:
             return (
@@ -4183,21 +4170,7 @@ class KnowledgeSearchService:
                 if doc_label and traits.tokens:
                     document_name_boost = self._lexical_score_text(doc_label, traits.tokens)
 
-            # Document continuity bonus (Conversation-Aware RAG)
-            # Boosts chunks from the same document being discussed in conversation
             document_continuity_bonus = 0.0
-            if session_context:
-                primary_upload_id = session_context.get("primary_upload_id")
-                if primary_upload_id:
-                    chunk_upload_id = str(cand.chunk.upload_id) if cand.chunk.upload_id else None
-                    if chunk_upload_id and chunk_upload_id == str(primary_upload_id):
-                        # Read weight from settings, default to 0.35
-                        try:
-                            document_continuity_bonus = float(
-                                getattr(settings, "RAG_WEIGHT_DOCUMENT_CONTINUITY", 0.35)
-                            )
-                        except (TypeError, ValueError):
-                            document_continuity_bonus = 0.35
 
             combined = (
                 self.rerank_weights["vector"] * vector_score
@@ -5311,13 +5284,13 @@ class KnowledgeSearchService:
         fallback_applied = False
         classification.fallback_used = bool(classification.fallback_used)
 
-        should_require_clarification = bool(
+        should_suggest_followup = bool(
             has_intent_pre_classification
             and classification.intent == QueryIntent.EXPLORATORY
-            and classification.confidence < self.intent_clarification_threshold
+            and classification.confidence < self.intent_followup_threshold
         )
-        if should_require_clarification:
-            classification.requires_clarification = True
+        if should_suggest_followup:
+            classification.low_confidence_followup = True
             if classification.intent == QueryIntent.COMPARE and len(classification.entity_names) < 2:
                 question = "Which two items should I compare? Please share both names or IDs."
             elif classification.intent == QueryIntent.AGGREGATE and not classification.attributes:
@@ -5329,10 +5302,10 @@ class KnowledgeSearchService:
                     "Please clarify what to retrieve: a specific record (with name/ID), "
                     "a comparison, or a full list."
                 )
-            classification.clarification_question = question
+            classification.followup_question = question
         else:
-            classification.requires_clarification = False
-            classification.clarification_question = ""
+            classification.low_confidence_followup = False
+            classification.followup_question = ""
         
         # comprehensive_intent is True for ENUMERATE and AGGREGATE intents
         # These require full table coverage, not just the top-matching rows
@@ -5343,7 +5316,7 @@ class KnowledgeSearchService:
             and table_profile.get("dominant")
             and classification.intent in generic_intents
             and classification.confidence >= 0.45
-            and not classification.requires_clarification
+            and not classification.low_confidence_followup
         )
         # Intent is data-driven, but must be based on meaningful signals.
         # Generic fee/limit/international tokens across a tenant corpus are too loose.
@@ -5378,7 +5351,7 @@ class KnowledgeSearchService:
                 "classifier_source": classification.source,
                 "classifier_fallback_attempted": fallback_attempted,
                 "classifier_fallback_applied": fallback_applied,
-                "classifier_requires_clarification": classification.requires_clarification,
+                "classifier_low_confidence_followup": classification.low_confidence_followup,
                 "comprehensive_intent_result": comprehensive_intent,
                 # Legacy detection (for comparison during transition)
                 "legacy_comprehensive_tokens": list(legacy_comprehensive_tokens),
@@ -5394,9 +5367,9 @@ class KnowledgeSearchService:
             table_profile.get("dominant")
             and classification.intent in generic_intents
             and classification.confidence >= 0.45
-            and not classification.requires_clarification
+            and not classification.low_confidence_followup
         )
-        if row_label_intent and not classification.requires_clarification:
+        if row_label_intent and not classification.low_confidence_followup:
             allow_generic = True
         return {
             "has_intent": has_intent,
@@ -5405,8 +5378,8 @@ class KnowledgeSearchService:
             "intent_source": classification.source,
             "intent_fallback_attempted": fallback_attempted,
             "intent_fallback_applied": fallback_applied,
-            "requires_clarification": classification.requires_clarification,
-            "clarification_question": classification.clarification_question,
+            "low_confidence_followup": classification.low_confidence_followup,
+            "followup_question": classification.followup_question,
             "tenant_lexicon_entity_terms_count": len(tenant_entity_terms),
             "tenant_lexicon_attribute_terms_count": len(tenant_attribute_terms),
             "matched_columns": matched_columns,
@@ -8865,7 +8838,7 @@ class KnowledgeSearchService:
                     return line
         return "document text"
 
-    def _build_auto_ambiguity_clarification_question(
+    def _build_auto_ambiguity_followup_question(
         self,
         *,
         hits: Sequence[ChunkResult],
@@ -8926,23 +8899,19 @@ class KnowledgeSearchService:
             decision = "tie_fallback_to_hint"
             resolved_table_intent = bool(table_intent_hint)
             reason = "score_margin_ambiguous_fallback_to_hint"
-            needs_clarification = False
         elif table_score > text_score and margin >= self.auto_mode_margin_threshold:
             decision = "table"
             resolved_table_intent = True
             reason = "score_margin_table"
-            needs_clarification = False
         elif text_score > table_score and margin >= self.auto_mode_margin_threshold:
             decision = "text"
             resolved_table_intent = False
             reason = "score_margin_text"
-            needs_clarification = False
         else:
             # Keep current behavior when scores are weak/insufficient.
             decision = "table_hint" if table_intent_hint else "text_hint"
             resolved_table_intent = bool(table_intent_hint)
             reason = "insufficient_signal_fallback_to_hint"
-            needs_clarification = False
 
         return {
             "auto_arbitration_version": "v1",
@@ -8950,7 +8919,6 @@ class KnowledgeSearchService:
             "auto_arbitration_min_score": round(self.auto_mode_min_score, 6),
             "auto_arbitration_decision": decision,
             "auto_arbitration_reason": reason,
-            "auto_arbitration_needs_clarification": needs_clarification,
             "auto_arbitration_table_intent": resolved_table_intent,
         }
 
@@ -8959,7 +8927,6 @@ class KnowledgeSearchService:
         *,
         route_diagnostics: Mapping[str, object] | None = None,
         scoring_diagnostics: Mapping[str, object] | None = None,
-        requires_clarification: bool = False,
         scope_summary: Mapping[str, object] | None = None,
         conflict_detected: bool | None = None,
         no_result_reason: str | None = None,
@@ -8988,9 +8955,7 @@ class KnowledgeSearchService:
         has_route = bool(route)
         used_scoring = isinstance(scored_table, (int, float)) or isinstance(scored_text, (int, float))
 
-        if requires_clarification:
-            decision = "clarification"
-        elif used_scoring and margin <= 0.05 and table_score > 0.0 and text_score > 0.0:
+        if used_scoring and margin <= 0.05 and table_score > 0.0 and text_score > 0.0:
             decision = "blended"
         elif used_scoring and table_score > text_score:
             decision = "table"
@@ -9040,30 +9005,15 @@ class KnowledgeSearchService:
             normalized_top_categories = [label for label in normalized_top_categories if label in category_set]
         if not normalized_top_categories:
             normalized_top_categories = list(normalized_categories[:SCOPE_TOP_CATEGORY_MAX_DEFAULT])
-        raw_ui_mode = (
-            scoring_data.get("clarification_ui_mode")
-            or route_data.get("clarification_ui_mode")
-        )
-        normalized_ui_mode = (
-            str(raw_ui_mode).strip().lower()
-            if isinstance(raw_ui_mode, str) and str(raw_ui_mode).strip()
-            else None
-        )
-        if normalized_ui_mode not in {"text"}:
-            normalized_ui_mode = None
-        if requires_clarification and not normalized_ui_mode:
-            normalized_ui_mode = "text"
 
         return {
             "table_score": table_score,
             "text_score": text_score,
             "margin": margin,
             "decision": decision,
-            "needs_clarification": bool(requires_clarification),
             "scope_summary": normalized_scope_summary,
             "categories": normalized_categories,
             "top_categories": normalized_top_categories,
-            "clarification_ui_mode": normalized_ui_mode,
             "conflict_detected": normalized_conflict,
             "no_result_reason": normalized_no_result_reason,
         }
@@ -9258,7 +9208,7 @@ class KnowledgeSearchService:
         return best_conflict
 
     @staticmethod
-    def _build_conflict_clarification_question(conflict: Mapping[str, object] | None) -> str:
+    def _build_conflict_followup_question(conflict: Mapping[str, object] | None) -> str:
         if not isinstance(conflict, Mapping):
             return (
                 "I found conflicting values in the retrieved sources. "
@@ -9355,6 +9305,9 @@ class KnowledgeSearchService:
                 updated_diagnostics["conflict_context"] = conflict_payload
                 updated_diagnostics["reason"] = "conflicting_evidence"
 
+        if updated_status not in {"ok", "not_found"}:
+            updated_status = "not_found"
+
         no_result_reason = None
         if updated_status == "not_found":
             no_result_reason = self._derive_no_result_reason(
@@ -9363,7 +9316,6 @@ class KnowledgeSearchService:
             )
             updated_diagnostics["no_result_reason"] = no_result_reason
 
-        requires_clarification = bool(updated_status == "needs_clarification")
         scope_summary = (
             updated_diagnostics.get("scope_summary")
             if isinstance(updated_diagnostics.get("scope_summary"), Mapping)
@@ -9379,36 +9331,13 @@ class KnowledgeSearchService:
             updated_diagnostics["categories"] = list(categories)
         if top_categories and "top_categories" not in updated_diagnostics:
             updated_diagnostics["top_categories"] = list(top_categories)
-        current_ui_mode = str(updated_diagnostics.get("clarification_ui_mode") or "").strip().lower()
-        if requires_clarification and current_ui_mode not in {"text"}:
-            updated_diagnostics["clarification_ui_mode"] = "text"
-        existing_contract = updated_diagnostics.get("auto_decision_contract")
-        if isinstance(existing_contract, Mapping):
-            contract = dict(existing_contract)
-            if requires_clarification:
-                contract["decision"] = "clarification"
-            contract["needs_clarification"] = requires_clarification
-            contract["scope_summary"] = dict(scope_summary) if isinstance(scope_summary, Mapping) else contract.get("scope_summary")
-            contract["categories"] = list(updated_diagnostics.get("categories") or contract.get("categories") or [])
-            contract["top_categories"] = list(updated_diagnostics.get("top_categories") or contract.get("top_categories") or [])
-            contract_ui_mode = str(updated_diagnostics.get("clarification_ui_mode") or contract.get("clarification_ui_mode") or "").strip().lower()
-            contract["clarification_ui_mode"] = contract_ui_mode if contract_ui_mode in {"text"} else None
-            contract["conflict_detected"] = bool(updated_diagnostics.get("conflict_detected"))
-            contract["no_result_reason"] = (
-                str(updated_diagnostics.get("no_result_reason")).strip().lower()
-                if str(updated_diagnostics.get("no_result_reason") or "").strip()
-                else None
-            )
-            updated_diagnostics["auto_decision_contract"] = contract
-        else:
-            updated_diagnostics["auto_decision_contract"] = self._derive_auto_decision_contract(
-                route_diagnostics=updated_diagnostics,
-                scoring_diagnostics=updated_diagnostics,
-                requires_clarification=requires_clarification,
-                scope_summary=scope_summary,
-                conflict_detected=bool(updated_diagnostics.get("conflict_detected")),
-                no_result_reason=str(updated_diagnostics.get("no_result_reason") or "") or None,
-            )
+        updated_diagnostics["auto_decision_contract"] = self._derive_auto_decision_contract(
+            route_diagnostics=updated_diagnostics,
+            scoring_diagnostics=updated_diagnostics,
+            scope_summary=scope_summary,
+            conflict_detected=bool(updated_diagnostics.get("conflict_detected")),
+            no_result_reason=str(updated_diagnostics.get("no_result_reason") or "") or None,
+        )
         return updated_status, updated_snippets, updated_diagnostics
 
     def _route_chunk_hits(

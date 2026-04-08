@@ -143,7 +143,7 @@ Debugging Bad Answers (Quick Checklist)
 2) Verify identifiers:
    - Ensure identifier gating isn’t blocking access (constraint errors / required keys).
 3) Check disambiguation:
-   - Clarification-like diagnostics may still appear for compatibility, but the portal runtime should prefer best-effort evidence over blocking on a clarification turn.
+   - Legacy clarification diagnostics were removed from the active portal runtime; best-effort evidence is preferred over any clarification-style blocking flow.
 4) Inspect partial reads:
    - If `status=partial` with `deferred`, re-read only the deferred ids (use `cursor`).
 5) Validate routing:

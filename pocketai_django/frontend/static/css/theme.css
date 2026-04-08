@@ -204,6 +204,27 @@
   display: contents;
 }
 
+.landing-hero-title {
+  max-width: min(100%, 22rem);
+  margin-inline: auto;
+}
+
+.landing-hero-heading {
+  margin: 0;
+  line-height: 0.92;
+  letter-spacing: -0.05em;
+  text-wrap: balance;
+}
+
+.landing-hero-highlight {
+  display: block;
+  margin-top: 0.12em;
+}
+
+.landing-hero-highlight .flip-words-wrapper {
+  max-width: 100%;
+}
+
 .hero-title {
   order: 1;
 }
@@ -221,6 +242,17 @@
     display: flex;
     flex-direction: column;
     gap: 2rem;
+  }
+
+  .landing-hero-title {
+    max-width: none;
+    margin-inline: 0;
+  }
+}
+
+@media (max-width: 1023px) {
+  .landing-hero-heading {
+    font-size: clamp(3rem, 14vw, 4.25rem);
   }
 }
 

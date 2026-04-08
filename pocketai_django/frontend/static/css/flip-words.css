@@ -41,10 +41,15 @@ html[dir="rtl"] .flip-word {
 /* Letters need to be inline-block to transform */
 .flip-letter {
   display: inline-block;
+  white-space: pre;
   opacity: 0;
   filter: blur(8px);
   transform: translateY(8px);
   will-change: transform, opacity, filter;
+}
+
+.flip-token {
+  white-space: normal;
 }
 
 /* Active state (Entering/Visible) */
@@ -55,6 +60,17 @@ html[dir="rtl"] .flip-word {
 /* Exiting letters - fast simultaneous fade */
 .exiting .flip-letter {
   animation: flip-exit 0.2s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+@media (max-width: 640px) {
+  .flip-word {
+    width: 100%;
+  }
+
+  .flip-token {
+    display: inline;
+    white-space: normal;
+  }
 }
 
 @keyframes flip-enter {

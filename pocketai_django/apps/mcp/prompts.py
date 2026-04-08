@@ -222,9 +222,9 @@ VERIFICATION_OUTPUT_HINT = textwrap.dedent(
     """
     Return JSON inside response_text with this shape:
     {
-      "verdict": "supported" | "needs_clarification" | "unsupported",
+      "verdict": "supported" | "unsupported",
       "missing_points": ["short item", "..."],
-      "final_response": "If not supported, provide ONE concise clarification question. Otherwise empty.",
+      "final_response": "If unsupported, provide ONE concise user-facing fallback response. Otherwise empty.",
       "notes": "short reasoning"
     }
     """
@@ -1336,7 +1336,7 @@ def build_verification_messages(
             "Check whether the draft answer is fully supported by the evidence."
         ),
         (
-            "Only use the evidence provided. If support is insufficient, ask ONE concise clarifying question "
+            "Only use the evidence provided. If support is insufficient, provide ONE concise fallback response "
             "instead of guessing."
         ),
         VERIFICATION_OUTPUT_HINT,

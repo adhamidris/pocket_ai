@@ -946,7 +946,6 @@ def landing(request: HttpRequest) -> HttpResponse:
         ],
         "integrations": [
             {"name": "HubSpot", "slug": "hubspot"},
-            {"name": "Slack", "slug": "slack"},
             {"name": "Zapier", "slug": "zapier"},
             {"name": "WhatsApp", "slug": "whatsapp"},
             {"name": "Gmail", "slug": "gmail"},
@@ -990,7 +989,6 @@ def landing(request: HttpRequest) -> HttpResponse:
                 ("Netflix", "netflix"),
                 ("Uber", "uber"),
                 ("Airbnb", "airbnb"),
-                ("Slack", "slack"),
                 ("Spotify", "spotify"),
                 ("Meta", "meta"),
                 ("PayPal", "paypal"),

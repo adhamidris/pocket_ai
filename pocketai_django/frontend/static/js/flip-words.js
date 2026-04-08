@@ -4,6 +4,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const documentDir = (document.documentElement.getAttribute("dir") || "ltr").toLowerCase();
   const isRtlDocument = documentDir === "rtl";
+  const preferWholeWordAnimation = window.matchMedia("(max-width: 640px)").matches;
 
   const initialWord = (targetElement.textContent || "").trim();
   const wordsFromData = (targetElement.dataset.words || "")
@@ -33,11 +34,11 @@ document.addEventListener("DOMContentLoaded", () => {
     wordSpan.style.unicodeBidi = "isolate";
 
     // Arabic shaping breaks when split into single letters; render as one token in RTL.
-    const shouldSplitLetters = !isRtlDocument && !isArabicWord;
+    const shouldSplitLetters = !preferWholeWordAnimation && !isRtlDocument && !isArabicWord;
     if (!shouldSplitLetters) {
       const token = document.createElement("span");
       token.textContent = text;
-      token.className = "flip-letter";
+      token.className = "flip-letter flip-token";
       wordSpan.appendChild(token);
       return wordSpan;
     }
