@@ -1131,39 +1131,6 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
         required=(),
     ),
     _function_schema(
-        name="create_agent_request",
-        description=(
-            "Send a structured request from Agent A to Agent B (agent-to-agent inbox). "
-            "Use this when you need another agent/department to answer something. "
-            "Provide references (ids/links) instead of raw dumps."
-        ),
-        properties={
-            "to_agent_slug": {
-                "type": "string",
-                "description": "Recipient agent slug (optional). Defaults to the current agent.",
-            },
-            "subject": {
-                "type": "string",
-                "description": "Short subject line for the request.",
-            },
-            "question": {
-                "type": "string",
-                "description": "The question/task for the recipient agent (avoid pasting large raw context).",
-            },
-            "context_refs": {
-                "type": "array",
-                "description": "Structured references for context (conversation_id, run_id, message_id, artifact_id, etc.).",
-                "items": {"type": "object", "additionalProperties": True},
-            },
-            "__ui": {
-                "type": "object",
-                "description": "UI-only metadata (ignored by the tool).",
-                "additionalProperties": True,
-            },
-        },
-        required=("question",),
-    ),
-    _function_schema(
         name="create_agent_run",
         description=(
             "Create a background AgentRun (sub-agent) anchored to this conversation. "
@@ -1300,19 +1267,12 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
                 "type": "string",
                 "description": "Opaque cursor from a prior search_knowledge response to fetch the next page.",
             },
-            "query": {
-                "type": "string",
-                "description": "Single search query (back-compat). Prefer `queries` for multiple variants.",
-            },
             "queries": {
                 "type": "array",
                 "items": {"type": "string"},
                 "minItems": 1,
+                "maxItems": _search_query_variant_limit(),
                 "description": _search_queries_schema_description(),
-            },
-            "exclude_seen": {
-                "type": "boolean",
-                "description": "Exclude results already shown in this conversation (server default is configurable).",
             },
             "__ui": {
                 "type": "object",
@@ -1323,13 +1283,6 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
                         "description": "Short portal spinner label for this tool call.",
                     }
                 },
-            },
-            "limit": {
-                "type": "integer",
-                "description": "Maximum number of snippets to return (1..MCP_PROMPT_MAX_SNIPPETS).",
-                "minimum": 1,
-                "maximum": SEARCH_KNOWLEDGE_LIMIT_SCHEMA_MAX,
-                "default": SEARCH_KNOWLEDGE_LIMIT_SCHEMA_DEFAULT,
             },
         },
         required=(),
@@ -2113,6 +2066,7 @@ def execute_tool(
     except ToolConstraintError as exc:
         status = "constraint_error"
         error_code = "constraint_error"
+        hint_text = str(exc) or "Tool constraint exceeded. Narrow the request and try again."
         if isinstance(exc, ToolRateLimitExceeded):
             status = "throttled"
             error_code = "rate_limited"
@@ -2128,13 +2082,15 @@ def execute_tool(
         elif isinstance(exc, SearchBudgetExceeded):
             status = "throttled"
             error_code = "search_budget_exceeded"
+            hint_text = ""
         result = {
             "tool": normalized_name,
             "status": status,
             "error": error_code,
             "error_code": error_code,
-            "hint": str(exc) or "Tool constraint exceeded. Narrow the request and try again.",
         }
+        if hint_text:
+            result["hint"] = hint_text
     except Exception:
         logger.exception(
             "mcp.tool_failed tool=%s business=%s conversation=%s",
@@ -4531,13 +4487,16 @@ def _search_knowledge_handler(
     primary_query = queries[0] if queries else ""
 
     # =========================================================================
-    # DIAGNOSTIC: Log search state at search start
+    # DIAGNOSTIC: Log document context state at search start
     # =========================================================================
     structured_log(
         "mcp",
         "search.context_state",
         {
             "query": primary_query,
+            "primary_upload_id": context.primary_upload_id if context else None,
+            "primary_document_title": context.get_primary_document_title() if context else None,
+            "referenced_upload_ids": list(context.referenced_upload_ids)[:5] if context else [],
             "search_history_count": len(context.search_history) if context else 0,
         },
         context={
@@ -4546,6 +4505,67 @@ def _search_knowledge_handler(
         },
         logger_obj=logger,
     )
+
+    # =========================================================================
+    # Context-Aware Query Rewriting (Conversation-Aware RAG)
+    # =========================================================================
+    # Rewrite follow-up queries to include document context for better retrieval.
+    # Example: "fees for withdrawal" -> "Trade Bills EN: fees for withdrawal"
+    rewrite_result = None
+    rewrite_enabled = str(getattr(settings, "RAG_CONTEXT_QUERY_REWRITE_ENABLED", "true")).lower() in {"1", "true", "yes"}
+    if rewrite_enabled and primary_query and context and context.has_strong_primary_document():
+        try:
+            from apps.rag.query_rewriter import (
+                build_rewrite_context_from_tool_context,
+                get_query_rewriter,
+            )
+
+            rewriter = get_query_rewriter()
+            rewrite_context = build_rewrite_context_from_tool_context(context, conversation=conversation)
+            rewrite_result = rewriter.rewrite(primary_query, rewrite_context)
+
+            if rewrite_result.context_injected:
+                # Replace the first query with the rewritten version.
+                queries[0] = rewrite_result.rewritten_query
+                primary_query = rewrite_result.rewritten_query
+                structured_log(
+                    "mcp",
+                    "search.query_rewrite",
+                    {
+                        "original_query": rewrite_result.original_query,
+                        "rewritten_query": rewrite_result.rewritten_query,
+                        "strategy": rewrite_result.rewrite_strategy,
+                        "confidence": rewrite_result.confidence,
+                        "primary_document": context.primary_upload_id,
+                    },
+                    context={
+                        "conversation": conversation.id,
+                        "business": conversation.business_profile_id,
+                    },
+                    logger_obj=logger,
+                )
+            else:
+                # Log why rewrite was skipped
+                structured_log(
+                    "mcp",
+                    "search.query_rewrite_skipped",
+                    {
+                        "query": primary_query,
+                        "strategy": rewrite_result.rewrite_strategy,
+                        "confidence": rewrite_result.confidence,
+                        "primary_upload_id": context.primary_upload_id if context else None,
+                        "primary_document_title": rewrite_context.primary_document_title,
+                        "has_previous_queries": bool(rewrite_context.previous_queries),
+                    },
+                    context={
+                        "conversation": conversation.id,
+                        "business": conversation.business_profile_id,
+                    },
+                    logger_obj=logger,
+                )
+        except Exception as exc:
+            # Don't fail the search if rewriting fails
+            logger.warning("Query rewriting failed: %s", exc, exc_info=True)
 
     # Fanout variants are controlled via MCP_SEARCH_MAX_QUERY_VARIANTS.
     # Keep this fully env-configurable so operators can tune recall/cost tradeoffs.
@@ -4690,6 +4710,19 @@ def _search_knowledge_handler(
         digest = hashlib.sha256("|".join(top_ids).encode("utf-8")).hexdigest()[:16]
         return digest, top_ids
 
+    search_budget_reserved = False
+
+    def _reserve_search_budget_once():
+        nonlocal search_budget_reserved
+        if search_budget_reserved:
+            return None
+        limited = _enforce_search_rate_limit()
+        if limited is not None:
+            return limited
+        context.reserve_search()
+        search_budget_reserved = True
+        return None
+
     intent_text = _normalize_intent_text(queries)
     intent_embedding: list[float] | None = None
     if new_contract_enabled and duplicate_intent_enabled:
@@ -4745,11 +4778,13 @@ def _search_knowledge_handler(
             if best_match is not None and best_similarity is not None and best_similarity >= 0.85:
                 prior_response = best_match.get("response")
                 if isinstance(prior_response, Mapping):
+                    limited = _reserve_search_budget_once()
+                    if limited is not None:
+                        return limited
                     duplicate_payload: dict[str, object] = {
                         "tool": "search_knowledge",
                         "status": "duplicate",
                         "error": "duplicate_intent",
-                        "error_code": "duplicate_intent",
                         "diagnostics": {"dedup_similarity": round(float(best_similarity), 4)},
                     }
                     if rag_agentic_enabled:
@@ -4922,6 +4957,11 @@ def _search_knowledge_handler(
         if precomputed_result is not None:
             result = precomputed_result
         else:
+            session_context = {
+                "primary_upload_id": context.primary_upload_id,
+                "referenced_upload_ids": list(context.referenced_upload_ids),
+                "document_context": context.document_context,
+            } if context else None
             result = service.search(
                 business_profile=conversation.business_profile,
                 query=query_text,
@@ -4929,9 +4969,31 @@ def _search_knowledge_handler(
                 identifier_filter=identifier_filter,
                 allowed_upload_ids=combined_upload_ids,
                 allowed_explicit_upload_ids=agent_explicit_upload_ids,
+                session_context=session_context,
             )
         combined_snippets: list[object] = list(getattr(result, "snippets", []) or [])
         snippet_payloads = _serialize_snippets(combined_snippets)
+
+        # Track referenced documents so later turns can keep document context.
+        doc_context_enabled = str(getattr(settings, "RAG_DOCUMENT_CONTEXT_ENABLED", "true")).lower() in {"1", "true", "yes"}
+        if doc_context_enabled:
+            for payload in snippet_payloads:
+                upload_id = payload.get("upload_id") or payload.get("document_id")
+                if upload_id:
+                    # Extract document title from snippet
+                    title = payload.get("title", "")
+                    if title and " – " in title:
+                        # Format is often "Document Name – chunk N"
+                        title = title.split(" – ")[0].strip()
+                    elif title and " - " in title:
+                        title = title.split(" - ")[0].strip()
+
+                    context.track_document_reference(
+                        upload_id=str(upload_id),
+                        title=title,
+                        stage=payload.get("search_stage", "unknown"),
+                        confidence=payload.get("confidence_score") if isinstance(payload.get("confidence_score"), (int, float)) else None,
+                    )
 
         read_required = False
         read_required_reasons_summary: set[str] = set()
@@ -5068,16 +5130,13 @@ def _search_knowledge_handler(
         pending_specs.append((idx, query_text, intent_info, intent, limit_for_run))
         non_cached_queries += 1
 
-    search_budget_reserved = False
     if non_cached_queries > 0:
         # Enforce limits only when this call needs a backend search.
         # Pure cache reuses (same intent/query in the same turn) should not
         # consume per-turn search budget.
-        limited = _enforce_search_rate_limit()
+        limited = _reserve_search_budget_once()
         if limited is not None:
             return limited
-        context.reserve_search()
-        search_budget_reserved = True
 
     executor: ThreadPoolExecutor | None = None
     futures: list[tuple[int, str, Mapping[str, object], str | None, int | None, object]] = []
@@ -5252,8 +5311,8 @@ def _search_knowledge_handler(
             return ""
         return str(run.get("status") or "").strip().lower()
 
-    # Agentic RAG should always return best-effort evidence when available and let
-    # the assistant handle ambiguity/conflicts in the response.
+    # Agentic RAG should not block on "needs_clarification". Always return best-effort evidence
+    # (if any) and let the assistant handle ambiguity/conflicts in the response.
     status_source_run: Mapping[str, object] = next(
         (run for run in runs if _normalized_run_status(run) == "ok"),
         primary_run,
@@ -5265,7 +5324,7 @@ def _search_knowledge_handler(
             (
                 run
                 for run in runs
-                if _normalized_run_status(run) not in {"", "not_found"}
+                if _normalized_run_status(run) not in {"", "not_found", "needs_clarification"}
             ),
             None,
         )
@@ -5275,6 +5334,8 @@ def _search_knowledge_handler(
         else:
             status_source_run = runs[-1]
             final_status = _normalized_run_status(status_source_run) or "not_found"
+            if final_status == "needs_clarification":
+                final_status = "not_found"
 
     for snippet in page_snippets:
         context.add_retrieval_candidate(snippet)
@@ -5527,14 +5588,10 @@ def _search_knowledge_handler(
             if fingerprint_match is not None:
                 prior_response = fingerprint_match.get("response")
                 if isinstance(prior_response, Mapping):
-                    if search_budget_reserved and int(getattr(context, "searches_used", 0) or 0) > 0:
-                        context.searches_used = max(0, int(context.searches_used) - 1)
-
                     duplicate_payload: dict[str, object] = {
                         "tool": "search_knowledge",
                         "status": "duplicate",
                         "error": "duplicate_results",
-                        "error_code": "duplicate_results",
                         "diagnostics": {
                             "dedup_strategy": "result_fingerprint",
                             "dedup_result_fingerprint": result_fingerprint,
@@ -6998,6 +7055,12 @@ def _agentic_read_v2_handler(
             )
             read.append({"id": item_id, "status": "error"})
             continue
+
+        # Track for follow-up context.
+        try:
+            context.track_document_read(upload_id, title=_upload_title(upload))
+        except Exception:
+            pass
 
         payload: dict[str, object] = {"type": "text", "text": ""}
         payload_type = "text"
@@ -10044,161 +10107,6 @@ def _request_user_input_handler(
     }
 
 
-def _create_agent_request_handler(
-    arguments: Mapping[str, object],
-    *,
-    conversation: Conversation,
-    context: ToolExecutionContext,
-) -> Mapping[str, object]:
-    del context
-
-    feature_state = FeatureFlagService.snapshot(conversation.business_profile)
-    if not bool(getattr(feature_state, "sub_agents_v1", False)):
-        return {
-            "tool": "create_agent_request",
-            "status": "error",
-            "error_code": "feature_disabled",
-            "error": "sub_agents_disabled",
-            "hint": (
-                "Sub-agents are disabled for this business. "
-                "Enable the per-business feature flag `sub_agents_v1` or set `SUB_AGENTS_V1_GLOBAL_OVERRIDE=true` "
-                "and restart the server."
-            ),
-        }
-
-    from_agent_profile = getattr(conversation, "agent_profile", None)
-    if not from_agent_profile:
-        return {
-            "tool": "create_agent_request",
-            "status": "error",
-            "error_code": "missing_agent_profile",
-            "error": "missing_agent_profile",
-            "hint": "Conversation must be linked to an agent_profile to create agent requests.",
-        }
-
-    question = str(arguments.get("question") or arguments.get("body") or "").strip()
-    subject = str(arguments.get("subject") or "").strip()
-    to_agent_slug = _coerce_str(arguments.get("to_agent_slug") or arguments.get("toAgentSlug")).strip()
-
-    if not question:
-        return {
-            "tool": "create_agent_request",
-            "status": "error",
-            "error_code": "validation_failed",
-            "error": "missing_question",
-            "hint": "Provide question for create_agent_request.",
-        }
-
-    if not subject:
-        subject = (question[:120].strip() or "Agent request").rstrip()
-
-    def _sanitize_value(value: object, *, depth: int) -> object:
-        if value is None or isinstance(value, (bool, int, float)):
-            return value
-        if isinstance(value, str):
-            return value.strip()[:280]
-        if depth >= 1:
-            return str(value)[:180]
-        if isinstance(value, Mapping):
-            payload: dict[str, object] = {}
-            for key, inner in list(value.items())[:10]:
-                if not isinstance(key, str):
-                    continue
-                key_norm = key.strip()
-                if not key_norm or len(key_norm) > 64:
-                    continue
-                payload[key_norm] = _sanitize_value(inner, depth=depth + 1)
-            return payload
-        if isinstance(value, list):
-            items: list[object] = []
-            for inner in value[:10]:
-                items.append(_sanitize_value(inner, depth=depth + 1))
-            return items
-        return str(value)[:180]
-
-    raw_refs = arguments.get("context_refs") or arguments.get("contextRefs") or []
-    context_refs: list[dict[str, object]] = []
-    if isinstance(raw_refs, list):
-        for item in raw_refs[:20]:
-            if not isinstance(item, Mapping):
-                continue
-            cleaned: dict[str, object] = {}
-            for key, value in item.items():
-                if not isinstance(key, str):
-                    continue
-                key_norm = key.strip()
-                if not key_norm or len(key_norm) > 64:
-                    continue
-                cleaned[key_norm] = _sanitize_value(value, depth=0)
-            if cleaned:
-                context_refs.append(cleaned)
-
-    from apps.accounts.models import AgentProfile
-    from apps.conversations.models import AgentRequest, AgentRequestStatus, AgentRun
-
-    to_agent_profile = from_agent_profile
-    if to_agent_slug:
-        resolved = AgentProfile.objects.filter(
-            business_profile_id=conversation.business_profile_id,
-            slug=to_agent_slug,
-        ).first()
-        if not resolved:
-            return {
-                "tool": "create_agent_request",
-                "status": "error",
-                "error_code": "recipient_not_found",
-                "error": "recipient_not_found",
-                "hint": "Recipient agent was not found for to_agent_slug.",
-            }
-        to_agent_profile = resolved
-
-    meta = conversation.metadata if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
-    run_id_raw = str(meta.get("agent_run_id") or meta.get("agentRunId") or "").strip()
-    agent_run_id = None
-    if run_id_raw:
-        try:
-            run_uuid = uuid.UUID(run_id_raw)
-        except (TypeError, ValueError):
-            run_uuid = None
-        if run_uuid:
-            agent_run_id = (
-                AgentRun.objects.filter(id=run_uuid, business_profile_id=conversation.business_profile_id)
-                .values_list("id", flat=True)
-                .first()
-            )
-
-    req = AgentRequest.objects.create(
-        business_profile_id=conversation.business_profile_id,
-        from_agent_profile_id=from_agent_profile.id,
-        to_agent_profile_id=to_agent_profile.id,
-        conversation_id=conversation.id,
-        agent_run_id=agent_run_id,
-        created_by_id=getattr(from_agent_profile, "user_id", None),
-        status=AgentRequestStatus.OPEN,
-        subject=subject[:240],
-        question=question[:6000],
-        context_refs=context_refs,
-        metadata={
-            "source": "mcp_tool",
-            "to_agent_slug": to_agent_slug,
-        },
-    )
-
-    return {
-        "tool": "create_agent_request",
-        "status": "needs_external",
-        "agent_request_id": str(req.id),
-        "request": {
-            "id": str(req.id),
-            "status": req.status,
-            "subject": req.subject,
-            "from_agent": {"id": str(from_agent_profile.id), "name": from_agent_profile.name, "slug": from_agent_profile.slug},
-            "to_agent": {"id": str(to_agent_profile.id), "name": to_agent_profile.name, "slug": to_agent_profile.slug},
-        },
-        "hint": "Request created. Await response in the agent inbox, then resume.",
-    }
-
-
 def _create_agent_run_handler(
     arguments: Mapping[str, object],
     *,
@@ -12048,7 +11956,6 @@ _TOOL_HANDLERS: dict[str, ToolHandler] = {
     "mcp_search_tools": _mcp_search_tools_handler,
     "mcp_call_tool": _mcp_call_tool_handler,
     "request_user_input": _request_user_input_handler,
-    "create_agent_request": _create_agent_request_handler,
     "create_agent_run": _create_agent_run_handler,
     "list_agent_runs": _list_agent_runs_handler,
     "get_agent_run": _get_agent_run_handler,

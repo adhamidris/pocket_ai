@@ -2116,7 +2116,6 @@ def _controls_tool_description(tool_name: str, description: str, *, source_type:
     if language_code.startswith("ar"):
         arabic_overrides = {
             "continue_agent_run": "استأنف تشغيلًا خلفيًا قائمًا (وكيلًا فرعيًا) برسالة متابعة. استخدمه لإرسال تعليمات إضافية بدل إنشاء تشغيل جديد.",
-            "create_agent_request": "أرسل طلبًا منظّمًا من وكيل إلى وكيل آخر (صندوق وكيل-إلى-وكيل) مع مراجع واضحة بدل نسخ محتوى خام.",
             "create_agent_run": "أنشئ تشغيلًا خلفيًا (وكيلًا فرعيًا) مرتبطًا بهذه المحادثة للمهام الطويلة أو متعددة الخطوات.",
             "list_agent_runs": "اعرض قائمة التشغيلات الخلفية الخاصة بالمحادثة مع حالتها الحالية.",
             "get_agent_run": "اجلب الحالة التفصيلية ونتيجة تشغيل خلفي معيّن.",
@@ -2175,11 +2174,6 @@ def _controls_tool_description(tool_name: str, description: str, *, source_type:
             "Continue an existing background run (sub-agent) with a follow-up message. "
             "Use this to send additional instructions to a completed or waiting run instead of creating a new one. "
             "The sub-agent will resume with its full conversation history."
-        ),
-        "create_agent_request": _(
-            "Send a structured request from Agent A to Agent B (agent-to-agent inbox). "
-            "Use this when you need another agent/department to answer something. "
-            "Provide references (ids/links) instead of raw dumps."
         ),
         "create_agent_run": _(
             "Create a background AgentRun (sub-agent) anchored to this conversation. "
@@ -2378,7 +2372,6 @@ def _controls_agentic_operational_tool_names(
     if sub_agents_enabled:
         allowed.update(
             {
-                "create_agent_request",
                 "create_agent_run",
                 "list_agent_runs",
                 "get_agent_run",

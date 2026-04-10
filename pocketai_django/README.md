@@ -65,6 +65,30 @@ Run these in separate terminals (with `cd pocketai_django` and `.venv` activated
 .venv/bin/python manage.py voice_post_call_worker --watch
 ```
 
+## Local tracing
+
+If you want full OpenTelemetry tracing plus the local portal/tool traces in one shot, use the repo-root helper scripts:
+
+```sh
+# From repo root
+./start-tracing.sh
+```
+
+This starts:
+- Jaeger UI on `http://localhost:16686`
+- the OTEL collector on `localhost:4317` / `localhost:4318`
+- Django with:
+  - `OTEL_TRACING_ENABLED=true`
+  - `PORTAL_STREAM_TRACE=true`
+  - `PORTAL_DEBUG_TOOL_TRACE=true`
+
+Stop the tracing containers with:
+
+```sh
+# From repo root
+./stop-tracing.sh
+```
+
 ### ngrok (voice dev-only, one session, two tunnels)
 
 If you’re testing Twilio webhooks + the voice WS server locally, run both tunnels in a single ngrok session:

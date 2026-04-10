@@ -192,13 +192,18 @@ class McpObservabilityTests(TestCase):
         self.assertTrue(any("DROPPED_SENTENCE" in entry for entry in logs.output))
 
     def test_prompts_include_no_narration_language(self) -> None:
-        system_prompt = prompts.build_system_message(
-            self.agent,
-            business_name=self.business.name,
-            business_industry=self.business.industry or "general services",
-        )
-        self.assertIn("Do not narrate internal steps", system_prompt)
-        self.assertIn("per visitor message (user turn)", system_prompt)
+        with patch("apps.mcp.prompts.FeatureFlagService.snapshot") as feature_mock:
+            feature_mock.return_value.rag_agentic_mode = True
+            system_prompt = prompts.build_system_message(
+                self.agent,
+                business_name=self.business.name,
+                business_industry=self.business.industry or "general services",
+                business_profile=self.business,
+                model_id="deepseek-chat",
+            )
+        self.assertIn("## Rules", system_prompt)
+        self.assertIn("search_knowledge", system_prompt)
+        self.assertIn("Avoid mentioning tool names to the customer.", system_prompt)
         final_messages = prompts.build_final_answer_messages(
             conversation=self.conversation,
             user_message="Explain the fees.",

@@ -158,8 +158,9 @@ KnowledgeSearchService.search(query, business, agent)
   → apps/rag/query_classifier.py          # QueryClassifier — intent classification
   │    Intents: ENUMERATE / SPECIFIC_LOOKUP / COMPARE / AGGREGATE / EXPLORATORY
   → apps/rag/tenant_lexicon.py            # TenantLexiconService — tenant vocabulary/synonym snapshots
-  → apps/rag/intent_fallback.py           # LLM fallback classifier for low-confidence table intent + follow-up routing
+  → apps/rag/intent_fallback.py           # LLM fallback classifier for low-confidence table intent + clarification routing
   → apps/rag/retrieval_strategies.py      # StrategyRouter — retrieval hints per intent
+  → apps/rag/query_rewriter.py            # Optional query rewriting for better vectors
   → Alias lookup (PostgreSQL trigram similarity)
   → apps/rag/embeddings.py                # Vector generation
   → Vector search:
@@ -184,14 +185,14 @@ Runtime contract notes (verified from code):
 - `KnowledgeSearchService` reads `RAG_NON_QUERYABLE_TABLE_FORMATS` at init and applies it via `_filter_queryable_table_uploads`.
 - `read_knowledge` can auto-fallback from table preview to text read for document uploads when table result is `not_found` with zero evaluated rows and no strong table signal.
 - Row expansion in `KnowledgeSearchService._expand_table_rows` prefers shard-local row chunks when a matched table summary chunk includes `table_row_shard_index`.
-- `KnowledgeSearchService.search` emits `diagnostics.auto_decision_contract` with scoring fields (`table_score`, `text_score`, `margin`, `decision`) plus additive diagnostics (`scope_summary`, `categories`, `top_categories`, `conflict_detected`, `no_result_reason`). `scope_summary` is computed from pre-clip fused candidates and includes `total_matches`, `distinct_docs`, `category_counts`, and `is_broad_scope` so breadth detection is independent of snippet/prompt clipping.
+- `KnowledgeSearchService.search` emits `diagnostics.auto_decision_contract` with scoring fields (`table_score`, `text_score`, `margin`, `decision`) plus additive diagnostics (`scope_summary`, `categories`, `top_categories`, `clarification_ui_mode`, `conflict_detected`, `no_result_reason`, `needs_clarification`). `scope_summary` is computed from pre-clip fused candidates and includes `total_matches`, `distinct_docs`, `category_counts`, and `is_broad_scope` so breadth detection is independent of snippet/prompt clipping.
 - Current portal semantics are best-effort agentic retrieval:
-  - conflicting or ambiguous evidence may still appear in diagnostics, but portal `search_knowledge` should prefer returning evidence/previews instead of surfacing a blocking follow-up state;
+  - conflicting or ambiguous evidence may still appear in diagnostics, but portal `search_knowledge` should prefer returning evidence/previews instead of surfacing a blocking clarification state;
   - `status=not_found` emits one normalized `no_result_reason`: `not_found`, `not_applicable_to_segment`, or `insufficient_evidence`.
-- `apps/mcp/tools.py::_search_knowledge_handler` now normalizes legacy unsupported search outcomes into best-effort portal behavior: if evidence exists, tool output should continue with readable refs/previews; if no evidence exists, it should degrade to `not_found`.
+- `apps/mcp/tools.py::_search_knowledge_handler` now normalizes clarification-like search outcomes into best-effort portal behavior: if evidence exists, tool output should continue with readable refs/previews; if no evidence exists, it should degrade to `not_found` instead of blocking on `needs_clarification`.
 - Agentic prompt source of truth is `apps/mcp/schemas/agentic_prompts.py` (selected via `build_model_specific_prompt` when `rag_agentic_mode=true` and `MCP_AGENTIC_READ_V2_ENABLED=true`). Do not rely on non-agentic fallback hints in `apps/mcp/prompts.py` for runtime behavior.
 - `apps/mcp/tools.py::_search_hint` now reads `diagnostics.no_result_reason` and returns reason-specific operator guidance instead of a generic not-found hint.
-- Scope-related fields remain diagnostic only unless a specific feature explicitly consumes them.
+- Scope/clarification-related fields remain diagnostic only unless a specific feature explicitly consumes them.
 - `_route_chunk_hits` now follows a single authoritative source path (`table_primary*` vs `text_primary`) with table-specific refinement only; legacy cross-mode fallback route branches were merged to align with auto arbitration decisions.
 - CI coverage includes ambiguity/no-result semantics and compatibility checks around additive diagnostics.
 

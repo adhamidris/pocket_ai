@@ -31,7 +31,7 @@ from core.cache_resilience import (
     store_json_state,
 )
 
-from pocketai.language import normalize_language_code
+from pocketai.language import metadata_ui_language, normalize_language_code
 
 from apps.accounts.models import (
     BusinessProfile,
@@ -980,20 +980,6 @@ def _normalize_portal_metadata(raw: object) -> dict[str, object]:
     return dict(raw) if isinstance(raw, Mapping) else {}
 
 
-def _metadata_ui_language(metadata: Mapping[str, object]) -> str:
-    candidates = (
-        metadata.get("ui_language"),
-        metadata.get("uiLanguage"),
-        metadata.get("selected_language"),
-        metadata.get("selectedLanguage"),
-    )
-    for candidate in candidates:
-        normalized = normalize_language_code(candidate)
-        if normalized:
-            return normalized
-    return ""
-
-
 def _request_ui_language(request: HttpRequest) -> str:
     normalized = normalize_language_code(getattr(request, "LANGUAGE_CODE", ""))
     if normalized:
@@ -1007,7 +993,7 @@ def _request_ui_language(request: HttpRequest) -> str:
 
 def _with_ui_language(request: HttpRequest, metadata: Mapping[str, object] | None) -> dict[str, object]:
     payload: dict[str, object] = dict(metadata) if isinstance(metadata, Mapping) else {}
-    selected = _metadata_ui_language(payload) or _request_ui_language(request)
+    selected = metadata_ui_language(payload) or _request_ui_language(request)
     if selected:
         payload["ui_language"] = selected
     return payload

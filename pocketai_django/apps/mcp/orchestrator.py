@@ -427,7 +427,7 @@ class McpOrchestratorService:
             internal_tool_defs = [
                 tool_def
                 for tool_def in internal_tool_defs
-                if self._tool_schema_name(tool_def) not in {"request_user_input", "create_agent_request"}
+                if self._tool_schema_name(tool_def) != "request_user_input"
             ]
         if rag_agentic_enabled:
             allowed = {
@@ -440,7 +440,6 @@ class McpOrchestratorService:
                 "pdf_extract_pages",
                 "pdf_extract_text",
                 "request_user_input",
-                "create_agent_request",
                 "create_agent_run",
                 "list_agent_runs",
                 "get_agent_run",
@@ -738,8 +737,16 @@ class McpOrchestratorService:
 
         def _knowledge_phase_payload(tool_name: str, arguments: Mapping[str, object]) -> dict[str, object] | None:
             if tool_name == "search_knowledge":
-                raw_query = arguments.get("query")
-                query = str(raw_query).strip() if raw_query is not None else ""
+                query = ""
+                raw_queries = arguments.get("queries")
+                if isinstance(raw_queries, list):
+                    for entry in raw_queries:
+                        query = str(entry or "").strip()
+                        if query:
+                            break
+                if not query:
+                    raw_query = arguments.get("query")
+                    query = str(raw_query).strip() if raw_query is not None else ""
                 label = f"Searching: {query[:80]}" if query else "Searching knowledge…"
                 meta: dict[str, object] = {}
                 if query:
@@ -1241,11 +1248,6 @@ class McpOrchestratorService:
                                     "error": "search_unavailable",
                                     "error_code": "search_budget_exceeded",
                                     "snippets": [],
-                                    "hint": (
-                                        "Use the snippets already retrieved in this turn. "
-                                        "If more detail is needed, call read_knowledge using the existing ref IDs "
-                                        "(do not invent IDs)."
-                                    ),
                                 }
 
                         knowledge_phase: dict[str, object] | None = None
@@ -1554,13 +1556,20 @@ class McpOrchestratorService:
                                                 if email_input:
                                                     internal_event_payload["input"] = email_input
                                             elif tool_name in {"mcp_search_tools", "search_knowledge", "search_conversation_files"}:
-                                                query_value = effective_arguments.get("query") if isinstance(effective_arguments, Mapping) else None
-                                                if isinstance(query_value, str):
-                                                    query_text = query_value.strip()
-                                                elif query_value is not None:
-                                                    query_text = str(query_value).strip()
-                                                else:
-                                                    query_text = ""
+                                                query_text = ""
+                                                if isinstance(effective_arguments, Mapping):
+                                                    query_values = effective_arguments.get("queries")
+                                                    if isinstance(query_values, list):
+                                                        for value in query_values:
+                                                            query_text = str(value or "").strip()
+                                                            if query_text:
+                                                                break
+                                                    if not query_text:
+                                                        query_value = effective_arguments.get("query")
+                                                        if isinstance(query_value, str):
+                                                            query_text = query_value.strip()
+                                                        elif query_value is not None:
+                                                            query_text = str(query_value).strip()
                                                 if query_text:
                                                     internal_event_payload["input"] = {
                                                         "query": self._clip_text(query_text, 280),
@@ -2440,7 +2449,7 @@ class McpOrchestratorService:
                     )
                     verdict = snapshot.get("verdict")
                     override = str(snapshot.get("final_response") or "").strip()
-                    if verdict == "unsupported" and override:
+                    if verdict in {"needs_clarification", "unsupported"} and override:
                         clean_single = override
 
             structured_log(
@@ -2589,7 +2598,7 @@ class McpOrchestratorService:
                 )
                 verdict = snapshot.get("verdict")
                 override = str(snapshot.get("final_response") or "").strip()
-                if verdict == "unsupported" and override:
+                if verdict in {"needs_clarification", "unsupported"} and override:
                     clean_answer_text = override
         all_dropped = stream_dropped + dropped_sentences
         normalized_assistant_msg = dict(final_assistant_message or {})
@@ -3338,7 +3347,7 @@ class McpOrchestratorService:
         if not parsed:
             return None
         verdict = str(parsed.get("verdict") or "").strip().lower()
-        if verdict and verdict not in {"supported", "unsupported"}:
+        if verdict and verdict not in {"supported", "needs_clarification", "unsupported"}:
             verdict = ""
         missing_points = parsed.get("missing_points")
         missing: list[str] = []
@@ -5174,10 +5183,13 @@ class McpOrchestratorService:
         return normalized
 
     def _hydrate_seen_items(self, conversation: Conversation, context: ToolExecutionContext) -> None:
-        """Load previously-shown chunk/row IDs from conversation metadata.
+        """Load previously-shown chunk/row IDs and document context from conversation metadata.
 
         This enables "are there more?" follow-up queries by tracking what has already
         been shown to the user, allowing the system to return NEW items on subsequent queries.
+
+        Also hydrates document context for conversation-aware RAG (query rewriting,
+        document affinity routing, ranking bonuses).
         """
         metadata = conversation.metadata if isinstance(conversation.metadata, Mapping) else {}
 
@@ -5192,6 +5204,11 @@ class McpOrchestratorService:
             if isinstance(row_ids, list):
                 context.seen_row_ids = {str(rid) for rid in row_ids if rid}
 
+        # Hydrate document context (NEW: Conversation-Aware RAG)
+        doc_context_data = metadata.get("mcp_document_context")
+        if isinstance(doc_context_data, Mapping):
+            context.hydrate_document_context(doc_context_data)
+
         # Hydrate recent search refs (cross-turn read continuity)
         recent_refs_data = metadata.get("mcp_recent_search_refs")
         if isinstance(recent_refs_data, (Mapping, list)):
@@ -5200,6 +5217,7 @@ class McpOrchestratorService:
         if (
             context.seen_chunk_ids
             or context.seen_row_ids
+            or context.primary_upload_id
             or context.recent_search_refs
         ):
             structured_log(
@@ -5208,6 +5226,8 @@ class McpOrchestratorService:
                 {
                     "seen_chunks": len(context.seen_chunk_ids),
                     "seen_rows": len(context.seen_row_ids),
+                    "primary_upload_id": context.primary_upload_id,
+                    "referenced_docs": len(context.referenced_upload_ids),
                     "recent_search_refs": len(context.recent_search_refs),
                 },
                 indent=1,
@@ -5219,10 +5239,12 @@ class McpOrchestratorService:
             )
 
     def _persist_seen_items(self, conversation: Conversation, context: ToolExecutionContext) -> None:
-        """Save newly-shown chunk/row IDs to conversation metadata.
+        """Save newly-shown chunk/row IDs and document context to conversation metadata.
 
         Combines items from previous turns with items shown this turn, capped
         to prevent unbounded growth.
+
+        Also persists document context for conversation-aware RAG.
         """
         MAX_SEEN_ITEMS = 200  # Cap to prevent metadata bloat
 
@@ -5230,11 +5252,12 @@ class McpOrchestratorService:
         new_chunk_ids = all_shown.get("chunk_ids", set())
         new_row_ids = all_shown.get("row_ids", set())
 
-        # Check if we have anything to persist (seen items OR recent read refs)
+        # Check if we have anything to persist (seen items OR document context)
         has_seen_items = context.newly_shown_chunk_ids or context.newly_shown_row_ids
+        has_document_context = context.primary_upload_id or context.referenced_upload_ids
         has_recent_search_refs = bool(context.recent_search_refs_updated)
 
-        if not has_seen_items and not has_recent_search_refs:
+        if not has_seen_items and not has_document_context and not has_recent_search_refs:
             return
 
         metadata = conversation.metadata if isinstance(conversation.metadata, Mapping) else {}
@@ -5252,7 +5275,11 @@ class McpOrchestratorService:
                 "updated_at": timezone.now().isoformat(),
             }
 
-        new_metadata.pop("mcp_document_context", None)
+        # Persist document context (NEW: Conversation-Aware RAG)
+        if has_document_context:
+            doc_context = context.get_document_context_for_persistence()
+            doc_context["updated_at"] = timezone.now().isoformat()
+            new_metadata["mcp_document_context"] = doc_context
 
         # Persist cross-turn recent refs used by read_knowledge follow-ups.
         if has_recent_search_refs:
@@ -5274,6 +5301,8 @@ class McpOrchestratorService:
                 "newly_shown_rows": len(context.newly_shown_row_ids),
                 "total_chunks": len(list(new_chunk_ids)[-MAX_SEEN_ITEMS:]) if has_seen_items else 0,
                 "total_rows": len(list(new_row_ids)[-MAX_SEEN_ITEMS:]) if has_seen_items else 0,
+                "primary_upload_id": context.primary_upload_id,
+                "referenced_docs": len(context.referenced_upload_ids),
                 "recent_search_refs": len(context.recent_search_refs) if has_recent_search_refs else 0,
             },
             indent=1,
@@ -6768,7 +6797,7 @@ class McpOrchestratorService:
             if isinstance(raw_diagnostics, Mapping):
                 for key in (
                     "reason",
-                    "intent_followup_question",
+                    "intent_clarification_question",
                     "assistant_guidance",
                     "scope_summary",
                     "conflict_detected",

@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 
 from django.conf import settings
 
+from core.otel import current_log_record_otel_fields
 from apps.core.console_logger import (
     Box,
     ConsoleFormatter,
@@ -178,6 +179,7 @@ def structured_log(
                 args=(),
                 exc_info=None,
             )
+            record.__dict__.update(current_log_record_otel_fields())
             handler.emit(record)
     else:
         # Fallback: use file format

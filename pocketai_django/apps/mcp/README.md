@@ -55,7 +55,7 @@ Workflow tools:
 - Background runs: `create_agent_run`, `list_agent_runs`, `get_agent_run`, `continue_agent_run`
 - MCP gateway: `mcp_search_tools`, `mcp_call_tool`
 - Portal output (deprecated): `portal_emit_blocks` (disabled for portal turns; portal streams **server-built blocks**)
-- Input control: `request_user_input`, `create_agent_request`
+- Input control: `request_user_input`
 - PDF utilities: `pdf_generate`, `pdf_merge`, `pdf_extract_pages`, `pdf_extract_text`
 
 Tool Schema Reference
@@ -143,7 +143,7 @@ Debugging Bad Answers (Quick Checklist)
 2) Verify identifiers:
    - Ensure identifier gating isn’t blocking access (constraint errors / required keys).
 3) Check disambiguation:
-   - Legacy clarification diagnostics were removed from the active portal runtime; best-effort evidence is preferred over any clarification-style blocking flow.
+   - Clarification-like diagnostics may still appear for compatibility, but the portal runtime should prefer best-effort evidence over blocking on a clarification turn.
 4) Inspect partial reads:
    - If `status=partial` with `deferred`, re-read only the deferred ids (use `cursor`).
 5) Validate routing:

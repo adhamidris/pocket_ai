@@ -13,6 +13,7 @@ context attach/detach).
 
 from __future__ import annotations
 
+import os
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Iterator
@@ -59,6 +60,9 @@ except Exception:  # pragma: no cover - optional dependency
         def get_tracer(self, *args: Any, **kwargs: Any) -> _NoopTracer:
             return _NoopTracer()
 
+        def get_current_span(self) -> Span:
+            return Span()
+
     class StatusCode:  # type: ignore[override]
         OK = "OK"
         ERROR = "ERROR"
@@ -91,5 +95,57 @@ __all__ = [
     "Span",
     "Status",
     "StatusCode",
+    "current_log_record_otel_fields",
 ]
 
+
+def _format_trace_id(value: int) -> str:
+    return f"{int(value or 0):032x}"
+
+
+def _format_span_id(value: int) -> str:
+    return f"{int(value or 0):016x}"
+
+
+def _trace_sampled_from_context(span_context: Any) -> bool:
+    trace_flags = getattr(span_context, "trace_flags", None)
+    sampled = getattr(trace_flags, "sampled", None)
+    if sampled is not None:
+        return bool(sampled)
+    try:
+        return bool(int(trace_flags) & 0x01)
+    except Exception:
+        return False
+
+
+def current_log_record_otel_fields() -> dict[str, object]:
+    """
+    Return OpenTelemetry-compatible logging fields for manually emitted LogRecords.
+
+    LoggingInstrumentor enriches records created through the normal logger path.
+    Our structured loggers emit raw LogRecords directly to handlers, so we need
+    to attach the same fields ourselves to satisfy formatters that expect them.
+    """
+
+    trace_id = 0
+    span_id = 0
+    sampled = False
+
+    try:
+        span = otel_trace.get_current_span()
+        span_context = span.get_span_context() if span else None
+        if span_context is not None:
+            trace_id = int(getattr(span_context, "trace_id", 0) or 0)
+            span_id = int(getattr(span_context, "span_id", 0) or 0)
+            sampled = _trace_sampled_from_context(span_context)
+    except Exception:
+        trace_id = 0
+        span_id = 0
+        sampled = False
+
+    return {
+        "otelTraceID": _format_trace_id(trace_id),
+        "otelSpanID": _format_span_id(span_id),
+        "otelTraceSampled": sampled,
+        "otelServiceName": os.getenv("OTEL_SERVICE_NAME", "pocketai-django"),
+    }

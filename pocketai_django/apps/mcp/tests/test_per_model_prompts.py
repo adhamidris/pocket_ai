@@ -122,7 +122,7 @@ class TemplateContentTests(SimpleTestCase):
         self.assertIn("with up to 3 query variants.", prompt)
 
     @staticmethod
-    def _search_queries_schema_description() -> str:
+    def _search_queries_schema() -> dict[str, object]:
         tool_def = next(
             schema
             for schema in tools.get_tool_definitions()
@@ -133,8 +133,10 @@ class TemplateContentTests(SimpleTestCase):
             .get("parameters", {})
             .get("properties", {})
             .get("queries", {})
-            .get("description", "")
         )
+
+    def _search_queries_schema_description(self) -> str:
+        return str(self._search_queries_schema().get("description", ""))
 
     @override_settings(MCP_SEARCH_MAX_QUERY_VARIANTS=1)
     def test_tool_schema_uses_single_variant_hint_when_limit_is_one(self) -> None:
@@ -149,6 +151,26 @@ class TemplateContentTests(SimpleTestCase):
             self._search_queries_schema_description(),
             "List of search queries. Use up to 5 short, specific variants.",
         )
+
+    @override_settings(MCP_SEARCH_MAX_QUERY_VARIANTS=1)
+    def test_tool_schema_sets_max_items_from_configured_variant_limit(self) -> None:
+        schema = self._search_queries_schema()
+        self.assertEqual(schema.get("maxItems"), 1)
+
+    def test_tool_schema_hides_legacy_and_backend_only_search_fields(self) -> None:
+        tool_def = next(
+            schema
+            for schema in tools.get_tool_definitions()
+            if schema.get("function", {}).get("name") == "search_knowledge"
+        )
+        properties = (
+            tool_def.get("function", {})
+            .get("parameters", {})
+            .get("properties", {})
+        )
+        self.assertNotIn("query", properties)
+        self.assertNotIn("exclude_seen", properties)
+        self.assertNotIn("limit", properties)
 
 
 # ---------------------------------------------------------------------------

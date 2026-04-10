@@ -9,7 +9,6 @@ the system prompt and transcript assembly logic.
 from __future__ import annotations
 
 import json
-import os
 import re
 import textwrap
 import uuid
@@ -35,7 +34,6 @@ from apps.conversations.models import (
 )
 from apps.llm.ai_prompt_builder import PromptBuilder
 from apps.mcp.sanitizer import sanitize_text
-from apps.accounts.agents import display_tone_label
 from apps.accounts.feature_flags import FeatureFlagService
 from apps.mcp.schemas.agentic_prompts import (
     build_model_specific_prompt,
@@ -43,12 +41,6 @@ from apps.mcp.schemas.agentic_prompts import (
 )
 
 TRACER = otel_trace.get_tracer(__name__)
-
-
-def _get_mcp_provider_name() -> str:
-    """Return the current MCP provider name ('openai', 'deepseek', or '')."""
-    return (os.getenv("MCP_PROVIDER") or "").strip().lower()
-
 
 PLACEHOLDER_REMINDER = (
     "After acknowledging you are checking, keep tool steps silent until the final answer."
@@ -194,16 +186,6 @@ STAGE_HISTORY_DEFAULTS: Mapping[str, int] = {
     "postflight": 6,
 }
 
-
-TONE_STYLE_HINTS: Mapping[str, str] = {
-    "friendly": "Keep a {tone_label} voice—warm, conversational, and encouraging.",
-    "professional": "Use a {tone_label} tone: clear, confident, and composed.",
-    "empathetic": "Maintain an {tone_label} tone that acknowledges the visitor's concerns before explaining facts or next steps with care.",
-    "casual": "Stay {tone_label} with relaxed phrasing, contractions, and natural flow; mirror the visitor's energy while remaining factual.",
-    "playful": "Adopt a {tone_label} tone with upbeat language, but keep policy and data accurate—fun but trustworthy.",
-    "formal": "Use a {tone_label} tone with precise language and full sentences; avoid slang while remaining readable.",
-}
-
 PREPLAN_OUTPUT_HINT = textwrap.dedent(
     """
     Return JSON inside response_text with this shape:
@@ -222,9 +204,9 @@ VERIFICATION_OUTPUT_HINT = textwrap.dedent(
     """
     Return JSON inside response_text with this shape:
     {
-      "verdict": "supported" | "unsupported",
+      "verdict": "supported" | "needs_clarification" | "unsupported",
       "missing_points": ["short item", "..."],
-      "final_response": "If unsupported, provide ONE concise user-facing fallback response. Otherwise empty.",
+      "final_response": "If not supported, provide ONE concise clarification question. Otherwise empty.",
       "notes": "short reasoning"
     }
     """
@@ -245,41 +227,6 @@ PLANNER_CRM_RULES = textwrap.dedent(
     """
 ).strip()
 
-# DEPRECATED: Legacy non-agentic path only.  Per-model templates in agentic_prompts.py supersede these.
-# Do not delete -- legacy non-agentic path may still be triggered if feature flag is disabled.
-OPENAI_PROACTIVE_TOOL_INSTRUCTIONS = textwrap.dedent(
-    """
-    ---
-
-    ## TOOL USAGE HINTS (OpenAI-Specific)
-
-    Use tools to ground business answers in evidence when needed.
-    - `search_knowledge` is a common starting point when evidence is missing.
-    - For multi-part questions, prefer one `search_knowledge(queries=[...])` call instead of multiple searches.
-    - If evidence is already present in context, answer directly.
-    - Use `read_knowledge` when previews are thin or ambiguous.
-    - For exhaustive lists, read more refs (and page through tables) to confirm scope.
-    - Keep tool calls silent; answer once you have evidence.
-
-    **Prompt Version**: 2.5-openai-hints
-    """
-).strip()
-
-# When gateway mode is enabled, remote MCP tool schemas are NOT injected into the LLM.
-# The model must discover tools via `mcp_search_tools` and execute them via `mcp_call_tool`.
-MCP_GATEWAY_TOOL_INSTRUCTIONS = textwrap.dedent(
-    """
-    ---
-
-    ## External MCP Tools (Gateway Mode)
-
-    Never invent tool names.
-    - Use `mcp_search_tools(query=...)` to get a `tool_id`.
-    - Then call `mcp_call_tool(tool_id=..., arguments={...})` to execute it.
-    - If you cannot find the right tool, refine the query and search again.
-    """
-).strip()
-
 MCP_GATEWAY_AGENTIC_RULES = textwrap.dedent(
     """
     External MCP tools:
@@ -287,38 +234,6 @@ MCP_GATEWAY_AGENTIC_RULES = textwrap.dedent(
     - Use `mcp_search_tools(query=...)` to get a `tool_id`, then `mcp_call_tool(tool_id=..., arguments={...})`.
     """
 ).strip()
-
-
-# DEPRECATED: Legacy non-agentic path only.  Per-model templates in agentic_prompts.py supersede these.
-# Do not delete -- legacy non-agentic path may still be triggered if feature flag is disabled.
-DEEPSEEK_COMPREHENSIVE_QUERY_INSTRUCTIONS = textwrap.dedent(
-    """
-    ---
-
-    ## COMPLETENESS HINTS (DeepSeek-Specific)
-
-    When the visitor expects a complete list or full coverage, verify scope before answering.
-    - Use `search_knowledge` to locate the right source.
-    - Use `read_knowledge` to confirm the full set (page tables when needed).
-    - If structured data is absent, read the relevant sections instead.
-    - Answer from what you can verify, and note any remaining gaps.
-
-    **Prompt Version**: 2.3-deepseek-hints
-    """
-).strip()
-
-
-
-def _tone_instruction(agent: AgentProfile | None) -> str:
-    tone_key = (agent.tone or "").strip().lower() if agent and agent.tone else ""
-    tone_label = display_tone_label(agent.tone) if agent else None
-    resolved_label = tone_label or "friendly"
-    hint = TONE_STYLE_HINTS.get(tone_key)
-    if hint:
-        return hint.format(tone_label=resolved_label)
-    return (
-        f"Maintain a {resolved_label} tone that matches the visitor's request."
-    )
 
 
 def build_system_message(
@@ -332,143 +247,46 @@ def build_system_message(
     has_mcp_connections: bool = False,
 ) -> str:
     """
-    Construct the MCP system prompt with agentic, hint-based guidance.
+    Construct the active MCP system prompt.
 
-    If provider_name is "openai", appends additional instructions to emphasize proactive
-    tool usage (GPT models tend to answer from training data instead of using tools).
-
-    When rag_agentic_mode is enabled (via feature flag), returns a minimal prompt
-    for the 2-tool search→read workflow.
+    The prompt stack is agentic-only: model-specific templates from
+    `agentic_prompts.py` plus runtime-injected rules (tone + optional MCP gateway
+    guidance). Legacy non-agentic fallback prompts have been removed.
     """
-    
-    resolved_business_name = business_name or "your business"
-    rag_agentic_enabled = False
-    new_contract_enabled = bool(getattr(settings, "MCP_NEW_CONTRACT_ENABLED", True))
-    
-    # Check if agentic mode is enabled (and the new contract gate is on).
-    if business_profile is not None:
-        feature_state = FeatureFlagService.snapshot(business_profile)
-        rag_agentic_enabled = bool(getattr(feature_state, "rag_agentic_mode", False)) and new_contract_enabled
 
-    if rag_agentic_enabled:
-        # Use minimal agentic prompt
-        rules: list[str] = []
-        tone = get_tone_instruction(agent.tone) if hasattr(agent, "tone") and agent.tone else ""
-        if tone:
-            rules.append(tone.strip())
-        # Only inject gateway rules when the agent actually has MCP connections.
-        if has_mcp_connections:
-            rules.append(MCP_GATEWAY_AGENTIC_RULES)
-        additional_rules_str = "\n\n".join(rule for rule in rules if rule)
-        agentic_read_v2_enabled = bool(getattr(settings, "MCP_AGENTIC_READ_V2_ENABLED", False))
-        if not agentic_read_v2_enabled:
-            raise RuntimeError(
-                "Legacy agentic prompt path is disabled. "
-                "Enable MCP_AGENTIC_READ_V2_ENABLED or remove rag_agentic_mode for this conversation."
-            )
-        return build_model_specific_prompt(
-            agent,
-            model_id=model_id,
-            business_name=resolved_business_name,
-            additional_rules=additional_rules_str,
+    del business_industry, provider_name
+
+    if business_profile is None:
+        raise RuntimeError("build_system_message requires a business_profile for agentic prompt routing.")
+
+    resolved_business_name = business_name or "your business"
+    new_contract_enabled = bool(getattr(settings, "MCP_NEW_CONTRACT_ENABLED", True))
+    feature_state = FeatureFlagService.snapshot(business_profile)
+    rag_agentic_enabled = bool(getattr(feature_state, "rag_agentic_mode", False)) and new_contract_enabled
+    if not rag_agentic_enabled:
+        raise RuntimeError(
+            "Legacy non-agentic MCP prompt path has been removed. "
+            "Enable rag_agentic_mode and MCP_NEW_CONTRACT_ENABLED for this conversation."
         )
 
-    tone_label = display_tone_label(agent.tone) or "friendly"
-    tone_instruction = _tone_instruction(agent)
-
-    # Detect provider if not explicitly provided
-    effective_provider = (provider_name or _get_mcp_provider_name() or "").lower()
-
-    # Core prompt (compact, guidance-focused)
-    base_prompt = textwrap.dedent(
-        f"""
-        You are {agent.name}, the {agent.role or "AI Customer Specialist"} for {resolved_business_name}. Maintain a {tone_label} tone.
-        
-        ## GUIDING PRINCIPLES
-
-        1. **Evidence first**: Use tools when business facts are needed; answer from verified content.
-        2. **Light planning**: Choose the smallest set of tool calls that yields a correct answer.
-        3. **Do not narrate internal steps**: Keep tool steps silent; reply with an answer or a single clarifying question.
-        4. **Tool loop discipline**: Do at most one discovery/read tool-loop per visitor message (user turn), unless the visitor explicitly asks to continue.
-        5. **{tone_instruction}**
-        6. **LANGUAGE**: Reply in the visitor's language; for Arabic use Modern Standard Arabic (MSA).
-
-        ---
-
-        ## Tool Usage Hints
-
-        ### `search_knowledge`
-        - Start here when you need to discover what exists.
-        - Keep queries tight and anchored to the product/plan/service name.
-        - If the visitor asks about multiple distinct items/topics, prefer one batched call using `queries=[...]`.
-        - If results mismatch intent, refine using document terms or the suggested refinement.
-        - If repeated searches keep returning the same documents/snippets, stop repeating search. Run one targeted read on the best refs if factual detail is still needed, then answer with clear gaps.
-        - If reliable evidence already exists in context, answer without a new search.
-        - Do not block the conversation asking the visitor to choose between table vs text evidence. Proceed best-effort and reconcile ambiguity by reading relevant refs.
-
-        ### `read_knowledge`
-        - Read when previews are too thin to answer confidently.
-        - Use the `refs` returned by `search_knowledge` (do not invent IDs).
-        - For table refs, page with `row_start` + `row_limit`.
-        - If a search result has `kind=table_row`, that ID is exact-row only. Never add `row_start` or `row_limit` to it.
-        - Use range paging only with a real table ref. Do not turn a row ref into a browsing ref.
-        - If the response includes `next_row_start`, more table rows are available from that offset.
-        - Prefer one comprehensive batched read over multiple small reads (extra tool-loop turns can cost more overall).
-        - If existing evidence is sufficient, answer without an extra read. Only page table rows when you still need more evidence.
-
-        ### CRM tools
-        - Log business inquiries as cases; create leads for product interest; do this silently.
-
-        ### `initiate_phone_call`
-        - Use to make an outbound phone call to a customer or contact.
-        - Requires: `phone_number` (E.164 format like +201234567890) and `objective` (purpose of the call).
-        - The call will be queued and executed by the voice system with AI conversation.
-        - Use for: customer follow-ups, appointment confirmations, support callbacks, verification calls.
-        - Optional: `language` (en/ar), `call_type` (service/marketing), `max_duration_minutes`.
-        - **Strongly recommended:** include `context_items=[...]` (structured notes) whenever the call depends on facts you just retrieved or details you don't want lost in the chat stream.
-          - Keep `objective` short (one sentence). Put facts, numbers, talking points, and evidence snippets into `context_items` instead of stuffing them into `objective`.
-          - Use a consistent shape for each item, e.g. `{{title: "Fees", value: "..."}}`
-
-        ---
-
-        ## Output Hints
-        - Lead with the answer; add a short clarifying question only if needed.
-        - Avoid placeholder narration during tool use.
-        - Use tables for multi-item comparisons when it helps.
-        - Prefer clean markdown for prose (avoid flicker-prone partial formatting).
-        - Formatting: use blank lines between paragraphs ("\\n\\n"); do not hard-wrap prose lines.
-        - Lists: use "- " bullets and "1. " numbering; include a blank line before/after lists; never embed list markers inside a sentence (bad: "you 1. ... 2. ...").
-        - Use single newlines only inside lists, code blocks, or truly line-based content (addresses).
-        - If a tool creates a downloadable artifact (PDF/file), **do not paste raw download URLs**. Just say it's ready and the visitor can click the **Download** button on the attachment card in the chat.
-
-        ---
-
-        ## Guardrails (Lightweight)
-        - If an action requires identifiers, ask once for the specific missing key.
-        - For health/finance/legal, stick to policy/process information, not personal advice.
-        - If a named product isn't in evidence, say so and ask for a document/page hint.
-
-        ---
-
-        ## Lightweight Heuristics
-        - Exhaustive list? `search_knowledge` → `read_knowledge` (page tables if needed) → answer.
-        - Weak search + specific lookup? Ask for a doc/page/ID.
-        - Repeated items? Use `already_seen` to avoid re-listing.
-
-        **Prompt Version**: 2.5-agentic-hints
-        """
-    ).strip()
-
-    # Gateway mode is permanently enabled.
-    base_prompt = base_prompt + "\n\n" + MCP_GATEWAY_TOOL_INSTRUCTIONS
-
-    # Append provider-specific instructions
-    if effective_provider == "openai":
-        return base_prompt + "\n\n" + OPENAI_PROACTIVE_TOOL_INSTRUCTIONS
-    elif effective_provider == "deepseek":
-        return base_prompt + "\n\n" + DEEPSEEK_COMPREHENSIVE_QUERY_INSTRUCTIONS
-
-    return base_prompt
+    rules: list[str] = []
+    tone = get_tone_instruction(agent.tone) if hasattr(agent, "tone") and agent.tone else ""
+    if tone:
+        rules.append(tone.strip())
+    if has_mcp_connections:
+        rules.append(MCP_GATEWAY_AGENTIC_RULES)
+    additional_rules_str = "\n\n".join(rule for rule in rules if rule)
+    agentic_read_v2_enabled = bool(getattr(settings, "MCP_AGENTIC_READ_V2_ENABLED", False))
+    if not agentic_read_v2_enabled:
+        raise RuntimeError(
+            "Agentic prompt routing requires MCP_AGENTIC_READ_V2_ENABLED=true."
+        )
+    return build_model_specific_prompt(
+        agent,
+        model_id=model_id,
+        business_name=resolved_business_name,
+        additional_rules=additional_rules_str,
+    )
 
 
 def _conversation_memory_note(
@@ -1336,7 +1154,7 @@ def build_verification_messages(
             "Check whether the draft answer is fully supported by the evidence."
         ),
         (
-            "Only use the evidence provided. If support is insufficient, provide ONE concise fallback response "
+            "Only use the evidence provided. If support is insufficient, ask ONE concise clarifying question "
             "instead of guessing."
         ),
         VERIFICATION_OUTPUT_HINT,

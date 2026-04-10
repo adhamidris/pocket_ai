@@ -30,6 +30,12 @@ def normalize_language_code(value: Any) -> str:
     return language_map.get(base, "")
 
 
+def metadata_ui_language(metadata: Mapping[str, Any] | None) -> str:
+    if not isinstance(metadata, Mapping):
+        return ""
+    return normalize_language_code(metadata.get("ui_language"))
+
+
 def _primary_business_for_user(user: Any):
     if not getattr(user, "is_authenticated", False):
         return None

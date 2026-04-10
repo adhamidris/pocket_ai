@@ -10,7 +10,7 @@ from django.db.models import Count, Prefetch
 from django.utils import timezone
 from django.utils.text import slugify
 
-from pocketai.language import normalize_language_code
+from pocketai.language import metadata_ui_language, normalize_language_code
 
 from apps.accounts.models import (
     AgentProfile,
@@ -82,22 +82,6 @@ class PortalSessionBootstrap:
 
 
 DEFAULT_SESSION_TTL: timedelta | None = None
-
-
-def _metadata_ui_language(metadata: dict | None) -> str:
-    if not isinstance(metadata, dict):
-        return ""
-    candidates = (
-        metadata.get("ui_language"),
-        metadata.get("uiLanguage"),
-        metadata.get("selected_language"),
-        metadata.get("selectedLanguage"),
-    )
-    for candidate in candidates:
-        normalized = normalize_language_code(candidate)
-        if normalized:
-            return normalized
-    return ""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -184,9 +168,7 @@ class ChatPortalService:
         if not body.strip():
             raise PortalValidationError("Message body cannot be empty")
         metadata = dict(metadata or {})
-        selected_ui_language = _metadata_ui_language(metadata)
-        if selected_ui_language:
-            metadata["ui_language"] = selected_ui_language
+        selected_ui_language = metadata_ui_language(metadata)
         with transaction.atomic():
             create_kwargs = {
                 "conversation": conversation,
@@ -560,9 +542,6 @@ class ChatPortalService:
         metadata: dict,
     ) -> Conversation:
         incoming_metadata = dict(metadata or {})
-        selected_ui_language = _metadata_ui_language(incoming_metadata)
-        if selected_ui_language:
-            incoming_metadata["ui_language"] = selected_ui_language
         now = timezone.now()
         conversation = None
         if existing_session_token:

@@ -19,6 +19,8 @@ from zoneinfo import ZoneInfo
 
 from django.conf import settings
 
+from core.otel import current_log_record_otel_fields
+
 
 class Verbosity(Enum):
     """Logging verbosity levels."""
@@ -385,6 +387,7 @@ class StructuredLogger:
                 args=(),
                 exc_info=None,
             )
+            record.__dict__.update(current_log_record_otel_fields())
             handler.emit(record)
         
         # If no handlers found, fall back to standard logging

@@ -153,6 +153,21 @@ class ToolExecutionContext:
     # wrapper-level guardrails can stop retry loops quickly.
     invalid_read_ref_attempts: dict[str, int] = dataclasses.field(default_factory=dict)
     # =========================================================================
+    # Document Context Tracking (Conversation-Aware RAG)
+    # =========================================================================
+    # Tracks which documents were referenced in search results for follow-up queries.
+    # Enables query rewriting, document affinity routing, and ranking bonuses.
+
+    # Set of all upload_ids referenced in this conversation
+    referenced_upload_ids: set[str] = dataclasses.field(default_factory=set)
+
+    # Primary document being discussed (most-referenced or most recent high-confidence)
+    primary_upload_id: str | None = None
+
+    # Detailed metadata per document: {upload_id: {"title": str, "search_count": int, ...}}
+    document_context: dict[str, dict] = dataclasses.field(default_factory=dict)
+
+    # =========================================================================
     # Query Refinement Tracking (Phase 4: Multi-Turn Refinement Loop)
     # =========================================================================
     # Tracks query refinement attempts to enable multi-turn refinement and
@@ -534,6 +549,240 @@ class ToolExecutionContext:
     @staticmethod
     def _utc_now_iso() -> str:
         return datetime.now(tz=dt_timezone.utc).isoformat()
+
+    def has_strong_primary_document(self) -> bool:
+        """
+        Whether the current primary document is "confirmed" by an explicit read.
+
+        We use this to decide when it's safe to apply conversation-scoped retrieval
+        behaviors (affinity search, query rewriting) without overfitting to noisy
+        search results.
+        """
+        if not self.primary_upload_id:
+            return False
+        meta = self.document_context.get(self.primary_upload_id, {})
+        try:
+            return int(meta.get("read_count", 0) or 0) > 0
+        except (TypeError, ValueError):
+            return False
+
+    def track_document_reference(
+        self,
+        upload_id: str,
+        title: str | None = None,
+        stage: str | None = None,
+        confidence: float | None = None,
+        *,
+        update_primary: bool = True,
+    ) -> None:
+        """
+        Track a document that was referenced in search results.
+
+        Called after each search to build conversation-level document context.
+        Updates primary_upload_id based on reference frequency and confidence.
+        """
+        if not upload_id:
+            return
+
+        upload_id = str(upload_id)
+        self.referenced_upload_ids.add(upload_id)
+
+        # Initialize or update document metadata
+        if upload_id not in self.document_context:
+            self.document_context[upload_id] = {
+                "title": title or "",
+                "search_count": 0,
+                "read_count": 0,
+                "stages": [],
+                "confidences": [],
+                "last_referenced_at": None,
+                "last_read_at": None,
+            }
+
+        meta = self.document_context[upload_id]
+        meta["search_count"] = meta.get("search_count", 0) + 1
+        meta["last_referenced_at"] = self._utc_now_iso()
+        if title and not meta.get("title"):
+            meta["title"] = title
+        if stage:
+            stages = meta.get("stages", [])
+            if stage not in stages:
+                stages.append(stage)
+            meta["stages"] = stages
+        if confidence is not None:
+            confidences = meta.get("confidences", [])
+            confidences.append(float(confidence))
+            # Keep only last 10 confidence scores
+            meta["confidences"] = confidences[-10:]
+
+        if update_primary:
+            # Update primary document if this one has higher engagement
+            self._update_primary_document(upload_id)
+
+    def track_document_read(self, upload_id: str, *, title: str | None = None) -> None:
+        """
+        Track an explicit document read.
+
+        This is a stronger signal than "appeared in search results", and should
+        generally drive the primary document for follow-ups.
+        """
+        if not upload_id:
+            return
+        upload_id = str(upload_id)
+        self.referenced_upload_ids.add(upload_id)
+
+        if upload_id not in self.document_context:
+            self.document_context[upload_id] = {
+                "title": title or "",
+                "search_count": 0,
+                "read_count": 0,
+                "stages": [],
+                "confidences": [],
+                "last_referenced_at": None,
+                "last_read_at": None,
+            }
+
+        meta = self.document_context[upload_id]
+        if title and not meta.get("title"):
+            meta["title"] = title
+        meta["read_count"] = meta.get("read_count", 0) + 1
+        meta["last_read_at"] = self._utc_now_iso()
+        meta["last_referenced_at"] = meta.get("last_referenced_at") or meta["last_read_at"]
+
+        # Reads are our strongest conversation signal: treat as the active primary.
+        self.primary_upload_id = upload_id
+
+    def _update_primary_document(self, candidate_upload_id: str) -> None:
+        """Update primary_upload_id based on document engagement metrics."""
+        if not self.primary_upload_id:
+            # First document referenced becomes primary
+            self.primary_upload_id = candidate_upload_id
+            return
+
+        # Compare candidate with current primary
+        candidate_meta = self.document_context.get(candidate_upload_id, {})
+        primary_meta = self.document_context.get(self.primary_upload_id, {})
+
+        # If we've explicitly read the primary document, don't override it based on
+        # noisy search-only references.
+        try:
+            if int(primary_meta.get("read_count", 0) or 0) > 0:
+                return
+        except (TypeError, ValueError):
+            pass
+
+        candidate_count = candidate_meta.get("search_count", 0)
+        primary_count = primary_meta.get("search_count", 0)
+
+        # Switch primary if candidate has significantly more references
+        if candidate_count > primary_count + 2:
+            self.primary_upload_id = candidate_upload_id
+
+    def get_primary_document_title(self) -> str | None:
+        """Get the title of the primary document, if available."""
+        if not self.primary_upload_id:
+            return None
+        meta = self.document_context.get(self.primary_upload_id, {})
+        return meta.get("title") or None
+
+    def get_document_context_for_query(self) -> dict:
+        """
+        Get document context dictionary for query rewriting and routing.
+
+        Returns a dict suitable for passing to ContextAwareQueryRewriter.
+        """
+        return {
+            "primary_upload_id": self.primary_upload_id,
+            "primary_document_title": self.get_primary_document_title(),
+            "referenced_upload_ids": list(self.referenced_upload_ids),
+            "document_metadata": dict(self.document_context),
+        }
+
+    def get_document_context_for_persistence(self) -> dict:
+        """
+        Get document context for persistence to conversation.metadata.
+
+        Returns a serializable dict that can be stored and rehydrated.
+        """
+        def _as_int(value: object) -> int:
+            try:
+                return int(value or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        primary_id = str(self.primary_upload_id) if self.primary_upload_id else None
+        sorted_docs = sorted(
+            self.document_context.items(),
+            key=lambda item: (
+                _as_int(item[1].get("read_count")),
+                _as_int(item[1].get("search_count")),
+                str(item[0]),
+            ),
+            reverse=True,
+        )
+        # Keep metadata bounded but ensure the primary doc is included when present.
+        selected_ids: list[str] = []
+        if primary_id and primary_id in self.document_context:
+            selected_ids.append(primary_id)
+        for upload_id, _ in sorted_docs:
+            upload_id = str(upload_id)
+            if upload_id in selected_ids:
+                continue
+            selected_ids.append(upload_id)
+            if len(selected_ids) >= 10:
+                break
+
+        referenced_sorted = sorted(
+            self.referenced_upload_ids,
+            key=lambda upload_id: (
+                _as_int(self.document_context.get(upload_id, {}).get("read_count")),
+                _as_int(self.document_context.get(upload_id, {}).get("search_count")),
+                str(upload_id),
+            ),
+            reverse=True,
+        )[:20]
+
+        return {
+            "primary_upload_id": self.primary_upload_id,
+            "referenced_uploads": referenced_sorted,  # Keep top 20 by engagement
+            "document_metadata": {
+                k: {
+                    "title": v.get("title", ""),
+                    "search_count": v.get("search_count", 0),
+                    "read_count": v.get("read_count", 0),
+                    "stages": v.get("stages", [])[-5:],  # Keep last 5 stages
+                    "last_referenced_at": v.get("last_referenced_at"),
+                    "last_read_at": v.get("last_read_at"),
+                    # Don't persist confidences (transient)
+                }
+                for k in selected_ids
+                for v in [self.document_context.get(k, {})]
+            },
+        }
+
+    def hydrate_document_context(self, persisted: dict) -> None:
+        """
+        Restore document context from conversation.metadata.
+
+        Called at the start of each turn to restore conversation state.
+        """
+        if not persisted:
+            return
+
+        self.primary_upload_id = persisted.get("primary_upload_id")
+        self.referenced_upload_ids = set(persisted.get("referenced_uploads", []))
+
+        doc_metadata = persisted.get("document_metadata", {})
+        for upload_id, meta in doc_metadata.items():
+            self.document_context[upload_id] = {
+                "title": meta.get("title", ""),
+                "search_count": meta.get("search_count", 0),
+                "read_count": meta.get("read_count", 0),
+                "stages": meta.get("stages", []),
+                "confidences": [],  # Not persisted
+                "last_referenced_at": meta.get("last_referenced_at"),
+                "last_read_at": meta.get("last_read_at"),
+            }
 
     # =========================================================================
     # Query Refinement Tracking Methods (Phase 4)

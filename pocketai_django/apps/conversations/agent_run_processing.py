@@ -363,39 +363,6 @@ def _sanitize_tool_output(tool_name: str, output: object) -> dict[str, object] |
                     out[key] = _clip_text(value.strip(), 240)
         return out
 
-    if normalized == "create_agent_request":
-        req_id = output.get("agent_request_id")
-        if isinstance(req_id, str) and req_id.strip():
-            out["agent_request_id"] = req_id.strip()
-        request_payload = output.get("request") if isinstance(output.get("request"), Mapping) else None
-        if request_payload:
-            request_out: dict[str, object] = {}
-            for key in ("id", "status", "subject"):
-                value = request_payload.get(key)
-                if isinstance(value, str) and value.strip():
-                    request_out[key] = _clip_text(value.strip(), 240)
-            from_agent = request_payload.get("from_agent") if isinstance(request_payload.get("from_agent"), Mapping) else None
-            to_agent = request_payload.get("to_agent") if isinstance(request_payload.get("to_agent"), Mapping) else None
-            if from_agent:
-                from_out: dict[str, object] = {}
-                for key in ("id", "name", "slug"):
-                    value = from_agent.get(key)
-                    if isinstance(value, str) and value.strip():
-                        from_out[key] = _clip_text(value.strip(), 160)
-                if from_out:
-                    request_out["from_agent"] = from_out
-            if to_agent:
-                to_out: dict[str, object] = {}
-                for key in ("id", "name", "slug"):
-                    value = to_agent.get(key)
-                    if isinstance(value, str) and value.strip():
-                        to_out[key] = _clip_text(value.strip(), 160)
-                if to_out:
-                    request_out["to_agent"] = to_out
-            if request_out:
-                out["request"] = request_out
-        return out
-
     if normalized == "request_user_input":
         questions = output.get("questions")
         if isinstance(questions, list):
@@ -1243,24 +1210,6 @@ class AgentRunProcessingService:
                 if tool_name == "request_user_input" and phase in {"started", "finished"}:
                     pause_state["user_input_event"] = dict(event)
                 label = f"{phase}:{tool_name}" if tool_name else (phase or "tool_event")
-                if tool_name == "create_agent_request" and phase == "finished":
-                    if status_value == "needs_external":
-                        pause_state["external_request_event"] = dict(event)
-                    output = event.get("output") if isinstance(event.get("output"), Mapping) else {}
-                    request_payload = (
-                        output.get("request") if isinstance(output, Mapping) and isinstance(output.get("request"), Mapping) else {}
-                    )
-                    from_agent = request_payload.get("from_agent") if isinstance(request_payload, Mapping) else {}
-                    to_agent = request_payload.get("to_agent") if isinstance(request_payload, Mapping) else {}
-                    from_name = str(from_agent.get("name") or "").strip() if isinstance(from_agent, Mapping) else ""
-                    to_name = str(to_agent.get("name") or "").strip() if isinstance(to_agent, Mapping) else ""
-                    subject = str(request_payload.get("subject") or "").strip() if isinstance(request_payload, Mapping) else ""
-                    prefix = "Agent request"
-                    if from_name and to_name:
-                        prefix = f"{from_name} → {to_name}" if from_name != to_name else from_name
-                    elif to_name:
-                        prefix = f"Agent → {to_name}"
-                    label = f"{prefix}: {subject}" if subject else prefix
                 if tool_name == "initiate_phone_call" and phase == "finished":
                     output_payload = event.get("output") if isinstance(event.get("output"), Mapping) else {}
                     call_session_id = ""
@@ -1411,7 +1360,6 @@ class AgentRunProcessingService:
                 "- Work autonomously.\n"
                 "- You may NOT create or delegate other background runs.\n"
                 "- If you require missing information from the user, call request_user_input with concise questions and stop.\n"
-                "- If you require another agent/department, call create_agent_request with a subject + question + context_refs and stop.\n"
                 "- If a tool call is pending approval, ask the user to approve/deny and stop.\n"
                 "- Do not claim actions happened unless they were executed via tools.\n"
                 "- Keep internal steps/tool chatter out of the final response.\n"
