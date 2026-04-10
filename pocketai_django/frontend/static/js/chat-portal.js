@@ -82,6 +82,7 @@ class ChatPortalClient {
 	    this.sessionStorageKey = `chat_sessions_${this.businessSlug}_${this.agentSlug}`;
     this.turnStateStorageKeyPrefix = `portal_turn_state_${this.businessSlug}_${this.agentSlug}_`;
 	    this.toolsVisibilityKey = `chat_tools_visible_${this.businessSlug}_${this.agentSlug}`;
+    this.tasksPanelStorageKey = `portal_tasks_panel_collapsed_${this.businessSlug}_${this.agentSlug}`;
 	    this.globalToolsVisible = this.readGlobalToolsPreference();
 	    this.streamingMessageNode = null;
 	    this.streamingMessageBodyEl = null;
@@ -108,6 +109,7 @@ class ChatPortalClient {
     this.streamingBlockPacerLastAt = 0;
     this.streamingBlockPacerMode = "normal";
     this.streamingBlockDeferredActions = [];
+    this.streamingTextBoundaryActions = [];
     this.turnPersistedFinalizeTimer = null;
     this.streamingBlockPacerConfig = {
       baseCharsPerSecond: 60,
@@ -242,8 +244,8 @@ class ChatPortalClient {
         this.initInboxPanel();
       } else {
         // Single-agent mode: keep the portal chat-only and hide background surfaces.
-        this.setTasksPanelVisible(false);
-        this.setInboxPanelVisible(false);
+        if (this.elements.tasksPanel) this.elements.tasksPanel.setAttribute("hidden", "");
+        if (this.elements.inboxPanel) this.elements.inboxPanel.setAttribute("hidden", "");
         if (this.elements.tasksOpenBtn) this.elements.tasksOpenBtn.setAttribute("hidden", "");
         if (this.elements.inboxOpenBtn) this.elements.inboxOpenBtn.setAttribute("hidden", "");
       }
@@ -1140,17 +1142,27 @@ class ChatPortalClient {
 	    if (blockId) {
 	      this.streamingContentBlocksById.set(blockId, block);
 	    }
-		    this.upsertStreamingContentBlock(block);
-		    if (blockId && this.isStreamingTextBlock(blockType)) {
-		      this.streamingTextBlockActiveIds.add(blockId);
-	        this.clearStreamingIdleStatusTimer();
-	        // Keep the status row pinned after inserting new streaming blocks.
-	        this.repositionStreamingStatusRow();
-          if (this.streamingPendingBlockOps.has(blockId)) {
+
+        const mountBlock = () => {
+		      this.upsertStreamingContentBlock(block);
+		      if (blockId && this.isStreamingTextBlock(blockType)) {
+		        this.streamingTextBlockActiveIds.add(blockId);
+	          this.clearStreamingIdleStatusTimer();
+	          // Keep the status row pinned after inserting new streaming blocks.
+	          this.repositionStreamingStatusRow();
+		      }
+          if (blockId && this.streamingPendingBlockOps.has(blockId)) {
             this.streamingDirtyTextBlocks.add(blockId);
             this.scheduleStreamingBlockRender();
           }
-		    }
+        };
+
+        if (blockType === "table" && this.hasStreamingTextRevealBacklog()) {
+          this._queueAfterTextRevealDrain(mountBlock, { mode: "boundary" });
+          return;
+        }
+
+        mountBlock();
 		  }
 
 	  handleBlockDeltaEvent(data) {
@@ -1336,13 +1348,8 @@ class ChatPortalClient {
             }
           });
         }
-        this.setSpinnerText(this.spinnerDesiredText || "", {
-          pending: true,
-          isError: this.spinnerDesiredIsError,
-          force: true,
-        });
-
         this.upsertStreamingContentBlock(block);
+        this.syncSpinnerFromActiveToolBlocks();
         this.repositionStreamingStatusRow();
         this.scheduleScrollToBottom({ behavior: "auto" });
       },
@@ -1381,6 +1388,7 @@ class ChatPortalClient {
           }
         }
         this.upsertStreamingContentBlock(block);
+        this.syncSpinnerFromActiveToolBlocks();
         this.repositionStreamingStatusRow();
         this.scheduleScrollToBottom({ behavior: "auto" });
       },
@@ -1407,6 +1415,7 @@ class ChatPortalClient {
         blockIds.forEach((blockId) => {
           this.removeStreamingContentBlockById(blockId);
         });
+        this.syncSpinnerFromActiveToolBlocks();
       },
       { mode: "boundary" },
     );
@@ -1457,7 +1466,7 @@ class ChatPortalClient {
     const wrapper = this.streamingContentBlockEls.get(blockId);
     if (!wrapper) return;
     if (this.shouldRebuildStreamingTextBlock(wrapper, blockModel)) {
-      const updated = this.updateContentBlockElement(wrapper, blockModel) || wrapper;
+      const updated = this.updateContentBlockElement(wrapper, blockModel, { streaming: true }) || wrapper;
       if (updated && updated !== wrapper) {
         this.streamingContentBlockEls.set(blockId, updated);
       }
@@ -1509,7 +1518,19 @@ class ChatPortalClient {
     const wrapperIsMarkdown =
       Boolean(wrapper.dataset && (wrapper.dataset.markdownRichText === "true" || wrapper.dataset.markdownTable === "true"));
     if (wrapperIsMarkdown) return true;
-    return type !== "list_item" && this.shouldRenderInlineContentAsMarkdown(rawText);
+    return type !== "list_item" && this.shouldRenderStreamingInlineContentAsMarkdown(rawText);
+  }
+
+  shouldRenderStreamingInlineContentAsMarkdown(text) {
+    const raw = (text || "").toString();
+    if (!raw) return false;
+    // Live streaming should only switch into markdown-wrapper rendering for
+    // strong block-level markdown. Inline marks are already handled by the
+    // structured inline-node path, so speculative upgrades on partial list or
+    // pipe fragments create visible jitter without improving fidelity.
+    if (this.containsMarkdownTable(raw)) return true;
+    if (this.containsMarkdownList(raw)) return true;
+    return false;
   }
 
   applyBlockOpsToBlockModel(block, ops) {
@@ -1560,6 +1581,30 @@ class ChatPortalClient {
           row.rtl = true;
         }
         rows.push(row);
+        return;
+      }
+      if (kind === "set_table_cell_text") {
+        const rowIndex = Number.isInteger(op.row_index) ? op.row_index : parseInt(op.row_index, 10);
+        const cellIndex = Number.isInteger(op.cell_index) ? op.cell_index : parseInt(op.cell_index, 10);
+        if (!Number.isFinite(rowIndex) || !Number.isFinite(cellIndex) || rowIndex < 0 || cellIndex < 0) return;
+        let rows = Array.isArray(payload.rows) ? payload.rows : [];
+        if (!Array.isArray(payload.rows)) {
+          payload.rows = rows;
+        }
+        while (rows.length <= rowIndex) {
+          rows.push({ cells: [] });
+        }
+        const row = rows[rowIndex] && typeof rows[rowIndex] === "object" ? rows[rowIndex] : { cells: [] };
+        const cells = Array.isArray(row.cells) ? row.cells.slice() : [];
+        while (cells.length <= cellIndex) {
+          cells.push("");
+        }
+        cells[cellIndex] = typeof op.text === "string" ? op.text : op.text == null ? "" : String(op.text);
+        row.cells = cells;
+        if (op.rtl === true) {
+          row.rtl = true;
+        }
+        rows[rowIndex] = row;
       }
     });
   }
@@ -1594,6 +1639,11 @@ class ChatPortalClient {
       }
       if (kind === "append_table_row") {
         total += 1;
+        return;
+      }
+      if (kind === "set_table_cell_text") {
+        const text = typeof op.text === "string" ? op.text : op.text == null ? "" : String(op.text);
+        total += text.length || 1;
       }
     });
     return total;
@@ -1611,6 +1661,23 @@ class ChatPortalClient {
     if (this.streamingDirtyTextBlocks && this.streamingDirtyTextBlocks.size) return true;
     if (this.streamingPendingBlockOps && this.streamingPendingBlockOps.size) {
       return this.estimateStreamingPendingChars() > 0;
+    }
+    return false;
+  }
+
+  hasStreamingTextRevealBacklog() {
+    if (!this.streamingPendingBlockOps || !this.streamingPendingBlockOps.size) return false;
+    for (const [blockId, ops] of this.streamingPendingBlockOps.entries()) {
+      if (!Array.isArray(ops) || !ops.length) continue;
+      const wrapper = this.streamingContentBlockEls.get(blockId);
+      let type = wrapper && wrapper.dataset ? (wrapper.dataset.blockType || "").toString().trim().toLowerCase() : "";
+      if (!type) {
+        const blockModel = this.streamingContentBlocksById.get(blockId);
+        type = blockModel && typeof blockModel === "object" ? (blockModel.type || "").toString().trim().toLowerCase() : "";
+      }
+      if (type && this.isStreamingTextBlock(type)) {
+        return true;
+      }
     }
     return false;
   }
@@ -1739,7 +1806,40 @@ class ChatPortalClient {
     this.scheduleStreamingBlockRender();
   }
 
+  _queueAfterTextRevealDrain(fn, { mode = "boundary" } = {}) {
+    if (typeof fn !== "function") return;
+    if (!this.hasStreamingTextRevealBacklog()) {
+      fn();
+      return;
+    }
+    if (!Array.isArray(this.streamingTextBoundaryActions)) {
+      this.streamingTextBoundaryActions = [];
+    }
+    this.streamingTextBoundaryActions.push(fn);
+    this.streamingBlockPacerMode = (mode || "boundary").toString();
+    this.scheduleStreamingBlockRender();
+  }
+
+  _flushTextBoundaryActionsIfReady() {
+    if (!Array.isArray(this.streamingTextBoundaryActions) || !this.streamingTextBoundaryActions.length) {
+      return;
+    }
+    if (this.hasStreamingTextRevealBacklog()) {
+      return;
+    }
+    const actions = this.streamingTextBoundaryActions.slice(0);
+    this.streamingTextBoundaryActions = [];
+    actions.forEach((fn) => {
+      try {
+        fn();
+      } catch (_err) {
+        // ignore
+      }
+    });
+  }
+
   flushStreamingBlockRenders(force = false) {
+    this._flushTextBoundaryActionsIfReady();
     if (!this.streamingDirtyTextBlocks.size) {
       if (this.streamingPendingBlockOps && this.streamingPendingBlockOps.size) {
         let seeded = 0;
@@ -1907,6 +2007,7 @@ class ChatPortalClient {
 
     this.streamingBlockPacerBudget = Math.max(0, (this.streamingBlockPacerBudget || 0) - consumedTotal);
     this.streamingDirtyTextBlocks = nextDirty;
+    this._flushTextBoundaryActionsIfReady();
     if (this.streamingDirtyTextBlocks.size) {
       this.scheduleStreamingBlockRender();
       return;
@@ -1991,7 +2092,7 @@ class ChatPortalClient {
       return;
     }
 
-    const el = this.buildContentBlockElement(block);
+    const el = this.buildContentBlockElement(block, { streaming: true });
     if (!el) return;
     this.applyStreamingBlockEnterAnimation(el);
     this.streamingContentBlockEls.set(blockId, el);
@@ -5292,6 +5393,7 @@ class ChatPortalClient {
     if (this.elements.tasksOpenBtn) {
       this.elements.tasksOpenBtn.addEventListener("click", () => {
         this.tasksPanelUserHidden = false;
+        this.persistTasksPanelPreference(false);
         this.setInboxPanelVisible(false);
         this.setTasksPanelVisible(true);
       });
@@ -5299,6 +5401,7 @@ class ChatPortalClient {
     if (this.elements.tasksCloseBtn) {
       this.elements.tasksCloseBtn.addEventListener("click", () => {
         this.tasksPanelUserHidden = true;
+        this.persistTasksPanelPreference(true);
         this.setTasksPanelVisible(false);
       });
     }
@@ -5359,7 +5462,11 @@ class ChatPortalClient {
     });
 
     this.initTasksPanelGrid();
-    this.setTasksPanelVisible(false);
+    this.tasksPanelUserHidden = this.readTasksPanelPreference();
+    this.setTasksPanelVisible(!this.tasksPanelUserHidden);
+    if (typeof document !== "undefined" && document.documentElement) {
+      document.documentElement.removeAttribute("data-portal-tasks-collapsed");
+    }
   }
 
   initInboxPanel() {
@@ -5606,77 +5713,34 @@ class ChatPortalClient {
     }
   }
 
+  readTasksPanelPreference() {
+    try {
+      if (typeof window === "undefined" || !window.localStorage) return false;
+      return window.localStorage.getItem(this.tasksPanelStorageKey) === "true";
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  persistTasksPanelPreference(collapsed) {
+    try {
+      if (typeof window === "undefined" || !window.localStorage) return;
+      window.localStorage.setItem(this.tasksPanelStorageKey, collapsed ? "true" : "false");
+    } catch (_error) {
+      // Ignore storage failures.
+    }
+  }
+
   setTasksPanelVisible(visible) {
     const panel = this.elements.tasksPanel;
     if (!panel) return;
-    const shouldShow = Boolean(visible);
-    const isHidden = panel.hasAttribute("hidden");
-
-    if (panel._tasksPanelOpenRaf) {
-      cancelAnimationFrame(panel._tasksPanelOpenRaf);
-      panel._tasksPanelOpenRaf = null;
+    panel.removeAttribute("hidden");
+    panel.dataset.panelState = visible ? "open" : "closed";
+    if (this.elements.tasksOpenBtn) {
+      this.elements.tasksOpenBtn.setAttribute("aria-expanded", visible ? "true" : "false");
     }
-    if (panel._tasksPanelCloseTimer) {
-      clearTimeout(panel._tasksPanelCloseTimer);
-      panel._tasksPanelCloseTimer = null;
-    }
-
-    if (shouldShow) {
-      if (!isHidden && panel.dataset.panelState === "open") {
-        this.setTasksPanelGridActive(true);
-        this.updateTasksOpenButton();
-        return;
-      }
-
-      // Start from the closed state so the transition can animate in.
-      panel.dataset.panelState = "closed";
-      panel.removeAttribute("hidden");
-
-      // Force reflow so the browser picks up the starting transform/opacity before we open.
-      void panel.offsetWidth;
-
-      panel._tasksPanelOpenRaf = requestAnimationFrame(() => {
-        panel.dataset.panelState = "open";
-        panel._tasksPanelOpenRaf = null;
-      });
-
-      this.setTasksPanelGridActive(true);
-      this.updateTasksOpenButton();
-      return;
-    }
-
-    if (isHidden) {
-      panel.dataset.panelState = "closed";
-      this.setTasksPanelGridActive(false);
-      this.updateTasksOpenButton();
-      return;
-    }
-
-    const finalizeClose = () => {
-      panel.setAttribute("hidden", "");
-      panel.dataset.panelState = "closed";
-      this.setTasksPanelGridActive(false);
-      this.updateTasksOpenButton();
-    };
-
-    panel.dataset.panelState = "closed";
-
-    const onEnd = (event) => {
-      if (!event || event.target !== panel) return;
-      if (event.propertyName !== "transform" && event.propertyName !== "opacity") return;
-      panel.removeEventListener("transitionend", onEnd);
-      finalizeClose();
-    };
-    panel.addEventListener("transitionend", onEnd);
-
-    // Fallback in case transitionend doesn't fire (tab not visible, etc.)
-    panel._tasksPanelCloseTimer = window.setTimeout(() => {
-      panel._tasksPanelCloseTimer = null;
-      panel.removeEventListener("transitionend", onEnd);
-      if (!panel.hasAttribute("hidden")) {
-        finalizeClose();
-      }
-    }, 320);
+    this.setTasksPanelGridActive(Boolean(visible));
+    this.updateTasksOpenButton();
   }
 
   initTasksPanelGrid() {
@@ -5885,23 +5949,19 @@ class ChatPortalClient {
     const btn = this.elements.tasksOpenBtn;
     if (!btn) return;
 
-    const hasRuns = this.agentRuns && this.agentRuns.size > 0;
-    const hasVoiceCalls = this.activeVoiceCalls && this.activeVoiceCalls.size > 0;
-    const panelVisible = this.elements.tasksPanel && !this.elements.tasksPanel.hasAttribute("hidden");
+    const panelOpen =
+      this.elements.tasksPanel &&
+      !this.elements.tasksPanel.hasAttribute("hidden") &&
+      this.elements.tasksPanel.dataset.panelState !== "closed";
 
-    if (!hasRuns && !hasVoiceCalls) {
-      btn.setAttribute("hidden", "");
-      return;
-    }
-
-    if (panelVisible) {
+    if (panelOpen) {
       btn.setAttribute("hidden", "");
     } else {
       btn.removeAttribute("hidden");
     }
 
     let activeCount = this.getActiveRunCount();
-    if (!hasRuns && hasVoiceCalls) {
+    if (activeCount === 0 && this.activeVoiceCalls && this.activeVoiceCalls.size > 0) {
       activeCount = this.activeVoiceCalls.size;
     }
     if (this.elements.tasksCount) {
@@ -6000,7 +6060,7 @@ class ChatPortalClient {
       this.replaceAgentRunEvents(runId, events);
     });
 
-    if (this.agentRuns.size > 0 && !this.tasksPanelUserHidden) {
+    if (!this.tasksPanelUserHidden) {
       this.setTasksPanelVisible(true);
     } else {
       this.updateTasksOpenButton();
@@ -6041,13 +6101,7 @@ class ChatPortalClient {
     }
 
     if (!this.tasksPanelUserHidden) {
-      const status = this.agentRuns.get(runId) && this.agentRuns.get(runId).run ? this.agentRuns.get(runId).run.status : "";
-      const norm = (status || "").toString().toLowerCase();
-      if (norm && norm !== "completed" && norm !== "cancelled" && norm !== "failed") {
-        this.setTasksPanelVisible(true);
-      } else {
-        this.updateTasksOpenButton();
-      }
+      this.setTasksPanelVisible(true);
     } else {
       this.updateTasksOpenButton();
     }
@@ -7918,8 +7972,9 @@ class ChatPortalClient {
     });
   }
 
-  updateContentBlockElement(el, block) {
+  updateContentBlockElement(el, block, options = {}) {
     if (!el || !block || typeof block !== "object") return el;
+    const streaming = Boolean(options && options.streaming);
     const type = (block.type || "").toString().trim().toLowerCase();
     const payload = block.payload && typeof block.payload === "object" ? block.payload : {};
 
@@ -7935,13 +7990,28 @@ class ChatPortalClient {
     if (type === "paragraph" || type === "heading" || type === "list_item") {
       const content = Array.isArray(payload.content) ? payload.content : [];
       const rawText = this.inlineNodesToText(content);
-      const shouldRenderMarkdown = type !== "list_item" && this.shouldRenderInlineContentAsMarkdown(rawText);
+      const shouldRenderMarkdown =
+        type !== "list_item" &&
+        (streaming ? this.shouldRenderStreamingInlineContentAsMarkdown(rawText) : this.shouldRenderInlineContentAsMarkdown(rawText));
       const level = Number(payload.level) || 3;
       const expectedTag = type === "heading" ? (level <= 1 ? "H1" : level === 2 ? "H2" : "H3") : type === "list_item" ? "LI" : "P";
       const isMarkdownWrapper =
         Boolean(el && el.dataset && (el.dataset.markdownRichText === "true" || el.dataset.markdownTable === "true")) || el.tagName !== expectedTag;
       if (shouldRenderMarkdown || isMarkdownWrapper) {
-        const replacement = this.buildContentBlockElement(block);
+        if (el.tagName === "DIV" && el.dataset && el.dataset.markdownRichText === "true") {
+          el.className = "leading-relaxed space-y-2";
+          el.dataset.contentBlock = "true";
+          el.dataset.blockType = type;
+          el.dataset.contentBlockText = "true";
+          el.dataset.markdownRichText = "true";
+          const rendered = this.renderMarkdown(rawText);
+          if (el.innerHTML !== rendered) {
+            el.innerHTML = rendered;
+            this.applyMarkdownTableStyles(el);
+          }
+          return el;
+        }
+        const replacement = this.buildContentBlockElement(block, { streaming });
         if (replacement) {
           el.replaceWith(replacement);
           return replacement;
@@ -8206,8 +8276,9 @@ class ChatPortalClient {
     this.updateInlineToolCardsVisibility(visibilityRoot);
   }
 
-  buildContentBlockElement(block) {
+  buildContentBlockElement(block, options = {}) {
     if (!block || typeof block !== "object") return null;
+    const streaming = Boolean(options && options.streaming);
     const type = (block.type || "").toString().trim().toLowerCase();
     const blockId = (block.block_id || block.blockId || "").toString().trim();
     const payload = block.payload && typeof block.payload === "object" ? block.payload : {};
@@ -8310,7 +8381,9 @@ class ChatPortalClient {
 		      if (blockId) wrapper.dataset.blockId = blockId;
 		      const content = Array.isArray(payload.content) ? payload.content : [];
 		      const rawText = this.inlineNodesToText(content);
-		      const shouldRenderMarkdown = type !== "list_item" && this.shouldRenderInlineContentAsMarkdown(rawText);
+		      const shouldRenderMarkdown =
+            type !== "list_item" &&
+            (streaming ? this.shouldRenderStreamingInlineContentAsMarkdown(rawText) : this.shouldRenderInlineContentAsMarkdown(rawText));
 		      if (shouldRenderMarkdown) {
 	        const markdownWrapper = document.createElement("div");
 	        markdownWrapper.className = "leading-relaxed space-y-2";
@@ -10833,6 +10906,41 @@ class ChatPortalClient {
     const baseLabel = labelOverride || labelMap[mode] || labelMap.working;
     const isError = mode === "error";
     this.setSpinnerText(baseLabel, { pending: mode !== "done", isError });
+  }
+
+  extractToolSpinnerText(payload) {
+    if (!payload || typeof payload !== "object") return "";
+    let text = "";
+    if (typeof payload.spinner_text === "string") {
+      text = payload.spinner_text;
+    }
+    if (!text && payload.__ui && typeof payload.__ui === "object" && typeof payload.__ui.spinner_text === "string") {
+      text = payload.__ui.spinner_text;
+    }
+    return (text || "").toString().trim();
+  }
+
+  syncSpinnerFromActiveToolBlocks() {
+    if (!this.streamingBlocksEl) return;
+    const inflightIds = this.streamingToolBlockActiveIds;
+    if (!inflightIds || !inflightIds.size) {
+      this.setSpinnerText("", { pending: this.isStreaming && !this.streamFinished });
+      return;
+    }
+    const children = Array.from(this.streamingBlocksEl.children || []);
+    for (const child of children) {
+      if (!child || child === this.streamingStatusEl) continue;
+      const blockId = child.dataset ? (child.dataset.blockId || "").toString().trim() : "";
+      if (!blockId || !inflightIds.has(blockId)) continue;
+      const block = this.streamingContentBlocksById.get(blockId);
+      const payload = block && typeof block === "object" && block.payload && typeof block.payload === "object" ? block.payload : null;
+      const text = this.extractToolSpinnerText(payload);
+      if (text) {
+        this.setSpinnerText(text, { pending: true, force: true });
+        return;
+      }
+    }
+    this.setSpinnerText("", { pending: true });
   }
 
   clearStreamingIdleStatusTimer() {

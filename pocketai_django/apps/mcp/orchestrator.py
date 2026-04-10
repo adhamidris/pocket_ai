@@ -569,7 +569,6 @@ class McpOrchestratorService:
         stream_buffer = ""
         stream_dropped: list[str] = []
         initial_stream_started = False
-        active_phase_payloads: dict[str, dict[str, object]] = {}
         final_answer_started = False
         inline_response_blocks_detected = False
         dsml_skip_line = False
@@ -736,118 +735,14 @@ class McpOrchestratorService:
             return ""
 
         def _knowledge_phase_payload(tool_name: str, arguments: Mapping[str, object]) -> dict[str, object] | None:
-            if tool_name == "search_knowledge":
-                query = ""
-                raw_queries = arguments.get("queries")
-                if isinstance(raw_queries, list):
-                    for entry in raw_queries:
-                        query = str(entry or "").strip()
-                        if query:
-                            break
-                if not query:
-                    raw_query = arguments.get("query")
-                    query = str(raw_query).strip() if raw_query is not None else ""
-                label = f"Searching: {query[:80]}" if query else "Searching knowledge…"
-                meta: dict[str, object] = {}
-                if query:
-                    meta["query"] = query[:200]
-                return {"code": "searching", "label": label, "meta": meta, "compat_code": "searching_knowledge"}
-
-            if tool_name == "read_knowledge":
-                refs = arguments.get("refs")
-                if not isinstance(refs, list):
-                    refs = arguments.get("items")
-                if isinstance(refs, list) and refs:
-                    label = "Reading knowledge"
-                    try:
-                        label = f"Reading knowledge ({len(refs)})"
-                    except Exception:
-                        pass
-                    meta = {"refs_count": len(refs)}
-                    return {"code": "reading", "label": label, "meta": meta, "compat_code": "reading_document"}
-
-                # Legacy support (pre-refs): try to guess label from intent, but prefer generic if vague.
-                intent_hint = str(arguments.get("intent") or "").strip().lower()
-                base_label = "Reading knowledge"
-                if intent_hint == "table":
-                    base_label = "Analyzing dataset"
-                elif intent_hint == "text":
-                    base_label = "Reading document"
-
-                raw_id = arguments.get("document_id")
-                doc_id = str(raw_id).strip() if raw_id is not None else ""
-                short_id = f"{doc_id[:8]}…" if doc_id else ""
-                label = base_label if not short_id else f"{base_label}: {short_id}"
-
-                meta = {"document_id": doc_id, "intent": intent_hint} if doc_id else {}
-                return {"code": "reading", "label": label, "meta": meta, "compat_code": "reading_document"}
-
             return None
 
         def _emit_phase_start(phase: Mapping[str, object] | None) -> dict[str, object] | None:
-            if not phase:
-                return None
-            code = str(phase.get("code") or "").strip()
-            if not code:
-                return None
-            label = phase.get("label")
-            meta = phase.get("meta")
-            compat = phase.get("compat_code")
-            existing = active_phase_payloads.get(code)
-            if existing:
-                current_label = str(existing.get("label") or "").strip()
-                next_label = str(label or "").strip()
-                if next_label and next_label != current_label:
-                    existing["label"] = next_label
-                    if isinstance(meta, Mapping) and meta:
-                        existing_meta = existing.get("meta")
-                        if isinstance(existing_meta, dict):
-                            existing_meta.update(dict(meta))
-                        else:
-                            existing["meta"] = dict(meta)
-                    compat_code = str(existing.get("compat_code") or compat or "").strip()
-                    if compat_code:
-                        _status_event(compat_code, next_label, existing.get("meta"))
-                return {
-                    "code": code,
-                    "label": label,
-                    "meta": dict((meta or {})),
-                    "compat_code": compat,
-                }
-
-            # Keep the portal spinner minimal: emit a single phase status for searching/reading.
-            if isinstance(compat, str) and compat:
-                _status_event(compat, label, meta)
-            else:
-                _status_event(f"{code}_start", label, meta)
-            active_phase_payloads[code] = {
-                "code": code,
-                "label": label,
-                "meta": dict(meta or {}),
-                "compat_code": compat,
-            }
-            return {
-                "code": code,
-                "label": phase.get("label"),
-                "meta": dict((phase.get("meta") or {})),
-                "compat_code": phase.get("compat_code"),
-            }
+            return None
 
         def _emit_phase_complete(phase: Mapping[str, object] | None, *, snippet_total: int | None = None) -> None:
-            if not phase:
-                return
-            code = str(phase.get("code") or "").strip()
-            if not code:
-                return
-            label = phase.get("label")
-            meta = dict((phase.get("meta") or {}))
-            if snippet_total is not None:
-                if code == "searching":
-                    meta["result_count"] = snippet_total
-                elif code == "reading":
-                    meta["snippets_returned"] = snippet_total
-            active_phase_payloads.pop(code, None)
-            _status_event(f"{code}_complete", label, meta)
+            del phase, snippet_total
+            return None
 
         def _mark_answer_started(label: str | None = "Responding…") -> None:
             nonlocal final_answer_started
@@ -878,40 +773,21 @@ class McpOrchestratorService:
                     normal_calls.append(tool_call)
             return normal_calls, portal_calls
 
-        def _prime_phase_starts(tool_calls: Sequence[Mapping[str, object]]) -> None:
-            for tool_call in tool_calls:
-                tool_name = self._tool_name(tool_call)
-                if not self._is_knowledge_tool(tool_name):
-                    continue
-                arguments = self._tool_arguments(tool_call)
-                phase = _knowledge_phase_payload(tool_name, arguments)
-                _emit_phase_start(phase)
-
-        def _on_stream_tool_call_start(tool_call: Mapping[str, object] | None) -> None:
-            if not tool_call:
-                return
-            try:
-                tool_name = self._tool_name(tool_call)
-                if not self._is_knowledge_tool(tool_name):
-                    return
-                arguments = self._tool_arguments(tool_call)
-            except Exception:
-                return
-            phase = _knowledge_phase_payload(tool_name, arguments)
-            if isinstance(phase, Mapping):
-                phase_code = str(phase.get("code") or "").strip()
-                phase_label = str(phase.get("label") or "").strip()
-                # Streaming tool-calls can begin before arguments are fully available.
-                # Avoid emitting generic labels that would immediately "upgrade" and flash in the UI.
-                if phase_code == "searching" and phase_label in {"Searching knowledge…", "Searching knowledge..."}:
-                    return
-                if phase_code == "reading":
-                    lowered = phase_label.lower()
-                    if lowered == "reading document" or lowered == "scanning document":
-                        return
-                    if lowered.startswith("reading document:") or lowered.startswith("scanning document:"):
-                        return
-            _emit_phase_start(phase)
+        def _tool_spinner_text(arguments: Mapping[str, object] | None) -> str:
+            if not isinstance(arguments, Mapping):
+                return ""
+            text = ""
+            raw_ui = arguments.get("__ui")
+            if isinstance(raw_ui, Mapping):
+                raw_text = raw_ui.get("spinner_text")
+                text = str(raw_text or "").strip() if raw_text is not None else ""
+            if not text:
+                raw_text = arguments.get("spinner_text")
+                text = str(raw_text or "").strip() if raw_text is not None else ""
+            if not text:
+                return ""
+            text = " ".join(text.split())
+            return self._clip_text(text, 160)
 
         def _on_stream_tool_call_delta(tool_call: Mapping[str, object] | None) -> None:
             if not tool_call:
@@ -1121,7 +997,7 @@ class McpOrchestratorService:
                 messages=primary_messages,
                 tools=initial_tools,
                 on_stream_delta=_first_stream_chunk if streaming_allowed else None,
-                on_tool_call_start=_on_stream_tool_call_start,
+                on_tool_call_start=None,
                 on_tool_call_delta=_on_stream_tool_call_delta,
                 tool_context=tool_context,
                 on_reasoning_event=on_reasoning_event,
@@ -1139,8 +1015,6 @@ class McpOrchestratorService:
                 on_tool_decision("used" if first_stream_tool_calls else "no_tools")
             except Exception:  # pragma: no cover - defensive
                 logger.exception("on_tool_decision callback failed")
-        if first_stream_tool_calls:
-            _prime_phase_starts(first_stream_tool_calls)
         first_content_raw = ""
         if first_stream_message:
             first_content_raw = str(first_stream_message.get("content") or "").strip()
@@ -1250,11 +1124,7 @@ class McpOrchestratorService:
                                     "snippets": [],
                                 }
 
-                        knowledge_phase: dict[str, object] | None = None
-                        # Only emit visitor-visible “searching/reading” phases for real tool execution.
-                        # Policy short-circuits should not show a “Searching…” spinner.
-                        if self._is_knowledge_tool(tool_name) and not policy_tool_result:
-                            knowledge_phase = _emit_phase_start(_knowledge_phase_payload(tool_name, arguments))
+                        ui_spinner_text = _tool_spinner_text(raw_arguments)
 
                         # Record the signature of the tool call after any hint injection so we can
                         # detect no-progress loops.
@@ -1513,6 +1383,8 @@ class McpOrchestratorService:
                                                     },
                                                     "input": dict(redacted_input),
                                                 }
+                                                if ui_spinner_text:
+                                                    remote_event_payload["spinner_text"] = ui_spinner_text
                                                 if defaults_applied:
                                                     remote_event_payload["defaults_applied"] = list(defaults_applied)
                                                 if on_tool_event:
@@ -1548,6 +1420,8 @@ class McpOrchestratorService:
                                                 "tool_name": tool_name,
                                                 "kind": "email" if is_email_tool else "mcp_internal",
                                             }
+                                            if ui_spinner_text:
+                                                internal_event_payload["spinner_text"] = ui_spinner_text
                                             # Keep internal tool inputs minimal; portal UI should render
                                             # user-facing results via dedicated blocks (attachments, etc.)
                                             # rather than surfacing full tool arguments.
@@ -2021,8 +1895,6 @@ class McpOrchestratorService:
                         if isinstance(tool_result, Mapping):
                             tool_status_value = str(tool_result.get("status") or "").strip().lower()
                         iteration_executed_tools.append((tool_name, tool_status_value))
-                        if knowledge_phase:
-                            _emit_phase_complete(knowledge_phase, snippet_total=_snippet_count(tool_result))
                         limits = self._prompt_compaction_limits()
                         prompt_tool_result: object
                         if isinstance(tool_result, Mapping):
@@ -2281,7 +2153,7 @@ class McpOrchestratorService:
                         messages=loop_messages,
                         tools=tools_for_iteration,
                         on_stream_delta=_answer_stream_chunk if streaming_allowed else None,
-                        on_tool_call_start=_on_stream_tool_call_start,
+                        on_tool_call_start=None,
                         on_tool_call_delta=_on_stream_tool_call_delta,
                         tool_context=tool_context,
                         on_reasoning_event=on_reasoning_event,
@@ -2355,9 +2227,7 @@ class McpOrchestratorService:
                                 single_pass_candidate = raw_content.strip()
                             break
 
-                    if next_tool_calls:
-                        _prime_phase_starts(next_tool_calls)
-                    else:
+                    if not next_tool_calls:
                         _mark_answer_started()
                     # Append the assistant turn (empty content if tools present).
                     assistant_turn: dict[str, object] = {

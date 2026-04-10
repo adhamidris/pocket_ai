@@ -16,7 +16,7 @@ CODE_TEXT_LIMIT = 4000
 ALLOWED_LINK_SCHEMES = {"http", "https", "mailto"}
 ALLOWED_BLOCK_TYPES = {"paragraph", "heading", "list", "list_item", "quote", "code_block", "table"}
 ALLOWED_INLINE_MARKS = {"bold", "italic", "code"}
-ALLOWED_BLOCK_OPS = {"append_inline", "append_code", "append_table_row"}
+ALLOWED_BLOCK_OPS = {"append_inline", "append_code", "append_table_row", "set_table_cell_text"}
 
 TABLE_CELL_LIMIT = 12
 TABLE_ROW_LIMIT = 60
@@ -403,6 +403,29 @@ def coerce_block_ops(value: object) -> list[dict[str, object]]:
             if isinstance(rtl, bool):
                 row_out["rtl"] = rtl
             ops_out.append({"op": "append_table_row", **row_out})
+        elif op_type == "set_table_cell_text":
+            try:
+                row_index = int(entry.get("row_index"))
+                cell_index = int(entry.get("cell_index"))
+            except (TypeError, ValueError):
+                continue
+            if row_index < 0 or row_index >= TABLE_ROW_LIMIT or cell_index < 0 or cell_index >= TABLE_CELL_LIMIT:
+                continue
+            text_value = entry.get("text")
+            if text_value is None:
+                text_out = ""
+            elif isinstance(text_value, str):
+                text_out = text_value
+            else:
+                text_out = str(text_value)
+            ops_out.append(
+                {
+                    "op": "set_table_cell_text",
+                    "row_index": row_index,
+                    "cell_index": cell_index,
+                    "text": text_out,
+                }
+            )
     return ops_out
 
 
@@ -514,6 +537,41 @@ def apply_block_ops(block: dict[str, object], ops: Iterable[Mapping[str, object]
                 row_out["rtl"] = rtl
             rows.append(row_out)
             payload["rows"] = rows[:TABLE_ROW_LIMIT]
+        elif op_type == "set_table_cell_text":
+            try:
+                row_index = int(op.get("row_index"))
+                cell_index = int(op.get("cell_index"))
+            except (TypeError, ValueError):
+                continue
+            if row_index < 0 or row_index >= TABLE_ROW_LIMIT or cell_index < 0 or cell_index >= TABLE_CELL_LIMIT:
+                continue
+            rows_raw = payload.get("rows")
+            rows: list[dict[str, object]] = list(rows_raw) if isinstance(rows_raw, list) else []
+            while len(rows) <= row_index and len(rows) < TABLE_ROW_LIMIT:
+                rows.append({"cells": []})
+            if row_index >= len(rows):
+                continue
+            row_payload = dict(rows[row_index]) if isinstance(rows[row_index], Mapping) else {"cells": []}
+            cells_raw = row_payload.get("cells")
+            cells: list[str] = list(cells_raw) if isinstance(cells_raw, list) else []
+            while len(cells) <= cell_index and len(cells) < TABLE_CELL_LIMIT:
+                cells.append("")
+            if cell_index >= len(cells):
+                continue
+            text_value = op.get("text")
+            if text_value is None:
+                text_out = ""
+            elif isinstance(text_value, str):
+                text_out = text_value
+            else:
+                text_out = str(text_value)
+            cells[cell_index] = text_out
+            row_payload["cells"] = cells[:TABLE_CELL_LIMIT]
+            rtl = op.get("rtl")
+            if isinstance(rtl, bool):
+                row_payload["rtl"] = rtl
+            rows[row_index] = row_payload
+            payload["rows"] = rows[:TABLE_ROW_LIMIT]
     block["payload"] = payload
 
 
@@ -546,6 +604,30 @@ def _split_markdown_table_cells(line: str) -> list[str]:
         raw = raw[:-1]
     cells = [part.strip() for part in raw.split("|")]
     return cells[:TABLE_CELL_LIMIT]
+
+
+def _parse_partial_markdown_table_row(line: str, *, expected_columns: int | None = None) -> list[str] | None:
+    raw = (line or "").rstrip("\r")
+    stripped = raw.strip()
+    if not stripped:
+        return None
+    if stripped.startswith(">") or stripped.startswith("```"):
+        return None
+    if _parse_markdown_table_divider(stripped) is not None:
+        return None
+    if not (stripped.startswith("|") or "|" in stripped):
+        return None
+    cells = _split_markdown_table_cells(stripped)
+    if not cells:
+        return None
+    if expected_columns is not None:
+        if len(cells) < expected_columns:
+            cells = cells + [""] * (expected_columns - len(cells))
+        elif len(cells) > expected_columns:
+            cells = cells[:expected_columns]
+    if not any(cell for cell in cells):
+        return None
+    return cells
 
 
 def _looks_like_markdown_table_line(line: str) -> bool:
@@ -639,6 +721,8 @@ class RichBlockStreamBuilder:
         self.active_code_block_id: str | None = None
         self.pending_table_header_line: str | None = None
         self.active_table_id: str | None = None
+        self.active_table_partial_row_index: int | None = None
+        self.active_table_partial_cells: list[str] = []
 
     # Backwards-compatible computed accessors for legacy code paths.
     @property
@@ -725,6 +809,8 @@ class RichBlockStreamBuilder:
 
     def _close_active_table(self) -> None:
         self.active_table_id = None
+        self.active_table_partial_row_index = None
+        self.active_table_partial_cells = []
 
     def _table_block(self) -> dict[str, object] | None:
         if not self.active_table_id:
@@ -798,6 +884,65 @@ class RichBlockStreamBuilder:
                 "ops": [{"op": "append_table_row", "cells": row_cells}],
             },
         }]
+
+    def _sync_partial_table_row(self, line: str, *, finalize: bool) -> list[dict[str, object]]:
+        table_block = self._table_block()
+        if not table_block:
+            return []
+        payload = table_block.get("payload")
+        payload_out: dict[str, object] = dict(payload) if isinstance(payload, Mapping) else {}
+        columns = payload_out.get("columns")
+        column_count = len(columns) if isinstance(columns, list) else 0
+        if column_count <= 1:
+            return []
+        partial_cells = _parse_partial_markdown_table_row(line, expected_columns=column_count)
+        if not partial_cells:
+            if finalize:
+                self.active_table_partial_row_index = None
+                self.active_table_partial_cells = []
+            return []
+
+        rows_value = payload_out.get("rows")
+        rows: list[dict[str, object]] = list(rows_value) if isinstance(rows_value, list) else []
+        row_index = self.active_table_partial_row_index
+        if row_index is None:
+            row_index = len(rows)
+            if row_index >= TABLE_ROW_LIMIT:
+                return []
+
+        previous_cells = list(self.active_table_partial_cells)
+        ops: list[dict[str, object]] = []
+        for cell_index, cell_text in enumerate(partial_cells[:TABLE_CELL_LIMIT]):
+            previous_text = previous_cells[cell_index] if cell_index < len(previous_cells) else None
+            if previous_text == cell_text:
+                continue
+            ops.append(
+                {
+                    "op": "set_table_cell_text",
+                    "row_index": row_index,
+                    "cell_index": cell_index,
+                    "text": cell_text,
+                }
+            )
+
+        if not ops:
+            if finalize:
+                self.active_table_partial_row_index = None
+                self.active_table_partial_cells = []
+            return []
+
+        apply_block_ops(table_block, ops)
+        self.active_table_partial_row_index = None if finalize else row_index
+        self.active_table_partial_cells = [] if finalize else list(partial_cells[:TABLE_CELL_LIMIT])
+        return [
+            {
+                "type": "block_delta",
+                "payload": {
+                    "block_id": str(table_block.get("block_id") or ""),
+                    "ops": ops,
+                },
+            }
+        ]
 
     def _flush_pending_table_header(self) -> list[dict[str, object]]:
         if not self.pending_table_header_line:
@@ -1085,6 +1230,8 @@ class RichBlockStreamBuilder:
 
         if not self.in_code_block and not line_ended and not had_context:
             if self.pending_table_header_line or self.active_table_id:
+                if self.active_table_id:
+                    events.extend(self._sync_partial_table_row(self.pending_line, finalize=False))
                 return events
             if _looks_like_partial_markdown_table_candidate(self.pending_line):
                 return events
@@ -1092,6 +1239,12 @@ class RichBlockStreamBuilder:
         if not self.in_code_block and line_ended:
             line = self.pending_line.rstrip("\r")
             if self.active_table_id:
+                had_partial_row = self.active_table_partial_row_index is not None
+                partial_events = self._sync_partial_table_row(line, finalize=True)
+                if partial_events or had_partial_row:
+                    self.pending_line = ""
+                    self._reset_line_state()
+                    return events + partial_events
                 row_events = self._append_table_row(line)
                 if row_events:
                     self.pending_line = ""
@@ -1156,6 +1309,12 @@ class RichBlockStreamBuilder:
 
         line = self.pending_line.rstrip("\r")
         if self.active_table_id:
+            had_partial_row = self.active_table_partial_row_index is not None
+            partial_events = self._sync_partial_table_row(line, finalize=True)
+            if partial_events or had_partial_row:
+                self.pending_line = ""
+                self._reset_line_state()
+                return events + partial_events
             row_events = self._append_table_row(line)
             if row_events:
                 self.pending_line = ""

@@ -2609,7 +2609,99 @@
   /* Simple sidebar collapse */
   [data-session-sidebar] {
     position: relative;
+    overflow: hidden;
     transition: width 0.2s ease;
+  }
+  [data-session-sidebar] [data-session-history] {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  [data-session-sidebar] [data-sessions-list]:not(.hidden) {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  [data-session-sidebar] [data-sessions-items] {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+  }
+  [data-session-sidebar] [data-sidebar-account] {
+    margin-top: auto;
+    padding: 0.75rem;
+    border-top: 1px solid hsl(var(--border) / 0.45);
+    background: hsl(var(--background) / 0.55);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+  [data-session-sidebar] [data-sidebar-account-card] {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.75rem;
+    border-radius: 1rem;
+    border: 1px solid hsl(var(--border) / 0.5);
+    background: hsl(var(--card) / 0.72);
+    color: hsl(var(--foreground));
+    transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+  }
+  [data-session-sidebar] a[data-sidebar-account-card]:hover {
+    background: hsl(var(--card) / 0.94);
+    border-color: hsl(var(--border) / 0.8);
+    transform: translateY(-1px);
+  }
+  [data-session-sidebar] [data-sidebar-account-avatar] {
+    width: 2.25rem;
+    height: 2.25rem;
+    border-radius: 999px;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: hsl(var(--foreground) / 0.12);
+    color: hsl(var(--foreground));
+    font-size: 0.95rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  [data-session-sidebar] [data-sidebar-account-meta] {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+  [data-session-sidebar] [data-sidebar-account-name] {
+    font-size: 0.96rem;
+    font-weight: 600;
+    line-height: 1.2;
+    letter-spacing: -0.025em;
+  }
+  [data-session-sidebar] [data-sidebar-account-tenant] {
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: hsl(var(--primary));
+    line-height: 1.25;
+  }
+  [data-session-sidebar] [data-sidebar-account-action] {
+    margin-left: auto;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 0.75rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: hsl(var(--muted-foreground));
+    background: hsl(var(--muted) / 0.45);
+    border: 1px solid hsl(var(--border) / 0.45);
+    transition: opacity 0.2s ease, width 0.2s ease, margin 0.2s ease;
   }
   [data-session-sidebar][data-collapsed="true"] {
     width: 4.5rem;
@@ -2646,6 +2738,32 @@
     right: 50%;
     transform: translateX(50%);
   }
+  [data-session-sidebar][data-collapsed="true"] [data-sidebar-account] {
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
+  [data-session-sidebar][data-collapsed="true"] [data-sidebar-account-card] {
+    width: 3rem;
+    height: 3rem;
+    margin: 0 auto;
+    justify-content: center;
+    gap: 0;
+    padding: 0;
+    border-radius: 1rem;
+    overflow: hidden;
+  }
+  [data-session-sidebar][data-collapsed="true"] [data-sidebar-account-avatar] {
+    width: 2.25rem;
+    height: 2.25rem;
+  }
+  [data-session-sidebar][data-collapsed="true"] [data-sidebar-account-action] {
+    width: 0;
+    margin-left: 0;
+    opacity: 0;
+    overflow: hidden;
+    border-width: 0;
+    padding: 0;
+  }
 
   /* ------------------------------------------------------------------ */
   /* Tasks Panel (Agent Runs) */
@@ -2656,6 +2774,7 @@
 
   [data-chat-portal] [data-tasks-panel] {
     display: none;
+    flex: 0 0 auto;
     width: 360px;
     min-width: 320px;
     max-width: 420px;
@@ -2667,13 +2786,21 @@
     overflow: hidden;
     opacity: 1;
     transform: translateX(0);
-    transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 200ms ease;
-    will-change: transform, opacity;
+    transition:
+      width 220ms cubic-bezier(0.22, 1, 0.36, 1),
+      min-width 220ms cubic-bezier(0.22, 1, 0.36, 1),
+      max-width 220ms cubic-bezier(0.22, 1, 0.36, 1),
+      transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 200ms ease;
+    will-change: width, min-width, max-width, transform, opacity;
   }
 
   [data-chat-portal] [data-tasks-panel][data-panel-state="closed"] {
-    opacity: 0;
-    transform: translateX(12px);
+    width: 4.25rem;
+    min-width: 4.25rem;
+    max-width: 4.25rem;
+    opacity: 1;
+    transform: translateX(0);
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -2684,6 +2811,49 @@
     [data-chat-portal] [data-tasks-panel][data-panel-state="closed"] {
       transform: none;
     }
+  }
+
+  [data-chat-portal] [data-tasks-panel][data-panel-state="closed"] .portal-tasks-header,
+  [data-chat-portal] [data-tasks-panel][data-panel-state="closed"] .portal-tasks-body {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateX(10px);
+  }
+
+  [data-chat-portal] [data-tasks-panel][data-panel-state="closed"] .portal-tasks-header {
+    padding-left: 0;
+    padding-right: 0;
+    border-bottom-color: transparent;
+  }
+
+  [data-chat-portal] [data-tasks-panel][data-panel-state="closed"] .portal-tasks-body {
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  [data-chat-portal] [data-tasks-panel][data-panel-state="closed"] .portal-tasks-grid {
+    opacity: 0;
+  }
+
+  html[data-portal-tasks-collapsed="true"] [data-chat-portal] [data-tasks-panel] {
+    width: 4.25rem;
+    min-width: 4.25rem;
+    max-width: 4.25rem;
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  html[data-portal-tasks-collapsed="true"] [data-chat-portal] [data-tasks-panel] .portal-tasks-header,
+  html[data-portal-tasks-collapsed="true"] [data-chat-portal] [data-tasks-panel] .portal-tasks-body {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateX(10px);
+  }
+
+  html[data-portal-tasks-collapsed="true"] [data-chat-portal] [data-tasks-panel] .portal-tasks-grid {
+    opacity: 0;
   }
 
   [data-chat-portal] .portal-tasks-grid {
@@ -2726,6 +2896,7 @@
     background: hsl(var(--primary));
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
+    transition: opacity 160ms ease, transform 160ms ease, padding 160ms ease, border-color 160ms ease;
   }
 
   [data-chat-portal] .portal-tasks-title {
@@ -2816,6 +2987,7 @@
     min-height: 0;
     padding: 0.85rem 0.85rem 1rem;
     overflow-y: auto;
+    transition: opacity 160ms ease, transform 160ms ease, padding 160ms ease;
   }
 
   [data-chat-portal] .portal-tasks-empty {
@@ -3419,11 +3591,11 @@
   [data-chat-portal] .portal-tasks-open-btn {
     position: absolute;
     top: 1rem;
-    right: 4rem;
-    z-index: 50;
-    width: 40px;
-    height: 40px;
-    border-radius: 12px;
+    left: 50%;
+    z-index: 8;
+    width: 2.75rem;
+    height: 2.75rem;
+    border-radius: 0.9rem;
     display: none;
     align-items: center;
     justify-content: center;
@@ -3431,7 +3603,8 @@
     background: hsl(var(--background) / 0.86);
     color: hsl(var(--muted-foreground));
     backdrop-filter: blur(10px);
-    transition: background 160ms ease, color 160ms ease, border-color 160ms ease, transform 120ms ease;
+    transform: translateX(-50%);
+    transition: background 160ms ease, color 160ms ease, border-color 160ms ease, transform 120ms ease, opacity 160ms ease;
   }
 
   @media (min-width: 1024px) {
@@ -3444,7 +3617,22 @@
     color: hsl(var(--foreground));
     background: hsl(var(--muted) / 0.55);
     border-color: hsl(var(--border));
-    transform: translateY(-1px);
+    transform: translate(-50%, -1px);
+  }
+
+  [data-chat-portal] [data-tasks-panel][data-panel-state="open"] .portal-tasks-open-btn {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  [data-chat-portal] [data-tasks-panel][data-panel-state="closed"] .portal-tasks-open-btn {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  html[data-portal-tasks-collapsed="true"] [data-chat-portal] .portal-tasks-open-btn {
+    opacity: 1;
+    pointer-events: auto;
   }
 
   [data-chat-portal] .portal-tasks-open-btn__badge {
@@ -3676,7 +3864,7 @@
     </div>
 
     <!-- Session History -->
-    <div class="flex-1 overflow-y-auto custom-scrollbar" data-session-history data-sidebar-content>
+    <div class="overflow-y-auto custom-scrollbar" data-session-history data-sidebar-content>
       <!-- Loading state -->
       <div class="px-3 py-2" data-sessions-loading>
         <div class="animate-pulse flex flex-col gap-1.5">
@@ -3699,10 +3887,36 @@
           </svg>
           <span class="uppercase tracking-wide">Recents</span>
         </button>
-        <div class="px-3 pb-3 space-y-0.5" data-sessions-items>
+        <div class="px-3 pb-3 space-y-0.5 custom-scrollbar" data-sessions-items>
           <!-- Session items will be injected here by JavaScript -->
         </div>
       </div>
+    </div>
+
+    <div data-sidebar-account>
+      {% if request.user.is_authenticated %}
+        {% firstof request.user.first_name request.user.get_short_name request.user.get_username "Account" as portal_sidebar_user_name %}
+        <a href="{% url 'frontend:dashboard' %}" data-sidebar-account-card>
+          <span data-sidebar-account-avatar aria-hidden="true">{{ portal_sidebar_user_name|slice:":1"|upper }}</span>
+          <span data-sidebar-account-meta data-sidebar-content>
+            <span class="truncate" data-sidebar-account-name>{{ portal_sidebar_user_name }}</span>
+            <span class="truncate" data-sidebar-account-tenant>{{ portal.business.name }}</span>
+          </span>
+          <span data-sidebar-account-action aria-hidden="true">
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 18l6-6-6-6"></path>
+            </svg>
+          </span>
+        </a>
+      {% else %}
+        <div data-sidebar-account-card>
+          <span data-sidebar-account-avatar aria-hidden="true">{{ portal.business.name|slice:":1"|upper }}</span>
+          <span data-sidebar-account-meta data-sidebar-content>
+            <span class="truncate" data-sidebar-account-name>Guest</span>
+            <span class="truncate" data-sidebar-account-tenant>{{ portal.business.name }}</span>
+          </span>
+        </div>
+      {% endif %}
     </div>
   </aside>
   <script>
@@ -3730,6 +3944,25 @@
       } catch(e) {}
     })();
   </script>
+  <script>
+    (function() {
+      try {
+        var key = "portal_tasks_panel_collapsed_{{ portal.business.slug }}_{{ portal.agent.slug }}";
+        if (localStorage.getItem(key) === 'true') {
+          document.documentElement.setAttribute('data-portal-tasks-collapsed', 'true');
+          var style = document.createElement('style');
+          style.id = 'tasks-panel-no-transition';
+          style.innerHTML = '[data-chat-portal] [data-tasks-panel], [data-chat-portal] [data-tasks-panel] * { transition: none !important; }';
+          document.head.appendChild(style);
+          requestAnimationFrame(function() {
+            setTimeout(function() {
+              if (style.parentNode) style.parentNode.removeChild(style);
+            }, 50);
+          });
+        }
+      } catch(e) {}
+    })();
+  </script>
 
   <!-- Main Chat Area -->
   <main class="flex-1 flex flex-col min-w-0 bg-background relative" data-chat-main>
@@ -3752,17 +3985,6 @@
         <path d="M21 15l-3 6H6l-3-6"></path>
       </svg>
       <span class="portal-inbox-open-btn__badge" data-inbox-count hidden>0</span>
-    </button>
-    <button type="button" class="portal-tasks-open-btn" data-tasks-open-btn hidden aria-label="Open tasks">
-      <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <line x1="8" y1="6" x2="21" y2="6"></line>
-        <line x1="8" y1="12" x2="21" y2="12"></line>
-        <line x1="8" y1="18" x2="21" y2="18"></line>
-        <circle cx="4" cy="6" r="1"></circle>
-        <circle cx="4" cy="12" r="1"></circle>
-        <circle cx="4" cy="18" r="1"></circle>
-      </svg>
-      <span class="portal-tasks-open-btn__badge" data-tasks-count hidden>0</span>
     </button>
     <!-- Mobile Header -->
     <div class="lg:hidden flex items-center justify-between p-4 border-b border-border/50 bg-background/80 backdrop-blur-sm sticky top-0 z-10">
@@ -3912,7 +4134,18 @@
   </main>
 
   <!-- Tasks Panel (Agent Runs) -->
-  <aside hidden data-tasks-panel>
+  <aside hidden data-tasks-panel data-panel-state="open">
+    <button type="button" class="portal-tasks-open-btn" data-tasks-open-btn aria-label="Open tasks">
+      <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <line x1="8" y1="6" x2="21" y2="6"></line>
+        <line x1="8" y1="12" x2="21" y2="12"></line>
+        <line x1="8" y1="18" x2="21" y2="18"></line>
+        <circle cx="4" cy="6" r="1"></circle>
+        <circle cx="4" cy="12" r="1"></circle>
+        <circle cx="4" cy="18" r="1"></circle>
+      </svg>
+      <span class="portal-tasks-open-btn__badge" data-tasks-count hidden>0</span>
+    </button>
     <div class="portal-tasks-header" data-tasks-header>
       <div class="portal-tasks-title">
         <span class="portal-tasks-title-icon" aria-hidden="true">
@@ -3927,7 +4160,7 @@
         </span>
         <span>Tasks</span>
       </div>
-      <button type="button" class="portal-tasks-close-btn" data-tasks-close-btn aria-label="Close tasks">
+      <button type="button" class="portal-tasks-close-btn" data-tasks-close-btn aria-label="Collapse tasks">
         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M18 6L6 18"></path>
           <path d="M6 6l12 12"></path>

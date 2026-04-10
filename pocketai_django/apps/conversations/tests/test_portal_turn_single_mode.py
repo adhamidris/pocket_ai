@@ -16,6 +16,7 @@ from apps.conversations.models import (
     ConversationToolApproval,
     ConversationToolApprovalStatus,
     PortalTurn,
+    PortalTurnEvent,
     PortalTurnStatus,
 )
 from apps.conversations.content_blocks import extract_text_from_content_blocks
@@ -605,3 +606,32 @@ class PortalTurnSingleModeTests(TransactionTestCase):
 
         approval.refresh_from_db()
         self.assertEqual(approval.turn_id, first_turn.id)
+
+    def test_tool_event_preserves_spinner_text_in_block_payload(self) -> None:
+        turn = PortalTurn.objects.create(
+            conversation=self.conversation,
+            agent_profile=self.agent,
+            status=PortalTurnStatus.STREAMING,
+            user_message="Find fees",
+        )
+        runner = PortalTurnRunner(turn=turn, conversation=self.conversation)
+
+        runner.builder.on_tool_event(
+            {
+                "event_id": "evt_spinner_1",
+                "phase": "started",
+                "status": "running",
+                "tool_call_id": "call_spinner_1",
+                "tool_name": "search_knowledge",
+                "kind": "tool",
+                "spinner_text": "Searching for account fees",
+            }
+        )
+
+        event = PortalTurnEvent.objects.filter(turn=turn, type="block_tool_use").order_by("-seq").first()
+        self.assertIsNotNone(event)
+        block = event.payload.get("block") if isinstance(event.payload, dict) else None
+        self.assertIsInstance(block, dict)
+        payload = block.get("payload") if isinstance(block, dict) else None
+        self.assertIsInstance(payload, dict)
+        self.assertEqual(payload.get("spinner_text"), "Searching for account fees")

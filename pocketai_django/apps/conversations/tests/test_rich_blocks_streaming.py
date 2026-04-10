@@ -148,3 +148,45 @@ class RichBlockStreamingTests(SimpleTestCase):
         payload = blocks[0]["payload"]
         self.assertEqual([col["label"] for col in payload["columns"]], ["Segment", "Fee per Paper", "Maximum Cap"])
         self.assertEqual(payload["rows"], [{"cells": ["Plus", "EGP 20 per paper", "Max EGP 1,000"]}])
+
+    def test_streaming_partial_table_row_updates_live_cells(self) -> None:
+        builder = RichBlockStreamBuilder()
+
+        builder.feed_text("| Segment | Fee per Paper | Maximum Cap |\n")
+        builder.feed_text("| --- | --- | --- |\n")
+
+        first_partial = builder.feed_text("| Plus")
+        self.assertEqual(
+            [str(event.get("type") or "").strip().lower() for event in first_partial],
+            ["block_delta"],
+        )
+        first_ops = first_partial[0]["payload"]["ops"]
+        self.assertEqual(first_ops[0]["op"], "set_table_cell_text")
+        self.assertEqual(first_ops[0]["row_index"], 0)
+        self.assertEqual(first_ops[0]["cell_index"], 0)
+        self.assertEqual(first_ops[0]["text"], "Plus")
+
+        second_partial = builder.feed_text(" | EGP 20")
+        self.assertEqual(
+            [str(event.get("type") or "").strip().lower() for event in second_partial],
+            ["block_delta"],
+        )
+        second_ops = second_partial[0]["payload"]["ops"]
+        self.assertEqual(second_ops[0]["op"], "set_table_cell_text")
+        self.assertEqual(second_ops[0]["row_index"], 0)
+        self.assertEqual(second_ops[0]["cell_index"], 1)
+        self.assertEqual(second_ops[0]["text"], "EGP 20")
+
+        final_partial = builder.feed_text(" per paper | Max EGP 1,000 |\n")
+        self.assertEqual(
+            [str(event.get("type") or "").strip().lower() for event in final_partial],
+            ["block_delta"],
+        )
+
+        blocks = builder.snapshot()
+        self.assertEqual([block["type"] for block in blocks], ["table"])
+        payload = blocks[0]["payload"]
+        self.assertEqual(
+            payload["rows"],
+            [{"cells": ["Plus", "EGP 20 per paper", "Max EGP 1,000"]}],
+        )

@@ -257,7 +257,7 @@ html[dir="rtl"] [data-chat-portal] [data-inbox-panel] {
 }
 
 html[dir="rtl"] [data-chat-portal] [data-tasks-panel][data-panel-state="closed"] {
-  transform: translateX(-12px);
+  transform: translateX(0);
 }
 
 html[dir="rtl"] [data-chat-portal] .portal-task__result th,
@@ -293,8 +293,8 @@ html[dir="rtl"] [data-chat-portal] [data-theme-toggle] {
 }
 
 html[dir="rtl"] [data-chat-portal] .portal-tasks-open-btn {
+  left: 50%;
   right: auto;
-  left: 4rem;
 }
 
 html[dir="rtl"] [data-chat-portal] .portal-inbox-open-btn {

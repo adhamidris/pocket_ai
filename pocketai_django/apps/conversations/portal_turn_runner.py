@@ -549,6 +549,11 @@ class PortalTurnEventBuilder:
             "kind": kind,
             "tool_name": tool_name,
         }
+        spinner_text = event.get("spinner_text")
+        if spinner_text is not None:
+            spinner_label = _clip_debug_text(spinner_text, limit=160)
+            if spinner_label:
+                payload["spinner_text"] = spinner_label
 
         remote = event.get("remote") if isinstance(event.get("remote"), Mapping) else None
         if not remote:
