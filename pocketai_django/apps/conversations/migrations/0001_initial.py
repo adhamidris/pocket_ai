@@ -15,8 +15,6 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('accounts', '0001_initial'),
-        ('cases', '0002_initial'),
-        ('customers', '0001_initial'),
         ('integrations', '0001_initial'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
@@ -256,8 +254,6 @@ class Migration(migrations.Migration):
                 ('csat_recorded_at', models.DateTimeField(blank=True, null=True)),
                 ('agent_profile', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='conversations', to='accounts.agentprofile')),
                 ('business_profile', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='conversations', to='accounts.businessprofile')),
-                ('case', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='conversations', to='cases.case')),
-                ('customer', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='conversations', to='customers.customer')),
             ],
             options={
                 'db_table': 'conversations_conversation',

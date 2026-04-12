@@ -473,7 +473,7 @@ class ChatPortalService:
 
     def _conversation_queryset(self, *, include_messages: bool):
         queryset = (
-            Conversation.objects.select_related("business_profile", "agent_profile", "case")
+            Conversation.objects.select_related("business_profile", "agent_profile")
             .prefetch_related("agent_profile__action_permissions")
         )
         if include_messages:

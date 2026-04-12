@@ -49,9 +49,6 @@ class ConversationAdmin(admin.ModelAdmin):
         "session_token",
         "business_profile__name",
         "agent_profile__name",
-        "customer__display_name",
-        "customer__primary_email",
-        "customer__primary_phone",
     )
     ordering = ("-started_at",)
     readonly_fields = (
@@ -62,13 +59,13 @@ class ConversationAdmin(admin.ModelAdmin):
         "closed_at",
         "csat_recorded_at",
     )
-    autocomplete_fields = ("business_profile", "agent_profile", "customer", "case")
+    autocomplete_fields = ("business_profile", "agent_profile")
     actions = (close_conversations, expire_conversations)
 
     def get_queryset(self, request):
         qs = super().get_queryset(request)
         return (
-            qs.select_related("business_profile", "agent_profile", "customer", "case")
+            qs.select_related("business_profile", "agent_profile")
             .annotate(_messages_count=Count("messages", distinct=True))
             .annotate(_files_count=Count("files", distinct=True))
         )

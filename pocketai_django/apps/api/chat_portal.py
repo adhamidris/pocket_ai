@@ -710,15 +710,7 @@ _KNOWLEDGE_ONLY_TOOLS = frozenset({
 })
 
 # CRM tools that need planner for action extraction
-_CRM_TOOLS = frozenset({
-    "create_case",
-    "update_case_details",
-    "add_case_history",
-    "create_lead",
-    "create_customer",
-    "update_customer",
-    "get_customer",
-})
+_CRM_TOOLS = frozenset()
 
 
 def _has_crm_signals(stream_context: StreamingTurnContext | None, user_message: str) -> bool:
@@ -726,7 +718,7 @@ def _has_crm_signals(stream_context: StreamingTurnContext | None, user_message: 
     Detect if this turn has CRM-related signals that warrant running the planner.
 
     Returns True if:
-    - CRM tools were called (create_case, create_lead, etc.)
+    - A future CRM/action tool was called
     - Non-knowledge tools were called
     - User message contains identifiers (email, phone, digits)
     - User message contains complaint/escalation signals

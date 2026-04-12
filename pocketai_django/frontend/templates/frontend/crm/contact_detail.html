@@ -1,0 +1,220 @@
+{% extends "frontend/base_app.html" %}
+{% load i18n %}
+
+{% block title %}{{ contact.display_name }} | Pocket AI{% endblock %}
+
+{% block extra_head %}
+  {% include "frontend/crm/_crm_styles.html" %}
+{% endblock %}
+
+{% block content %}
+<div class="crm-page">
+  {% include "frontend/components/dashboard/sidebar.html" with active=crm_active user_name=user_name %}
+  <main class="crm-main">
+    <div class="crm-shell">
+      <section class="crm-hero">
+        <div class="crm-hero__inner">
+          <div class="crm-record-identity">
+            <div class="crm-avatar">{{ contact.display_name|slice:":2"|upper }}</div>
+            <div>
+              <span class="crm-eyebrow">{% trans "Contact Profile" %}</span>
+              <h1 class="crm-title">{{ contact.display_name }}</h1>
+              <p class="crm-subtitle">
+                {% if contact.title %}
+                  {{ contact.title }}
+                {% else %}
+                  {% trans "A canonical customer record that can represent an individual buyer or a company-side contact." %}
+                {% endif %}
+              </p>
+              <div class="crm-pill-row">
+                <span class="crm-pill">{{ contact.status|title }}</span>
+                {% if contact.primary_email %}<span class="crm-pill">{{ contact.primary_email }}</span>{% endif %}
+                {% if contact.primary_phone %}<span class="crm-pill">{{ contact.primary_phone }}</span>{% endif %}
+              </div>
+            </div>
+          </div>
+          <div class="crm-actions">
+            <a class="crm-button crm-button--ghost" href="{% url 'frontend:dashboard-crm-contacts' %}">{% trans "Back to Contacts" %}</a>
+            <a class="crm-button crm-button--primary" href="{% url 'frontend:dashboard-crm-imports' %}">{% trans "Open Imports" %}</a>
+          </div>
+        </div>
+      </section>
+
+      <div class="crm-detail-grid">
+        <aside class="crm-stack">
+          <section class="crm-card">
+            <div class="crm-card__body">
+              <div class="crm-section__header">
+                <div>
+                  <h2 class="crm-section__title">{% trans "Identity" %}</h2>
+                  <p class="crm-section__subtitle">{% trans "Quick read of the canonical record." %}</p>
+                </div>
+              </div>
+              <div class="crm-keyfacts">
+                <div class="crm-keyfacts__item">
+                  <div class="crm-keyfacts__label">{% trans "Email" %}</div>
+                  <div class="crm-keyfacts__value">{{ contact.primary_email|default:"—" }}</div>
+                </div>
+                <div class="crm-keyfacts__item">
+                  <div class="crm-keyfacts__label">{% trans "Phone" %}</div>
+                  <div class="crm-keyfacts__value">{{ contact.primary_phone|default:"—" }}</div>
+                </div>
+                <div class="crm-keyfacts__item">
+                  <div class="crm-keyfacts__label">{% trans "Source" %}</div>
+                  <div class="crm-keyfacts__value">{{ contact.source|default:"manual" }}</div>
+                </div>
+                <div class="crm-keyfacts__item">
+                  <div class="crm-keyfacts__label">{% trans "Tags" %}</div>
+                  <div class="crm-keyfacts__value">
+                    {% if contact.tags %}
+                      {{ contact.tags|join:", " }}
+                    {% else %}
+                      —
+                    {% endif %}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="crm-card">
+            <div class="crm-card__body">
+              <div class="crm-section__header">
+                <div>
+                  <h2 class="crm-section__title">{% trans "Company links" %}</h2>
+                  <p class="crm-section__subtitle">{% trans "Contacts can stand alone or connect to business accounts." %}</p>
+                </div>
+              </div>
+              {% with links=contact.company_links.all %}
+                {% if links %}
+                  <div class="crm-link-grid">
+                    {% for link in links %}
+                      <div class="crm-link-card">
+                        <div class="crm-link-card__title">{{ link.company.name }}</div>
+                        <div class="crm-link-card__meta">
+                          {% if link.relationship_title %}{{ link.relationship_title }}{% else %}{% trans "Relationship title not set" %}{% endif %}
+                          {% if link.is_primary %}<br>{% trans "Primary company link" %}{% endif %}
+                        </div>
+                      </div>
+                    {% endfor %}
+                  </div>
+                {% else %}
+                  <div class="crm-empty">{% trans "This contact currently stands on its own without a linked company." %}</div>
+                {% endif %}
+              {% endwith %}
+            </div>
+          </section>
+
+          <section class="crm-card">
+            <div class="crm-card__body">
+              <div class="crm-section__header">
+                <div>
+                  <h2 class="crm-section__title">{% trans "External identities" %}</h2>
+                </div>
+              </div>
+              {% if contact.external_identities.all %}
+                <ul class="crm-list">
+                  {% for identity in contact.external_identities.all %}
+                    <li class="crm-list-item">
+                      <div class="crm-list-item__title">{{ identity.source_system }} · {{ identity.external_id }}</div>
+                      <div class="crm-list-item__meta">{{ identity.external_object_type }} · {{ identity.external_label|default:"—" }}</div>
+                    </li>
+                  {% endfor %}
+                </ul>
+              {% else %}
+                <div class="crm-empty">{% trans "No external identities are attached yet." %}</div>
+              {% endif %}
+            </div>
+          </section>
+        </aside>
+
+        <div class="crm-stack">
+          <section class="crm-card">
+            <div class="crm-card__body">
+              <div class="crm-section__header">
+                <div>
+                  <h2 class="crm-section__title">{% trans "Edit profile" %}</h2>
+                  <p class="crm-section__subtitle">{% trans "Use the split layout to keep profile context visible while editing." %}</p>
+                </div>
+              </div>
+              <form method="post" class="crm-form-shell">
+                {% csrf_token %}
+                {% include "frontend/crm/_form_fields.html" with form=form %}
+                <div class="crm-actions crm-form-actions">
+                  <button class="crm-button crm-button--primary" type="submit">{% trans "Update Contact" %}</button>
+                </div>
+              </form>
+            </div>
+          </section>
+
+          <section class="crm-card">
+            <div class="crm-card__body">
+              <div class="crm-section__header">
+                <div>
+                  <h2 class="crm-section__title">{% trans "Custom fields" %}</h2>
+                </div>
+              </div>
+              {% if contact.field_values.all %}
+                <ul class="crm-list">
+                  {% for field_value in contact.field_values.all %}
+                    <li class="crm-list-item">
+                      <div class="crm-list-item__title">{{ field_value.field_definition.label }}</div>
+                      <div class="crm-list-item__meta">{{ field_value.value_json }}</div>
+                    </li>
+                  {% endfor %}
+                </ul>
+              {% else %}
+                <div class="crm-empty">{% trans "No custom fields have been applied to this contact yet." %}</div>
+              {% endif %}
+            </div>
+          </section>
+
+          <section class="crm-card">
+            <div class="crm-card__body">
+              <div class="crm-section__header">
+                <div>
+                  <h2 class="crm-section__title">{% trans "Notes" %}</h2>
+                </div>
+              </div>
+              {% if contact.notes.all %}
+                <ul class="crm-list">
+                  {% for note in contact.notes.all %}
+                    <li class="crm-list-item">
+                      <div class="crm-list-item__title">{% firstof note.author.get_full_name note.author.email _("System note") %}</div>
+                      <div class="crm-list-item__meta crm-note">{{ note.body }}</div>
+                    </li>
+                  {% endfor %}
+                </ul>
+              {% else %}
+                <div class="crm-empty">{% trans "No notes yet for this record." %}</div>
+              {% endif %}
+            </div>
+          </section>
+
+          <section class="crm-card">
+            <div class="crm-card__body">
+              <div class="crm-section__header">
+                <div>
+                  <h2 class="crm-section__title">{% trans "Activity timeline" %}</h2>
+                </div>
+              </div>
+              {% if contact.activities.all %}
+                <ul class="crm-timeline">
+                  {% for activity in contact.activities.all %}
+                    <li class="crm-timeline__item">
+                      <div class="crm-timeline__title">{{ activity.summary }}</div>
+                      <div class="crm-timeline__meta">{{ activity.occurred_at }}{% if activity.detail %} · {{ activity.detail }}{% endif %}</div>
+                    </li>
+                  {% endfor %}
+                </ul>
+              {% else %}
+                <div class="crm-empty">{% trans "Activity will appear here as the record changes over time." %}</div>
+              {% endif %}
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+{% endblock %}

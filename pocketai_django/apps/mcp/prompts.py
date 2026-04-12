@@ -215,15 +215,8 @@ VERIFICATION_OUTPUT_HINT = textwrap.dedent(
 PLANNER_CRM_RULES = textwrap.dedent(
     """
     ### CRM Capture Rules (MCP)
-    - Treat any business inquiry/request/issue/product interest as a CRM signal.
-    - Create a case for every business context, even without identifiers; the system links it to the session.
-    - For product interest or sales inquiry, create a lead in addition to the case.
-    - Complaints or negative sentiment require a case with priority=high.
-    - Keep cases current: use update_case_details for major changes; add_case_history for incremental updates.
-    - When new issue context, product interest, or resolution details appear, update the existing case on that same turn.
-    - When any identifier appears (email/phone/name) in a business context, call create_customer once to attach it to the session; if already attached, log new identifiers in case history/metadata.
-    - Do not mention cases/leads to the visitor unless they ask. Offer human follow-up only after the visitor repeats/insists or explicitly asks, and wait for consent.
-    - These CRM rules override any other action guidance in this prompt when they conflict.
+    - Legacy support-era CRM actions are retired from the active MCP tool surface.
+    - Do not invent or request retired case/lead/customer tools.
     """
 ).strip()
 

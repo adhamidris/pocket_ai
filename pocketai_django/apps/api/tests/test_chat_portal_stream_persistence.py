@@ -54,7 +54,6 @@ class ChatPortalStreamingPersistenceTests(TestCase):
             business_profile=self.business,
             user=self.user,
             name="Portal Agent",
-            status="active",
         )
         self.conversation = Conversation.objects.create(
             business_profile=self.business,

@@ -31,7 +31,6 @@ class AgentRunProcessingTests(TestCase):
             business_profile=self.business,
             user=self.user,
             name="Ops Agent",
-            status="active",
         )
 
     def test_process_next_run_requeues_when_provider_missing(self) -> None:

@@ -121,41 +121,73 @@
         </svg>
         <span class="sidebar-label">{% trans "Home" %}</span>
       </a>
-      <a
-        href="{% url 'frontend:dashboard-cases' %}"
-        class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'cases' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
-        title="{% trans 'Cases' %}"
-      >
-        <svg class="sidebar-icon h-4 w-4 {% if active == 'cases' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 4.5h16.5a1.5 1.5 0 0 1 1.5 1.5v11.25a1.5 1.5 0 0 1-1.5 1.5H6.75L3.75 21V6A1.5 1.5 0 0 1 5.25 4.5Z" />
-          <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 9h9M7.5 12h5.25" />
-        </svg>
-        <span class="sidebar-label">{% trans "Cases" %}</span>
-      </a>
-      <a
-        href="{% url 'frontend:dashboard-leads' %}"
-        class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'leads' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
-        title="{% trans 'Leads' %}"
-      >
-        <svg class="sidebar-icon h-4 w-4 {% if active == 'leads' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 6.75 12 2.25l2.187 4.5 4.94.72-3.563 3.472.84 4.908L12 13.5l-4.404 2.25.84-4.908L4.873 7.47l4.94-.72Z" />
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 13.5v7.5" />
-        </svg>
-        <span class="sidebar-label">{% trans "Leads" %}</span>
-      </a>
-      <a
-        href="{% url 'frontend:dashboard-customers' %}"
-        class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'customers' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
-        title="{% trans 'Customers' %}"
-      >
-        <svg class="sidebar-icon h-4 w-4 {% if active == 'customers' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.933 2.25 2.25 0 0 0-1.256-4.13h-1.047a8.1 8.1 0 0 0-3.434.732" />
-          <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 19.128a9.357 9.357 0 0 1-2.625.372 9.337 9.337 0 0 1-4.121-.933A2.25 2.25 0 0 1 1.26 14.44h1.047a8.1 8.1 0 0 1 3.434.732" />
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 13.5a4.5 4.5 0 1 0-4.5-4.5 4.5 4.5 0 0 0 4.5 4.5Z" />
-          <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 21.75a4.5 4.5 0 0 0-9 0" />
-        </svg>
-        <span class="sidebar-label">{% trans "Customers" %}</span>
-      </a>
+      {% if crm_v1_enabled %}
+        <a
+          href="{% url 'frontend:dashboard-crm-overview' %}"
+          class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'crm-overview' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
+          title="{% trans 'CRM Overview' %}"
+        >
+          <svg class="sidebar-icon h-4 w-4 {% if active == 'crm-overview' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 4.5h16.5A1.125 1.125 0 0 1 21.375 5.625v12.75A1.125 1.125 0 0 1 20.25 19.5H3.75A1.125 1.125 0 0 1 2.625 18.375V5.625A1.125 1.125 0 0 1 3.75 4.5Z" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 9.75h3v5.25h-3Zm6 0H16.5v5.25H13.5Z" />
+          </svg>
+          <span class="sidebar-label">{% trans "CRM Overview" %}</span>
+        </a>
+        <a
+          href="{% url 'frontend:dashboard-crm-contacts' %}"
+          class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'crm-contacts' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
+          title="{% trans 'CRM Contacts' %}"
+        >
+          <svg class="sidebar-icon h-4 w-4 {% if active == 'crm-contacts' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 13.5a4.5 4.5 0 1 0-4.5-4.5 4.5 4.5 0 0 0 4.5 4.5Z" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 21.75a4.5 4.5 0 0 0-9 0" />
+          </svg>
+          <span class="sidebar-label">{% trans "CRM Contacts" %}</span>
+        </a>
+        <a
+          href="{% url 'frontend:dashboard-crm-companies' %}"
+          class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'crm-companies' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
+          title="{% trans 'CRM Companies' %}"
+        >
+          <svg class="sidebar-icon h-4 w-4 {% if active == 'crm-companies' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5M3.75 17.25h16.5" />
+          </svg>
+          <span class="sidebar-label">{% trans "CRM Companies" %}</span>
+        </a>
+        <a
+          href="{% url 'frontend:dashboard-crm-imports' %}"
+          class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'crm-imports' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
+          title="{% trans 'CRM Imports' %}"
+        >
+          <svg class="sidebar-icon h-4 w-4 {% if active == 'crm-imports' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 16.5V4.5m0 12 4.5-4.5m-4.5 4.5L7.5 12" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 19.5h15" />
+          </svg>
+          <span class="sidebar-label">{% trans "CRM Imports" %}</span>
+        </a>
+        <a
+          href="{% url 'frontend:dashboard-crm-duplicates' %}"
+          class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'crm-duplicates' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
+          title="{% trans 'CRM Duplicates' %}"
+        >
+          <svg class="sidebar-icon h-4 w-4 {% if active == 'crm-duplicates' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 7.5h8.25M8.25 12h8.25m-8.25 4.5h8.25" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 7.5a1.5 1.5 0 1 0 0 .001V7.5Zm0 4.5a1.5 1.5 0 1 0 0 .001V12Zm0 4.5a1.5 1.5 0 1 0 0 .001V16.5Z" />
+          </svg>
+          <span class="sidebar-label">{% trans "CRM Duplicates" %}</span>
+        </a>
+        <a
+          href="{% url 'frontend:dashboard-crm-fields' %}"
+          class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'crm-fields' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
+          title="{% trans 'CRM Fields' %}"
+        >
+          <svg class="sidebar-icon h-4 w-4 {% if active == 'crm-fields' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 7.5h15M4.5 12h15M4.5 16.5h15" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 5.25v2.25m4.5 2.25v2.25m4.5 2.25v2.25" />
+          </svg>
+          <span class="sidebar-label">{% trans "CRM Fields" %}</span>
+        </a>
+      {% endif %}
       <a
         href="{% url 'frontend:dashboard-agents' %}"
         class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'agents' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"

@@ -40,7 +40,6 @@ class VoicePhase1TwilioAndToolingTests(TestCase):
             business_profile=self.business,
             user=self.user,
             name="Ops Agent",
-            status="active",
         )
         with tenant_context(self.business.id):
             connection = VoiceProviderConnection(

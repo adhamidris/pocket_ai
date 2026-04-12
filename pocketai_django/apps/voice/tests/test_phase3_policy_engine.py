@@ -29,7 +29,7 @@ class VoicePhase3PolicyEngineTests(TestCase):
             status="active",
             metadata={FEATURE_FLAG_METADATA_KEY: {"sub_agents_v1": True}},
         )
-        self.agent = AgentProfile.objects.create(business_profile=self.business, user=user, name="Ops Agent", status="active")
+        self.agent = AgentProfile.objects.create(business_profile=self.business, user=user, name="Ops Agent")
 
         with tenant_context(self.business.id):
             VoiceConfiguration.objects.create(

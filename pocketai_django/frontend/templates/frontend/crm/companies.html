@@ -1,0 +1,151 @@
+{% extends "frontend/base_app.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "CRM Companies" %} | Pocket AI{% endblock %}
+
+{% block extra_head %}
+  {% include "frontend/crm/_crm_styles.html" %}
+{% endblock %}
+
+{% block content %}
+<div class="crm-page">
+  {% include "frontend/components/dashboard/sidebar.html" with active=crm_active user_name=user_name %}
+  <main class="crm-main">
+    <div class="crm-shell">
+      <section class="crm-hero">
+        <div class="crm-hero__inner">
+          <div>
+            <span class="crm-eyebrow">{% trans "CRM Companies" %}</span>
+            <h1 class="crm-title">{% trans "Account-level records for business customers" %}</h1>
+            <p class="crm-subtitle">
+              {% blocktrans with total=total %}
+                Manage {{ total }} company records, keep account identity clean, and connect the right contacts to each organization.
+              {% endblocktrans %}
+            </p>
+          </div>
+          <div class="crm-actions">
+            <a class="crm-button crm-button--ghost" href="{% url 'frontend:dashboard-crm-overview' %}">{% trans "Back to CRM Overview" %}</a>
+            <a class="crm-button crm-button--primary" href="{% url 'frontend:dashboard-crm-imports' %}">{% trans "Import Companies" %}</a>
+          </div>
+        </div>
+      </section>
+
+      <div class="crm-grid">
+        <section class="crm-card">
+          <div class="crm-card__body">
+            <div class="crm-toolbar">
+              <form method="get" class="crm-search">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="h-4 w-4 text-muted-foreground">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.35-4.35m0 0A7.5 7.5 0 1 0 5.25 5.25a7.5 7.5 0 0 0 11.4 11.4Z" />
+                </svg>
+                <input type="search" name="q" value="{{ search_query }}" placeholder="{% trans 'Search by company name, website, or phone' %}">
+                <button type="submit" class="crm-button crm-button--ghost">{% trans "Search" %}</button>
+              </form>
+              <span class="crm-kicker">
+                {% blocktrans with count=crm_open_duplicates %}{{ count }} open duplicate reviews{% endblocktrans %}
+              </span>
+            </div>
+
+            <div class="crm-table-shell">
+              <table class="crm-table">
+                <thead>
+                  <tr>
+                    <th>{% trans "Company" %}</th>
+                    <th>{% trans "Website" %}</th>
+                    <th>{% trans "Linked contacts" %}</th>
+                    <th>{% trans "Status" %}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for company in companies %}
+                    <tr>
+                      <td>
+                        <a class="crm-table__title" href="{% url 'frontend:dashboard-crm-company-detail' company.id %}">{{ company.name }}</a>
+                        <div class="crm-meta">
+                          {% if company.primary_phone %}{{ company.primary_phone }}{% else %}{% trans "No phone set" %}{% endif %}
+                        </div>
+                      </td>
+                      <td>
+                        <div>{{ company.website|default:"—" }}</div>
+                        <div class="crm-meta">
+                          {% if company.website_domain_normalized %}
+                            {{ company.website_domain_normalized }}
+                          {% else %}
+                            {% trans "Domain will appear after website normalization" %}
+                          {% endif %}
+                        </div>
+                      </td>
+                      <td>
+                        {% with links=company.contact_links.all %}
+                          {% if links %}
+                            {% for link in links %}
+                              <div>{{ link.contact.display_name }}{% if link.is_primary %} <span class="crm-meta">· {% trans "Primary" %}</span>{% endif %}</div>
+                            {% endfor %}
+                          {% else %}
+                            <span class="crm-meta">{% trans "No linked contacts yet" %}</span>
+                          {% endif %}
+                        {% endwith %}
+                      </td>
+                      <td><span class="crm-pill">{{ company.status|title }}</span></td>
+                    </tr>
+                  {% empty %}
+                    <tr>
+                      <td colspan="4" class="crm-empty">
+                        {% trans "No companies yet. Add your first account record or import a customer file to begin." %}
+                      </td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <aside class="crm-stack">
+          <section class="crm-card">
+            <div class="crm-card__body">
+              <div class="crm-section__header">
+                <div>
+                  <h2 class="crm-section__title">{% trans "Create Company" %}</h2>
+                  <p class="crm-section__subtitle">{% trans "Add an account-level record for a business customer." %}</p>
+                </div>
+              </div>
+              <form method="post" class="crm-form-shell">
+                {% csrf_token %}
+                {% include "frontend/crm/_form_fields.html" with form=form %}
+                <div class="crm-actions crm-form-actions">
+                  <button class="crm-button crm-button--primary" type="submit">{% trans "Save Company" %}</button>
+                </div>
+              </form>
+            </div>
+          </section>
+
+          <section class="crm-card">
+            <div class="crm-card__body">
+              <div class="crm-section__header">
+                <div>
+                  <h2 class="crm-section__title">{% trans "Why this matters" %}</h2>
+                </div>
+              </div>
+              <ul class="crm-list">
+                <li class="crm-list-item">
+                  <div class="crm-list-item__title">{% trans "Mixed customer types are supported" %}</div>
+                  <div class="crm-list-item__meta">{% trans "Use companies for account-level CRM while still supporting direct individual contacts where needed." %}</div>
+                </li>
+                <li class="crm-list-item">
+                  <div class="crm-list-item__title">{% trans "Cleaner account context" %}</div>
+                  <div class="crm-list-item__meta">{% trans "Normalize websites, keep phone and source visible, and attach multiple contacts over time." %}</div>
+                </li>
+                <li class="crm-list-item">
+                  <div class="crm-list-item__title">{% trans "Import-ready structure" %}</div>
+                  <div class="crm-list-item__meta">{% trans "This account layer is designed to handle migration from files and external CRMs later." %}</div>
+                </li>
+              </ul>
+            </div>
+          </section>
+        </aside>
+      </div>
+    </div>
+  </main>
+</div>
+{% endblock %}

@@ -43,7 +43,7 @@ class VoicePhase3CallInsightsTests(TestCase):
             status="active",
             metadata={FEATURE_FLAG_METADATA_KEY: {"sub_agents_v1": True}},
         )
-        agent = AgentProfile.objects.create(business_profile=business, user=user, name="Ops Agent", status="active")
+        agent = AgentProfile.objects.create(business_profile=business, user=user, name="Ops Agent")
 
         now = timezone.now()
         session = CallSession.objects.create(
@@ -102,7 +102,7 @@ class VoicePhase3CallInsightsTests(TestCase):
             status="active",
             metadata={FEATURE_FLAG_METADATA_KEY: {"sub_agents_v1": True}},
         )
-        agent = AgentProfile.objects.create(business_profile=business, user=user, name="Ops Agent", status="active")
+        agent = AgentProfile.objects.create(business_profile=business, user=user, name="Ops Agent")
 
         session = CallSession.objects.create(
             business_profile=business,

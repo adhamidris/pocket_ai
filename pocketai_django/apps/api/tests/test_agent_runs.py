@@ -43,7 +43,6 @@ class AgentRunsApiTests(TestCase):
             business_profile=self.business,
             user=self.user,
             name="Ops Agent",
-            status="active",
         )
         self.client.force_login(self.user)
 

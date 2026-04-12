@@ -52,9 +52,6 @@ from apps.knowledge.models import (
 )
 from apps.integrations.models import KnowledgeIntegration
 from apps.rag.query_analytics import build_query_analytics_report
-from apps.cases.models import Case, CaseStatus
-from apps.conversations.models import Conversation, ConversationSender
-from apps.customers.models import Customer
 from apps.accounts.agents import (
     AgentListValidationError,
     agent_identifier,
@@ -63,10 +60,7 @@ from apps.accounts.agents import (
     initials_from_name,
     list_agents,
 )
-from apps.accounts.action_controls import list_action_settings
 from apps.accounts.registration import KnowledgeUploadError
-from apps.cases.services import list_cases
-from apps.customers.services import list_customers
 from apps.knowledge.documents import DocumentListValidationError, list_documents
 from apps.knowledge.knowledge_ingestion import queue_ingestion_job
 from apps.api.chat_portal import bootstrap_session as bootstrap_session_view
@@ -432,110 +426,10 @@ def _compute_business_rows(samples: list[dict[str, object]], *, limit: int = 12)
         )
     return rows
 
-
-def _case_priority_class(priority: str) -> str:
-    mapping = {
-        "critical": "border-transparent bg-red-500/10 text-red-600",
-        "high": "border-transparent bg-orange-500/10 text-orange-600",
-        "medium": "border-transparent bg-amber-500/10 text-amber-600",
-        "low": "border-transparent bg-emerald-500/10 text-emerald-600",
-    }
-    if not priority:
-        return "border-transparent bg-muted/60 text-muted-foreground"
-    return mapping.get(priority.lower(), "border-transparent bg-muted/60 text-muted-foreground")
-
-
-def _case_status_class(status: str) -> str:
-    mapping = {
-        "open": "border-transparent bg-emerald-500/10 text-emerald-600",
-        "closed": "border-transparent bg-muted/60 text-muted-foreground",
-        "resolved": "border-transparent bg-blue-500/10 text-blue-600",
-        "escalated": "border-transparent bg-rose-500/10 text-rose-600",
-    }
-    if not status:
-        return "border-transparent bg-muted/60 text-muted-foreground"
-    return mapping.get(status.lower(), "border-transparent bg-muted/60 text-muted-foreground")
-
-
-ACTION_BADGE_STYLES = {
-    "create_case": {
-        "label": "Case created",
-        "classes": "border border-emerald-200 bg-emerald-50 text-emerald-700",
-    },
-    "update_case_status": {
-        "label": "Case updated",
-        "classes": "border border-teal-200 bg-teal-50 text-teal-600",
-    },
-    "flag_escalation": {
-        "label": "Escalation flagged",
-        "classes": "border border-rose-200 bg-rose-50 text-rose-600",
-    },
-    "create_customer": {
-        "label": "Customer created",
-        "classes": "border border-blue-200 bg-blue-50 text-blue-600",
-    },
-    "update_customer": {
-        "label": "Customer updated",
-        "classes": "border border-indigo-200 bg-indigo-50 text-indigo-600",
-    },
-    "create_lead": {
-        "label": "Lead captured",
-        "classes": "border border-sky-200 bg-sky-50 text-sky-600",
-    },
-    "create_appointment": {
-        "label": "Appointment logged",
-        "classes": "border border-amber-200 bg-amber-50 text-amber-700",
-    },
-}
-
-ACTION_BADGE_DEFAULT = {
-    "label": "Action applied",
-    "classes": "border border-border/70 bg-muted/40 text-foreground",
-}
-
-
 def _format_datetime_label(value: datetime | None) -> str:
     if not value:
         return "—"
     return value.strftime("%b %d, %Y %I:%M %p")
-
-
-def _describe_action_detail(metadata: dict[str, Any]) -> str:
-    if not isinstance(metadata, dict):
-        return ""
-    if metadata.get("case_number"):
-        return f"#{metadata['case_number']}"
-    if metadata.get("display_name"):
-        return str(metadata["display_name"])
-    if metadata.get("reason"):
-        return str(metadata["reason"])
-    if metadata.get("status"):
-        return str(metadata["status"]).replace("_", " ")
-    return ""
-
-
-def _format_action_badges(actions: list[dict[str, Any]] | None) -> list[dict[str, str]]:
-    formatted: list[dict[str, str]] = []
-    if not actions:
-        return formatted
-    for action in actions:
-        if not isinstance(action, dict):
-            continue
-        key = str(action.get("action") or "").lower()
-        config = ACTION_BADGE_STYLES.get(key, ACTION_BADGE_DEFAULT)
-        status = str(action.get("status") or "").lower()
-        classes = config["classes"]
-        if status == "failed":
-            classes = "border border-rose-200 bg-rose-50 text-rose-600"
-        formatted.append(
-            {
-                "label": config["label"],
-                "classes": classes,
-                "detail": _describe_action_detail(action.get("metadata") or {}),
-                "status": status,
-            }
-        )
-    return formatted
 
 
 def _format_citations(items: list[Any] | None) -> list[dict[str, str | None]]:
@@ -2200,103 +2094,9 @@ def dashboard_rag_analytics(request: HttpRequest) -> HttpResponse:
     }
     return render(request, "frontend/rag_analytics.html", context)
 
-
-@login_required
-def dashboard_customers(request: HttpRequest) -> HttpResponse:
-    user_name = _current_user_name(request)
-    stats = [
-        {"label": _("New customers"), "value": None, "helper": _("No data to measure yet")},
-        {"label": _("Active customers"), "value": None, "helper": _("No customers yet")},
-        {"label": _("Open cases"), "value": None, "helper": _("Create cases to populate data")},
-    ]
-    customers: list[dict[str, object]] = []
-    total_customers = 0
-    now = timezone.now()
-    thirty_days_ago = now - timedelta(days=30)
-    business = None
-    if request.user.is_authenticated:
-        business = request.user.business_profiles.order_by("-created_at").first()
-
-    if business:
-        try:
-            result = list_customers(business_profile=business, limit=50)
-            total_customers = result.total_count
-            for item in result.items:
-                name = item.display_name or _("Customer")
-                tokens = [token for token in name.split() if token]
-                if not tokens:
-                    initials = _("CU")
-                elif len(tokens) == 1:
-                    initials = tokens[0][:2].upper()
-                else:
-                    initials = (tokens[0][0] + tokens[-1][0]).upper()
-                state_label = item.state.replace("_", " ").title() if item.state else _("—")
-                last_contact = item.last_interaction_at
-                customers.append(
-                    {
-                        "uuid": str(item.id),
-                        "name": name,
-                        "initials": initials,
-                        "email": item.email or "—",
-                        "state": item.state or "",
-                        "state_label": state_label,
-                        "cases_open": item.open_cases,
-                        "cases_total": item.total_cases,
-                        "last_contact": last_contact.strftime("%b %d, %Y %H:%M") if last_contact else "No activity yet",
-                        "last_contact_iso": last_contact.isoformat() if last_contact else "",
-                    }
-                )
-        except Exception:
-            pass
-
-        new_customers = Customer.objects.filter(
-            business_profile=business,
-            created_at__gte=thirty_days_ago,
-        ).count()
-        active_customers = Customer.objects.filter(
-            business_profile=business,
-            record_state="active",
-        ).count()
-        open_cases = Case.objects.filter(business_profile=business, status=CaseStatus.OPEN).count()
-        stats = [
-            {"label": _("New customers"), "value": new_customers or 0, "helper": _("Last 30 days")},
-            {"label": _("Active customers"), "value": active_customers or 0, "helper": _("Currently engaged")},
-            {"label": _("Open cases"), "value": open_cases or 0, "helper": _("Customer cases awaiting action")},
-        ]
-
-    context = {
-        "user_name": user_name,
-        "customers_stats": stats,
-        "customers_filters": {
-            "search_placeholder": _("Search name, email, text…"),
-            "lifecycle_label": _("All lifecycle stages"),
-            "date_label": _("Any time"),
-            "limit": 25,
-        },
-        "customers_backend_notice": None,
-        "customers_auth_notice": None,
-        "customers_loading": False,
-        "skeleton_rows": range(6),
-        "customers": customers,
-        "customers_empty_message": _("No customers added yet. Import customers or add one."),
-        "customers_showing_count": len(customers),
-        "customers_total": total_customers if total_customers else len(customers),
-        "customers_has_prev": False,
-        "customers_has_next": False,
-        "customers_detail_empty_title": _("No customer selected"),
-        "customers_detail_empty_message": _("Choose a customer from the table to inspect profiles, activity, and notes."),
-    }
-    return render(request, "frontend/customers.html", context)
-
-
 @login_required
 def dashboard_agents(request: HttpRequest) -> HttpResponse:
     user_name = _current_user_name(request)
-    stats = [
-        {"label": _("Active agents"), "value": None, "helper": _("No agents deployed yet")},
-        {"label": _("Avg. satisfaction"), "value": None, "helper": _("Scores will populate once conversations start")},
-        {"label": _("Automation coverage"), "value": None, "helper": _("Connect channels to calculate coverage")},
-    ]
     agents: list[dict[str, object]] = []
     total_agents = 0
     has_error = False
@@ -2334,18 +2134,6 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
                 tone_label = display_tone_label(item.tone) or _("—")
                 updated_at = item.updated_at
                 updated_label = updated_at.strftime("%b %d, %Y %H:%M") if updated_at else _("—")
-                status_code = (item.status or "").lower()
-                status_label_map = {
-                    "draft": _("Draft"),
-                    "review": _("Review"),
-                    "active": _("Active"),
-                    "paused": _("Paused"),
-                    "disabled": _("Disabled"),
-                }
-                status_label = status_label_map.get(
-                    status_code,
-                    status_code.replace("_", " ").title() if status_code else _("Draft"),
-                )
                 shareable_path = ""
                 if item.public_slug:
                     shareable_path = f"/{business_slug}/{item.public_slug}".replace("//", "/")
@@ -2360,13 +2148,7 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
                         "role_code": item.role or "",
                         "tone_label": tone_label,
                         "tone_code": item.tone or "",
-                        "status": status_label,
-                        "status_code": status_code,
-                        "conversations": item.conversations or 0,
                         "satisfaction": None,
-                        "aht": _format_duration(item.average_handle_seconds),
-                        "aht_seconds": item.average_handle_seconds or 0,
-                        "escalations": item.escalations or 0,
                         "updated": updated_label,
                         "updated_iso": updated_at.isoformat() if updated_at else "",
                         "last_active_iso": item.last_active_at.isoformat() if item.last_active_at else "",
@@ -2385,7 +2167,6 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
                 for profile in AgentProfile.objects.filter(business_profile=business, id__in=agent_ids)
                 .select_related("business_profile")
                 .prefetch_related(
-                    "action_permissions",
                     Prefetch(
                         "allowed_documents",
                         queryset=KnowledgeUpload.objects.filter(business_profile=business).only("id", "status", "is_active"),
@@ -2443,72 +2224,15 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
                     agent["knowledge_processing"] = knowledge_processing_total
                     agent["knowledge_failed"] = knowledge_failed_total
 
-                action_settings = list_action_settings(profile)
-                enabled_lookup = {setting.key: setting.enabled for setting in action_settings}
-
-                def _enabled(key: str) -> bool:
-                    return bool(enabled_lookup.get(key))
-
-                knowledge_enabled = _enabled("read_knowledge")
-                cases_enabled = _enabled("create_case")
-                customers_enabled = _enabled("create_customer") or _enabled("update_customer")
-                leads_enabled = _enabled("create_lead")
-                appointments_enabled = _enabled("create_appointment")
-                escalation_enabled = _enabled("flag_escalation")
-
-                capability_flags = [
-                    (_("Knowledge"), knowledge_enabled),
-                    (_("Cases"), cases_enabled),
-                    (_("Customers"), customers_enabled),
-                    (_("Leads"), leads_enabled),
-                    (_("Appointments"), appointments_enabled),
-                    (_("Escalation"), escalation_enabled),
-                ]
-                enabled_labels = [label for label, enabled in capability_flags if enabled]
-                highlights = enabled_labels[:3]
-                agent["capabilities_enabled"] = sum(1 for _label, enabled in capability_flags if enabled)
-                agent["capabilities_total"] = len(capability_flags)
-                agent["capabilities_highlights"] = highlights
-                agent["capabilities_more"] = max(0, len(enabled_labels) - len(highlights))
-                agent["escalation_enabled"] = escalation_enabled
-                agent["escalation_rule"] = profile.escalation_rule or ""
-
-        active_agents = AgentProfile.objects.filter(business_profile=business, status="active").count()
-        total_recorded_agents = AgentProfile.objects.filter(business_profile=business).count()
-        case_counts = Case.objects.filter(business_profile=business).aggregate(
-            total=Count("id"),
-            automated=Count("id", filter=Q(agent_profile__isnull=False)),
-        )
-        coverage = None
-        if case_counts.get("total"):
-            coverage = round(
-                (case_counts.get("automated", 0) / max(case_counts["total"], 1)) * 100,
-            )
-        stats = [
-            {
-                "label": _("Active agents"),
-                "value": active_agents or 0,
-                "helper": _("%(count)s total") % {"count": total_recorded_agents or total_agents},
-            },
-            {
-                "label": _("Avg. satisfaction"),
-                "value": None,
-                "helper": _("Scores populate once conversations sync"),
-            },
-            {
-                "label": _("Automation coverage"),
-                "value": f"{coverage}%" if coverage is not None else None,
-                "helper": _("Cases handled by AI"),
-            },
-        ]
+                agent["escalation_enabled"] = False
+                agent["escalation_rule"] = ""
 
     context = {
         "user_name": user_name,
         "business_id": str(getattr(business, "id", "")) if business else "",
-        "agents_stats": stats,
+        "agents_can_create": bool(business and (total_agents or len(agents)) == 0),
         "agents_filters": {
             "search_placeholder": _("Search name, ID, role…"),
-            "status_label": _("All statuses"),
             "limit": 25,
         },
         "agents_backend_notice": None if business else _("Link a business profile to create agents."),
@@ -2532,57 +2256,6 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
         ],
     }
     return render(request, "frontend/agents.html", context)
-
-
-@login_required
-def dashboard_leads(request: HttpRequest) -> HttpResponse:
-    user_name = _current_user_name(request)
-    stats = [
-        {"label": _("Open leads"), "value": None, "delta": _("Up 0% vs last week")},
-        {"label": _("Hot leads"), "value": None, "delta": _("Ready for outreach")},
-        {"label": _("Avg. response SLA"), "value": None, "delta": _("< 3h target")},
-    ]
-    heat_options = [
-        {"label": _("All"), "value": "all"},
-        {"label": _("Hot"), "value": "hot"},
-        {"label": _("Warm"), "value": "warm"},
-        {"label": _("Cold"), "value": "cold"},
-    ]
-    pipeline_breakdown = [
-        {"label": _("New"), "helper": _("0 leads")},
-        {"label": _("Qualified"), "helper": _("0 leads")},
-        {"label": _("Engaged"), "helper": _("0 leads")},
-        {"label": _("Negotiation"), "helper": _("0 leads")},
-        {"label": _("Closed Won"), "helper": _("0 leads")},
-    ]
-    context = {
-        "user_name": user_name,
-        "leads_stats": stats,
-        "leads_filters": {
-            "search_placeholder": _("Search lead, company, or tag"),
-            "stage_label": _("All stages"),
-            "owner_label": _("All owners"),
-            "range_label": _("Last 14 days"),
-        },
-        "leads_heat_options": heat_options,
-        "leads_heat_active": "all",
-        "leads_backend_notice": None,
-        "leads_auth_notice": None,
-        "leads_loading": False,
-        "leads_error_message": None,
-        "skeleton_rows": range(6),
-        "leads": [],
-        "leads_empty_message": _("No leads match this view yet."),
-        "leads_showing_count": 0,
-        "leads_total": 0,
-        "leads_has_prev": False,
-        "leads_has_next": False,
-        "leads_detail_empty_title": _("Select a lead"),
-        "leads_detail_empty_message": _("Choose a lead to review stage, owner activity, and history."),
-        "leads_pipeline_breakdown": pipeline_breakdown,
-    }
-    return render(request, "frontend/leads.html", context)
-
 
 @login_required
 def dashboard_integrations(request: HttpRequest) -> HttpResponse:
@@ -2652,8 +2325,8 @@ def _format_document_timestamp(value: datetime | None) -> str:
     localized = timezone.localtime(value)
     language = (get_language() or "").lower()
     if language.startswith("ar"):
-        return date_format(localized, "d/m/Y H:i")
-    return date_format(localized, "M j, Y H:i")
+        return date_format(localized, "d/m/Y h:i A")
+    return date_format(localized, "M j, Y g:i A")
 
 
 def _is_arabic_language() -> bool:
@@ -3349,201 +3022,6 @@ def dashboard_knowledge_integrations_connect(request: HttpRequest) -> HttpRespon
         messages.error(request, _("Missing authorization URL from Google."))
         return redirect("frontend:dashboard-knowledge")
     return redirect(authorization_url)
-
-
-@login_required
-def dashboard_cases(request: HttpRequest) -> HttpResponse:
-    user_name = _current_user_name(request)
-    cases: List[Dict[str, object]] = []
-    metrics = {"open": None, "urgent": None, "urgent_delta": None, "avg_open": None}
-    total = 0
-
-    business = None
-    if request.user.is_authenticated:
-        business = request.user.business_profiles.order_by("-created_at").first()
-
-    if business:
-        try:
-            result = list_cases(business_profile=business, limit=25)
-            total = result.total_count
-            metrics = {
-                "open": result.metrics.open_total,
-                "urgent": result.metrics.urgent_open,
-                "urgent_delta": result.metrics.urgent_delta_hint,
-                "avg_open": result.metrics.average_open_hours,
-            }
-            for item in result.items:
-                cases.append(
-                    {
-                        "id": item.case_number,
-                        "uuid": str(item.id),
-                        "priority": item.priority,
-                        "priority_class": _case_priority_class(item.priority),
-                        "type": "inquiry",
-                        "title": item.title,
-                        "description": item.description,
-                        "status": item.status,
-                        "status_class": _case_status_class(item.status),
-                        "customer": {
-                            "name": item.customer_name,
-                            "email": item.customer_email or _("—"),
-                            "initials": item.customer_initials,
-                        },
-                        "channel": (item.channel or _("chat")).replace("_", " ").title(),
-                        "started": item.started_at.strftime("%b %d, %Y %H:%M"),
-                        "started_iso": item.started_at.isoformat(),
-                    }
-                )
-        except Exception:
-            pass
-
-    context = {
-        "user_name": user_name,
-        "cases_total": total if total else len(cases),
-        "cases_metrics": metrics,
-        "skeleton_rows": range(6),
-        "cases_loading": False,
-        "cases": cases,
-        "cases_empty_message": _("No cases yet. Connect Pocket AI to your support channels to see live traffic."),
-        "cases_showing_count": len(cases),
-        "cases_has_prev": False,
-        "cases_has_next": bool(total and total > len(cases)),
-    }
-    return render(request, "frontend/cases.html", context)
-
-
-@login_required
-def dashboard_case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
-    user_name = _current_user_name(request)
-    business = request.user.business_profiles.order_by("-created_at").first()
-    if business is None:
-        raise Http404(_("Case not found"))
-
-    case = (
-        Case.objects.select_related("business_profile", "agent_profile", "customer")
-        .filter(id=case_id, business_profile=business)
-        .first()
-    )
-    if case is None:
-        raise Http404(_("Case not found"))
-
-    conversation = (
-        Conversation.objects.select_related("agent_profile", "customer")
-        .prefetch_related("messages", "extractions")
-        .filter(case=case)
-        .first()
-    )
-
-    customer_name = None
-    customer_email = None
-    if case.customer:
-        customer_name = case.customer.display_name or case.customer.primary_email or _("Customer")
-        customer_email = case.customer.primary_email or _("—")
-    elif conversation and conversation.customer:
-        customer_name = conversation.customer.display_name or _("Customer")
-        customer_email = conversation.customer.primary_email or _("—")
-    else:
-        customer_name = _("Customer")
-        customer_email = _("—")
-
-    conversation_context: dict[str, str] | None = None
-    messages: list[dict[str, Any]] = []
-    extractions: list[dict[str, Any]] = []
-    if conversation:
-        conversation_context = {
-            "status": conversation.status,
-            "status_label": (conversation.status or "").replace("_", " ").title(),
-            "channel": (conversation.channel or _("chat")).replace("_", " ").title(),
-            "session_token": conversation.session_token,
-            "started_at_label": _format_datetime_label(conversation.started_at),
-            "last_activity_label": _format_datetime_label(conversation.last_activity_at),
-        }
-        agent_label = (conversation.agent_profile.name if conversation.agent_profile else None) or (
-            case.agent_profile.name if case.agent_profile else _("Pocket AI")
-        )
-        customer_label = customer_name
-        ordered_messages = conversation.messages.all().order_by("sent_at", "created_at")
-        for message in ordered_messages:
-            sender = (message.sender or "system").lower()
-            if sender == ConversationSender.CUSTOMER:
-                author = customer_label
-                initials = initials_from_name(customer_label, "CU")
-            elif sender == ConversationSender.AI:
-                author = agent_label
-                initials = initials_from_name(agent_label, "AI")
-            else:
-                author = _("System")
-                initials = _("SYS")
-            metadata = message.metadata or {}
-            messages.append(
-                {
-                    "id": str(message.id),
-                    "variant": sender,
-                    "author": author,
-                    "initials": initials,
-                    "body": message.body,
-                    "sent_at_label": _format_datetime_label(message.sent_at),
-                    "actions": _format_action_badges(metadata.get("actions")),
-                    "citations": _format_citations(metadata.get("citations")),
-                    "diagnostics": _format_diagnostics(metadata.get("diagnostics")),
-                }
-            )
-        for extraction in conversation.extractions.all().order_by("-created_at"):
-            payload = extraction.payload or {}
-            summary = (
-                payload.get("reason")
-                or payload.get("title")
-                or payload.get("display_name")
-                or payload.get("status")
-                or ""
-            )
-            extractions.append(
-                {
-                    "id": str(extraction.id),
-                    "type": (extraction.extraction_type or "").replace("_", " ").title(),
-                    "created_at_label": _format_datetime_label(extraction.created_at),
-                    "summary": summary,
-                    "payload": payload,
-                }
-            )
-
-    suggested_actions = case.ai_suggested_actions if isinstance(case.ai_suggested_actions, list) else []
-    case_context = {
-        "id": str(case.id),
-        "case_number": case.case_number,
-        "title": case.title,
-        "description": case.description,
-        "status": case.status,
-        "status_label": (case.status or "").replace("_", " ").title(),
-        "status_class": _case_status_class(case.status),
-        "priority": case.priority,
-        "priority_label": (case.priority or "").replace("_", " ").title(),
-        "priority_class": _case_priority_class(case.priority),
-        "started_at_label": _format_datetime_label(case.started_at),
-        "updated_at_label": _format_datetime_label(case.updated_at),
-        "closed_at_label": _format_datetime_label(case.closed_at),
-        "agent_name": case.agent_profile.name if case.agent_profile else _("—"),
-        "customer": {
-            "name": customer_name,
-            "email": customer_email,
-            "initials": initials_from_name(customer_name, "CU"),
-        },
-        "ai_diagnosis": case.ai_diagnosis or _("No diagnosis provided."),
-        "ai_actions_taken": case.ai_actions_taken or "",
-        "ai_suggested_actions": [str(item) for item in suggested_actions if item],
-    }
-
-    context = {
-        "user_name": user_name,
-        "case": case_context,
-        "conversation": conversation_context,
-        "messages": messages,
-        "extractions": extractions,
-        "messages_empty_message": _("No transcript available for this case yet."),
-        "back_url": reverse("frontend:dashboard-cases"),
-    }
-    return render(request, "frontend/case_detail.html", context)
-
 
 def chat_portal(request: HttpRequest, business_slug: str, agent_slug: str) -> HttpResponse:
     """Render the public chat portal view backed by the API bootstrap endpoint."""

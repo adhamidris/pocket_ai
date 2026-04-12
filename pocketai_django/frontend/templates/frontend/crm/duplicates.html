@@ -1,0 +1,208 @@
+{% extends "frontend/base_app.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "CRM Duplicates" %} | Pocket AI{% endblock %}
+
+{% block extra_head %}
+  {% include "frontend/crm/_crm_styles.html" %}
+{% endblock %}
+
+{% block content %}
+<div class="crm-page">
+  {% include "frontend/components/dashboard/sidebar.html" with active=crm_active user_name=user_name %}
+  <main class="crm-main">
+    <div class="crm-shell">
+      <section class="crm-hero crm-hero--duplicate">
+        <div class="crm-hero__inner">
+          <div>
+            <span class="crm-eyebrow">{% trans "CRM Duplicates" %}</span>
+            <h1 class="crm-title">{% trans "Review the records that still need a human decision" %}</h1>
+            <p class="crm-subtitle">
+              {% trans "Use the duplicate queue to compare imported snapshots against canonical CRM records, then ignore, reopen, or merge when the underlying data supports it." %}
+            </p>
+          </div>
+          <div class="crm-actions">
+            <a class="crm-button crm-button--ghost" href="{% url 'frontend:dashboard-crm-overview' %}">{% trans "Back to CRM Overview" %}</a>
+            <a class="crm-button crm-button--secondary" href="{% url 'frontend:dashboard-crm-imports' %}">{% trans "Open Imports" %}</a>
+          </div>
+        </div>
+      </section>
+
+      {% if duplicate_notice %}
+        <div class="crm-notice crm-notice--success">{{ duplicate_notice }}</div>
+      {% endif %}
+      {% if duplicate_error %}
+        <div class="crm-notice crm-notice--danger">{{ duplicate_error }}</div>
+      {% endif %}
+
+      <section class="crm-card">
+        <div class="crm-card__body">
+          <div class="crm-section__header">
+            <div>
+              <h2 class="crm-section__title">{% trans "Queue status" %}</h2>
+              <p class="crm-section__subtitle">{% trans "Switch between open, ignored, and already-resolved duplicate suggestions without leaving the CRM shell." %}</p>
+            </div>
+          </div>
+          <div class="crm-status-tabs">
+            <a class="crm-status-tab {% if duplicate_status_filter == 'open' %}crm-status-tab--active{% endif %}" href="{% url 'frontend:dashboard-crm-duplicates' %}?status=open">
+              <span>{% trans "Open" %}</span>
+              <strong>{{ duplicate_counts.open }}</strong>
+            </a>
+            <a class="crm-status-tab {% if duplicate_status_filter == 'ignored' %}crm-status-tab--active{% endif %}" href="{% url 'frontend:dashboard-crm-duplicates' %}?status=ignored">
+              <span>{% trans "Ignored" %}</span>
+              <strong>{{ duplicate_counts.ignored }}</strong>
+            </a>
+            <a class="crm-status-tab {% if duplicate_status_filter == 'merged' %}crm-status-tab--active{% endif %}" href="{% url 'frontend:dashboard-crm-duplicates' %}?status=merged">
+              <span>{% trans "Merged" %}</span>
+              <strong>{{ duplicate_counts.merged }}</strong>
+            </a>
+          </div>
+        </div>
+      </section>
+
+      {% if duplicate_items %}
+        <section class="crm-duplicate-stack">
+          {% for item in duplicate_items %}
+            <article class="crm-card crm-duplicate-card">
+              <div class="crm-card__body">
+                <div class="crm-section__header">
+                  <div>
+                    <h2 class="crm-section__title">{{ item.title }}</h2>
+                    <p class="crm-section__subtitle">
+                      {% if item.source_row_number %}
+                        {% blocktrans with row=item.source_row_number %}Source row {{ row }}{% endblocktrans %}
+                      {% else %}
+                        {% trans "Created directly inside the duplicate queue" %}
+                      {% endif %}
+                      {% if item.match_reasons %}
+                        · {{ item.match_reasons|join:", " }}
+                      {% endif %}
+                    </p>
+                  </div>
+                  <span class="crm-status-badge crm-status-badge--{{ item.status }}">{{ item.status_label }}</span>
+                </div>
+
+                <div class="crm-duplicate-grid">
+                  <section class="crm-compare-card">
+                    <div class="crm-compare-card__header">
+                      <h3>{% trans "Candidate record already in CRM" %}</h3>
+                      {% if item.candidate_url %}
+                        <a class="crm-button crm-button--ghost crm-button--small" href="{{ item.candidate_url }}">{% trans "Open record" %}</a>
+                      {% endif %}
+                    </div>
+                    {% if item.candidate %}
+                      <div class="crm-compare-card__hero">
+                        <strong>
+                          {% if item.record_type == "contact" %}
+                            {{ item.candidate.display_name }}
+                          {% else %}
+                            {{ item.candidate.name }}
+                          {% endif %}
+                        </strong>
+                        <span class="crm-meta">
+                          {% if item.record_type == "contact" %}
+                            {% if item.candidate.primary_email %}{{ item.candidate.primary_email }}{% elif item.candidate.primary_phone %}{{ item.candidate.primary_phone }}{% else %}{% trans "No primary channel yet" %}{% endif %}
+                          {% else %}
+                            {% if item.candidate.website %}{{ item.candidate.website }}{% elif item.candidate.primary_phone %}{{ item.candidate.primary_phone }}{% else %}{% trans "No website or phone captured yet" %}{% endif %}
+                          {% endif %}
+                        </span>
+                      </div>
+                      <div class="crm-compare-list">
+                        {% for row in item.compare_rows %}
+                          <div class="crm-compare-list__row">
+                            <span class="crm-compare-list__label">{{ row.label }}</span>
+                            <span class="crm-compare-list__value">{% if row.candidate %}{{ row.candidate }}{% else %}—{% endif %}</span>
+                          </div>
+                        {% endfor %}
+                      </div>
+                    {% else %}
+                      <div class="crm-empty">{% trans "The candidate CRM record could not be loaded." %}</div>
+                    {% endif %}
+                  </section>
+
+                  <section class="crm-compare-card">
+                    <div class="crm-compare-card__header">
+                      <h3>{% trans "Incoming snapshot from import" %}</h3>
+                    </div>
+                    <div class="crm-snapshot-grid">
+                      {% for key, value in item.incoming_snapshot_items %}
+                        <div class="crm-snapshot-item">
+                          <span class="crm-snapshot-item__label">{{ key }}</span>
+                          <span class="crm-snapshot-item__value">{% if value %}{{ value }}{% else %}—{% endif %}</span>
+                        </div>
+                      {% empty %}
+                        <div class="crm-empty">{% trans "No incoming snapshot is attached to this suggestion." %}</div>
+                      {% endfor %}
+                    </div>
+                  </section>
+                </div>
+
+                {% if item.linked_record %}
+                  <div class="crm-inline-note">
+                    {% blocktrans with record_id=item.linked_record.id %}
+                      This duplicate already has a mergeable record attached inside the CRM. Record ID: {{ record_id }}
+                    {% endblocktrans %}
+                    {% if item.linked_record_url %}
+                      <a href="{{ item.linked_record_url }}" class="crm-inline-link">{% trans "Open linked record" %}</a>
+                    {% endif %}
+                  </div>
+                {% elif item.status == 'open' %}
+                  <div class="crm-inline-note">
+                    {% trans "This suggestion came from an import snapshot without a second CRM record yet, so merge is not available. You can ignore it for now or keep it open for later review." %}
+                  </div>
+                {% endif %}
+
+                {% if item.resolution_note %}
+                  <div class="crm-inline-note">
+                    <strong>{% trans "Resolution note" %}</strong><br>
+                    {{ item.resolution_note }}
+                  </div>
+                {% endif %}
+
+                {% if item.status != 'merged' %}
+                  <form method="post" class="crm-duplicate-form">
+                    {% csrf_token %}
+                    <input type="hidden" name="suggestion_id" value="{{ item.id }}">
+                    <input type="hidden" name="status" value="{{ duplicate_status_filter }}">
+                    {% if item.can_merge and item.linked_record %}
+                      <input type="hidden" name="record_id" value="{{ item.linked_record.id }}">
+                    {% endif %}
+                    <div class="crm-form-field crm-form-field--full">
+                      <label for="resolution-note-{{ item.id }}">{% trans "Resolution note" %}</label>
+                      <textarea id="resolution-note-{{ item.id }}" name="resolution_note" placeholder="{% trans 'Add context for why you ignored or merged this suggestion.' %}"></textarea>
+                    </div>
+                    <div class="crm-actions crm-actions--start">
+                      {% if item.status == 'open' %}
+                        <button class="crm-button crm-button--ghost" type="submit" name="action" value="ignore">{% trans "Ignore Suggestion" %}</button>
+                        {% if item.can_merge %}
+                          <button class="crm-button crm-button--primary" type="submit" name="action" value="merge">{% trans "Merge Records" %}</button>
+                        {% endif %}
+                      {% elif item.status == 'ignored' %}
+                        <button class="crm-button crm-button--secondary" type="submit" name="action" value="reopen">{% trans "Reopen Suggestion" %}</button>
+                      {% endif %}
+                    </div>
+                  </form>
+                {% endif %}
+              </div>
+            </article>
+          {% endfor %}
+        </section>
+      {% else %}
+        <section class="crm-card">
+          <div class="crm-card__body">
+            <div class="crm-empty">
+              {% if duplicate_status_filter == 'open' %}
+                {% trans "No open duplicate suggestions right now. New import conflicts will appear here as they need review." %}
+              {% elif duplicate_status_filter == 'ignored' %}
+                {% trans "No ignored duplicate suggestions yet." %}
+              {% else %}
+                {% trans "No merged duplicate suggestions yet." %}
+              {% endif %}
+            </div>
+          </div>
+        </section>
+      {% endif %}
+    </div>
+  </main>
+</div>
+{% endblock %}

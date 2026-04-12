@@ -1,0 +1,184 @@
+{% extends "frontend/base_app.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "CRM Overview" %} | Pocket AI{% endblock %}
+
+{% block extra_head %}
+  {% include "frontend/crm/_crm_styles.html" %}
+{% endblock %}
+
+{% block content %}
+<div class="crm-page">
+  {% include "frontend/components/dashboard/sidebar.html" with active=crm_active user_name=user_name %}
+  <main class="crm-main">
+    <div class="crm-shell">
+      <section class="crm-hero">
+        <div class="crm-hero__inner">
+          <div>
+            <span class="crm-eyebrow">{% trans "CRM Overview" %}</span>
+            <h1 class="crm-title">{% blocktrans with business_name=crm_business_name %}Customer intelligence for {{ business_name }}{% endblocktrans %}</h1>
+            <p class="crm-subtitle">
+              {% trans "Monitor the shape of your CRM, review what needs attention, and jump into contacts, companies, or imports from one dashboard-native workspace." %}
+            </p>
+          </div>
+          <div class="crm-actions">
+            <a class="crm-button crm-button--ghost" href="{% url 'frontend:dashboard' %}">{% trans "Back to Home" %}</a>
+            <a class="crm-button crm-button--primary" href="{% url 'frontend:dashboard-crm-imports' %}">{% trans "Start a Migration Import" %}</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="crm-stats">
+        <article class="crm-card crm-stat-card">
+          <div class="crm-card__body">
+            <div class="crm-stat-card__label">{% trans "Contacts" %}</div>
+            <div class="crm-stat-card__value">{{ contacts_total }}</div>
+            <div class="crm-stat-card__hint">{% trans "Individual and company-side people records." %}</div>
+          </div>
+        </article>
+        <article class="crm-card crm-stat-card">
+          <div class="crm-card__body">
+            <div class="crm-stat-card__label">{% trans "Companies" %}</div>
+            <div class="crm-stat-card__value">{{ companies_total }}</div>
+            <div class="crm-stat-card__hint">{% trans "Canonical business account records." %}</div>
+          </div>
+        </article>
+        <article class="crm-card crm-stat-card">
+          <div class="crm-card__body">
+            <div class="crm-stat-card__label">{% trans "Active imports" %}</div>
+            <div class="crm-stat-card__value">{{ active_imports }}</div>
+            <div class="crm-stat-card__hint">{% trans "Queued or currently processing import jobs." %}</div>
+          </div>
+        </article>
+        <article class="crm-card crm-stat-card">
+          <div class="crm-card__body">
+            <div class="crm-stat-card__label">{% trans "Duplicate queue" %}</div>
+            <div class="crm-stat-card__value">{{ open_duplicates }}</div>
+            <div class="crm-stat-card__hint">{% trans "Records waiting for human duplicate review." %}</div>
+          </div>
+        </article>
+      </section>
+
+      <section class="crm-card">
+        <div class="crm-card__body">
+          <div class="crm-section__header">
+            <div>
+              <h2 class="crm-section__title">{% trans "Quick actions" %}</h2>
+              <p class="crm-section__subtitle">{% trans "Move through the CRM without leaving the dashboard shell." %}</p>
+            </div>
+          </div>
+          <div class="crm-quicklinks">
+            <a class="crm-quicklink" href="{% url 'frontend:dashboard-crm-contacts' %}">
+              <div class="crm-quicklink__title">{% trans "Open Contacts" %}</div>
+              <div class="crm-quicklink__meta">{% trans "Search, create, and review people records." %}</div>
+            </a>
+            <a class="crm-quicklink" href="{% url 'frontend:dashboard-crm-companies' %}">
+              <div class="crm-quicklink__title">{% trans "Open Companies" %}</div>
+              <div class="crm-quicklink__meta">{% trans "Manage account-level customer records." %}</div>
+            </a>
+            <a class="crm-quicklink" href="{% url 'frontend:dashboard-crm-imports' %}">
+              <div class="crm-quicklink__title">{% trans "Open Imports" %}</div>
+              <div class="crm-quicklink__meta">{% trans "Queue migration files and monitor import health." %}</div>
+            </a>
+            <a class="crm-quicklink" href="{% url 'frontend:dashboard-crm-duplicates' %}">
+              <div class="crm-quicklink__title">{% trans "Open Duplicates" %}</div>
+              <div class="crm-quicklink__meta">{% trans "Review duplicate suggestions and resolve the records that still need a human decision." %}</div>
+            </a>
+            <a class="crm-quicklink" href="{% url 'frontend:dashboard-crm-fields' %}">
+              <div class="crm-quicklink__title">{% trans "Manage Fields" %}</div>
+              <div class="crm-quicklink__meta">{% trans "Control which custom fields exist for contacts and companies before your team scales usage." %}</div>
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <div class="crm-grid">
+        <div class="crm-stack">
+          <section class="crm-card">
+            <div class="crm-card__body">
+              <div class="crm-section__header">
+                <div>
+                  <h2 class="crm-section__title">{% trans "Recent activity" %}</h2>
+                  <p class="crm-section__subtitle">{% trans "A compact pulse of what changed across the CRM." %}</p>
+                </div>
+              </div>
+              {% if recent_activities %}
+                <ul class="crm-timeline">
+                  {% for activity in recent_activities %}
+                    <li class="crm-timeline__item">
+                      <div class="crm-timeline__title">{{ activity.summary }}</div>
+                      <div class="crm-timeline__meta">{{ activity.occurred_at }}{% if activity.detail %} · {{ activity.detail }}{% endif %}</div>
+                    </li>
+                  {% endfor %}
+                </ul>
+              {% else %}
+                <div class="crm-empty">{% trans "CRM activity will appear here as your team creates, updates, imports, and reviews records." %}</div>
+              {% endif %}
+            </div>
+          </section>
+        </div>
+
+        <div class="crm-stack">
+          <section class="crm-card">
+            <div class="crm-card__body">
+              <div class="crm-section__header">
+                <div>
+                  <h2 class="crm-section__title">{% trans "Newest contacts" %}</h2>
+                </div>
+              </div>
+              {% if recent_contacts %}
+                <ul class="crm-list">
+                  {% for contact in recent_contacts %}
+                    <li class="crm-list-item">
+                      <a class="crm-list-item__title" href="{% url 'frontend:dashboard-crm-contact-detail' contact.id %}">{{ contact.display_name }}</a>
+                      <div class="crm-list-item__meta">
+                        {% if contact.primary_email %}
+                          {{ contact.primary_email }}
+                        {% elif contact.primary_phone %}
+                          {{ contact.primary_phone }}
+                        {% else %}
+                          {% trans "No primary contact channel yet" %}
+                        {% endif %}
+                      </div>
+                    </li>
+                  {% endfor %}
+                </ul>
+              {% else %}
+                <div class="crm-empty">{% trans "No contact records yet." %}</div>
+              {% endif %}
+            </div>
+          </section>
+
+          <section class="crm-card">
+            <div class="crm-card__body">
+              <div class="crm-section__header">
+                <div>
+                  <h2 class="crm-section__title">{% trans "Newest companies" %}</h2>
+                </div>
+              </div>
+              {% if recent_companies %}
+                <ul class="crm-list">
+                  {% for company in recent_companies %}
+                    <li class="crm-list-item">
+                      <a class="crm-list-item__title" href="{% url 'frontend:dashboard-crm-company-detail' company.id %}">{{ company.name }}</a>
+                      <div class="crm-list-item__meta">
+                        {% if company.website %}
+                          {{ company.website }}
+                        {% else %}
+                          {% trans "No website captured yet" %}
+                        {% endif %}
+                      </div>
+                    </li>
+                  {% endfor %}
+                </ul>
+              {% else %}
+                <div class="crm-empty">{% trans "No company records yet." %}</div>
+              {% endif %}
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+{% endblock %}

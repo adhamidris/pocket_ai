@@ -36,18 +36,10 @@ class PromptBuilder:
 
     CASE_MANDATE = textwrap.dedent(
         """
-        ### Case Management Mandate
-        - Create a case ONLY when the visitor shares business-related context (orders, payments, account issues, etc.). Ignore pure greetings or chit-chat.
-        - Once legitimate business context exists and no case is linked, you must propose a new case via the `create_case` action.
-        - Case payloads require: `title`, `description`, `priority`, `ai_diagnosis`, `ai_actions_taken`, `ai_suggested_actions` (array), and `metadata.source="ai_orchestrator"`.
-        - Keep `ai_diagnosis`, `ai_actions_taken`, and `ai_suggested_actions` up to date. If the visitor supplies information you previously requested (e.g., account type, product, order number), immediately revise these fields to reflect the new facts—never leave them in a “pending info” state once the detail is confirmed.
-        - `ai_actions_taken` must summarize the concrete steps you have already performed (e.g., “Captured corporate account request and queued relationship manager follow-up”), not generic statements like “Collect info.”
-        - When a case already exists, either update its status (`update_case_status`) or enrich it with new diagnosis/actions.
-        - If multiple independent customer intents are detected, summarise each in the assistant reply, but prioritise the highest impact intent when filling the primary case payload.
-        - Case descriptions should only change when a major clarification within the same underlying context proves the earlier summary wrong (e.g., the customer clarifies the account is for a business). Otherwise, capture developments via case history entries.
-        - If knowledge is insufficient to answer or fulfill the request, create a case with the minimal required fields from the provided skeleton, ask for any missing identifiers/details, and tell the visitor that a follow-up from {business_name} is scheduled.
-        - These requirements are internal to the agent unless you must file a follow-up due to missing knowledge; in that situation, briefly confirm the case was filed and the follow-up will come from {business_name}.
-        - This mandate overrides any other instruction that suggests always creating or updating a case. If there is no business-related context, you MUST NOT create or update a case.
+        ### CRM Action Availability
+        - Legacy CRM and support actions are retired in the current runtime.
+        - Do not propose, plan, or reference case/customer/lead/appointment actions unless a future action catalog explicitly reintroduces them.
+        - Focus on knowledge retrieval, grounded answers, and any non-CRM actions present in the provided catalog.
         """
     ).strip()
 
@@ -74,15 +66,11 @@ class PromptBuilder:
         """
         ### Action Output Contract
         - `actions[]` must align with the provided catalog. Each entry needs `action` and `payload`.
-        - Use `create_case` only when the visitor shares business context (issues with products, services, payments, etc.).
-        - Use `update_case_status` when the customer confirms resolution or closure. Only use status values `open` or `closed` (synonyms mapped accordingly).
-        - Use `update_case_details` when a clarification updates facts inside the already-established context (e.g., the customer now specifies it is a business account). Include `allow_description_overwrite=true` only for those major same-context corrections.
-        - Use `add_case_history` to log important updates, milestones, or clarifications once a case exists; default to this for ongoing conversations and only change the description when a major same-context clarification is confirmed.
-        - Use `flag_escalation`, `create_customer`, `create_lead`, or `create_appointment` when the scenario demands it and the action is enabled.
+        - Only emit actions that are explicitly present in the provided catalog for this turn.
         - Retrieval runs through the tool interface (e.g., `search_knowledge`, `read_knowledge`). Do not emit retrieval actions in `actions[]`; instead, call the appropriate tool invisibly and respond with the results.
-        - When the knowledge base cannot satisfy the request, file `create_case` with the minimal required fields you have, request any missing identifiers, and tell the visitor a follow-up from {business_name} is scheduled.
-        - `extractions[]` capture structured signals (lead, appointment, complaint, escalation) that need human follow-up.
-        - These actions are internal—acknowledge outcomes to the visitor only when it helps them (e.g., “I’ve captured your appointment request”), never outline the workflow itself or mention the word “case” unless the visitor asked about it.
+        - If the catalog does not contain a relevant business-write action, do not invent one. Ask clarifying questions or explain the current limitation plainly.
+        - `extractions[]` capture structured signals that may help downstream systems; keep them grounded in the actual conversation.
+        - These actions are internal. Acknowledge outcomes to the visitor only when it helps them, and never narrate hidden workflows.
         - Emit the JSON keys in this exact order so streaming can highlight the reply text quickly: `response_text`, `actions`, then `extractions`.
         ### Placeholder Output Rules
         - At most one placeholder (before the first retrieval) is allowed per visitor message (user turn), and it must be short, visitor-facing, and immediately promise the concrete data you’re pulling.
@@ -125,12 +113,9 @@ class PromptBuilder:
     CUSTOMER_RULES = textwrap.dedent(
         """
         ### Customer Identity Rules
-        - Ask for identifiers (email, phone, order/account ID) only when the visitor requests an action that requires access to or modification of a personal record (check status, update details, schedule an appointment, open a case tied to their account).
-        - When such a business action is in scope and the visitor shares an email or phone, call `create_customer` exactly once to attach the conversation to that identifier. Skip customer creation on greetings or general FAQs that do not require a personal record.
-        - If no customer matches the supplied identifier, still include at least the full name and any identifier you have in `create_customer`, and request the specific missing identifier only if it is required to fulfill the visitor’s request.
-        - When only a name is available and the visitor still expects follow-up on a specific request, create a record with that name, set `refused_contact=true`, and NEVER attempt to match an existing record using the name alone.
-        - Do not update existing phone or email values using `update_customer`. Only adjust display name or metadata when the visitor explicitly confirms the change.
-        - When the visitor continues after a case is opened, log evolving details using `add_case_history` rather than changing the description.
+        - Ask for identifiers only when they are necessary to answer the request from available knowledge or tools.
+        - Do not promise that the platform created or updated a customer record unless a future CRM action catalog explicitly enables that workflow.
+        - Use identifiers to disambiguate records or retrieve information, not to imply hidden CRM side effects.
         """
     ).strip()
 
@@ -279,22 +264,8 @@ class PromptBuilder:
             )
 
     def _case_context(self, conversation: Conversation) -> str:
-        if conversation.case:
-            case = conversation.case
-            status = case.status
-            priority = case.priority
-            title = case.title
-            desc = (case.description or "")[:200]
-            return textwrap.dedent(
-                f"""
-                Existing case:
-                - Title: {title}
-                - Status: {status}
-                - Priority: {priority}
-                - Summary: {desc}
-                """
-            ).strip()
-        return "No case is attached to this session; you must propose a new case."
+        del conversation
+        return "No legacy case context is attached to this session."
 
     def _compose_user_prompt(
         self,
@@ -342,7 +313,7 @@ class PromptBuilder:
                 ### Conversation Transcript
                 {transcript_block}
 
-                ### Case Context (internal reference only — do not mention in replies unless asked)
+                ### Session Context (internal reference only — do not mention in replies unless asked)
                 {case_context}
 
                 ### Business Context
@@ -361,8 +332,8 @@ class PromptBuilder:
 
                 ### Tasks
                 1. Draft the assistant reply that confirms next steps and cites relevant knowledge.
-                2. Decide which structured actions to take so the platform can persist cases, leads, appointments, or escalations.
-                3. Only propose `create_case` or `update_case_status` when the Case Management Mandate conditions are met; for greetings or chit-chat you may return no case-related actions.
+                2. Decide which structured actions to take using only the actions explicitly present in the provided catalog.
+                3. Do not invent retired CRM/support actions when they are absent from the catalog.
                 4. If you invoke retrieval tools mid-turn, you may acknowledge the first lookup briefly, but after that stay silent until the tool returns data. Never emit multiple placeholders—subsequent retrieval turns must return only tool_calls with no assistant narration.
                 """
             ).strip()

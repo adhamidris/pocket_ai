@@ -20,6 +20,8 @@ FEATURE_FLAG_DEFAULTS: dict[str, bool] = {
     "mcp_gateway_mode": True,
     # Enable background sub-agents (agent runs, automations, watchers, inbox) for this business.
     "sub_agents_v1": False,
+    # Enable the new standalone CRM runtime.
+    "crm_v1": False,
 }
 
 _TRUE_VALUES = {"1", "true", "yes", "on", "enabled"}

@@ -675,7 +675,6 @@ class McpConnectionsApiTests(TestCase):
             name="Support Agent",
             role="support",
             tone="friendly",
-            status="active",
         )
         url = reverse("api:mcp-agent-approval-defaults")
         resp = self.client.get(url, {"business_id": str(self.business.id)})
@@ -692,7 +691,6 @@ class McpConnectionsApiTests(TestCase):
             name="Support Agent",
             role="support",
             tone="friendly",
-            status="active",
         )
         url = reverse("api:mcp-agent-approval-defaults")
         resp = self.client.post(

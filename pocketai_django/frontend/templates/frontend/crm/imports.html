@@ -1,0 +1,383 @@
+{% extends "frontend/base_app.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "CRM Imports" %} | Pocket AI{% endblock %}
+
+{% block extra_head %}
+  {% include "frontend/crm/_crm_styles.html" %}
+{% endblock %}
+
+{% block content %}
+<div class="crm-page">
+  {% include "frontend/components/dashboard/sidebar.html" with active=crm_active user_name=user_name %}
+  <main class="crm-main">
+    <div class="crm-shell">
+      <section class="crm-hero crm-hero--import">
+        <div class="crm-hero__inner">
+          <div>
+            <span class="crm-eyebrow">{% trans "CRM Imports" %}</span>
+            <h1 class="crm-title">{% trans "Move customer data in with confidence" %}</h1>
+            <p class="crm-subtitle">
+              {% trans "Upload a source file, review the inferred mapping, then queue a migration job without leaving the dashboard shell." %}
+            </p>
+          </div>
+          <div class="crm-actions">
+            <a class="crm-button crm-button--ghost" href="{% url 'frontend:dashboard-crm-overview' %}">{% trans "Back to CRM Overview" %}</a>
+            <a class="crm-button crm-button--secondary" href="{% url 'frontend:dashboard-crm-contacts' %}">{% trans "Open Contacts" %}</a>
+            <a class="crm-button crm-button--ghost" href="{% url 'frontend:dashboard-crm-duplicates' %}">{% trans "Open Duplicate Reviews" %}</a>
+          </div>
+        </div>
+      </section>
+
+      {% if upload_notice %}
+        <div class="crm-notice crm-notice--success">{{ upload_notice }}</div>
+      {% endif %}
+
+      <section class="crm-import-steps">
+        <article class="crm-import-step crm-import-step--active">
+          <div class="crm-import-step__number">1</div>
+          <div>
+            <div class="crm-import-step__title">{% trans "Upload source file" %}</div>
+            <div class="crm-import-step__meta">{% trans "CSV and XLSX are supported for the first migration flow." %}</div>
+          </div>
+        </article>
+        <article class="crm-import-step {% if import_preview %}crm-import-step--active{% endif %}">
+          <div class="crm-import-step__number">2</div>
+          <div>
+            <div class="crm-import-step__title">{% trans "Review inferred mapping" %}</div>
+            <div class="crm-import-step__meta">{% trans "See what the CRM recognized before you commit the import job." %}</div>
+          </div>
+        </article>
+        <article class="crm-import-step {% if upload_notice %}crm-import-step--active{% endif %}">
+          <div class="crm-import-step__number">3</div>
+          <div>
+            <div class="crm-import-step__title">{% trans "Queue migration job" %}</div>
+            <div class="crm-import-step__meta">{% trans "Track job health, duplicates, and row-level outcomes from one page." %}</div>
+          </div>
+        </article>
+      </section>
+
+      <section class="crm-grid crm-grid--import-top">
+        <article class="crm-card crm-panel crm-import-panel">
+          <div class="crm-card__body">
+            <div class="crm-section__header">
+              <div>
+                <h2 class="crm-section__title">{% trans "Import source" %}</h2>
+                <p class="crm-section__subtitle">{% trans "Start with the file you want to migrate, then optionally reuse a saved mapping template." %}</p>
+              </div>
+            </div>
+
+            <form method="post" enctype="multipart/form-data" class="crm-import-form">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="preview">
+              <div class="crm-form-grid">
+                <div class="crm-form-field crm-form-field--full">
+                  <label for="{{ form.source_file.id_for_label }}">{{ form.source_file.label }}</label>
+                  {{ form.source_file }}
+                  {% if form.source_file.help_text %}<p class="crm-form-help">{{ form.source_file.help_text }}</p>{% endif %}
+                  {% for error in form.source_file.errors %}<p class="crm-form-errors">{{ error }}</p>{% endfor %}
+                </div>
+                <div class="crm-form-field">
+                  <label for="{{ form.existing_template.id_for_label }}">{% trans "Reusable mapping template" %}</label>
+                  {{ form.existing_template }}
+                  <p class="crm-form-help">{% trans "Use a saved template when you already know how this source should map into the CRM." %}</p>
+                  {% for error in form.existing_template.errors %}<p class="crm-form-errors">{{ error }}</p>{% endfor %}
+                </div>
+                <div class="crm-form-field">
+                  <label for="{{ form.template_name.id_for_label }}">{% trans "Template name to save" %}</label>
+                  {{ form.template_name }}
+                  <p class="crm-form-help">{% trans "Optional. If you like the inferred mapping, save it as a reusable template when you queue the import." %}</p>
+                  {% for error in form.template_name.errors %}<p class="crm-form-errors">{{ error }}</p>{% endfor %}
+                </div>
+              </div>
+              <div class="crm-actions">
+                <button class="crm-button crm-button--primary" type="submit">{% trans "Preview Mapping" %}</button>
+              </div>
+            </form>
+          </div>
+        </article>
+
+        <article class="crm-card crm-panel crm-import-panel">
+          <div class="crm-card__body">
+            <div class="crm-section__header">
+              <div>
+                <h2 class="crm-section__title">{% trans "Import control tower" %}</h2>
+                <p class="crm-section__subtitle">{% trans "Keep migration pressure visible while imports and duplicate review move through the CRM." %}</p>
+              </div>
+            </div>
+            <div class="crm-stats crm-stats--compact">
+              <article class="crm-card crm-stat-card">
+                <div class="crm-card__body">
+                  <div class="crm-stat-card__label">{% trans "Active imports" %}</div>
+                  <div class="crm-stat-card__value">{{ active_imports }}</div>
+                  <div class="crm-stat-card__hint">{% trans "Queued or currently running jobs." %}</div>
+                </div>
+              </article>
+              <article class="crm-card crm-stat-card">
+                <div class="crm-card__body">
+                  <div class="crm-stat-card__label">{% trans "Open duplicate reviews" %}</div>
+                  <div class="crm-stat-card__value">{{ crm_open_duplicates }}</div>
+                  <div class="crm-stat-card__hint">{% trans "Imported records waiting for a human decision." %}</div>
+                </div>
+              </article>
+            </div>
+
+            <div class="crm-list">
+              {% for template in saved_templates|slice:":4" %}
+                <article class="crm-list-item">
+                  <div class="crm-list-item__title">{{ template.name }}</div>
+                  <div class="crm-list-item__meta">
+                    {% blocktrans with updated=template.updated_at|date:"M j, Y" %}Updated {{ updated }}{% endblocktrans %}
+                  </div>
+                </article>
+              {% empty %}
+                <div class="crm-empty">{% trans "No reusable mapping templates yet. The first successful import can create one." %}</div>
+              {% endfor %}
+            </div>
+          </div>
+        </article>
+      </section>
+
+      {% if import_preview %}
+        <section class="crm-import-review">
+          <div class="crm-section__header">
+            <div>
+              <h2 class="crm-section__title">{% trans "Review mapping snapshot" %}</h2>
+              <p class="crm-section__subtitle">{% trans "This is the inferred shape the CRM will use when the job is queued." %}</p>
+            </div>
+          </div>
+
+          <div class="crm-grid crm-grid--import-review">
+            <article class="crm-card crm-panel">
+              <div class="crm-card__body">
+                <div class="crm-import-filemeta">
+                  <div class="crm-import-filemeta__item">
+                    <span class="crm-kicker">{% trans "Source file" %}</span>
+                    <strong>{{ import_preview.source.original_filename }}</strong>
+                  </div>
+                  <div class="crm-import-filemeta__item">
+                    <span class="crm-kicker">{% trans "Format" %}</span>
+                    <strong>{{ import_preview.file_format_label }}</strong>
+                  </div>
+                  <div class="crm-import-filemeta__item">
+                    <span class="crm-kicker">{% trans "Size" %}</span>
+                    <strong>{{ import_preview.file_size_label }}</strong>
+                  </div>
+                  <div class="crm-import-filemeta__item">
+                    <span class="crm-kicker">{% trans "Detected columns" %}</span>
+                    <strong>{{ import_preview.column_count }}</strong>
+                  </div>
+                  <div class="crm-import-filemeta__item">
+                    <span class="crm-kicker">{% trans "Sample rows" %}</span>
+                    <strong>{{ import_preview.sample_count }}</strong>
+                  </div>
+                  <div class="crm-import-filemeta__item">
+                    <span class="crm-kicker">{% trans "Mapping source" %}</span>
+                    <strong>
+                      {% if import_preview.selected_template %}
+                        {{ import_preview.selected_template.name }}
+                      {% else %}
+                        {% trans "Suggested automatically" %}
+                      {% endif %}
+                    </strong>
+                  </div>
+                </div>
+
+                {% if import_preview.template_name and not import_preview.selected_template %}
+                  <div class="crm-inline-note">
+                    {% blocktrans with name=import_preview.template_name %}This mapping will also be saved as the reusable template "{{ name }}" when you queue the import.{% endblocktrans %}
+                  </div>
+                {% endif %}
+
+                {% if import_preview.warnings %}
+                  <div class="crm-warning-list">
+                    {% for warning in import_preview.warnings %}
+                      <article class="crm-warning">
+                        <strong>{% trans "Review note" %}</strong>
+                        <p>{{ warning }}</p>
+                      </article>
+                    {% endfor %}
+                  </div>
+                {% endif %}
+
+                <div class="crm-import-mapping-grid">
+                  {% for section in import_preview.sections %}
+                    <article class="crm-mapping-card">
+                      <div class="crm-mapping-card__header">
+                        <h3>{{ section.title }}</h3>
+                      </div>
+                      <div class="crm-mapping-card__body">
+                        {% if section.entries %}
+                          <ul class="crm-list">
+                            {% for entry in section.entries %}
+                              <li class="crm-list-item crm-list-item--mapping">
+                                <div class="crm-list-item__title">{{ entry.source }}</div>
+                                <div class="crm-list-item__meta">{{ entry.target }}</div>
+                              </li>
+                            {% endfor %}
+                          </ul>
+                        {% else %}
+                          <div class="crm-empty">{% trans "No default columns detected in this section yet." %}</div>
+                        {% endif %}
+
+                        {% if section.external_identity %}
+                          <div class="crm-inline-note">
+                            {% blocktrans with source=section.external_identity.source system=section.external_identity.system object_type=section.external_identity.object_type %}
+                              External identity will read from {{ source }} and register it under {{ system }} / {{ object_type }}.
+                            {% endblocktrans %}
+                          </div>
+                        {% endif %}
+                      </div>
+                    </article>
+                  {% endfor %}
+                </div>
+
+                {% if import_preview.unmapped_columns %}
+                  <div class="crm-section__header">
+                    <div>
+                      <h3 class="crm-section__title crm-section__title--sm">{% trans "Unmapped columns" %}</h3>
+                      <p class="crm-section__subtitle">{% trans "These columns are visible in the file preview but are not part of the current inferred mapping." %}</p>
+                    </div>
+                  </div>
+                  <div class="crm-pill-row">
+                    {% for column in import_preview.unmapped_columns %}
+                      <span class="crm-pill">{{ column }}</span>
+                    {% endfor %}
+                  </div>
+                {% endif %}
+
+                <form method="post" class="crm-import-queueform">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="queue">
+                  <input type="hidden" name="source_file_id" value="{{ queue_form.source_file_id.value|default_if_none:'' }}">
+                  <input type="hidden" name="template_id" value="{{ queue_form.template_id.value|default_if_none:'' }}">
+                  <input type="hidden" name="template_name" value="{{ queue_form.template_name.value|default_if_none:'' }}">
+                  {% if queue_form.save_as_template.value %}
+                    <input type="hidden" name="save_as_template" value="on">
+                  {% endif %}
+                  {% for error in queue_form.non_field_errors %}
+                    <p class="crm-form-errors">{{ error }}</p>
+                  {% endfor %}
+                  {% for error in queue_form.source_file_id.errors %}<p class="crm-form-errors">{{ error }}</p>{% endfor %}
+                  {% for error in queue_form.template_id.errors %}<p class="crm-form-errors">{{ error }}</p>{% endfor %}
+                  {% for error in queue_form.template_name.errors %}<p class="crm-form-errors">{{ error }}</p>{% endfor %}
+                  <div class="crm-actions">
+                    <button class="crm-button crm-button--primary" type="submit">{% trans "Queue Migration Job" %}</button>
+                  </div>
+                </form>
+              </div>
+            </article>
+
+            <article class="crm-card crm-panel">
+              <div class="crm-card__body">
+                <div class="crm-section__header">
+                  <div>
+                    <h3 class="crm-section__title">{% trans "Preview sample rows" %}</h3>
+                    <p class="crm-section__subtitle">{% trans "Use the sample rows to validate names, channels, and company data before the import runs." %}</p>
+                  </div>
+                </div>
+                <div class="crm-table-shell crm-table-shell--preview">
+                  <table class="crm-table crm-table--preview">
+                    <thead>
+                      <tr>
+                        {% for column in import_preview.source.column_snapshot %}
+                          <th>{{ column }}</th>
+                        {% endfor %}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for row in import_preview.sample_rows %}
+                        <tr>
+                          {% for cell in row.cells %}
+                            <td>{% if cell %}{{ cell }}{% else %}—{% endif %}</td>
+                          {% endfor %}
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </article>
+          </div>
+        </section>
+      {% endif %}
+
+      <section class="crm-grid crm-grid--import-bottom">
+        <article class="crm-card crm-panel">
+          <div class="crm-card__body">
+            <div class="crm-section__header">
+              <div>
+                <h2 class="crm-section__title">{% trans "Recent import jobs" %}</h2>
+                <p class="crm-section__subtitle">{% trans "See which jobs created records, updated existing ones, or surfaced duplicates." %}</p>
+              </div>
+            </div>
+            <div class="crm-job-list">
+              {% for job in jobs %}
+                <article class="crm-job-card">
+                  <div class="crm-job-card__topline">
+                    <div>
+                      <h3>{{ job.source_name }}</h3>
+                      <p>{{ job.id }}</p>
+                    </div>
+                    <span class="crm-status-badge crm-status-badge--{{ job.status }}">{{ job.status_label }}</span>
+                  </div>
+                  <div class="crm-pill-row crm-pill-row--metrics">
+                    <span class="crm-pill">{% blocktrans with count=job.summary.created %}{{ count }} created{% endblocktrans %}</span>
+                    <span class="crm-pill">{% blocktrans with count=job.summary.updated %}{{ count }} updated{% endblocktrans %}</span>
+                    <span class="crm-pill">{% blocktrans with count=job.summary.duplicates %}{{ count }} duplicates{% endblocktrans %}</span>
+                    <span class="crm-pill">{% blocktrans with count=job.summary.failed %}{{ count }} failed{% endblocktrans %}</span>
+                    <span class="crm-pill">{% blocktrans with count=job.summary.skipped %}{{ count }} skipped{% endblocktrans %}</span>
+                  </div>
+                  <div class="crm-meta">
+                    {% blocktrans with count=job.total_processed %}{{ count }} processed rows{% endblocktrans %}
+                    {% if job.template_name %} · {% blocktrans with name=job.template_name %}Template: {{ name }}{% endblocktrans %}{% endif %}
+                  </div>
+                  {% if job.error_detail %}
+                    <div class="crm-inline-note crm-inline-note--danger">{{ job.error_detail }}</div>
+                  {% endif %}
+                </article>
+              {% empty %}
+                <div class="crm-empty">{% trans "No import jobs yet. Upload a source file to start the migration flow." %}</div>
+              {% endfor %}
+            </div>
+          </div>
+        </article>
+
+        <article class="crm-card crm-panel">
+          <div class="crm-card__body">
+            <div class="crm-section__header">
+              <div>
+                <h2 class="crm-section__title">{% trans "Duplicate pressure" %}</h2>
+                <p class="crm-section__subtitle">{% trans "The next CRM phase will add the full review queue, but you can already see what the imports pipeline is surfacing." %}</p>
+              </div>
+            </div>
+            <div class="crm-list">
+              {% for item in duplicates %}
+                <article class="crm-list-item">
+                  <div class="crm-list-item__title">
+                    {% if item.record_type == "contact" %}
+                      {% trans "Contact duplicate suggestion" %}
+                    {% else %}
+                      {% trans "Company duplicate suggestion" %}
+                    {% endif %}
+                  </div>
+                  <div class="crm-list-item__meta">
+                    {{ item.status }}
+                    {% if item.source_row_number %} · {% blocktrans with row=item.source_row_number %}Row {{ row }}{% endblocktrans %}{% endif %}
+                    {% if item.match_reasons %} · {{ item.match_reasons|join:", " }}{% endif %}
+                  </div>
+                </article>
+              {% empty %}
+                <div class="crm-empty">{% trans "No duplicate suggestions yet." %}</div>
+              {% endfor %}
+            </div>
+            <div class="crm-actions">
+              <a class="crm-button crm-button--secondary" href="{% url 'frontend:dashboard-crm-duplicates' %}">{% trans "Go to Duplicate Queue" %}</a>
+            </div>
+          </div>
+        </article>
+      </section>
+    </div>
+  </main>
+</div>
+{% endblock %}

@@ -72,7 +72,6 @@ from apps.conversations.models import (
     ConversationFileChunk,
 )
 from apps.rag.ai_orchestrator import (
-    ActionType,
     AiOrchestratorService,
     KnowledgeSearchService,
     KnowledgeSnippet,
@@ -1513,122 +1512,6 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
         required=("refs", "max_chars"),
     ),
     _function_schema(
-        name="create_case",
-        description="Create a structured customer case with diagnosis and suggested actions.",
-        properties={
-            "title": {"type": "string", "description": "Short case title provided to internal teams."},
-            "description": {"type": "string", "description": "Detailed summary of the issue."},
-            "priority": {
-                "type": "string",
-                "enum": ["low", "medium", "high"],
-                "description": "Relative urgency.",
-            },
-            "ai_diagnosis": {"type": "string", "description": "What you believe is happening."},
-            "ai_actions_taken": {"type": "string", "description": "What you already did for the visitor."},
-            "ai_suggested_actions": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Follow-up steps you recommend.",
-            },
-        },
-        required=("title", "description", "priority", "ai_diagnosis", "ai_actions_taken"),
-    ),
-    _function_schema(
-        name="update_case_status",
-        description="Update the status of the currently linked case.",
-        properties={
-            "case_id": {"type": "string", "description": "UUID of the case to update."},
-            "status": {
-                "type": "string",
-                "enum": ["open", "closed"],
-                "description": "New lifecycle status (open/closed).",
-            },
-            "note": {"type": "string", "description": "Optional explanation surfaced to humans."},
-        },
-        required=("case_id", "status"),
-    ),
-    _function_schema(
-        name="update_case_details",
-        description="Revise the title/description/priority of an existing case when new facts arrive.",
-        properties={
-            "case_id": {"type": "string", "description": "UUID of the case to update."},
-            "title": {"type": "string"},
-            "description": {"type": "string"},
-            "priority": {
-                "type": "string",
-                "enum": ["low", "medium", "high"],
-            },
-            "allow_description_overwrite": {
-                "type": "boolean",
-                "description": "Set true only when the prior description is now incorrect.",
-                "default": False,
-            },
-        },
-        required=("case_id",),
-    ),
-    _function_schema(
-        name="add_case_history",
-        description="Log a case history entry documenting progress or clarifications.",
-        properties={
-            "case_id": {"type": "string"},
-            "summary": {"type": "string", "description": "What changed or what was confirmed."},
-        },
-        required=("case_id", "summary"),
-    ),
-    _function_schema(
-        name="flag_escalation",
-        description="Escalate a conversation for human follow-up.",
-        properties={
-            "reason": {"type": "string", "description": "Why the escalation is needed."},
-            "details": {"type": "string", "description": "Context to hand off to the human team."},
-        },
-        required=("reason",),
-    ),
-    _function_schema(
-        name="create_customer",
-        description="Create or match a customer record when identifiers are provided.",
-        properties={
-            "full_name": {"type": "string"},
-            "email": {"type": "string"},
-            "phone": {"type": "string"},
-            "metadata": {
-                "type": "object",
-                "description": "Optional extra context (company, notes, etc.).",
-            },
-        },
-        required=("full_name",),
-    ),
-    _function_schema(
-        name="update_customer",
-        description="Update an existing customer profile when the visitor confirms a change.",
-        properties={
-            "customer_id": {"type": "string"},
-            "full_name": {"type": "string"},
-            "metadata": {"type": "object"},
-        },
-        required=("customer_id",),
-    ),
-    _function_schema(
-        name="create_lead",
-        description="Capture a sales lead discovered in chat.",
-        properties={
-            "title": {"type": "string"},
-            "description": {"type": "string"},
-            "source": {"type": "string"},
-        },
-        required=("title", "description"),
-    ),
-    _function_schema(
-        name="create_appointment",
-        description="Schedule or request an appointment for the visitor.",
-        properties={
-            "topic": {"type": "string"},
-            "preferred_time": {"type": "string", "description": "ISO timestamp or natural language slot."},
-            "notes": {"type": "string"},
-        },
-        required=("topic",),
-    ),
-    _function_schema(
         name="email_search",
         description="Search the connected email mailbox (Google/Microsoft). Results are bounded and text-only.",
         properties={
@@ -2021,7 +1904,6 @@ def get_tool_definitions() -> tuple[Mapping[str, object], ...]:
         if isinstance(queries_schema, dict):
             queries_schema["description"] = queries_description
         break
-
     return tuple(definitions)
 
 
@@ -2117,6 +1999,13 @@ def execute_tool(
         return enriched
 
     return result
+
+
+def _tool_schema_name(tool_def: Mapping[str, object]) -> str:
+    function_block = tool_def.get("function")
+    if not isinstance(function_block, Mapping):
+        return ""
+    return str(function_block.get("name") or "").strip()
 
 
 # ---------------------------------------------------------------------------
@@ -8269,190 +8158,6 @@ def _read_knowledge_handler(
     return _read_knowledge_agentic_wrapper(arguments, conversation, context)
 
 
-def _action_tool_result(action: ActionType, payload: Mapping[str, object]) -> Mapping[str, object]:
-    """
-    Structure a tool result as a planned action without side effects.
-
-    The legacy ActionDispatcher will still execute these actions based on the
-    AiOrchestratorPlan, so MCP tooling focuses on planning, not persistence.
-    """
-
-    return {
-        "action": action.value,
-        "payload": dict(payload),
-    }
-
-
-def _create_case_handler(
-    arguments: Mapping[str, object],
-    conversation: Conversation,
-    context: ToolExecutionContext,
-) -> Mapping[str, object]:
-    del context  # planning only; no side effects
-    title = _coerce_str(arguments.get("title")).strip() or "Customer request"
-    description = _coerce_str(arguments.get("description")).strip()
-    priority = _normalize_priority(arguments.get("priority")) or "medium"
-    ai_diagnosis = _coerce_str(arguments.get("ai_diagnosis")).strip()
-    ai_actions_taken = _coerce_str(arguments.get("ai_actions_taken")).strip()
-    raw_suggestions = arguments.get("ai_suggested_actions") or []
-    suggestions: list[str] = [
-        str(item)
-        for item in raw_suggestions
-        if isinstance(item, (str, int, float))
-    ]
-    payload = {
-        "title": title,
-        "description": description,
-        "priority": priority,
-        "ai_diagnosis": ai_diagnosis,
-        "ai_actions_taken": ai_actions_taken,
-        "ai_suggested_actions": suggestions,
-        "metadata": {"source": "mcp_orchestrator"},
-    }
-    return _action_tool_result(ActionType.CREATE_CASE, payload)
-
-
-def _update_case_status_handler(
-    arguments: Mapping[str, object],
-    conversation: Conversation,
-    context: ToolExecutionContext,
-) -> Mapping[str, object]:
-    del context, conversation  # planning only
-    status_raw = _coerce_str(arguments.get("status")).strip().lower()
-    if status_raw in {"resolve", "resolved", "close", "closed"}:
-        status = "closed"
-    elif status_raw in {"open", "reopen", "re-open"}:
-        status = "open"
-    else:
-        status = status_raw or "open"
-    payload = {
-        "case_id": _coerce_str(arguments.get("case_id")).strip(),
-        "status": status,
-        "note": _coerce_str(arguments.get("note")).strip() or None,
-    }
-    return _action_tool_result(ActionType.UPDATE_CASE_STATUS, payload)
-
-
-def _update_case_details_handler(
-    arguments: Mapping[str, object],
-    conversation: Conversation,
-    context: ToolExecutionContext,
-) -> Mapping[str, object]:
-    del context, conversation
-    payload: dict[str, object] = {
-        "case_id": _coerce_str(arguments.get("case_id")).strip(),
-        "allow_description_overwrite": bool(arguments.get("allow_description_overwrite") or False),
-    }
-    for key in ("title", "description", "priority"):
-        value = arguments.get(key)
-        if value is None:
-            continue
-        if key == "priority":
-            normalized = _normalize_priority(value)
-            if normalized:
-                payload[key] = normalized
-        else:
-            text = _coerce_str(value).strip()
-            if text:
-                payload[key] = text
-    return _action_tool_result(ActionType.UPDATE_CASE_DETAILS, payload)
-
-
-def _add_case_history_handler(
-    arguments: Mapping[str, object],
-    conversation: Conversation,
-    context: ToolExecutionContext,
-) -> Mapping[str, object]:
-    del context, conversation
-    payload = {
-        "case_id": _coerce_str(arguments.get("case_id")).strip(),
-        "summary": _coerce_str(arguments.get("summary")).strip(),
-    }
-    return _action_tool_result(ActionType.ADD_CASE_HISTORY, payload)
-
-
-def _flag_escalation_handler(
-    arguments: Mapping[str, object],
-    conversation: Conversation,
-    context: ToolExecutionContext,
-) -> Mapping[str, object]:
-    del context, conversation
-    reason = _coerce_str(arguments.get("reason")).strip() or "Escalated by MCP orchestrator"
-    details = _coerce_str(arguments.get("details")).strip()
-    payload: dict[str, object] = {"reason": reason}
-    if details:
-        payload["metadata"] = {"details": details}
-    return _action_tool_result(ActionType.FLAG_ESCALATION, payload)
-
-
-def _create_customer_handler(
-    arguments: Mapping[str, object],
-    conversation: Conversation,
-    context: ToolExecutionContext,
-) -> Mapping[str, object]:
-    del context  # planning only
-    full_name = _coerce_str(arguments.get("full_name")).strip() or "Web Visitor"
-    email = _coerce_str(arguments.get("email")).strip()
-    phone = _coerce_str(arguments.get("phone")).strip()
-    metadata = arguments.get("metadata") if isinstance(arguments.get("metadata"), Mapping) else {}
-    payload = {
-        "display_name": full_name,
-        "primary_email": email,
-        "primary_phone": phone,
-        "metadata": metadata,
-        # record_origin is filled by the legacy handler if omitted
-    }
-    return _action_tool_result(ActionType.CREATE_CUSTOMER, payload)
-
-
-def _update_customer_handler(
-    arguments: Mapping[str, object],
-    conversation: Conversation,
-    context: ToolExecutionContext,
-) -> Mapping[str, object]:
-    del context, conversation
-    full_name = _coerce_str(arguments.get("full_name")).strip()
-    metadata = arguments.get("metadata") if isinstance(arguments.get("metadata"), Mapping) else {}
-    payload: dict[str, object] = {
-        "customer_id": _coerce_str(arguments.get("customer_id")).strip(),
-    }
-    if full_name:
-        payload["display_name"] = full_name
-    if metadata:
-        payload["metadata"] = metadata
-    return _action_tool_result(ActionType.UPDATE_CUSTOMER, payload)
-
-
-def _create_lead_handler(
-    arguments: Mapping[str, object],
-    conversation: Conversation,
-    context: ToolExecutionContext,
-) -> Mapping[str, object]:
-    del context  # planning only
-    payload = {
-        "title": _coerce_str(arguments.get("title")).strip(),
-        "description": _coerce_str(arguments.get("description")).strip(),
-        "source": _coerce_str(arguments.get("source")).strip() or "mcp_orchestrator",
-        "conversation_id": str(conversation.id),
-    }
-    return _action_tool_result(ActionType.CREATE_LEAD, payload)
-
-
-def _create_appointment_handler(
-    arguments: Mapping[str, object],
-    conversation: Conversation,
-    context: ToolExecutionContext,
-) -> Mapping[str, object]:
-    del context  # planning only
-    payload = {
-        "topic": _coerce_str(arguments.get("topic")).strip(),
-        "preferred_time": _coerce_str(arguments.get("preferred_time")).strip(),
-        "notes": _coerce_str(arguments.get("notes")).strip(),
-        "conversation_id": str(conversation.id),
-    }
-    return _action_tool_result(ActionType.CREATE_APPOINTMENT, payload)
-
-
 # ---------------------------------------------------------------------------
 # Backwards-compatible stub factory (for undefined tools)
 
@@ -11968,15 +11673,6 @@ _TOOL_HANDLERS: dict[str, ToolHandler] = {
     "pdf_merge": _pdf_merge_handler,
     "pdf_extract_pages": _pdf_extract_pages_handler,
     "pdf_extract_text": _pdf_extract_text_handler,
-    "create_case": _create_case_handler,
-    "update_case_status": _update_case_status_handler,
-    "update_case_details": _update_case_details_handler,
-    "add_case_history": _add_case_history_handler,
-    "flag_escalation": _flag_escalation_handler,
-    "create_customer": _create_customer_handler,
-    "update_customer": _update_customer_handler,
-    "create_lead": _create_lead_handler,
-    "create_appointment": _create_appointment_handler,
     "email_search": _email_search_handler,
     "email_get_message": _email_get_message_handler,
     "email_get_thread": _email_get_thread_handler,

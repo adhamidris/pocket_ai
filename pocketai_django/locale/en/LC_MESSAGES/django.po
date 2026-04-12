@@ -4612,3 +4612,807 @@ msgstr "Arabic"
 
 #~ msgid "About"
 #~ msgstr "About"
+
+# CRM Phase 1 UI
+msgid "A canonical business account record that can hold linked contacts, imports, and account history."
+msgstr "A canonical business account record that can hold linked contacts, imports, and account history."
+
+msgid "A canonical customer record that can represent an individual buyer or a company-side contact."
+msgstr "A canonical customer record that can represent an individual buyer or a company-side contact."
+
+msgid "A compact pulse of what changed across the CRM."
+msgstr "A compact pulse of what changed across the CRM."
+
+msgid "A quick read of the company-level CRM record."
+msgstr "A quick read of the company-level CRM record."
+
+msgid "Account snapshot"
+msgstr "Account snapshot"
+
+msgid "Account-level records for business customers"
+msgstr "Account-level records for business customers"
+
+msgid "Active imports"
+msgstr "Active imports"
+
+msgid "Activity timeline"
+msgstr "Activity timeline"
+
+msgid "Activity will appear here as the company record evolves."
+msgstr "Activity will appear here as the company record evolves."
+
+msgid "Activity will appear here as the record changes over time."
+msgstr "Activity will appear here as the record changes over time."
+
+msgid "Add a person record directly inside the CRM."
+msgstr "Add a person record directly inside the CRM."
+
+msgid "Add an account-level record for a business customer."
+msgstr "Add an account-level record for a business customer."
+
+msgid "Awaiting a verified contact channel"
+msgstr "Awaiting a verified contact channel"
+
+msgid "B2C and B2B ready"
+msgstr "B2C and B2B ready"
+
+msgid "Back to CRM Overview"
+msgstr "Back to CRM Overview"
+
+msgid "Back to Companies"
+msgstr "Back to Companies"
+
+msgid "Back to Contacts"
+msgstr "Back to Contacts"
+
+msgid "Back to Home"
+msgstr "Back to Home"
+
+msgid "Business contacts anchored to this company."
+msgstr "Business contacts anchored to this company."
+
+msgid "CRM Companies"
+msgstr "CRM Companies"
+
+msgid "CRM Contacts"
+msgstr "CRM Contacts"
+
+msgid "CRM Imports"
+msgstr "CRM Imports"
+
+msgid "CRM Overview"
+msgstr "CRM Overview"
+
+msgid "CRM activity will appear here as your team creates, updates, imports, and reviews records."
+msgstr "CRM activity will appear here as your team creates, updates, imports, and reviews records."
+
+msgid "Canonical business account records."
+msgstr "Canonical business account records."
+
+msgid "Clean identity records"
+msgstr "Clean identity records"
+
+msgid "Cleaner account context"
+msgstr "Cleaner account context"
+
+msgid "Company Profile"
+msgstr "Company Profile"
+
+msgid "Company links"
+msgstr "Company links"
+
+msgid "Contact Profile"
+msgstr "Contact Profile"
+
+msgid "Contacts can stand alone or connect to business accounts."
+msgstr "Contacts can stand alone or connect to business accounts."
+
+msgid "Contacts can stand alone or link into one or more companies."
+msgstr "Contacts can stand alone or link into one or more companies."
+
+msgid "Create Company"
+msgstr "Create Company"
+
+msgid "Create Contact"
+msgstr "Create Contact"
+
+msgid "Customer intelligence for {{ business_name }}"
+msgstr "Customer intelligence for {{ business_name }}"
+
+msgid "Domain"
+msgstr "Domain"
+
+msgid "Domain will appear after website normalization"
+msgstr "Domain will appear after website normalization"
+
+msgid "Duplicate queue"
+msgstr "Duplicate queue"
+
+msgid "Edit account"
+msgstr "Edit account"
+
+msgid "Edit profile"
+msgstr "Edit profile"
+
+msgid "Email and phone stay visible so your team can review canonical customer data quickly."
+msgstr "Email and phone stay visible so your team can review canonical customer data quickly."
+
+msgid "Email-first record"
+msgstr "Email-first record"
+
+msgid "External identities"
+msgstr "External identities"
+
+msgid "Identity"
+msgstr "Identity"
+
+msgid "Import Companies"
+msgstr "Import Companies"
+
+msgid "Import Contacts"
+msgstr "Import Contacts"
+
+msgid "Import-ready structure"
+msgstr "Import-ready structure"
+
+msgid "Individual / not linked yet"
+msgstr "Individual / not linked yet"
+
+msgid "Individual and company-side people records."
+msgstr "Individual and company-side people records."
+
+msgid "Keep company context visible while updating the account record."
+msgstr "Keep company context visible while updating the account record."
+
+msgid "Linked contacts"
+msgstr "Linked contacts"
+
+msgid "Manage account-level customer records."
+msgstr "Manage account-level customer records."
+
+msgid "Manage {{ total }} company records, keep account identity clean, and connect the right contacts to each organization."
+msgstr "Manage {{ total }} company records, keep account identity clean, and connect the right contacts to each organization."
+
+msgid "Mixed customer types are supported"
+msgstr "Mixed customer types are supported"
+
+msgid "Monitor the shape of your CRM, review what needs attention, and jump into contacts, companies, or imports from one dashboard-native workspace."
+msgstr "Monitor the shape of your CRM, review what needs attention, and jump into contacts, companies, or imports from one dashboard-native workspace."
+
+msgid "Move through the CRM without leaving the dashboard shell."
+msgstr "Move through the CRM without leaving the dashboard shell."
+
+msgid "Newest companies"
+msgstr "Newest companies"
+
+msgid "Newest contacts"
+msgstr "Newest contacts"
+
+msgid "No companies yet. Add your first account record or import a customer file to begin."
+msgstr "No companies yet. Add your first account record or import a customer file to begin."
+
+msgid "No company records yet."
+msgstr "No company records yet."
+
+msgid "No contact records yet."
+msgstr "No contact records yet."
+
+msgid "No contacts are linked to this company yet."
+msgstr "No contacts are linked to this company yet."
+
+msgid "No contacts yet. Create your first record or import a file to start building the CRM."
+msgstr "No contacts yet. Create your first record or import a file to start building the CRM."
+
+msgid "No custom fields have been applied to this company yet."
+msgstr "No custom fields have been applied to this company yet."
+
+msgid "No custom fields have been applied to this contact yet."
+msgstr "No custom fields have been applied to this contact yet."
+
+msgid "No external account identities are attached yet."
+msgstr "No external account identities are attached yet."
+
+msgid "No external identities are attached yet."
+msgstr "No external identities are attached yet."
+
+msgid "No linked contacts yet"
+msgstr "No linked contacts yet"
+
+msgid "No notes yet for this company."
+msgstr "No notes yet for this company."
+
+msgid "No notes yet for this record."
+msgstr "No notes yet for this record."
+
+msgid "No phone set"
+msgstr "No phone set"
+
+msgid "No primary contact channel yet"
+msgstr "No primary contact channel yet"
+
+msgid "No role set"
+msgstr "No role set"
+
+msgid "No website captured yet"
+msgstr "No website captured yet"
+
+msgid "Normalize websites, keep phone and source visible, and attach multiple contacts over time."
+msgstr "Normalize websites, keep phone and source visible, and attach multiple contacts over time."
+
+msgid "Open Companies"
+msgstr "Open Companies"
+
+msgid "Open Contacts"
+msgstr "Open Contacts"
+
+msgid "Open Imports"
+msgstr "Open Imports"
+
+msgid "People records built for real customer context"
+msgstr "People records built for real customer context"
+
+msgid "Phone-first record"
+msgstr "Phone-first record"
+
+msgid "Primary channel"
+msgstr "Primary channel"
+
+msgid "Primary company link"
+msgstr "Primary company link"
+
+msgid "Primary relationship"
+msgstr "Primary relationship"
+
+msgid "Queue migration files and monitor import health."
+msgstr "Queue migration files and monitor import health."
+
+msgid "Queued or currently processing import jobs."
+msgstr "Queued or currently processing import jobs."
+
+msgid "Quick actions"
+msgstr "Quick actions"
+
+msgid "Quick read of the canonical record."
+msgstr "Quick read of the canonical record."
+
+msgid "Ready for import-led growth"
+msgstr "Ready for import-led growth"
+
+msgid "Recent activity"
+msgstr "Recent activity"
+
+msgid "Records waiting for human duplicate review."
+msgstr "Records waiting for human duplicate review."
+
+msgid "Relationship title not set"
+msgstr "Relationship title not set"
+
+msgid "Review {{ total }} people records, keep identity details clean, and create new contacts without leaving the dashboard."
+msgstr "Review {{ total }} people records, keep identity details clean, and create new contacts without leaving the dashboard."
+
+msgid "Save Company"
+msgstr "Save Company"
+
+msgid "Save Contact"
+msgstr "Save Contact"
+
+msgid "Search by company name, website, or phone"
+msgstr "Search by company name, website, or phone"
+
+msgid "Search by name, email, phone, or company"
+msgstr "Search by name, email, phone, or company"
+
+msgid "Search, create, and review people records."
+msgstr "Search, create, and review people records."
+
+msgid "Start a Migration Import"
+msgstr "Start a Migration Import"
+
+msgid "System note"
+msgstr "System note"
+
+msgid "This account layer is designed to handle migration from files and external CRMs later."
+msgstr "This account layer is designed to handle migration from files and external CRMs later."
+
+msgid "This contact currently stands on its own without a linked company."
+msgstr "This contact currently stands on its own without a linked company."
+
+msgid "Update Company"
+msgstr "Update Company"
+
+msgid "Update Contact"
+msgstr "Update Contact"
+
+msgid "Use companies for account-level CRM while still supporting direct individual contacts where needed."
+msgstr "Use companies for account-level CRM while still supporting direct individual contacts where needed."
+
+msgid "Use imports when you want to bring in larger datasets with duplicate review later."
+msgstr "Use imports when you want to bring in larger datasets with duplicate review later."
+
+msgid "Use the split layout to keep profile context visible while editing."
+msgstr "Use the split layout to keep profile context visible while editing."
+
+msgid "What this page is for"
+msgstr "What this page is for"
+
+msgid "Why this matters"
+msgstr "Why this matters"
+
+msgid "{{ count }} open duplicate reviews"
+msgstr "{{ count }} open duplicate reviews"
+
+# CRM Phase 2 imports UI
+msgid "%(value).1f %(unit)s"
+msgstr "%(value).1f %(unit)s"
+
+msgid "%(value)s %(unit)s"
+msgstr "%(value)s %(unit)s"
+
+msgid "0 bytes"
+msgstr "0 bytes"
+
+msgid "CRM is not enabled for this business."
+msgstr "CRM is not enabled for this business."
+
+msgid "CSV and XLSX are supported for the first migration flow."
+msgstr "CSV and XLSX are supported for the first migration flow."
+
+msgid "Company duplicate suggestion"
+msgstr "Company duplicate suggestion"
+
+msgid "Company mapping"
+msgstr "Company mapping"
+
+msgid "Company name"
+msgstr "Company name"
+
+msgid "Contact duplicate suggestion"
+msgstr "Contact duplicate suggestion"
+
+msgid "Contact mapping"
+msgstr "Contact mapping"
+
+msgid "Detected columns"
+msgstr "Detected columns"
+
+msgid "Display name"
+msgstr "Display name"
+
+msgid "Duplicate pressure"
+msgstr "Duplicate pressure"
+
+msgid "External identity will read from {{ source }} and register it under {{ system }} / {{ object_type }}."
+msgstr "External identity will read from {{ source }} and register it under {{ system }} / {{ object_type }}."
+
+msgid "Format"
+msgstr "Format"
+
+msgid "Import control tower"
+msgstr "Import control tower"
+
+msgid "Import source"
+msgstr "Import source"
+
+msgid "Imported records waiting for a human decision."
+msgstr "Imported records waiting for a human decision."
+
+msgid "Keep migration pressure visible while imports and duplicate review move through the CRM."
+msgstr "Keep migration pressure visible while imports and duplicate review move through the CRM."
+
+msgid "Last name"
+msgstr "Last name"
+
+msgid "Mapping source"
+msgstr "Mapping source"
+
+msgid "Move customer data in with confidence"
+msgstr "Move customer data in with confidence"
+
+msgid "No default columns detected in this section yet."
+msgstr "No default columns detected in this section yet."
+
+msgid "No default field mapping was detected. Consider saving a reusable template before you queue this import."
+msgstr "No default field mapping was detected. Consider saving a reusable template before you queue this import."
+
+msgid "No import jobs yet. Upload a source file to start the migration flow."
+msgstr "No import jobs yet. Upload a source file to start the migration flow."
+
+msgid "No reusable mapping templates yet. The first successful import can create one."
+msgstr "No reusable mapping templates yet. The first successful import can create one."
+
+msgid "Open duplicate reviews"
+msgstr "Open duplicate reviews"
+
+msgid "Optional. If you like the inferred mapping, save it as a reusable template when you queue the import."
+msgstr "Optional. If you like the inferred mapping, save it as a reusable template when you queue the import."
+
+msgid "Preview Mapping"
+msgstr "Preview Mapping"
+
+msgid "Preview sample rows"
+msgstr "Preview sample rows"
+
+msgid "Primary email"
+msgstr "Primary email"
+
+msgid "Primary phone"
+msgstr "Primary phone"
+
+msgid "Queue Migration Job"
+msgstr "Queue Migration Job"
+
+msgid "Queue migration job"
+msgstr "Queue migration job"
+
+msgid "Queued or currently running jobs."
+msgstr "Queued or currently running jobs."
+
+msgid "Recent import jobs"
+msgstr "Recent import jobs"
+
+msgid "Reusable mapping template"
+msgstr "Reusable mapping template"
+
+msgid "Review inferred mapping"
+msgstr "Review inferred mapping"
+
+msgid "Review mapping snapshot"
+msgstr "Review mapping snapshot"
+
+msgid "Review note"
+msgstr "Review note"
+
+msgid "Role / title"
+msgstr "Role / title"
+
+msgid "Row {{ row }}"
+msgstr "Row {{ row }}"
+
+msgid "Sample rows"
+msgstr "Sample rows"
+
+msgid "See what the CRM recognized before you commit the import job."
+msgstr "See what the CRM recognized before you commit the import job."
+
+msgid "See which jobs created records, updated existing ones, or surfaced duplicates."
+msgstr "See which jobs created records, updated existing ones, or surfaced duplicates."
+
+msgid "Size"
+msgstr "Size"
+
+msgid "Some columns are currently unmapped. They will be ignored unless you later turn them into custom fields or update the mapping template."
+msgstr "Some columns are currently unmapped. They will be ignored unless you later turn them into custom fields or update the mapping template."
+
+msgid "Source file"
+msgstr "Source file"
+
+msgid "Start with the file you want to migrate, then optionally reuse a saved mapping template."
+msgstr "Start with the file you want to migrate, then optionally reuse a saved mapping template."
+
+msgid "Suggested automatically"
+msgstr "Suggested automatically"
+
+msgid "Template name to save"
+msgstr "Template name to save"
+
+msgid "Template: {{ name }}"
+msgstr "Template: {{ name }}"
+
+msgid "The next CRM phase will add the full review queue, but you can already see what the imports pipeline is surfacing."
+msgstr "The next CRM phase will add the full review queue, but you can already see what the imports pipeline is surfacing."
+
+msgid "These columns are visible in the file preview but are not part of the current inferred mapping."
+msgstr "These columns are visible in the file preview but are not part of the current inferred mapping."
+
+msgid "This is the inferred shape the CRM will use when the job is queued."
+msgstr "This is the inferred shape the CRM will use when the job is queued."
+
+msgid "This mapping will also be saved as the reusable template \"{{ name }}\" when you queue the import."
+msgstr "This mapping will also be saved as the reusable template \"{{ name }}\" when you queue the import."
+
+# CRM Phase 3 duplicates UI
+msgid "A valid mergeable record is required before this duplicate can be merged."
+msgstr "A valid mergeable record is required before this duplicate can be merged."
+
+msgid "Add context for why you ignored or merged this suggestion."
+msgstr "Add context for why you ignored or merged this suggestion."
+
+msgid "CRM Duplicates"
+msgstr "CRM Duplicates"
+
+msgid "Candidate record already in CRM"
+msgstr "Candidate record already in CRM"
+
+msgid "Created directly inside the duplicate queue"
+msgstr "Created directly inside the duplicate queue"
+
+msgid "Duplicate suggestion ignored."
+msgstr "Duplicate suggestion ignored."
+
+msgid "Duplicate suggestion merged."
+msgstr "Duplicate suggestion merged."
+
+msgid "Duplicate suggestion reopened."
+msgstr "Duplicate suggestion reopened."
+
+msgid "Ignore Suggestion"
+msgstr "Ignore Suggestion"
+
+msgid "Ignored"
+msgstr "Ignored"
+
+msgid "Incoming snapshot from import"
+msgstr "Incoming snapshot from import"
+
+msgid "Merge Records"
+msgstr "Merge Records"
+
+msgid "Merged"
+msgstr "Merged"
+
+msgid "No ignored duplicate suggestions yet."
+msgstr "No ignored duplicate suggestions yet."
+
+msgid "No incoming snapshot is attached to this suggestion."
+msgstr "No incoming snapshot is attached to this suggestion."
+
+msgid "No merged duplicate suggestions yet."
+msgstr "No merged duplicate suggestions yet."
+
+msgid "No open duplicate suggestions right now. New import conflicts will appear here as they need review."
+msgstr "No open duplicate suggestions right now. New import conflicts will appear here as they need review."
+
+msgid "No primary channel yet"
+msgstr "No primary channel yet"
+
+msgid "No website or phone captured yet"
+msgstr "No website or phone captured yet"
+
+msgid "Open Duplicates"
+msgstr "Open Duplicates"
+
+msgid "Open Duplicate Reviews"
+msgstr "Open Duplicate Reviews"
+
+msgid "Open linked record"
+msgstr "Open linked record"
+
+msgid "Open record"
+msgstr "Open record"
+
+msgid "Queue status"
+msgstr "Queue status"
+
+msgid "Reopen Suggestion"
+msgstr "Reopen Suggestion"
+
+msgid "Resolution note"
+msgstr "Resolution note"
+
+msgid "Review duplicate suggestions and resolve the records that still need a human decision."
+msgstr "Review duplicate suggestions and resolve the records that still need a human decision."
+
+msgid "Review the records that still need a human decision"
+msgstr "Review the records that still need a human decision"
+
+msgid "Source row {{ row }}"
+msgstr "Source row {{ row }}"
+
+msgid "Switch between open, ignored, and already-resolved duplicate suggestions without leaving the CRM shell."
+msgstr "Switch between open, ignored, and already-resolved duplicate suggestions without leaving the CRM shell."
+
+msgid "The candidate CRM record could not be loaded."
+msgstr "The candidate CRM record could not be loaded."
+
+msgid "This duplicate already has a mergeable record attached inside the CRM. Record ID: {{ record_id }}"
+msgstr "This duplicate already has a mergeable record attached inside the CRM. Record ID: {{ record_id }}"
+
+msgid "This suggestion came from an import snapshot without a second CRM record yet, so merge is not available. You can ignore it for now or keep it open for later review."
+msgstr "This suggestion came from an import snapshot without a second CRM record yet, so merge is not available. You can ignore it for now or keep it open for later review."
+
+msgid "Unsupported duplicate action."
+msgstr "Unsupported duplicate action."
+
+msgid "Use the duplicate queue to compare imported snapshots against canonical CRM records, then ignore, reopen, or merge when the underlying data supports it."
+msgstr "Use the duplicate queue to compare imported snapshots against canonical CRM records, then ignore, reopen, or merge when the underlying data supports it."
+
+msgid "Companies"
+msgstr "Companies"
+
+msgid "Contacts"
+msgstr "Contacts"
+
+msgid "Language: {{ label }}"
+msgstr "Language: {{ label }}"
+
+msgid "RAG Analytics"
+msgstr "RAG Analytics"
+
+msgid "Track job health, duplicates, and row-level outcomes from one page."
+msgstr "Track job health, duplicates, and row-level outcomes from one page."
+
+msgid "Unmapped columns"
+msgstr "Unmapped columns"
+
+msgid "Updated {{ updated }}"
+msgstr "Updated {{ updated }}"
+
+msgid "Upload a source file, review the inferred mapping, then queue a migration job without leaving the dashboard shell."
+msgstr "Upload a source file, review the inferred mapping, then queue a migration job without leaving the dashboard shell."
+
+msgid "Upload source file"
+msgstr "Upload source file"
+
+msgid "Use a saved template when you already know how this source should map into the CRM."
+msgstr "Use a saved template when you already know how this source should map into the CRM."
+
+msgid "Use the sample rows to validate names, channels, and company data before the import runs."
+msgstr "Use the sample rows to validate names, channels, and company data before the import runs."
+
+msgid "{{ count }} created"
+msgstr "{{ count }} created"
+
+msgid "{{ count }} duplicates"
+msgstr "{{ count }} duplicates"
+
+msgid "{{ count }} failed"
+msgstr "{{ count }} failed"
+
+msgid "{{ count }} processed rows"
+msgstr "{{ count }} processed rows"
+
+msgid "{{ count }} skipped"
+msgstr "{{ count }} skipped"
+
+msgid "{{ count }} updated"
+msgstr "{{ count }} updated"
+
+msgid "Import file queued for processing."
+msgstr "Import file queued for processing."
+
+msgid "No duplicate suggestions yet."
+msgstr "No duplicate suggestions yet."
+
+msgid "No external ID column was detected, so source-system exact-match updates are not available for this file."
+msgstr "No external ID column was detected, so source-system exact-match updates are not available for this file."
+
+msgid "CRM Fields"
+msgstr "CRM Fields"
+
+msgid "Manage Fields"
+msgstr "Manage Fields"
+
+msgid "Control which custom fields exist for contacts and companies before your team scales usage."
+msgstr "Control which custom fields exist for contacts and companies before your team scales usage."
+
+msgid "CRM Workspace"
+msgstr "CRM Workspace"
+
+msgid "Your CRM now lives inside the dashboard"
+msgstr "Your CRM now lives inside the dashboard"
+
+msgid "Open the standalone CRM workspace to manage contacts, companies, imports, duplicate reviews, and custom field configuration from one dashboard-native flow."
+msgstr "Open the standalone CRM workspace to manage contacts, companies, imports, duplicate reviews, and custom field configuration from one dashboard-native flow."
+
+msgid "Open CRM Overview"
+msgstr "Open CRM Overview"
+
+msgid "Shape the CRM fields your team will rely on"
+msgstr "Shape the CRM fields your team will rely on"
+
+msgid "Keep contact and company data flexible without turning the CRM into an unstructured spreadsheet. Define the fields, visibility, and search behavior in one dashboard-native control room."
+msgstr "Keep contact and company data flexible without turning the CRM into an unstructured spreadsheet. Define the fields, visibility, and search behavior in one dashboard-native control room."
+
+msgid "Contact fields"
+msgstr "Contact fields"
+
+msgid "Flexible fields available on people records."
+msgstr "Flexible fields available on people records."
+
+msgid "Company fields"
+msgstr "Company fields"
+
+msgid "Account-level fields ready for business records."
+msgstr "Account-level fields ready for business records."
+
+msgid "Field library"
+msgstr "Field library"
+
+msgid "Switch between contact and company fields, then open any definition for editing."
+msgstr "Switch between contact and company fields, then open any definition for editing."
+
+msgid "Required"
+msgstr "Required"
+
+msgid "Searchable"
+msgstr "Searchable"
+
+msgid "Filterable"
+msgstr "Filterable"
+
+msgid "PII"
+msgstr "PII"
+
+msgid "Edit"
+msgstr "Edit"
+
+msgid "Archive"
+msgstr "Archive"
+
+msgid "No field definitions yet"
+msgstr "No field definitions yet"
+
+msgid "Start with a simple text or select field, then expand as imports and real customer data reveal what this business actually needs."
+msgstr "Start with a simple text or select field, then expand as imports and real customer data reveal what this business actually needs."
+
+msgid "Archived definitions"
+msgstr "Archived definitions"
+
+msgid "Archived fields disappear from normal create and edit flows, but you can still restore them if the business needs them again."
+msgstr "Archived fields disappear from normal create and edit flows, but you can still restore them if the business needs them again."
+
+msgid "Restore"
+msgstr "Restore"
+
+msgid "No archived field definitions for this target yet."
+msgstr "No archived field definitions for this target yet."
+
+msgid "Edit field definition"
+msgstr "Edit field definition"
+
+msgid "Create field definition"
+msgstr "Create field definition"
+
+msgid "Define the field type, key, visibility, and structure once, then let the rest of the CRM build on top of it safely."
+msgstr "Define the field type, key, visibility, and structure once, then let the rest of the CRM build on top of it safely."
+
+msgid "Use a stable machine-friendly key. If you leave it blank, the label will be normalized into one automatically."
+msgstr "Use a stable machine-friendly key. If you leave it blank, the label will be normalized into one automatically."
+
+msgid "For select or multi-select fields, enter a JSON array such as [\"enterprise\", \"partner\", \"vip\"]."
+msgstr "For select or multi-select fields, enter a JSON array such as [\"enterprise\", \"partner\", \"vip\"]."
+
+msgid "For object or object-list fields, define a JSON schema-like object that names the properties the CRM should accept."
+msgstr "For object or object-list fields, define a JSON schema-like object that names the properties the CRM should accept."
+
+msgid "Required on final write"
+msgstr "Required on final write"
+
+msgid "Contains sensitive data"
+msgstr "Contains sensitive data"
+
+msgid "Create new field"
+msgstr "Create new field"
+
+msgid "Save changes"
+msgstr "Save changes"
+
+msgid "Create field"
+msgstr "Create field"
+
+msgid "Field definition archived."
+msgstr "Field definition archived."
+
+msgid "Field definition restored."
+msgstr "Field definition restored."
+
+msgid "Field definition saved."
+msgstr "Field definition saved."
+
+msgid "Field definition updated."
+msgstr "Field definition updated."
+
+msgid "The selected field definition could not be found."
+msgstr "The selected field definition could not be found."
+
+msgid "Review the field configuration and correct the highlighted inputs."
+msgstr "Review the field configuration and correct the highlighted inputs."
+
+msgid "%(summary)s + %(extra)s more"
+msgstr "%(summary)s + %(extra)s more"
+
+msgid "%(count)s schema properties"
+msgstr "%(count)s schema properties"
+
+msgid "Core typed field"
+msgstr "Core typed field"

@@ -38,7 +38,6 @@ class PortalTurnRedisEventBusTests(TestCase):
             business_profile=self.business,
             user=self.user,
             name="Redis Agent",
-            status="active",
         )
         self.conversation = Conversation.objects.create(
             business_profile=self.business,

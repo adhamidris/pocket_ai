@@ -245,14 +245,14 @@
             </div>
           </div>
 
-          <div class="relative bg-card text-card-foreground shadow-lg shadow-black/5 backdrop-blur transition-colors rounded-xl overflow-hidden">
+          <div class="relative bg-card text-card-foreground shadow-lg shadow-black/5 transition-colors rounded-xl overflow-hidden">
             <div class="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary/35 via-primary/20 to-transparent"></div>
             <div class="relative overflow-x-auto overflow-y-auto max-h-[70vh]">
               <table
-                class="rtl-table w-full caption-bottom text-sm rounded-xl bg-background/40 shadow-sm backdrop-blur [&_th]:px-3 [&_td]:px-3 [&_th:first-child]:pl-4 [&_td:first-child]:pl-4 [&_th:last-child]:pr-4 [&_td:last-child]:pr-4 [&_th]:py-3 [&_td]:py-3"
+                class="rtl-table w-full caption-bottom text-sm rounded-xl bg-background shadow-sm [&_th]:px-3 [&_td]:px-3 [&_th:first-child]:pl-4 [&_td:first-child]:pl-4 [&_th:last-child]:pr-4 [&_td:last-child]:pr-4 [&_th]:py-3 [&_td]:py-3"
                 data-documents-table
               >
-                <thead class="sticky top-0 z-10 bg-muted/80 backdrop-blur border-b border-border/60">
+                <thead class="sticky top-0 z-10 bg-background border-b border-border/60 shadow-sm">
                   <tr class="transition-colors hover:bg-transparent">
                     <th scope="col" class="h-12 text-left font-medium text-muted-foreground w-[220px]">{% trans "Name" %}</th>
                     <th scope="col" class="h-12 text-left font-medium text-muted-foreground">
@@ -1579,13 +1579,14 @@
           } else if (payload.document) {
             uploadedDocuments = [payload.document];
           }
-	          setUploadStatus("success", {
-	            label: uploadedDocuments.length > 1 ? I18N.uploaded + " " + uploadedDocuments.length + " " + I18N.filesWord : I18N.uploaded,
-	            fileName: options.fileName || "",
-	            message: payload.message || I18N.queuedForIngestion,
-	          });
+          setUploadStatus("success", {
+            label: uploadedDocuments.length > 1 ? I18N.uploaded + " " + uploadedDocuments.length + " " + I18N.filesWord : I18N.uploaded,
+            fileName: options.fileName || "",
+            message: payload.message || I18N.queuedForIngestion,
+          });
           uploadedDocuments.forEach(function (documentData) {
-            insertDocumentRow(documentData, payload.documents_total);
+            var insertedRow = insertDocumentRow(documentData, payload.documents_total);
+            ensureDocumentStatusPolling(insertedRow);
           });
 
           if (uploadedDocuments.length === 1) {
@@ -1955,6 +1956,12 @@
     var activeRow = null;
     var inFlight = null;
     var isPanelOpen = false;
+    var documentStatusPollers = {};
+    var documentStatusInitialDelayMs = 1200;
+    var documentStatusFastDelayMs = 2000;
+    var documentStatusSlowDelayMs = 5000;
+    var documentStatusFastWindowMs = 20000;
+    var documentStatusMaxWindowMs = 180000;
     var rootDir = document.documentElement ? document.documentElement.getAttribute("dir") : "";
     var isRtl = (rootDir || "").toLowerCase() === "rtl";
 
@@ -1978,13 +1985,25 @@
         if (Number.isNaN(date.getTime())) {
           return value;
         }
-        return date.toLocaleString(undefined, {
-          year: "numeric",
-          month: "short",
-          day: "numeric",
-          hour: "2-digit",
-          minute: "2-digit",
-        });
+        if (isRtl) {
+          return date.toLocaleString(undefined, {
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+            hour: "numeric",
+            minute: "2-digit",
+            hour12: true,
+          });
+        }
+        var monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        var month = monthNames[date.getMonth()] || "";
+        var day = date.getDate();
+        var year = date.getFullYear();
+        var hours = date.getHours();
+        var minutes = String(date.getMinutes()).padStart(2, "0");
+        var suffix = hours >= 12 ? "PM" : "AM";
+        var displayHour = hours % 12 || 12;
+        return month + " " + day + ", " + year + " " + displayHour + ":" + minutes + " " + suffix;
       } catch (_err) {
         return value;
       }
@@ -2223,8 +2242,249 @@
       return Date.now() - entry.fetchedAt < detailCacheTtlMs;
     }
 
+    function normalizeDocumentStatusValue(status) {
+      return (status || "").toString().trim().toLowerCase();
+    }
+
     function isStableStatus(status) {
-      return status === "ready" || status === "active" || status === "archived" || status === "failed";
+      var normalized = normalizeDocumentStatusValue(status);
+      return normalized === "ready" || normalized === "active" || normalized === "archived" || normalized === "failed";
+    }
+
+    function isInFlightDocumentStatus(status) {
+      var normalized = normalizeDocumentStatusValue(status);
+      return normalized === "pending" || normalized === "processing";
+    }
+
+    function getDocumentRow(documentId) {
+      if (!documentId) {
+        return null;
+      }
+      return document.querySelector("[data-document-id='" + documentId + "']");
+    }
+
+    function getKnowledgeStatusUrl(documentId) {
+      var url = "/api/knowledge/documents/" + encodeURIComponent(documentId) + "/status/";
+      if (knowledgeBusinessId) {
+        url += "?business_id=" + encodeURIComponent(knowledgeBusinessId);
+      }
+      return url;
+    }
+
+    function syncActivePanelFromRow(row) {
+      if (!row || activeRow !== row || !isPanelOpen) {
+        return;
+      }
+
+      var cachedEntry = readCachedDetail(row.dataset.documentId || "");
+      if (cachedEntry && cachedEntry.detail && cachedEntry.detail.summary) {
+        cachedEntry.detail.summary.status = row.dataset.documentStatus || "";
+        cachedEntry.detail.summary.statusLabel = row.dataset.documentStatusLabel || "";
+        cachedEntry.detail.summary.updatedAt = row.dataset.documentUpdatedIso || "";
+        cachedEntry.detail.summary.lastSyncedAt = row.dataset.documentLastSynced || "";
+        cachedEntry.detail.summary.lastIngestedAt = row.dataset.documentLastIngested || "";
+        cachedEntry.detail.summary.tokenCount = Number(row.dataset.documentTokens || 0);
+        if (row.dataset.documentSizeBytes) {
+          cachedEntry.detail.summary.sizeBytes = Number(row.dataset.documentSizeBytes || 0);
+        }
+        cachedEntry.detail.summary.language = row.dataset.documentLanguage || "";
+        cachedEntry.detail.summary.category = row.dataset.documentCategory || "";
+        cachedEntry.detail.summary.integrationName = row.dataset.documentIntegration || "";
+        cacheDocumentDetail(row.dataset.documentId || "", cachedEntry.detail);
+        if (panel.dataset.state === "content") {
+          populatePanel(cachedEntry.detail, row.dataset);
+        }
+        return;
+      }
+
+      prefillFromRow(row);
+    }
+
+    function updateDocumentRowFromSummary(row, summary) {
+      if (!row || !summary) {
+        return;
+      }
+
+      var statusCode = normalizeDocumentStatusValue(summary.status);
+      var statusLabel = summary.statusLabel || row.dataset.documentStatusLabel || I18N.draft;
+      var updatedIso = summary.updatedAt || "";
+      var updatedDisplay = summary.updatedDisplay || (updatedIso ? formatDate(updatedIso) : "—");
+      var lastSyncedIso = summary.lastSyncedAt || "";
+      var lastIngestedIso = summary.lastIngestedAt || "";
+      var sourceLabel = summary.sourceLabel || row.dataset.documentSource || I18N.unknownSource;
+      var sourceType = summary.sourceType || row.dataset.documentType || "";
+
+      row.dataset.documentStatus = statusCode;
+      row.dataset.documentStatusLabel = statusLabel;
+      row.dataset.documentUpdatedIso = updatedIso;
+      row.dataset.documentUpdated = updatedDisplay;
+      row.dataset.documentLastSynced = lastSyncedIso;
+      row.dataset.documentLastIngested = lastIngestedIso;
+      row.dataset.documentTokens = String(summary.tokenCount != null ? summary.tokenCount : row.dataset.documentTokens || 0);
+      row.dataset.documentLanguage = summary.language || "";
+      row.dataset.documentCategory = summary.category || "";
+      row.dataset.documentSource = sourceLabel;
+      row.dataset.documentType = sourceType;
+      row.dataset.documentSizeBytes = summary.sizeBytes != null ? String(summary.sizeBytes) : row.dataset.documentSizeBytes || "";
+      row.dataset.documentSize = summary.sizeBytes != null ? formatBytes(summary.sizeBytes) : row.dataset.documentSize || "—";
+      row.dataset.documentIntegration = summary.integrationName || "";
+      row.dataset.documentSensitive = summary.isSensitive ? "true" : "false";
+
+      if (summary.name) {
+        row.dataset.documentName = summary.name;
+      }
+
+      var nameCell = row.children[0];
+      if (nameCell) {
+        var nameSpan = nameCell.querySelector("span.font-medium");
+        if (nameSpan && row.dataset.documentName) {
+          nameSpan.textContent = row.dataset.documentName;
+        }
+      }
+
+      var typeCell = row.children[2];
+      if (typeCell) {
+        var typeBadge = typeCell.querySelector("span");
+        if (typeBadge) {
+          typeBadge.textContent = localizeSourceLabel(sourceLabel, sourceType);
+        }
+      }
+
+      var statusCell = row.children[3];
+      if (statusCell) {
+        var statusBadge = statusCell.querySelector("span");
+        if (statusBadge) {
+          applyStatusBadge(statusBadge, statusLabel, statusCode);
+        }
+      }
+
+      var updatedCell = row.children[4];
+      if (updatedCell) {
+        var updatedPrimary = updatedCell.querySelector("div.text-sm");
+        var updatedSecondary = updatedCell.querySelector("div.text-xs");
+        if (updatedPrimary) {
+          updatedPrimary.textContent = updatedDisplay;
+        }
+        if (updatedSecondary) {
+          updatedSecondary.textContent = row.dataset.documentSize || "—";
+        }
+      }
+
+      syncActivePanelFromRow(row);
+    }
+
+    function stopDocumentStatusPolling(documentId) {
+      var poller = documentStatusPollers[documentId];
+      if (!poller) {
+        return;
+      }
+      if (poller.timeoutId) {
+        window.clearTimeout(poller.timeoutId);
+      }
+      delete documentStatusPollers[documentId];
+    }
+
+    function computeDocumentStatusPollDelay(poller) {
+      var elapsedMs = Date.now() - (poller.startedAt || Date.now());
+      return elapsedMs < documentStatusFastWindowMs ? documentStatusFastDelayMs : documentStatusSlowDelayMs;
+    }
+
+    function scheduleDocumentStatusPoll(documentId, delayMs) {
+      var poller = documentStatusPollers[documentId];
+      if (!poller) {
+        return;
+      }
+      if (poller.timeoutId) {
+        window.clearTimeout(poller.timeoutId);
+      }
+      poller.timeoutId = window.setTimeout(function () {
+        pollDocumentStatus(documentId);
+      }, typeof delayMs === "number" ? delayMs : computeDocumentStatusPollDelay(poller));
+    }
+
+    function pollDocumentStatus(documentId) {
+      var poller = documentStatusPollers[documentId];
+      var row = getDocumentRow(documentId);
+      if (!poller || !row) {
+        stopDocumentStatusPolling(documentId);
+        return;
+      }
+      if (!isInFlightDocumentStatus(row.dataset.documentStatus || "")) {
+        stopDocumentStatusPolling(documentId);
+        return;
+      }
+      if (document.visibilityState === "hidden") {
+        scheduleDocumentStatusPoll(documentId, documentStatusSlowDelayMs);
+        return;
+      }
+      if (poller.requestInFlight) {
+        return;
+      }
+
+      poller.requestInFlight = true;
+      fetch(getKnowledgeStatusUrl(documentId), {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        credentials: "same-origin",
+      })
+        .then(function (response) {
+          if (response.status === 403 || response.status === 404) {
+            stopDocumentStatusPolling(documentId);
+            return null;
+          }
+          if (!response.ok) {
+            throw new Error("STATUS_POLL_FAILED");
+          }
+          return response.json();
+        })
+        .then(function (payload) {
+          if (!payload || !payload.document) {
+            return;
+          }
+          updateDocumentRowFromSummary(row, payload.document);
+          if (isInFlightDocumentStatus(payload.document.status)) {
+            scheduleDocumentStatusPoll(documentId);
+          } else {
+            stopDocumentStatusPolling(documentId);
+          }
+        })
+        .catch(function (error) {
+          console.error("Failed to refresh knowledge document status", error);
+          if (Date.now() - (poller.startedAt || Date.now()) >= documentStatusMaxWindowMs) {
+            stopDocumentStatusPolling(documentId);
+            return;
+          }
+          scheduleDocumentStatusPoll(documentId);
+        })
+        .finally(function () {
+          var nextPoller = documentStatusPollers[documentId];
+          if (nextPoller) {
+            nextPoller.requestInFlight = false;
+          }
+        });
+    }
+
+    function ensureDocumentStatusPolling(row) {
+      if (!row) {
+        return;
+      }
+      var documentId = row.dataset.documentId || "";
+      if (!documentId) {
+        return;
+      }
+      if (!isInFlightDocumentStatus(row.dataset.documentStatus || "")) {
+        stopDocumentStatusPolling(documentId);
+        return;
+      }
+      if (documentStatusPollers[documentId]) {
+        return;
+      }
+      documentStatusPollers[documentId] = {
+        startedAt: Date.now(),
+        requestInFlight: false,
+        timeoutId: null,
+      };
+      scheduleDocumentStatusPoll(documentId, documentStatusInitialDelayMs);
     }
 
     function setPanelState(state) {
@@ -2397,8 +2657,9 @@
         fieldSource.textContent = localizeSourceLabel(dataset.documentSource || I18N.unknownSource, dataset.documentType || "");
       }
       if (fieldUpdated) {
-        var updatedValue = dataset.documentUpdatedIso || dataset.documentUpdated || "";
-        fieldUpdated.textContent = updatedValue ? I18N.updatedPrefix + " " + formatDate(updatedValue) : I18N.updatedPrefix + " —";
+        var updatedDisplayValue = dataset.documentUpdated || "";
+        var updatedValue = dataset.documentUpdatedIso || updatedDisplayValue || "";
+        fieldUpdated.textContent = updatedValue ? I18N.updatedPrefix + " " + (updatedDisplayValue || formatDate(updatedValue)) : I18N.updatedPrefix + " —";
       }
       if (fieldLastSynced) {
         var syncedValue = dataset.documentLastSynced || "";
@@ -2437,12 +2698,14 @@
         );
       }
       if (fieldUpdated) {
-        var updated = summary.updatedAt || dataset.documentUpdatedIso || dataset.documentUpdated || "";
-        fieldUpdated.textContent = updated ? I18N.updatedPrefix + " " + formatDate(updated) : I18N.updatedPrefix + " —";
+        var updatedDisplay = summary.updatedDisplay || dataset.documentUpdated || "";
+        var updated = summary.updatedAt || dataset.documentUpdatedIso || updatedDisplay || "";
+        fieldUpdated.textContent = updated ? I18N.updatedPrefix + " " + (updatedDisplay || formatDate(updated)) : I18N.updatedPrefix + " —";
       }
       if (fieldLastSynced) {
-        var synced = summary.lastSyncedAt || dataset.documentLastSynced || "";
-        fieldLastSynced.textContent = synced ? I18N.lastSyncedPrefix + " " + formatDate(synced) : I18N.lastSyncedPrefix + " —";
+        var syncedDisplay = summary.lastSyncedDisplay || "";
+        var synced = summary.lastSyncedAt || dataset.documentLastSynced || syncedDisplay || "";
+        fieldLastSynced.textContent = synced ? I18N.lastSyncedPrefix + " " + (syncedDisplay || formatDate(synced)) : I18N.lastSyncedPrefix + " —";
       }
       if (fieldSize) {
         if (summary.sizeBytes != null) {
@@ -3146,6 +3409,7 @@
 
 	    var rows = Array.prototype.slice.call(document.querySelectorAll("[data-document-row]") || []);
 	    rows.forEach(bindDocumentRow);
+    rows.forEach(ensureDocumentStatusPolling);
 
     if (deleteButton) {
       deleteButton.addEventListener("click", function () {
@@ -3183,6 +3447,7 @@
               rowToRemove = activeRow;
               clearSelection();
             }
+            stopDocumentStatusPolling(targetId);
             if (rowToRemove && rowToRemove.parentNode) {
               rowToRemove.parentNode.removeChild(rowToRemove);
             }
@@ -3224,6 +3489,18 @@
           closePanel();
         }
       }
+    });
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+      Object.keys(documentStatusPollers).forEach(function (documentId) {
+        var poller = documentStatusPollers[documentId];
+        if (!poller || poller.requestInFlight) {
+          return;
+        }
+        scheduleDocumentStatusPoll(documentId, 350);
+      });
     });
 
     setPanelState("empty");

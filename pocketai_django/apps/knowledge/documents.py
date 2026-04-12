@@ -16,7 +16,8 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from django.conf import settings
-from django.db.models import Prefetch, Q
+from django.db.models import Prefetch, Q, TextField
+from django.db.models.functions import Cast
 from core.tenancy import tenant_context
 
 from apps.accounts.models import (
@@ -227,6 +228,29 @@ class CsvPreview:
     dialect: dict[str, str | None]
 
 
+def _build_document_list_item(upload: KnowledgeUpload) -> DocumentListItem:
+    tags = tuple(str(tag) for tag in (upload.tags or []))
+    return DocumentListItem(
+        id=upload.id,
+        name=upload.display_name or "Document",
+        status=upload.status,
+        status_label=(upload.status or "").replace("_", " ").title(),
+        source_type=upload.source_type,
+        source_label=upload.get_source_type_display(),
+        tags=tags,
+        language=upload.language or "",
+        category=upload.category or "",
+        token_count=upload.token_count or 0,
+        size_bytes=upload.size_bytes or 0,
+        is_sensitive=bool(upload.is_sensitive),
+        last_ingested_at=upload.last_ingested_at,
+        last_synced_at=upload.last_synced_at,
+        updated_at=upload.updated_at,
+        integration_name=getattr(upload.integration, "name", None),
+        ingestion_error=upload.ingestion_error or None,
+    )
+
+
 def list_documents(
     *,
     business_profile: BusinessProfile,
@@ -291,32 +315,42 @@ def list_documents(
             .order_by("-updated_at")[offset : offset + limit]
         )
 
-        items = []
-        for upload in rows:
-            tags = tuple(str(tag) for tag in (upload.tags or []))
-            items.append(
-                DocumentListItem(
-                    id=upload.id,
-                    name=upload.display_name or "Document",
-                    status=upload.status,
-                    status_label=(upload.status or "").replace("_", " ").title(),
-                    source_type=upload.source_type,
-                    source_label=upload.get_source_type_display(),
-                    tags=tags,
-                    language=upload.language or "",
-                    category=upload.category or "",
-                    token_count=upload.token_count or 0,
-                    size_bytes=upload.size_bytes or 0,
-                    is_sensitive=bool(upload.is_sensitive),
-                    last_ingested_at=upload.last_ingested_at,
-                    last_synced_at=upload.last_synced_at,
-                    updated_at=upload.updated_at,
-                    integration_name=getattr(upload.integration, "name", None),
-                    ingestion_error=upload.ingestion_error or None,
-                )
-            )
+        items = [_build_document_list_item(upload) for upload in rows]
 
         return DocumentListResult(items=tuple(items), total=total, limit=limit, offset=offset)
+
+
+def get_document_summary(*, business_profile: BusinessProfile, document_id: uuid.UUID) -> DocumentListItem:
+    """
+    Load the lightweight summary used by list/status surfaces without the heavy detail payload.
+    """
+
+    with tenant_context(business_profile.id):
+        upload = (
+            KnowledgeUpload.objects.filter(business_profile=business_profile, id=document_id)
+            .select_related("integration")
+            .only(
+                "id",
+                "display_name",
+                "status",
+                "source_type",
+                "tags",
+                "language",
+                "category",
+                "token_count",
+                "size_bytes",
+                "is_sensitive",
+                "last_ingested_at",
+                "last_synced_at",
+                "updated_at",
+                "ingestion_error",
+                "integration__name",
+            )
+            .first()
+        )
+        if upload is None:
+            raise KnowledgeUpload.DoesNotExist
+        return _build_document_list_item(upload)
 
 
 def get_document_detail(*, business_profile: BusinessProfile, document_id: uuid.UUID) -> DocumentDetail:
@@ -383,25 +417,7 @@ def get_document_detail(*, business_profile: BusinessProfile, document_id: uuid.
         if upload is None:
             raise KnowledgeUpload.DoesNotExist
 
-        summary = DocumentListItem(
-            id=upload.id,
-            name=upload.display_name or "Document",
-            status=upload.status,
-            status_label=(upload.status or "").replace("_", " ").title(),
-            source_type=upload.source_type,
-            source_label=upload.get_source_type_display(),
-            tags=tuple(str(tag) for tag in (upload.tags or [])),
-            language=upload.language or "",
-            category=upload.category or "",
-            token_count=upload.token_count or 0,
-            size_bytes=upload.size_bytes or 0,
-            is_sensitive=bool(upload.is_sensitive),
-            last_ingested_at=upload.last_ingested_at,
-            last_synced_at=upload.last_synced_at,
-            updated_at=upload.updated_at,
-            integration_name=getattr(upload.integration, "name", None),
-            ingestion_error=upload.ingestion_error or None,
-        )
+        summary = _build_document_list_item(upload)
 
         file_meta = None
         file_detail = getattr(upload, "file_detail", None)

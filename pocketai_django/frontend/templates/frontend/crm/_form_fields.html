@@ -1,0 +1,18 @@
+{% load i18n %}
+{% for hidden in form.hidden_fields %}
+  {{ hidden }}
+{% endfor %}
+<div class="crm-form-grid">
+  {% for field in form.visible_fields %}
+    <div class="crm-form-field {% if field.name == 'display_name' or field.name == 'name' or field.name == 'website' or field.name == 'source_file' or field.name == 'template_name' or field.field.widget.input_type == 'textarea' %}crm-form-field--full{% endif %}">
+      <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+      {{ field }}
+      {% if field.help_text %}
+        <div class="crm-form-help">{{ field.help_text }}</div>
+      {% endif %}
+      {% if field.errors %}
+        <div class="crm-form-errors">{{ field.errors|join:", " }}</div>
+      {% endif %}
+    </div>
+  {% endfor %}
+</div>

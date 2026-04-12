@@ -125,7 +125,7 @@ After streaming, `run_planner_only` produces a JSON payload:
 ```json
 {
   "response_text": "",
-  "actions": [{ "action": "create_case", "payload": { "...": "..." } }],
+  "actions": [],
   "extractions": [{ "type": "CUSTOMER", "payload": { "...": "..." } }]
 }
 ```

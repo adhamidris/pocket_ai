@@ -9,6 +9,7 @@ from . import chat_portal_files
 from . import agent_runs
 from . import voice_calls
 from . import voice_providers
+from apps.crm import api_views as crm_api_views
 from .chat_portal import (
     bootstrap_session,
     create_portal_session,
@@ -41,7 +42,7 @@ urlpatterns = [
     path("health/live/", health_views.liveness_check, name="liveness"),
     path("agents/", views.agents_collection, name="agents-list"),
     path("agents/<uuid:agent_id>/", views.agent_detail_view, name="agents-detail"),
-    path("agents/<uuid:agent_id>/actions/", views.agent_action_settings_view, name="agents-actions"),
+    path("agents/<uuid:agent_id>/capabilities/", views.agent_capabilities_view, name="agents-capabilities"),
     path(
         "agents/<uuid:agent_id>/knowledge-access/",
         views.agent_knowledge_access_view,
@@ -133,6 +134,7 @@ urlpatterns = [
     path("chat/csat/", submit_csat, name="chat-csat"),
     path("chat/feedback/", submit_feedback, name="chat-feedback"),
     path("knowledge/documents/", views.knowledge_documents_collection, name="knowledge-documents-list"),
+    path("knowledge/documents/<uuid:document_id>/status/", views.knowledge_document_status, name="knowledge-documents-status"),
     path("knowledge/documents/<uuid:document_id>/", views.knowledge_document_detail, name="knowledge-documents-detail"),
     path(
         "knowledge/documents/<uuid:document_id>/download/",
@@ -152,12 +154,24 @@ urlpatterns = [
     path("integrations/google/resources/", views.google_drive_resources, name="integrations-google-resources"),
     path("integrations/google/resources/save/", views.google_drive_save_resources, name="integrations-google-resources-save"),
     path("integrations/google/sync/", views.google_drive_sync_now, name="integrations-google-sync"),
-    path("cases/", views.cases_collection, name="cases-collection"),
-    path("cases/<uuid:case_id>/", views.case_detail_view, name="cases-detail"),
-    path("cases/<uuid:case_id>/history/", views.case_history_view, name="cases-history"),
-    path("cases/<uuid:case_id>/messages/", views.case_messages_view, name="cases-messages"),
-    path("cases/<uuid:case_id>/notes/", views.case_notes_view, name="cases-notes"),
-    path("customers/<uuid:customer_id>/", views.customer_detail_view, name="customers-detail"),
+    path("crm/contacts/", crm_api_views.crm_contacts_collection, name="crm-contacts"),
+    path("crm/contacts/<uuid:contact_id>/", crm_api_views.crm_contact_detail, name="crm-contact-detail"),
+    path("crm/contacts/<uuid:contact_id>/merge/", crm_api_views.crm_contact_merge, name="crm-contact-merge"),
+    path("crm/contacts/<uuid:contact_id>/notes/", crm_api_views.crm_contact_notes_collection, name="crm-contact-notes"),
+    path("crm/contacts/<uuid:contact_id>/company-links/", crm_api_views.crm_contact_company_links_collection, name="crm-contact-company-links"),
+    path("crm/contacts/<uuid:contact_id>/company-links/<uuid:company_id>/", crm_api_views.crm_contact_company_link_detail, name="crm-contact-company-link-detail"),
+    path("crm/companies/", crm_api_views.crm_companies_collection, name="crm-companies"),
+    path("crm/companies/<uuid:company_id>/", crm_api_views.crm_company_detail, name="crm-company-detail"),
+    path("crm/companies/<uuid:company_id>/merge/", crm_api_views.crm_company_merge, name="crm-company-merge"),
+    path("crm/companies/<uuid:company_id>/notes/", crm_api_views.crm_company_notes_collection, name="crm-company-notes"),
+    path("crm/field-definitions/", crm_api_views.crm_field_definitions_collection, name="crm-field-definitions"),
+    path("crm/field-definitions/<uuid:field_definition_id>/", crm_api_views.crm_field_definition_detail, name="crm-field-definition-detail"),
+    path("crm/imports/sources/", crm_api_views.crm_import_sources_collection, name="crm-import-sources"),
+    path("crm/imports/templates/", crm_api_views.crm_import_templates_collection, name="crm-import-templates"),
+    path("crm/imports/jobs/", crm_api_views.crm_import_jobs_collection, name="crm-import-jobs"),
+    path("crm/imports/jobs/<uuid:job_id>/", crm_api_views.crm_import_job_detail, name="crm-import-job-detail"),
+    path("crm/duplicates/", crm_api_views.crm_duplicate_suggestions_collection, name="crm-duplicate-suggestions"),
+    path("crm/duplicates/<uuid:suggestion_id>/", crm_api_views.crm_duplicate_suggestion_detail, name="crm-duplicate-suggestion-detail"),
     path("mcp/connections/", mcp_connections.mcp_connections_collection, name="mcp-connections"),
     path("mcp/connections/<uuid:connection_id>/", mcp_connections.mcp_connection_detail, name="mcp-connection-detail"),
     path("mcp/connections/<uuid:connection_id>/test/", mcp_connections.mcp_connection_test, name="mcp-connection-test"),

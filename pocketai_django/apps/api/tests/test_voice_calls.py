@@ -26,7 +26,7 @@ class VoiceCallsApiTests(TestCase):
             status="active",
             metadata={FEATURE_FLAG_METADATA_KEY: {"sub_agents_v1": True}},
         )
-        self.agent = AgentProfile.objects.create(business_profile=self.business, user=self.user, name="Ops Agent", status="active")
+        self.agent = AgentProfile.objects.create(business_profile=self.business, user=self.user, name="Ops Agent")
         self.client.force_login(self.user)
 
     def test_voice_call_detail_includes_summary_actions_and_insights(self) -> None:

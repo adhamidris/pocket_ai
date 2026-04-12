@@ -31,7 +31,6 @@ class PortalTurnProcessingTests(TestCase):
             business_profile=self.business,
             user=self.user,
             name="Worker Agent",
-            status="active",
         )
         self.conversation = Conversation.objects.create(
             business_profile=self.business,

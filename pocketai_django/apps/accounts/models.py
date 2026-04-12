@@ -486,15 +486,6 @@ class AgentProfile(models.Model):
         blank=True,
         help_text="Knowledge uploads this agent is permitted to use during conversations.",
     )
-    status = models.CharField(
-        max_length=32,
-        choices=(
-            ("draft", "Draft"),
-            ("review", "Review"),
-            ("active", "Active"),
-        ),
-        default="draft",
-    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -502,8 +493,6 @@ class AgentProfile(models.Model):
         db_table = "accounts_agent_profile"
         ordering = ("-created_at",)
         indexes = [
-            models.Index(fields=["user", "status"], name="agent_user_status_idx"),
-            models.Index(fields=["status", "updated_at"], name="agent_status_updated_idx"),
             models.Index(fields=["business_profile", "slug"], name="agent_business_slug_idx"),
         ]
         constraints = [

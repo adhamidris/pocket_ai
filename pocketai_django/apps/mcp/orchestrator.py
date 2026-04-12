@@ -4041,7 +4041,6 @@ class McpOrchestratorService:
         out: dict[str, object] = {"status": status}
         for key in (
             "id",
-            "case_id",
             "document_id",
             "draft_id",
             "message_id",

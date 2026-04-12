@@ -1,0 +1,238 @@
+{% extends "frontend/base_app.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "CRM Fields" %} | Pocket AI{% endblock %}
+
+{% block extra_head %}
+  {% include "frontend/crm/_crm_styles.html" %}
+{% endblock %}
+
+{% block content %}
+<div class="crm-page">
+  {% include "frontend/components/dashboard/sidebar.html" with active=crm_active user_name=user_name %}
+  <main class="crm-main">
+    <div class="crm-shell">
+      <section class="crm-hero">
+        <div class="crm-hero__inner">
+          <div>
+            <span class="crm-eyebrow">{% trans "CRM Fields" %}</span>
+            <h1 class="crm-title">{% trans "Shape the CRM fields your team will rely on" %}</h1>
+            <p class="crm-subtitle">
+              {% trans "Keep contact and company data flexible without turning the CRM into an unstructured spreadsheet. Define the fields, visibility, and search behavior in one dashboard-native control room." %}
+            </p>
+          </div>
+          <div class="crm-actions">
+            <a class="crm-button crm-button--ghost" href="{% url 'frontend:dashboard-crm-overview' %}">{% trans "Back to CRM Overview" %}</a>
+            <a class="crm-button crm-button--secondary" href="{% url 'frontend:dashboard-crm-imports' %}">{% trans "Open Imports" %}</a>
+          </div>
+        </div>
+      </section>
+
+      {% if fields_notice %}
+        <div class="crm-notice crm-notice--success">{{ fields_notice }}</div>
+      {% endif %}
+      {% if fields_error %}
+        <div class="crm-notice crm-notice--danger">{{ fields_error }}</div>
+      {% endif %}
+
+      <section class="crm-stats crm-stats--compact">
+        <article class="crm-card crm-stat-card">
+          <div class="crm-card__body">
+            <div class="crm-stat-card__label">{% trans "Contact fields" %}</div>
+            <div class="crm-stat-card__value">{{ field_counts.contact }}</div>
+            <div class="crm-stat-card__hint">{% trans "Flexible fields available on people records." %}</div>
+          </div>
+        </article>
+        <article class="crm-card crm-stat-card">
+          <div class="crm-card__body">
+            <div class="crm-stat-card__label">{% trans "Company fields" %}</div>
+            <div class="crm-stat-card__value">{{ field_counts.company }}</div>
+            <div class="crm-stat-card__hint">{% trans "Account-level fields ready for business records." %}</div>
+          </div>
+        </article>
+      </section>
+
+      <div class="crm-detail-grid crm-detail-grid--fields">
+        <div class="crm-stack">
+          <section class="crm-card">
+            <div class="crm-card__body">
+              <div class="crm-section__header">
+                <div>
+                  <h2 class="crm-section__title">{% trans "Field library" %}</h2>
+                  <p class="crm-section__subtitle">{% trans "Switch between contact and company fields, then open any definition for editing." %}</p>
+                </div>
+              </div>
+
+              <div class="crm-status-tabs crm-status-tabs--fields">
+                <a class="crm-status-tab {% if field_target_filter == 'contact' %}crm-status-tab--active{% endif %}" href="?target=contact">
+                  {% trans "Contacts" %}
+                  <span>{{ field_counts.contact }}</span>
+                </a>
+                <a class="crm-status-tab {% if field_target_filter == 'company' %}crm-status-tab--active{% endif %}" href="?target=company">
+                  {% trans "Companies" %}
+                  <span>{{ field_counts.company }}</span>
+                </a>
+              </div>
+
+              {% if field_definitions %}
+                <div class="crm-field-stack">
+                  {% for definition in field_definitions %}
+                    <article class="crm-field-card {% if selected_field_definition and selected_field_definition.id == definition.id %}crm-field-card--active{% endif %}">
+                      <div class="crm-field-card__header">
+                        <div>
+                          <a class="crm-field-card__title" href="?target={{ field_target_filter }}&definition={{ definition.id }}">{{ definition.label }}</a>
+                          <div class="crm-field-card__meta">{{ definition.key }} · {{ definition.field_type_label }}</div>
+                        </div>
+                        <div class="crm-pill-row">
+                          {% if definition.required %}<span class="crm-pill">{% trans "Required" %}</span>{% endif %}
+                          {% if definition.searchable %}<span class="crm-pill">{% trans "Searchable" %}</span>{% endif %}
+                          {% if definition.filterable %}<span class="crm-pill">{% trans "Filterable" %}</span>{% endif %}
+                          {% if definition.pii %}<span class="crm-pill">{% trans "PII" %}</span>{% endif %}
+                        </div>
+                      </div>
+                      <div class="crm-field-card__body">
+                        <p class="crm-field-card__summary">{{ definition.config_summary }}</p>
+                        <div class="crm-actions crm-actions--start">
+                          <a class="crm-button crm-button--ghost crm-button--small" href="?target={{ field_target_filter }}&definition={{ definition.id }}">{% trans "Edit" %}</a>
+                          <form method="post">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="archive">
+                            <input type="hidden" name="definition_id" value="{{ definition.id }}">
+                            <button class="crm-button crm-button--ghost crm-button--small" type="submit">{% trans "Archive" %}</button>
+                          </form>
+                        </div>
+                      </div>
+                    </article>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <div class="crm-empty-state">
+                  <h3>{% trans "No field definitions yet" %}</h3>
+                  <p>{% trans "Start with a simple text or select field, then expand as imports and real customer data reveal what this business actually needs." %}</p>
+                </div>
+              {% endif %}
+            </div>
+          </section>
+
+          <section class="crm-card">
+            <div class="crm-card__body">
+              <div class="crm-section__header">
+                <div>
+                  <h2 class="crm-section__title">{% trans "Archived definitions" %}</h2>
+                  <p class="crm-section__subtitle">{% trans "Archived fields disappear from normal create and edit flows, but you can still restore them if the business needs them again." %}</p>
+                </div>
+              </div>
+              {% if archived_field_definitions %}
+                <div class="crm-field-stack crm-field-stack--archived">
+                  {% for definition in archived_field_definitions %}
+                    <article class="crm-field-card crm-field-card--archived">
+                      <div class="crm-field-card__header">
+                        <div>
+                          <div class="crm-field-card__title">{{ definition.label }}</div>
+                          <div class="crm-field-card__meta">{{ definition.key }} · {{ definition.field_type_label }}</div>
+                        </div>
+                      </div>
+                      <div class="crm-field-card__body">
+                        <p class="crm-field-card__summary">{{ definition.config_summary }}</p>
+                        <form method="post">
+                          {% csrf_token %}
+                          <input type="hidden" name="action" value="restore">
+                          <input type="hidden" name="definition_id" value="{{ definition.id }}">
+                          <button class="crm-button crm-button--secondary crm-button--small" type="submit">{% trans "Restore" %}</button>
+                        </form>
+                      </div>
+                    </article>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <div class="crm-empty">{% trans "No archived field definitions for this target yet." %}</div>
+              {% endif %}
+            </div>
+          </section>
+        </div>
+
+        <div class="crm-stack">
+          <section class="crm-card">
+            <div class="crm-card__body">
+              <div class="crm-section__header">
+                <div>
+                  <h2 class="crm-section__title">
+                    {% if selected_field_definition %}
+                      {% trans "Edit field definition" %}
+                    {% else %}
+                      {% trans "Create field definition" %}
+                    {% endif %}
+                  </h2>
+                  <p class="crm-section__subtitle">{% trans "Define the field type, key, visibility, and structure once, then let the rest of the CRM build on top of it safely." %}</p>
+                </div>
+              </div>
+
+              <form method="post" class="crm-import-form crm-field-form">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="save">
+                {% if selected_field_definition %}
+                  <input type="hidden" name="definition_id" value="{{ selected_field_definition.id }}">
+                {% endif %}
+                <div class="crm-form-grid">
+                  <div class="crm-form-field">
+                    <label for="{{ field_form.target_object.id_for_label }}">{{ field_form.target_object.label }}</label>
+                    {{ field_form.target_object }}
+                    {% for error in field_form.target_object.errors %}<p class="crm-form-errors">{{ error }}</p>{% endfor %}
+                  </div>
+                  <div class="crm-form-field">
+                    <label for="{{ field_form.field_type.id_for_label }}">{{ field_form.field_type.label }}</label>
+                    {{ field_form.field_type }}
+                    {% for error in field_form.field_type.errors %}<p class="crm-form-errors">{{ error }}</p>{% endfor %}
+                  </div>
+                  <div class="crm-form-field">
+                    <label for="{{ field_form.label.id_for_label }}">{{ field_form.label.label }}</label>
+                    {{ field_form.label }}
+                    {% for error in field_form.label.errors %}<p class="crm-form-errors">{{ error }}</p>{% endfor %}
+                  </div>
+                  <div class="crm-form-field">
+                    <label for="{{ field_form.key.id_for_label }}">{{ field_form.key.label }}</label>
+                    {{ field_form.key }}
+                    <p class="crm-form-help">{% trans "Use a stable machine-friendly key. If you leave it blank, the label will be normalized into one automatically." %}</p>
+                    {% for error in field_form.key.errors %}<p class="crm-form-errors">{{ error }}</p>{% endfor %}
+                  </div>
+                  <div class="crm-form-field crm-form-field--full">
+                    <label for="{{ field_form.options.id_for_label }}">{{ field_form.options.label }}</label>
+                    {{ field_form.options }}
+                    <p class="crm-form-help">{% trans "For select or multi-select fields, enter a JSON array such as [\"enterprise\", \"partner\", \"vip\"]." %}</p>
+                    {% for error in field_form.options.errors %}<p class="crm-form-errors">{{ error }}</p>{% endfor %}
+                  </div>
+                  <div class="crm-form-field crm-form-field--full">
+                    <label for="{{ field_form.schema.id_for_label }}">{{ field_form.schema.label }}</label>
+                    {{ field_form.schema }}
+                    <p class="crm-form-help">{% trans "For object or object-list fields, define a JSON schema-like object that names the properties the CRM should accept." %}</p>
+                    {% for error in field_form.schema.errors %}<p class="crm-form-errors">{{ error }}</p>{% endfor %}
+                  </div>
+                </div>
+                <div class="crm-flag-grid">
+                  <label class="crm-toggle">{{ field_form.required }} <span>{% trans "Required on final write" %}</span></label>
+                  <label class="crm-toggle">{{ field_form.searchable }} <span>{% trans "Searchable" %}</span></label>
+                  <label class="crm-toggle">{{ field_form.filterable }} <span>{% trans "Filterable" %}</span></label>
+                  <label class="crm-toggle">{{ field_form.pii }} <span>{% trans "Contains sensitive data" %}</span></label>
+                </div>
+                {% for error in field_form.non_field_errors %}
+                  <p class="crm-form-errors">{{ error }}</p>
+                {% endfor %}
+                <div class="crm-actions">
+                  <a class="crm-button crm-button--ghost" href="?target={{ field_target_filter }}">{% trans "Create new field" %}</a>
+                  <button class="crm-button crm-button--primary" type="submit">
+                    {% if selected_field_definition %}
+                      {% trans "Save changes" %}
+                    {% else %}
+                      {% trans "Create field" %}
+                    {% endif %}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+{% endblock %}

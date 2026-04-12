@@ -367,8 +367,7 @@ INSTALLED_APPS = [
     # Profiling / request tracing (DEBUG-only URLs wired below)
     # Project apps
     "apps.accounts",
-    "apps.cases",
-    "apps.customers",
+    "apps.crm",
     "apps.conversations.apps.ConversationsConfig",
     "apps.integrations.apps.IntegrationsConfig",
     "apps.knowledge.apps.KnowledgeConfig",
@@ -426,6 +425,18 @@ try:
 except (TypeError, ValueError):
     REDIS_CIRCUIT_BREAKER_LOG_COOLDOWN_SECONDS = 10.0
 REDIS_CIRCUIT_BREAKER_LOG_COOLDOWN_SECONDS = max(1.0, REDIS_CIRCUIT_BREAKER_LOG_COOLDOWN_SECONDS)
+
+# CRM_V1_GLOBAL_OVERRIDE: Optional hard override for the standalone CRM rollout.
+# Leave blank to rely on the per-business `crm_v1` feature flag.
+_crm_v1_override_raw = os.getenv("CRM_V1_GLOBAL_OVERRIDE", "").strip().lower()
+if _crm_v1_override_raw in {"1", "true", "yes", "on"}:
+    CRM_V1_GLOBAL_OVERRIDE = True
+elif _crm_v1_override_raw in {"0", "false", "no", "off"}:
+    CRM_V1_GLOBAL_OVERRIDE = False
+else:
+    # In non-production environments, surface the new CRM by default so it is
+    # reachable from the dashboard while preserving an explicit off switch.
+    CRM_V1_GLOBAL_OVERRIDE = None if _is_production() else True
 
 # EMBED_PROVIDER: Embedding backend ("local" for FastEmbed, or "openai").
 EMBED_PROVIDER = os.getenv("EMBED_PROVIDER", "local")

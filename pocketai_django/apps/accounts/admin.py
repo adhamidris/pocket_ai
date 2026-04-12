@@ -535,8 +535,7 @@ class BusinessProfileAdmin(admin.ModelAdmin):
 
 @admin.register(AgentProfile)
 class AgentProfileAdmin(admin.ModelAdmin):
-    list_display = ("id", "name", "business_profile", "status", "updated_at")
-    list_filter = ("status",)
+    list_display = ("id", "name", "business_profile", "updated_at")
     search_fields = ("name", "business_profile__name", "user__email")
     ordering = ("-updated_at",)
 

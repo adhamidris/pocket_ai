@@ -73,20 +73,6 @@ class Conversation(models.Model):
         null=True,
         blank=True,
     )
-    customer = models.ForeignKey(
-        "customers.Customer",
-        related_name="conversations",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-    )
-    case = models.ForeignKey(
-        "cases.Case",
-        related_name="conversations",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-    )
     session_token = models.CharField(max_length=96, unique=True, db_index=True)
     channel = models.CharField(
         max_length=32,

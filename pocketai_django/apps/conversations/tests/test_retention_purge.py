@@ -36,7 +36,6 @@ class TenantRetentionPurgeTests(TestCase):
             business_profile=self.business,
             user=self.user,
             name="Ops Agent",
-            status="active",
         )
 
     def test_purge_deletes_old_memory_items_and_segments_and_trims_overlaps(self) -> None:

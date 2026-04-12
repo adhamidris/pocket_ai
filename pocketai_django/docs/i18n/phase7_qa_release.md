@@ -19,7 +19,7 @@
 Run in desktop and mobile breakpoints:
 
 - Public pages: `/`, `/login/`, `/register/`, `/privacy/`, `/terms/`
-- App shell/pages: `/dashboard/`, `/dashboard/customers/`, `/dashboard/agents/`, `/dashboard/leads/`, `/dashboard/cases/`
+- App shell/pages: `/dashboard/`, `/dashboard/agents/`, `/dashboard/crm/contacts/`, `/dashboard/crm/companies/`, `/dashboard/crm/imports/`
 - Platform pages: `/dashboard/knowledge/`, `/dashboard/knowledge/visualizer/`, `/dashboard/integrations/`, `/dashboard/mcp/`, `/dashboard/controls/`, `/dashboard/voice/`
 - OAuth popups: provider callback popup windows
 

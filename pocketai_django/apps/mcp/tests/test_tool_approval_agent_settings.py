@@ -35,7 +35,6 @@ class McpToolApprovalAgentSettingsTests(TestCase):
             business_profile=self.business,
             user=self.user,
             name="Agent",
-            status="active",
         )
         self.connection = McpConnection.objects.create(
             business_profile=self.business,

@@ -53,7 +53,6 @@ class ChatPortalToolApprovalTests(TestCase):
             business_profile=self.business,
             user=self.user,
             name="Support Agent",
-            status="active",
         )
         self.conversation = Conversation.objects.create(
             business_profile=self.business,
@@ -265,7 +264,6 @@ class ChatPortalRunApprovalTests(TestCase):
             business_profile=self.business,
             user=self.user,
             name="Ops Agent",
-            status="active",
         )
         self.anchor = Conversation.objects.create(
             business_profile=self.business,
@@ -370,7 +368,6 @@ class ChatPortalPendingToolExecutionTests(TestCase):
             business_profile=self.business,
             user=self.user,
             name="Test Agent",
-            status="active",
         )
         self.anchor = Conversation.objects.create(
             business_profile=self.business,
@@ -497,7 +494,6 @@ class ChatPortalBootstrapPendingApprovalsTests(TestCase):
             business_profile=self.business,
             user=self.user,
             name="Bootstrap Agent",
-            status="active",
         )
 
     def _bootstrap(self, *, session_token: str | None = None) -> dict:

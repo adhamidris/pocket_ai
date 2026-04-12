@@ -13,6 +13,7 @@
           <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">{% trans "Agents" %}</h1>
           <p class="text-sm text-muted-foreground">{% trans "Create, configure, and monitor conversational agents for every channel." %}</p>
         </div>
+        {% if agents_can_create %}
         <div class="flex flex-wrap items-center justify-start md:justify-end gap-2">
           <button
             type="button"
@@ -25,26 +26,8 @@
             {% trans "Create agent" %}
           </button>
         </div>
+        {% endif %}
       </header>
-
-      <section class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {% for stat in agents_stats %}
-          <div class="rounded-lg bg-card/70 backdrop-blur shadow-sm transition-all duration-300">
-            <div class="p-5 space-y-2">
-              <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">{{ stat.label }}</span>
-              {% if stat.value %}
-                <div class="text-3xl font-semibold tracking-tight text-foreground">{{ stat.value }}</div>
-              {% else %}
-                <div class="text-sm text-muted-foreground">{{ stat.helper }}</div>
-              {% endif %}
-            </div>
-          </div>
-        {% empty %}
-          <div class="rounded-lg border border-dashed border-border/70 bg-muted/40 p-6 text-center text-sm text-muted-foreground">
-            {% trans "Metrics will surface once you start deploying agents." %}
-          </div>
-        {% endfor %}
-      </section>
 
       <section class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div class="flex flex-col gap-2 md:flex-row md:items-center md:flex-wrap w-full lg:w-auto">
@@ -63,22 +46,6 @@
           </div>
         </div>
         <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-end md:flex-wrap w-full lg:w-auto">
-          <button
-            type="button"
-            class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 border border-input bg-background hover:bg-accent hover:text-accent-foreground hover:border-primary/50 h-10 px-3 py-2"
-            data-dropdown-trigger="agent-status"
-            aria-haspopup="true"
-            aria-expanded="false"
-          >
-            <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z" />
-              <path stroke-linecap="round" stroke-linejoin="round" d="M12 14c-4.418 0-8 2.015-8 4.5V21h16v-2.5c0-2.485-3.582-4.5-8-4.5Z" />
-            </svg>
-            <span data-dropdown-label="agent-status">{% if agents_filters.status_label %}{{ agents_filters.status_label }}{% else %}{% trans "All statuses" %}{% endif %}</span>
-            <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20" aria-hidden="true">
-              <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m6 8 4 4 4-4" />
-            </svg>
-          </button>
           <button
             type="button"
             class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 border border-input bg-background hover:bg-accent hover:text-accent-foreground hover:border-primary/50 h-10 px-3 py-2"
@@ -148,16 +115,12 @@
                   data-agent-name="{% if agent.name %}{{ agent.name|escape }}{% else %}{% trans 'Unnamed agent' %}{% endif %}"
                   data-agent-initials="{{ agent.initials|default:'AI'|escape }}"
                   data-agent-identifier="{{ agent.identifier|default:'AG-0000' }}"
-                  data-agent-status="{{ agent.status_code|default:''|lower }}"
-                  data-agent-status-label="{% if agent.status %}{{ agent.status|escape }}{% else %}{% trans 'Draft' %}{% endif %}"
                   data-agent-role="{% if agent.primary_role %}{{ agent.primary_role|escape }}{% else %}{% trans 'Support Agent' %}{% endif %}"
                   data-agent-tone="{{ agent.tone_label|default:'—'|escape }}"
                   data-agent-tone-code="{{ agent.tone_code|default:''|lower }}"
                   data-agent-roles="{{ agent.roles|join:', ' }}"
-                  data-agent-conversations="{{ agent.conversations|default:0 }}"
-                  data-agent-escalations="{{ agent.escalations|default:0 }}"
-                  data-agent-aht-seconds="{{ agent.aht_seconds|default:0 }}"
-                  data-agent-aht="{{ agent.aht|default:'' }}"
+                  data-agent-knowledge-mode="{{ agent.knowledge_mode|default:'' }}"
+                  data-agent-knowledge-total="{{ agent.knowledge_total|default:0 }}"
                   data-agent-updated="{{ agent.updated|default:''|escape }}"
                   data-agent-updated-iso="{{ agent.updated_iso|default:'' }}"
                   data-agent-last-active="{{ agent.last_active_iso|default:'' }}"
@@ -183,16 +146,11 @@
 	                      </div>
 	                    </div>
 	                    <div class="shrink-0 text-right">
-	                      {% with status_code=agent.status_code|default:""|lower %}
-	                        <div class="text-xs font-semibold capitalize {% if status_code == 'active' %}text-emerald-600{% elif status_code == 'review' %}text-amber-600{% elif status_code == 'draft' %}text-slate-500{% else %}text-slate-500{% endif %}">
-	                          {% if agent.status %}{{ agent.status }}{% else %}{% trans "Draft" %}{% endif %}
-	                        </div>
-	                      {% endwith %}
-	                      <div class="mt-1 text-[11px] text-muted-foreground">{{ agent.updated|default:"—" }}</div>
+	                      <div class="text-[11px] text-muted-foreground">{{ agent.updated|default:"—" }}</div>
 	                    </div>
 	                  </div>
 
-	                  <div class="mt-4 grid grid-cols-2 gap-3">
+	                  <div class="mt-4">
 	                    <div class="rounded-lg border border-border/60 bg-muted/30 px-3 py-2">
 	                      <div class="text-[11px] font-medium text-muted-foreground">{% trans "Knowledge" %}</div>
 	                      <div class="mt-1 text-sm font-semibold leading-tight">
@@ -215,20 +173,6 @@
 	                          <span class="text-amber-600">{% blocktrans with count=agent.knowledge_processing %}{{ count }} processing{% endblocktrans %}</span>
 	                        {% else %}
 	                          <span class="text-muted-foreground">{% trans "Up to date" %}</span>
-	                        {% endif %}
-	                      </div>
-	                    </div>
-	                    <div class="rounded-lg border border-border/60 bg-muted/30 px-3 py-2 min-w-0">
-	                      <div class="text-[11px] font-medium text-muted-foreground">{% trans "Tools" %}</div>
-	                      <div class="mt-1 text-sm font-semibold text-foreground leading-tight">
-	                        {{ agent.capabilities_enabled|default:0 }}/{{ agent.capabilities_total|default:0 }}
-	                        <span class="text-xs font-medium text-muted-foreground">{% trans "enabled" %}</span>
-	                      </div>
-	                      <div class="mt-1 truncate text-[11px] text-muted-foreground">
-	                        {% if agent.capabilities_highlights %}
-	                          {{ agent.capabilities_highlights|join:", " }}{% if agent.capabilities_more %}{% blocktrans with count=agent.capabilities_more %} +{{ count }} more{% endblocktrans %}{% endif %}
-	                        {% else %}
-	                          {% trans "No tools enabled" %}
 	                        {% endif %}
 	                      </div>
 	                    </div>
@@ -369,7 +313,6 @@
 	              <span class="text-xs text-muted-foreground" data-agent-last-active>—</span>
 	            </div>
 	            <div class="mt-3 flex flex-wrap items-center gap-2">
-	              <span class="text-[11px] font-semibold capitalize text-muted-foreground" data-agent-status-badge>{% if LANGUAGE_BIDI %}مسودة{% else %}Draft{% endif %}</span>
 	              <span class="text-xs text-muted-foreground" data-agent-updated>{% if LANGUAGE_BIDI %}آخر تحديث —{% else %}Updated —{% endif %}</span>
 	            </div>
 	          </section>
@@ -394,15 +337,15 @@
 	              </button>
 	              <button
 	                type="button"
-	                id="agent-tab-automation"
+	                id="agent-tab-capabilities"
 	                class="inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-background/60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
 	                role="tab"
 	                aria-selected="false"
-	                aria-controls="agent-tabpanel-automation"
+	                aria-controls="agent-tabpanel-capabilities"
 	                tabindex="-1"
-	                data-agent-tab="automation"
+	                data-agent-tab="capabilities"
 	              >
-	                {% if LANGUAGE_BIDI %}ضوابط الأتمتة{% else %}Automation controls{% endif %}
+	                {% if LANGUAGE_BIDI %}القدرات{% else %}Capabilities{% endif %}
 	              </button>
 	              <button
 	                type="button"
@@ -427,27 +370,27 @@
 	            data-agent-tab-panel="overview"
 	          >
 	            <div class="rounded-xl bg-card/95 p-4 space-y-4 shadow-sm">
-	              <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{% if LANGUAGE_BIDI %}الأداء{% else %}Performance{% endif %}</div>
+	              <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{% if LANGUAGE_BIDI %}لقطة إعداد{% else %}Setup snapshot{% endif %}</div>
 	              <dl class="grid grid-cols-2 gap-4 text-sm sm:grid-cols-3">
-	                <div>
-                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">{% if LANGUAGE_BIDI %}المحادثات{% else %}Conversations{% endif %}</dt>
-                  <dd class="text-base font-semibold text-foreground" data-agent-metric-total>—</dd>
+                <div>
+                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">{% if LANGUAGE_BIDI %}نطاق المعرفة{% else %}Knowledge scope{% endif %}</dt>
+                  <dd class="text-base font-semibold text-foreground" data-agent-metric-scope>—</dd>
                 </div>
                 <div>
-                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">{% if LANGUAGE_BIDI %}الحالات المفتوحة{% else %}Open cases{% endif %}</dt>
-                  <dd class="text-base font-semibold text-foreground" data-agent-metric-open>—</dd>
+                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">{% if LANGUAGE_BIDI %}المستندات{% else %}Documents{% endif %}</dt>
+                  <dd class="text-base font-semibold text-foreground" data-agent-metric-documents>—</dd>
                 </div>
                 <div>
-                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">{% if LANGUAGE_BIDI %}الحالات المغلقة{% else %}Closed cases{% endif %}</dt>
-                  <dd class="text-base font-semibold text-foreground" data-agent-metric-closed>—</dd>
+                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">{% if LANGUAGE_BIDI %}اتصالات MCP{% else %}MCP connections{% endif %}</dt>
+                  <dd class="text-base font-semibold text-foreground" data-agent-metric-connections>—</dd>
                 </div>
                 <div>
-                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">{% if LANGUAGE_BIDI %}التصعيدات{% else %}Escalations{% endif %}</dt>
-                  <dd class="text-base font-semibold text-foreground" data-agent-metric-escalations>—</dd>
+                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">{% if LANGUAGE_BIDI %}سياسة الموافقة{% else %}Approval policy{% endif %}</dt>
+                  <dd class="text-base font-semibold text-foreground" data-agent-metric-approval>—</dd>
                 </div>
                 <div>
-                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">{% if LANGUAGE_BIDI %}متوسط زمن المعالجة{% else %}Avg. handle time{% endif %}</dt>
-                  <dd class="text-base font-semibold text-foreground" data-agent-metric-aht>—</dd>
+                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">{% if LANGUAGE_BIDI %}القيود{% else %}Restrictions{% endif %}</dt>
+                  <dd class="text-base font-semibold text-foreground" data-agent-metric-restrictions>—</dd>
                 </div>
               </dl>
             </div>
@@ -517,23 +460,56 @@
 	          </section>
 
 	          <section
-	            id="agent-tabpanel-automation"
+	            id="agent-tabpanel-capabilities"
 	            class="space-y-4 px-6"
 	            role="tabpanel"
-	            aria-labelledby="agent-tab-automation"
-	            data-agent-tab-panel="automation"
+	            aria-labelledby="agent-tab-capabilities"
+	            data-agent-tab-panel="capabilities"
 	            hidden
 	          >
-	            <div class="rounded-xl border border-border/60 bg-card/95 p-4 space-y-3 shadow-sm" data-agent-action-container>
-	              <div class="flex items-center justify-between gap-3">
-	                <div>
-	                  <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{% if LANGUAGE_BIDI %}ضوابط الأتمتة{% else %}Automation controls{% endif %}</div>
-	                  <p class="text-xs text-muted-foreground">{% if LANGUAGE_BIDI %}بدّل إجراءات المنسّق المسموح لهذا الوكيل بتشغيلها.{% else %}Toggle orchestrator actions this agent is allowed to run.{% endif %}</p>
+	            <div class="rounded-xl border border-border/60 bg-card/95 p-4 space-y-4 shadow-sm" data-agent-approval-card>
+	              <div class="flex items-start justify-between gap-3">
+	                <div class="space-y-1">
+	                  <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{% if LANGUAGE_BIDI %}سياسة الموافقة الافتراضية{% else %}Default approval policy{% endif %}</div>
+	                  <p class="text-xs text-muted-foreground">{% if LANGUAGE_BIDI %}تحدد السياسة الافتراضية لكيفية التعامل مع الأدوات المتصلة عندما لا يوجد إعداد أكثر تحديداً.{% else %}Defines the default handling for connected tools when no more specific rule exists.{% endif %}</p>
 	                </div>
-	                <span class="text-xs text-muted-foreground" data-agent-action-state>{% if LANGUAGE_BIDI %}خامل{% else %}Idle{% endif %}</span>
+	                <span class="text-xs text-muted-foreground" data-agent-capability-flash>{% if LANGUAGE_BIDI %}جاهز{% else %}Ready{% endif %}</span>
 	              </div>
-	              <div class="space-y-3" data-agent-action-list>
-	                <p class="text-xs text-muted-foreground">{% if LANGUAGE_BIDI %}اختر وكيلاً لتحميل صلاحيات الإجراءات.{% else %}Select an agent to load action permissions.{% endif %}</p>
+	              <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+	                <div class="text-sm text-foreground" data-agent-approval-summary>{% if LANGUAGE_BIDI %}موروث من الاتصال{% else %}Inherited from connections{% endif %}</div>
+	                <label class="flex items-center gap-3 text-sm text-foreground">
+	                  <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{% if LANGUAGE_BIDI %}الوضع{% else %}Mode{% endif %}</span>
+	                  <select class="h-10 rounded-md border border-border/60 bg-background px-3 text-sm" data-agent-approval-select>
+	                    <option value="inherit">{% if LANGUAGE_BIDI %}موروث{% else %}Inherited{% endif %}</option>
+	                    <option value="auto">{% if LANGUAGE_BIDI %}تلقائي{% else %}Auto approve{% endif %}</option>
+	                    <option value="approve_writes">{% if LANGUAGE_BIDI %}موافقة على الكتابة{% else %}Approve writes{% endif %}</option>
+	                    <option value="approve_all">{% if LANGUAGE_BIDI %}موافقة على الكل{% else %}Approve all{% endif %}</option>
+	                  </select>
+	                </label>
+	              </div>
+	            </div>
+
+	            <div class="rounded-xl border border-border/60 bg-card/95 p-4 space-y-4 shadow-sm">
+	              <div class="flex items-start justify-between gap-3">
+	                <div class="space-y-1">
+	                  <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{% if LANGUAGE_BIDI %}اتصالات MCP{% else %}MCP connections{% endif %}</div>
+	                  <p class="text-xs text-muted-foreground">{% if LANGUAGE_BIDI %}إدارة الوصول إلى اتصالات MCP مع عرض الأدوات المحسومة وسياسة التنفيذ الفعلية داخل كل اتصال.{% else %}Manage MCP connection access and inspect the resolved tools plus effective execution policy inside each connection.{% endif %}</p>
+	                </div>
+	              </div>
+	              <div class="space-y-3" data-agent-capability-connections>
+	                <p class="text-xs text-muted-foreground">{% if LANGUAGE_BIDI %}لا توجد اتصالات MCP بعد.{% else %}No MCP connections available yet.{% endif %}</p>
+	              </div>
+	            </div>
+
+	            <div class="rounded-xl border border-border/60 bg-card/95 p-4 space-y-4 shadow-sm">
+	              <div class="flex items-start justify-between gap-3">
+	                <div class="space-y-1">
+	                  <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{% if LANGUAGE_BIDI %}التكاملات الأصلية{% else %}Native integrations{% endif %}</div>
+	                  <p class="text-xs text-muted-foreground">{% if LANGUAGE_BIDI %}يعرض الحسابات الأصلية المتصلة مثل Gmail وOutlook وGoogle Drive وGoogle Calendar مع الأدوات المتاحة لها.{% else %}Shows connected first-party accounts such as Gmail, Outlook, Google Drive, and Google Calendar with their available tools.{% endif %}</p>
+	                </div>
+	              </div>
+	              <div class="space-y-3" data-agent-capability-native-connections>
+	                <p class="text-xs text-muted-foreground">{% if LANGUAGE_BIDI %}لا توجد تكاملات أصلية متصلة بعد.{% else %}No native integrations connected yet.{% endif %}</p>
 	              </div>
 	            </div>
 	          </section>
@@ -569,6 +545,7 @@
 	</aside>
 </div>
 
+{% if agents_can_create %}
 <div class="fixed inset-0 z-50 hidden items-center justify-center bg-background/80 backdrop-blur-sm" data-dialog="create-agent" role="dialog" aria-modal="true">
   <div class="w-full max-w-lg rounded-2xl border border-border/70 bg-card shadow-lg shadow-black/10">
     <div class="px-6 py-4 border-b border-border/70 flex items-start justify-between">
@@ -635,6 +612,7 @@
     </div>
   </div>
 </div>
+{% endif %}
 {% endblock %}
 
 {% block extra_js %}
@@ -663,27 +641,30 @@
     var fieldRole = panel.querySelector("[data-agent-role]");
     var fieldTone = panel.querySelector("[data-agent-tone]");
     var fieldInitials = panel.querySelector("[data-agent-initials]");
-    var fieldStatusBadge = panel.querySelector("[data-agent-status-badge]");
     var fieldUpdated = panel.querySelector("[data-agent-updated]");
     var fieldLastActive = panel.querySelector("[data-agent-last-active]");
-    var fieldMetricTotal = panel.querySelector("[data-agent-metric-total]");
-    var fieldMetricOpen = panel.querySelector("[data-agent-metric-open]");
-    var fieldMetricClosed = panel.querySelector("[data-agent-metric-closed]");
-    var fieldMetricEscalations = panel.querySelector("[data-agent-metric-escalations]");
-    var fieldMetricAht = panel.querySelector("[data-agent-metric-aht]");
+    var fieldMetricScope = panel.querySelector("[data-agent-metric-scope]");
+    var fieldMetricDocuments = panel.querySelector("[data-agent-metric-documents]");
+    var fieldMetricConnections = panel.querySelector("[data-agent-metric-connections]");
+    var fieldMetricApproval = panel.querySelector("[data-agent-metric-approval]");
+    var fieldMetricRestrictions = panel.querySelector("[data-agent-metric-restrictions]");
     var fieldTraits = panel.querySelector("[data-agent-traits]");
     var fieldKpis = panel.querySelector("[data-agent-kpis]");
 	    var fieldCustomKpis = panel.querySelector("[data-agent-custom-kpis]");
 	    var fieldKpiWeighting = panel.querySelector("[data-agent-kpi-weighting]");
 		    var fieldEscalation = panel.querySelector("[data-agent-escalation]");
-		    var fieldKnowledgeMode = panel.querySelector("[data-agent-knowledge-mode]");
+	    var fieldKnowledgeMode = panel.querySelector("[data-agent-knowledge-mode]");
 		    var fieldKnowledgeList = panel.querySelector("[data-agent-knowledge-list]");
+		    var capabilityFlash = panel.querySelector("[data-agent-capability-flash]");
+		    var capabilityApprovalCard = panel.querySelector("[data-agent-approval-card]");
+		    var capabilityApprovalSummary = panel.querySelector("[data-agent-approval-summary]");
+		    var capabilityApprovalSelect = panel.querySelector("[data-agent-approval-select]");
+		    var capabilityConnections = panel.querySelector("[data-agent-capability-connections]");
+		    var capabilityNativeConnections = panel.querySelector("[data-agent-capability-native-connections]");
 		    var shareableField = panel.querySelector("[data-agent-shareable]");
 	    var shareableState = panel.querySelector("[data-agent-shareable-state]");
 	    var shareableOpen = panel.querySelector("[data-agent-shareable-open]");
 	    var shareableCopy = panel.querySelector("[data-agent-shareable-copy]");
-	    var actionList = panel.querySelector("[data-agent-action-list]");
-	    var actionStateLabel = panel.querySelector("[data-agent-action-state]");
 	    var tabsList = panel.querySelector("[data-agent-tabs]");
 	    var tabsButtons = tabsList
 	      ? Array.prototype.slice.call(tabsList.querySelectorAll("[data-agent-tab]") || [])
@@ -697,10 +678,11 @@
 	    var isPanelOpen = false;
 	    var currentAgentTitle = "";
 		    var shareableLinkValue = "";
-		    var actionFetchController = null;
-		    var currentActionAgentId = null;
-	    var actionFlashTimer = null;
 	    var currentTab = "overview";
+	    var SETUP_URLS = {
+	      mcp: "{% url 'frontend:dashboard-mcp' %}",
+	      integrations: "{% url 'frontend:dashboard-integrations' %}"
+	    };
 
 	    var tabActiveClasses = ["bg-background", "text-foreground", "shadow-sm"];
 	    var tabInactiveClasses = ["text-muted-foreground", "hover:text-foreground", "hover:bg-background/60"];
@@ -711,7 +693,6 @@
 	      createAgent: "{% if LANGUAGE_BIDI %}إنشاء وكيل{% else %}Create agent{% endif %}",
 	      createAgentSaveFailed: "{% if LANGUAGE_BIDI %}تعذّر حفظ الوكيل. حاول مرة أخرى.{% else %}We couldn't save your agent. Try again.{% endif %}",
 	      createAgentUnavailable: "{% if LANGUAGE_BIDI %}يتعذّر إنشاء الوكيل حالياً.{% else %}Unable to create agent right now.{% endif %}",
-	      draft: "{% if LANGUAGE_BIDI %}مسودة{% else %}Draft{% endif %}",
 	      agent: "{% if LANGUAGE_BIDI %}وكيل{% else %}Agent{% endif %}",
 	      supportAgent: "{% if LANGUAGE_BIDI %}وكيل دعم{% else %}Support Agent{% endif %}",
 	      selectAgent: "{% if LANGUAGE_BIDI %}اختر وكيلاً{% else %}Select an agent{% endif %}",
@@ -726,21 +707,6 @@
 	      updatedPrefix: "{% if LANGUAGE_BIDI %}آخر تحديث {% else %}Updated {% endif %}",
 	      live: "{% if LANGUAGE_BIDI %}نشط{% else %}Live{% endif %}",
 	      notPublished: "{% if LANGUAGE_BIDI %}غير منشور{% else %}Not published{% endif %}",
-	      selectAgentForActions: "{% if LANGUAGE_BIDI %}اختر وكيلاً لتحميل صلاحيات الإجراءات.{% else %}Select an agent to load action permissions.{% endif %}",
-	      syncing: "{% if LANGUAGE_BIDI %}جارٍ المزامنة…{% else %}Syncing…{% endif %}",
-	      failed: "{% if LANGUAGE_BIDI %}فشل{% else %}Failed{% endif %}",
-	      idle: "{% if LANGUAGE_BIDI %}خامل{% else %}Idle{% endif %}",
-	      enabled: "{% if LANGUAGE_BIDI %}مفعّل{% else %}Enabled{% endif %}",
-	      disabled: "{% if LANGUAGE_BIDI %}معطّل{% else %}Disabled{% endif %}",
-	      noToggleableActions: "{% if LANGUAGE_BIDI %}لا توجد إجراءات قابلة للتبديل.{% else %}No toggleable actions registered.{% endif %}",
-	      actionToggle: "{% if LANGUAGE_BIDI %}مفتاح إجراء{% else %}Action toggle{% endif %}",
-	      updating: "{% if LANGUAGE_BIDI %}جارٍ التحديث…{% else %}Updating…{% endif %}",
-	      failedToUpdateAction: "{% if LANGUAGE_BIDI %}تعذّر تحديث الإجراء{% else %}Failed to update action{% endif %}",
-	      actionEnabledSuffix: "{% if LANGUAGE_BIDI %}تم التفعيل{% else %}enabled{% endif %}",
-	      actionDisabledSuffix: "{% if LANGUAGE_BIDI %}تم التعطيل{% else %}disabled{% endif %}",
-	      unableToUpdateAction: "{% if LANGUAGE_BIDI %}تعذّر تحديث الإجراء.{% else %}Unable to update action.{% endif %}",
-	      failedToLoadActionPermissions: "{% if LANGUAGE_BIDI %}تعذّر تحميل صلاحيات الإجراءات{% else %}Failed to load action permissions{% endif %}",
-	      unableToLoadActionPermissions: "{% if LANGUAGE_BIDI %}تعذّر تحميل صلاحيات الإجراءات.{% else %}Unable to load action permissions.{% endif %}",
 	      lastActivePrefix: "{% if LANGUAGE_BIDI %}آخر نشاط {% else %}Last active {% endif %}",
 	      noRecentActivity: "{% if LANGUAGE_BIDI %}لا يوجد نشاط حديث{% else %}No recent activity{% endif %}",
 	      noTraits: "{% if LANGUAGE_BIDI %}لا توجد سمات مُعدّة.{% else %}No traits configured.{% endif %}",
@@ -750,7 +716,44 @@
 	      defaultKpiWeighting: "{% if LANGUAGE_BIDI %}يتم استخدام أوزان مؤشرات الأداء الافتراضية{% else %}Using default KPI weighting{% endif %}",
 	      noneConfigured: "{% if LANGUAGE_BIDI %}لم يتم الإعداد.{% else %}None configured.{% endif %}",
 	      usesAllBusinessKnowledge: "{% if LANGUAGE_BIDI %}يستخدم جميع مصادر معرفة النشاط.{% else %}Uses all business knowledge sources.{% endif %}",
-	      loadingActionPermissions: "{% if LANGUAGE_BIDI %}جارٍ تحميل صلاحيات الإجراءات…{% else %}Loading action permissions…{% endif %}",
+	      knowledgeScopeAll: "{% if LANGUAGE_BIDI %}كل المعرفة{% else %}All knowledge{% endif %}",
+	      knowledgeScopeSelected: "{% if LANGUAGE_BIDI %}معرفة محددة{% else %}Selected knowledge{% endif %}",
+	      knowledgeScopeMissing: "{% if LANGUAGE_BIDI %}بدون معرفة{% else %}No knowledge{% endif %}",
+	      approvalAuto: "{% if LANGUAGE_BIDI %}تلقائي{% else %}Auto{% endif %}",
+	      approvalWrites: "{% if LANGUAGE_BIDI %}موافقة على الكتابة{% else %}Approve writes{% endif %}",
+	      approvalAll: "{% if LANGUAGE_BIDI %}موافقة على الكل{% else %}Approve all{% endif %}",
+	      approvalInherited: "{% if LANGUAGE_BIDI %}موروث{% else %}Inherited{% endif %}",
+	      approvalMixedDefaults: "{% if LANGUAGE_BIDI %}افتراضات اتصال مختلطة{% else %}Mixed connection defaults{% endif %}",
+	      capabilityReady: "{% if LANGUAGE_BIDI %}جاهز{% else %}Ready{% endif %}",
+	      capabilitySaving: "{% if LANGUAGE_BIDI %}جارٍ الحفظ…{% else %}Saving…{% endif %}",
+	      capabilitySaveFailed: "{% if LANGUAGE_BIDI %}تعذّر حفظ إعدادات القدرات{% else %}Failed to save capability settings{% endif %}",
+	      approvalSummaryFormat: "{% if LANGUAGE_BIDI %}الوضع الفعلي: {mode}{% else %}Effective mode: {mode}{% endif %}",
+	      capabilityConnectionEnabled: "{% if LANGUAGE_BIDI %}مفعّل{% else %}Enabled{% endif %}",
+	      capabilityConnectionDisabled: "{% if LANGUAGE_BIDI %}معطّل{% else %}Disabled{% endif %}",
+	      capabilityConnectionUnavailable: "{% if LANGUAGE_BIDI %}غير متاح{% else %}Unavailable{% endif %}",
+	      capabilityEnable: "{% if LANGUAGE_BIDI %}تفعيل{% else %}Enable{% endif %}",
+	      capabilityDisable: "{% if LANGUAGE_BIDI %}تعطيل{% else %}Disable{% endif %}",
+	      capabilityNoConnections: "{% if LANGUAGE_BIDI %}لا توجد اتصالات MCP بعد.{% else %}No MCP connections available yet.{% endif %}",
+	      capabilityConnectionFallback: "{% if LANGUAGE_BIDI %}اتصال{% else %}Connection{% endif %}",
+	      capabilityToolCountFormat: "{% if LANGUAGE_BIDI %}{count} أداة{% else %}{count} tools{% endif %}",
+	      capabilityNoConnectionTools: "{% if LANGUAGE_BIDI %}لا توجد أدوات محسومة لهذا الاتصال.{% else %}No resolved tools for this connection.{% endif %}",
+	      capabilityNoNativeConnections: "{% if LANGUAGE_BIDI %}لا توجد تكاملات أصلية متصلة بعد.{% else %}No native integrations connected yet.{% endif %}",
+	      capabilitySetupMcp: "{% if LANGUAGE_BIDI %}إعداد MCP{% else %}Set up MCP{% endif %}",
+	      capabilitySetupNative: "{% if LANGUAGE_BIDI %}إعداد التكاملات{% else %}Set up integrations{% endif %}",
+	      capabilitySendModeLabel: "{% if LANGUAGE_BIDI %}سياسة الإرسال{% else %}Send policy{% endif %}",
+	      capabilityNativeIntegrationFallback: "{% if LANGUAGE_BIDI %}تكامل أصلي{% else %}Native integration{% endif %}",
+	      capabilitySourceDefault: "{% if LANGUAGE_BIDI %}افتراضي{% else %}Default{% endif %}",
+	      capabilitySourceAgentOverride: "{% if LANGUAGE_BIDI %}تخصيص الوكيل{% else %}Agent override{% endif %}",
+	      capabilitySourceConnectionOverride: "{% if LANGUAGE_BIDI %}تخصيص الاتصال{% else %}Connection override{% endif %}",
+	      capabilitySourceConnectionDefault: "{% if LANGUAGE_BIDI %}افتراضي الاتصال{% else %}Connection default{% endif %}",
+	      capabilitySourceAgentDefault: "{% if LANGUAGE_BIDI %}افتراضي الوكيل{% else %}Agent default{% endif %}",
+	      capabilitySourceSystem: "{% if LANGUAGE_BIDI %}النظام{% else %}System{% endif %}",
+	      capabilityRestricted: "{% if LANGUAGE_BIDI %}مقيّد{% else %}Restricted{% endif %}",
+	      capabilityBlocked: "{% if LANGUAGE_BIDI %}محظور{% else %}Blocked{% endif %}",
+	      capabilityAuto: "{% if LANGUAGE_BIDI %}تلقائي{% else %}Auto{% endif %}",
+	      capabilityApproveWrites: "{% if LANGUAGE_BIDI %}موافقة على الكتابة{% else %}Approve writes{% endif %}",
+	      capabilityApproveAll: "{% if LANGUAGE_BIDI %}موافقة على الكل{% else %}Approve all{% endif %}",
+	      capabilityUnknown: "{% if LANGUAGE_BIDI %}غير معروف{% else %}Unknown{% endif %}",
 	      failedToLoadAgentDetail: "{% if LANGUAGE_BIDI %}تعذّر تحميل تفاصيل الوكيل{% else %}Failed to load agent detail{% endif %}",
 	      invalidPayload: "{% if LANGUAGE_BIDI %}بيانات غير صالحة{% else %}Invalid payload{% endif %}",
 	      unableToLoadAgentDetails: "{% if LANGUAGE_BIDI %}تعذر تحميل تفاصيل الوكيل. يرجى المحاولة مرة أخرى.{% else %}Unable to load agent details. Please try again.{% endif %}",
@@ -1132,22 +1135,6 @@
       return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
     }
 
-    var statusClassMap = {
-      active: "text-emerald-600",
-      review: "text-amber-600",
-      draft: "text-slate-500",
-    };
-
-    function applyStatusBadge(target, label, code) {
-      if (!target) {
-        return;
-      }
-      var normalized = (code || label || "").toString().toLowerCase();
-      var baseClass = "text-[11px] font-semibold capitalize";
-      target.className = baseClass + " " + (statusClassMap[normalized] || "text-muted-foreground");
-      target.textContent = label || I18N.draft;
-    }
-
 	    function setPanelState(state) {
       panel.dataset.state = state;
       if (emptyState) emptyState.classList.toggle("hidden", state !== "empty");
@@ -1218,8 +1205,6 @@
         inFlight.abort();
       }
       inFlight = null;
-      resetActionArea();
-      setActionStateLabel("idle");
       if (!options.suppressState) {
         currentAgentTitle = "";
         setPanelState("empty");
@@ -1306,6 +1291,303 @@
       });
     }
 
+    function formatKnowledgeScopeLabel(mode) {
+      var normalized = String(mode || "").toLowerCase();
+      if (normalized === "all") return I18N.knowledgeScopeAll;
+      if (normalized === "select") return I18N.knowledgeScopeSelected;
+      if (normalized === "missing") return I18N.knowledgeScopeMissing;
+      return "—";
+    }
+
+    function formatApprovalModeLabel(mode) {
+      var normalized = String(mode || "").toLowerCase();
+      if (normalized === "auto") return I18N.approvalAuto;
+      if (normalized === "approve_writes") return I18N.approvalWrites;
+      if (normalized === "approve_all") return I18N.approvalAll;
+      return I18N.approvalInherited;
+    }
+
+    function formatCapabilitySource(source) {
+      var normalized = String(source || "").toLowerCase();
+      if (normalized === "agent_override") return I18N.capabilitySourceAgentOverride;
+      if (normalized === "connection_override") return I18N.capabilitySourceConnectionOverride;
+      if (normalized === "connection_default") return I18N.capabilitySourceConnectionDefault;
+      if (normalized === "agent_default") return I18N.capabilitySourceAgentDefault;
+      if (normalized === "system") return I18N.capabilitySourceSystem;
+      return I18N.capabilitySourceDefault;
+    }
+
+    function formatExecutionPolicy(policy) {
+      var normalized = String(policy || "").toLowerCase();
+      if (normalized === "auto") return I18N.capabilityAuto;
+      if (normalized === "approve_writes") return I18N.capabilityApproveWrites;
+      if (normalized === "approve_all") return I18N.capabilityApproveAll;
+      if (normalized === "blocked") return I18N.capabilityBlocked;
+      return I18N.capabilityUnknown;
+    }
+
+    function getCapabilityGroup(agent, category) {
+      var groups = agent && Array.isArray(agent.capabilityGraph) ? agent.capabilityGraph : [];
+      for (var i = 0; i < groups.length; i += 1) {
+        if ((groups[i] && groups[i].category) === category) {
+          return groups[i];
+        }
+      }
+      return null;
+    }
+
+    function setCapabilityFlash(message, isError) {
+      if (!capabilityFlash) return;
+      capabilityFlash.textContent = message || I18N.capabilityReady;
+      capabilityFlash.classList.toggle("text-destructive", !!isError);
+      capabilityFlash.classList.toggle("text-muted-foreground", !isError);
+    }
+
+    function resolveEffectiveApprovalSummary(agent) {
+      var summary = agent && agent.capabilitySummary ? agent.capabilitySummary : {};
+      if (summary.defaultApprovalMode) {
+        return formatApprovalModeLabel(summary.defaultApprovalMode);
+      }
+      var connectionGroup = getCapabilityGroup(agent, "mcp_connection");
+      var items = connectionGroup && Array.isArray(connectionGroup.items) ? connectionGroup.items : [];
+      var modes = [];
+      items.forEach(function (item) {
+        if (!item || item.availability !== "enabled") return;
+        var mode = String(item.executionPolicy || "").trim().toLowerCase();
+        if (!mode) return;
+        if (modes.indexOf(mode) === -1) modes.push(mode);
+      });
+      if (!modes.length) return I18N.approvalWrites;
+      if (modes.length === 1) return formatApprovalModeLabel(modes[0]);
+      return I18N.approvalMixedDefaults;
+    }
+
+    function hasAnyConnectedCapabilities(agent) {
+      var summary = agent && agent.capabilitySummary ? agent.capabilitySummary : {};
+      return Boolean(
+        Number(summary.mcpConnectionEnabled || 0) > 0 ||
+        Number(summary.nativeIntegrationEnabled || 0) > 0
+      );
+    }
+
+    function renderCapabilityEmptyState(container, message, ctaLabel, href) {
+      if (!container) return;
+      container.innerHTML = "";
+      var wrap = document.createElement("div");
+      wrap.className = "rounded-lg border border-dashed border-border/70 bg-muted/20 px-4 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between";
+      var text = document.createElement("p");
+      text.className = "text-xs text-muted-foreground";
+      text.textContent = message;
+      wrap.appendChild(text);
+      if (ctaLabel && href) {
+        var link = document.createElement("a");
+        link.href = href;
+        link.className = "inline-flex shrink-0 items-center justify-center rounded-md border border-input bg-background px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors";
+        link.textContent = ctaLabel;
+        wrap.appendChild(link);
+      }
+      container.appendChild(wrap);
+    }
+
+    function renderCapabilityConnections(group, agentId, toolGroup) {
+      if (!capabilityConnections) return;
+      capabilityConnections.innerHTML = "";
+      var items = group && Array.isArray(group.items) ? group.items : [];
+      var tools = toolGroup && Array.isArray(toolGroup.items) ? toolGroup.items : [];
+      if (!items.length) {
+        renderCapabilityEmptyState(capabilityConnections, I18N.capabilityNoConnections, I18N.capabilitySetupMcp, SETUP_URLS.mcp);
+        return;
+      }
+      items.forEach(function (item) {
+        var row = document.createElement("div");
+        row.className = "flex items-start justify-between gap-3 rounded-lg border border-border/70 bg-muted/20 px-3 py-3";
+        var info = document.createElement("div");
+        info.className = "min-w-0 space-y-1";
+        var connectionId = item.metadata && item.metadata.connectionId;
+        var title = document.createElement("div");
+        title.className = "text-sm font-semibold text-foreground";
+        title.textContent = item.label || I18N.capabilityConnectionFallback;
+        var meta = document.createElement("div");
+        meta.className = "flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground";
+        var availability = document.createElement("span");
+        availability.textContent = item.availability === "enabled"
+          ? I18N.capabilityConnectionEnabled
+          : item.source === "system"
+            ? I18N.capabilityConnectionUnavailable
+            : I18N.capabilityConnectionDisabled;
+        var source = document.createElement("span");
+        source.textContent = formatCapabilitySource(item.source);
+        var toolCount = document.createElement("span");
+        toolCount.textContent = I18N.capabilityToolCountFormat.replace(
+          "{count}",
+          formatNumber(item.metadata && item.metadata.toolCount, 0)
+        );
+        meta.appendChild(availability);
+        meta.appendChild(source);
+        meta.appendChild(toolCount);
+        var reason = document.createElement("p");
+        reason.className = "text-xs text-muted-foreground";
+        reason.textContent = item.reason || "";
+        info.appendChild(title);
+        info.appendChild(meta);
+        info.appendChild(reason);
+
+        var connectionTools = tools.filter(function (tool) {
+          return tool && tool.metadata && tool.metadata.connectionId === connectionId;
+        });
+        var toolsWrap = document.createElement("div");
+        toolsWrap.className = "mt-3 space-y-2";
+        if (connectionTools.length) {
+          connectionTools.forEach(function (tool) {
+            var toolRow = document.createElement("div");
+            toolRow.className = "rounded-md border border-border/60 bg-background/70 px-3 py-2 space-y-1";
+            var toolHeader = document.createElement("div");
+            toolHeader.className = "flex items-center justify-between gap-2";
+            var toolTitle = document.createElement("div");
+            toolTitle.className = "text-xs font-semibold text-foreground";
+            toolTitle.textContent = tool.label || tool.key;
+            var toolPolicy = document.createElement("span");
+            toolPolicy.className = "inline-flex items-center rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground";
+            toolPolicy.textContent = formatExecutionPolicy(tool.executionPolicy);
+            toolHeader.appendChild(toolTitle);
+            toolHeader.appendChild(toolPolicy);
+
+            var toolMeta = document.createElement("div");
+            toolMeta.className = "flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground";
+            var toolSource = document.createElement("span");
+            toolSource.textContent = formatCapabilitySource(tool.source);
+            toolMeta.appendChild(toolSource);
+
+            var toolReason = document.createElement("p");
+            toolReason.className = "text-[11px] text-muted-foreground";
+            toolReason.textContent = tool.reason || "";
+
+            toolRow.appendChild(toolHeader);
+            toolRow.appendChild(toolMeta);
+            toolRow.appendChild(toolReason);
+            toolsWrap.appendChild(toolRow);
+          });
+        } else {
+          var emptyTools = document.createElement("p");
+          emptyTools.className = "text-[11px] text-muted-foreground";
+          emptyTools.textContent = I18N.capabilityNoConnectionTools;
+          toolsWrap.appendChild(emptyTools);
+        }
+        info.appendChild(toolsWrap);
+        row.appendChild(info);
+
+        var actionable = Boolean(connectionId) && item.source !== "system";
+        if (actionable) {
+          var button = document.createElement("button");
+          button.type = "button";
+          button.className = "inline-flex items-center justify-center rounded-md border border-input bg-background px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors";
+          button.textContent = item.availability === "enabled" ? I18N.capabilityDisable : I18N.capabilityEnable;
+          button.addEventListener("click", function () {
+            updateAgentConnection(agentId, connectionId, item.availability !== "enabled", button);
+          });
+          row.appendChild(button);
+        }
+        capabilityConnections.appendChild(row);
+      });
+    }
+
+    function renderNativeConnections(group, toolGroup) {
+      if (!capabilityNativeConnections) return;
+      capabilityNativeConnections.innerHTML = "";
+      var items = group && Array.isArray(group.items) ? group.items : [];
+      var tools = toolGroup && Array.isArray(toolGroup.items) ? toolGroup.items : [];
+      if (!items.length) {
+        renderCapabilityEmptyState(
+          capabilityNativeConnections,
+          I18N.capabilityNoNativeConnections,
+          I18N.capabilitySetupNative,
+          SETUP_URLS.integrations
+        );
+        return;
+      }
+      items.forEach(function (item) {
+        var row = document.createElement("div");
+        row.className = "flex items-start justify-between gap-3 rounded-lg border border-border/70 bg-muted/20 px-3 py-3";
+        var info = document.createElement("div");
+        info.className = "min-w-0 space-y-1";
+        var accountId = item.metadata && item.metadata.accountId;
+        var title = document.createElement("div");
+        title.className = "text-sm font-semibold text-foreground";
+        title.textContent = item.label || I18N.capabilityNativeIntegrationFallback;
+        var meta = document.createElement("div");
+        meta.className = "flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground";
+        var availability = document.createElement("span");
+        availability.textContent = I18N.capabilityConnectionEnabled;
+        var source = document.createElement("span");
+        source.textContent = formatCapabilitySource(item.source);
+        var toolCount = document.createElement("span");
+        toolCount.textContent = I18N.capabilityToolCountFormat.replace(
+          "{count}",
+          formatNumber(item.metadata && item.metadata.toolCount, 0)
+        );
+        meta.appendChild(availability);
+        meta.appendChild(source);
+        meta.appendChild(toolCount);
+        if (item.metadata && item.metadata.sendMode) {
+          var sendMode = document.createElement("span");
+          sendMode.textContent = I18N.capabilitySendModeLabel + ": " + formatApprovalModeLabel(
+            item.metadata.sendMode === "draft_approval" ? "approve_writes" : item.metadata.sendMode
+          );
+          meta.appendChild(sendMode);
+        }
+        var reason = document.createElement("p");
+        reason.className = "text-xs text-muted-foreground";
+        reason.textContent = item.reason || "";
+        info.appendChild(title);
+        info.appendChild(meta);
+        info.appendChild(reason);
+
+        var accountTools = tools.filter(function (tool) {
+          return tool && tool.metadata && tool.metadata.accountId === accountId;
+        });
+        var toolsWrap = document.createElement("div");
+        toolsWrap.className = "mt-3 space-y-2";
+        if (accountTools.length) {
+          accountTools.forEach(function (tool) {
+            var toolRow = document.createElement("div");
+            toolRow.className = "rounded-md border border-border/60 bg-background/70 px-3 py-2 space-y-1";
+            var toolHeader = document.createElement("div");
+            toolHeader.className = "flex items-center justify-between gap-2";
+            var toolTitle = document.createElement("div");
+            toolTitle.className = "text-xs font-semibold text-foreground";
+            toolTitle.textContent = tool.label || tool.key;
+            var toolPolicy = document.createElement("span");
+            toolPolicy.className = "inline-flex items-center rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground";
+            toolPolicy.textContent = formatExecutionPolicy(tool.executionPolicy);
+            toolHeader.appendChild(toolTitle);
+            toolHeader.appendChild(toolPolicy);
+
+            var toolMeta = document.createElement("div");
+            toolMeta.className = "flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground";
+            var toolSource = document.createElement("span");
+            toolSource.textContent = formatCapabilitySource(tool.source);
+            toolMeta.appendChild(toolSource);
+            var toolReason = document.createElement("p");
+            toolReason.className = "text-[11px] text-muted-foreground";
+            toolReason.textContent = tool.reason || "";
+
+            toolRow.appendChild(toolHeader);
+            toolRow.appendChild(toolMeta);
+            toolRow.appendChild(toolReason);
+            toolsWrap.appendChild(toolRow);
+          });
+        } else {
+          var emptyTools = document.createElement("p");
+          emptyTools.className = "text-[11px] text-muted-foreground";
+          emptyTools.textContent = I18N.capabilityNoConnectionTools;
+          toolsWrap.appendChild(emptyTools);
+        }
+        info.appendChild(toolsWrap);
+        row.appendChild(info);
+        capabilityNativeConnections.appendChild(row);
+      });
+    }
+
     function updateShareable(path) {
       shareableLinkValue = path || "";
       var hasLink = Boolean(shareableLinkValue);
@@ -1337,201 +1619,87 @@
       }
     }
 
-    function resetActionArea(message) {
-      if (actionFetchController && typeof actionFetchController.abort === "function") {
-        actionFetchController.abort();
-        actionFetchController = null;
-      }
-      currentActionAgentId = null;
-      if (!actionList) {
-        return;
-      }
-      actionList.innerHTML = "";
-      var placeholder = document.createElement("p");
-      placeholder.className = "text-xs text-muted-foreground";
-      placeholder.textContent = message || I18N.selectAgentForActions;
-      actionList.appendChild(placeholder);
-    }
-
-    function setActionStateLabel(state, text) {
-      if (!actionStateLabel) {
-        return;
-      }
-      var label = text;
-      if (!label) {
-        if (state === "loading") {
-          label = I18N.syncing;
-        } else if (state === "error") {
-          label = I18N.failed;
-        } else if (state === "ready") {
-          label = I18N.live;
-        } else {
-          label = I18N.idle;
-        }
-      }
-      actionStateLabel.textContent = label;
-      actionStateLabel.classList.toggle("text-destructive", state === "error");
-      actionStateLabel.classList.toggle("text-muted-foreground", state !== "error");
-      actionStateLabel.classList.toggle("animate-pulse", state === "loading");
-    }
-
-    function flashActionMessage(message, isError) {
-      setActionStateLabel(isError ? "error" : "ready", message);
-      if (actionFlashTimer) {
-        clearTimeout(actionFlashTimer);
-      }
-      actionFlashTimer = window.setTimeout(function () {
-        setActionStateLabel("ready");
-        actionFlashTimer = null;
-      }, 3200);
-    }
-
-    function applyToggleState(target, enabled) {
-      if (!target) {
-        return;
-      }
-      var base =
-        "inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-semibold border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40";
-      if (enabled) {
-        target.className = base + " border-emerald-500 bg-emerald-500/90 text-white shadow-sm";
-        target.textContent = I18N.enabled;
-        target.dataset.state = "on";
-      } else {
-        target.className = base + " border-border/70 bg-background text-muted-foreground";
-        target.textContent = I18N.disabled;
-        target.dataset.state = "off";
-      }
-    }
-
-    function renderActionToggles(actions, agentId) {
-      if (!actionList) {
-        return;
-      }
-      actionList.innerHTML = "";
-      if (!actions || !actions.length) {
-        var empty = document.createElement("p");
-        empty.className = "text-xs text-muted-foreground";
-        empty.textContent = I18N.noToggleableActions;
-        actionList.appendChild(empty);
-        return;
-      }
-      actions.forEach(function (action) {
-        var item = document.createElement("div");
-        item.className = "flex items-start justify-between gap-3 rounded-lg border border-border/70 bg-muted/20 px-3 py-2";
-        var info = document.createElement("div");
-        var title = document.createElement("div");
-        title.className = "text-sm font-semibold text-foreground";
-        title.textContent = action.label || action.key;
-        var description = document.createElement("p");
-        description.className = "text-xs text-muted-foreground";
-        description.textContent = action.description || I18N.actionToggle;
-        info.appendChild(title);
-        info.appendChild(description);
-        var toggle = document.createElement("button");
-        toggle.type = "button";
-        applyToggleState(toggle, !!action.enabled);
-        toggle.dataset.actionKey = action.key;
-        toggle.addEventListener("click", function () {
-          var next = toggle.dataset.state !== "on";
-          toggleAgentAction(agentId, action.key, next, toggle);
-        });
-        item.appendChild(info);
-        item.appendChild(toggle);
-        actionList.appendChild(item);
-      });
-    }
-
     function getCsrfToken() {
       var match = document.cookie ? document.cookie.match(/csrftoken=([^;]+)/) : null;
       return match ? decodeURIComponent(match[1]) : "";
     }
 
-    function toggleAgentAction(agentId, actionKey, enabled, control) {
-      if (!agentId || !actionKey || !control) {
-        return;
-      }
-      control.disabled = true;
-      setActionStateLabel("loading", I18N.updating);
-      fetch("/api/agents/" + encodeURIComponent(agentId) + "/actions/", {
-        method: "PUT",
+    function updateAgentApprovalDefault(agentId, mode) {
+      if (!agentId || !businessId) return Promise.resolve();
+      setCapabilityFlash(I18N.capabilitySaving, false);
+      return fetch("/api/mcp/agents/approval-defaults/", {
+        method: "POST",
         headers: {
           "Content-Type": "application/json",
           "X-Requested-With": "XMLHttpRequest",
           "X-CSRFToken": getCsrfToken(),
         },
         credentials: "same-origin",
-        body: JSON.stringify({ action: actionKey, enabled: enabled }),
+        body: JSON.stringify({
+          businessId: businessId,
+          agentId: agentId,
+          defaultApprovalMode: mode === "inherit" ? null : mode,
+        }),
       })
         .then(function (response) {
           if (!response.ok) {
-            throw new Error(I18N.failedToUpdateAction);
+            throw new Error(I18N.capabilitySaveFailed);
           }
           return response.json();
         })
-        .then(function (payload) {
-          var updated = payload && payload.action ? payload.action.enabled : enabled;
-          applyToggleState(control, !!updated);
-          var label = (payload && payload.action && payload.action.label) || actionKey;
-          flashActionMessage(label + " " + (updated ? I18N.actionEnabledSuffix : I18N.actionDisabledSuffix), false);
+        .then(function () {
+          setCapabilityFlash(I18N.capabilityReady, false);
+          if (activeRow) {
+            handleRowActivation(activeRow, { forceReload: true, tab: "capabilities" });
+          }
         })
         .catch(function (error) {
-          console.error("Failed to update action permission", error);
-          flashActionMessage(I18N.unableToUpdateAction, true);
-        })
-        .finally(function () {
-          control.disabled = false;
+          console.error("Failed to update default approval mode", error);
+          setCapabilityFlash(I18N.capabilitySaveFailed, true);
         });
     }
 
-    function loadAgentActions(agentId) {
-      if (!actionList) {
-        return;
+    function updateAgentConnection(agentId, connectionId, enabled, control) {
+      if (!agentId || !connectionId || !businessId) return;
+      if (control) {
+        control.disabled = true;
+        control.classList.add("opacity-60", "cursor-not-allowed");
       }
-      if (!agentId) {
-        resetActionArea();
-        setActionStateLabel("idle");
-        return;
-      }
-      currentActionAgentId = agentId;
-      if (actionFetchController && typeof actionFetchController.abort === "function") {
-        actionFetchController.abort();
-      }
-      var controller = abortSupported ? new AbortController() : null;
-      actionFetchController = controller;
-      setActionStateLabel("loading");
-      fetch("/api/agents/" + encodeURIComponent(agentId) + "/actions/", {
-        method: "GET",
-        headers: { Accept: "application/json" },
+      setCapabilityFlash(I18N.capabilitySaving, false);
+      fetch("/api/mcp/connections/" + encodeURIComponent(connectionId) + "/agents/", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+          "X-CSRFToken": getCsrfToken(),
+        },
         credentials: "same-origin",
-        signal: controller ? controller.signal : undefined,
+        body: JSON.stringify({
+          businessId: businessId,
+          agentId: agentId,
+          enabled: enabled,
+        }),
       })
         .then(function (response) {
           if (!response.ok) {
-            throw new Error(I18N.failedToLoadActionPermissions);
+            throw new Error(I18N.capabilitySaveFailed);
           }
           return response.json();
         })
-        .then(function (payload) {
-          if (controller && controller.signal.aborted) {
-            return;
+        .then(function () {
+          setCapabilityFlash(I18N.capabilityReady, false);
+          if (activeRow) {
+            handleRowActivation(activeRow, { forceReload: true, tab: "capabilities" });
           }
-          if (currentActionAgentId !== agentId) {
-            return;
-          }
-          renderActionToggles((payload && payload.actions) || [], agentId);
-          setActionStateLabel("ready");
         })
         .catch(function (error) {
-          if (controller && controller.signal.aborted) {
-            return;
-          }
-          console.error("Failed to load action permissions", error);
-          resetActionArea(I18N.unableToLoadActionPermissions);
-          setActionStateLabel("error");
+          console.error("Failed to update MCP connection assignment", error);
+          setCapabilityFlash(I18N.capabilitySaveFailed, true);
         })
         .finally(function () {
-          if (controller && actionFetchController === controller) {
-            actionFetchController = null;
+          if (control) {
+            control.disabled = false;
+            control.classList.remove("opacity-60", "cursor-not-allowed");
           }
         });
     }
@@ -1571,16 +1739,17 @@
         var lastActive = dataset.agentLastActive ? formatDateTime(dataset.agentLastActive) : "";
         fieldLastActive.textContent = lastActive ? I18N.lastActivePrefix + lastActive : I18N.noRecentActivity;
       }
-      applyStatusBadge(
-        fieldStatusBadge,
-        dataset.agentStatusLabel || dataset.agentStatus || I18N.draft,
-        dataset.agentStatus || ""
-      );
-      if (fieldMetricTotal) fieldMetricTotal.textContent = formatNumber(dataset.agentConversations);
-      if (fieldMetricOpen) fieldMetricOpen.textContent = "—";
-      if (fieldMetricClosed) fieldMetricClosed.textContent = "—";
-      if (fieldMetricEscalations) fieldMetricEscalations.textContent = formatNumber(dataset.agentEscalations);
-      if (fieldMetricAht) fieldMetricAht.textContent = dataset.agentAht || "—";
+      if (fieldMetricScope) fieldMetricScope.textContent = formatKnowledgeScopeLabel(dataset.agentKnowledgeMode);
+      if (fieldMetricDocuments) fieldMetricDocuments.textContent = formatNumber(dataset.agentKnowledgeTotal);
+      if (fieldMetricConnections) fieldMetricConnections.textContent = "—";
+      if (fieldMetricApproval) fieldMetricApproval.textContent = "—";
+      if (fieldMetricRestrictions) fieldMetricRestrictions.textContent = "—";
+      if (capabilityApprovalSummary) capabilityApprovalSummary.textContent = I18N.approvalSummaryFormat.replace("{mode}", "—");
+      if (capabilityApprovalSelect) capabilityApprovalSelect.value = "inherit";
+      if (capabilityApprovalCard) capabilityApprovalCard.hidden = true;
+      renderCapabilityConnections(null, dataset.agentUuid || "", null);
+      renderNativeConnections(null, null);
+      setCapabilityFlash(I18N.capabilityReady, false);
       updateShareable(dataset.agentShareable || "");
     }
 
@@ -1594,27 +1763,44 @@
       if (fieldInitials) {
         fieldInitials.textContent = getInitials(agent.name || rowDataset.agentName, rowDataset.agentInitials);
       }
-      applyStatusBadge(
-        fieldStatusBadge,
-        agent.statusLabel || rowDataset.agentStatusLabel || agent.status || rowDataset.agentStatus || I18N.draft,
-        agent.status || rowDataset.agentStatus || ""
-      );
       if (fieldUpdated) {
         var updatedValue = agent.updatedAt || rowDataset.agentUpdatedIso || rowDataset.agentUpdated;
         fieldUpdated.textContent = updatedValue ? I18N.updatedPrefix + formatDateTime(updatedValue) : "";
       }
-      var stats = agent.stats || {};
-      if (fieldMetricTotal) fieldMetricTotal.textContent = formatNumber(stats.casesTotal, rowDataset.agentConversations);
-      if (fieldMetricOpen) fieldMetricOpen.textContent = formatNumber(stats.casesOpen);
-      if (fieldMetricClosed) fieldMetricClosed.textContent = formatNumber(stats.casesClosed);
-      if (fieldMetricEscalations)
-        fieldMetricEscalations.textContent = formatNumber(stats.escalations, rowDataset.agentEscalations);
-      if (fieldMetricAht) {
-        fieldMetricAht.textContent = stats.averageHandleSeconds
-          ? formatDuration(stats.averageHandleSeconds)
-          : rowDataset.agentAht || "—";
+      if (fieldMetricScope) {
+        var knowledgeMode = agent.knowledge && agent.knowledge.mode ? agent.knowledge.mode : rowDataset.agentKnowledgeMode;
+        fieldMetricScope.textContent = formatKnowledgeScopeLabel(knowledgeMode);
+      }
+      if (fieldMetricDocuments) {
+        var knowledgeDocuments = agent.knowledge && Array.isArray(agent.knowledge.documents) ? agent.knowledge.documents.length : null;
+        fieldMetricDocuments.textContent = formatNumber(knowledgeDocuments, rowDataset.agentKnowledgeTotal);
+      }
+      var capabilitySummary = agent.capabilitySummary || {};
+      if (fieldMetricConnections) {
+        var totalConnections = Number(capabilitySummary.mcpConnectionEnabled || 0) + Number(capabilitySummary.nativeIntegrationEnabled || 0);
+        var allConnections = Number(capabilitySummary.mcpConnectionTotal || 0) + Number(capabilitySummary.nativeIntegrationTotal || 0);
+        fieldMetricConnections.textContent = formatNumber(totalConnections, allConnections);
+      }
+      if (fieldMetricApproval) {
+        fieldMetricApproval.textContent = hasAnyConnectedCapabilities(agent) ? resolveEffectiveApprovalSummary(agent) : "—";
+      }
+      if (fieldMetricRestrictions) {
+        fieldMetricRestrictions.textContent = formatNumber(capabilitySummary.restrictionsTotal);
+      }
+      if (capabilityApprovalSummary) {
+        capabilityApprovalSummary.textContent = I18N.approvalSummaryFormat.replace(
+          "{mode}",
+          resolveEffectiveApprovalSummary(agent)
+        );
+      }
+      if (capabilityApprovalSelect) {
+        capabilityApprovalSelect.value = capabilitySummary.defaultApprovalMode || "inherit";
+      }
+      if (capabilityApprovalCard) {
+        capabilityApprovalCard.hidden = !hasAnyConnectedCapabilities(agent);
       }
       if (fieldLastActive) {
+        var stats = agent.stats || {};
         var lastActive = stats.lastActiveAt || rowDataset.agentLastActive;
         fieldLastActive.textContent = lastActive ? I18N.lastActivePrefix + formatDateTime(lastActive) : I18N.noRecentActivity;
       }
@@ -1629,12 +1815,21 @@
       if (fieldEscalation) {
         fieldEscalation.textContent = agent.escalationRule || I18N.noneConfigured;
       }
-	      if (fieldKnowledgeMode) {
-	        fieldKnowledgeMode.textContent = I18N.usesAllBusinessKnowledge;
+      if (fieldKnowledgeMode) {
+	        fieldKnowledgeMode.textContent = formatKnowledgeScopeLabel(capabilitySummary.knowledgeScope || agent.knowledge && agent.knowledge.mode);
 	      }
+      renderCapabilityConnections(
+        getCapabilityGroup(agent, "mcp_connection"),
+        agent.id || rowDataset.agentUuid || "",
+        getCapabilityGroup(agent, "mcp_tool")
+      );
+      renderNativeConnections(
+        getCapabilityGroup(agent, "native_integration"),
+        getCapabilityGroup(agent, "native_tool")
+      );
+      setCapabilityFlash(I18N.capabilityReady, false);
 	      populateKnowledge(fieldKnowledgeList, agent.knowledge && agent.knowledge.documents);
 	      updateShareable(agent.shareablePath || rowDataset.agentShareable || "");
-	      loadAgentActions(agent.id || rowDataset.agentUuid || null);
 	      if (fieldAriaTitle) {
 	        fieldAriaTitle.textContent = currentAgentTitle;
 	      }
@@ -1645,15 +1840,13 @@
       var uuid = row.getAttribute("data-agent-uuid");
       if (!uuid) return;
       options = options || {};
-      setActiveTab("overview", { scrollTop: false });
+      setActiveTab(options.tab || "overview", { scrollTop: false });
       if (!options.forceReload && activeRow === row && isPanelOpen && panel.dataset.state === "content") {
         openPanel();
         return;
       }
       selectRow(row);
       prefillSummaryFromRow(row);
-      resetActionArea(I18N.loadingActionPermissions);
-      setActionStateLabel("loading");
       if (inFlight && typeof inFlight.abort === "function") {
         inFlight.abort();
       }
@@ -1807,14 +2000,19 @@
 	      });
 	    }
 
-	    if (shareableCopy) {
-	      shareableCopy.addEventListener("click", function () {
-	        copyShareableLink(shareableLinkValue);
-	      });
-	    }
+    if (shareableCopy) {
+      shareableCopy.addEventListener("click", function () {
+        copyShareableLink(shareableLinkValue);
+      });
+    }
 
-    resetActionArea();
-    setActionStateLabel("idle");
+    if (capabilityApprovalSelect) {
+      capabilityApprovalSelect.addEventListener("change", function () {
+        if (!activeRow) return;
+        updateAgentApprovalDefault(activeRow.getAttribute("data-agent-uuid"), capabilityApprovalSelect.value || "inherit");
+      });
+    }
+
     setPanelState("empty");
     closePanel({ suppressState: true, resetSelection: false, force: true });
   });

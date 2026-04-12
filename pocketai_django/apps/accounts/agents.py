@@ -16,7 +16,7 @@ from apps.accounts.models import (
 from apps.knowledge.models import (
     KnowledgeUpload,
 )
-from apps.cases.models import CasePriority, CaseStatus
+from apps.conversations.models import ConversationStatus
 
 
 ROLE_LABELS = {
@@ -54,13 +54,12 @@ class AgentListItem:
     name: str
     role: str
     tone: str | None
-    status: str
     public_slug: str
     created_at: datetime
     updated_at: datetime
     conversations: int
-    open_cases: int
-    closed_cases: int
+    active_conversations: int
+    completed_conversations: int
     escalations: int
     last_active_at: datetime | None
     average_handle_seconds: float | None
@@ -76,9 +75,9 @@ class AgentListResult:
 
 @dataclass(frozen=True)
 class AgentStats:
-    total_cases: int
-    open_cases: int
-    closed_cases: int
+    total_conversations: int
+    active_conversations: int
+    completed_conversations: int
     escalations: int
     last_active_at: datetime | None
     average_handle_seconds: float | None
@@ -148,7 +147,7 @@ def list_agents(
     order: str = "desc",
 ) -> AgentListResult:
     """
-    Fetch a paginated list of agents for a business with lightweight fields and case metrics.
+    Fetch a paginated list of agents for a business with lightweight fields and conversation metrics.
     """
 
     try:
@@ -184,22 +183,38 @@ def list_agents(
     total = base_qs.count()
 
     duration_expr = ExpressionWrapper(
-        F("cases__closed_at") - F("cases__started_at"),
+        F("conversations__closed_at") - F("conversations__started_at"),
         output_field=DjangoDurationField(),
     )
     annotated = base_qs.annotate(
-        total_cases=Count("cases", distinct=True),
-        open_cases=Count("cases", filter=Q(cases__status=CaseStatus.OPEN), distinct=True),
-        closed_cases=Count("cases", filter=Q(cases__status=CaseStatus.CLOSED), distinct=True),
-        escalations=Count(
-            "cases",
-            filter=Q(cases__priority=CasePriority.CRITICAL),
+        total_conversations=Count("conversations", distinct=True),
+        open_conversations=Count(
+            "conversations",
+            filter=Q(conversations__status__in=[
+                ConversationStatus.NEW,
+                ConversationStatus.LIVE,
+                ConversationStatus.ESCALATED,
+            ]),
             distinct=True,
         ),
-        last_case_at=Max("cases__updated_at"),
+        closed_conversations=Count(
+            "conversations",
+            filter=Q(conversations__status__in=[
+                ConversationStatus.RESOLVED,
+                ConversationStatus.CLOSED,
+                ConversationStatus.EXPIRED,
+            ]),
+            distinct=True,
+        ),
+        escalations=Count(
+            "conversations",
+            filter=Q(conversations__status=ConversationStatus.ESCALATED),
+            distinct=True,
+        ),
+        last_conversation_at=Max("conversations__last_activity_at"),
         avg_handle=Avg(
             duration_expr,
-            filter=Q(cases__status=CaseStatus.CLOSED),
+            filter=Q(conversations__closed_at__isnull=False),
         ),
     )
 
@@ -212,15 +227,14 @@ def list_agents(
             name=row.name,
             role=row.role or "",
             tone=row.tone or None,
-            status=row.status,
             public_slug=row.slug or "",
             created_at=row.created_at,
             updated_at=row.updated_at,
-            conversations=getattr(row, "total_cases", 0) or 0,
-            open_cases=getattr(row, "open_cases", 0) or 0,
-            closed_cases=getattr(row, "closed_cases", 0) or 0,
+            conversations=getattr(row, "total_conversations", 0) or 0,
+            active_conversations=getattr(row, "open_conversations", 0) or 0,
+            completed_conversations=getattr(row, "closed_conversations", 0) or 0,
             escalations=getattr(row, "escalations", 0) or 0,
-            last_active_at=getattr(row, "last_case_at", None),
+            last_active_at=getattr(row, "last_conversation_at", None),
             average_handle_seconds=_duration_seconds(getattr(row, "avg_handle", None)),
         )
         for row in rows
@@ -238,10 +252,7 @@ def get_agent_detail(
     Load a single agent profile with persona, KPI, and knowledge metadata.
     """
 
-    duration_expr = ExpressionWrapper(
-        F("cases__closed_at") - F("cases__started_at"),
-        output_field=DjangoDurationField(),
-    )
+    duration_expr = ExpressionWrapper(F("conversations__closed_at") - F("conversations__started_at"), output_field=DjangoDurationField())
     agent = (
         AgentProfile.objects.filter(business_profile=business_profile, id=agent_id)
         .select_related("business_profile")
@@ -260,18 +271,34 @@ def get_agent_detail(
             ),
         )
         .annotate(
-            total_cases=Count("cases", distinct=True),
-            open_cases=Count("cases", filter=Q(cases__status=CaseStatus.OPEN), distinct=True),
-            closed_cases=Count("cases", filter=Q(cases__status=CaseStatus.CLOSED), distinct=True),
-            escalations=Count(
-                "cases",
-                filter=Q(cases__priority=CasePriority.CRITICAL),
+            total_conversations=Count("conversations", distinct=True),
+            open_conversations=Count(
+                "conversations",
+                filter=Q(conversations__status__in=[
+                    ConversationStatus.NEW,
+                    ConversationStatus.LIVE,
+                    ConversationStatus.ESCALATED,
+                ]),
                 distinct=True,
             ),
-            last_case_at=Max("cases__updated_at"),
+            closed_conversations=Count(
+                "conversations",
+                filter=Q(conversations__status__in=[
+                    ConversationStatus.RESOLVED,
+                    ConversationStatus.CLOSED,
+                    ConversationStatus.EXPIRED,
+                ]),
+                distinct=True,
+            ),
+            escalations=Count(
+                "conversations",
+                filter=Q(conversations__status=ConversationStatus.ESCALATED),
+                distinct=True,
+            ),
+            last_conversation_at=Max("conversations__last_activity_at"),
             avg_handle=Avg(
                 duration_expr,
-                filter=Q(cases__status=CaseStatus.CLOSED),
+                filter=Q(conversations__closed_at__isnull=False),
             ),
         )
         .first()
@@ -284,15 +311,14 @@ def get_agent_detail(
         name=agent.name,
         role=agent.role or "",
         tone=agent.tone or None,
-        status=agent.status,
         public_slug=agent.slug or "",
         created_at=agent.created_at,
         updated_at=agent.updated_at,
-        conversations=getattr(agent, "total_cases", 0) or 0,
-        open_cases=getattr(agent, "open_cases", 0) or 0,
-        closed_cases=getattr(agent, "closed_cases", 0) or 0,
+        conversations=getattr(agent, "total_conversations", 0) or 0,
+        active_conversations=getattr(agent, "open_conversations", 0) or 0,
+        completed_conversations=getattr(agent, "closed_conversations", 0) or 0,
         escalations=getattr(agent, "escalations", 0) or 0,
-        last_active_at=getattr(agent, "last_case_at", None),
+        last_active_at=getattr(agent, "last_conversation_at", None),
         average_handle_seconds=_duration_seconds(getattr(agent, "avg_handle", None)),
     )
 
@@ -308,9 +334,9 @@ def get_agent_detail(
     )
 
     stats = AgentStats(
-        total_cases=summary.conversations,
-        open_cases=summary.open_cases,
-        closed_cases=summary.closed_cases,
+        total_conversations=summary.conversations,
+        active_conversations=summary.active_conversations,
+        completed_conversations=summary.completed_conversations,
         escalations=summary.escalations,
         last_active_at=summary.last_active_at,
         average_handle_seconds=summary.average_handle_seconds,

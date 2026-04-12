@@ -1840,8 +1840,6 @@ def mcp_connection_agents(request: HttpRequest, connection_id: uuid.UUID) -> Jso
                     "id": str(agent.id),
                     "name": agent.name,
                     "slug": agent.slug,
-                    "status": agent.status,
-                    "statusLabel": agent.get_status_display(),
                     "enabled": agent.id not in opted_out,
                     "optedOut": agent.id in opted_out,
                 }
@@ -2156,15 +2154,6 @@ def _controls_tool_description(tool_name: str, description: str, *, source_type:
             "email_get_thread": "اجلب سلسلة بريد إلكتروني كاملة بحسب المعرّف.",
             "email_create_draft": "أنشئ مسودة بريد إلكتروني في الحساب المتصل.",
             "email_send_draft": "أرسل مسودة بريد إلكتروني موجودة (حسب سياسة الموافقات).",
-            "create_case": "أنشئ حالة عميل منظمة تتضمن التشخيص والإجراءات المقترحة.",
-            "update_case_status": "حدّث حالة دورة حياة الحالة المرتبطة.",
-            "update_case_details": "حدّث عنوان/وصف/أولوية حالة قائمة عند ظهور معلومات جديدة.",
-            "add_case_history": "أضف سجل متابعة للحالة لتوثيق التقدم أو التوضيحات.",
-            "flag_escalation": "صعّد المحادثة للمتابعة البشرية مع سبب وتفاصيل واضحة.",
-            "create_customer": "أنشئ أو طابق ملف عميل عند توفر معرّفات موثوقة.",
-            "update_customer": "حدّث ملف عميل قائم بعد تأكيد التغييرات.",
-            "create_lead": "أنشئ عميلًا محتملًا تم اكتشافه أثناء المحادثة.",
-            "create_appointment": "أنشئ أو اطلب موعدًا للعميل وفق الوقت المفضل.",
         }
         if tool_key in arabic_overrides:
             return arabic_overrides[tool_key]
@@ -2636,8 +2625,6 @@ def mcp_agent_approval_defaults(request: HttpRequest) -> JsonResponse:
                         "id": str(agent.id),
                         "name": agent.name,
                         "slug": agent.slug,
-                        "status": agent.status,
-                        "statusLabel": agent.get_status_display(),
                         "mcpDefaultApprovalMode": getattr(agent, "mcp_default_approval_mode", None),
                     }
                     for agent in agents

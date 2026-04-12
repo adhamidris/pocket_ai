@@ -38,8 +38,8 @@ Workflow tools (agentic mode allowlist):
 
 **Not LLM‑facing in agentic mode:**
 - Any other knowledge/dataset tools beyond `search_knowledge` + `read_knowledge`
-- CRM tools (`create_case`, `update_case_*`, `create_customer`, `create_lead`, `create_appointment`)  
-  These are produced via the planner JSON pass, not tool calls.
+- CRM write tools are retired in the current runtime; prompt behavior is retrieval-first unless a future action catalog reintroduces CRM operations.
+- Planner-only outputs may still produce structured non-tool actions when explicitly supported by the runtime.
 
 ## Prompt Selection (How MCP Chooses)
 

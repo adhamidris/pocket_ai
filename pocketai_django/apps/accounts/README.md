@@ -16,7 +16,7 @@ Directory Map
 - agents.py
   Agent listing + detail helpers and labels.
 - action_controls.py
-  Per-agent action permission toggles (create_case, update_case, etc.).
+  Per-agent action permission toggles for active non-retired actions.
 - feature_flags.py
   Business-level feature flag helpers.
 - credential_secrets.py
@@ -55,7 +55,7 @@ Quick Start (Dev)
 - Configure agent:
   `configure_agent_profile(...)`
 - Toggle an action:
-  `set_action_setting(agent, action_key="create_case", enabled=True)`
+  `set_action_setting(agent, action_key="read_knowledge", enabled=True)`
 
 Security Notes
 --------------
@@ -81,7 +81,7 @@ display_role_label("support")  # -> "Support Agent"
 
 Toggle action permissions:
 ```python
-set_action_setting(agent, action_key="create_case", enabled=False)
+set_action_setting(agent, action_key="read_knowledge", enabled=False)
 ```
 
 Create a knowledge upload record:

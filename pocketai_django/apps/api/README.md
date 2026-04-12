@@ -4,8 +4,7 @@ API App (apps/api)
 Purpose
 -------
 This app exposes HTTP endpoints for the web portal and admin dashboard:
-chat streaming, registration, knowledge documents, integrations, cases,
-customers.
+chat streaming, registration, knowledge documents, integrations, and CRM v1.
 
 Directory Map
 -------------
@@ -15,7 +14,7 @@ Directory Map
   Streaming chat endpoints + orchestration dispatch.
 - views.py
   REST-style endpoints for agents, registrations, documents, integrations,
-  cases, and customers.
+  and CRM resources.
 - tests/
   API tests for chat, knowledge, integrations, and portal runtime.
 
@@ -132,7 +131,7 @@ Registration
 Agents
 - GET  `/api/agents/` — list agents
 - GET  `/api/agents/<agent_id>/` — agent detail
-- GET/POST `/api/agents/<agent_id>/actions/` — action settings
+- GET  `/api/agents/<agent_id>/capabilities/` — resolved capability graph
 
 Knowledge Documents
 - GET  `/api/knowledge/documents/` — list uploads
@@ -156,13 +155,19 @@ MCP Connector (BETA)
 - POST `/api/mcp/connections/<connection_id>/test/` — test connection and cache tool schemas
 - GET/POST `/api/mcp/connections/<connection_id>/agents/` — view/update per-agent opt-outs
 
-Cases + Customers
-- GET  `/api/cases/` — list cases
-- GET  `/api/cases/<case_id>/` — case detail
-- GET  `/api/cases/<case_id>/history/` — case history
-- GET  `/api/cases/<case_id>/messages/` — case messages
-- GET  `/api/cases/<case_id>/notes/` — case notes
-- GET  `/api/customers/<customer_id>/` — customer detail
+CRM V1
+- GET/POST `/api/crm/contacts/` — list/create contacts
+- GET/PATCH/DELETE `/api/crm/contacts/<contact_id>/` — contact detail/update/delete
+- POST `/api/crm/contacts/<contact_id>/merge/` — merge contacts
+- GET/POST `/api/crm/companies/` — list/create companies
+- GET/PATCH/DELETE `/api/crm/companies/<company_id>/` — company detail/update/delete
+- POST `/api/crm/companies/<company_id>/merge/` — merge companies
+- GET/POST `/api/crm/field-definitions/` — list/create custom field definitions
+- POST `/api/crm/imports/sources/` — upload an import source file and get a suggested mapping
+- GET/POST `/api/crm/imports/templates/` — list/create reusable import mappings
+- GET/POST `/api/crm/imports/jobs/` — list/queue import jobs
+- GET `/api/crm/imports/jobs/<job_id>/` — import job detail
+- GET `/api/crm/duplicates/` — duplicate suggestions
 
 Examples (By Endpoint)
 ----------------------
@@ -233,10 +238,7 @@ Agents
 ```bash
 curl -s http://localhost:8000/api/agents/
 curl -s http://localhost:8000/api/agents/<agent_id>/
-curl -s http://localhost:8000/api/agents/<agent_id>/actions/
-curl -s -X PUT http://localhost:8000/api/agents/<agent_id>/actions/ \
-  -H "Content-Type: application/json" \
-  -d '{"action":"create_case","enabled":true}'
+curl -s http://localhost:8000/api/agents/<agent_id>/capabilities/
 ```
 
 Knowledge Documents
@@ -269,14 +271,13 @@ curl -s -X POST http://localhost:8000/api/integrations/google/sync/ \
   -d '{"integration_id":"<uuid>","resource_ids":["<sheet_id>"]}'
 ```
 
-Cases + Customers
+CRM V1
 ```bash
-curl -s "http://localhost:8000/api/cases/?business_id=<uuid>"
-curl -s "http://localhost:8000/api/cases/<case_id>/?business_id=<uuid>"
-curl -s "http://localhost:8000/api/cases/<case_id>/history/?business_id=<uuid>"
-curl -s "http://localhost:8000/api/cases/<case_id>/messages/?business_id=<uuid>"
-curl -s "http://localhost:8000/api/cases/<case_id>/notes/?business_id=<uuid>"
-curl -s "http://localhost:8000/api/customers/<customer_id>/?business_id=<uuid>"
+curl -s "http://localhost:8000/api/crm/contacts/?business_id=<uuid>"
+curl -s "http://localhost:8000/api/crm/companies/?business_id=<uuid>"
+curl -s "http://localhost:8000/api/crm/field-definitions/?business_id=<uuid>"
+curl -s "http://localhost:8000/api/crm/imports/jobs/?business_id=<uuid>"
+curl -s "http://localhost:8000/api/crm/duplicates/?business_id=<uuid>"
 ```
 
 High-Level Architecture

@@ -33,6 +33,7 @@ class FeatureState:
     rag_agentic_mode: bool  # 2-tool retrieval: search (metadata) → read (content)
     mcp_gateway_mode: bool  # Small gateway tool surface for external MCP
     sub_agents_v1: bool  # Background runs/automations/watchers/inbox
+    crm_v1: bool  # Standalone CRM v1 runtime
 
     def as_dict(self) -> dict[str, bool]:
         return {
@@ -49,6 +50,7 @@ class FeatureState:
             "rag_agentic_mode": self.rag_agentic_mode,
             "mcp_gateway_mode": self.mcp_gateway_mode,
             "sub_agents_v1": self.sub_agents_v1,
+            "crm_v1": self.crm_v1,
         }
 
 
@@ -112,6 +114,7 @@ class FeatureFlagService:
             rag_agentic_mode=bool(payload.get("rag_agentic_mode", FEATURE_FLAG_DEFAULTS["rag_agentic_mode"])),
             mcp_gateway_mode=bool(payload.get("mcp_gateway_mode", FEATURE_FLAG_DEFAULTS["mcp_gateway_mode"])),
             sub_agents_v1=bool(payload.get("sub_agents_v1", FEATURE_FLAG_DEFAULTS["sub_agents_v1"])),
+            crm_v1=bool(payload.get("crm_v1", FEATURE_FLAG_DEFAULTS["crm_v1"])),
         )
 
     @classmethod

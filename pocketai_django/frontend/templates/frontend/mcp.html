@@ -1669,7 +1669,6 @@
           row.innerHTML =
             '<div class="min-w-0">' +
               '<div class="text-sm font-medium text-foreground truncate">' + escapeHtml(agent.name || "Agent") + "</div>" +
-              '<div class="text-[11px] text-muted-foreground">' + escapeHtml(agent.statusLabel || "") + "</div>" +
             "</div>" +
             '<label class="inline-flex items-center gap-2 text-xs text-muted-foreground">' +
               '<input type="checkbox" class="h-4 w-4 rounded border-border/60" data-mcp-agent-toggle="' + escapeHtml(agent.id) + '"' + (agent.enabled ? " checked" : "") + " />" +

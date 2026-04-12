@@ -4584,3 +4584,807 @@ msgstr "العربية"
 
 #~ msgid "About"
 #~ msgstr "نبذة"
+
+# CRM Phase 1 UI
+msgid "A canonical business account record that can hold linked contacts, imports, and account history."
+msgstr "سجل موحد للحساب التجاري يمكنه الاحتفاظ بجهات الاتصال المرتبطة وعمليات الاستيراد وسجل الحساب."
+
+msgid "A canonical customer record that can represent an individual buyer or a company-side contact."
+msgstr "سجل عميل موحد يمكنه تمثيل مشتري فردي أو جهة اتصال تابعة لشركة."
+
+msgid "A compact pulse of what changed across the CRM."
+msgstr "ملخص سريع لما تغيّر عبر نظام CRM."
+
+msgid "A quick read of the company-level CRM record."
+msgstr "قراءة سريعة لسجل CRM على مستوى الشركة."
+
+msgid "Account snapshot"
+msgstr "ملخص الحساب"
+
+msgid "Account-level records for business customers"
+msgstr "سجلات على مستوى الحساب لعملاء الأعمال"
+
+msgid "Active imports"
+msgstr "عمليات الاستيراد النشطة"
+
+msgid "Activity timeline"
+msgstr "الخط الزمني للنشاط"
+
+msgid "Activity will appear here as the company record evolves."
+msgstr "سيظهر النشاط هنا مع تطور سجل الشركة."
+
+msgid "Activity will appear here as the record changes over time."
+msgstr "سيظهر النشاط هنا مع تغيّر السجل بمرور الوقت."
+
+msgid "Add a person record directly inside the CRM."
+msgstr "أضف سجل شخص مباشرة داخل نظام CRM."
+
+msgid "Add an account-level record for a business customer."
+msgstr "أضف سجلًا على مستوى الحساب لعميل تجاري."
+
+msgid "Awaiting a verified contact channel"
+msgstr "بانتظار قناة تواصل موثقة"
+
+msgid "B2C and B2B ready"
+msgstr "جاهز لـ B2C وB2B"
+
+msgid "Back to CRM Overview"
+msgstr "العودة إلى نظرة CRM العامة"
+
+msgid "Back to Companies"
+msgstr "العودة إلى الشركات"
+
+msgid "Back to Contacts"
+msgstr "العودة إلى جهات الاتصال"
+
+msgid "Back to Home"
+msgstr "العودة إلى الرئيسية"
+
+msgid "Business contacts anchored to this company."
+msgstr "جهات الاتصال التجارية المرتبطة بهذه الشركة."
+
+msgid "CRM Companies"
+msgstr "شركات CRM"
+
+msgid "CRM Contacts"
+msgstr "جهات اتصال CRM"
+
+msgid "CRM Imports"
+msgstr "استيراد CRM"
+
+msgid "CRM Overview"
+msgstr "نظرة عامة على CRM"
+
+msgid "CRM activity will appear here as your team creates, updates, imports, and reviews records."
+msgstr "سيظهر نشاط CRM هنا مع قيام فريقك بإنشاء السجلات وتحديثها واستيرادها ومراجعتها."
+
+msgid "Canonical business account records."
+msgstr "سجلات حسابات تجارية موحدة."
+
+msgid "Clean identity records"
+msgstr "سجلات هوية نظيفة"
+
+msgid "Cleaner account context"
+msgstr "سياق حساب أوضح"
+
+msgid "Company Profile"
+msgstr "ملف الشركة"
+
+msgid "Company links"
+msgstr "روابط الشركة"
+
+msgid "Contact Profile"
+msgstr "ملف جهة الاتصال"
+
+msgid "Contacts can stand alone or connect to business accounts."
+msgstr "يمكن لجهات الاتصال أن تكون مستقلة أو مرتبطة بحسابات تجارية."
+
+msgid "Contacts can stand alone or link into one or more companies."
+msgstr "يمكن لجهات الاتصال أن تبقى مستقلة أو ترتبط بشركة واحدة أو أكثر."
+
+msgid "Create Company"
+msgstr "إنشاء شركة"
+
+msgid "Create Contact"
+msgstr "إنشاء جهة اتصال"
+
+msgid "Customer intelligence for {{ business_name }}"
+msgstr "رؤى العملاء لـ {{ business_name }}"
+
+msgid "Domain"
+msgstr "النطاق"
+
+msgid "Domain will appear after website normalization"
+msgstr "سيظهر النطاق بعد توحيد الموقع الإلكتروني"
+
+msgid "Duplicate queue"
+msgstr "قائمة التكرارات"
+
+msgid "Edit account"
+msgstr "تعديل الحساب"
+
+msgid "Edit profile"
+msgstr "تعديل الملف"
+
+msgid "Email and phone stay visible so your team can review canonical customer data quickly."
+msgstr "يبقى البريد الإلكتروني والهاتف ظاهرين حتى يتمكن فريقك من مراجعة بيانات العميل الموحدة بسرعة."
+
+msgid "Email-first record"
+msgstr "سجل يبدأ بالبريد الإلكتروني"
+
+msgid "External identities"
+msgstr "الهويات الخارجية"
+
+msgid "Identity"
+msgstr "الهوية"
+
+msgid "Import Companies"
+msgstr "استيراد الشركات"
+
+msgid "Import Contacts"
+msgstr "استيراد جهات الاتصال"
+
+msgid "Import-ready structure"
+msgstr "بنية جاهزة للاستيراد"
+
+msgid "Individual / not linked yet"
+msgstr "فرد / غير مرتبط بعد"
+
+msgid "Individual and company-side people records."
+msgstr "سجلات أشخاص أفراد وأشخاص تابعين لشركات."
+
+msgid "Keep company context visible while updating the account record."
+msgstr "أبقِ سياق الشركة ظاهرًا أثناء تحديث سجل الحساب."
+
+msgid "Linked contacts"
+msgstr "جهات الاتصال المرتبطة"
+
+msgid "Manage account-level customer records."
+msgstr "إدارة سجلات العملاء على مستوى الحساب."
+
+msgid "Manage {{ total }} company records, keep account identity clean, and connect the right contacts to each organization."
+msgstr "أدر {{ total }} سجل شركة، وحافظ على هوية الحساب نظيفة، واربط جهات الاتصال الصحيحة بكل مؤسسة."
+
+msgid "Mixed customer types are supported"
+msgstr "أنواع العملاء المختلطة مدعومة"
+
+msgid "Monitor the shape of your CRM, review what needs attention, and jump into contacts, companies, or imports from one dashboard-native workspace."
+msgstr "راقب حالة CRM لديك، وراجع ما يحتاج إلى انتباه، وانتقل إلى جهات الاتصال أو الشركات أو الاستيراد من مساحة عمل واحدة داخل اللوحة."
+
+msgid "Move through the CRM without leaving the dashboard shell."
+msgstr "تنقّل داخل CRM دون مغادرة إطار لوحة التحكم."
+
+msgid "Newest companies"
+msgstr "أحدث الشركات"
+
+msgid "Newest contacts"
+msgstr "أحدث جهات الاتصال"
+
+msgid "No companies yet. Add your first account record or import a customer file to begin."
+msgstr "لا توجد شركات بعد. أضف أول سجل حساب أو استورد ملف عملاء للبدء."
+
+msgid "No company records yet."
+msgstr "لا توجد سجلات شركات بعد."
+
+msgid "No contact records yet."
+msgstr "لا توجد سجلات جهات اتصال بعد."
+
+msgid "No contacts are linked to this company yet."
+msgstr "لا توجد جهات اتصال مرتبطة بهذه الشركة بعد."
+
+msgid "No contacts yet. Create your first record or import a file to start building the CRM."
+msgstr "لا توجد جهات اتصال بعد. أنشئ أول سجل أو استورد ملفًا لبدء بناء CRM."
+
+msgid "No custom fields have been applied to this company yet."
+msgstr "لم يتم تطبيق أي حقول مخصصة على هذه الشركة بعد."
+
+msgid "No custom fields have been applied to this contact yet."
+msgstr "لم يتم تطبيق أي حقول مخصصة على جهة الاتصال هذه بعد."
+
+msgid "No external account identities are attached yet."
+msgstr "لا توجد هويات حساب خارجية مرفقة بعد."
+
+msgid "No external identities are attached yet."
+msgstr "لا توجد هويات خارجية مرفقة بعد."
+
+msgid "No linked contacts yet"
+msgstr "لا توجد جهات اتصال مرتبطة بعد"
+
+msgid "No notes yet for this company."
+msgstr "لا توجد ملاحظات لهذه الشركة بعد."
+
+msgid "No notes yet for this record."
+msgstr "لا توجد ملاحظات لهذا السجل بعد."
+
+msgid "No phone set"
+msgstr "لا يوجد هاتف محدد"
+
+msgid "No primary contact channel yet"
+msgstr "لا توجد قناة تواصل أساسية بعد"
+
+msgid "No role set"
+msgstr "لا يوجد دور محدد"
+
+msgid "No website captured yet"
+msgstr "لم يتم حفظ موقع إلكتروني بعد"
+
+msgid "Normalize websites, keep phone and source visible, and attach multiple contacts over time."
+msgstr "وحّد المواقع الإلكترونية، وأبقِ الهاتف والمصدر ظاهرين، وأرفق عدة جهات اتصال بمرور الوقت."
+
+msgid "Open Companies"
+msgstr "افتح الشركات"
+
+msgid "Open Contacts"
+msgstr "افتح جهات الاتصال"
+
+msgid "Open Imports"
+msgstr "افتح الاستيراد"
+
+msgid "People records built for real customer context"
+msgstr "سجلات أشخاص مبنية على سياق العملاء الحقيقي"
+
+msgid "Phone-first record"
+msgstr "سجل يبدأ بالهاتف"
+
+msgid "Primary channel"
+msgstr "القناة الأساسية"
+
+msgid "Primary company link"
+msgstr "الرابط الأساسي للشركة"
+
+msgid "Primary relationship"
+msgstr "العلاقة الأساسية"
+
+msgid "Queue migration files and monitor import health."
+msgstr "أرسل ملفات الترحيل إلى قائمة الانتظار وراقب حالة الاستيراد."
+
+msgid "Queued or currently processing import jobs."
+msgstr "عمليات استيراد في الانتظار أو قيد المعالجة حاليًا."
+
+msgid "Quick actions"
+msgstr "إجراءات سريعة"
+
+msgid "Quick read of the canonical record."
+msgstr "قراءة سريعة للسجل الموحد."
+
+msgid "Ready for import-led growth"
+msgstr "جاهز للنمو عبر الاستيراد"
+
+msgid "Recent activity"
+msgstr "النشاط الأخير"
+
+msgid "Records waiting for human duplicate review."
+msgstr "سجلات تنتظر مراجعة بشرية للتكرار."
+
+msgid "Relationship title not set"
+msgstr "لم يتم تحديد عنوان العلاقة"
+
+msgid "Review {{ total }} people records, keep identity details clean, and create new contacts without leaving the dashboard."
+msgstr "راجع {{ total }} سجلًا للأشخاص، وحافظ على تفاصيل الهوية نظيفة، وأنشئ جهات اتصال جديدة دون مغادرة لوحة التحكم."
+
+msgid "Save Company"
+msgstr "حفظ الشركة"
+
+msgid "Save Contact"
+msgstr "حفظ جهة الاتصال"
+
+msgid "Search by company name, website, or phone"
+msgstr "ابحث باسم الشركة أو الموقع الإلكتروني أو الهاتف"
+
+msgid "Search by name, email, phone, or company"
+msgstr "ابحث بالاسم أو البريد الإلكتروني أو الهاتف أو الشركة"
+
+msgid "Search, create, and review people records."
+msgstr "ابحث وأنشئ وراجع سجلات الأشخاص."
+
+msgid "Start a Migration Import"
+msgstr "ابدأ استيراد الترحيل"
+
+msgid "System note"
+msgstr "ملاحظة النظام"
+
+msgid "This account layer is designed to handle migration from files and external CRMs later."
+msgstr "تم تصميم طبقة الحساب هذه للتعامل لاحقًا مع الترحيل من الملفات وأنظمة CRM الخارجية."
+
+msgid "This contact currently stands on its own without a linked company."
+msgstr "جهة الاتصال هذه مستقلة حاليًا بدون شركة مرتبطة."
+
+msgid "Update Company"
+msgstr "تحديث الشركة"
+
+msgid "Update Contact"
+msgstr "تحديث جهة الاتصال"
+
+msgid "Use companies for account-level CRM while still supporting direct individual contacts where needed."
+msgstr "استخدم الشركات لإدارة CRM على مستوى الحساب مع الاستمرار في دعم جهات الاتصال الفردية المباشرة عند الحاجة."
+
+msgid "Use imports when you want to bring in larger datasets with duplicate review later."
+msgstr "استخدم الاستيراد عندما تريد إدخال مجموعات بيانات أكبر مع مراجعة التكرارات لاحقًا."
+
+msgid "Use the split layout to keep profile context visible while editing."
+msgstr "استخدم التخطيط المقسوم لإبقاء سياق الملف ظاهرًا أثناء التعديل."
+
+msgid "What this page is for"
+msgstr "ما الغرض من هذه الصفحة"
+
+msgid "Why this matters"
+msgstr "لماذا هذا مهم"
+
+msgid "{{ count }} open duplicate reviews"
+msgstr "{{ count }} مراجعات تكرار مفتوحة"
+
+# CRM Phase 2 imports UI
+msgid "%(value).1f %(unit)s"
+msgstr "%(value).1f %(unit)s"
+
+msgid "%(value)s %(unit)s"
+msgstr "%(value)s %(unit)s"
+
+msgid "0 bytes"
+msgstr "0 بايت"
+
+msgid "CRM is not enabled for this business."
+msgstr "نظام CRM غير مفعّل لهذا النشاط."
+
+msgid "CSV and XLSX are supported for the first migration flow."
+msgstr "يتم دعم CSV وXLSX في أول مسار للترحيل."
+
+msgid "Company duplicate suggestion"
+msgstr "اقتراح تكرار لشركة"
+
+msgid "Company mapping"
+msgstr "ربط حقول الشركة"
+
+msgid "Company name"
+msgstr "اسم الشركة"
+
+msgid "Contact duplicate suggestion"
+msgstr "اقتراح تكرار لجهة اتصال"
+
+msgid "Contact mapping"
+msgstr "ربط حقول جهة الاتصال"
+
+msgid "Detected columns"
+msgstr "الأعمدة المكتشفة"
+
+msgid "Display name"
+msgstr "الاسم الظاهر"
+
+msgid "Duplicate pressure"
+msgstr "ضغط التكرارات"
+
+msgid "External identity will read from {{ source }} and register it under {{ system }} / {{ object_type }}."
+msgstr "ستتم قراءة الهوية الخارجية من {{ source }} وتسجيلها تحت {{ system }} / {{ object_type }}."
+
+msgid "Format"
+msgstr "الصيغة"
+
+msgid "Import control tower"
+msgstr "مركز مراقبة الاستيراد"
+
+msgid "Import source"
+msgstr "مصدر الاستيراد"
+
+msgid "Imported records waiting for a human decision."
+msgstr "سجلات مستوردة تنتظر قرارًا بشريًا."
+
+msgid "Keep migration pressure visible while imports and duplicate review move through the CRM."
+msgstr "أبقِ ضغط الترحيل ظاهرًا بينما تتحرك عمليات الاستيراد ومراجعة التكرارات داخل CRM."
+
+msgid "Last name"
+msgstr "اسم العائلة"
+
+msgid "Mapping source"
+msgstr "مصدر الربط"
+
+msgid "Move customer data in with confidence"
+msgstr "انقل بيانات العملاء بثقة"
+
+msgid "No default columns detected in this section yet."
+msgstr "لم يتم اكتشاف أعمدة افتراضية في هذا القسم بعد."
+
+msgid "No default field mapping was detected. Consider saving a reusable template before you queue this import."
+msgstr "لم يتم اكتشاف ربط افتراضي للحقول. فكّر في حفظ قالب قابل لإعادة الاستخدام قبل وضع هذا الاستيراد في قائمة الانتظار."
+
+msgid "No import jobs yet. Upload a source file to start the migration flow."
+msgstr "لا توجد مهام استيراد بعد. ارفع ملف مصدر لبدء مسار الترحيل."
+
+msgid "No reusable mapping templates yet. The first successful import can create one."
+msgstr "لا توجد قوالب ربط قابلة لإعادة الاستخدام بعد. يمكن لأول استيراد ناجح إنشاء واحد."
+
+msgid "Open duplicate reviews"
+msgstr "مراجعات التكرار المفتوحة"
+
+msgid "Optional. If you like the inferred mapping, save it as a reusable template when you queue the import."
+msgstr "اختياري. إذا أعجبك الربط المستنتج، احفظه كقالب قابل لإعادة الاستخدام عند وضع الاستيراد في قائمة الانتظار."
+
+msgid "Preview Mapping"
+msgstr "معاينة الربط"
+
+msgid "Preview sample rows"
+msgstr "معاينة صفوف العينة"
+
+msgid "Primary email"
+msgstr "البريد الإلكتروني الأساسي"
+
+msgid "Primary phone"
+msgstr "الهاتف الأساسي"
+
+msgid "Queue Migration Job"
+msgstr "إضافة مهمة الترحيل إلى قائمة الانتظار"
+
+msgid "Queue migration job"
+msgstr "إضافة مهمة الترحيل إلى الانتظار"
+
+msgid "Queued or currently running jobs."
+msgstr "مهام في الانتظار أو قيد التشغيل حاليًا."
+
+msgid "Recent import jobs"
+msgstr "مهام الاستيراد الأخيرة"
+
+msgid "Reusable mapping template"
+msgstr "قالب ربط قابل لإعادة الاستخدام"
+
+msgid "Review inferred mapping"
+msgstr "راجع الربط المستنتج"
+
+msgid "Review mapping snapshot"
+msgstr "راجع لقطة الربط"
+
+msgid "Review note"
+msgstr "ملاحظة للمراجعة"
+
+msgid "Role / title"
+msgstr "الدور / المسمى"
+
+msgid "Row {{ row }}"
+msgstr "الصف {{ row }}"
+
+msgid "Sample rows"
+msgstr "صفوف العينة"
+
+msgid "See what the CRM recognized before you commit the import job."
+msgstr "اطّلع على ما تعرّف عليه CRM قبل اعتماد مهمة الاستيراد."
+
+msgid "See which jobs created records, updated existing ones, or surfaced duplicates."
+msgstr "اعرف أي المهام أنشأت سجلات أو حدثت سجلات موجودة أو أظهرت تكرارات."
+
+msgid "Size"
+msgstr "الحجم"
+
+msgid "Some columns are currently unmapped. They will be ignored unless you later turn them into custom fields or update the mapping template."
+msgstr "بعض الأعمدة غير مربوطة حاليًا. سيتم تجاهلها ما لم تحوّلها لاحقًا إلى حقول مخصصة أو تحدّث قالب الربط."
+
+msgid "Source file"
+msgstr "ملف المصدر"
+
+msgid "Start with the file you want to migrate, then optionally reuse a saved mapping template."
+msgstr "ابدأ بالملف الذي تريد ترحيله، ثم أعد استخدام قالب ربط محفوظ عند الحاجة."
+
+msgid "Suggested automatically"
+msgstr "مقترح تلقائيًا"
+
+msgid "Template name to save"
+msgstr "اسم القالب للحفظ"
+
+msgid "Template: {{ name }}"
+msgstr "القالب: {{ name }}"
+
+msgid "The next CRM phase will add the full review queue, but you can already see what the imports pipeline is surfacing."
+msgstr "ستضيف المرحلة القادمة من CRM قائمة المراجعة الكاملة، لكن يمكنك بالفعل رؤية ما يكشفه مسار الاستيراد."
+
+msgid "These columns are visible in the file preview but are not part of the current inferred mapping."
+msgstr "هذه الأعمدة ظاهرة في معاينة الملف لكنها ليست جزءًا من الربط المستنتج الحالي."
+
+msgid "This is the inferred shape the CRM will use when the job is queued."
+msgstr "هذا هو الشكل المستنتج الذي سيستخدمه CRM عند وضع المهمة في قائمة الانتظار."
+
+msgid "This mapping will also be saved as the reusable template \"{{ name }}\" when you queue the import."
+msgstr "سيتم أيضًا حفظ هذا الربط كقالب قابل لإعادة الاستخدام باسم \"{{ name }}\" عند وضع الاستيراد في قائمة الانتظار."
+
+# CRM Phase 3 duplicates UI
+msgid "A valid mergeable record is required before this duplicate can be merged."
+msgstr "يلزم وجود سجل صالح وقابل للدمج قبل دمج هذا التكرار."
+
+msgid "Add context for why you ignored or merged this suggestion."
+msgstr "أضف توضيحًا لسبب تجاهل هذا الاقتراح أو دمجه."
+
+msgid "CRM Duplicates"
+msgstr "تكرارات CRM"
+
+msgid "Candidate record already in CRM"
+msgstr "السجل المرشح موجود بالفعل في CRM"
+
+msgid "Created directly inside the duplicate queue"
+msgstr "تم إنشاؤه مباشرة داخل قائمة التكرارات"
+
+msgid "Duplicate suggestion ignored."
+msgstr "تم تجاهل اقتراح التكرار."
+
+msgid "Duplicate suggestion merged."
+msgstr "تم دمج اقتراح التكرار."
+
+msgid "Duplicate suggestion reopened."
+msgstr "تمت إعادة فتح اقتراح التكرار."
+
+msgid "Ignore Suggestion"
+msgstr "تجاهل الاقتراح"
+
+msgid "Ignored"
+msgstr "تم تجاهله"
+
+msgid "Incoming snapshot from import"
+msgstr "اللقطة الواردة من الاستيراد"
+
+msgid "Merge Records"
+msgstr "دمج السجلات"
+
+msgid "Merged"
+msgstr "تم الدمج"
+
+msgid "No ignored duplicate suggestions yet."
+msgstr "لا توجد اقتراحات تكرار متجاهلة بعد."
+
+msgid "No incoming snapshot is attached to this suggestion."
+msgstr "لا توجد لقطة واردة مرفقة بهذا الاقتراح."
+
+msgid "No merged duplicate suggestions yet."
+msgstr "لا توجد اقتراحات تكرار مدمجة بعد."
+
+msgid "No open duplicate suggestions right now. New import conflicts will appear here as they need review."
+msgstr "لا توجد اقتراحات تكرار مفتوحة حاليًا. ستظهر هنا تعارضات الاستيراد الجديدة عندما تحتاج إلى مراجعة."
+
+msgid "No primary channel yet"
+msgstr "لا توجد قناة أساسية بعد"
+
+msgid "No website or phone captured yet"
+msgstr "لم يتم حفظ موقع إلكتروني أو هاتف بعد"
+
+msgid "Open Duplicates"
+msgstr "افتح التكرارات"
+
+msgid "Open Duplicate Reviews"
+msgstr "افتح مراجعات التكرار"
+
+msgid "Open linked record"
+msgstr "افتح السجل المرتبط"
+
+msgid "Open record"
+msgstr "افتح السجل"
+
+msgid "Queue status"
+msgstr "حالة القائمة"
+
+msgid "Reopen Suggestion"
+msgstr "إعادة فتح الاقتراح"
+
+msgid "Resolution note"
+msgstr "ملاحظة الحل"
+
+msgid "Review duplicate suggestions and resolve the records that still need a human decision."
+msgstr "راجع اقتراحات التكرار وعالج السجلات التي ما زالت تحتاج إلى قرار بشري."
+
+msgid "Review the records that still need a human decision"
+msgstr "راجع السجلات التي ما زالت تحتاج إلى قرار بشري"
+
+msgid "Source row {{ row }}"
+msgstr "صف المصدر {{ row }}"
+
+msgid "Switch between open, ignored, and already-resolved duplicate suggestions without leaving the CRM shell."
+msgstr "انتقل بين اقتراحات التكرار المفتوحة والمتجاهلة والمحسومة دون مغادرة إطار CRM."
+
+msgid "The candidate CRM record could not be loaded."
+msgstr "تعذر تحميل سجل CRM المرشح."
+
+msgid "This duplicate already has a mergeable record attached inside the CRM. Record ID: {{ record_id }}"
+msgstr "هذا التكرار لديه بالفعل سجل قابل للدمج داخل CRM. معرّف السجل: {{ record_id }}"
+
+msgid "This suggestion came from an import snapshot without a second CRM record yet, so merge is not available. You can ignore it for now or keep it open for later review."
+msgstr "جاء هذا الاقتراح من لقطة استيراد بدون سجل CRM ثانٍ بعد، لذلك لا يتوفر الدمج. يمكنك تجاهله الآن أو إبقاؤه مفتوحًا للمراجعة لاحقًا."
+
+msgid "Unsupported duplicate action."
+msgstr "إجراء التكرار غير مدعوم."
+
+msgid "Use the duplicate queue to compare imported snapshots against canonical CRM records, then ignore, reopen, or merge when the underlying data supports it."
+msgstr "استخدم قائمة التكرارات لمقارنة اللقطات المستوردة مع سجلات CRM الموحدة، ثم تجاهلها أو أعد فتحها أو ادمجها عندما تدعم البيانات ذلك."
+
+msgid "Companies"
+msgstr "الشركات"
+
+msgid "Contacts"
+msgstr "جهات الاتصال"
+
+msgid "Language: {{ label }}"
+msgstr "اللغة: {{ label }}"
+
+msgid "RAG Analytics"
+msgstr "تحليلات RAG"
+
+msgid "Track job health, duplicates, and row-level outcomes from one page."
+msgstr "تابع حالة المهمة والتكرارات ونتائج الصفوف من صفحة واحدة."
+
+msgid "Unmapped columns"
+msgstr "الأعمدة غير المربوطة"
+
+msgid "Updated {{ updated }}"
+msgstr "تم التحديث {{ updated }}"
+
+msgid "Upload a source file, review the inferred mapping, then queue a migration job without leaving the dashboard shell."
+msgstr "ارفع ملف مصدر، وراجع الربط المستنتج، ثم أضف مهمة ترحيل إلى قائمة الانتظار دون مغادرة إطار لوحة التحكم."
+
+msgid "Upload source file"
+msgstr "ارفع ملف المصدر"
+
+msgid "Use a saved template when you already know how this source should map into the CRM."
+msgstr "استخدم قالبًا محفوظًا عندما تكون تعرف مسبقًا كيف يجب ربط هذا المصدر داخل CRM."
+
+msgid "Use the sample rows to validate names, channels, and company data before the import runs."
+msgstr "استخدم صفوف العينة للتحقق من الأسماء وقنوات التواصل وبيانات الشركة قبل تشغيل الاستيراد."
+
+msgid "{{ count }} created"
+msgstr "تم إنشاء {{ count }}"
+
+msgid "{{ count }} duplicates"
+msgstr "{{ count }} تكرارات"
+
+msgid "{{ count }} failed"
+msgstr "فشل {{ count }}"
+
+msgid "{{ count }} processed rows"
+msgstr "{{ count }} صفوف تمت معالجتها"
+
+msgid "{{ count }} skipped"
+msgstr "تم تخطي {{ count }}"
+
+msgid "{{ count }} updated"
+msgstr "تم تحديث {{ count }}"
+
+msgid "Import file queued for processing."
+msgstr "تمت إضافة ملف الاستيراد إلى قائمة المعالجة."
+
+msgid "No duplicate suggestions yet."
+msgstr "لا توجد اقتراحات تكرار بعد."
+
+msgid "No external ID column was detected, so source-system exact-match updates are not available for this file."
+msgstr "لم يتم اكتشاف عمود للمعرّف الخارجي، لذلك لن تكون تحديثات المطابقة الدقيقة بحسب نظام المصدر متاحة لهذا الملف."
+
+msgid "CRM Fields"
+msgstr "حقول إدارة العملاء"
+
+msgid "Manage Fields"
+msgstr "إدارة الحقول"
+
+msgid "Control which custom fields exist for contacts and companies before your team scales usage."
+msgstr "تحكم في الحقول المخصصة المتاحة لجهات الاتصال والشركات قبل أن يتوسع استخدام فريقك."
+
+msgid "CRM Workspace"
+msgstr "مساحة إدارة العملاء"
+
+msgid "Your CRM now lives inside the dashboard"
+msgstr "إدارة العملاء أصبحت الآن داخل لوحة التحكم"
+
+msgid "Open the standalone CRM workspace to manage contacts, companies, imports, duplicate reviews, and custom field configuration from one dashboard-native flow."
+msgstr "افتح مساحة إدارة العملاء المستقلة لإدارة جهات الاتصال والشركات وعمليات الاستيراد ومراجعة التكرارات وإعداد الحقول المخصصة من نفس تدفق لوحة التحكم."
+
+msgid "Open CRM Overview"
+msgstr "افتح نظرة عامة على إدارة العملاء"
+
+msgid "Shape the CRM fields your team will rely on"
+msgstr "صمّم حقول إدارة العملاء التي سيعتمد عليها فريقك"
+
+msgid "Keep contact and company data flexible without turning the CRM into an unstructured spreadsheet. Define the fields, visibility, and search behavior in one dashboard-native control room."
+msgstr "حافظ على مرونة بيانات جهات الاتصال والشركات دون تحويل إدارة العملاء إلى جدول غير منظم. عرّف الحقول ومستوى الظهور وسلوك البحث من غرفة تحكم واحدة داخل لوحة التحكم."
+
+msgid "Contact fields"
+msgstr "حقول جهات الاتصال"
+
+msgid "Flexible fields available on people records."
+msgstr "حقول مرنة متاحة على سجلات الأشخاص."
+
+msgid "Company fields"
+msgstr "حقول الشركات"
+
+msgid "Account-level fields ready for business records."
+msgstr "حقول على مستوى الحساب جاهزة لسجلات الشركات."
+
+msgid "Field library"
+msgstr "مكتبة الحقول"
+
+msgid "Switch between contact and company fields, then open any definition for editing."
+msgstr "تنقل بين حقول جهات الاتصال وحقول الشركات ثم افتح أي تعريف للتعديل."
+
+msgid "Required"
+msgstr "إلزامي"
+
+msgid "Searchable"
+msgstr "قابل للبحث"
+
+msgid "Filterable"
+msgstr "قابل للتصفية"
+
+msgid "PII"
+msgstr "بيانات حساسة"
+
+msgid "Edit"
+msgstr "تعديل"
+
+msgid "Archive"
+msgstr "أرشفة"
+
+msgid "No field definitions yet"
+msgstr "لا توجد تعريفات حقول بعد"
+
+msgid "Start with a simple text or select field, then expand as imports and real customer data reveal what this business actually needs."
+msgstr "ابدأ بحقل نصي أو حقل اختيار بسيط ثم وسّع لاحقًا عندما تكشف عمليات الاستيراد وبيانات العملاء الحقيقية ما يحتاجه هذا النشاط فعليًا."
+
+msgid "Archived definitions"
+msgstr "التعريفات المؤرشفة"
+
+msgid "Archived fields disappear from normal create and edit flows, but you can still restore them if the business needs them again."
+msgstr "الحقول المؤرشفة تختفي من تدفقات الإنشاء والتعديل العادية، لكن يمكنك استعادتها إذا احتاجها النشاط مرة أخرى."
+
+msgid "Restore"
+msgstr "استعادة"
+
+msgid "No archived field definitions for this target yet."
+msgstr "لا توجد تعريفات حقول مؤرشفة لهذا النوع بعد."
+
+msgid "Edit field definition"
+msgstr "تعديل تعريف الحقل"
+
+msgid "Create field definition"
+msgstr "إنشاء تعريف حقل"
+
+msgid "Define the field type, key, visibility, and structure once, then let the rest of the CRM build on top of it safely."
+msgstr "حدّد نوع الحقل والمفتاح ومستوى الظهور والبنية مرة واحدة، ثم دع بقية إدارة العملاء تبني فوقه بشكل آمن."
+
+msgid "Use a stable machine-friendly key. If you leave it blank, the label will be normalized into one automatically."
+msgstr "استخدم مفتاحًا ثابتًا مناسبًا للأنظمة. إذا تركته فارغًا فسيتم توليده تلقائيًا من الاسم."
+
+msgid "For select or multi-select fields, enter a JSON array such as [\"enterprise\", \"partner\", \"vip\"]."
+msgstr "لحقول الاختيار أو الاختيار المتعدد، أدخل مصفوفة JSON مثل [\"enterprise\", \"partner\", \"vip\"]."
+
+msgid "For object or object-list fields, define a JSON schema-like object that names the properties the CRM should accept."
+msgstr "لحقول الكائن أو قائمة الكائنات، عرّف كائنًا شبيهًا بـ JSON schema يحدد الخصائص التي يجب أن تقبلها إدارة العملاء."
+
+msgid "Required on final write"
+msgstr "إلزامي عند الحفظ النهائي"
+
+msgid "Contains sensitive data"
+msgstr "يحتوي على بيانات حساسة"
+
+msgid "Create new field"
+msgstr "إنشاء حقل جديد"
+
+msgid "Save changes"
+msgstr "حفظ التغييرات"
+
+msgid "Create field"
+msgstr "إنشاء الحقل"
+
+msgid "Field definition archived."
+msgstr "تمت أرشفة تعريف الحقل."
+
+msgid "Field definition restored."
+msgstr "تمت استعادة تعريف الحقل."
+
+msgid "Field definition saved."
+msgstr "تم حفظ تعريف الحقل."
+
+msgid "Field definition updated."
+msgstr "تم تحديث تعريف الحقل."
+
+msgid "The selected field definition could not be found."
+msgstr "تعذر العثور على تعريف الحقل المحدد."
+
+msgid "Review the field configuration and correct the highlighted inputs."
+msgstr "راجع إعدادات الحقل وصحح المدخلات المميزة."
+
+msgid "%(summary)s + %(extra)s more"
+msgstr "%(summary)s + %(extra)s أخرى"
+
+msgid "%(count)s schema properties"
+msgstr "%(count)s خصائص في البنية"
+
+msgid "Core typed field"
+msgstr "حقل أساسي مضبوط النوع"

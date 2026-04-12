@@ -243,7 +243,6 @@ def configure_agent_profile(
             "tone": (tone or "").strip(),
             "traits": sanitized_traits,
             "escalation_rule": (escalation_rule or "").strip(),
-            "status": "review",
         }
 
         profile, created = AgentProfile.objects.select_for_update().get_or_create(
@@ -256,8 +255,6 @@ def configure_agent_profile(
             profile.tone = defaults["tone"]
             profile.traits = sanitized_traits
             profile.escalation_rule = defaults["escalation_rule"]
-            if profile.status == "draft":
-                profile.status = "review"
             profile.save()
 
     return AgentProfileResult(profile=profile, session=session)
@@ -519,11 +516,6 @@ def finalize_knowledge_uploads(
         if business.status != "active":
             business.status = "active"
             business.save(update_fields=["status", "updated_at"])
-
-        agent_profile = getattr(business, "agent_profile", None)
-        if agent_profile and agent_profile.status != "active":
-            agent_profile.status = "active"
-            agent_profile.save(update_fields=["status", "updated_at"])
 
     uploads.sort(key=lambda item: (item.category or "", item.created_at))
     if uploads_for_ingestion:

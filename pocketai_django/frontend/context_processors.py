@@ -6,6 +6,8 @@ from django.conf import settings
 from django.urls import reverse
 from django.utils.translation import gettext as _
 
+from apps.crm.flags import crm_v1_enabled
+
 
 class NavLink(TypedDict):
     label: str
@@ -161,5 +163,10 @@ def site_globals(request) -> Dict[str, Any]:
                 "light_label": _("Light mode"),
                 "dark_label": _("Dark mode"),
             },
-        }
+        },
+        "crm_v1_enabled": crm_v1_enabled(
+            request.user.business_profiles.order_by("-created_at").first()
+            if getattr(getattr(request, "user", None), "is_authenticated", False)
+            else None
+        ),
     }
