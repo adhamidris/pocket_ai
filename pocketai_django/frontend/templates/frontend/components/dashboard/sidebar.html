@@ -92,7 +92,6 @@
       <div class="sidebar-brand flex items-center gap-2 text-lg font-semibold">
         <span class="sidebar-brand-text flex items-center gap-2">
           <span class="sidebar-title">{% trans "Dashboard" %}</span>
-          <span class="sidebar-version text-xs align-top text-muted-foreground">v0.1</span>
         </span>
         <span class="sidebar-logo-collapsed text-sm font-semibold text-primary">PA</span>
       </div>
@@ -120,6 +119,16 @@
           <path stroke-linecap="round" stroke-linejoin="round" d="m2.25 12 8.954-8.955a1.125 1.125 0 0 1 1.592 0L21.75 12M4.5 9.75v10.125A1.125 1.125 0 0 0 5.625 21h4.125v-4.875A1.125 1.125 0 0 1 10.875 15h2.25A1.125 1.125 0 0 1 14.25 16.125V21h4.125A1.125 1.125 0 0 0 19.5 19.875V9.75" />
         </svg>
         <span class="sidebar-label">{% trans "Home" %}</span>
+      </a>
+      <a
+        href="{% url 'frontend:dashboard-chat' %}"
+        class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'portal' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
+        title="{% trans 'Portal' %}"
+      >
+        <svg class="sidebar-icon h-4 w-4 {% if active == 'portal' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 9.75h7.5m-7.5 4.5h4.5M6.75 4.5h10.5A2.25 2.25 0 0 1 19.5 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 17.25V6.75A2.25 2.25 0 0 1 6.75 4.5Z" />
+        </svg>
+        <span class="sidebar-label">{% trans "Portal" %}</span>
       </a>
       {% if crm_v1_enabled %}
         <a
@@ -219,16 +228,6 @@
         </svg>
         <span class="sidebar-label">{% trans "Integrations" %}</span>
       </a>
-      <a
-        href="{% url 'frontend:dashboard-controls' %}"
-        class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'controls' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
-        title="{% trans 'Controls' %}"
-      >
-        <svg class="sidebar-icon h-4 w-4 {% if active == 'controls' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 6h9m-15 0h2.25m6.75 12h6m-15 0h8.25M7.5 6a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Zm6 12a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Z" />
-        </svg>
-        <span class="sidebar-label">{% trans "Controls" %}</span>
-      </a>
       {% if request.user.is_superuser %}
         <a
           href="{% url 'frontend:dashboard-rag-analytics' %}"
@@ -265,6 +264,16 @@
           <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 6.75a.75.75 0 0 1 .75-.75h2.379a.75.75 0 0 1 .73.577l.61 2.438a.75.75 0 0 1-.227.74l-1.11 1.11a11.254 11.254 0 0 0 5.058 5.058l1.11-1.11a.75.75 0 0 1 .74-.227l2.438.61a.75.75 0 0 1 .577.73V21a.75.75 0 0 1-.75.75h-1.5C7.097 21.75 2.25 16.903 2.25 10.875v-4.125Z" />
         </svg>
         <span class="sidebar-label">{% trans "Voice Calling" %}</span>
+      </a>
+      <a
+        href="{% url 'frontend:dashboard-controls' %}"
+        class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'controls' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
+        title="{% trans 'Controls' %}"
+      >
+        <svg class="sidebar-icon h-4 w-4 {% if active == 'controls' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 6h9m-15 0h2.25m6.75 12h6m-15 0h8.25M7.5 6a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Zm6 12a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Z" />
+        </svg>
+        <span class="sidebar-label">{% trans "Controls" %}</span>
       </a>
     </nav>
     <button

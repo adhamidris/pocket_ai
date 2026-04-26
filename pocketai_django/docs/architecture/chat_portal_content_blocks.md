@@ -1,7 +1,7 @@
 # Chat Portal — Content Blocks (Phase 0)
 
 This doc captures (1) the current streaming + persistence contract for the
-public chat portal and (2) the canonical `content_blocks[]` message schema that
+authenticated chat workspace and (2) the canonical `content_blocks[]` message schema that
 will replace segment-based tool chip reconstruction.
 
 ## 1) Current contract inventory

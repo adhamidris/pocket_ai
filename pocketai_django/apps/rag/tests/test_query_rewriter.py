@@ -25,6 +25,33 @@ class QueryRewriterTests(SimpleTestCase):
         )
         result = rewriter.rewrite("Credit card fees", context)
         self.assertFalse(result.context_injected)
+        self.assertEqual(result.rewrite_strategy, "topic_shift")
+
+    def test_generic_fee_overlap_does_not_rewrite_cross_topic_query(self) -> None:
+        rewriter = ContextAwareQueryRewriter(enabled=True, prefix_mode=True, min_confidence=0.5)
+        context = RewriteContext(
+            primary_document_title="Fees and Charges Credit Cards Eng_185",
+            previous_queries=("list me all credit cards and their issuance fees",),
+        )
+
+        result = rewriter.rewrite("account opening fees", context)
+
+        self.assertFalse(result.context_injected)
+        self.assertEqual(result.rewrite_strategy, "topic_shift")
+        self.assertEqual(result.reason, "topic_shift")
+
+    def test_explicit_followup_marker_can_rewrite_generic_fee_query(self) -> None:
+        rewriter = ContextAwareQueryRewriter(enabled=True, prefix_mode=True, min_confidence=0.5)
+        context = RewriteContext(
+            primary_document_title="Fees and Charges Credit Cards Eng_185",
+            previous_queries=("list me all credit cards and their issuance fees",),
+        )
+
+        result = rewriter.rewrite("what about replacement fees?", context)
+
+        self.assertTrue(result.context_injected)
+        self.assertEqual(result.rewrite_strategy, "prefix")
+        self.assertTrue(result.rewritten_query.startswith("Fees and Charges Credit Cards Eng_185: "))
 
     def test_does_not_rewrite_when_query_mentions_primary_title(self) -> None:
         rewriter = ContextAwareQueryRewriter(enabled=True, prefix_mode=True, min_confidence=0.5)

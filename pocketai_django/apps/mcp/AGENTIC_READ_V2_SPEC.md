@@ -67,6 +67,8 @@ read_knowledge (agentic v2)
 The **only** agentic read interface:
 - The model supplies refs (IDs) and optional continuation cursors.
 - The tool chooses the right read strategy (page blocks, table rows, chunk windows).
+- For text documents, the tool may resolve a ref to a bounded section span and
+  continue across page boundaries within that section.
 - The tool returns evidence plus deterministic continuation cursors when needed.
 
 Request:
@@ -138,12 +140,24 @@ The cursor is an opaque, signed token. Internally it contains:
 - scope: `conversation_id`, `business_id`, `item_id`
 - kind: one of
   - `page_blocks`: `{upload_id, page_number, block_order, char_offset, prepend_sep?}`
+  - `section_span`: `{upload_id, start_page_number, start_block_order, end_page_number, end_block_order, current_page_number, current_block_order, char_offset, prepend_sep?}`
   - `table_rows`: `{upload_id, table_id, row_chunk_index, char_offset, prepend_sep?}`
   - `chunk_window`: `{upload_id, chunk_start, chunk_end, chunk_index, char_offset, prepend_sep?}`
   - `artifact`: `{artifact_id, char_offset}`
 
 `prepend_sep` is set only when resuming at an element boundary so that concatenating
 multiple tool calls preserves the exact `\n\n` joins between blocks/rows/chunks.
+
+Text Continuation Strategy
+--------------------------
+When the backend can infer a bounded section from layout-aware page blocks, text
+refs should page through that `section_span` first. This keeps continuation
+within the relevant section even when it crosses page boundaries.
+
+Fallback order for text refs:
+- `section_span`
+- `page_blocks`
+- `chunk_window`
 
 Artifact Strategy
 -----------------

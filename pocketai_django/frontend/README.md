@@ -3,13 +3,13 @@ Frontend App (frontend/)
 
 Purpose
 -------
-This Django app serves the public website, dashboard pages, and the embedded
-chat portal UI (templates + static assets).
+This Django app serves the public website, dashboard pages, and the authenticated
+chat workspace UI (templates + static assets).
 
 Directory Map
 -------------
 - views.py
-  Server-rendered pages (landing, dashboard, chat portal).
+  Server-rendered pages (landing, dashboard, chat workspace).
 - urls.py
   Frontend routes.
 - context_processors.py
@@ -24,8 +24,8 @@ Key Flows
 1) Landing + dashboard
    frontend/views.py -> templates -> CSS/JS assets.
 
-2) Chat portal embed
-   /<business>/<agent>/ -> templates/frontend/chat/portal.html
+2) Dashboard chat workspace
+   /dashboard/chat/ -> templates/frontend/chat/portal.html
    -> loads `frontend/static/js/chat-portal.js` and hits API endpoints.
 
 3) Knowledge dashboard
@@ -35,25 +35,25 @@ Quick Start (Dev)
 ----------------
 - Run Django and open:
   http://localhost:8000/
-- Chat portal:
-  http://localhost:8000/<business_slug>/<agent_slug>/
+- Dashboard chat:
+  http://localhost:8000/dashboard/chat/
 
 Examples
 --------
-Portal bootstrap from frontend (server-side call):
+Chat bootstrap from frontend (server-side call):
 ```python
 payload = _call_portal_bootstrap_api(request, business_slug, agent_slug, existing_session_token, metadata)
 ```
 
-Portal page (client-side flow):
+Chat page (client-side flow):
 - Template: `frontend/templates/frontend/chat/portal.html`
 - JS bundle: `frontend/static/js/chat-portal.js`
-- API endpoints: `/api/chat/portal/sessions/` + `/api/chat/turns/`
+- API endpoints: `/api/chat/conversations/` + `/api/chat/turns/`
 
 Troubleshooting
 ---------------
-- Portal not loading:
-  - Ensure business + agent slugs exist and API returns 200.
+- Chat workspace not loading:
+  - Ensure the authenticated user owns a business + agent and API returns 200.
 - Static assets missing:
   - Check `STATIC_URL` and `STATICFILES_DIRS`.
 

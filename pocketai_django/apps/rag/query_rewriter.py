@@ -88,6 +88,25 @@ _STOPWORDS = {
     "جميع",
 }
 
+_GENERIC_CONTEXT_TOKENS = {
+    "amount",
+    "amounts",
+    "charge",
+    "charges",
+    "cost",
+    "costs",
+    "fee",
+    "fees",
+    "price",
+    "prices",
+    "pricing",
+    "rate",
+    "rates",
+    "tariff",
+    "tariffs",
+    "رسوم",
+}
+
 
 def _tokenize(text: str) -> list[str]:
     normalized = normalize_lexicon_text(text)
@@ -97,6 +116,10 @@ def _tokenize(text: str) -> list[str]:
 
 def _significant_tokens(text: str) -> set[str]:
     return {token for token in _tokenize(text) if len(token) >= 3 and token not in _STOPWORDS}
+
+
+def _context_overlap_tokens(text: str) -> set[str]:
+    return _significant_tokens(text) - _GENERIC_CONTEXT_TOKENS
 
 
 @dataclass(frozen=True)
@@ -140,6 +163,7 @@ class RewriteResult:
     context_injected: bool
     rewrite_strategy: str  # "none", "prefix", "expansion", "entity_resolution"
     confidence: float = 1.0  # How confident we are this is a follow-up
+    reason: str = ""
 
     def as_dict(self) -> dict:
         """Convert to dictionary for logging/serialization."""
@@ -149,6 +173,7 @@ class RewriteResult:
             "context_injected": self.context_injected,
             "rewrite_strategy": self.rewrite_strategy,
             "confidence": self.confidence,
+            "reason": self.reason,
         }
 
 
@@ -249,10 +274,11 @@ class ContextAwareQueryRewriter:
             return RewriteResult(query, query, False, "already_contextual")
 
         # Detect follow-up patterns
-        is_followup, confidence = self._detect_followup(query, context)
+        is_followup, confidence, reason = self._detect_followup(query, context)
 
         if not is_followup or confidence < self.min_confidence:
-            return RewriteResult(query, query, False, "not_followup", confidence)
+            strategy = "topic_shift" if reason == "topic_shift" else "not_followup"
+            return RewriteResult(query, query, False, strategy, confidence, reason)
 
         # Apply context injection
         rewritten = self._inject_context(query, context)
@@ -271,11 +297,12 @@ class ContextAwareQueryRewriter:
             context_injected=True,
             rewrite_strategy="prefix" if self.prefix_mode else "suffix",
             confidence=confidence,
+            reason=reason or "followup",
         )
 
     def _detect_followup(
         self, query: str, context: RewriteContext
-    ) -> tuple[bool, float]:
+    ) -> tuple[bool, float, str]:
         """
         Detect if a query is a follow-up to previous conversation context.
 
@@ -286,6 +313,7 @@ class ContextAwareQueryRewriter:
         tokens = _tokenize(query)
         token_count = len(tokens)
         query_significant = {token for token in tokens if len(token) >= 3 and token not in _STOPWORDS}
+        query_context_tokens = query_significant - _GENERIC_CONTEXT_TOKENS
 
         # Short queries are more likely to be follow-ups, but shortness alone is not enough.
         if token_count <= self.MAX_FOLLOWUP_QUERY_LENGTH:
@@ -296,21 +324,25 @@ class ContextAwareQueryRewriter:
             confidence += 0.10
 
         # Check for explicit follow-up indicators
+        has_followup_marker = False
         for pattern in self._followup_patterns:
             if pattern.search(query):
                 confidence += 0.35
+                has_followup_marker = True
                 break
 
         # Check for pronouns that reference previous context
+        has_pronoun_marker = False
         for pattern in self._pronoun_patterns:
             if pattern.search(query):
                 confidence += 0.25
+                has_pronoun_marker = True
                 break
 
         title_overlap = 0
         if context.primary_document_title:
-            title_tokens = _significant_tokens(context.primary_document_title)
-            title_overlap = len(title_tokens & query_significant) if title_tokens else 0
+            title_tokens = _context_overlap_tokens(context.primary_document_title)
+            title_overlap = len(title_tokens & query_context_tokens) if title_tokens else 0
             if title_overlap >= 2:
                 confidence += 0.25
             elif title_overlap == 1:
@@ -318,31 +350,38 @@ class ContextAwareQueryRewriter:
 
         prev_overlap = 0
         if context.previous_queries:
-            prev_tokens = _significant_tokens(context.previous_queries[-1])
-            prev_overlap = len(prev_tokens & query_significant) if prev_tokens else 0
+            prev_tokens = _context_overlap_tokens(context.previous_queries[-1])
+            prev_overlap = len(prev_tokens & query_context_tokens) if prev_tokens else 0
             if prev_overlap >= 2:
                 confidence += 0.25
             elif prev_overlap == 1:
                 confidence += 0.15
 
-        lexicon_overlap = self._lexicon_overlap(query_significant, context)
+        lexicon_overlap = self._lexicon_overlap(query_context_tokens, context)
         if lexicon_overlap >= 2:
             confidence += 0.2
         elif lexicon_overlap == 1:
             confidence += 0.1
 
+        has_marker = has_followup_marker or has_pronoun_marker
+        if (
+            not has_marker
+            and query_context_tokens
+            and title_overlap == 0
+            and prev_overlap == 0
+            and lexicon_overlap == 0
+        ):
+            return False, min(confidence, self.min_confidence - 0.01), "topic_shift"
+
         # Guardrail: avoid rewriting "new topic" short queries with no overlap or markers.
         # After a document is read, the system also applies document affinity search; we
         # keep rewriting conservative to prevent over-biasing unrelated queries.
         if confidence >= self.min_confidence and token_count <= self.MAX_FOLLOWUP_QUERY_LENGTH:
-            has_marker = any(pattern.search(query) for pattern in self._followup_patterns) or any(
-                pattern.search(query) for pattern in self._pronoun_patterns
-            )
             if not has_marker and title_overlap == 0 and prev_overlap == 0 and lexicon_overlap == 0:
                 confidence = min(confidence, self.min_confidence - 0.01)
 
         is_followup = confidence >= self.min_confidence
-        return is_followup, min(confidence, 1.0)
+        return is_followup, min(confidence, 1.0), "followup" if is_followup else "low_confidence"
 
     @staticmethod
     def _lexicon_overlap(query_significant: set[str], context: RewriteContext) -> int:
@@ -353,7 +392,7 @@ class ContextAwareQueryRewriter:
             tokens: set[str] = set()
             for value in values:
                 for token in _tokenize(str(value or "")):
-                    if len(token) >= 3 and token not in _STOPWORDS:
+                    if len(token) >= 3 and token not in _STOPWORDS and token not in _GENERIC_CONTEXT_TOKENS:
                         tokens.add(token)
             return tokens
 

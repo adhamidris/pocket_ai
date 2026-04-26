@@ -246,6 +246,14 @@ FEES_PDF_FIXTURE = GoldenFixture(
 
 FEES_QUERIES: tuple[GoldenQuery, ...] = (
     GoldenQuery(
+        query_id="fees_credit_cards_list_all_issuance",
+        text="list me all credit cards and their issuance fees",
+        query_type="natural",
+        expected_behavior="hybrid",
+        target_fixtures=("fees_credit_cards_pdf",),
+        notes="Regression target: enumeration should retrieve all issuance-fee table groups.",
+    ),
+    GoldenQuery(
         query_id="fees_credit_cards_general",
         text="what are the credit card fees?",
         query_type="natural",
@@ -340,6 +348,40 @@ FEES_SET = GoldenSet(
     queries=FEES_QUERIES,
 )
 
+ACCOUNT_FEES_PDF_FIXTURE = GoldenFixture(
+    name="cib_account_pdf",
+    filename="cib_account_en.pdf",
+    description="CIB-Account-EN account fees and charges PDF",
+    source_type="pdf",
+)
+
+ACCOUNT_FEES_QUERIES: tuple[GoldenQuery, ...] = (
+    GoldenQuery(
+        query_id="account_fees_opening_all",
+        text="list me all account opening fees",
+        query_type="natural",
+        expected_behavior="hybrid",
+        target_fixtures=("cib_account_pdf",),
+        notes="Regression target: fresh-thread account opening fee enumeration.",
+    ),
+    GoldenQuery(
+        query_id="account_fees_current_opening",
+        text="current account opening fees",
+        query_type="natural",
+        expected_behavior="hybrid",
+        target_fixtures=("cib_account_pdf",),
+        notes="Regression target: account query should not be crowded out by card-fee documents.",
+    ),
+)
+
+ACCOUNT_FEES_SET = GoldenSet(
+    slug="account-fees",
+    industry="financial_services",
+    business_slug="eval-account-fees",
+    fixtures=(ACCOUNT_FEES_PDF_FIXTURE,),
+    queries=ACCOUNT_FEES_QUERIES,
+)
+
 
 GOLDEN_SETS: dict[str, GoldenSet] = {
     TRAVEL_SET.slug: TRAVEL_SET,
@@ -347,6 +389,7 @@ GOLDEN_SETS: dict[str, GoldenSet] = {
     CARDS_SET.slug: CARDS_SET,
     JOBS_SET.slug: JOBS_SET,
     FEES_SET.slug: FEES_SET,
+    ACCOUNT_FEES_SET.slug: ACCOUNT_FEES_SET,
 }
 
 

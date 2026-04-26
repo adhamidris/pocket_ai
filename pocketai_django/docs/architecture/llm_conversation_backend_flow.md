@@ -8,7 +8,7 @@ This document walks through a **single chat turn** in the SaaS portal — from t
 
 ## Scope
 
-This doc covers only the **public chat portal → LLM → knowledge tools** workflow:
+This doc covers only the **authenticated chat workspace → LLM → knowledge tools** workflow:
 
 - Session bootstrap for the portal widget.
 - A single **message send** using `POST /api/chat/turns/` plus SSE from `/api/chat/turns/<turn_id>/events/`.

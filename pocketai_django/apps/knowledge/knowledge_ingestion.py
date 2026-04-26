@@ -3083,6 +3083,10 @@ class GeometryTableReconstructor:
             return right_text
         if not right_text:
             return left_text
+        if left_text.lower() in {"n/a", "na", "not applicable"}:
+            return left_text
+        if right_text.lower() in {"n/a", "na", "not applicable"}:
+            return right_text
         if left_text == right_text:
             return left_text
         if right_text in left_text:
@@ -3161,6 +3165,108 @@ class GeometryTableReconstructor:
                 return True
         return False
 
+    @staticmethod
+    def _matrix_value_columns(texts: Sequence[str]) -> list[str]:
+        if len(texts) <= 1:
+            return []
+        return [str(text or "").strip() for text in texts[1:]]
+
+    @staticmethod
+    def _descriptor_looks_incomplete_for_matrix(text: str) -> bool:
+        candidate = str(text or "").strip().lower()
+        if not candidate:
+            return False
+        if candidate.endswith(("from", "for", "with", "to", "within", "per")):
+            return True
+        return False
+
+    @staticmethod
+    def _descriptor_looks_like_continuation_fragment(text: str) -> bool:
+        candidate = str(text or "").strip().lower()
+        if not candidate:
+            return False
+        if candidate.startswith(("or ", "and ", "per ", "with ", "within ", "from ", "to ")):
+            return True
+        return False
+
+    @staticmethod
+    def _row_vertical_gap(current: TableRowPayload, nxt: TableRowPayload) -> float:
+        current_bbox = current.bbox or {}
+        next_bbox = nxt.bbox or {}
+        try:
+            current_y1 = float(current_bbox.get("y1") or 0.0)
+            next_y0 = float(next_bbox.get("y0") or 0.0)
+        except (TypeError, ValueError):
+            return 9999.0
+        if not current_y1 or not next_y0:
+            return 9999.0
+        return next_y0 - current_y1
+
+    @staticmethod
+    def _rows_overlap_vertically(current: TableRowPayload, nxt: TableRowPayload) -> bool:
+        current_bbox = current.bbox or {}
+        next_bbox = nxt.bbox or {}
+        try:
+            current_y0 = float(current_bbox.get("y0") or 0.0)
+            current_y1 = float(current_bbox.get("y1") or 0.0)
+            next_y0 = float(next_bbox.get("y0") or 0.0)
+            next_y1 = float(next_bbox.get("y1") or 0.0)
+        except (TypeError, ValueError):
+            return False
+        if not current_y1 or not next_y1:
+            return False
+        return min(current_y1, next_y1) - max(current_y0, next_y0) >= -2.0
+
+    def _matrix_rows_share_parallel_values(self, current_texts: Sequence[str], next_texts: Sequence[str]) -> bool:
+        current_values = self._matrix_value_columns(current_texts)
+        next_values = self._matrix_value_columns(next_texts)
+        if not current_values or not next_values:
+            return False
+        overlap_pairs = 0
+        for current_value, next_value in zip(current_values, next_values):
+            if not current_value or not next_value:
+                continue
+            overlap_pairs += 1
+        return overlap_pairs >= 2
+
+    @staticmethod
+    def _looks_like_value_prefix_fragment(text: str) -> bool:
+        candidate = str(text or "").strip().lower()
+        if not candidate:
+            return False
+        if not re.search(r"\d", candidate):
+            return False
+        if candidate.endswith(("from", "with", "for", "of", "on", "per", "to")):
+            return True
+        if candidate.endswith(("total", "loaded", "outstanding", "balance")):
+            return True
+        return False
+
+    def _row_values_look_like_prefix_fragment(self, texts: Sequence[str]) -> bool:
+        values = [value for value in self._matrix_value_columns(texts) if value]
+        if len(values) < 2:
+            return False
+        prefix_count = sum(1 for value in values if self._looks_like_value_prefix_fragment(value))
+        return prefix_count >= max(2, len(values) // 2)
+
+    @staticmethod
+    def _looks_like_value_suffix_fragment(text: str) -> bool:
+        candidate = str(text or "").strip().lower()
+        if not candidate:
+            return False
+        if candidate.startswith(("min", "max", "per ", "purchase", "purchases", "month", "months", "only", "within")):
+            return True
+        if candidate in {"free", "n/a"}:
+            return False
+        return False
+
+    def _row_values_look_like_suffix_fragment(self, texts: Sequence[str]) -> bool:
+        values = [value for value in self._matrix_value_columns(texts) if value]
+        if len(values) < 2:
+            return False
+        suffix_count = sum(1 for value in values if self._looks_like_value_suffix_fragment(value))
+        return suffix_count >= max(2, len(values) // 2)
+
     def _rows_should_merge_logically(self, current: TableRowPayload, nxt: TableRowPayload, column_count: int) -> bool:
         current_texts = self._row_texts(current, column_count)
         next_texts = self._row_texts(nxt, column_count)
@@ -3188,7 +3294,51 @@ class GeometryTableReconstructor:
             if self._has_complementary_value_fragments(current_texts, next_texts):
                 return True
 
+        gap = self._row_vertical_gap(current, nxt)
+        tightly_stacked = gap <= max(18.0, self.y_tol * 3.0) or self._rows_overlap_vertically(current, nxt)
+        if tightly_stacked and column_count >= 4:
+            current_descriptor_cell = str(current_texts[0] or "").strip()
+            next_descriptor_cell = str(next_texts[0] or "").strip()
+            if (
+                current_descriptor_cell
+                and not next_descriptor_cell
+                and self._matrix_rows_share_parallel_values(current_texts, next_texts)
+                and self._row_values_look_like_suffix_fragment(next_texts)
+            ):
+                return True
+            if (
+                current_descriptor_cell
+                and next_descriptor_cell
+                and self._descriptor_looks_incomplete_for_matrix(current_descriptor_cell)
+                and self._matrix_rows_share_parallel_values(current_texts, next_texts)
+            ):
+                return True
+            if (
+                current_descriptor_cell
+                and next_descriptor_cell
+                and self._descriptor_looks_like_continuation_fragment(next_descriptor_cell)
+                and self._matrix_rows_share_parallel_values(current_texts, next_texts)
+            ):
+                return True
+
         return False
+
+    def _rows_should_merge_forward_logically(self, current: TableRowPayload, nxt: TableRowPayload, column_count: int) -> bool:
+        if column_count < 4:
+            return False
+        current_texts = self._row_texts(current, column_count)
+        next_texts = self._row_texts(nxt, column_count)
+        current_descriptor_cell = str(current_texts[0] or "").strip()
+        next_descriptor_cell = str(next_texts[0] or "").strip()
+        if current_descriptor_cell or not next_descriptor_cell:
+            return False
+        gap = self._row_vertical_gap(current, nxt)
+        tightly_stacked = gap <= max(18.0, self.y_tol * 3.0) or self._rows_overlap_vertically(current, nxt)
+        if not tightly_stacked:
+            return False
+        if not self._matrix_rows_share_parallel_values(current_texts, next_texts):
+            return False
+        return self._row_values_look_like_prefix_fragment(current_texts)
 
     def _merge_geometry_rows(
         self,
@@ -3250,18 +3400,91 @@ class GeometryTableReconstructor:
             cells=merged_cells,
         )
 
+    def _merge_geometry_rows_forward(
+        self,
+        current: TableRowPayload,
+        nxt: TableRowPayload,
+        column_count: int,
+    ) -> TableRowPayload:
+        current_cells = {cell.column_index: cell for cell in (current.cells or [])}
+        next_cells = {cell.column_index: cell for cell in (nxt.cells or [])}
+        merged_cells: list[TableCellPayload] = []
+        merged_bboxes: list[dict[str, Any]] = []
+
+        for col_idx in range(column_count):
+            current_cell = current_cells.get(col_idx)
+            next_cell = next_cells.get(col_idx)
+            current_text = str(current_cell.raw_text if current_cell else "").strip()
+            next_text = str(next_cell.raw_text if next_cell else "").strip()
+            if col_idx == 0:
+                merged_text = next_text or current_text
+            else:
+                merged_text = self._merge_fragment_text(current_text, next_text)
+            current_bbox = current_cell.bbox if current_cell else {}
+            next_bbox = next_cell.bbox if next_cell else {}
+            merged_bbox = _union_bbox([bbox for bbox in [current_bbox, next_bbox] if bbox and any(bbox.values())])
+            if any(merged_bbox.values()):
+                merged_bboxes.append(merged_bbox)
+            column_key = (
+                next_cell.column_key
+                if next_cell is not None
+                else current_cell.column_key
+                if current_cell is not None
+                else f"column_{col_idx+1}"
+            )
+            span_count = int((current_cell.metadata or {}).get("span_count") or 0) + int((next_cell.metadata or {}).get("span_count") or 0)
+            metadata = {"span_count": span_count, "logical_row_merged": True, "logical_row_merge_direction": "forward"}
+            merged_cells.append(
+                TableCellPayload(
+                    row_index=current.row_index,
+                    column_index=col_idx,
+                    column_key=column_key,
+                    raw_text=merged_text,
+                    normalized_value=TableDetector._normalize_cell_value(merged_text),
+                    bbox=merged_bbox,
+                    confidence=None,
+                    metadata=metadata,
+                )
+            )
+
+        merged_meta = dict(nxt.metadata or {})
+        merged_meta["geometry_logical_row_merged"] = True
+        merged_meta["geometry_merged_row_count"] = int(merged_meta.get("geometry_merged_row_count") or 1) + int((current.metadata or {}).get("geometry_merged_row_count") or 1)
+        merged_meta["geometry_merge_direction"] = "forward"
+        merged_bbox = _union_bbox([bbox for bbox in [current.bbox, nxt.bbox] if bbox and any(bbox.values())] + merged_bboxes)
+        merged_raw = " | ".join(str(cell.raw_text or "").strip() for cell in merged_cells)
+        return TableRowPayload(
+            row_index=current.row_index,
+            page_number=nxt.page_number,
+            bbox=merged_bbox,
+            raw_text=merged_raw,
+            metadata=merged_meta,
+            cells=merged_cells,
+        )
+
     def _normalize_geometry_logical_rows(self, rows: list[TableRowPayload], column_count: int) -> tuple[list[TableRowPayload], int]:
         if not rows:
             return rows, 0
-        merged_rows: list[TableRowPayload] = [rows[0]]
+        merged_rows: list[TableRowPayload] = []
         merged_pairs = 0
-        for nxt in rows[1:]:
-            current = merged_rows[-1]
-            if self._rows_should_merge_logically(current, nxt, column_count):
-                merged_rows[-1] = self._merge_geometry_rows(current, nxt, column_count)
-                merged_pairs += 1
-            else:
-                merged_rows.append(nxt)
+        idx = 0
+        while idx < len(rows):
+            current = rows[idx]
+            while idx + 1 < len(rows):
+                nxt = rows[idx + 1]
+                if self._rows_should_merge_logically(current, nxt, column_count):
+                    current = self._merge_geometry_rows(current, nxt, column_count)
+                    merged_pairs += 1
+                    idx += 1
+                    continue
+                if self._rows_should_merge_forward_logically(current, nxt, column_count):
+                    current = self._merge_geometry_rows_forward(current, nxt, column_count)
+                    merged_pairs += 1
+                    idx += 1
+                    continue
+                break
+            merged_rows.append(current)
+            idx += 1
         normalized_rows: list[TableRowPayload] = []
         for idx, row in enumerate(merged_rows, start=1):
             normalized_cells = [
@@ -3821,7 +4044,12 @@ class KnowledgeIngestionService:
         self.page_renderer = PageRenderer(pymupdf_module=fitz)
         self.table_detector = TableDetector()
         self.pdfplumber_enabled = bool(getattr(settings, "RAG_PDFPLUMBER_ENABLED", True))
-        self.pdf_table_extractor = str(getattr(settings, "RAG_PDF_TABLE_EXTRACTOR", "auto") or "auto").lower()
+        self.pdf_table_extractor = str(
+            getattr(settings, "RAG_PDF_TABLE_EXTRACTOR", "auto") or "auto"
+        ).lower()
+        self.table_selection_mode = str(
+            getattr(settings, "RAG_TABLE_SELECTION_MODE", "scored_promotion_v2") or "scored_promotion_v2"
+        ).strip().lower()
         self.pdfplumber_table_settings = self._normalize_pdfplumber_settings(
             getattr(settings, "RAG_PDFPLUMBER_TABLE_SETTINGS", None)
         )
@@ -3884,6 +4112,12 @@ class KnowledgeIngestionService:
         )
         self.table_dedupe_enabled = bool(getattr(settings, "RAG_TABLE_DEDUPE_ENABLED", True))
         self.table_dedupe_min_overlap = float(getattr(settings, "RAG_TABLE_DEDUPE_MIN_OVERLAP", 0.6))
+        self.pdf_structural_acceptance_enabled = bool(
+            getattr(settings, "RAG_PDF_STRUCTURAL_ACCEPTANCE_ENABLED", True)
+        )
+        self.pdf_collapsed_matrix_reconstruction_enabled = bool(
+            getattr(settings, "RAG_PDF_COLLAPSED_MATRIX_RECONSTRUCTION_ENABLED", True)
+        )
         self.table_postprocess_row_limit = max(
             5, int(getattr(settings, "RAG_TABLE_POSTPROCESS_ROW_LIMIT", 40))
         )
@@ -3922,6 +4156,39 @@ class KnowledgeIngestionService:
         self.chunk_quality_low_score = float(getattr(settings, "RAG_CHUNK_LOW_QUALITY_SCORE", 0.45))
         if not (0.0 <= self.chunk_quality_low_score <= 1.0):
             self.chunk_quality_low_score = 0.45
+        self.native_pdf_text_density_floor = float(
+            getattr(settings, "RAG_NATIVE_PDF_TEXT_DENSITY_FLOOR", 0.00005)
+        )
+        if self.native_pdf_text_density_floor < 0.0:
+            self.native_pdf_text_density_floor = 0.00005
+        self.native_pdf_pdfplumber_score_boost = float(
+            getattr(settings, "RAG_NATIVE_PDF_PDFPLUMBER_SCORE_BOOST", 1.35)
+        )
+        if self.native_pdf_pdfplumber_score_boost < 1.0:
+            self.native_pdf_pdfplumber_score_boost = 1.0
+        self.native_pdf_low_readability_penalty = float(
+            getattr(settings, "RAG_NATIVE_PDF_LOW_READABILITY_PENALTY", 0.7)
+        )
+        if not (0.1 <= self.native_pdf_low_readability_penalty <= 1.0):
+            self.native_pdf_low_readability_penalty = 0.7
+        self.page_block_flat_text_preference_margin = float(
+            getattr(settings, "RAG_PAGE_BLOCK_FLAT_TEXT_PREFERENCE_MARGIN", 0.12)
+        )
+        if self.page_block_flat_text_preference_margin < 0.0:
+            self.page_block_flat_text_preference_margin = 0.12
+        self.page_block_fragmentation_min_blocks = max(
+            4,
+            int(getattr(settings, "RAG_PAGE_BLOCK_FRAGMENTATION_MIN_BLOCKS", 8)),
+        )
+        self.page_block_fragmentation_short_token_limit = max(
+            2,
+            int(getattr(settings, "RAG_PAGE_BLOCK_FRAGMENTATION_SHORT_TOKEN_LIMIT", 6)),
+        )
+        self.page_block_fragmentation_short_ratio = float(
+            getattr(settings, "RAG_PAGE_BLOCK_FRAGMENTATION_SHORT_RATIO", 0.45)
+        )
+        if not (0.0 <= self.page_block_fragmentation_short_ratio <= 1.0):
+            self.page_block_fragmentation_short_ratio = 0.45
         self.evidence_grouping_enabled = bool(getattr(settings, "RAG_EVIDENCE_GROUPING_ENABLED", True))
         self.evidence_text_link_max_chars = max(
             200,
@@ -5084,6 +5351,7 @@ class KnowledgeIngestionService:
         # Geometry-based reconstruction (PDF only, when PyMuPDF available)
         geometry_tables: list[TablePayload] = []
         geom_issues: list[IssuePayload] = []
+        page_spans: list[list[PdfSpan]] = []
         if format_hint == "pdf" and fitz is not None:
             try:
                 page_spans = self.page_renderer.extract_pdf_spans(absolute)
@@ -5170,7 +5438,20 @@ class KnowledgeIngestionService:
             candidates["heuristic"] = filtered_heuristics
 
         table_runtime_flags = self._table_runtime_flags(upload)
-        selected_extractor, tables, selection_meta = self._select_table_candidates(candidates)
+        selection_context = self._build_table_selection_context(
+            format_hint=format_hint,
+            pages=layout_result.pages,
+        )
+        if format_hint == "pdf":
+            selected_extractor, tables, selection_meta = self._route_pdf_table_candidates(
+                candidates,
+                selection_context=selection_context,
+            )
+        else:
+            selected_extractor, tables, selection_meta = self._select_table_candidates(
+                candidates,
+                selection_context=selection_context,
+            )
         issues = (
             layout_result.issues
             + table_issues
@@ -5180,6 +5461,17 @@ class KnowledgeIngestionService:
             + azure_issues
             + docx_issues
         )
+
+        structural_repair_meta: dict[str, Any] = {}
+        if format_hint == "pdf" and tables:
+            tables, structural_repair_meta, structural_repair_issues = self._repair_pdf_table_structure(
+                tables,
+                candidates=candidates,
+                page_spans=page_spans,
+                selected_extractor=selected_extractor,
+                selection_context=selection_context,
+            )
+            issues.extend(structural_repair_issues)
 
         repair_meta: dict[str, Any] = {}
         if tables:
@@ -5337,30 +5629,31 @@ class KnowledgeIngestionService:
                 "selected_extractor": selected_extractor,
                 "candidate_counts": {key: len(val) for key, val in candidates.items()},
                 "candidate_scores": selection_meta.get("scores", {}),
+                "candidate_rank_scores": selection_meta.get("rank_scores", {}),
             }
-            extraction_meta["selection_mode"] = str(selection_meta.get("selection_mode") or "candidate_scorer_v2")
+            extraction_meta["selection_mode"] = str(
+                selection_meta.get("selection_mode") or self.table_selection_mode or "scored_promotion_v2"
+            )
             extraction_meta["runtime_flags"] = table_runtime_flags
             candidate_metrics = selection_meta.get("metrics")
             if isinstance(candidate_metrics, Mapping):
                 extraction_meta["candidate_metrics"] = candidate_metrics
+            candidate_quality = selection_meta.get("quality_diagnostics")
+            if isinstance(candidate_quality, Mapping):
+                extraction_meta["candidate_quality"] = candidate_quality
+            selection_context_meta = selection_meta.get("selection_context")
+            if isinstance(selection_context_meta, Mapping):
+                extraction_meta["selection_context"] = dict(selection_context_meta)
+            route_meta = selection_meta.get("route")
+            if isinstance(route_meta, Mapping):
+                extraction_meta["route"] = dict(route_meta)
             selector_debug = {
-                "heuristic_override_applied": selection_meta.get("heuristic_override_applied"),
-                "heuristic_override_reason": selection_meta.get("heuristic_override_reason"),
-                "heuristic_override_flags": selection_meta.get("heuristic_override_flags"),
-                "heuristic_override_from": selection_meta.get("heuristic_override_from"),
-                "heuristic_override_to": selection_meta.get("heuristic_override_to"),
-                "heuristic_override_candidate": selection_meta.get("heuristic_override_candidate"),
-                "heuristic_override_comparable_non_heuristic": selection_meta.get(
-                    "heuristic_override_comparable_non_heuristic"
-                ),
-                "heuristic_override_fallback_fragmentation": selection_meta.get(
-                    "heuristic_override_fallback_fragmentation"
-                ),
-                "region_blend_applied": selection_meta.get("region_blend_applied"),
-                "region_blend_document_selected": selection_meta.get("region_blend_document_selected"),
-                "region_blend_extractors_used": selection_meta.get("region_blend_extractors_used"),
-                "region_blend_region_count": selection_meta.get("region_blend_region_count"),
-                "region_blend_regions": selection_meta.get("region_blend_regions"),
+                "preferred_extractor": selection_meta.get("preferred_extractor"),
+                "fallback_chain": selection_meta.get("fallback_chain"),
+                "selector_disabled": selection_meta.get("selector_disabled"),
+                "ranked_candidates": selection_meta.get("ranked_candidates"),
+                "runner_up": selection_meta.get("runner_up"),
+                "score_margin_to_runner_up": selection_meta.get("score_margin_to_runner_up"),
             }
             selector_debug = {key: value for key, value in selector_debug.items() if value is not None}
             if selector_debug:
@@ -5373,6 +5666,8 @@ class KnowledgeIngestionService:
                 extraction_meta["azure_di"] = azure_meta
             if repair_meta:
                 extraction_meta["table_repairs"] = repair_meta
+            if structural_repair_meta:
+                extraction_meta["structural_repair"] = structural_repair_meta
             if postprocess_meta:
                 extraction_meta["table_postprocess"] = postprocess_meta
             if table_promotion_meta:
@@ -5387,7 +5682,9 @@ class KnowledgeIngestionService:
                 "selected_extractor": selected_extractor,
                 "candidate_counts": {key: len(val) for key, val in candidates.items()},
                 "candidate_scores": selection_meta.get("scores", {}),
-                "selection_mode": str(selection_meta.get("selection_mode") or "candidate_scorer_v2"),
+                "selection_mode": str(
+                    selection_meta.get("selection_mode") or self.table_selection_mode or "scored_promotion_v2"
+                ),
             }
             if docx_meta:
                 extraction_meta["docx"] = docx_meta
@@ -7034,6 +7331,1445 @@ class KnowledgeIngestionService:
             return self._extract_text_file(path)
         raise UnsupportedFormatError(f"Unsupported file type {format_hint}.")
 
+    def _build_table_selection_context(
+        self,
+        *,
+        format_hint: str,
+        pages: Sequence[PageLayout] | None = None,
+    ) -> dict[str, Any]:
+        context: dict[str, Any] = {"format_hint": str(format_hint or "").strip().lower()}
+        if context["format_hint"] == "pdf":
+            native_text_pdf = self._pdf_pages_look_native_text(pages or [])
+            context["native_text_pdf"] = native_text_pdf
+            context["pdf_lane"] = "native_text" if native_text_pdf else "ocr_or_mixed"
+        return context
+
+    @staticmethod
+    def _subset_candidate_map(
+        candidates: Mapping[str, list[TablePayload]],
+        names: Sequence[str],
+    ) -> dict[str, list[TablePayload]]:
+        subset: dict[str, list[TablePayload]] = {}
+        for name in names:
+            if name in candidates:
+                subset[name] = candidates[name]
+        return subset
+
+    def _pdf_route_policy(self, selection_context: Mapping[str, Any] | None) -> dict[str, Any]:
+        native_text_pdf = bool(
+            isinstance(selection_context, Mapping) and selection_context.get("native_text_pdf")
+        )
+        if native_text_pdf:
+            return {
+                "pdf_lane": "native_text",
+                "primary_chain": [
+                    "pdfplumber:lines",
+                    "pdfplumber:lines_text",
+                    "pdfplumber:text_lines",
+                    "pdfplumber:text",
+                ],
+                "fallback_chain": [
+                    "azure:layout",
+                    "geometry",
+                    "heuristic",
+                ],
+            }
+        return {
+            "pdf_lane": "ocr_or_mixed",
+            "primary_chain": [
+                "azure:layout",
+                "pdfplumber:lines",
+                "pdfplumber:lines_text",
+                "geometry",
+                "heuristic",
+            ],
+            "fallback_chain": [
+                "pdfplumber:text_lines",
+                "pdfplumber:text",
+            ],
+        }
+
+    def _pdf_route_primary_selection_acceptable(
+        self,
+        *,
+        selected_name: str,
+        selection_meta: Mapping[str, Any],
+        selection_context: Mapping[str, Any] | None,
+    ) -> tuple[bool, str]:
+        quality_diagnostics = selection_meta.get("quality_diagnostics")
+        diagnostics = quality_diagnostics.get(selected_name) if isinstance(quality_diagnostics, Mapping) else {}
+        diagnostics = diagnostics if isinstance(diagnostics, Mapping) else {}
+        table_count = int(diagnostics.get("table_count") or 0)
+        avg_quality = float(diagnostics.get("avg_quality_score") or 0.0)
+        avg_readability = float(diagnostics.get("avg_readability_score") or 0.0)
+        collapsed_factual_count = int(diagnostics.get("collapsed_factual_count") or 0)
+        lane = str((selection_context or {}).get("pdf_lane") or "")
+
+        if table_count <= 0:
+            return False, "no_tables"
+
+        if lane == "native_text":
+            if avg_readability < 0.65:
+                return False, "readability_below_threshold"
+            if avg_quality < 0.5 and collapsed_factual_count <= 0:
+                return False, "quality_below_threshold"
+            return True, "native_text_primary_acceptable"
+
+        if avg_readability < 0.55 and avg_quality < 0.45:
+            return False, "ocr_primary_below_threshold"
+        return True, "ocr_primary_acceptable"
+
+    def _route_pdf_table_candidates(
+        self,
+        candidates: Mapping[str, list[TablePayload]],
+        *,
+        selection_context: Mapping[str, Any] | None = None,
+    ) -> tuple[str, list[TablePayload], dict[str, Any]]:
+        if not candidates:
+            return "none", [], {"route_applied": False}
+
+        route_policy = self._pdf_route_policy(selection_context)
+        primary_candidates = self._subset_candidate_map(candidates, route_policy["primary_chain"])
+        fallback_candidates = self._subset_candidate_map(candidates, route_policy["fallback_chain"])
+
+        route_meta: dict[str, Any] = {
+            "route_applied": True,
+            "pdf_lane": route_policy.get("pdf_lane"),
+            "primary_chain": list(route_policy.get("primary_chain") or []),
+            "fallback_chain": list(route_policy.get("fallback_chain") or []),
+            "primary_candidate_names": list(primary_candidates.keys()),
+            "fallback_candidate_names": list(fallback_candidates.keys()),
+        }
+
+        lane = str(route_policy.get("pdf_lane") or "")
+        primary_attempts: list[dict[str, Any]] = []
+
+        if primary_candidates:
+            if lane == "native_text":
+                for candidate_name in route_policy.get("primary_chain") or []:
+                    if candidate_name not in primary_candidates:
+                        continue
+                    primary_context = dict(selection_context or {})
+                    primary_context["route_stage"] = "primary"
+                    primary_context["route_candidate"] = candidate_name
+                    selected, tables, selection_meta = self._select_table_candidates(
+                        {candidate_name: primary_candidates[candidate_name]},
+                        selection_context=primary_context,
+                    )
+                    acceptable, reason = self._pdf_route_primary_selection_acceptable(
+                        selected_name=selected,
+                        selection_meta=selection_meta,
+                        selection_context=selection_context,
+                    )
+                    primary_attempts.append(
+                        {
+                            "candidate": candidate_name,
+                            "selected": selected,
+                            "acceptable": acceptable,
+                            "reason": reason,
+                        }
+                    )
+                    if acceptable:
+                        route_meta["primary_selected"] = selected
+                        route_meta["primary_acceptance_reason"] = reason
+                        route_meta["primary_attempts"] = primary_attempts
+                        selection_meta["route"] = route_meta
+                        logger.info(
+                            "table.route.decision lane=%s selected=%s fallback_triggered=%s reason=%s",
+                            route_meta.get("pdf_lane"),
+                            selected,
+                            False,
+                            reason,
+                        )
+                        return selected, tables, selection_meta
+                selected = "none"
+                tables = []
+                selection_meta = {"scores": {}}
+                route_meta["primary_selected"] = None
+                route_meta["primary_acceptance_reason"] = (
+                    primary_attempts[-1]["reason"] if primary_attempts else "no_primary_candidates"
+                )
+            else:
+                primary_context = dict(selection_context or {})
+                primary_context["route_stage"] = "primary"
+                selected, tables, selection_meta = self._select_table_candidates(
+                    primary_candidates,
+                    selection_context=primary_context,
+                )
+                acceptable, reason = self._pdf_route_primary_selection_acceptable(
+                    selected_name=selected,
+                    selection_meta=selection_meta,
+                    selection_context=selection_context,
+                )
+                route_meta["primary_selected"] = selected
+                route_meta["primary_acceptance_reason"] = reason
+                if acceptable:
+                    route_meta["primary_attempts"] = [
+                        {
+                            "candidate": selected,
+                            "selected": selected,
+                            "acceptable": True,
+                            "reason": reason,
+                        }
+                    ]
+                    selection_meta["route"] = route_meta
+                    logger.info(
+                        "table.route.decision lane=%s selected=%s fallback_triggered=%s reason=%s",
+                        route_meta.get("pdf_lane"),
+                        selected,
+                        False,
+                        reason,
+                    )
+                    return selected, tables, selection_meta
+        else:
+            selected = "none"
+            tables = []
+            selection_meta = {"scores": {}}
+            route_meta["primary_selected"] = None
+            route_meta["primary_acceptance_reason"] = "no_primary_candidates"
+
+        if primary_attempts:
+            route_meta["primary_attempts"] = primary_attempts
+
+        if fallback_candidates:
+            fallback_context = dict(selection_context or {})
+            fallback_context["route_stage"] = "fallback"
+            fallback_context["fallback_triggered"] = True
+            selected, tables, fallback_meta = self._select_table_candidates(
+                fallback_candidates,
+                selection_context=fallback_context,
+            )
+            route_meta["fallback_triggered"] = True
+            route_meta["fallback_selected"] = selected
+            fallback_meta["route"] = route_meta
+            logger.info(
+                "table.route.decision lane=%s selected=%s fallback_triggered=%s reason=%s",
+                route_meta.get("pdf_lane"),
+                selected,
+                True,
+                route_meta.get("primary_acceptance_reason"),
+            )
+            return selected, tables, fallback_meta
+
+        route_meta["fallback_triggered"] = False
+        selection_meta["route"] = route_meta
+        logger.info(
+            "table.route.decision lane=%s selected=%s fallback_triggered=%s reason=%s",
+            route_meta.get("pdf_lane"),
+            selected,
+            False,
+            route_meta.get("primary_acceptance_reason"),
+        )
+        return selected, tables, selection_meta
+
+    @staticmethod
+    def _collapsed_matrix_text_signal_count(value: str) -> int:
+        text = re.sub(r"\s+", " ", str(value or "").strip())
+        if not text:
+            return 0
+        count = len(re.findall(r"\b\d{1,3}(?:[.,]\d{3})*(?:[.,]\d+)?\b", text))
+        count += len(re.findall(r"\b(?:egp|usd|eur|gbp|sar|aed)\b", text, flags=re.IGNORECASE))
+        count += len(re.findall(r"%", text))
+        return count
+
+    def _diagnose_pdf_table_structure(
+        self,
+        table: TablePayload,
+        *,
+        selection_context: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        readable_rows = self._pdf_table_readable_rows(table)
+        row_source = readable_rows or list(table.rows or [])
+        column_count = self._table_column_count(table)
+        header_row = next(
+            (row for row in (table.rows or []) if (row.metadata or {}).get("row_type") == "header"),
+            row_source[0] if row_source else None,
+        )
+        header_cells = list(header_row.cells or []) if header_row else []
+        header_texts = [self._sanitize_text(cell.raw_text).strip() for cell in header_cells if str(cell.raw_text or "").strip()]
+        header_joined = " ".join(header_texts).strip()
+        merged_header = False
+        if column_count <= 1:
+            if len(header_texts) == 1 and len(header_joined.split()) >= 4:
+                merged_header = True
+            elif not header_texts and header_row and len(self._sanitize_text(header_row.raw_text).split()) >= 4:
+                merged_header = True
+
+        packed_value_rows = 0
+        data_row_count = 0
+        for row in row_source:
+            cells = [cell for cell in (row.cells or []) if str(cell.raw_text or "").strip()]
+            if not cells:
+                continue
+            if (row.metadata or {}).get("row_type") == "header":
+                continue
+            data_row_count += 1
+            if len(cells) == 1 and self._collapsed_matrix_text_signal_count(cells[0].raw_text) >= 2:
+                packed_value_rows += 1
+        packed_value_ratio = float(packed_value_rows) / float(data_row_count or 1)
+
+        lane = str((selection_context or {}).get("pdf_lane") or "")
+        kind = "other"
+        recoverable = False
+        if lane == "native_text" and column_count <= 1 and data_row_count >= 3 and merged_header and packed_value_ratio >= 0.35:
+            kind = "collapsed_matrix"
+            recoverable = True
+
+        return {
+            "kind": kind,
+            "recoverable": recoverable,
+            "column_count": column_count,
+            "data_row_count": data_row_count,
+            "packed_value_ratio": round(packed_value_ratio, 4),
+            "merged_header": merged_header,
+            "header_text": header_joined or self._sanitize_text(getattr(header_row, "raw_text", "")).strip(),
+        }
+
+    @staticmethod
+    def _merge_sparse_segment_text(parts: Sequence[str]) -> str:
+        text = " ".join(part.strip() for part in parts if str(part or "").strip())
+        text = re.sub(r"\s+", " ", text).strip()
+        if not text:
+            return ""
+        text = re.sub(r"\b([A-Z]{1,3})\s+([A-Z])\s+(\d)", r"\1\2 \3", text)
+        text = re.sub(r"\b(\d{1,3})\s+(\d)\b", r"\1\2", text)
+        text = re.sub(r"\b([A-Z]{1,2})\s+([A-Z]{2,4})\b", r"\1\2", text)
+        text = re.sub(r"\b([A-Za-z]{1,3})\s+([a-z]{2,})\b", r"\1\2", text)
+        text = re.sub(r"\b([A-Za-z]{2,4})\s+([a-z]{2,})\b", r"\1\2", text)
+        text = re.sub(r"\b([A-Za-z]{2,})\s+([A-Za-z])\s+([A-Za-z])\s+([A-Za-z])\b", r"\1\2\3\4", text)
+        text = re.sub(r"\b([A-Za-z]{2,})\s+([A-Za-z])\s+([A-Za-z])\b", r"\1\2\3", text)
+        text = re.sub(r"\b([A-Za-z]-[A-Za-z]?)\s+([A-Za-z]{2,})\b", r"\1\2", text)
+        text = re.sub(r"([(/-])\s+", r"\1", text)
+        text = re.sub(r"\s+([)%/.,:;])", r"\1", text)
+        return text.strip()
+
+    @staticmethod
+    def _sparse_cells_should_split(previous_text: str, current_text: str) -> bool:
+        prev = re.sub(r"\s+", " ", str(previous_text or "").strip())
+        curr = re.sub(r"\s+", " ", str(current_text or "").strip())
+        if not prev or not curr:
+            return False
+        if curr[:1].islower():
+            return False
+        if prev.endswith(("-", "/", "(")):
+            return False
+        if len(prev) <= 2 and prev.isupper() and re.match(r"^[A-Z]{1,3}\b", curr):
+            return False
+        if re.fullmatch(r"\d{1,3}", curr) and re.search(r"(?:[A-Z]{1,4}\s*\d{1,3}|\d)$", prev):
+            return False
+        prev_numeric = bool(re.search(r"\d|%|\b(?:egp|usd|eur|gbp|sar|aed)\b", prev, flags=re.IGNORECASE))
+        curr_numeric = bool(re.search(r"\d|%|\b(?:egp|usd|eur|gbp|sar|aed)\b", curr, flags=re.IGNORECASE))
+        if prev_numeric and curr_numeric:
+            return True
+        prev_short = len(prev) <= 16 and len(prev.split()) <= 3
+        curr_short = len(curr) <= 16 and len(curr.split()) <= 3
+        prev_titleish = prev[:1].isupper()
+        curr_titleish = curr[:1].isupper()
+        return prev_short and curr_short and prev_titleish and curr_titleish
+
+    def _sparse_row_segments(self, row: TableRowPayload) -> list[str]:
+        cells = sorted(list(row.cells or []), key=lambda cell: cell.column_index)
+        if not cells:
+            return []
+        segments: list[str] = []
+        current_parts: list[str] = []
+        prev_col: int | None = None
+        for cell in cells:
+            raw = self._sanitize_text(cell.raw_text).strip()
+            if not raw:
+                if current_parts and prev_col is not None and cell.column_index > (prev_col + 1):
+                    merged = self._merge_sparse_segment_text(current_parts)
+                    if merged:
+                        segments.append(merged)
+                    current_parts = []
+                    prev_col = None
+                continue
+            if current_parts and prev_col is not None and cell.column_index > (prev_col + 1):
+                merged = self._merge_sparse_segment_text(current_parts)
+                if merged:
+                    segments.append(merged)
+                current_parts = []
+            cleaned = raw.replace("\n", " ")
+            if current_parts and prev_col is not None and cell.column_index == (prev_col + 1):
+                previous_text = self._merge_sparse_segment_text(current_parts)
+                if self._sparse_cells_should_split(previous_text, cleaned):
+                    merged = self._merge_sparse_segment_text(current_parts)
+                    if merged:
+                        segments.append(merged)
+                    current_parts = []
+            current_parts.append(cleaned)
+            prev_col = cell.column_index
+        if current_parts:
+            merged = self._merge_sparse_segment_text(current_parts)
+            if merged:
+                segments.append(merged)
+        return [segment for segment in segments if segment]
+
+    @staticmethod
+    def _row_looks_like_sparse_matrix_header(segments: Sequence[str]) -> bool:
+        if len(segments) < 3:
+            return False
+        first = str(segments[0] or "").strip().lower()
+        if "card type" in first or "epp program" in first:
+            return True
+        if "type" not in first and "program" not in first:
+            return False
+        non_empty = [seg for seg in segments if str(seg or "").strip()]
+        tail = non_empty[1:]
+        tail_numeric_ratio = (
+            sum(1 for seg in tail if re.search(r"\d", seg)) / float(len(tail) or 1)
+        )
+        return tail_numeric_ratio <= 0.35 and len(first.split()) <= 4
+
+    def _build_sparse_matrix_subtables(self, table: TablePayload) -> list[dict[str, Any]]:
+        sparse_rows: list[dict[str, Any]] = []
+        for row in table.rows or []:
+            segments = self._sparse_row_segments(row)
+            if len(segments) >= 2:
+                sparse_rows.append(
+                    {
+                        "row": row,
+                        "segments": segments,
+                        "is_header": self._row_looks_like_sparse_matrix_header(segments),
+                    }
+                )
+        subtables: list[dict[str, Any]] = []
+        current: list[dict[str, Any]] = []
+        for entry in sparse_rows:
+            if entry["is_header"]:
+                if current:
+                    subtables.append({"rows": current})
+                current = [entry]
+                continue
+            if current:
+                current.append(entry)
+        if current:
+            subtables.append({"rows": current})
+        return [
+            subtable
+            for subtable in subtables
+            if len(subtable.get("rows") or []) >= 3
+            and len((subtable.get("rows") or [])[0].get("segments") or []) >= 4
+        ]
+
+    def _align_sparse_segments_to_schema(
+        self,
+        segments: Sequence[str],
+        *,
+        column_count: int,
+    ) -> list[str]:
+        values = [self._sanitize_text(value).strip() for value in segments if self._sanitize_text(value).strip()]
+        if not values:
+            return [""] * column_count
+        if len(values) == column_count:
+            return list(values)
+        if column_count >= 3 and len(values) == 2:
+            return [values[0]] + [values[1]] * (column_count - 1)
+        if len(values) < column_count:
+            return list(values) + [""] * (column_count - len(values))
+        leading = len(values) - (column_count - 1)
+        descriptor = self._merge_sparse_segment_text(values[:leading])
+        return [descriptor] + list(values[leading:])
+
+    def _table_payload_from_sparse_matrix(
+        self,
+        *,
+        source_table: TablePayload,
+        subtable_rows: Sequence[dict[str, Any]],
+        target_table: TablePayload | None = None,
+        source_name: str,
+    ) -> TablePayload | None:
+        if not subtable_rows:
+            return None
+        header_segments = list((subtable_rows[0] or {}).get("segments") or [])
+        if len(header_segments) < 4:
+            return None
+        column_schema = [
+            TableDetector._normalize_header_cell(segment, idx)
+            for idx, segment in enumerate(header_segments)
+        ]
+        page_number = target_table.page_number if target_table is not None else source_table.page_number
+        order_index = target_table.order_index if target_table is not None else source_table.order_index
+        title = target_table.title if target_table is not None else source_table.title
+        section_heading = target_table.section_heading if target_table is not None else source_table.section_heading
+        metadata = dict(source_table.metadata or {})
+        metadata["detected_via"] = f"reconstructed:{source_name}"
+        metadata["structure_reconstructed"] = True
+        metadata["structure_reconstruction_source"] = source_name
+        metadata["structure_reconstruction_strategy"] = "sparse_matrix_segments"
+        if target_table is not None:
+            metadata["structure_reconstructed_from_order_index"] = target_table.order_index
+
+        rows: list[TableRowPayload] = []
+        header_cells = [
+            TableCellPayload(
+                row_index=0,
+                column_index=idx,
+                column_key=column_schema[idx],
+                raw_text=segment,
+                normalized_value=TableDetector._normalize_cell_value(segment),
+                bbox={},
+                confidence=None,
+            )
+            for idx, segment in enumerate(header_segments)
+        ]
+        rows.append(
+            TableRowPayload(
+                row_index=0,
+                page_number=page_number,
+                bbox={},
+                raw_text=" | ".join(header_segments),
+                metadata={"row_type": "header"},
+                cells=header_cells,
+            )
+        )
+
+        for row_index, entry in enumerate(subtable_rows[1:], start=1):
+            aligned = self._align_sparse_segments_to_schema(
+                entry.get("segments") or [],
+                column_count=len(column_schema),
+            )
+            if len(aligned) != len(column_schema):
+                continue
+            cells = [
+                TableCellPayload(
+                    row_index=row_index,
+                    column_index=idx,
+                    column_key=column_schema[idx],
+                    raw_text=value,
+                    normalized_value=TableDetector._normalize_cell_value(value),
+                    bbox={},
+                    confidence=None,
+                )
+                for idx, value in enumerate(aligned)
+            ]
+            rows.append(
+                TableRowPayload(
+                    row_index=row_index,
+                    page_number=page_number,
+                    bbox={},
+                    raw_text=" | ".join(aligned),
+                    metadata={"row_type": "data"},
+                    cells=cells,
+                )
+            )
+        if len(rows) < 3:
+            return None
+        return TablePayload(
+            order_index=order_index,
+            title=title,
+            section_heading=section_heading,
+            page_number=page_number,
+            bbox=target_table.bbox if target_table is not None else source_table.bbox,
+            column_schema=column_schema,
+            data_dictionary={},
+            metadata=metadata,
+            rows=rows,
+        )
+
+    def _reconstruct_collapsed_native_text_tables(
+        self,
+        *,
+        tables: Sequence[TablePayload],
+        candidates: Mapping[str, list[TablePayload]],
+        page_spans: Sequence[Sequence[PdfSpan]] | None = None,
+        selection_context: Mapping[str, Any] | None = None,
+    ) -> tuple[list[TablePayload], dict[str, Any], list[IssuePayload]]:
+        if not self.pdf_collapsed_matrix_reconstruction_enabled:
+            return list(tables), {"enabled": False}, []
+        if str((selection_context or {}).get("pdf_lane") or "") != "native_text":
+            return list(tables), {"enabled": True, "skipped_reason": "non_native_text_lane"}, []
+
+        collapsed_targets = [
+            table
+            for table in tables
+            if (self._diagnose_pdf_table_structure(table, selection_context=selection_context).get("kind") == "collapsed_matrix")
+        ]
+        if not collapsed_targets:
+            return list(tables), {"enabled": True, "collapsed_targets": 0}, []
+
+        span_reconstructed = self._reconstruct_collapsed_native_text_tables_from_spans(
+            collapsed_targets=collapsed_targets,
+            page_spans=page_spans or [],
+        )
+        if not span_reconstructed:
+            return list(tables), {
+                "enabled": True,
+                "collapsed_targets": len(collapsed_targets),
+                "reconstructed_tables": 0,
+                "skipped_reason": "no_span_reconstruction_candidates",
+            }, []
+
+        issues: list[IssuePayload] = []
+        replacements: dict[tuple[int, int | None], TablePayload] = {}
+        for target_key, rebuilt in span_reconstructed.items():
+            replacements[target_key] = rebuilt
+            issues.append(
+                IssuePayload(
+                    code="pdf_table_structure_reconstructed",
+                    severity=KnowledgeIssueSeverity.INFO.value,
+                    description="Reconstructed collapsed native-text table from pymupdf:spans before canonical persistence.",
+                    page_number=target_key[1],
+                    table_order_index=target_key[0],
+                    details={
+                        "source_name": "pymupdf:spans",
+                        "column_count": len(rebuilt.column_schema),
+                        "row_count": len(rebuilt.rows),
+                    },
+                )
+            )
+
+        updated_tables: list[TablePayload] = []
+        reconstructed_count = 0
+        for table in tables:
+            key = (table.order_index, table.page_number)
+            replacement = replacements.get(key)
+            if replacement is not None:
+                updated_tables.append(replacement)
+                reconstructed_count += 1
+            else:
+                updated_tables.append(table)
+        return updated_tables, {
+            "enabled": True,
+            "collapsed_targets": len(collapsed_targets),
+            "span_reconstruction_candidates": len(span_reconstructed),
+            "reconstructed_tables": reconstructed_count,
+        }, issues
+
+    @staticmethod
+    def _cluster_pdf_spans_by_row(spans: Sequence[PdfSpan], *, y_tol: float = 6.5) -> list[list[PdfSpan]]:
+        if not spans:
+            return []
+        sorted_spans = sorted(spans, key=lambda span: (span.y_center, span.x0))
+        rows: list[list[PdfSpan]] = [[sorted_spans[0]]]
+        anchor = sorted_spans[0].y_center
+        for span in sorted_spans[1:]:
+            if abs(span.y_center - anchor) <= y_tol:
+                rows[-1].append(span)
+                row_members = rows[-1]
+                anchor = sum(member.y_center for member in row_members) / float(len(row_members))
+            else:
+                rows.append([span])
+                anchor = span.y_center
+        return [sorted(row, key=lambda span: span.x0) for row in rows]
+
+    @staticmethod
+    def _span_text_signal_count(text: str) -> int:
+        sample = str(text or "").strip()
+        if not sample:
+            return 0
+        score = 0
+        if re.search(r"\d", sample):
+            score += 1
+        if re.search(r"%|\b(?:egp|usd|eur|gbp|aed|sar)\b", sample, flags=re.IGNORECASE):
+            score += 1
+        lowered = sample.lower()
+        if lowered in {"free", "n/a", "na"} or "free" in lowered:
+            score += 1
+        return score
+
+    @staticmethod
+    def _row_gap(row_a: Sequence[PdfSpan], row_b: Sequence[PdfSpan]) -> float:
+        if not row_a or not row_b:
+            return 0.0
+        return float(min(span.y0 for span in row_b) - max(span.y1 for span in row_a))
+
+    def _span_row_looks_like_data(
+        self,
+        row: Sequence[PdfSpan],
+        *,
+        descriptor_limit: float,
+    ) -> bool:
+        if not row:
+            return False
+        value_like = [
+            span for span in row
+            if span.x0 > descriptor_limit and self._span_text_signal_count(span.text) >= 1
+        ]
+        if len(value_like) >= 2:
+            return True
+        descriptor_present = any(span.x0 <= descriptor_limit for span in row)
+        if descriptor_present and len(value_like) == 1:
+            shared = value_like[0]
+            shared_text = str(shared.text or "").strip().lower()
+            if "across all" in shared_text or "all card types" in shared_text:
+                return True
+            if (shared.x1 - shared.x0) >= 72.0:
+                return True
+        return False
+
+    def _span_row_is_header_support(
+        self,
+        row: Sequence[PdfSpan],
+        *,
+        descriptor_limit: float,
+    ) -> bool:
+        if not row:
+            return False
+        if any(self._span_text_signal_count(span.text) >= 1 for span in row if span.x0 > descriptor_limit):
+            return False
+        if row[0].x0 <= descriptor_limit and "card type" not in row[0].text.lower():
+            return False
+        return any(span.x0 > descriptor_limit for span in row)
+
+    @staticmethod
+    def _cluster_x_centers(values: Sequence[tuple[float, float, float]], *, x_tol: float = 18.0) -> list[list[tuple[float, float, float]]]:
+        if not values:
+            return []
+        sorted_values = sorted(values, key=lambda item: item[0])
+        clusters: list[list[tuple[float, float, float]]] = [[sorted_values[0]]]
+        anchor = sorted_values[0][0]
+        for value in sorted_values[1:]:
+            if abs(value[0] - anchor) <= x_tol:
+                clusters[-1].append(value)
+                anchor = sum(item[0] for item in clusters[-1]) / float(len(clusters[-1]))
+            else:
+                clusters.append([value])
+                anchor = value[0]
+        return clusters
+
+    def _build_span_matrix_subtables(
+        self,
+        spans: Sequence[PdfSpan],
+        *,
+        page_number: int,
+    ) -> list[dict[str, Any]]:
+        row_clusters = self._cluster_pdf_spans_by_row([span for span in spans if span.page_number == page_number])
+        if not row_clusters:
+            return []
+
+        row_infos: list[dict[str, Any]] = []
+        for row in row_clusters:
+            texts = [str(span.text or "").strip() for span in row if str(span.text or "").strip()]
+            if not texts:
+                continue
+            row_infos.append(
+                {
+                    "spans": row,
+                    "texts": texts,
+                    "bbox": _union_bbox(
+                        [{"x0": span.x0, "y0": span.y0, "x1": span.x1, "y1": span.y1} for span in row]
+                    ),
+                }
+            )
+
+        subtables: list[dict[str, Any]] = []
+        idx = 0
+        while idx < len(row_infos):
+            current = row_infos[idx]
+            first_text = str((current.get("texts") or [""])[0]).strip().lower()
+            if "card type" not in first_text:
+                idx += 1
+                continue
+
+            anchor_row = current.get("spans") or []
+            if not anchor_row:
+                idx += 1
+                continue
+            descriptor_limit = float(anchor_row[0].x1 + 24.0)
+
+            data_start = None
+            for probe in range(idx + 1, len(row_infos)):
+                probe_row = row_infos[probe].get("spans") or []
+                if not probe_row:
+                    continue
+                if self._row_gap(anchor_row, probe_row) > 22.0:
+                    break
+                if self._span_row_looks_like_data(probe_row, descriptor_limit=descriptor_limit):
+                    data_start = probe
+                    break
+            if data_start is None:
+                idx += 1
+                continue
+
+            header_start = idx
+            while header_start > 0:
+                previous = row_infos[header_start - 1].get("spans") or []
+                if not previous:
+                    break
+                if self._row_gap(previous, row_infos[header_start].get("spans") or []) > 18.0:
+                    break
+                if not self._span_row_is_header_support(previous, descriptor_limit=descriptor_limit):
+                    break
+                header_start -= 1
+
+            sample_rows = [info.get("spans") or [] for info in row_infos[header_start : min(len(row_infos), data_start + 2)]]
+            x_samples: list[tuple[float, float, float]] = []
+            for sample_row in sample_rows:
+                for span in sample_row:
+                    if span.x0 <= descriptor_limit:
+                        continue
+                    x_samples.append((span.x_center, span.x0, span.x1))
+            column_clusters = self._cluster_x_centers(x_samples)
+            if len(column_clusters) < 3:
+                idx = data_start
+                continue
+
+            column_bands: list[dict[str, float]] = []
+            for cluster in column_clusters:
+                centers = [item[0] for item in cluster]
+                x0s = [item[1] for item in cluster]
+                x1s = [item[2] for item in cluster]
+                column_bands.append(
+                    {
+                        "center": float(sum(centers) / float(len(centers))),
+                        "x0": float(min(x0s)),
+                        "x1": float(max(x1s)),
+                    }
+                )
+            column_bands.sort(key=lambda band: band["center"])
+
+            data_end = data_start
+            while data_end < len(row_infos):
+                row_spans = row_infos[data_end].get("spans") or []
+                if not row_spans:
+                    break
+                if data_end > data_start and "card type" in str((row_infos[data_end].get("texts") or [""])[0]).lower():
+                    break
+                overlaps_band = any(
+                    span.x1 >= (column_bands[0]["x0"] - 8.0) and span.x0 <= (column_bands[-1]["x1"] + 8.0)
+                    for span in row_spans
+                )
+                descriptor_present = any(span.x0 <= descriptor_limit for span in row_spans)
+                if data_end > data_start and not overlaps_band and not descriptor_present:
+                    break
+                if data_end > data_start and self._row_gap(row_infos[data_end - 1].get("spans") or [], row_spans) > 20.0:
+                    break
+                data_end += 1
+
+            header_rows = [info.get("spans") or [] for info in row_infos[header_start:data_start]]
+            data_rows = [info.get("spans") or [] for info in row_infos[data_start:data_end]]
+            if header_rows and data_rows:
+                subtables.append(
+                    {
+                        "page_number": page_number,
+                        "header_rows": header_rows,
+                        "data_rows": data_rows,
+                        "column_bands": column_bands,
+                        "descriptor_limit": descriptor_limit,
+                        "bbox": _union_bbox([info.get("bbox") or {} for info in row_infos[header_start:data_end]]),
+                        "top": float((row_infos[header_start].get("bbox") or {}).get("y0") or 0.0),
+                    }
+                )
+            idx = max(data_end, idx + 1)
+        return subtables
+
+    def _assign_span_row_to_bands(
+        self,
+        row_spans: Sequence[PdfSpan],
+        *,
+        descriptor_limit: float,
+        column_bands: Sequence[Mapping[str, float]],
+    ) -> tuple[list[str], list[dict[str, float]]]:
+        descriptor_members: list[PdfSpan] = []
+        value_members: list[list[PdfSpan]] = [[] for _ in column_bands]
+        if not row_spans:
+            return [""] * (len(column_bands) + 1), [{"x0": 0.0, "y0": 0.0, "x1": 0.0, "y1": 0.0}] * (len(column_bands) + 1)
+
+        for span in sorted(row_spans, key=lambda item: (item.y0, item.x0)):
+            first_band_left = float(column_bands[0].get("x0") or 0.0) if column_bands else 0.0
+            if span.x1 <= descriptor_limit or (first_band_left and span.x0 < (first_band_left - 12.0)):
+                descriptor_members.append(span)
+                continue
+            overlaps: list[int] = []
+            for idx, band in enumerate(column_bands):
+                if span.x1 >= (float(band.get("x0") or 0.0) - 6.0) and span.x0 <= (float(band.get("x1") or 0.0) + 6.0):
+                    overlaps.append(idx)
+            if not overlaps:
+                nearest = min(
+                    range(len(column_bands)),
+                    key=lambda idx: abs(span.x_center - float(column_bands[idx].get("center") or 0.0)),
+                )
+                overlaps = [nearest]
+            for idx in overlaps:
+                value_members[idx].append(span)
+
+        cells: list[str] = []
+        bboxes: list[dict[str, float]] = []
+        all_members = [descriptor_members] + value_members
+        for members in all_members:
+            if members:
+                members_sorted = sorted(members, key=lambda item: (item.y0, item.x0))
+                text = self._merge_span_texts([member.text for member in members_sorted])
+                bbox = _union_bbox(
+                    [{"x0": member.x0, "y0": member.y0, "x1": member.x1, "y1": member.y1} for member in members_sorted]
+                )
+            else:
+                text = ""
+                bbox = {"x0": 0.0, "y0": 0.0, "x1": 0.0, "y1": 0.0}
+            cells.append(text)
+            bboxes.append(bbox)
+
+        if len(column_bands) >= 3:
+            descriptor_bbox = bboxes[0] if bboxes else {"x0": 0.0, "y0": 0.0, "x1": 0.0, "y1": 0.0}
+            descriptor_overlaps_values = bool(
+                column_bands
+                and float((descriptor_bbox or {}).get("x1") or 0.0) >= (float(column_bands[0].get("x0") or 0.0) - 6.0)
+            )
+            if cells[0] and not any(re.sub(r"\s+", " ", value).strip() for value in cells[1:]) and descriptor_overlaps_values:
+                split = self._split_descriptor_from_shared_value(cells[0])
+                if split is not None:
+                    descriptor_text, shared_value = split
+                    cells[0] = descriptor_text
+                    for idx in range(1, len(cells)):
+                        cells[idx] = shared_value
+                        bboxes[idx] = descriptor_bbox
+            populated_values = [idx for idx, text in enumerate(cells[1:], start=1) if text]
+            if len(populated_values) == 1:
+                shared_text = cells[populated_values[0]]
+                shared_bbox = bboxes[populated_values[0]]
+                for idx in range(1, len(cells)):
+                    cells[idx] = shared_text
+                    bboxes[idx] = shared_bbox
+            elif len(populated_values) >= 2:
+                normalized_values = {
+                    re.sub(r"\s+", " ", cells[idx]).strip().lower()
+                    for idx in populated_values
+                    if re.sub(r"\s+", " ", cells[idx]).strip()
+                }
+                if len(normalized_values) == 1:
+                    shared_text = cells[populated_values[0]]
+                    shared_bbox = bboxes[populated_values[0]]
+                    for idx in range(1, len(cells)):
+                        if not re.sub(r"\s+", " ", cells[idx]).strip():
+                            cells[idx] = shared_text
+                            bboxes[idx] = shared_bbox
+
+        return cells, bboxes
+
+    def _build_table_payload_from_span_matrix(
+        self,
+        *,
+        target_table: TablePayload,
+        subtable: Mapping[str, Any],
+    ) -> TablePayload | None:
+        header_rows = list(subtable.get("header_rows") or [])
+        data_rows = list(subtable.get("data_rows") or [])
+        column_bands = list(subtable.get("column_bands") or [])
+        descriptor_limit = float(subtable.get("descriptor_limit") or 0.0)
+        if not header_rows or not data_rows or len(column_bands) < 3:
+            return None
+
+        header_cells = ["Card Type"] + [""] * len(column_bands)
+        header_bboxes = [{"x0": 0.0, "y0": 0.0, "x1": 0.0, "y1": 0.0} for _ in range(len(column_bands) + 1)]
+        for row in header_rows:
+            assigned, bboxes = self._assign_span_row_to_bands(
+                row,
+                descriptor_limit=descriptor_limit,
+                column_bands=column_bands,
+            )
+            for idx, value in enumerate(assigned):
+                cleaned = self._sanitize_text(value).strip()
+                if not cleaned:
+                    continue
+                if idx == 0 and header_cells[idx].strip().lower() == cleaned.lower():
+                    continue
+                if header_cells[idx]:
+                    header_cells[idx] = self._merge_span_texts([header_cells[idx], cleaned])
+                    header_bboxes[idx] = _union_bbox([header_bboxes[idx], bboxes[idx]])
+                else:
+                    header_cells[idx] = cleaned
+                    header_bboxes[idx] = bboxes[idx]
+
+        if not header_cells[0]:
+            header_cells[0] = "Card Type"
+        column_schema = [
+            TableDetector._normalize_header_cell(value, idx)
+            for idx, value in enumerate(header_cells)
+        ]
+
+        rows: list[TableRowPayload] = []
+        header_payload_cells = [
+            TableCellPayload(
+                row_index=0,
+                column_index=idx,
+                column_key=column_schema[idx],
+                raw_text=header_cells[idx],
+                normalized_value=TableDetector._normalize_cell_value(header_cells[idx]),
+                bbox=header_bboxes[idx],
+                confidence=None,
+            )
+            for idx in range(len(column_schema))
+        ]
+        rows.append(
+            TableRowPayload(
+                row_index=0,
+                page_number=target_table.page_number,
+                bbox=_union_bbox([bbox for bbox in header_bboxes if any(bbox.values())]),
+                raw_text=" | ".join(header_cells),
+                metadata={"row_type": "header"},
+                cells=header_payload_cells,
+            )
+        )
+
+        data_payload_rows: list[TableRowPayload] = []
+        next_row_idx = 1
+        for span_row in data_rows:
+            assigned, bboxes = self._assign_span_row_to_bands(
+                span_row,
+                descriptor_limit=descriptor_limit,
+                column_bands=column_bands,
+            )
+            if len(assigned) != len(column_schema):
+                continue
+            descriptor = self._sanitize_text(assigned[0]).strip()
+            value_count = sum(1 for value in assigned[1:] if self._sanitize_text(value).strip())
+            if not descriptor and value_count < 2:
+                continue
+            payload_cells = [
+                TableCellPayload(
+                    row_index=next_row_idx,
+                    column_index=idx,
+                    column_key=column_schema[idx],
+                    raw_text=assigned[idx],
+                    normalized_value=TableDetector._normalize_cell_value(assigned[idx]),
+                    bbox=bboxes[idx],
+                    confidence=None,
+                )
+                for idx in range(len(column_schema))
+            ]
+            data_payload_rows.append(
+                TableRowPayload(
+                    row_index=next_row_idx,
+                    page_number=target_table.page_number,
+                    bbox=_union_bbox([bbox for bbox in bboxes if any(bbox.values())]),
+                    raw_text=" | ".join(assigned),
+                    metadata={"row_type": "data"},
+                    cells=payload_cells,
+                )
+            )
+            next_row_idx += 1
+
+        reconstructor = GeometryTableReconstructor()
+        normalized_data_rows, _merged_pairs = reconstructor._normalize_geometry_logical_rows(
+            data_payload_rows,
+            len(column_schema),
+        )
+        rows.extend(normalized_data_rows)
+
+        if len(rows) < 3:
+            return None
+
+        metadata = dict(target_table.metadata or {})
+        metadata["detected_via"] = "reconstructed:pymupdf:spans"
+        metadata["structure_reconstructed"] = True
+        metadata["structure_reconstruction_source"] = "pymupdf:spans"
+        metadata["structure_reconstruction_strategy"] = "span_matrix_bands"
+        return TablePayload(
+            order_index=target_table.order_index,
+            title=target_table.title,
+            section_heading=target_table.section_heading,
+            page_number=target_table.page_number,
+            bbox=dict(subtable.get("bbox") or target_table.bbox or {}),
+            column_schema=column_schema,
+            data_dictionary={},
+            metadata=metadata,
+            rows=rows,
+        )
+
+    @staticmethod
+    def _merge_span_texts(parts: Sequence[str]) -> str:
+        merged: list[str] = []
+        for part in parts:
+            cleaned = re.sub(r"\s+", " ", str(part or "").strip())
+            if not cleaned:
+                continue
+            if merged and merged[-1] == cleaned:
+                continue
+            merged.append(cleaned)
+        return " ".join(merged).strip()
+
+    @staticmethod
+    def _split_descriptor_from_shared_value(text: str) -> tuple[str, str] | None:
+        candidate = re.sub(r"\s+", " ", str(text or "").strip())
+        if not candidate:
+            return None
+        tokens = candidate.split()
+        if len(tokens) < 3:
+            return None
+        split_idx: int | None = None
+        for idx, token in enumerate(tokens[1:], start=1):
+            normalized = token.strip().lower()
+            if re.search(r"\d", normalized) or "%" in normalized or normalized in {"egp", "usd", "eur", "aed", "sar", "gbp"}:
+                split_idx = idx
+                break
+        if split_idx is None or split_idx >= len(tokens):
+            return None
+        descriptor = " ".join(tokens[:split_idx]).strip()
+        shared_value = " ".join(tokens[split_idx:]).strip()
+        if not descriptor or not shared_value:
+            return None
+        return descriptor, shared_value
+
+    @staticmethod
+    def _header_similarity_score(target: str, candidate: str) -> float:
+        target_tokens = {token for token in re.findall(r"[a-z0-9]+", str(target or "").lower()) if len(token) >= 2}
+        candidate_tokens = {token for token in re.findall(r"[a-z0-9]+", str(candidate or "").lower()) if len(token) >= 2}
+        if not target_tokens or not candidate_tokens:
+            return 0.0
+        return float(len(target_tokens & candidate_tokens)) / float(len(target_tokens | candidate_tokens))
+
+    def _reconstruct_collapsed_native_text_tables_from_spans(
+        self,
+        *,
+        collapsed_targets: Sequence[TablePayload],
+        page_spans: Sequence[Sequence[PdfSpan]],
+    ) -> dict[tuple[int, int | None], TablePayload]:
+        if not page_spans:
+            return {}
+
+        candidates_by_page: dict[int, list[dict[str, Any]]] = {}
+        for target in collapsed_targets:
+            page_number = int(target.page_number or 0)
+            if page_number <= 0 or page_number > len(page_spans):
+                continue
+            if page_number not in candidates_by_page:
+                candidates_by_page[page_number] = self._build_span_matrix_subtables(
+                    page_spans[page_number - 1],
+                    page_number=page_number,
+                )
+
+        replacements: dict[tuple[int, int | None], TablePayload] = {}
+        used_indices: dict[int, set[int]] = {}
+        for target in collapsed_targets:
+            page_number = int(target.page_number or 0)
+            page_candidates = candidates_by_page.get(page_number) or []
+            if not page_candidates:
+                continue
+            target_header = str(
+                (self._diagnose_pdf_table_structure(target, selection_context={"pdf_lane": "native_text"}) or {}).get("header_text") or ""
+            )
+            best_idx = None
+            best_score = 0.0
+            used = used_indices.setdefault(page_number, set())
+            for idx, candidate in enumerate(page_candidates):
+                if idx in used:
+                    continue
+                header_rows = candidate.get("header_rows") or []
+                header_text = " ".join(
+                    self._sanitize_text(span.text)
+                    for row in header_rows
+                    for span in row
+                )
+                score = self._header_similarity_score(target_header, header_text)
+                if score > best_score:
+                    best_score = score
+                    best_idx = idx
+            if best_idx is None:
+                continue
+            rebuilt = self._build_table_payload_from_span_matrix(
+                target_table=target,
+                subtable=page_candidates[best_idx],
+            )
+            if rebuilt is None:
+                continue
+            used.add(best_idx)
+            replacements[(target.order_index, target.page_number)] = rebuilt
+        return replacements
+
+    def _enforce_pdf_canonical_acceptance(
+        self,
+        tables: Sequence[TablePayload],
+        *,
+        selection_context: Mapping[str, Any] | None = None,
+    ) -> tuple[list[TablePayload], dict[str, Any], list[IssuePayload]]:
+        if not self.pdf_structural_acceptance_enabled:
+            return list(tables), {"enabled": False}, []
+        kept: list[TablePayload] = []
+        issues: list[IssuePayload] = []
+        dropped_tables: list[dict[str, Any]] = []
+        for table in tables:
+            diagnosis = self._diagnose_pdf_table_structure(table, selection_context=selection_context)
+            metadata = dict(table.metadata or {})
+            metadata["structure_diagnosis"] = diagnosis
+            unsafe = diagnosis.get("kind") == "collapsed_matrix" and not metadata.get("structure_reconstructed")
+            metadata["canonical_acceptance"] = "fallback_text_only" if unsafe else "accepted"
+            updated = TablePayload(
+                order_index=table.order_index,
+                title=table.title,
+                section_heading=table.section_heading,
+                page_number=table.page_number,
+                bbox=table.bbox,
+                column_schema=table.column_schema,
+                data_dictionary=table.data_dictionary,
+                metadata=metadata,
+                rows=table.rows,
+            )
+            if unsafe:
+                dropped_tables.append(
+                    {
+                        "order_index": table.order_index,
+                        "page_number": table.page_number,
+                        "diagnosis": diagnosis,
+                    }
+                )
+                issues.append(
+                    IssuePayload(
+                        code="pdf_table_not_canonical",
+                        severity=KnowledgeIssueSeverity.INFO.value,
+                        description="Dropped structurally unsafe PDF table from canonical persistence; text fallback remains available.",
+                        page_number=table.page_number,
+                        table_order_index=table.order_index,
+                        details={"diagnosis": diagnosis},
+                    )
+                )
+                continue
+            kept.append(updated)
+        return kept, {
+            "enabled": True,
+            "input_tables": len(tables),
+            "kept_tables": len(kept),
+            "dropped_tables": len(dropped_tables),
+            "dropped_examples": dropped_tables[:8],
+        }, issues
+
+    def _repair_pdf_table_structure(
+        self,
+        tables: Sequence[TablePayload],
+        *,
+        candidates: Mapping[str, list[TablePayload]],
+        page_spans: Sequence[Sequence[PdfSpan]] | None = None,
+        selected_extractor: str,
+        selection_context: Mapping[str, Any] | None = None,
+    ) -> tuple[list[TablePayload], dict[str, Any], list[IssuePayload]]:
+        if not tables:
+            return [], {"enabled": True, "selected_extractor": selected_extractor}, []
+        reconstructed_tables, reconstruction_meta, reconstruction_issues = (
+            self._reconstruct_collapsed_native_text_tables(
+                tables=tables,
+                candidates=candidates,
+                page_spans=page_spans,
+                selection_context=selection_context,
+            )
+        )
+        accepted_tables, acceptance_meta, acceptance_issues = self._enforce_pdf_canonical_acceptance(
+            reconstructed_tables,
+            selection_context=selection_context,
+        )
+        meta = {
+            "enabled": True,
+            "selected_extractor": selected_extractor,
+            "reconstruction": reconstruction_meta,
+            "acceptance": acceptance_meta,
+        }
+        return accepted_tables, meta, reconstruction_issues + acceptance_issues
+
+    def _pdf_pages_look_native_text(self, pages: Sequence[PageLayout]) -> bool:
+        if not pages:
+            return False
+        non_ocr_pages = 0
+        for page in pages:
+            if bool(getattr(page, "has_ocr_content", False)):
+                continue
+            density = 0.0
+            try:
+                density = float(
+                    (getattr(page, "metadata", {}) or {}).get("raw_text_density")
+                    or getattr(page, "text_density", 0.0)
+                    or 0.0
+                )
+            except (TypeError, ValueError):
+                density = 0.0
+            has_text_block = any(
+                self._sanitize_text(str(getattr(block, "text", "") or "")).strip()
+                for block in (getattr(page, "blocks", None) or [])
+            )
+            if has_text_block or density >= self.native_pdf_text_density_floor:
+                non_ocr_pages += 1
+        return non_ocr_pages >= max(1, math.ceil(len(pages) * 0.6))
+
+    @staticmethod
+    def _table_row_render_text(row: TableRowPayload) -> str:
+        raw = str(getattr(row, "raw_text", "") or "").strip()
+        if raw:
+            return re.sub(r"\s+", " ", raw).strip()
+        values = [str(cell.raw_text or "").strip() for cell in (row.cells or []) if str(cell.raw_text or "").strip()]
+        return re.sub(r"\s+", " ", " ".join(values)).strip()
+
+    def _table_collapsed_factual_row_ratio(self, table: TablePayload) -> float:
+        readable_rows = self._pdf_table_readable_rows(table)
+        if not readable_rows:
+            return 0.0
+        factual_rows = 0
+        for row in readable_rows:
+            text = self._table_row_render_text(row)
+            if not text:
+                continue
+            word_count = len(re.findall(r"[A-Za-z0-9\u0600-\u06FF]+", text))
+            if word_count < 3 or word_count > 40:
+                continue
+            if not self._has_numeric_table_signal(text):
+                continue
+            if not re.search(r"[A-Za-z\u0600-\u06FF]", text):
+                continue
+            factual_rows += 1
+        return round(factual_rows / max(1, len(readable_rows)), 4)
+
+    def _table_is_collapsed_factual(
+        self,
+        table: TablePayload,
+        assessment: Mapping[str, Any] | None = None,
+    ) -> bool:
+        assessment = assessment if isinstance(assessment, Mapping) else self._assess_table_quality(table)
+        signals = assessment.get("signals") if isinstance(assessment, Mapping) else {}
+        if not isinstance(signals, Mapping):
+            signals = {}
+        data_row_count = len(self._pdf_table_readable_rows(table))
+        if data_row_count < 3:
+            return False
+        effective_columns = int(signals.get("effective_column_count") or self._table_effective_column_count(table))
+        if effective_columns > 2:
+            return False
+        if bool(signals.get("no_readable_rows")):
+            return False
+        if bool(signals.get("bridge_like_table")) or bool(signals.get("compact_banner_table")):
+            return False
+        if float(signals.get("placeholder_cell_ratio") or 0.0) >= 0.55:
+            return False
+        if bool(signals.get("nonsense_columns")) and float(signals.get("header_confidence") or 0.0) == 0.0:
+            return False
+        structured_row_ratio = float(signals.get("structured_row_ratio") or 0.0)
+        factual_row_ratio = self._table_collapsed_factual_row_ratio(table)
+        return structured_row_ratio >= 0.5 and factual_row_ratio >= 0.6
+
+    def _table_text_readability_score(
+        self,
+        table: TablePayload,
+        assessment: Mapping[str, Any] | None = None,
+    ) -> float:
+        assessment = assessment if isinstance(assessment, Mapping) else self._assess_table_quality(table)
+        signals = assessment.get("signals") if isinstance(assessment, Mapping) else {}
+        if not isinstance(signals, Mapping):
+            signals = {}
+        score = 1.0
+        header_confidence = float(signals.get("header_confidence") or 0.0)
+        if bool(signals.get("nonsense_columns")):
+            score -= 0.3
+        if bool(signals.get("spaced_characters")):
+            score -= 0.2
+        if bool(signals.get("row_misalignment")):
+            score -= 0.2
+        if bool(signals.get("fragmented_logical_rows")):
+            score -= 0.15
+        if header_confidence < 0.3:
+            score -= 0.25
+        elif header_confidence < 0.5:
+            score -= 0.1
+        if bool(signals.get("paragraph_like_table")) and not self._table_is_collapsed_factual(table, assessment):
+            score -= 0.15
+        score += min(0.15, self._table_collapsed_factual_row_ratio(table) * 0.15)
+        return round(max(0.0, min(1.0, score)), 4)
+
+    def _table_is_coherent_pdfplumber_candidate(
+        self,
+        table: TablePayload,
+        assessment: Mapping[str, Any] | None = None,
+    ) -> bool:
+        assessment = assessment if isinstance(assessment, Mapping) else self._assess_table_quality(table)
+        signals = assessment.get("signals") if isinstance(assessment, Mapping) else {}
+        if not isinstance(signals, Mapping):
+            signals = {}
+        metadata = table.metadata if isinstance(table.metadata, Mapping) else {}
+        detected_via = str(metadata.get("detected_via") or "").lower()
+        if "pdfplumber" not in detected_via:
+            return False
+        if self._table_is_collapsed_factual(table, assessment):
+            return False
+        data_row_count = len(self._pdf_table_readable_rows(table))
+        if data_row_count < 5:
+            return False
+        effective_columns = int(signals.get("effective_column_count") or self._table_effective_column_count(table))
+        if effective_columns < 3:
+            return False
+        if bool(signals.get("no_readable_rows")):
+            return False
+        if bool(signals.get("bridge_like_table")) or bool(signals.get("compact_banner_table")):
+            return False
+        if bool(signals.get("header_paragraph_like")):
+            return False
+        if float(signals.get("placeholder_cell_ratio") or 0.0) >= 0.45:
+            return False
+        if float(signals.get("scaffold_row_ratio") or 0.0) >= 0.8:
+            return False
+        if float(signals.get("multi_cell_row_ratio") or 0.0) < 0.35:
+            return False
+        if float(signals.get("value_row_ratio") or 0.0) < 0.2:
+            return False
+        readability = self._table_text_readability_score(table, assessment)
+        quality = float(assessment.get("quality_score") or 0.0)
+        return readability >= 0.82 and quality >= 0.5
+
+    def _table_distinct_row_prefix_count(
+        self,
+        table: TablePayload,
+        *,
+        max_tokens: int = 5,
+    ) -> int:
+        prefixes: set[str] = set()
+        for row in self._pdf_table_readable_rows(table):
+            text = self._table_row_render_text(row)
+            if not text:
+                continue
+            tokens = [
+                token
+                for token in re.findall(r"[A-Za-z0-9\u0600-\u06FF%]+", text.lower())
+                if len(token) > 1
+            ]
+            if not tokens:
+                continue
+            prefix = " ".join(tokens[:max_tokens]).strip()
+            if prefix:
+                prefixes.add(prefix)
+        return len(prefixes)
+
+    def _table_is_collapsed_uniform_value_matrix(
+        self,
+        table: TablePayload,
+        assessment: Mapping[str, Any] | None = None,
+    ) -> bool:
+        assessment = assessment if isinstance(assessment, Mapping) else self._assess_table_quality(table)
+        signals = assessment.get("signals") if isinstance(assessment, Mapping) else {}
+        if not isinstance(signals, Mapping):
+            signals = {}
+        metadata = table.metadata if isinstance(table.metadata, Mapping) else {}
+        detected_via = str(metadata.get("detected_via") or "").lower()
+        if "pdfplumber" not in detected_via:
+            return False
+        if self._table_is_collapsed_factual(table, assessment):
+            return False
+        if self._table_is_coherent_pdfplumber_candidate(table, assessment):
+            return False
+        data_row_count = len(self._pdf_table_readable_rows(table))
+        if data_row_count < 8:
+            return False
+        effective_columns = int(signals.get("effective_column_count") or self._table_effective_column_count(table))
+        if effective_columns != 1:
+            return False
+        if bool(signals.get("no_readable_rows")):
+            return False
+        if bool(signals.get("bridge_like_table")) or bool(signals.get("compact_banner_table")):
+            return False
+        if bool(signals.get("header_paragraph_like")):
+            return False
+        if float(signals.get("placeholder_cell_ratio") or 0.0) >= 0.2:
+            return False
+        if float(signals.get("structured_row_ratio") or 0.0) < 0.6:
+            return False
+        if float(signals.get("value_row_ratio") or 0.0) < 0.5:
+            return False
+        if float(signals.get("row_consistency") or 0.0) < 0.9:
+            return False
+        if float(signals.get("cell_fill_ratio") or 0.0) < 0.95:
+            return False
+        if float(signals.get("long_cell_ratio") or 0.0) > 0.25:
+            return False
+        if int(signals.get("max_cell_word_count") or 0) > 18:
+            return False
+        if self._table_distinct_row_prefix_count(table) < 6:
+            return False
+        quality = float(assessment.get("quality_score") or 0.0)
+        return quality >= 0.7
+
     def _estimate_table_structure_confidence(self, table: TablePayload) -> float:
         """
         Best-effort proxy for table structure confidence (0.0-1.0).
@@ -7107,13 +8843,26 @@ class KnowledgeIngestionService:
     def _score_table_set(self, tables: Sequence[TablePayload]) -> float:
         if not tables:
             return 0.0
+        selection_context = getattr(self, "_active_table_selection_context", None)
+        native_text_pdf = bool(
+            isinstance(selection_context, Mapping) and selection_context.get("native_text_pdf")
+        )
         total_score = 0.0
         for table in tables:
             assessment = self._assess_table_quality(table)
             quality = float(assessment.get("quality_score") or 0.0)
             structure_conf = self._get_table_structure_confidence(table)
+            collapsed_factual = self._table_is_collapsed_factual(table, assessment)
+            readability = self._table_text_readability_score(table, assessment)
+            table_meta = table.metadata if isinstance(table.metadata, Mapping) else {}
+            detected_via = str(table_meta.get("detected_via") or "").lower()
             if isinstance(structure_conf, (int, float)):
-                quality *= max(0.2, min(1.0, float(structure_conf)))
+                structure_multiplier = max(0.2, min(1.0, float(structure_conf)))
+                if native_text_pdf and collapsed_factual:
+                    structure_multiplier = max(structure_multiplier, 0.72)
+                if native_text_pdf and "azure" in detected_via and readability < 0.55:
+                    structure_multiplier = min(structure_multiplier, 0.62)
+                quality *= structure_multiplier
             signals = assessment.get("signals") or {}
             if isinstance(signals, Mapping) and (
                 signals.get("card_mockup")
@@ -7121,6 +8870,12 @@ class KnowledgeIngestionService:
                 or signals.get("valid_thru")
             ):
                 quality = max(0.0, quality - 0.4)
+            if native_text_pdf:
+                quality *= 0.55 + (0.45 * readability)
+                if "pdfplumber" in detected_via and collapsed_factual:
+                    quality *= self.native_pdf_pdfplumber_score_boost
+                elif "azure" in detected_via and readability < 0.55:
+                    quality *= self.native_pdf_low_readability_penalty
             # Align with read_knowledge: "visible body rows" exclude header + section_header.
             data_rows = len(
                 [
@@ -7194,298 +8949,93 @@ class KnowledgeIngestionService:
             "valid_bbox_count": valid_bbox_count,
         }
 
-    def _maybe_override_fragmented_heuristic_selection(
+    def _candidate_quality_diagnostics(
         self,
-        selected: str,
-        *,
-        candidates: Mapping[str, list[TablePayload]],
-        scores: Mapping[str, float],
-        metrics: Mapping[str, Mapping[str, float | int]],
-    ) -> tuple[str, dict[str, Any]]:
-        diag: dict[str, Any] = {
-            "heuristic_override_applied": False,
-            "heuristic_override_reason": "",
-        }
-        if not selected.startswith("heuristic"):
-            diag["heuristic_override_reason"] = "selected_not_heuristic"
-            return selected, diag
-
-        non_heuristic_names = [name for name in candidates.keys() if not name.startswith("heuristic")]
-        if not non_heuristic_names:
-            diag["heuristic_override_reason"] = "no_non_heuristic_candidate"
-            return selected, diag
-
-        best_non_heuristic = max(
-            non_heuristic_names,
-            key=lambda name: (scores.get(name, 0.0), len(candidates.get(name) or []), name),
-        )
-        selected_metrics = metrics.get(selected) or {}
-        non_heuristic_metrics = metrics.get(best_non_heuristic) or {}
-
-        selected_table_count = int(selected_metrics.get("table_count") or 0)
-        selected_micro_ratio = float(selected_metrics.get("micro_table_ratio") or 0.0)
-        selected_title_ratio = float(selected_metrics.get("distinct_title_ratio") or 0.0)
-        selected_bbox_area = float(selected_metrics.get("total_bbox_area") or 0.0)
-        selected_total_rows = int(selected_metrics.get("total_data_rows") or 0)
-        non_heuristic_bbox_area = float(non_heuristic_metrics.get("total_bbox_area") or 0.0)
-        non_heuristic_total_rows = int(non_heuristic_metrics.get("total_data_rows") or 0)
-        non_heuristic_micro_ratio = float(non_heuristic_metrics.get("micro_table_ratio") or 0.0)
-        selected_score = float(scores.get(selected) or 0.0)
-        non_heuristic_score = float(scores.get(best_non_heuristic) or 0.0)
-
-        suspicious_flags: list[str] = []
-        if selected_table_count >= 3 and selected_micro_ratio >= 0.75:
-            suspicious_flags.append("fragmented_micro_tables")
-        if selected_table_count >= 3 and selected_title_ratio <= 0.4:
-            suspicious_flags.append("repeated_titles")
-        if (
-            selected_bbox_area > 0.0
-            and non_heuristic_bbox_area > 0.0
-            and selected_bbox_area <= (non_heuristic_bbox_area * 0.45)
-        ):
-            suspicious_flags.append("low_bbox_coverage")
-
-        comparable_non_heuristic = non_heuristic_score >= (selected_score * 0.35)
-        large_coverage_gain = (
-            selected_bbox_area > 0.0
-            and non_heuristic_bbox_area >= (selected_bbox_area * 2.5)
-        )
-        strong_row_gain = non_heuristic_total_rows >= max(8, selected_total_rows * 2)
-        viable_non_heuristic_shape = non_heuristic_micro_ratio <= 0.6
-        fallback_fragmentation_override = (
-            len(suspicious_flags) >= 2
-            and large_coverage_gain
-            and strong_row_gain
-            and viable_non_heuristic_shape
-        )
-
-        if len(suspicious_flags) >= 2 and (
-            comparable_non_heuristic or fallback_fragmentation_override
-        ):
-            override_reason = (
-                "suspicious_fragmentation"
-                if comparable_non_heuristic
-                else "suspicious_fragmentation_low_coverage_rows"
-            )
-            diag.update(
-                {
-                    "heuristic_override_applied": True,
-                    "heuristic_override_reason": override_reason,
-                    "heuristic_override_flags": suspicious_flags,
-                    "heuristic_override_from": selected,
-                    "heuristic_override_to": best_non_heuristic,
-                }
-            )
-            return best_non_heuristic, diag
-
-        diag.update(
-            {
-                "heuristic_override_reason": "not_triggered",
-                "heuristic_override_flags": suspicious_flags,
-                "heuristic_override_candidate": best_non_heuristic,
-                "heuristic_override_comparable_non_heuristic": comparable_non_heuristic,
-                "heuristic_override_fallback_fragmentation": fallback_fragmentation_override,
+        tables: Sequence[TablePayload],
+    ) -> dict[str, float | int]:
+        if not tables:
+            return {
+                "table_count": 0,
+                "avg_quality_score": 0.0,
+                "avg_readability_score": 0.0,
+                "collapsed_factual_count": 0,
+                "avg_structure_confidence": 0.0,
             }
-        )
-        return selected, diag
 
-    def _table_region_candidate_score(self, table: TablePayload) -> float:
-        assessment = self._assess_table_quality(table)
-        quality = float(assessment.get("quality_score") or 0.0)
-        structure_conf = self._get_table_structure_confidence(table)
-        confidence = float(structure_conf if isinstance(structure_conf, (int, float)) else 0.0)
-        return round(quality * confidence, 4)
+        quality_scores: list[float] = []
+        readability_scores: list[float] = []
+        structure_scores: list[float] = []
+        collapsed_count = 0
+        for table in tables:
+            assessment = self._assess_table_quality(table)
+            quality_scores.append(float(assessment.get("quality_score") or 0.0))
+            readability_scores.append(self._table_text_readability_score(table, assessment))
+            structure_conf = self._get_table_structure_confidence(table)
+            if isinstance(structure_conf, (int, float)):
+                structure_scores.append(float(structure_conf))
+            if self._table_is_collapsed_factual(table, assessment):
+                collapsed_count += 1
 
-    def _table_region_candidate_rank(
-        self,
-        table: TablePayload,
-    ) -> tuple[int, int, float, int, str, str, list[str]]:
-        assessment = self._assess_table_quality(table)
-        candidate_class, decision, reasons = self._classify_pdf_table_candidate(
-            table,
-            assessment,
-            recurrence_stats=None,
-        )
-        region_score = self._table_region_candidate_score(table)
-        data_rows = len(self._pdf_table_readable_rows(table))
-        class_rank = {
-            "strong_table": 3,
-            "weak_table": 2,
-            "layout_fragment": 1,
-            "recurring_scaffold": 0,
-        }.get(candidate_class, 0)
-        keep_rank = 1 if decision == "keep" else 0
-        return keep_rank, class_rank, region_score, data_rows, candidate_class, decision, reasons
+        def _avg(values: Sequence[float]) -> float:
+            if not values:
+                return 0.0
+            return round(sum(values) / len(values), 4)
 
-    def _extractor_is_primary_table_candidate(self, extractor_name: str) -> bool:
-        normalized = str(extractor_name or "").strip().lower()
-        return bool(normalized) and not normalized.startswith("heuristic")
-
-    def _table_region_membership_score(self, left: TablePayload, right: TablePayload) -> float:
-        overlap_ratio = self._table_region_overlap_ratio(left, right)
-        left_bbox = self._normalize_bbox(left.bbox)
-        right_bbox = self._normalize_bbox(right.bbox)
-        if not left_bbox or not right_bbox:
-            return overlap_ratio
-
-        ix0 = max(left_bbox["x0"], right_bbox["x0"])
-        iy0 = max(left_bbox["y0"], right_bbox["y0"])
-        ix1 = min(left_bbox["x1"], right_bbox["x1"])
-        iy1 = min(left_bbox["y1"], right_bbox["y1"])
-        if ix1 <= ix0 or iy1 <= iy0:
-            return overlap_ratio
-
-        intersection = (ix1 - ix0) * (iy1 - iy0)
-        left_area = self._bbox_area(left_bbox)
-        right_area = self._bbox_area(right_bbox)
-        containment = max(
-            intersection / max(left_area, 1.0),
-            intersection / max(right_area, 1.0),
-        )
-        return max(overlap_ratio, containment)
-
-    def _select_table_candidates_by_region(
-        self,
-        candidates: Mapping[str, list[TablePayload]],
-        *,
-        document_selected: str,
-    ) -> tuple[str, list[TablePayload], dict[str, Any]] | None:
-        region_items: list[dict[str, Any]] = []
-        for extractor_name, tables in candidates.items():
-            for table in tables:
-                bbox = self._normalize_bbox(table.bbox)
-                if not bbox:
-                    continue
-                keep_rank, class_rank, region_score, data_rows, candidate_class, decision, reasons = (
-                    self._table_region_candidate_rank(table)
-                )
-                region_items.append(
-                    {
-                        "extractor": extractor_name,
-                        "table": table,
-                        "page": int(table.page_number or 0),
-                        "bbox": bbox,
-                        "region_score": region_score,
-                        "data_rows": data_rows,
-                        "keep_rank": keep_rank,
-                        "class_rank": class_rank,
-                        "candidate_class": candidate_class,
-                        "candidate_decision": decision,
-                        "candidate_reasons": reasons,
-                    }
-                )
-        if len(region_items) < 2:
-            return None
-
-        regions: list[list[dict[str, Any]]] = []
-        for item in sorted(
-            region_items,
-            key=lambda entry: (
-                entry["page"],
-                float(entry["bbox"]["y0"]),
-                float(entry["bbox"]["x0"]),
-                entry["extractor"],
-            ),
-        ):
-            matched_region: list[dict[str, Any]] | None = None
-            for region in regions:
-                if region[0]["page"] != item["page"]:
-                    continue
-                if any(
-                    self._table_region_membership_score(member["table"], item["table"]) >= 0.35
-                    for member in region
-                ):
-                    matched_region = region
-                    break
-            if matched_region is None:
-                regions.append([item])
-            else:
-                matched_region.append(item)
-
-        blended_tables: list[TablePayload] = []
-        region_choices: list[dict[str, Any]] = []
-        chosen_extractors: list[str] = []
-        chosen_region_entries: list[dict[str, Any]] = []
-        document_selected_region_entries: list[dict[str, Any] | None] = []
-
-        for region_index, region in enumerate(regions, start=1):
-            primary_region = [
-                entry for entry in region if self._extractor_is_primary_table_candidate(entry["extractor"])
-            ]
-            candidate_pool = primary_region or region
-            best = max(
-                candidate_pool,
-                key=lambda entry: (
-                    entry["keep_rank"],
-                    entry["class_rank"],
-                    entry["region_score"],
-                    entry["data_rows"],
-                    entry["extractor"],
-                ),
-            )
-            document_selected_pool = [
-                entry for entry in region if str(entry["extractor"] or "").strip().lower() == document_selected
-            ]
-            document_best = (
-                max(
-                    document_selected_pool,
-                    key=lambda entry: (
-                        entry["keep_rank"],
-                        entry["class_rank"],
-                        entry["region_score"],
-                        entry["data_rows"],
-                        entry["extractor"],
-                    ),
-                )
-                if document_selected_pool
-                else None
-            )
-            blended_tables.append(best["table"])
-            chosen_extractors.append(best["extractor"])
-            chosen_region_entries.append(best)
-            document_selected_region_entries.append(document_best)
-            region_choices.append(
-                {
-                    "region_index": region_index,
-                    "page_number": best["page"],
-                    "selected_extractor": best["extractor"],
-                    "selected_order_index": best["table"].order_index,
-                    "selected_score": best["region_score"],
-                    "selected_class": best["candidate_class"],
-                    "selected_decision": best["candidate_decision"],
-                    "selected_reasons": best["candidate_reasons"],
-                    "candidate_extractors": [entry["extractor"] for entry in region],
-                    "primary_candidate_extractors": [entry["extractor"] for entry in primary_region],
-                    "heuristic_only_region": not primary_region,
-                }
-            )
-
-        unique_extractors = sorted(set(chosen_extractors))
-        document_selected_gap_improved = any(
-            chosen.get("candidate_decision") == "keep"
-            and (document_best is None or document_best.get("candidate_decision") != "keep")
-            for chosen, document_best in zip(chosen_region_entries, document_selected_region_entries)
-        )
-        if len(unique_extractors) <= 1 and unique_extractors and unique_extractors[0] == document_selected:
-            return None
-        if not document_selected_gap_improved:
-            return None
-
-        blended_tables.sort(
-            key=lambda table: (
-                int(table.page_number or 0),
-                float((self._normalize_bbox(table.bbox) or {}).get("y0", 0.0)),
-                table.order_index,
-            )
-        )
-        return "auto:region_blend", blended_tables, {
-            "selection_mode": "candidate_region_blend_v1",
-            "region_blend_applied": True,
-            "region_blend_document_selected": document_selected,
-            "region_blend_extractors_used": unique_extractors,
-            "region_blend_region_count": len(regions),
-            "region_blend_regions": region_choices,
+        return {
+            "table_count": len(tables),
+            "avg_quality_score": _avg(quality_scores),
+            "avg_readability_score": _avg(readability_scores),
+            "collapsed_factual_count": collapsed_count,
+            "avg_structure_confidence": _avg(structure_scores),
         }
+
+    def _native_pdf_candidate_rank_scores(
+        self,
+        *,
+        scores: Mapping[str, float],
+        metrics: Mapping[str, Mapping[str, Any]],
+        quality_diagnostics: Mapping[str, Mapping[str, Any]],
+    ) -> dict[str, float]:
+        if not scores:
+            return {}
+        available = [name for name in scores.keys()]
+        table_counts = [
+            max(1, int((metrics.get(name) or {}).get("table_count") or 0))
+            for name in available
+        ]
+        baseline_table_count = min(table_counts) if table_counts else 1
+        best_readability = max(
+            (float((quality_diagnostics.get(name) or {}).get("avg_readability_score") or 0.0) for name in available),
+            default=0.0,
+        )
+        ranked_scores: dict[str, float] = {}
+        for name in available:
+            raw_score = float(scores.get(name) or 0.0)
+            table_count = max(1, int((metrics.get(name) or {}).get("table_count") or 0))
+            avg_readability = float((quality_diagnostics.get(name) or {}).get("avg_readability_score") or 0.0)
+            avg_quality = float((quality_diagnostics.get(name) or {}).get("avg_quality_score") or 0.0)
+            collapsed_factual_count = int((quality_diagnostics.get(name) or {}).get("collapsed_factual_count") or 0)
+            detected_name = str(name or "").lower()
+
+            adjusted = raw_score / math.sqrt(float(table_count))
+            adjusted *= 0.75 + (0.25 * avg_readability)
+            adjusted *= 0.8 + (0.2 * avg_quality)
+
+            inflated = table_count >= max(3, int(math.ceil(baseline_table_count * 1.5)))
+            readability_gap = best_readability - avg_readability
+            if inflated and readability_gap <= 0.04:
+                adjusted *= max(0.5, baseline_table_count / float(table_count))
+
+            if collapsed_factual_count > 0:
+                adjusted *= 1.0 + min(0.2, collapsed_factual_count * 0.04)
+
+            if "pdfplumber:lines" == detected_name:
+                adjusted *= 1.08
+            elif "azure" in detected_name and inflated and collapsed_factual_count == 0:
+                adjusted *= 0.92
+
+            ranked_scores[name] = round(adjusted, 4)
+        return ranked_scores
 
     def _table_runtime_flags(self, upload: KnowledgeUpload | None) -> dict[str, Any]:
         business = getattr(upload, "business_profile", None) if upload else None
@@ -7503,72 +9053,140 @@ class KnowledgeIngestionService:
     def _select_table_candidates(
         self,
         candidates: Mapping[str, list[TablePayload]],
+        *,
+        selection_context: Mapping[str, Any] | None = None,
     ) -> tuple[str, list[TablePayload], dict[str, Any]]:
         if not candidates:
             return "none", [], {"scores": {}}
-        scores = {name: self._score_table_set(tables) for name, tables in candidates.items()}
-        metrics = {name: self._candidate_selection_metrics(tables) for name, tables in candidates.items()}
-
-        preferred = (self.pdf_table_extractor or "auto").strip().lower()
-        selected = ""
-        if preferred and preferred != "auto":
-            if preferred in candidates:
-                selected = preferred
-            elif preferred == "pdfplumber":
-                pdf_options = [name for name in candidates if name.startswith("pdfplumber:")]
-                if pdf_options:
-                    selected = max(pdf_options, key=lambda name: scores.get(name, 0.0))
-            elif preferred == "azure":
-                azure_options = [name for name in candidates if name.startswith("azure")]
-                if azure_options:
-                    selected = max(azure_options, key=lambda name: scores.get(name, 0.0))
-            elif preferred.startswith("pdfplumber"):
-                suffix = preferred.replace("pdfplumber", "").lstrip(":-_")
-                if suffix:
-                    key = f"pdfplumber:{suffix}"
-                    if key in candidates:
-                        selected = key
-            elif preferred.startswith("azure"):
-                suffix = preferred.replace("azure", "").lstrip(":-_")
-                key = f"azure:{suffix}" if suffix else "azure"
-                if key in candidates:
-                    selected = key
-
-        if not selected:
-            ordered = sorted(
-                candidates.keys(),
-                key=lambda name: (scores.get(name, 0.0), len(candidates.get(name) or []), name),
-                reverse=True,
-            )
-            selected = ordered[0]
-            selected, override_diag = self._maybe_override_fragmented_heuristic_selection(
-                selected,
-                candidates=candidates,
-                scores=scores,
-                metrics=metrics,
-            )
-        else:
-            override_diag = {
-                "heuristic_override_applied": False,
-                "heuristic_override_reason": "preferred_extractor",
+        previous_context = getattr(self, "_active_table_selection_context", None)
+        self._active_table_selection_context = dict(selection_context or {})
+        try:
+            scores = {name: self._score_table_set(tables) for name, tables in candidates.items()}
+            metrics = {name: self._candidate_selection_metrics(tables) for name, tables in candidates.items()}
+            quality_diagnostics = {
+                name: self._candidate_quality_diagnostics(tables) for name, tables in candidates.items()
             }
-        selection_meta: dict[str, Any] = {
-            "scores": scores,
-            "metrics": metrics,
-            "selection_mode": "candidate_scorer_v2",
-            **override_diag,
+        finally:
+            self._active_table_selection_context = previous_context
+        preferred = (self.pdf_table_extractor or "auto").strip().lower()
+        selection_mode = self.table_selection_mode or "scored_promotion_v2"
+
+        alias_priority = {
+            "auto": [
+                "pdfplumber:lines",
+                "pdfplumber:lines_text",
+                "pdfplumber:text_lines",
+                "pdfplumber:text",
+                "azure:layout",
+                "heuristic",
+                "geometry",
+            ],
+            "pdfplumber": [
+                "pdfplumber:lines",
+                "pdfplumber:lines_text",
+                "pdfplumber:text_lines",
+                "pdfplumber:text",
+            ],
+            "azure": ["azure:layout"],
+            "geometry": ["geometry"],
+            "heuristic": ["heuristic"],
         }
 
-        if preferred in {"", "auto"}:
-            region_blend = self._select_table_candidates_by_region(
-                candidates,
-                document_selected=selected,
-            )
-            if region_blend is not None:
-                blended_name, blended_tables, region_meta = region_blend
-                selection_meta.update(region_meta)
-                return blended_name, blended_tables, selection_meta
+        explicit_variants: list[str] = []
+        if preferred in candidates:
+            explicit_variants = [preferred]
+        elif preferred.startswith("pdfplumber"):
+            suffix = preferred.replace("pdfplumber", "").lstrip(":-_")
+            explicit_variants = [f"pdfplumber:{suffix}"] if suffix else alias_priority["pdfplumber"]
+        elif preferred.startswith("azure"):
+            suffix = preferred.replace("azure", "").lstrip(":-_")
+            explicit_variants = [f"azure:{suffix}"] if suffix else alias_priority["azure"]
+        else:
+            explicit_variants = list(alias_priority.get(preferred, []))
 
+        default_chain = list(alias_priority["auto"])
+        preference_chain = list(explicit_variants)
+        for candidate_name in default_chain:
+            if candidate_name not in preference_chain:
+                preference_chain.append(candidate_name)
+
+        available_names = sorted(candidates.keys())
+
+        def _preference_rank(name: str) -> int:
+            if name in preference_chain:
+                return preference_chain.index(name)
+            return len(preference_chain) + available_names.index(name)
+
+        if selection_mode == "deterministic_priority_v1":
+            selected = next((name for name in explicit_variants if name in candidates), "")
+            if not selected:
+                selected = next((name for name in default_chain if name in candidates), "")
+            if not selected:
+                selected = available_names[0]
+            ranked_candidates = sorted(available_names, key=lambda name: (_preference_rank(name), name))
+            rank_scores = dict(scores)
+            selector_disabled = True
+        else:
+            native_text_pdf = bool(
+                isinstance(selection_context, Mapping) and selection_context.get("native_text_pdf")
+            )
+            if native_text_pdf:
+                rank_scores = self._native_pdf_candidate_rank_scores(
+                    scores=scores,
+                    metrics=metrics,
+                    quality_diagnostics=quality_diagnostics,
+                )
+            else:
+                rank_scores = dict(scores)
+            ranked_candidates = sorted(
+                available_names,
+                key=lambda name: (
+                    -float(rank_scores.get(name) or 0.0),
+                    -int(metrics.get(name, {}).get("total_data_rows") or 0),
+                    -float(metrics.get(name, {}).get("avg_data_rows") or 0.0),
+                    float(metrics.get(name, {}).get("micro_table_ratio") or 0.0),
+                    -float(metrics.get(name, {}).get("distinct_title_ratio") or 0.0),
+                    -float(metrics.get(name, {}).get("total_bbox_area") or 0.0),
+                    _preference_rank(name),
+                    name,
+                ),
+            )
+            selected = ranked_candidates[0]
+            selector_disabled = False
+
+        selected_score = round(float(scores.get(selected) or 0.0), 4)
+        runner_up = ranked_candidates[1] if len(ranked_candidates) > 1 else None
+
+        selection_meta: dict[str, Any] = {
+            "scores": scores,
+            "rank_scores": rank_scores,
+            "metrics": metrics,
+            "quality_diagnostics": quality_diagnostics,
+            "selection_mode": selection_mode,
+            "preferred_extractor": preferred,
+            "fallback_chain": default_chain,
+            "selector_disabled": selector_disabled,
+            "ranked_candidates": ranked_candidates,
+            "selected_score": selected_score,
+        }
+        if selection_context:
+            selection_meta["selection_context"] = dict(selection_context)
+        if runner_up:
+            selection_meta["runner_up"] = runner_up
+            selection_meta["score_margin_to_runner_up"] = round(
+                selected_score - float(scores.get(runner_up) or 0.0),
+                4,
+            )
+        logger.info(
+            "table.selector.decision selection_mode=%s selected=%s score=%.4f rank_score=%.4f context=%s ranked=%s diagnostics=%s",
+            selection_mode,
+            selected,
+            selected_score,
+            float(rank_scores.get(selected) or 0.0),
+            dict(selection_context or {}),
+            ranked_candidates,
+            quality_diagnostics,
+        )
         return selected, candidates.get(selected, []), selection_meta
 
     @staticmethod
@@ -9403,6 +11021,9 @@ class KnowledgeIngestionService:
         bridge_like = bool(signals.get("bridge_like_table"))
         low_structure = bool(signals.get("low_structure_table"))
         compact_banner = bool(signals.get("compact_banner_table"))
+        collapsed_factual_keep = self._table_is_collapsed_factual(table, assessment)
+        coherent_pdfplumber_keep = self._table_is_coherent_pdfplumber_candidate(table, assessment)
+        collapsed_uniform_matrix_keep = self._table_is_collapsed_uniform_value_matrix(table, assessment)
         header_paragraph_like = bool(signals.get("header_paragraph_like"))
         leading_blank_rows = int(signals.get("leading_blank_rows") or 0)
         scaffold_row_ratio = float(signals.get("scaffold_row_ratio") or 0.0)
@@ -9419,11 +11040,11 @@ class KnowledgeIngestionService:
             reasons.append("no_readable_rows")
             return "layout_fragment", "suppress", reasons
 
-        if header_paragraph_like and data_row_count <= 3:
+        if header_paragraph_like and data_row_count <= 3 and not collapsed_factual_keep:
             reasons.append("header_paragraph_like")
             return "layout_fragment", "suppress", reasons
 
-        if paragraph_like and (quality <= 0.8 or bool(signals.get("nonsense_columns"))):
+        if paragraph_like and not collapsed_factual_keep and (quality <= 0.8 or bool(signals.get("nonsense_columns"))):
             reasons.append("paragraph_like_table")
             if fragment_like:
                 reasons.append("fragmented_logical_rows")
@@ -9437,7 +11058,7 @@ class KnowledgeIngestionService:
                 reasons.append("nonsense_columns")
             return "layout_fragment", "suppress", reasons
 
-        if low_structure:
+        if low_structure and not collapsed_factual_keep:
             reasons.append("low_structure_table")
             if paragraph_like:
                 reasons.append("paragraph_like_table")
@@ -9481,7 +11102,14 @@ class KnowledgeIngestionService:
             and float(signals.get("structured_row_ratio") or 0.0) >= 0.5
             and scaffold_row_ratio <= 0.5
         )
-        keep_evidence = matrix_like_keep or narrow_factual_keep or sparse_grid_keep
+        keep_evidence = (
+            matrix_like_keep
+            or narrow_factual_keep
+            or sparse_grid_keep
+            or collapsed_factual_keep
+            or coherent_pdfplumber_keep
+            or collapsed_uniform_matrix_keep
+        )
 
         if bool(signals.get("insufficient_rows")) and not keep_evidence:
             reasons.append("insufficient_rows")
@@ -9505,7 +11133,7 @@ class KnowledgeIngestionService:
             reasons.extend(["leading_blank_rows", "column_misalignment"])
             return "layout_fragment", "suppress", reasons
 
-        if quality < 0.6 and (fragment_like or bool(signals.get("nonsense_columns"))):
+        if quality < 0.6 and not collapsed_factual_keep and (fragment_like or bool(signals.get("nonsense_columns"))):
             if fragment_like:
                 reasons.append("fragmented_logical_rows")
             if signals.get("nonsense_columns"):
@@ -9515,6 +11143,18 @@ class KnowledgeIngestionService:
         if not keep_evidence:
             reasons.append("insufficient_keep_evidence")
             return "weak_table", "suppress", reasons
+
+        if collapsed_factual_keep and quality >= 0.4:
+            reasons.append("collapsed_factual_keep")
+            return "collapsed_factual_table", "keep", reasons
+
+        if coherent_pdfplumber_keep and quality >= 0.5:
+            reasons.append("coherent_pdfplumber_keep")
+            return "coherent_native_text_table", "keep", reasons
+
+        if collapsed_uniform_matrix_keep and quality >= 0.7:
+            reasons.append("collapsed_uniform_matrix_keep")
+            return "collapsed_uniform_value_matrix", "keep", reasons
 
         if quality < 0.75:
             reasons.append("low_quality_table")
@@ -9536,9 +11176,11 @@ class KnowledgeIngestionService:
         issues: list[IssuePayload] = []
         class_counts: Counter[str] = Counter()
         suppressed_examples: list[dict[str, Any]] = []
+        evaluated_tables: list[dict[str, Any]] = []
 
         for table in tables:
             assessment = self._assess_table_quality(table)
+            quality_score = float(assessment.get("quality_score") or 0.0)
             candidate_class, decision, reasons = self._classify_pdf_table_candidate(
                 table,
                 assessment,
@@ -9548,6 +11190,7 @@ class KnowledgeIngestionService:
             metadata = dict(table.metadata or {})
             metadata["promotion_class"] = candidate_class
             metadata["promotion_decision"] = decision
+            metadata["promotion_quality_score"] = round(quality_score, 4)
             if reasons:
                 metadata["promotion_reasons"] = reasons
             updated = TablePayload(
@@ -9560,6 +11203,18 @@ class KnowledgeIngestionService:
                 data_dictionary=table.data_dictionary,
                 metadata=metadata,
                 rows=table.rows,
+            )
+            evaluated_tables.append(
+                {
+                    "table": updated,
+                    "candidate_class": candidate_class,
+                    "decision": decision,
+                    "reasons": list(reasons),
+                    "assessment": assessment,
+                    "quality_score": quality_score,
+                    "data_row_count": len(self._pdf_table_readable_rows(updated)),
+                    "column_count": self._table_column_count(updated),
+                }
             )
             if decision == "keep":
                 kept.append(updated)
@@ -9589,6 +11244,79 @@ class KnowledgeIngestionService:
                 )
             )
 
+        fallback_kept: dict[str, Any] | None = None
+        if not kept and evaluated_tables:
+            hard_reject_reasons = {
+                "recurring_scaffold",
+                "micro_fragment_table",
+                "compact_banner_table",
+                "form_scaffold_table",
+                "bridge_like_table",
+                "single_row_bridge",
+                "no_readable_rows",
+            }
+
+            fallback_candidates = [
+                entry
+                for entry in evaluated_tables
+                if entry["data_row_count"] >= 2
+                and entry["column_count"] >= 2
+                and float(entry["quality_score"] or 0.0) >= 0.55
+                and not (hard_reject_reasons & set(entry["reasons"]))
+            ]
+            if fallback_candidates:
+                fallback_candidates.sort(
+                    key=lambda entry: (
+                        -float(entry["quality_score"] or 0.0),
+                        -int(entry["data_row_count"] or 0),
+                        -int(entry["column_count"] or 0),
+                        entry["table"].order_index,
+                    )
+                )
+                selected_fallback = fallback_candidates[0]
+                fallback_table = selected_fallback["table"]
+                fallback_meta = dict(fallback_table.metadata or {})
+                fallback_meta["promotion_decision"] = "keep_fallback"
+                fallback_meta["promotion_fallback"] = True
+                fallback_meta["promotion_fallback_reason"] = "bounded_structured_recovery"
+                if selected_fallback["reasons"]:
+                    fallback_meta["promotion_fallback_from_reasons"] = list(selected_fallback["reasons"])
+                fallback_table = TablePayload(
+                    order_index=fallback_table.order_index,
+                    title=fallback_table.title,
+                    section_heading=fallback_table.section_heading,
+                    page_number=fallback_table.page_number,
+                    bbox=fallback_table.bbox,
+                    column_schema=fallback_table.column_schema,
+                    data_dictionary=fallback_table.data_dictionary,
+                    metadata=fallback_meta,
+                    rows=fallback_table.rows,
+                )
+                kept.append(fallback_table)
+                fallback_kept = {
+                    "order_index": fallback_table.order_index,
+                    "page_number": fallback_table.page_number,
+                    "quality_score": round(float(selected_fallback["quality_score"] or 0.0), 4),
+                    "class": selected_fallback["candidate_class"],
+                }
+                class_counts["fallback_recovered"] += 1
+                issues = [
+                    issue
+                    for issue in issues
+                    if not (
+                        issue.table_order_index == fallback_table.order_index
+                        and issue.page_number == fallback_table.page_number
+                    )
+                ]
+                suppressed_examples = [
+                    example
+                    for example in suppressed_examples
+                    if not (
+                        example.get("order_index") == fallback_table.order_index
+                        and example.get("page_number") == fallback_table.page_number
+                    )
+                ]
+
         metadata = {
             "enabled": True,
             "input_tables": len(tables),
@@ -9596,6 +11324,8 @@ class KnowledgeIngestionService:
             "suppressed_tables": max(0, len(tables) - len(kept)),
             "class_counts": dict(class_counts),
         }
+        if fallback_kept:
+            metadata["fallback_kept_table"] = fallback_kept
         if suppressed_examples:
             metadata["suppressed_examples"] = suppressed_examples
         return kept, metadata, issues
@@ -9715,6 +11445,149 @@ class KnowledgeIngestionService:
             diagnostics["restored_by_reason"] = dict(restored_by_reason)
         return updated_pages, diagnostics
 
+    def _build_flat_text_segment_payloads(
+        self,
+        content: str,
+        *,
+        alias_hygiene: bool = False,
+    ) -> list[dict[str, Any]]:
+        segment_payloads: list[dict[str, Any]] = []
+        text_segments = self._chunk_text(content)
+        for segment in text_segments:
+            if not segment:
+                continue
+            augmented, aliases = self._inject_identifiers_into_text(segment, alias_hygiene=alias_hygiene)
+            metadata = {
+                "strategy": "sliding_window",
+                "index_type": "text",
+                "content_source": "flat_text",
+                "region_role": "text",
+            }
+            if aliases:
+                metadata.update(self._alias_metadata(aliases))
+            segment_payloads.append({"text": augmented, "metadata": metadata})
+        return segment_payloads
+
+    def _page_block_fragmentation_score(self, pages: Sequence[PageLayout]) -> float:
+        if not pages:
+            return 0.0
+        skip_types = {
+            KnowledgeBlockType.TABLE,
+            KnowledgeBlockType.IMAGE,
+            KnowledgeBlockType.FIGURE,
+            KnowledgeBlockType.HEADER,
+            KnowledgeBlockType.FOOTER,
+            KnowledgeBlockType.OTHER,
+        }
+        total_blocks = 0
+        short_blocks = 0
+        numeric_short_blocks = 0
+        for page in pages:
+            for block in page.blocks or []:
+                if block.block_type in skip_types:
+                    continue
+                block_meta = block.metadata if isinstance(block.metadata, Mapping) else {}
+                if block_meta.get("canonical_consumed_by_table"):
+                    continue
+                text = self._sanitize_text(str(block.text or "")).strip()
+                if not text:
+                    continue
+                total_blocks += 1
+                token_count = len(self._tokenize_for_quality(text))
+                if token_count <= self.page_block_fragmentation_short_token_limit:
+                    short_blocks += 1
+                    if self._has_numeric_table_signal(text):
+                        numeric_short_blocks += 1
+        if total_blocks < self.page_block_fragmentation_min_blocks:
+            return 0.0
+        short_ratio = short_blocks / max(1, total_blocks)
+        numeric_ratio = numeric_short_blocks / max(1, total_blocks)
+        return round((short_ratio * 0.7) + (numeric_ratio * 0.3), 4)
+
+    def _segment_quality_average(self, payloads: Sequence[Mapping[str, Any]]) -> float:
+        if not payloads:
+            return 0.0
+        scores: list[float] = []
+        for payload in payloads:
+            text = str(payload.get("text") or "").strip()
+            if not text:
+                continue
+            metrics = self._chunk_quality_metrics(text)
+            scores.append(float(metrics.get("chunk_quality_score") or 0.0))
+        if not scores:
+            return 0.0
+        return round(sum(scores) / len(scores), 4)
+
+    def _should_prefer_flat_text_segments(
+        self,
+        *,
+        pages: Sequence[PageLayout],
+        page_segments: Sequence[Mapping[str, Any]],
+        flat_segments: Sequence[Mapping[str, Any]],
+    ) -> bool:
+        if not pages or not page_segments or not flat_segments:
+            return False
+        fragmentation_score = self._page_block_fragmentation_score(pages)
+        if fragmentation_score < self.page_block_fragmentation_short_ratio:
+            return False
+        page_score = self._segment_quality_average(page_segments)
+        flat_score = self._segment_quality_average(flat_segments)
+        if fragmentation_score >= 0.7 and flat_score >= page_score:
+            return True
+        return flat_score >= (page_score + self.page_block_flat_text_preference_margin)
+
+    def _text_chunk_source_decision(
+        self,
+        *,
+        pages: Sequence[PageLayout] | None,
+        page_segments: Sequence[Mapping[str, Any]],
+        flat_segments: Sequence[Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        diagnostics: dict[str, Any] = {
+            "pages_available": bool(pages),
+            "page_segment_count": len(page_segments),
+            "flat_segment_count": len(flat_segments),
+        }
+        if not pages:
+            diagnostics["selected_source"] = "flat_text"
+            diagnostics["reason"] = "no_pages"
+            return diagnostics
+        fragmentation_score = self._page_block_fragmentation_score(pages)
+        page_score = self._segment_quality_average(page_segments)
+        flat_score = self._segment_quality_average(flat_segments)
+        diagnostics.update(
+            {
+                "fragmentation_score": fragmentation_score,
+                "page_blocks_quality_score": page_score,
+                "flat_text_quality_score": flat_score,
+                "fragmentation_threshold": self.page_block_fragmentation_short_ratio,
+                "quality_margin_threshold": self.page_block_flat_text_preference_margin,
+            }
+        )
+        if not page_segments:
+            diagnostics["selected_source"] = "flat_text"
+            diagnostics["reason"] = "no_page_segments"
+            return diagnostics
+        if not flat_segments:
+            diagnostics["selected_source"] = "page_blocks"
+            diagnostics["reason"] = "no_flat_segments"
+            return diagnostics
+        prefer_flat = self._should_prefer_flat_text_segments(
+            pages=pages,
+            page_segments=page_segments,
+            flat_segments=flat_segments,
+        )
+        diagnostics["selected_source"] = "flat_text" if prefer_flat else "page_blocks"
+        if fragmentation_score < self.page_block_fragmentation_short_ratio:
+            diagnostics["reason"] = "fragmentation_below_threshold"
+        elif flat_score >= (page_score + self.page_block_flat_text_preference_margin):
+            diagnostics["reason"] = "flat_text_quality_margin"
+        elif fragmentation_score >= 0.7 and flat_score >= page_score:
+            diagnostics["reason"] = "severe_fragmentation"
+        else:
+            diagnostics["reason"] = "page_blocks_retained"
+        return diagnostics
+
     def _build_chunks(
         self,
         upload: KnowledgeUpload,
@@ -9745,26 +11618,56 @@ class KnowledgeIngestionService:
             segment_payloads = self._build_entity_segment_payloads(entity_payloads, alias_hygiene=alias_hygiene)
         else:
             segment_payloads = []
+            flat_text_segment_payloads = self._build_flat_text_segment_payloads(
+                content,
+                alias_hygiene=alias_hygiene,
+            )
             if pages:
                 page_segments = self._build_text_segments_from_blocks(pages, alias_hygiene=alias_hygiene)
                 if page_segments:
-                    segment_payloads.extend(page_segments)
-                    used_page_blocks = True
-            if not segment_payloads:
-                text_segments = self._chunk_text(content)
-                for segment in text_segments:
-                    if not segment:
-                        continue
-                    augmented, aliases = self._inject_identifiers_into_text(segment, alias_hygiene=alias_hygiene)
-                    metadata = {
-                        "strategy": "sliding_window",
-                        "index_type": "text",
-                        "content_source": "flat_text",
-                        "region_role": "text",
+                    text_chunk_source_decision = self._text_chunk_source_decision(
+                        pages=pages,
+                        page_segments=page_segments,
+                        flat_segments=flat_text_segment_payloads,
+                    )
+                    if isinstance(ingestion_metadata, dict):
+                        ingestion_metadata["text_chunk_source_decision"] = text_chunk_source_decision
+                    logger.info(
+                        "chunk.text_source.decision upload=%s selected=%s reason=%s diagnostics=%s",
+                        upload.id,
+                        text_chunk_source_decision.get("selected_source"),
+                        text_chunk_source_decision.get("reason"),
+                        text_chunk_source_decision,
+                    )
+                    if text_chunk_source_decision.get("selected_source") == "flat_text":
+                        segment_payloads.extend(flat_text_segment_payloads)
+                    elif self._should_prefer_flat_text_segments(
+                        pages=pages,
+                        page_segments=page_segments,
+                        flat_segments=flat_text_segment_payloads,
+                    ):
+                        segment_payloads.extend(flat_text_segment_payloads)
+                    else:
+                        segment_payloads.extend(page_segments)
+                        used_page_blocks = True
+                elif isinstance(ingestion_metadata, dict):
+                    ingestion_metadata["text_chunk_source_decision"] = {
+                        "pages_available": True,
+                        "page_segment_count": 0,
+                        "flat_segment_count": len(flat_text_segment_payloads),
+                        "selected_source": "flat_text",
+                        "reason": "no_page_segments",
                     }
-                    if aliases:
-                        metadata.update(self._alias_metadata(aliases))
-                    segment_payloads.append({"text": augmented, "metadata": metadata})
+            if not segment_payloads:
+                if isinstance(ingestion_metadata, dict) and "text_chunk_source_decision" not in ingestion_metadata:
+                    ingestion_metadata["text_chunk_source_decision"] = {
+                        "pages_available": bool(pages),
+                        "page_segment_count": 0,
+                        "flat_segment_count": len(flat_text_segment_payloads),
+                        "selected_source": "flat_text",
+                        "reason": "flat_text_fallback_only",
+                    }
+                segment_payloads.extend(flat_text_segment_payloads)
 
             table_segment_payloads: list[dict[str, Any]] = []
             privacy_rules = self._table_privacy_rules(upload)
@@ -10607,6 +12510,7 @@ class KnowledgeIngestionService:
                 promoted_meta.pop("table_residual_candidate", None)
                 promoted_meta["content_source"] = "page_blocks"
                 promoted_meta["region_role"] = "text"
+                promoted_meta["table_adjacent"] = True
                 promoted_meta.pop("search_tier", None)
                 promoted_meta["table_annotation_unanchored"] = True
                 passthrough.append({"text": payload["text"], "metadata": promoted_meta})
@@ -10619,6 +12523,7 @@ class KnowledgeIngestionService:
                 promoted_meta.pop("table_residual_candidate", None)
                 promoted_meta["content_source"] = "page_blocks"
                 promoted_meta["region_role"] = "text"
+                promoted_meta["table_adjacent"] = True
                 promoted_meta.pop("search_tier", None)
                 promoted_meta["table_residual_projected"] = "narrative"
                 promoted_meta["table_reference_id"] = table_id
@@ -11819,6 +13724,13 @@ class KnowledgeIngestionService:
         rows = table_payload.rows or []
         page_number = table_payload.page_number or 0
         order_index = table_payload.order_index or 0
+        table_meta = table_payload.metadata if isinstance(getattr(table_payload, "metadata", None), Mapping) else {}
+        promoted_headers = int(table_meta.get("embedded_header_rows_promoted") or 0)
+        carried_labels = int(table_meta.get("merged_parent_label_cells_carried_down") or 0)
+        if promoted_headers > 0:
+            signals["embedded_header_rows_promoted"] = promoted_headers
+        if carried_labels > 0:
+            signals["merged_parent_label_cells_carried_down"] = carried_labels
 
         def _row_type(row: Any) -> str:
             meta = row.metadata if isinstance(getattr(row, "metadata", None), Mapping) else {}
@@ -12468,6 +14380,44 @@ class KnowledgeIngestionService:
             "scope_echo_ratio": round(float(scope_echo_ratio), 4),
         }
 
+    def _table_allows_collapsed_native_text_row_override(self, table: KnowledgeUploadTable) -> bool:
+        table_meta = getattr(table, "metadata", None)
+        if not isinstance(table_meta, Mapping):
+            return False
+        promotion_class = str(table_meta.get("promotion_class") or "").strip().lower()
+        return promotion_class in {
+            "collapsed_factual_table",
+            "collapsed_uniform_value_matrix",
+            "coherent_native_text_table",
+        }
+
+    def _collapsed_native_text_row_override_applies(
+        self,
+        *,
+        table: KnowledgeUploadTable,
+        value_by_label: Mapping[str, str],
+        row_signal_diag: Mapping[str, Any],
+        structural_row_diag: Mapping[str, Any],
+    ) -> bool:
+        if not self._table_allows_collapsed_native_text_row_override(table):
+            return False
+        if bool(structural_row_diag.get("is_structural_context")):
+            return False
+        values = [self._table_cell_text(value) for value in value_by_label.values()]
+        values = [value for value in values if value]
+        if len(values) != 1:
+            return False
+        text = values[0]
+        word_count = len(re.findall(r"[A-Za-z0-9\u0600-\u06FF%]+", text))
+        if word_count < 3 or word_count > 24:
+            return False
+        numeric_signal_tokens = int(row_signal_diag.get("currency_signal_token_count") or 0)
+        keyword_count = int(row_signal_diag.get("keyword_value_count") or 0)
+        has_fee_value = bool(row_signal_diag.get("has_fee_value"))
+        if numeric_signal_tokens <= 0 and keyword_count <= 0 and not has_fee_value:
+            return False
+        return True
+
     def _is_prefix_value_fragment(self, value: str) -> bool:
         sample = self._table_cell_text(value)
         if not sample:
@@ -12571,6 +14521,176 @@ class KnowledgeIngestionService:
             raw_text=row_text or row.raw_text,
             metadata=row_meta,
             cells=new_cells,
+        )
+
+    def _table_contextual_column_indices(self, table: TablePayload) -> set[int]:
+        column_map = self._table_column_map_for_payload(table)
+        if not column_map:
+            return {0}
+        role_payloads = self._infer_table_column_roles(
+            table_rows=list(table.rows or []),
+            column_map=column_map,
+            cached_roles=(table.data_dictionary or {}).get("column_roles"),
+        )
+        role_lookup = role_lookup_by_index(role_payloads)
+        contextual = {
+            int(idx)
+            for idx, payload in role_lookup.items()
+            if str(payload.get("role") or "").strip() in {COLUMN_ROLE_DESCRIPTOR, COLUMN_ROLE_QUALIFIER}
+        }
+        if contextual:
+            return contextual
+        # Conservative fallback: only the leading columns are likely to carry
+        # row labels. Value columns can legitimately use row spans too, and
+        # duplicating those would change the facts.
+        return {0}
+
+    def _replace_or_add_row_cell(
+        self,
+        *,
+        row: TableRowPayload,
+        column_index: int,
+        column_key: str,
+        new_value: str,
+        metadata_patch: Mapping[str, Any],
+    ) -> TableRowPayload:
+        new_cells: list[TableCellPayload] = []
+        replaced = False
+        for cell in row.cells or []:
+            try:
+                idx = int(cell.column_index)
+            except (TypeError, ValueError):
+                idx = -1
+            if idx != column_index:
+                new_cells.append(cell)
+                continue
+            replaced = True
+            cell_meta = dict(cell.metadata or {})
+            cell_meta.update(dict(metadata_patch or {}))
+            new_cells.append(
+                TableCellPayload(
+                    row_index=cell.row_index,
+                    column_index=cell.column_index,
+                    column_key=cell.column_key or column_key,
+                    raw_text=new_value,
+                    normalized_value=cell.normalized_value,
+                    bbox=cell.bbox,
+                    confidence=cell.confidence,
+                    metadata=cell_meta,
+                )
+            )
+        if not replaced:
+            new_cells.append(
+                TableCellPayload(
+                    row_index=row.row_index,
+                    column_index=column_index,
+                    column_key=column_key,
+                    raw_text=new_value,
+                    normalized_value={},
+                    bbox={},
+                    confidence=None,
+                    metadata=dict(metadata_patch or {}),
+                )
+            )
+        ordered_cells = sorted(
+            new_cells,
+            key=lambda c: int(getattr(c, "column_index", 0) or 0),
+        )
+        row_text = " | ".join(
+            str(cell.raw_text or "").strip()
+            for cell in ordered_cells
+            if str(cell.raw_text or "").strip()
+        ).strip()
+        row_meta = dict(row.metadata or {})
+        row_meta["merged_parent_labels_carried_down"] = int(row_meta.get("merged_parent_labels_carried_down") or 0) + 1
+        return TableRowPayload(
+            row_index=row.row_index,
+            page_number=row.page_number,
+            bbox=row.bbox,
+            raw_text=row_text or row.raw_text,
+            metadata=row_meta,
+            cells=ordered_cells,
+        )
+
+    def _carry_down_merged_parent_labels(self, table: TablePayload) -> tuple[TablePayload, int]:
+        rows = sorted(list(table.rows or []), key=lambda row: int(getattr(row, "row_index", 0)))
+        if len(rows) < 2:
+            return table, 0
+        contextual_indices = self._table_contextual_column_indices(table)
+        if not contextual_indices:
+            return table, 0
+
+        schema = [str(col or "").strip() or f"column_{idx + 1}" for idx, col in enumerate(table.column_schema or [])]
+        updated_rows: dict[int, TableRowPayload] = {int(row.row_index): row for row in rows}
+        filled_cells = 0
+
+        for position, row in enumerate(rows):
+            row_meta = row.metadata if isinstance(row.metadata, Mapping) else {}
+            if str(row_meta.get("row_type") or "").strip().lower() in {"header", "section_header"}:
+                continue
+            effective_row = updated_rows.get(int(row.row_index), row)
+            for col_idx, cell in sorted(self._row_cell_lookup(effective_row).items()):
+                if col_idx not in contextual_indices:
+                    continue
+                parent_value = self._table_cell_text(cell.raw_text or "")
+                if not parent_value:
+                    continue
+                try:
+                    row_span = int((cell.metadata or {}).get("row_span") or 1)
+                except (TypeError, ValueError):
+                    row_span = 1
+                if row_span <= 1:
+                    continue
+                for offset in range(1, row_span):
+                    target_position = position + offset
+                    if target_position >= len(rows):
+                        break
+                    target_original = rows[target_position]
+                    target_row = updated_rows.get(int(target_original.row_index), target_original)
+                    target_meta = target_row.metadata if isinstance(target_row.metadata, Mapping) else {}
+                    if str(target_meta.get("row_type") or "").strip().lower() in {"header", "section_header"}:
+                        continue
+                    target_lookup = self._row_cell_lookup(target_row)
+                    target_cell = target_lookup.get(col_idx)
+                    if target_cell is not None and self._table_cell_text(target_cell.raw_text or ""):
+                        continue
+                    column_key = schema[col_idx] if 0 <= col_idx < len(schema) else f"column_{col_idx + 1}"
+                    target_row = self._replace_or_add_row_cell(
+                        row=target_row,
+                        column_index=col_idx,
+                        column_key=column_key,
+                        new_value=parent_value,
+                        metadata_patch={
+                            "merged_parent_label_carried_down": True,
+                            "merged_parent_source_row": int(row.row_index),
+                            "merged_parent_source_column": int(col_idx),
+                            "merged_parent_source_row_span": int(row_span),
+                        },
+                    )
+                    updated_rows[int(target_row.row_index)] = target_row
+                    filled_cells += 1
+
+        if filled_cells <= 0:
+            return table, 0
+
+        table_meta = dict(table.metadata or {})
+        table_meta["merged_parent_label_cells_carried_down"] = int(
+            table_meta.get("merged_parent_label_cells_carried_down") or 0
+        ) + filled_cells
+        rebuilt_rows = [updated_rows.get(int(row.row_index), row) for row in rows]
+        return (
+            TablePayload(
+                order_index=table.order_index,
+                title=table.title,
+                section_heading=table.section_heading,
+                page_number=table.page_number,
+                bbox=table.bbox,
+                column_schema=table.column_schema,
+                data_dictionary=table.data_dictionary,
+                metadata=table_meta,
+                rows=rebuilt_rows,
+            ),
+            filled_cells,
         )
 
     def _stitch_table_row_continuations(self, table: TablePayload) -> tuple[TablePayload, int]:
@@ -13112,6 +15232,8 @@ class KnowledgeIngestionService:
         meta = {
             "deduped_tables": 0,
             "header_inferred": 0,
+            "embedded_header_rows_promoted": 0,
+            "merged_parent_label_cells_carried_down": 0,
             "row_continuation_stitched_pairs": 0,
             "value_fragment_stitched_cells": 0,
             "scope_refreshed_tables": 0,
@@ -13125,6 +15247,46 @@ class KnowledgeIngestionService:
 
         for page_number, page_tables in grouped.items():
             page_tables = sorted(page_tables, key=lambda t: t.order_index)
+            promoted_tables: list[TablePayload] = []
+            for table in page_tables:
+                promoted_table, promoted_headers = self._promote_embedded_header_rows(table)
+                if promoted_headers > 0:
+                    meta["embedded_header_rows_promoted"] += promoted_headers
+                    issues.append(
+                        IssuePayload(
+                            code="table_embedded_header_promoted",
+                            severity=KnowledgeIssueSeverity.INFO.value,
+                            description="Header-like table row promoted to schema/header metadata before indexing.",
+                            page_number=page_number,
+                            table_order_index=table.order_index,
+                            details={
+                                "promoted_rows": promoted_headers,
+                                "source_row": (promoted_table.metadata or {}).get("embedded_header_source_row"),
+                                "renamed_columns": (promoted_table.metadata or {}).get("embedded_header_renamed_columns"),
+                            },
+                        )
+                    )
+                promoted_tables.append(promoted_table)
+            page_tables = promoted_tables
+
+            carried_tables: list[TablePayload] = []
+            for table in page_tables:
+                carried_table, carried_cells = self._carry_down_merged_parent_labels(table)
+                if carried_cells > 0:
+                    meta["merged_parent_label_cells_carried_down"] += carried_cells
+                    issues.append(
+                        IssuePayload(
+                            code="table_merged_parent_labels_carried_down",
+                            severity=KnowledgeIssueSeverity.INFO.value,
+                            description="Merged parent row labels were carried down into child rows.",
+                            page_number=page_number,
+                            table_order_index=table.order_index,
+                            details={"carried_cells": carried_cells},
+                        )
+                    )
+                carried_tables.append(carried_table)
+            page_tables = carried_tables
+
             stitched_tables: list[TablePayload] = []
             for table in page_tables:
                 stitched_table, stitched_pairs = self._stitch_table_row_continuations(table)
@@ -13724,9 +15886,6 @@ class KnowledgeIngestionService:
                     or block_meta.get("table_residual")
                     or block_meta.get("content_source") == "table_residual"
                     or block_meta.get("region_role") == "table_residual"
-                    or block_meta.get("table_overlap_candidate")
-                    or block_meta.get("suppress_text_chunk")
-                    or block_meta.get("suppression_reason") == "table_overlap"
                 )
                 overlap_ratio = 0.0
                 try:
@@ -13811,6 +15970,31 @@ class KnowledgeIngestionService:
                             "region_role": "text",
                         }
                     )
+                    overlap_values = [
+                        float(entry.get("table_overlap_ratio") or 0.0)
+                        for entry in blocks
+                        if isinstance(entry.get("table_overlap_ratio"), (int, float))
+                    ]
+                    overlap_candidates = [
+                        entry
+                        for entry in blocks
+                        if entry.get("table_overlap_ratio") or entry.get("table_residual_region_key")
+                    ]
+                    if overlap_candidates:
+                        metadata["table_adjacent"] = True
+                        if overlap_values:
+                            metadata["table_overlap_ratio_max"] = round(max(overlap_values), 4)
+                        region_keys = _dedupe(
+                            [
+                                entry.get("table_residual_region_key")
+                                for entry in overlap_candidates
+                                if entry.get("table_residual_region_key")
+                            ],
+                            8,
+                        )
+                        if region_keys:
+                            metadata["table_region_keys"] = region_keys
+                            metadata["table_region_key"] = region_keys[0]
                 if anchors:
                     metadata["block_anchors"] = anchors
                 if headings:
@@ -17599,12 +19783,19 @@ class KnowledgeIngestionService:
                 fee_value=fee_value,
                 row_signal_diag=row_signal_diag,
             )
+            row_signal_override = self._collapsed_native_text_row_override_applies(
+                table=table,
+                value_by_label=value_by_label,
+                row_signal_diag=row_signal_diag,
+                structural_row_diag=structural_row_diag,
+            )
             if (
                 row_signal_diag["pair_count"] < self.table_row_signal_min_pairs
                 and row_signal_score < self.table_row_signal_min_score
             ):
-                suppressed_low_signal_rows += 1
-                continue
+                if not row_signal_override:
+                    suppressed_low_signal_rows += 1
+                    continue
 
             evidence_cell_ids = [
                 str(cell.id)
@@ -17661,6 +19852,7 @@ class KnowledgeIngestionService:
                     ),
                     "table_row_signal_has_fee_value": bool(row_signal_diag["has_fee_value"]),
                     "table_row_signal_score": float(row_signal_diag["score"]),
+                    "table_row_signal_override": bool(row_signal_override),
                     "table_row_is_structural_context": bool(
                         structural_row_diag["is_structural_context"]
                     ),
@@ -18134,6 +20326,11 @@ class KnowledgeIngestionService:
         return normalized or "table_row"
 
     _GENERIC_TABLE_TITLE_RE = re.compile(r"^Table\s+\d+$", re.IGNORECASE)
+    _GENERIC_COLUMN_LABEL_RE = re.compile(r"^(?:column[_\s-]*\d+|col[_\s-]*\d+|\d+)$", re.IGNORECASE)
+    _COMMON_DESCRIPTOR_COLUMN_RE = re.compile(
+        r"^(?:service|tariff|fee|fees|charge|charges|type|card type|account type|description|item|items|name|category|metric|parameter)$",
+        re.IGNORECASE,
+    )
 
     @staticmethod
     def _derive_table_title(table_payload: TablePayload, upload: KnowledgeUpload) -> str:
@@ -18166,6 +20363,261 @@ class KnowledgeIngestionService:
             return f"Table {table_payload.order_index} ({preview})"
 
         return f"Table {table_payload.order_index}"
+
+    @classmethod
+    def _table_column_label_is_generic(cls, value: Any) -> bool:
+        label = str(value or "").strip()
+        if not label:
+            return True
+        return bool(cls._GENERIC_COLUMN_LABEL_RE.fullmatch(label))
+
+    @classmethod
+    def _schema_label_can_be_section_heading(cls, value: Any) -> bool:
+        label = re.sub(r"\s+", " ", str(value or "").strip())
+        if not label:
+            return False
+        if cls._table_column_label_is_generic(label):
+            return False
+        if cls._COMMON_DESCRIPTOR_COLUMN_RE.fullmatch(label):
+            return False
+        if len(label) > 80:
+            return False
+        if len(re.findall(r"[A-Za-z0-9\u0600-\u06FF]+", label)) > 10:
+            return False
+        if _column_numeric_signal(label):
+            return False
+        return True
+
+    @staticmethod
+    def _table_cell_is_pure_value_like(value: str) -> bool:
+        sample = re.sub(r"\s+", " ", str(value or "").strip())
+        if not sample:
+            return False
+        lowered = sample.lower()
+        if lowered in {"free", "n/a", "na", "none", "waived", "no fee", "no fees", "-"}:
+            return True
+        if re.fullmatch(r"[+\-]?(?:\d[\d,]*(?:[.:]\d+)?%?|[%$€£¥₹]+)", sample):
+            return True
+        tokens = [token.lower() for token in re.findall(r"[A-Za-z0-9]+", sample)]
+        if not tokens:
+            return False
+        currency_tokens = {
+            "usd", "eur", "gbp", "jpy", "chf", "aud", "cad", "cny", "inr",
+            "sar", "aed", "egp", "qar", "kwd", "omr", "bhd", "try", "zar",
+        }
+        non_currency_alpha = [
+            token for token in tokens
+            if token not in currency_tokens and re.search(r"[a-z]", token)
+        ]
+        if _column_numeric_signal(sample) and len(non_currency_alpha) <= 1:
+            return True
+        return False
+
+    def _table_cell_looks_like_header_label(self, value: str) -> bool:
+        sample = self._table_cell_text(value)
+        if not sample:
+            return False
+        if self._table_cell_is_pure_value_like(sample):
+            return False
+        if len(sample) > 90:
+            return False
+        word_count = len(re.findall(r"[A-Za-z0-9\u0600-\u06FF]+", sample))
+        if word_count <= 0 or word_count > 10:
+            return False
+        return bool(re.search(r"[A-Za-z\u0600-\u06FF]", sample))
+
+    def _row_cell_texts_by_index(self, row: TableRowPayload, *, width: int) -> list[str]:
+        values = ["" for _ in range(max(0, width))]
+        for cell in row.cells or []:
+            try:
+                idx = int(cell.column_index)
+            except (TypeError, ValueError):
+                continue
+            if idx < 0:
+                continue
+            while idx >= len(values):
+                values.append("")
+            values[idx] = self._table_cell_text(cell.raw_text)
+        return values
+
+    def _embedded_header_candidate_score(
+        self,
+        *,
+        schema: Sequence[str],
+        row: TableRowPayload,
+    ) -> tuple[bool, list[str], dict[str, Any]]:
+        width = max(len(schema), max((int(cell.column_index) + 1 for cell in row.cells or []), default=0))
+        values = self._row_cell_texts_by_index(row, width=width)
+        non_empty = [value for value in values if value]
+        if len(non_empty) < max(1, min(2, width - 1)):
+            return False, values, {"reason": "too_few_header_values", "non_empty": len(non_empty)}
+
+        generic_header_hits = 0
+        header_like_count = 0
+        pure_value_count = 0
+        for idx, value in enumerate(values):
+            if not value:
+                continue
+            if self._table_cell_is_pure_value_like(value):
+                pure_value_count += 1
+                continue
+            if self._table_cell_looks_like_header_label(value):
+                header_like_count += 1
+                schema_label = schema[idx] if idx < len(schema) else ""
+                if self._table_column_label_is_generic(schema_label):
+                    generic_header_hits += 1
+
+        if generic_header_hits <= 0:
+            return False, values, {
+                "reason": "no_generic_columns_with_header_labels",
+                "generic_header_hits": generic_header_hits,
+                "header_like_count": header_like_count,
+            }
+        if header_like_count < max(1, min(2, len(non_empty))):
+            return False, values, {
+                "reason": "insufficient_header_like_cells",
+                "header_like_count": header_like_count,
+            }
+        if pure_value_count >= max(1, math.ceil(len(non_empty) * 0.5)):
+            return False, values, {
+                "reason": "value_like_row",
+                "pure_value_count": pure_value_count,
+                "non_empty": len(non_empty),
+            }
+        return True, values, {
+            "generic_header_hits": generic_header_hits,
+            "header_like_count": header_like_count,
+            "pure_value_count": pure_value_count,
+            "non_empty": len(non_empty),
+        }
+
+    def _apply_schema_to_rows(
+        self,
+        rows: Sequence[TableRowPayload],
+        schema: Sequence[str],
+    ) -> list[TableRowPayload]:
+        normalized_schema = [str(col or "").strip() or f"column_{idx + 1}" for idx, col in enumerate(schema)]
+        new_rows: list[TableRowPayload] = []
+        for row in rows:
+            new_cells: list[TableCellPayload] = []
+            for cell in row.cells or []:
+                try:
+                    idx = int(cell.column_index)
+                except (TypeError, ValueError):
+                    idx = 0
+                column_key = normalized_schema[idx] if 0 <= idx < len(normalized_schema) else f"column_{idx + 1}"
+                new_cells.append(
+                    TableCellPayload(
+                        row_index=cell.row_index,
+                        column_index=cell.column_index,
+                        column_key=column_key,
+                        raw_text=cell.raw_text,
+                        normalized_value=cell.normalized_value,
+                        bbox=cell.bbox,
+                        confidence=cell.confidence,
+                        metadata=cell.metadata,
+                    )
+                )
+            new_rows.append(
+                TableRowPayload(
+                    row_index=row.row_index,
+                    page_number=row.page_number,
+                    bbox=row.bbox,
+                    raw_text=row.raw_text,
+                    metadata=row.metadata,
+                    cells=new_cells,
+                )
+            )
+        return new_rows
+
+    def _promote_embedded_header_rows(self, table: TablePayload) -> tuple[TablePayload, int]:
+        rows = list(table.rows or [])
+        if len(rows) < 2:
+            return table, 0
+        schema = [str(col or "").strip() or f"column_{idx + 1}" for idx, col in enumerate(table.column_schema or [])]
+        if not schema:
+            return table, 0
+
+        candidate_positions: list[tuple[int, list[str], dict[str, Any]]] = []
+        for position, row in enumerate(sorted(rows, key=lambda item: int(getattr(item, "row_index", 0)))[:3]):
+            row_meta = row.metadata if isinstance(row.metadata, Mapping) else {}
+            row_type = str(row_meta.get("row_type") or "").strip().lower()
+            if row_type in {"header", "section_header"}:
+                continue
+            is_candidate, values, diag = self._embedded_header_candidate_score(schema=schema, row=row)
+            if not is_candidate:
+                continue
+            candidate_positions.append((int(row.row_index), values, diag))
+            break
+
+        if not candidate_positions:
+            return table, 0
+
+        header_row_index, header_values, diag = candidate_positions[0]
+        width = max(len(schema), len(header_values))
+        normalized_schema: list[str] = []
+        renamed_columns = 0
+        for idx in range(width):
+            current = schema[idx] if idx < len(schema) else f"column_{idx + 1}"
+            header_value = header_values[idx] if idx < len(header_values) else ""
+            if header_value and (self._table_column_label_is_generic(current) or not current):
+                normalized_schema.append(header_value)
+                if header_value != current:
+                    renamed_columns += 1
+            else:
+                normalized_schema.append(current or header_value or f"column_{idx + 1}")
+
+        rebuilt_rows: list[TableRowPayload] = []
+        for row in rows:
+            row_meta = dict(row.metadata or {})
+            if int(row.row_index) == header_row_index:
+                row_meta["original_row_type"] = row_meta.get("row_type") or "data"
+                row_meta["row_type"] = "header"
+                row_meta["embedded_header_promoted"] = True
+            rebuilt_rows.append(
+                TableRowPayload(
+                    row_index=row.row_index,
+                    page_number=row.page_number,
+                    bbox=row.bbox,
+                    raw_text=row.raw_text,
+                    metadata=row_meta,
+                    cells=row.cells,
+                )
+            )
+        rebuilt_rows = self._apply_schema_to_rows(rebuilt_rows, normalized_schema)
+
+        inferred_section = ""
+        if (
+            not str(table.section_heading or "").strip()
+            and header_values
+            and not header_values[0]
+            and self._schema_label_can_be_section_heading(schema[0] if schema else "")
+        ):
+            inferred_section = schema[0]
+
+        table_meta = dict(table.metadata or {})
+        table_meta["embedded_header_rows_promoted"] = int(table_meta.get("embedded_header_rows_promoted") or 0) + 1
+        table_meta["embedded_header_renamed_columns"] = renamed_columns
+        table_meta["embedded_header_source_row"] = header_row_index
+        table_meta["embedded_header_diagnostics"] = diag
+        if inferred_section:
+            table_meta["embedded_header_section_label"] = inferred_section
+            table_meta["embedded_header_section_label_source"] = "schema_column_1"
+
+        return (
+            TablePayload(
+                order_index=table.order_index,
+                title=table.title,
+                section_heading=table.section_heading or inferred_section,
+                page_number=table.page_number,
+                bbox=table.bbox,
+                column_schema=normalized_schema,
+                data_dictionary=table.data_dictionary,
+                metadata=table_meta,
+                rows=rebuilt_rows,
+            ),
+            1,
+        )
 
     def _row_attributes_from_table(
         self,

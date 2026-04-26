@@ -720,8 +720,16 @@ else:
     RAG_NON_QUERYABLE_TABLE_FORMATS = []  # Empty = all formats queryable (PDF tables enabled)
 # RAG_PDFPLUMBER_ENABLED: Enable pdfplumber extraction for PDFs (local ingest path).
 RAG_PDFPLUMBER_ENABLED = os.getenv("RAG_PDFPLUMBER_ENABLED", "true").lower() in {"1", "true", "yes"}
-# RAG_PDF_TABLE_EXTRACTOR: Which PDF table extractor to use ("auto"|"pdfplumber"|...).
-RAG_PDF_TABLE_EXTRACTOR = os.getenv("RAG_PDF_TABLE_EXTRACTOR", "auto").strip().lower() or "auto"
+# RAG_PDF_TABLE_EXTRACTOR: Preferred PDF table extractor family or variant.
+# "auto" defers final promotion choice to scored arbitration, with deterministic tie-breaking only.
+RAG_PDF_TABLE_EXTRACTOR = (
+    os.getenv("RAG_PDF_TABLE_EXTRACTOR", "auto").strip().lower() or "auto"
+)
+# RAG_TABLE_SELECTION_MODE: Promotion policy for structured table candidates.
+# "scored_promotion_v2" ranks candidates by measured table quality before applying deterministic ties.
+RAG_TABLE_SELECTION_MODE = (
+    os.getenv("RAG_TABLE_SELECTION_MODE", "scored_promotion_v2").strip().lower() or "scored_promotion_v2"
+)
 # RAG_PDFPLUMBER_TABLE_SETTINGS: Optional JSON dict of pdfplumber table settings.
 _raw_pdfplumber_settings = os.getenv("RAG_PDFPLUMBER_TABLE_SETTINGS", "").strip()
 if _raw_pdfplumber_settings:
@@ -866,11 +874,6 @@ MCP_SEARCH_PAGINATION_PREFETCH_MIN = max(0, MCP_SEARCH_PAGINATION_PREFETCH_MIN)
 # MCP_SEARCH_EXCLUDE_SEEN_ENABLED: Exclude already-shown chunks/rows when returning search results.
 # Default is false to preserve legacy behavior; enable via env to improve "show me more" flows.
 MCP_SEARCH_EXCLUDE_SEEN_ENABLED = os.getenv("MCP_SEARCH_EXCLUDE_SEEN_ENABLED", "false").lower() in {"1", "true", "yes"}
-
-# MCP_SEARCH_DUPLICATE_INTENT_ENABLED: When true, repeated/near-duplicate search_knowledge calls
-# within the same turn reuse prior results (prevents tool thrash). Disable to force every call
-# to hit retrieval (useful when experimenting with paging/exclusion behaviors).
-MCP_SEARCH_DUPLICATE_INTENT_ENABLED = os.getenv("MCP_SEARCH_DUPLICATE_INTENT_ENABLED", "true").lower() in {"1", "true", "yes"}
 
 # MCP_AGENTIC_SEARCH_PREVIEWS_ENABLED: Include preview text inside agentic search_knowledge refs[].
 # This helps the model decide what to read, but can increase prompt size.

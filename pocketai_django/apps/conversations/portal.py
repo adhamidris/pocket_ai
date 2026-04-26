@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Iterable, Sequence
 
+from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import Count, Prefetch
 from django.utils import timezone
@@ -36,6 +37,10 @@ class PortalNotFoundError(Exception):
 
 class PortalValidationError(ValueError):
     """Raised when incoming payload fails validation."""
+
+
+class PortalAuthorizationError(PermissionError):
+    """Raised when an authenticated user cannot access a portal resource."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -87,6 +92,7 @@ DEFAULT_SESSION_TTL: timedelta | None = None
 @dataclasses.dataclass(frozen=True, slots=True)
 class PortalSessionSummary:
     """Lightweight session info for session history list."""
+    conversation_id: uuid.UUID
     session_token: str
     title: str
     started_at: datetime
@@ -97,7 +103,7 @@ class PortalSessionSummary:
 
 
 class ChatPortalService:
-    """High-level orchestration for public chat portal lifecycle."""
+    """High-level orchestration for chat session lifecycle."""
 
     def __init__(self, *, session_ttl: timedelta | None = None) -> None:
         self.session_ttl = session_ttl if session_ttl is not None else DEFAULT_SESSION_TTL
@@ -235,6 +241,14 @@ class ChatPortalService:
 
     def list_messages(self, *, session_token: str, limit: int | None = None) -> Sequence[PortalMessage]:
         conversation = self._get_active_conversation_by_token(session_token)
+        return self.list_messages_for_conversation(conversation=conversation, limit=limit)
+
+    def list_messages_for_conversation(
+        self,
+        *,
+        conversation: Conversation,
+        limit: int | None = None,
+    ) -> Sequence[PortalMessage]:
         qs = conversation.messages.all()
         if limit:
             qs = qs.order_by("sent_at", "created_at")[:limit]
@@ -252,7 +266,10 @@ class ChatPortalService:
             conversation=conversation,
             include_messages=False,
         )
-        return self._serialize_session(conversation_obj)
+        return self.get_session_state_for_conversation(conversation_obj)
+
+    def get_session_state_for_conversation(self, conversation: Conversation) -> PortalSessionState:
+        return self._serialize_session(conversation)
 
     def record_csat(self, *, session_token: str, score: int, comment: str | None = None) -> PortalSessionState:
         if score < 1 or score > 5:
@@ -370,30 +387,38 @@ class ChatPortalService:
             .order_by("-started_at")[:limit]
         )
         
-        summaries: list[PortalSessionSummary] = []
-        for conv in conversations:
-            # Generate title from first customer message
-            first_messages = getattr(conv, "first_customer_messages", [])
-            first_msg = first_messages[0] if first_messages else None
-            
-            if first_msg:
-                title = self._generate_session_title(first_msg.body)
-                preview = (first_msg.body or "")[:100]
-            else:
-                title = "New conversation"
-                preview = ""
-            
-            summaries.append(PortalSessionSummary(
-                session_token=conv.session_token,
-                title=title,
-                started_at=conv.started_at,
-                last_activity_at=conv.last_activity_at,
-                status=conv.status,
-                message_count=conv.message_count,
-                preview=preview.strip(),
-            ))
-        
-        return tuple(summaries)
+        return self._build_session_summaries(conversations)
+
+    def list_owned_sessions(
+        self,
+        *,
+        owner_user: object,
+        business_slug: str,
+        agent_slug: str,
+        limit: int = 50,
+    ) -> Sequence[PortalSessionSummary]:
+        business, agent = self.resolve_handle(business_slug, agent_slug)
+        filters: dict[str, object] = {
+            "business_profile": business,
+            "agent_profile": agent,
+        }
+        if not getattr(owner_user, "is_staff", False):
+            filters["owner_user"] = owner_user
+        conversations = (
+            Conversation.objects.filter(**filters)
+            .annotate(message_count=Count("messages"))
+            .prefetch_related(
+                Prefetch(
+                    "messages",
+                    queryset=ConversationMessage.objects.filter(
+                        sender=ConversationSender.CUSTOMER
+                    ).order_by("sent_at", "created_at")[:1],
+                    to_attr="first_customer_messages",
+                )
+            )
+            .order_by("-last_activity_at", "-started_at")[:limit]
+        )
+        return self._build_session_summaries(conversations)
 
     def create_new_session(
         self,
@@ -421,6 +446,23 @@ class ChatPortalService:
             messages=(),  # New session has no messages
         )
 
+    def create_owned_session(
+        self,
+        *,
+        owner_user: object,
+        business_slug: str,
+        agent_slug: str,
+        metadata: dict | None = None,
+    ) -> PortalSessionBootstrap:
+        payload = dict(metadata or {})
+        if getattr(owner_user, "id", None) and "actor_user_id" not in payload and "actorUserId" not in payload:
+            payload["actor_user_id"] = str(owner_user.id)
+        return self.create_new_session(
+            business_slug=business_slug,
+            agent_slug=agent_slug,
+            metadata=payload,
+        )
+
     def _generate_session_title(self, first_message: str, max_length: int = 50) -> str:
         """
         Generate a meaningful session title from the first customer message.
@@ -444,6 +486,33 @@ class ChatPortalService:
             truncated = truncated[:last_space]
         
         return truncated.rstrip(".,!?;:") + "..."
+
+    def _build_session_summaries(self, conversations: Iterable[Conversation]) -> tuple[PortalSessionSummary, ...]:
+        summaries: list[PortalSessionSummary] = []
+        for conv in conversations:
+            first_messages = getattr(conv, "first_customer_messages", [])
+            first_msg = first_messages[0] if first_messages else None
+
+            if first_msg:
+                title = self._generate_session_title(first_msg.body)
+                preview = (first_msg.body or "")[:100]
+            else:
+                title = "New conversation"
+                preview = ""
+
+            summaries.append(
+                PortalSessionSummary(
+                    conversation_id=conv.id,
+                    session_token=conv.session_token,
+                    title=title,
+                    started_at=conv.started_at,
+                    last_activity_at=conv.last_activity_at,
+                    status=conv.status,
+                    message_count=getattr(conv, "message_count", 0),
+                    preview=preview.strip(),
+                )
+            )
+        return tuple(summaries)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -471,9 +540,18 @@ class ChatPortalService:
             raise PortalNotFoundError("Conversation not found")
         return conversation
 
+    def get_conversation_by_id(self, conversation_id: uuid.UUID | str, *, include_messages: bool = False) -> Conversation:
+        if not conversation_id:
+            raise PortalNotFoundError("Conversation id is required")
+        queryset = self._conversation_queryset(include_messages=include_messages)
+        conversation = queryset.filter(id=conversation_id).first()
+        if conversation is None:
+            raise PortalNotFoundError("Conversation not found")
+        return conversation
+
     def _conversation_queryset(self, *, include_messages: bool):
         queryset = (
-            Conversation.objects.select_related("business_profile", "agent_profile")
+            Conversation.objects.select_related("business_profile", "agent_profile", "owner_user")
             .prefetch_related("agent_profile__action_permissions")
         )
         if include_messages:
@@ -543,6 +621,7 @@ class ChatPortalService:
     ) -> Conversation:
         incoming_metadata = dict(metadata or {})
         now = timezone.now()
+        owner_user = self._resolve_owner_user(business=business, metadata=incoming_metadata)
         conversation = None
         if existing_session_token:
             conversation = Conversation.objects.filter(
@@ -557,6 +636,7 @@ class ChatPortalService:
             conversation = Conversation.objects.create(
                 business_profile=business,
                 agent_profile=agent,
+                owner_user=owner_user,
                 metadata=incoming_metadata,
                 expires_at=expires_at,
             )
@@ -566,6 +646,9 @@ class ChatPortalService:
 
         updated_metadata = {**(conversation.metadata or {}), **incoming_metadata}
         update_fields: list[str] = ["last_activity_at"]
+        if conversation.owner_user_id is None and owner_user is not None:
+            conversation.owner_user = owner_user
+            update_fields.append("owner_user")
         if updated_metadata != conversation.metadata:
             conversation.metadata = updated_metadata
             update_fields.append("metadata")
@@ -579,6 +662,23 @@ class ChatPortalService:
             update_fields.append("expires_at")
         conversation.save(update_fields=update_fields)
         return conversation
+
+    def _resolve_owner_user(self, *, business: BusinessProfile, metadata: dict) -> object:
+        actor_user_id = (
+            metadata.get("actor_user_id")
+            or metadata.get("actorUserId")
+            or metadata.get("owner_user_id")
+            or metadata.get("ownerUserId")
+        )
+        if actor_user_id:
+            user_model = get_user_model()
+            owner_user = user_model.objects.filter(id=actor_user_id).first()
+            if owner_user is not None:
+                if getattr(owner_user, "is_staff", False):
+                    return owner_user
+                if owner_user.business_profiles.filter(id=business.id).exists():
+                    return owner_user
+        return business.user
 
     def _ensure_welcome_message(self, conversation: Conversation) -> None:
         agent_name = conversation.agent_profile.name if conversation.agent_profile else "Pocket AI"

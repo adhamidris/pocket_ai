@@ -14,12 +14,12 @@ class _SearchTwiceProvider:
     """
     Fake provider that attempts to call search_knowledge twice in the same user turn.
 
-    The MCP orchestrator should execute the first search and block the second
-    search call based on the per-turn search budget.
+    The MCP orchestrator should execute both searches when budget allows.
     """
 
     def __init__(self) -> None:
         self.calls = 0
+        self.model = "deepseek-chat"
 
     def chat(
         self,
@@ -59,6 +59,7 @@ class _SingleAnswerProvider:
     def __init__(self, content: str = "Cheque fees are available in the selected category.") -> None:
         self.calls = 0
         self.content = content
+        self.model = "deepseek-chat"
 
     def chat(
         self,
@@ -102,7 +103,7 @@ class McpSearchContractTests(TestCase):
 
     @override_settings(MCP_MAX_SEARCHES_PER_TURN=1)
     @patch("apps.mcp.orchestrator.mcp_tools.execute_tool")
-    def test_search_knowledge_runs_once_per_turn(self, execute_tool_mock) -> None:
+    def test_search_knowledge_budget_blocks_second_call(self, execute_tool_mock) -> None:
         def _fake_execute_tool(name, arguments, *, conversation, context=None):
             self.assertEqual(name, "search_knowledge")
             self.assertIsNotNone(context)
@@ -149,3 +150,50 @@ class McpSearchContractTests(TestCase):
 
         self.assertNotIn("search limit", context.response_text.lower())
         self.assertNotIn("budget", context.response_text.lower())
+
+    @override_settings(MCP_MAX_SEARCHES_PER_TURN=2)
+    @patch("apps.mcp.orchestrator.mcp_tools.execute_tool")
+    def test_search_knowledge_allows_second_call_when_budget_allows(self, execute_tool_mock) -> None:
+        def _fake_execute_tool(name, arguments, *, conversation, context=None):
+            self.assertEqual(name, "search_knowledge")
+            self.assertIsNotNone(context)
+            context.reserve_search()
+            return {
+                "tool": "search_knowledge",
+                "status": "ok",
+                "query": str((arguments.get("queries") or [""])[0]),
+                "snippets": [
+                    {
+                        "id": f"snippet-{context.searches_used}",
+                        "title": "Fees",
+                        "public_label": "Fees",
+                        "content": "Annual fee example: 100 EGP",
+                        "read_state": "summary",
+                        "read_required": False,
+                        "search_stage": "hybrid",
+                        "chunk_id": f"chunk-{context.searches_used}",
+                        "upload_id": "upload-1",
+                        "is_table_chunk": False,
+                    }
+                ],
+            }
+
+        execute_tool_mock.side_effect = _fake_execute_tool
+
+        provider = _SearchTwiceProvider()
+        orchestrator = McpOrchestratorService(agent=self.agent, provider=provider)
+        context = orchestrator.stream_turn(
+            conversation=self.conversation,
+            user_message="Tell me more about credit card fees",
+        )
+
+        self.assertEqual(provider.calls, 3)
+        self.assertIsNotNone(context.tool_context)
+        self.assertEqual(context.tool_context.searches_used, 2)
+
+        self.assertEqual(execute_tool_mock.call_count, 2)
+
+        search_traces = [t for t in context.tool_trace if t.get("tool") == "search_knowledge"]
+        self.assertEqual(len(search_traces), 2)
+        self.assertEqual(sum(1 for t in search_traces if t.get("origin") == "live"), 2)
+        self.assertEqual(sum(1 for t in search_traces if t.get("origin") == "policy"), 0)

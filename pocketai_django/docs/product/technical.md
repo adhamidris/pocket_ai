@@ -16,7 +16,7 @@ If you want a business-only description (for sales, onboarding, or investors), u
 - Auditability: keep an access trail for compliance/disputes without retaining deleted document content in logs.
 
 ## Non-goals (explicit)
-- The public portal agent should not run advanced spreadsheet-style computation that could leak private rows. “True querying” is an internal/admin capability, not for anonymous portal visitors.
+- The authenticated chat workspace should not run advanced spreadsheet-style computation that could leak private rows. “True querying” is an internal/admin capability, not for general chat users.
 
 ---
 

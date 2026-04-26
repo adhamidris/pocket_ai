@@ -90,6 +90,17 @@ class QueryClassification:
         """Returns True if results should be diversified across tables."""
         return self.intent in (QueryIntent.ENUMERATE, QueryIntent.EXPLORATORY)
 
+    def prefers_section_context(self) -> bool:
+        """Returns True when section-aware text retrieval/ranking should be preferred."""
+        return bool(self.retrieval_hints.get("prefer_section_context"))
+
+    def modality_bias(self) -> str:
+        """Returns the retrieval modality bias hint."""
+        value = str(self.retrieval_hints.get("modality_bias") or "mixed").strip().lower()
+        if value not in {"table", "text", "mixed"}:
+            return "mixed"
+        return value
+
     def get_snippet_multiplier(self) -> float:
         """Returns multiplier for snippet limit based on intent."""
         multipliers = {
@@ -248,6 +259,56 @@ class QueryClassifier:
         "إجمالي",
         "المجموع",
         "متوسط",
+    }
+    SECTION_SEEKING_PATTERNS = [
+        r"\bwork\s+experience\b",
+        r"\bwork\s+history\b",
+        r"\bemployment\s+history\b",
+        r"\bjob\s+titles?\b",
+        r"\bjob\s+positions?\b",
+        r"\bterms?\s+and\s+conditions\b",
+    ]
+    SECTION_COVERAGE_HEADWORDS = {
+        "title",
+        "titles",
+        "role",
+        "roles",
+        "position",
+        "positions",
+        "responsibility",
+        "responsibilities",
+        "duty",
+        "duties",
+        "term",
+        "terms",
+        "clause",
+        "clauses",
+        "section",
+        "sections",
+        "benefit",
+        "benefits",
+        "fee",
+        "fees",
+        "charge",
+        "charges",
+        "service",
+        "services",
+        "product",
+        "products",
+        "job",
+        "jobs",
+        "experience",
+        "experiences",
+        "history",
+        "employment",
+        "skill",
+        "skills",
+        "qualification",
+        "qualifications",
+        "requirement",
+        "requirements",
+        "location",
+        "locations",
     }
 
     @staticmethod
@@ -446,7 +507,14 @@ class QueryClassifier:
         scope = self._determine_scope(intent, tokens, entity_names)
 
         # Generate retrieval hints
-        retrieval_hints = self._generate_retrieval_hints(intent, entity_type, entity_names)
+        retrieval_hints = self._generate_retrieval_hints(
+            intent,
+            entity_type,
+            entity_names,
+            attributes=attributes,
+            token_list=token_list,
+            query_lower=query_lower,
+        )
 
         classification = QueryClassification(
             intent=intent,
@@ -773,9 +841,26 @@ class QueryClassifier:
         self,
         intent: QueryIntent,
         entity_type: Optional[str],
-        entity_names: list[str]
+        entity_names: list[str],
+        *,
+        attributes: list[str],
+        token_list: list[str],
+        query_lower: str,
     ) -> dict:
         """Generate hints for the retrieval layer."""
+        prefer_section_context = self._should_prefer_section_context(
+            intent,
+            token_list=token_list,
+            query_lower=query_lower,
+            entity_type=entity_type,
+            entity_names=entity_names,
+            attributes=attributes,
+        )
+        section_focus_terms = self._section_focus_terms(
+            entity_type=entity_type,
+            attributes=attributes,
+            query_lower=query_lower,
+        )
         hints = {
             'diversify_tables': intent in (QueryIntent.ENUMERATE, QueryIntent.EXPLORATORY),
             'increase_snippet_limit': intent in (QueryIntent.ENUMERATE, QueryIntent.AGGREGATE),
@@ -783,6 +868,9 @@ class QueryClassifier:
             'entity_names_filter': entity_names if intent == QueryIntent.SPECIFIC_LOOKUP else [],
             'prefer_table_headers': intent == QueryIntent.ENUMERATE,
             'include_all_tables': intent == QueryIntent.ENUMERATE,
+            'prefer_section_context': prefer_section_context,
+            'section_focus_terms': section_focus_terms if prefer_section_context else [],
+            'modality_bias': 'mixed',
         }
 
         if intent == QueryIntent.ENUMERATE:
@@ -797,6 +885,74 @@ class QueryClassifier:
             hints['snippet_limit_multiplier'] = 1.0
 
         return hints
+
+    def _section_focus_terms(
+        self,
+        *,
+        entity_type: Optional[str],
+        attributes: list[str],
+        query_lower: str,
+    ) -> list[str]:
+        terms: list[str] = []
+        if entity_type:
+            terms.append(entity_type)
+        for attr in attributes:
+            cleaned = str(attr or "").strip().lower()
+            if not cleaned:
+                continue
+            terms.append(cleaned)
+            attr_tokens = [token for token in cleaned.split() if token]
+            if len(attr_tokens) == 1:
+                singular = self._singularize(attr_tokens[0])
+                if singular and singular != cleaned:
+                    terms.append(singular)
+        for pattern in self.SECTION_SEEKING_PATTERNS:
+            match = re.search(pattern, query_lower)
+            if match:
+                terms.append(match.group(0).strip().lower())
+        return self._dedupe_preserve(terms)[:8]
+
+    def _should_prefer_section_context(
+        self,
+        intent: QueryIntent,
+        *,
+        token_list: list[str],
+        query_lower: str,
+        entity_type: Optional[str],
+        entity_names: list[str],
+        attributes: list[str],
+    ) -> bool:
+        token_set = set(token_list)
+        coverage_terms = token_set & self.SECTION_COVERAGE_HEADWORDS
+        plural_attribute_signal = False
+        for attr in attributes:
+            attr_tokens = list(tokenize_lexicon_text(attr, max_tokens=12))
+            if any(self._looks_like_plural_noun(token) for token in attr_tokens):
+                plural_attribute_signal = True
+                break
+
+        phrase_signal = any(re.search(pattern, query_lower) for pattern in self.SECTION_SEEKING_PATTERNS)
+        temporal_location_signal = bool(
+            {"where", "when"} & token_set
+            and {"work", "employment", "experience", "history", "job", "jobs"} & token_set
+        )
+        coverage_question_signal = bool(
+            coverage_terms
+            and (
+                plural_attribute_signal
+                or bool(token_set & self.ALL_SCOPE_TOKENS)
+                or bool(token_set & self.LIST_VERBS)
+                or "else" in token_set
+                or phrase_signal
+                or temporal_location_signal
+            )
+        )
+
+        if intent in (QueryIntent.ENUMERATE, QueryIntent.AGGREGATE):
+            return bool(attributes or entity_type or coverage_terms or phrase_signal)
+        if intent == QueryIntent.COMPARE:
+            return bool(coverage_terms and len(entity_names) <= 1 and (plural_attribute_signal or phrase_signal))
+        return bool(coverage_question_signal or phrase_signal or temporal_location_signal)
 
 
 # Convenience function for quick classification

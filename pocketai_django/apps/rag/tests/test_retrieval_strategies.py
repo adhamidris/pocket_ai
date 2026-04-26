@@ -44,6 +44,8 @@ class TestRetrievalHints(TestCase):
         self.assertEqual(list(hints.entity_names_filter), [])
         self.assertFalse(hints.comprehensive_intent)
         self.assertTrue(hints.expand_table_rows)
+        self.assertFalse(hints.prefer_section_context)
+        self.assertEqual(hints.modality_bias, "mixed")
     
     def test_hints_to_dict(self):
         """Test converting hints to dictionary."""
@@ -58,6 +60,7 @@ class TestRetrievalHints(TestCase):
         self.assertEqual(result["snippet_limit_multiplier"], 3.0)
         self.assertTrue(result["diversify_tables"])
         self.assertTrue(result["comprehensive_intent"])
+        self.assertEqual(result["modality_bias"], "mixed")
 
 
 class TestEnumerationStrategy(TestCase):
@@ -84,6 +87,7 @@ class TestEnumerationStrategy(TestCase):
         self.assertTrue(hints.include_all_tables)
         self.assertTrue(hints.comprehensive_intent)
         self.assertEqual(hints.min_tables_coverage, "all")
+        self.assertEqual(hints.modality_bias, "mixed")
     
     def test_compute_hints_prefers_table_headers(self):
         """Test that enumeration prefers table headers for entity discovery."""
@@ -148,6 +152,7 @@ class TestSpecificLookupStrategy(TestCase):
         self.assertFalse(hints.diversify_tables)
         self.assertFalse(hints.include_all_tables)
         self.assertFalse(hints.comprehensive_intent)
+        self.assertEqual(hints.modality_bias, "mixed")
     
     def test_compute_hints_with_entity_names(self):
         """Test that entity names are used for filtering."""
@@ -166,6 +171,12 @@ class TestSpecificLookupStrategy(TestCase):
         hints = self.strategy.compute_hints(context)
         
         self.assertTrue(hints.expand_table_rows)
+
+    def test_compute_hints_can_prefer_section_context(self):
+        context = self._create_context(QueryIntent.SPECIFIC_LOOKUP)
+        context.classification.retrieval_hints = {"prefer_section_context": True}
+        hints = self.strategy.compute_hints(context)
+        self.assertTrue(hints.prefer_section_context)
     
     def _create_context(
         self, 
@@ -218,6 +229,7 @@ class TestComparisonStrategy(TestCase):
         self.assertTrue(hints.diversify_tables)
         self.assertTrue(hints.filter_by_entity_names)
         self.assertFalse(hints.comprehensive_intent)
+        self.assertEqual(hints.modality_bias, "mixed")
     
     def _create_context(
         self, 

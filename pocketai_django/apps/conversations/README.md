@@ -3,8 +3,8 @@ Conversations App (apps/conversations)
 
 Purpose
 -------
-This app owns the public chat session lifecycle: conversations, messages,
-extractions, response blocks, and the portal-facing session API helpers.
+This app owns the authenticated chat workspace lifecycle: conversations, messages,
+extractions, response blocks, and the chat-facing session API helpers.
 
 Directory Map
 -------------
@@ -24,7 +24,7 @@ Key Flows
 ---------
 1) Session bootstrap
    ChatPortalService.bootstrap_session() -> returns agent, business, session,
-   and existing messages for the public portal.
+   and existing messages for the authenticated chat workspace.
 
 2) Message append
    ChatPortalService.append_message() -> writes ConversationMessage and updates

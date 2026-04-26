@@ -18,16 +18,21 @@ class ChatPortalClient {
       emailDiscardDraft: container.getAttribute("data-endpoint-email-discard-draft"),
 	      fileUpload: container.getAttribute("data-endpoint-file-upload"),
       fileDownloadUrlTemplate: container.getAttribute("data-endpoint-file-download-url-template"),
-	    };
+		    };
     this.businessSlug = container.getAttribute("data-business-slug") || "";
     this.agentSlug = container.getAttribute("data-agent-slug") || "";
     this.agentName = container.getAttribute("data-agent-name") || "Pocket AI";
     this.agentInitials = container.getAttribute("data-agent-initials") || "AI";
     this.uiLanguage = this.resolveUiLanguage(container.getAttribute("data-ui-language") || "");
     this.locale = this.resolveLocale(this.uiLanguage);
+    this.conversationId = container.getAttribute("data-conversation-id") || null;
     this.sessionToken = container.getAttribute("data-session-token") || null;
     this.sessionCacheKey = container.getAttribute("data-session-cache-key") || "";
     this.bootstrapScriptId = container.getAttribute("data-bootstrap-script-id") || "";
+    this.conversationsEndpoint = container.getAttribute("data-endpoint-conversations") || "";
+    this.chatSurface = container.getAttribute("data-chat-surface") || "public";
+    const authenticatedChatAttr = (container.getAttribute("data-authenticated-chat") || "").toString().trim().toLowerCase();
+    this.authenticatedChat = authenticatedChatAttr === "true" || authenticatedChatAttr === "1" || authenticatedChatAttr === "yes";
     const subAgentsAttr = (container.getAttribute("data-subagents-enabled") || "").toString().trim().toLowerCase();
     this.subAgentsEnabled = subAgentsAttr === "true" || subAgentsAttr === "1" || subAgentsAttr === "yes";
     this.currentStatus = container.getAttribute("data-initial-status") || "new";
@@ -75,11 +80,11 @@ class ChatPortalClient {
       inboxOpenBtn: container.querySelector("[data-inbox-open-btn]"),
       inboxCloseBtn: container.querySelector("[data-inbox-close-btn]"),
       inboxCount: container.querySelector("[data-inbox-count]"),
-    };
-	    // Session management state
-	    this.sessionTokens = [];
-	    this.currentSessionToken = null;
-	    this.sessionStorageKey = `chat_sessions_${this.businessSlug}_${this.agentSlug}`;
+	    };
+		    // Session management state
+		    this.currentSessionKey = null;
+		    this.sessionStorageKey = `chat_sessions_${this.businessSlug}_${this.agentSlug}`;
+    this.lastConversationStorageKey = `dashboard_chat_last_conversation_${this.businessSlug}_${this.agentSlug}`;
     this.turnStateStorageKeyPrefix = `portal_turn_state_${this.businessSlug}_${this.agentSlug}_`;
 	    this.toolsVisibilityKey = `chat_tools_visible_${this.businessSlug}_${this.agentSlug}`;
     this.tasksPanelStorageKey = `portal_tasks_panel_collapsed_${this.businessSlug}_${this.agentSlug}`;
@@ -188,6 +193,8 @@ class ChatPortalClient {
 
     // Voice call transcript state
     this.activeVoiceCalls = new Map(); // sessionId -> { transcripts: [], expanded }
+    this.pageLifecycleBound = false;
+    this.pageLifecycleSuspended = false;
   }
 
   t(message, params) {
@@ -228,10 +235,9 @@ class ChatPortalClient {
 	      this.updateAllToolsVisibility();
 	      this.setComposerAvailability(true);
       
-      // Track this session in localStorage
-      this.trackCurrentSession();
-      // Load session history in sidebar
-      this.loadSessionHistory();
+	      // Sync current session identity and load recent conversations from the backend when available.
+	      this.trackCurrentSession();
+	      this.loadSessionHistory();
 
       // Auto-focus input now that it is enabled
       if (this.elements.sendForm) {
@@ -249,11 +255,40 @@ class ChatPortalClient {
         if (this.elements.tasksOpenBtn) this.elements.tasksOpenBtn.setAttribute("hidden", "");
         if (this.elements.inboxOpenBtn) this.elements.inboxOpenBtn.setAttribute("hidden", "");
       }
+      this.bindPageLifecycleHandlers();
       this.connectEventStream();
       this.resumeActiveTurnIfNeeded();
     } catch (error) {
       this.showToast("Unable to load chat", error.message || "Please refresh and try again.", true);
     }
+  }
+
+  bindPageLifecycleHandlers() {
+    if (this.pageLifecycleBound || typeof document === "undefined" || typeof window === "undefined") return;
+    this.pageLifecycleBound = true;
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) {
+        this.pageLifecycleSuspended = true;
+        this.closeSessionEventStream();
+        this.closeTurnEventStream();
+        return;
+      }
+      const wasSuspended = this.pageLifecycleSuspended;
+      this.pageLifecycleSuspended = false;
+      if (!wasSuspended) return;
+      this.connectEventStream();
+      this.resumeActiveTurnIfNeeded();
+    });
+
+    const teardown = () => {
+      this.pageLifecycleSuspended = true;
+      this.closeSessionEventStream();
+      this.closeTurnEventStream();
+    };
+
+    window.addEventListener("pagehide", teardown);
+    window.addEventListener("beforeunload", teardown);
   }
 
   async waitForDependencies() {
@@ -662,15 +697,24 @@ class ChatPortalClient {
       }
 
       const form = new FormData();
-      form.append("session_token", this.sessionToken);
+      const referencePayload = this.getCurrentReferencePayload();
+      Object.entries(referencePayload).forEach(([key, value]) => {
+        if (value) {
+          form.append(key, value);
+        }
+      });
       form.append("file", file);
 
       try {
         this.showToast("Uploading…", file.name || "PDF");
-        const response = await fetch(this.endpoints.fileUpload, {
-          method: "POST",
-          body: form,
-        });
+	        const response = await fetch(this.endpoints.fileUpload, {
+	          method: "POST",
+          headers: (() => {
+            const csrfToken = this.getCsrfToken();
+            return csrfToken ? { "X-CSRFToken": csrfToken, "X-Requested-With": "XMLHttpRequest" } : { "X-Requested-With": "XMLHttpRequest" };
+          })(),
+	          body: form,
+	        });
         const data = await response.json().catch(() => null);
         if (!response.ok) {
           const msg = data && data.error && data.error.message ? data.error.message : "Upload failed.";
@@ -742,9 +786,9 @@ class ChatPortalClient {
     const endpoint = this.buildFileDownloadUrlEndpoint(token);
     if (!endpoint) return;
 
-    try {
-      const url = new URL(endpoint, window.location.origin);
-      url.searchParams.set("session_token", this.sessionToken);
+	    try {
+	      const url = new URL(endpoint, window.location.origin);
+        this.applyCurrentReferenceToUrl(url);
 
       const response = await fetch(url.toString(), {
         method: "GET",
@@ -786,13 +830,14 @@ class ChatPortalClient {
     });
   }
 
-		  async bootstrapSession(forceRender = false) {
-		    const options = typeof forceRender === "object" && forceRender !== null ? forceRender : { forceRender };
-		    const preloadedToken = this.readBootstrapScriptToken();
-		    const requestId = typeof options.loadId === "number" ? options.loadId : ++this.sessionLoadId;
-		    const storedToken = this.getStoredToken();
-		    const serverToken = this.sessionToken || preloadedToken || null;
-		    const resolvedToken = options.sessionToken || storedToken || serverToken;
+			  async bootstrapSession(forceRender = false) {
+			    const options = typeof forceRender === "object" && forceRender !== null ? forceRender : { forceRender };
+			    const preloadedToken = this.readBootstrapScriptToken();
+          const preloadedConversationId = this.readBootstrapScriptConversationId();
+			    const requestId = typeof options.loadId === "number" ? options.loadId : ++this.sessionLoadId;
+			    const storedToken = this.getStoredToken();
+			    const serverToken = this.sessionToken || preloadedToken || null;
+			    const resolvedToken = options.sessionToken || storedToken || serverToken;
 		    const tokenMismatch = Boolean(resolvedToken && serverToken && resolvedToken !== serverToken);
 		    const shouldForceRender =
 		      Boolean(options.forceRender) ||
@@ -825,24 +870,34 @@ class ChatPortalClient {
     const data = await response.json();
     if (this.sessionLoadId !== requestId) {
       return null;
-    }
-    this.bootstrapPayload = data;
-    const token = data && data.session && data.session.session_token ? data.session.session_token : null;
-    if (!token) {
-      throw new Error("Session token missing from bootstrap response");
-    }
+	    }
+	    this.bootstrapPayload = data;
+    const session = data && data.session ? data.session : null;
+	    const token = data && data.session && data.session.session_token ? data.session.session_token : null;
+	    if (!token) {
+	      throw new Error("Session token missing from bootstrap response");
+	    }
     if (options.expectedToken && token !== options.expectedToken) {
-      throw new Error("Session is no longer available.");
+	      throw new Error("Session is no longer available.");
+	    }
+	    this.persistSessionToken(token);
+    if (this.shouldUseConversationApi()) {
+      const resolvedConversationId =
+        (session && (session.conversation_id || session.conversationId)) || options.conversationId || this.conversationId || preloadedConversationId;
+      if (resolvedConversationId) {
+        this.setActiveSessionFromSession({ ...(session || {}), conversation_id: resolvedConversationId, session_token: token });
+      }
+    } else if (session) {
+      this.setActiveSessionFromSession(session);
     }
-    this.persistSessionToken(token);
-    const messages = Array.isArray(data.messages) ? data.messages : [];
-    const effectiveMessages = messages.filter(
-      (message) => !(message && message.metadata && message.metadata.placeholder),
-    );
-    this.currentSessionHasMessages = effectiveMessages.length > 0;
-    this.updateSessionEmptyState(effectiveMessages.length);
-    this.setSessionMessageCount(token, effectiveMessages.length);
-    this.setConversationLayout(effectiveMessages.length > 0);
+	    const messages = Array.isArray(data.messages) ? data.messages : [];
+	    const effectiveMessages = messages.filter(
+	      (message) => !(message && message.metadata && message.metadata.placeholder),
+	    );
+	    this.currentSessionHasMessages = effectiveMessages.length > 0;
+	    this.updateSessionEmptyState(effectiveMessages.length);
+	    this.setSessionMessageCount(this.getCurrentSessionKey(), effectiveMessages.length);
+	    this.setConversationLayout(effectiveMessages.length > 0);
 
 	    // Fix FOUC: Only render transcript if container is empty (client-side only),
 	    // otherwise assume server-side rendering is correct.
@@ -891,16 +946,20 @@ class ChatPortalClient {
         options && typeof options === "object" && options.turnMetadata && typeof options.turnMetadata === "object"
           ? options.turnMetadata
           : null;
-      const requestBody = {
-        session_token: this.sessionToken,
-        body: message,
-        metadata: this.buildTurnMetadata(turnMetadataOverrides),
-      };
-      const response = await fetch(this.endpoints.turnCreate, {
-        method: "POST",
-        headers: this.jsonHeaders(),
-        body: JSON.stringify(requestBody),
-      });
+	      const requestBody = {
+	        body: message,
+	        metadata: this.buildTurnMetadata(turnMetadataOverrides),
+          ...this.getCurrentReferencePayload(),
+	      };
+        const turnEndpoint =
+          this.shouldUseConversationApi() && this.conversationId
+            ? this.getConversationTurnsUrl(this.conversationId)
+            : this.endpoints.turnCreate;
+	      const response = await fetch(turnEndpoint, {
+	        method: "POST",
+	        headers: this.jsonHeaders(),
+	        body: JSON.stringify(requestBody),
+	      });
 
       if (!response.ok) {
         throw new Error("Turn creation failed");
@@ -913,10 +972,11 @@ class ChatPortalClient {
         throw new Error("Turn id missing from response");
       }
 
-      if (data && data.session && data.session.status) {
-        this.updateStatus(data.session.status);
-        this.updateCsatVisibility(data.session.status);
-      }
+	      if (data && data.session && data.session.status) {
+          this.setActiveSessionFromSession(data.session);
+	        this.updateStatus(data.session.status);
+	        this.updateCsatVisibility(data.session.status);
+	      }
       if (data && data.customer_message_id) {
         this.updateLatestCustomerMessageId(data.customer_message_id);
       }
@@ -1106,11 +1166,11 @@ class ChatPortalClient {
         if (!endpoint) {
           throw new Error("Turn cancel endpoint unavailable");
         }
-	      const response = await fetch(endpoint, {
-	        method: "POST",
-	        headers: this.jsonHeaders(),
-	        body: JSON.stringify({ session_token: this.sessionToken }),
-	      });
+		      const response = await fetch(endpoint, {
+		        method: "POST",
+		        headers: this.jsonHeaders(),
+		        body: JSON.stringify(this.getCurrentReferencePayload()),
+		      });
 	      if (!response.ok) {
 	        throw new Error("Stop request failed");
 	      }
@@ -2484,11 +2544,11 @@ class ChatPortalClient {
     this.toolHistoryModalBody.innerHTML =
       '<div class="rounded-lg border border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground">Loading activity…</div>';
     try {
-      const response = await fetch(this.endpoints.toolHistory, {
-        method: "POST",
-        headers: this.jsonHeaders(),
-        body: JSON.stringify({ session_token: this.sessionToken, limit: 150 }),
-      });
+	      const response = await fetch(this.endpoints.toolHistory, {
+	        method: "POST",
+	        headers: this.jsonHeaders(),
+	        body: JSON.stringify(this.getCurrentReferencePayload({ limit: 150 })),
+	      });
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
         const message = payload && payload.error && payload.error.message ? payload.error.message : "Unable to load activity.";
@@ -3916,15 +3976,16 @@ class ChatPortalClient {
     });
 
     try {
-      const response = await fetch(this.endpoints.toolApproval, {
-        method: "POST",
-        headers: this.jsonHeaders(),
-        body: JSON.stringify({
-          session_token: this.sessionToken,
-          approval_id: approvalId,
-          decision: action,
-        }),
-      });
+	      const response = await fetch(this.endpoints.toolApproval, {
+	        method: "POST",
+	        headers: this.jsonHeaders(),
+	        body: JSON.stringify(
+            this.getCurrentReferencePayload({
+              approval_id: approvalId,
+              decision: action,
+            }),
+          ),
+	      });
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
         const message = payload && payload.error && payload.error.message ? payload.error.message : "Approval failed.";
@@ -4029,15 +4090,16 @@ class ChatPortalClient {
     }
 
     try {
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: this.jsonHeaders(),
-        body: JSON.stringify({
-          session_token: this.sessionToken,
-          draft_id: draftId,
-          email_account_id: card.dataset.emailAccountId || "",
-        }),
-      });
+	      const response = await fetch(endpoint, {
+	        method: "POST",
+	        headers: this.jsonHeaders(),
+	        body: JSON.stringify(
+            this.getCurrentReferencePayload({
+              draft_id: draftId,
+              email_account_id: card.dataset.emailAccountId || "",
+            }),
+          ),
+	      });
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
         const message = payload && payload.error && payload.error.message ? payload.error.message : "Email action failed.";
@@ -4423,14 +4485,11 @@ class ChatPortalClient {
         return;
       }
       try {
-        const response = await fetch(this.endpoints.toolHistory, {
-          method: "POST",
-          headers: this.jsonHeaders(),
-          body: JSON.stringify({
-            session_token: this.sessionToken,
-            limit: 200,
-          }),
-        });
+	        const response = await fetch(this.endpoints.toolHistory, {
+	          method: "POST",
+	          headers: this.jsonHeaders(),
+	          body: JSON.stringify(this.getCurrentReferencePayload({ limit: 200 })),
+	        });
         const payload = await response.json().catch(() => null);
         if (response.ok && payload && payload.history && Array.isArray(payload.history.toolEvents)) {
           const match = payload.history.toolEvents.find(
@@ -5289,11 +5348,10 @@ class ChatPortalClient {
 
   connectEventStream() {
     if (!this.endpoints.events || !this.sessionToken) return;
-    if (this.eventSource) {
-      this.eventSource.close();
-    }
+    if (typeof document !== "undefined" && document.hidden) return;
+    this.closeSessionEventStream();
     const url = new URL(this.endpoints.events, window.location.origin);
-    url.searchParams.set("session_token", this.sessionToken);
+    this.applyCurrentReferenceToUrl(url);
     this.eventSource = new EventSource(url.toString());
     this.eventSource.addEventListener("statusChanged", (event) => {
       try {
@@ -5361,6 +5419,20 @@ class ChatPortalClient {
           console.warn("Failed to parse voice call transcript event", error);
         }
       });
+    }
+
+    this.eventSource.onerror = () => {
+      if (!this.eventSource) return;
+      if (typeof document !== "undefined" && document.hidden) {
+        this.closeSessionEventStream();
+      }
+    };
+  }
+
+  closeSessionEventStream() {
+    if (this.eventSource) {
+      this.eventSource.close();
+      this.eventSource = null;
     }
   }
 
@@ -5591,16 +5663,17 @@ class ChatPortalClient {
 
     try {
       const action = decision.toString().trim().toLowerCase();
-      const response = await fetch(this.endpoints.runApproval, {
-        method: "POST",
-        headers: this.jsonHeaders(),
-        body: JSON.stringify({
-          session_token: this.sessionToken,
-          run_id: runId,
-          approval_id: approvalId,
-          decision: action,
-        }),
-      });
+	      const response = await fetch(this.endpoints.runApproval, {
+	        method: "POST",
+	        headers: this.jsonHeaders(),
+	        body: JSON.stringify(
+            this.getCurrentReferencePayload({
+              run_id: runId,
+              approval_id: approvalId,
+              decision: action,
+            }),
+          ),
+	      });
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
         const message = payload && payload.error && payload.error.message ? payload.error.message : "Approval failed.";
@@ -5681,15 +5754,16 @@ class ChatPortalClient {
       textareaEl.disabled = true;
     }
     try {
-      const response = await fetch(this.endpoints.runUserInput, {
-        method: "POST",
-        headers: this.jsonHeaders(),
-        body: JSON.stringify({
-          session_token: this.sessionToken,
-          run_id: runId,
-          message,
-        }),
-      });
+	      const response = await fetch(this.endpoints.runUserInput, {
+	        method: "POST",
+	        headers: this.jsonHeaders(),
+	        body: JSON.stringify(
+            this.getCurrentReferencePayload({
+              run_id: runId,
+              message,
+            }),
+          ),
+	      });
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
         const messageOut = payload && payload.error && payload.error.message ? payload.error.message : "Send failed.";
@@ -7263,16 +7337,17 @@ class ChatPortalClient {
     }
 
     try {
-      const response = await fetch(this.endpoints.agentRequestUpdate, {
-        method: "POST",
-        headers: this.jsonHeaders(),
-        body: JSON.stringify({
-          session_token: this.sessionToken,
-          request_id: requestId,
-          status,
-          resolution: resolution || undefined,
-        }),
-      });
+	      const response = await fetch(this.endpoints.agentRequestUpdate, {
+	        method: "POST",
+	        headers: this.jsonHeaders(),
+	        body: JSON.stringify(
+            this.getCurrentReferencePayload({
+              request_id: requestId,
+              status,
+              resolution: resolution || undefined,
+            }),
+          ),
+	      });
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
         const message = payload && payload.error && payload.error.message ? payload.error.message : "Update failed.";
@@ -7312,14 +7387,11 @@ class ChatPortalClient {
   }
 
   async submitCsat({ score }) {
-    const response = await fetch(this.endpoints.csat, {
-      method: "POST",
-      headers: this.jsonHeaders(),
-      body: JSON.stringify({
-        session_token: this.sessionToken,
-        score,
-      }),
-    });
+	    const response = await fetch(this.endpoints.csat, {
+	      method: "POST",
+	      headers: this.jsonHeaders(),
+	      body: JSON.stringify(this.getCurrentReferencePayload({ score })),
+	    });
     if (!response.ok) {
       throw new Error("Failed to submit feedback");
     }
@@ -11422,6 +11494,7 @@ class ChatPortalClient {
   }
 
   getStoredToken() {
+    if (this.shouldUseConversationApi()) return null;
     if (!this.sessionCacheKey) return null;
     try {
       return window.localStorage.getItem(this.sessionCacheKey);
@@ -11464,16 +11537,153 @@ class ChatPortalClient {
     return null;
   }
 
+  readBootstrapScriptConversationId() {
+    if (!this.bootstrapScriptId) return null;
+    const script = document.getElementById(this.bootstrapScriptId);
+    if (!script) return null;
+    try {
+      const data = JSON.parse(script.textContent || "{}");
+      if (data && data.session && data.session.conversation_id) {
+        return data.session.conversation_id;
+      }
+    } catch (error) {
+      console.warn("Failed to parse bootstrap script", error);
+    }
+    return null;
+  }
+
   persistSessionToken(token) {
     if (!token) return;
     this.sessionToken = token;
     this.container.setAttribute("data-session-token", token);
+    if (this.shouldUseConversationApi()) return;
     if (!this.sessionCacheKey) return;
     try {
       window.localStorage.setItem(this.sessionCacheKey, token);
     } catch (error) {
       console.warn("Unable to persist session token", error);
     }
+  }
+
+  shouldUseConversationApi() {
+    return Boolean(this.authenticatedChat && this.conversationsEndpoint && this.businessSlug && this.agentSlug);
+  }
+
+  getSessionSummaryConversationId(session) {
+    if (!session || typeof session !== "object") return "";
+    return (session.conversation_id || session.conversationId || "").toString().trim();
+  }
+
+  getSessionSummaryToken(session) {
+    if (!session || typeof session !== "object") return "";
+    return (session.session_token || session.sessionToken || "").toString().trim();
+  }
+
+  getSessionSummaryKey(session) {
+    if (!session || typeof session !== "object") return "";
+    const conversationId = this.getSessionSummaryConversationId(session);
+    if (this.shouldUseConversationApi() && conversationId) {
+      return conversationId;
+    }
+    return this.getSessionSummaryToken(session) || conversationId;
+  }
+
+  getCurrentSessionKey() {
+    if (this.shouldUseConversationApi() && this.conversationId) {
+      return this.conversationId;
+    }
+    return this.sessionToken || this.conversationId || null;
+  }
+
+  getCurrentReferencePayload(extra = {}) {
+    const payload = { ...extra };
+    if (this.shouldUseConversationApi() && this.conversationId) {
+      payload.conversation_id = this.conversationId;
+      return payload;
+    }
+    if (this.sessionToken) {
+      payload.session_token = this.sessionToken;
+    }
+    return payload;
+  }
+
+  applyCurrentReferenceToUrl(url) {
+    if (!(url instanceof URL)) return url;
+    if (this.shouldUseConversationApi() && this.conversationId) {
+      url.searchParams.set("conversation_id", this.conversationId);
+      url.searchParams.delete("session_token");
+      return url;
+    }
+    if (this.sessionToken) {
+      url.searchParams.set("session_token", this.sessionToken);
+    }
+    return url;
+  }
+
+  setActiveSessionFromSession(session) {
+    if (!session || typeof session !== "object") return;
+    const sessionToken = this.getSessionSummaryToken(session);
+    const conversationId = this.getSessionSummaryConversationId(session);
+    if (sessionToken) {
+      this.sessionToken = sessionToken;
+      this.container.setAttribute("data-session-token", sessionToken);
+    }
+    if (conversationId) {
+      this.conversationId = conversationId;
+      this.container.setAttribute("data-conversation-id", conversationId);
+    }
+    this.currentSessionKey = this.getSessionSummaryKey(session);
+    if (this.shouldUseConversationApi() && conversationId) {
+      try {
+        if (window.localStorage) {
+          window.localStorage.setItem(this.lastConversationStorageKey, conversationId);
+        }
+      } catch (_error) {
+        // ignore storage failures
+      }
+      this.updateDashboardUrl(conversationId);
+    }
+  }
+
+  updateDashboardUrl(conversationId) {
+    if (!this.shouldUseConversationApi() || !conversationId || this.chatSurface !== "dashboard") return;
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set("conversation", conversationId);
+      window.history.replaceState({}, "", url.toString());
+    } catch (_error) {
+      // ignore URL update failures
+    }
+  }
+
+  getSessionSummaryByKey(sessionKey) {
+    if (!sessionKey || !Array.isArray(this.sessionSummaries)) return null;
+    return this.sessionSummaries.find((session) => this.getSessionSummaryKey(session) === sessionKey) || null;
+  }
+
+  getConversationMessagesUrl(conversationId, limit = null) {
+    const normalized = (conversationId || "").toString().trim();
+    if (!normalized) return "";
+    const url = new URL(`/api/chat/conversations/${encodeURIComponent(normalized)}/messages/`, window.location.origin);
+    if (Number.isFinite(Number(limit)) && Number(limit) > 0) {
+      url.searchParams.set("limit", String(Number(limit)));
+    }
+    return url.toString();
+  }
+
+  getConversationTurnsUrl(conversationId) {
+    const normalized = (conversationId || "").toString().trim();
+    if (!normalized) return "";
+    return `/api/chat/conversations/${encodeURIComponent(normalized)}/turns/`;
+  }
+
+  upsertSessionSummary(sessionSummary) {
+    if (!sessionSummary || typeof sessionSummary !== "object") return;
+    const key = this.getSessionSummaryKey(sessionSummary);
+    if (!key) return;
+    const existing = Array.isArray(this.sessionSummaries) ? this.sessionSummaries : [];
+    const filtered = existing.filter((session) => this.getSessionSummaryKey(session) !== key);
+    this.sessionSummaries = [sessionSummary, ...filtered];
   }
 
   getTurnStateKey() {
@@ -11534,9 +11744,7 @@ class ChatPortalClient {
       ? template.replace("{turn_id}", encodedId)
       : `/api/chat/turns/${encodedId}/events/`;
     const url = new URL(path, window.location.origin);
-    if (this.sessionToken) {
-      url.searchParams.set("session_token", this.sessionToken);
-    }
+    this.applyCurrentReferenceToUrl(url);
     if (Number.isFinite(Number(since)) && Number(since) > 0) {
       url.searchParams.set("since", String(Number(since)));
     }
@@ -11722,10 +11930,28 @@ class ChatPortalClient {
   }
 
   jsonHeaders() {
-    return {
+    const headers = {
       "Content-Type": "application/json",
       "X-Requested-With": "XMLHttpRequest",
     };
+    const csrfToken = this.getCsrfToken();
+    if (csrfToken) {
+      headers["X-CSRFToken"] = csrfToken;
+    }
+    return headers;
+  }
+
+  getCsrfToken() {
+    try {
+      const match = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/);
+      if (match && match[1]) {
+        return decodeURIComponent(match[1]);
+      }
+    } catch (_error) {
+      // ignore cookie parsing failures
+    }
+    const input = document.querySelector('input[name="csrfmiddlewaretoken"]');
+    return input && input.value ? input.value : "";
   }
 
   scrollToBottom(smooth = false) {
@@ -11839,70 +12065,61 @@ class ChatPortalClient {
     });
   }
 
-  getSessionTokens() {
-    try {
-      const stored = localStorage.getItem(this.sessionStorageKey);
-      if (!stored) return [];
-      const parsed = JSON.parse(stored);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (e) {
-      console.warn("Failed to load session tokens", e);
-      return [];
-    }
-  }
-
-  saveSessionTokens(tokens) {
-    try {
-      // Keep only the most recent 100 sessions
-      const limited = tokens.slice(0, 100);
-      localStorage.setItem(this.sessionStorageKey, JSON.stringify(limited));
-      this.sessionTokens = limited;
-    } catch (e) {
-      console.warn("Failed to save session tokens", e);
-    }
-  }
-
   trackCurrentSession() {
-    if (!this.sessionToken) return;
-    
-    this.currentSessionToken = this.sessionToken;
-    const tokens = this.getSessionTokens();
-    
-    // Add current session if it doesn't exist (don't reorder if it does)
-    if (!tokens.includes(this.sessionToken)) {
-      // Add new session at the beginning (newest)
-      tokens.unshift(this.sessionToken);
-      this.saveSessionTokens(tokens);
-    }
+    const session =
+      this.bootstrapPayload && this.bootstrapPayload.session && typeof this.bootstrapPayload.session === "object"
+        ? this.bootstrapPayload.session
+        : {
+            session_token: this.sessionToken,
+            conversation_id: this.conversationId,
+          };
+    this.setActiveSessionFromSession(session);
   }
 
   async loadSessionHistory() {
-    const tokens = this.getSessionTokens();
-    
-    if (tokens.length === 0) {
-      this.showSessionsEmpty();
-      return;
-    }
-
     this.showSessionsLoading();
 
     try {
-      const response = await fetch("/api/chat/portal/sessions/list/", {
-        method: "POST",
-        headers: this.jsonHeaders(),
-        body: JSON.stringify({
-          business_slug: this.businessSlug,
-          agent_slug: this.agentSlug,
-          session_tokens: tokens,
-        }),
-      });
+      let response;
+      if (this.shouldUseConversationApi()) {
+        const url = new URL(this.conversationsEndpoint, window.location.origin);
+        url.searchParams.set("business_slug", this.businessSlug);
+        url.searchParams.set("agent_slug", this.agentSlug);
+        url.searchParams.set("limit", "100");
+        response = await fetch(url.toString(), {
+          method: "GET",
+          headers: { Accept: "application/json", "X-Requested-With": "XMLHttpRequest" },
+        });
+      } else {
+        let tokens = [];
+        try {
+          const stored = localStorage.getItem(this.sessionStorageKey);
+          tokens = stored ? JSON.parse(stored) : [];
+        } catch (error) {
+          console.warn("Failed to read session history from localStorage", error);
+          tokens = [];
+        }
+        if (!Array.isArray(tokens) || tokens.length === 0) {
+          this.showSessionsEmpty();
+          return;
+        }
+        response = await fetch("/api/chat/portal/sessions/list/", {
+          method: "POST",
+          headers: this.jsonHeaders(),
+          body: JSON.stringify({
+            business_slug: this.businessSlug,
+            agent_slug: this.agentSlug,
+            session_tokens: tokens,
+          }),
+        });
+      }
 
       if (!response.ok) {
         throw new Error("Failed to load sessions");
       }
 
       const data = await response.json();
-      const sessions = data.sessions || [];
+      const sessions = this.shouldUseConversationApi() ? data.conversations || [] : data.sessions || [];
 
       this.sessionSummaries = Array.isArray(sessions) ? sessions : [];
       if (sessions.length === 0) {
@@ -11956,7 +12173,7 @@ class ChatPortalClient {
     itemsContainer.innerHTML = "";
 
     for (const session of sessions) {
-      const isActive = session.session_token === this.currentSessionToken;
+      const isActive = this.getSessionSummaryKey(session) === this.getCurrentSessionKey();
       const item = this.buildSessionItem(session, isActive);
       itemsContainer.appendChild(item);
     }
@@ -11971,7 +12188,16 @@ class ChatPortalClient {
         ? "bg-primary/10 text-primary"
         : "text-foreground/80 hover:bg-muted/50"
     }`;
-    div.dataset.sessionToken = session.session_token;
+    const sessionToken = this.getSessionSummaryToken(session);
+    const conversationId = this.getSessionSummaryConversationId(session);
+    const sessionKey = this.getSessionSummaryKey(session);
+    if (sessionToken) {
+      div.dataset.sessionToken = sessionToken;
+    }
+    if (conversationId) {
+      div.dataset.conversationId = conversationId;
+    }
+    div.dataset.sessionKey = sessionKey;
     if (typeof session.message_count === "number") {
       div.dataset.messageCount = String(session.message_count);
     }
@@ -11983,8 +12209,8 @@ class ChatPortalClient {
 
     // Click to switch session
     div.addEventListener("click", () => {
-      if (session.session_token !== this.currentSessionToken) {
-        this.switchToSession(session.session_token);
+      if (sessionKey && sessionKey !== this.getCurrentSessionKey()) {
+        this.switchToSession(session);
       }
     });
 
@@ -12030,9 +12256,9 @@ class ChatPortalClient {
     return truncated.replace(/[.,!?;:]+$/, "") + "...";
   }
 
-  applySessionTitleToDom(sessionToken, title) {
-    if (!sessionToken || !this.elements.sessionsList) return false;
-    const item = this.elements.sessionsList.querySelector(`[data-session-token="${sessionToken}"]`);
+  applySessionTitleToDom(sessionKey, title) {
+    if (!sessionKey || !this.elements.sessionsList) return false;
+    const item = this.elements.sessionsList.querySelector(`[data-session-key="${sessionKey}"]`);
     if (!item) return false;
     const titleEl = item.querySelector("[data-session-title]") || item.querySelector("span");
     if (!titleEl) return false;
@@ -12046,52 +12272,52 @@ class ChatPortalClient {
     return true;
   }
 
-  updateSessionTitle(sessionToken, title) {
-    if (!sessionToken || !title) return;
-    const applied = this.applySessionTitleToDom(sessionToken, title);
+  updateSessionTitle(sessionKey, title) {
+    if (!sessionKey || !title) return;
+    const applied = this.applySessionTitleToDom(sessionKey, title);
     if (!applied) {
-      this.pendingSessionTitles[sessionToken] = title;
-    } else if (this.pendingSessionTitles[sessionToken]) {
-      delete this.pendingSessionTitles[sessionToken];
+      this.pendingSessionTitles[sessionKey] = title;
+    } else if (this.pendingSessionTitles[sessionKey]) {
+      delete this.pendingSessionTitles[sessionKey];
     }
     if (Array.isArray(this.sessionSummaries) && this.sessionSummaries.length) {
       this.sessionSummaries = this.sessionSummaries.map((session) => {
-        if (!session || session.session_token !== sessionToken) return session;
+        if (!session || this.getSessionSummaryKey(session) !== sessionKey) return session;
         return { ...session, title };
       });
     }
   }
 
   updateSessionTitleFromMessage(messageText) {
-    const token = this.currentSessionToken;
-    if (!token) return;
+    const sessionKey = this.getCurrentSessionKey();
+    if (!sessionKey) return;
     const title = this.generateSessionTitle(messageText);
-    this.updateSessionTitle(token, title);
+    this.updateSessionTitle(sessionKey, title);
   }
 
   applyPendingSessionTitles() {
     if (!this.pendingSessionTitles || !this.elements.sessionsList) return;
     const pending = { ...this.pendingSessionTitles };
-    Object.keys(pending).forEach((sessionToken) => {
-      this.updateSessionTitle(sessionToken, pending[sessionToken]);
+    Object.keys(pending).forEach((sessionKey) => {
+      this.updateSessionTitle(sessionKey, pending[sessionKey]);
     });
   }
 
-  findEmptySessionToken() {
+  findEmptySessionKey() {
     if (Array.isArray(this.sessionSummaries) && this.sessionSummaries.length) {
       const emptySummary = this.sessionSummaries.find((session) => session && session.message_count === 0);
-      return emptySummary ? emptySummary.session_token : null;
+      return emptySummary ? this.getSessionSummaryKey(emptySummary) : null;
     }
     if (this.elements.sessionsList) {
       const emptyItem = this.elements.sessionsList.querySelector('[data-message-count="0"]');
-      return emptyItem ? emptyItem.dataset.sessionToken : null;
+      return emptyItem ? emptyItem.dataset.sessionKey || emptyItem.dataset.conversationId || emptyItem.dataset.sessionToken : null;
     }
     return null;
   }
 
-  getSessionMessageCount(sessionToken) {
-    if (!sessionToken || !this.elements.sessionsList) return null;
-    const item = this.elements.sessionsList.querySelector(`[data-session-token="${sessionToken}"]`);
+  getSessionMessageCount(sessionKey) {
+    if (!sessionKey || !this.elements.sessionsList) return null;
+    const item = this.elements.sessionsList.querySelector(`[data-session-key="${sessionKey}"]`);
     if (!item) return null;
     const raw = item.dataset.messageCount;
     if (raw === undefined || raw === "") return null;
@@ -12099,9 +12325,9 @@ class ChatPortalClient {
     return Number.isFinite(parsed) ? parsed : null;
   }
 
-  setSessionMessageCount(sessionToken, messageCount) {
-    if (!sessionToken || !this.elements.sessionsList) return;
-    const item = this.elements.sessionsList.querySelector(`[data-session-token="${sessionToken}"]`);
+  setSessionMessageCount(sessionKey, messageCount) {
+    if (!sessionKey || !this.elements.sessionsList) return;
+    const item = this.elements.sessionsList.querySelector(`[data-session-key="${sessionKey}"]`);
     if (!item) return;
     if (typeof messageCount === "number" && Number.isFinite(messageCount)) {
       item.dataset.messageCount = String(messageCount);
@@ -12110,7 +12336,7 @@ class ChatPortalClient {
     }
     if (Array.isArray(this.sessionSummaries) && this.sessionSummaries.length) {
       this.sessionSummaries = this.sessionSummaries.map((session) => {
-        if (!session || session.session_token !== sessionToken) return session;
+        if (!session || this.getSessionSummaryKey(session) !== sessionKey) return session;
         if (typeof messageCount !== "number" || !Number.isFinite(messageCount)) return session;
         return { ...session, message_count: messageCount };
       });
@@ -12158,9 +12384,9 @@ class ChatPortalClient {
       this.showToast("Still loading", "Please wait for the conversation to load.", false);
       return;
     }
-    const emptySessionToken = this.findEmptySessionToken();
-    if (emptySessionToken) {
-      if (emptySessionToken === this.currentSessionToken) {
+    const emptySessionKey = this.findEmptySessionKey();
+    if (emptySessionKey) {
+      if (emptySessionKey === this.getCurrentSessionKey()) {
         this.showToast(
           "Start chatting first",
           "Please send a message in this chat before creating a new one.",
@@ -12168,7 +12394,7 @@ class ChatPortalClient {
         );
         return;
       }
-      this.switchToSession(emptySessionToken);
+      this.switchToSession(emptySessionKey);
       return;
     }
     // Check if current session is empty
@@ -12195,7 +12421,8 @@ class ChatPortalClient {
     }
 
     try {
-      const response = await fetch("/api/chat/portal/sessions/create/", {
+      const endpoint = this.shouldUseConversationApi() ? this.conversationsEndpoint : "/api/chat/portal/sessions/create/";
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: this.jsonHeaders(),
         body: JSON.stringify({
@@ -12210,21 +12437,18 @@ class ChatPortalClient {
       }
 
       const data = await response.json();
-      const newToken = data.session?.session_token;
-
-      if (!newToken) {
-        throw new Error("No session token returned");
+      const session = data && data.session ? data.session : null;
+      const newKey = this.getSessionSummaryKey(session || {});
+      if (!session || !newKey) {
+        throw new Error("No conversation returned");
       }
-
-      // Update localStorage to use new session and reload
-      try {
-        window.localStorage.setItem(this.sessionCacheKey, newToken);
-      } catch (e) {
-        console.warn("Failed to update session cache", e);
-      }
-      
-      // Reload page with new session
-      window.location.reload();
+      this.upsertSessionSummary({
+        ...session,
+        title: session.title || "New conversation",
+        message_count: 0,
+      });
+      this.renderSessionList(this.sessionSummaries);
+      await this.switchToSession(this.getSessionSummaryByKey(newKey) || session);
     } catch (error) {
       this.showToast("New chat failed", error.message || "Could not create new conversation.", true);
       this.sessionCreationInProgress = false;
@@ -12237,8 +12461,13 @@ class ChatPortalClient {
     }
   }
 
-  async switchToSession(sessionToken) {
-    if (!sessionToken || sessionToken === this.currentSessionToken) return;
+  async switchToSession(sessionRef) {
+    const session =
+      typeof sessionRef === "object" && sessionRef !== null
+        ? sessionRef
+        : this.getSessionSummaryByKey((sessionRef || "").toString().trim());
+    const sessionKey = this.getSessionSummaryKey(session || {});
+    if (!session || !sessionKey || sessionKey === this.getCurrentSessionKey()) return;
 
     const loadId = ++this.sessionLoadId;
     this.prepareForSessionSwitch();
@@ -12246,23 +12475,14 @@ class ChatPortalClient {
     this.currentSessionHasMessages = false;
 
     // 1. Update internal state
-    this.currentSessionToken = sessionToken;
-    this.sessionToken = sessionToken;
-    this.container.setAttribute("data-session-token", sessionToken);
+    this.setActiveSessionFromSession(session);
     this.updateSessionEmptyState();
-    
-    // Update localStorage
-    try {
-      window.localStorage.setItem(this.sessionCacheKey, sessionToken);
-    } catch (e) {
-      console.warn("Failed to update session cache", e);
-    }
 
     // 2. Update UI Highlight
     if (this.elements.sessionsList) {
-      const items = this.elements.sessionsList.querySelectorAll('[data-session-token]');
+      const items = this.elements.sessionsList.querySelectorAll('[data-session-key]');
       items.forEach(el => {
-        if (el.dataset.sessionToken === sessionToken) {
+        if (el.dataset.sessionKey === sessionKey) {
            el.className = "flex items-center gap-2 px-2 h-10 rounded-lg cursor-pointer transition-colors text-sm font-medium bg-primary/10 text-primary";
         } else {
            el.className = "flex items-center gap-2 px-2 h-10 rounded-lg cursor-pointer transition-colors text-sm font-medium text-foreground/80 hover:bg-muted/50";
@@ -12271,7 +12491,7 @@ class ChatPortalClient {
     }
 
     // 3. Render loading state
-    const messageCount = this.getSessionMessageCount(sessionToken);
+    const messageCount = this.getSessionMessageCount(sessionKey);
     const shouldShowSkeleton = typeof messageCount === "number" ? messageCount > 0 : true;
     if (shouldShowSkeleton) {
       this.setConversationLayout(true);
@@ -12282,13 +12502,35 @@ class ChatPortalClient {
 
     // 4. Fetch and Render Data
     try {
-      // Re-use bootstrap logic but forcing the new token AND forcing render (overwriting skeleton)
-      const data = await this.bootstrapSession({
-        forceRender: true,
-        expectedToken: sessionToken,
-        sessionToken: sessionToken,
-        loadId,
-      });
+      let data = null;
+      if (this.shouldUseConversationApi() && this.getSessionSummaryConversationId(session)) {
+        const response = await fetch(this.getConversationMessagesUrl(this.getSessionSummaryConversationId(session), 150), {
+          method: "GET",
+          headers: { Accept: "application/json", "X-Requested-With": "XMLHttpRequest" },
+        });
+        if (!response.ok) {
+          throw new Error("Conversation request failed");
+        }
+        data = await response.json();
+        this.bootstrapPayload = data;
+        if (data && data.session) {
+          this.setActiveSessionFromSession(data.session);
+          const messages = Array.isArray(data.messages) ? data.messages : [];
+          this.currentSessionHasMessages = messages.length > 0;
+          this.setSessionMessageCount(this.getCurrentSessionKey(), messages.length);
+          this.setConversationLayout(messages.length > 0);
+          this.renderTranscript(messages);
+          this.updateStatus(data.session.status);
+          this.updateCsatVisibility(data.session.status);
+        }
+      } else {
+        data = await this.bootstrapSession({
+          forceRender: true,
+          expectedToken: this.getSessionSummaryToken(session),
+          sessionToken: this.getSessionSummaryToken(session),
+          loadId,
+        });
+      }
       if (!data || this.sessionLoadId !== loadId) return;
       this.setSessionLoadingState(false);
       this.connectEventStream();
@@ -12393,13 +12635,14 @@ class ChatPortalClient {
       btn.setAttribute("aria-disabled", "false");
     }
     this.currentSessionHasMessages = !isEmpty;
-    if (this.currentSessionToken) {
+    const currentSessionKey = this.getCurrentSessionKey();
+    if (currentSessionKey) {
       if (typeof messageCount === "number") {
-        this.setSessionMessageCount(this.currentSessionToken, messageCount);
+        this.setSessionMessageCount(currentSessionKey, messageCount);
       } else if (!isEmpty) {
-        const existing = this.getSessionMessageCount(this.currentSessionToken);
+        const existing = this.getSessionMessageCount(currentSessionKey);
         if (!existing || existing === 0) {
-          this.setSessionMessageCount(this.currentSessionToken, 1);
+          this.setSessionMessageCount(currentSessionKey, 1);
         }
       }
     }
@@ -12435,10 +12678,7 @@ class ChatPortalClient {
     this.clearStreamingStatus();
     this.updateSendButtonState(false);
     this.updateComposerNotice(false);
-    if (this.eventSource) {
-      this.eventSource.close();
-      this.eventSource = null;
-    }
+    this.closeSessionEventStream();
 
     if (this.agentRuns) {
       this.agentRuns.clear();

@@ -601,7 +601,7 @@ class AgenticReadTableAnchorMergeTests(TestCase):
         self.assertIn("Assessment Fees", rendered)
         self.assertIn("EGP 200 (Paid once)", rendered)
 
-    def test_row_chunk_ref_rejects_row_range_arguments(self) -> None:
+    def test_row_chunk_ref_with_row_range_arguments_reads_parent_table(self) -> None:
         result = tools.execute_tool(
             "read_knowledge",
             {
@@ -612,11 +612,20 @@ class AgenticReadTableAnchorMergeTests(TestCase):
             context=ToolExecutionContext(),
         )
 
-        self.assertEqual(result.get("status"), "error")
-        errors = result.get("errors") or []
-        self.assertEqual(len(errors), 1)
-        self.assertEqual(errors[0].get("error_code"), "row_ref_range_not_supported")
-        self.assertIn(str(self.table.id), str(errors[0].get("hint") or ""))
+        self.assertEqual(result.get("status"), "ok")
+        evidence = result.get("evidence") or []
+        self.assertEqual(len(evidence), 1)
+        payload = evidence[0].get("payload") or {}
+        self.assertEqual(payload.get("table_id"), str(self.table.id))
+        self.assertEqual(payload.get("selection_mode"), "row_range")
+        self.assertEqual(payload.get("upgraded_from_ref"), "table_row")
+        rendered_rows = {" | ".join(str(cell or "") for cell in row) for row in payload.get("rows") or []}
+        self.assertTrue(
+            any("Assessment Fees" in row and "EGP 200 (Paid once)" in row for row in rendered_rows)
+        )
+        self.assertTrue(
+            any("Unsecured Personal Loans via Apply Online" in row and "1%" in row for row in rendered_rows)
+        )
 
 
 @override_settings(MCP_NEW_CONTRACT_ENABLED=True, MCP_AGENTIC_READ_V2_ENABLED=True)

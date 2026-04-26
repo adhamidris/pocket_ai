@@ -20,7 +20,6 @@ from django.db import IntegrityError, close_old_connections, transaction
 from django.db.models import Max, Q
 from django.http import HttpRequest, HttpResponse, JsonResponse, StreamingHttpResponse
 from django.utils import timezone
-from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 from core.otel import otel_context, otel_trace
 from core.cache_resilience import (
@@ -65,12 +64,18 @@ from apps.rag.rag_logging import structured_log
 from apps.conversations.portal import (
     ChatPortalService,
     PortalAgentSummary,
+    PortalAuthorizationError,
     PortalBusinessSummary,
     PortalMessage,
     PortalNotFoundError,
     PortalSessionBootstrap,
     PortalSessionState,
     PortalValidationError,
+)
+from apps.conversations.portal_auth import (
+    can_access_conversation,
+    get_authorized_conversation,
+    resolve_scope_for_user,
 )
 from apps.conversations.portal_turn_events import (
     PORTAL_TURN_EVENTS_NOTIFY_CHANNEL,
@@ -954,11 +959,103 @@ def _service() -> ChatPortalService:
     return ChatPortalService()
 
 
+def _attach_actor_user_id_if_authorized(
+    *,
+    service: ChatPortalService,
+    request: HttpRequest,
+    business_slug: str,
+    agent_slug: str,
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    user = getattr(request, "user", None)
+    if not user or not getattr(user, "is_authenticated", False):
+        return metadata
+    if "actor_user_id" in metadata or "actorUserId" in metadata:
+        return metadata
+    try:
+        resolve_scope_for_user(
+            service=service,
+            user=user,
+            business_slug=business_slug,
+            agent_slug=agent_slug,
+        )
+    except (PortalAuthorizationError, PortalNotFoundError):
+        return metadata
+    metadata["actor_user_id"] = str(user.id)
+    return metadata
+
+
 def _json_error(code: str, message: str, *, status: int = 400, extra: dict | None = None) -> JsonResponse:
     payload: dict[str, object] = {"error": {"code": code, "message": message}}
     if extra:
         payload["error"].update(extra)
     return JsonResponse(payload, status=status)
+
+
+def _session_summary_to_dict(summary) -> dict[str, object]:
+    return {
+        "conversation_id": str(summary.conversation_id),
+        "session_token": summary.session_token,
+        "title": summary.title,
+        "started_at": summary.started_at.isoformat(),
+        "last_activity_at": summary.last_activity_at.isoformat(),
+        "status": summary.status,
+        "message_count": summary.message_count,
+        "preview": summary.preview,
+    }
+
+
+def _require_authenticated_user(request: HttpRequest):
+    user = getattr(request, "user", None)
+    if not user or not getattr(user, "is_authenticated", False):
+        raise PortalAuthorizationError("Authentication is required.")
+    return user
+
+
+def _extract_conversation_id(payload: Mapping[str, object] | None = None, request: HttpRequest | None = None) -> str:
+    if payload:
+        value = payload.get("conversation_id") or payload.get("conversationId")
+        if value:
+            return str(value).strip()
+    if request is not None:
+        value = request.GET.get("conversation_id") or request.GET.get("conversationId")
+        if value:
+            return str(value).strip()
+    return ""
+
+
+def _resolve_request_conversation(
+    *,
+    service: ChatPortalService,
+    request: HttpRequest,
+    payload: Mapping[str, object] | None = None,
+    include_messages: bool = False,
+) -> tuple[Conversation, PortalSessionState]:
+    user = _require_authenticated_user(request)
+    conversation_id = _extract_conversation_id(payload, request)
+    if conversation_id:
+        conversation = get_authorized_conversation(
+            service=service,
+            user=user,
+            conversation_id=conversation_id,
+            include_messages=include_messages,
+        )
+        session = service.get_session_state_for_conversation(conversation)
+        return conversation, session
+
+    session_token = ""
+    if payload:
+        session_token = str(payload.get("session_token") or payload.get("sessionToken") or "").strip()
+    if not session_token and request is not None:
+        session_token = str(request.GET.get("session_token") or request.GET.get("sessionToken") or "").strip()
+    if not session_token:
+        raise PortalValidationError("conversation_id or session_token is required.")
+
+    conversation = service.get_conversation(session_token=session_token, include_messages=include_messages)
+    if not can_access_conversation(user, conversation):
+        raise PortalAuthorizationError("You do not have access to this conversation.")
+    session = service.get_session_state(session_token=session_token, conversation=conversation)
+    return conversation, session
 
 
 def _parse_json_body(request: HttpRequest) -> dict:
@@ -1509,10 +1606,13 @@ def resolve_portal_handle(request: HttpRequest, business_slug: str, agent_slug: 
     )
 
 
-@csrf_exempt
 @require_POST
 def bootstrap_session(request: HttpRequest) -> JsonResponse:
     service = _service()
+    try:
+        _require_authenticated_user(request)
+    except PortalAuthorizationError as exc:
+        return _json_error("auth_required", str(exc), status=401)
     try:
         payload = _parse_json_body(request)
     except PortalValidationError as exc:
@@ -1526,17 +1626,13 @@ def bootstrap_session(request: HttpRequest) -> JsonResponse:
     if not business_slug or not agent_slug:
         return _json_error("validation_error", "business_slug and agent_slug are required.")
 
-    # If an authenticated tenant user is bootstrapping the portal, attach their id
-    # to the session metadata so internal tools can resolve per-user integrations.
-    try:
-        user = getattr(request, "user", None)
-        if user and user.is_authenticated:
-            business, _agent = service.resolve_handle(business_slug, agent_slug)
-            allowed = bool(user.is_staff or user.business_profiles.filter(id=business.id).exists())
-            if allowed and "actor_user_id" not in metadata and "actorUserId" not in metadata:
-                metadata["actor_user_id"] = str(user.id)
-    except Exception:  # pragma: no cover - best effort only
-        pass
+    metadata = _attach_actor_user_id_if_authorized(
+        service=service,
+        request=request,
+        business_slug=business_slug,
+        agent_slug=agent_slug,
+        metadata=metadata,
+    )
 
     try:
         result = service.bootstrap_session(
@@ -1548,26 +1644,13 @@ def bootstrap_session(request: HttpRequest) -> JsonResponse:
     except PortalNotFoundError as exc:
         return _json_error("not_found", str(exc), status=404)
 
-    response = JsonResponse(_bootstrap_to_dict(result), status=200)
-    response.set_cookie(
-        f"chat_session_{result.business.slug}_{result.agent.slug}",
-        result.session.session_token,
-        max_age=3600 * 24 * 365,
-        httponly=False,
-        secure=False,
-        samesite="Lax",
-    )
-    return response
+    return JsonResponse(_bootstrap_to_dict(result), status=200)
 
 
-@csrf_exempt
 @require_http_methods(["GET", "POST"])
 def messages_endpoint(request: HttpRequest) -> JsonResponse:
     service = _service()
     if request.method == "GET":
-        session_token = request.GET.get("session_token") or request.GET.get("sessionToken")
-        if not session_token:
-            return _json_error("validation_error", "session_token is required")
         limit_param = request.GET.get("limit")
         limit = None
         if limit_param:
@@ -1576,10 +1659,20 @@ def messages_endpoint(request: HttpRequest) -> JsonResponse:
             except ValueError:
                 return _json_error("validation_error", "limit must be an integer between 1 and 200")
         try:
-            messages = service.list_messages(session_token=session_token, limit=limit)
-            session = service.get_session_state(session_token=session_token)
+            conversation, session = _resolve_request_conversation(
+                service=service,
+                request=request,
+                include_messages=False,
+            )
+            messages = service.list_messages_for_conversation(conversation=conversation, limit=limit)
+        except PortalAuthorizationError as exc:
+            status = 401 if str(exc) == "Authentication is required." else 403
+            code = "auth_required" if status == 401 else "forbidden"
+            return _json_error(code, str(exc), status=status)
         except PortalNotFoundError as exc:
             return _json_error("not_found", str(exc), status=404)
+        except PortalValidationError as exc:
+            return _json_error("validation_error", str(exc))
         return JsonResponse(
             {"session": _session_to_dict(session), "messages": [_message_to_dict(msg) for msg in messages]}
         )
@@ -1589,26 +1682,35 @@ def messages_endpoint(request: HttpRequest) -> JsonResponse:
     except PortalValidationError as exc:
         return _json_error("invalid_json", str(exc))
 
-    session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
     body = (payload.get("body") or "").strip()
     metadata = _with_ui_language(request, _normalize_portal_metadata(payload.get("metadata") or {}))
 
     try:
+        conversation, _session = _resolve_request_conversation(
+            service=service,
+            request=request,
+            payload=payload,
+            include_messages=False,
+        )
         message = service.append_message(
-            session_token=session_token,
+            session_token=conversation.session_token,
             sender=ConversationSender.CUSTOMER,
             body=body,
             metadata=metadata,
+            conversation=conversation,
         )
     except PortalValidationError as exc:
         return _json_error("validation_error", str(exc))
     except PortalNotFoundError as exc:
         return _json_error("not_found", str(exc), status=404)
+    except PortalAuthorizationError as exc:
+        status = 401 if str(exc) == "Authentication is required." else 403
+        code = "auth_required" if status == 401 else "forbidden"
+        return _json_error(code, str(exc), status=status)
 
     return JsonResponse({"message": _message_to_dict(message)}, status=201)
 
 
-@csrf_exempt
 @require_POST
 def submit_csat(request: HttpRequest) -> JsonResponse:
     service = _service()
@@ -1617,7 +1719,6 @@ def submit_csat(request: HttpRequest) -> JsonResponse:
     except PortalValidationError as exc:
         return _json_error("invalid_json", str(exc))
 
-    session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
     try:
         score = int(payload.get("score"))
     except (TypeError, ValueError):
@@ -1625,16 +1726,29 @@ def submit_csat(request: HttpRequest) -> JsonResponse:
     comment = (payload.get("comment") or "").strip() or None
 
     try:
-        session = service.record_csat(session_token=session_token, score=score, comment=comment)
+        conversation, _session = _resolve_request_conversation(
+            service=service,
+            request=request,
+            payload=payload,
+            include_messages=False,
+        )
+        session = service.record_csat(
+            session_token=conversation.session_token,
+            score=score,
+            comment=comment,
+        )
     except PortalValidationError as exc:
         return _json_error("validation_error", str(exc))
     except PortalNotFoundError as exc:
         return _json_error("not_found", str(exc), status=404)
+    except PortalAuthorizationError as exc:
+        status = 401 if str(exc) == "Authentication is required." else 403
+        code = "auth_required" if status == 401 else "forbidden"
+        return _json_error(code, str(exc), status=status)
 
     return JsonResponse({"session": _session_to_dict(session)}, status=200)
 
 
-@csrf_exempt
 @require_POST
 def submit_feedback(request: HttpRequest) -> JsonResponse:
     service = _service()
@@ -1643,10 +1757,9 @@ def submit_feedback(request: HttpRequest) -> JsonResponse:
     except PortalValidationError as exc:
         return _json_error("invalid_json", str(exc))
 
-    session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
     feedback_type = (payload.get("feedback_type") or payload.get("feedbackType") or "").strip()
-    if not session_token or not feedback_type:
-        return _json_error("validation_error", "session_token and feedback_type are required.")
+    if not feedback_type:
+        return _json_error("validation_error", "conversation_id/session_token and feedback_type are required.")
     message_id_value = payload.get("message_id") or payload.get("messageId")
     message_id: uuid.UUID | None = None
     if message_id_value:
@@ -1663,8 +1776,14 @@ def submit_feedback(request: HttpRequest) -> JsonResponse:
         "auto_promote": payload.get("auto_promote", True),
     }
     try:
+        conversation, _session = _resolve_request_conversation(
+            service=service,
+            request=request,
+            payload=payload,
+            include_messages=False,
+        )
         feedback = service.record_feedback(
-            session_token=session_token,
+            session_token=conversation.session_token,
             feedback_type=feedback_type,
             message_id=message_id,
             payload=feedback_payload,
@@ -1673,6 +1792,10 @@ def submit_feedback(request: HttpRequest) -> JsonResponse:
         return _json_error("validation_error", str(exc))
     except PortalNotFoundError as exc:
         return _json_error("not_found", str(exc), status=404)
+    except PortalAuthorizationError as exc:
+        status = 401 if str(exc) == "Authentication is required." else 403
+        code = "auth_required" if status == 401 else "forbidden"
+        return _json_error(code, str(exc), status=status)
 
     return JsonResponse(
         {
@@ -1691,7 +1814,6 @@ def submit_feedback(request: HttpRequest) -> JsonResponse:
 
 
 
-@csrf_exempt
 @require_POST
 def portal_tool_approval(request: HttpRequest) -> JsonResponse:
     service = _service()
@@ -1700,7 +1822,6 @@ def portal_tool_approval(request: HttpRequest) -> JsonResponse:
     except PortalValidationError as exc:
         return _json_error("invalid_json", str(exc))
 
-    session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
     approval_id = (payload.get("approval_id") or payload.get("approvalId") or "").strip()
     decision_raw = payload.get("decision") or payload.get("action") or payload.get("status") or ""
     decision = str(decision_raw).strip().lower()
@@ -1710,8 +1831,8 @@ def portal_tool_approval(request: HttpRequest) -> JsonResponse:
         remember = remember_raw.strip().lower() in {"1", "true", "yes", "on"}
     else:
         remember = bool(remember_raw)
-    if not session_token or not approval_id or not decision:
-        return _json_error("validation_error", "session_token, approval_id, and decision are required.")
+    if not approval_id or not decision:
+        return _json_error("validation_error", "conversation_id/session_token, approval_id, and decision are required.")
 
     if decision in {"approve", "approved", "allow"}:
         next_status = ConversationToolApprovalStatus.APPROVED
@@ -1726,10 +1847,20 @@ def portal_tool_approval(request: HttpRequest) -> JsonResponse:
         return _json_error("validation_error", "approval_id is invalid.")
 
     try:
-        conversation = service.get_conversation(session_token=session_token, include_messages=False)
-        session = service.get_session_state(session_token=session_token, conversation=conversation)
+        conversation, session = _resolve_request_conversation(
+            service=service,
+            request=request,
+            payload=payload,
+            include_messages=False,
+        )
     except PortalNotFoundError as exc:
         return _json_error("not_found", str(exc), status=404)
+    except PortalAuthorizationError as exc:
+        status = 401 if str(exc) == "Authentication is required." else 403
+        code = "auth_required" if status == 401 else "forbidden"
+        return _json_error(code, str(exc), status=status)
+    except PortalValidationError as exc:
+        return _json_error("validation_error", str(exc))
 
     approval: ConversationToolApproval | None = None
     now = timezone.now()
@@ -1838,10 +1969,7 @@ def portal_tool_approval(request: HttpRequest) -> JsonResponse:
         if getattr(settings, "PORTAL_ALLOW_MCP_TOOL_PREFERENCES", False):
             allow_persist = True
         elif getattr(request, "user", None) and request.user.is_authenticated:
-            allow_persist = bool(
-                request.user.is_staff
-                or request.user.business_profiles.filter(id=conversation.business_profile_id).exists()
-            )
+            allow_persist = can_access_conversation(request.user, conversation)
         if allow_persist and conversation.agent_profile_id:
             try:
                 operation_value = str((approval.metadata or {}).get("operation_type") or "").strip().lower()
@@ -1872,7 +2000,7 @@ def portal_tool_approval(request: HttpRequest) -> JsonResponse:
         else:
             actor_snapshot = {
                 "type": "portal_session",
-                "session_hash": hashlib.sha256(session_token.encode("utf-8", errors="ignore")).hexdigest()[:16],
+                "session_hash": hashlib.sha256(conversation.session_token.encode("utf-8", errors="ignore")).hexdigest()[:16],
             }
         with tenant_context(business_id):
             waiting_runs = list(
@@ -2005,7 +2133,6 @@ def portal_tool_approval(request: HttpRequest) -> JsonResponse:
     )
 
 
-@csrf_exempt
 @require_POST
 def portal_agent_run_user_input(request: HttpRequest) -> JsonResponse:
     service = _service()
@@ -2014,14 +2141,13 @@ def portal_agent_run_user_input(request: HttpRequest) -> JsonResponse:
     except PortalValidationError as exc:
         return _json_error("invalid_json", str(exc))
 
-    session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
     run_id_raw = (payload.get("run_id") or payload.get("runId") or "").strip()
     message = str(payload.get("message") or "").strip()
     extra = payload.get("payload")
     extra_payload = dict(extra) if isinstance(extra, dict) else {}
 
-    if not session_token or not run_id_raw:
-        return _json_error("validation_error", "session_token and run_id are required.")
+    if not run_id_raw:
+        return _json_error("validation_error", "conversation_id/session_token and run_id are required.")
     if not message and not extra_payload:
         return _json_error("validation_error", "message or payload is required.")
 
@@ -2031,10 +2157,20 @@ def portal_agent_run_user_input(request: HttpRequest) -> JsonResponse:
         return _json_error("validation_error", "run_id is invalid.")
 
     try:
-        conversation = service.get_conversation(session_token=session_token, include_messages=False)
-        session = service.get_session_state(session_token=session_token, conversation=conversation)
+        conversation, session = _resolve_request_conversation(
+            service=service,
+            request=request,
+            payload=payload,
+            include_messages=False,
+        )
     except PortalNotFoundError as exc:
         return _json_error("not_found", str(exc), status=404)
+    except PortalAuthorizationError as exc:
+        status = 401 if str(exc) == "Authentication is required." else 403
+        code = "auth_required" if status == 401 else "forbidden"
+        return _json_error(code, str(exc), status=status)
+    except PortalValidationError as exc:
+        return _json_error("validation_error", str(exc))
 
     business_id = getattr(conversation, "business_profile_id", None)
     enabled = False
@@ -2057,7 +2193,7 @@ def portal_agent_run_user_input(request: HttpRequest) -> JsonResponse:
     else:
         actor_snapshot = {
             "type": "portal_session",
-            "session_hash": hashlib.sha256(session_token.encode("utf-8", errors="ignore")).hexdigest()[:16],
+            "session_hash": hashlib.sha256(conversation.session_token.encode("utf-8", errors="ignore")).hexdigest()[:16],
         }
 
     with tenant_context(business_id):
@@ -2100,10 +2236,10 @@ def portal_agent_run_user_input(request: HttpRequest) -> JsonResponse:
 
     try:
         if message:
-            service.append_message(
-                session_token=session_token,
-                sender=ConversationSender.CUSTOMER,
-                body=message,
+                service.append_message(
+                    session_token=conversation.session_token,
+                    sender=ConversationSender.CUSTOMER,
+                    body=message,
                 metadata={"source": "agent_run", "agent_run_id": str(run.id), "type": "user_input"},
                 conversation=conversation,
             )
@@ -2138,7 +2274,6 @@ def portal_agent_run_user_input(request: HttpRequest) -> JsonResponse:
     return JsonResponse({"session": _session_to_dict(session), "run": _serialize_agent_run_for_portal(run)}, status=200)
 
 
-@csrf_exempt
 @require_POST
 def portal_agent_run_approval(request: HttpRequest) -> JsonResponse:
     service = _service()
@@ -2147,14 +2282,13 @@ def portal_agent_run_approval(request: HttpRequest) -> JsonResponse:
     except PortalValidationError as exc:
         return _json_error("invalid_json", str(exc))
 
-    session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
     run_id_raw = (payload.get("run_id") or payload.get("runId") or "").strip()
     approval_id_raw = (payload.get("approval_id") or payload.get("approvalId") or "").strip()
     decision_raw = payload.get("decision") or payload.get("action") or payload.get("status") or ""
     decision = str(decision_raw).strip().lower()
 
-    if not session_token or not run_id_raw or not decision:
-        return _json_error("validation_error", "session_token, run_id, and decision are required.")
+    if not run_id_raw or not decision:
+        return _json_error("validation_error", "conversation_id/session_token, run_id, and decision are required.")
 
     if decision in {"approve", "approved", "allow"}:
         next_status = ConversationToolApprovalStatus.APPROVED
@@ -2171,10 +2305,20 @@ def portal_agent_run_approval(request: HttpRequest) -> JsonResponse:
         return _json_error("validation_error", "run_id is invalid.")
 
     try:
-        conversation = service.get_conversation(session_token=session_token, include_messages=False)
-        session = service.get_session_state(session_token=session_token, conversation=conversation)
+        conversation, session = _resolve_request_conversation(
+            service=service,
+            request=request,
+            payload=payload,
+            include_messages=False,
+        )
     except PortalNotFoundError as exc:
         return _json_error("not_found", str(exc), status=404)
+    except PortalAuthorizationError as exc:
+        status = 401 if str(exc) == "Authentication is required." else 403
+        code = "auth_required" if status == 401 else "forbidden"
+        return _json_error(code, str(exc), status=status)
+    except PortalValidationError as exc:
+        return _json_error("validation_error", str(exc))
 
     business_id = getattr(conversation, "business_profile_id", None)
     enabled = False
@@ -2197,7 +2341,7 @@ def portal_agent_run_approval(request: HttpRequest) -> JsonResponse:
     else:
         actor_snapshot = {
             "type": "portal_session",
-            "session_hash": hashlib.sha256(session_token.encode("utf-8", errors="ignore")).hexdigest()[:16],
+            "session_hash": hashlib.sha256(conversation.session_token.encode("utf-8", errors="ignore")).hexdigest()[:16],
         }
 
     run: AgentRun | None = None
@@ -2352,7 +2496,6 @@ def portal_agent_run_approval(request: HttpRequest) -> JsonResponse:
     return JsonResponse({"session": _session_to_dict(session), "run": _serialize_agent_run_for_portal(run)}, status=200)
 
 
-@csrf_exempt
 @require_POST
 def portal_agent_request_update(request: HttpRequest) -> JsonResponse:
     service = _service()
@@ -2361,14 +2504,13 @@ def portal_agent_request_update(request: HttpRequest) -> JsonResponse:
     except PortalValidationError as exc:
         return _json_error("invalid_json", str(exc))
 
-    session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
     request_id_raw = (payload.get("request_id") or payload.get("requestId") or "").strip()
     status_raw = payload.get("status") or payload.get("state") or payload.get("action") or ""
     status_value = str(status_raw).strip().lower().replace("-", "_").replace(" ", "_")
     resolution = str(payload.get("resolution") or payload.get("message") or payload.get("reply") or "").strip()
 
-    if not session_token or not request_id_raw:
-        return _json_error("validation_error", "session_token and request_id are required.")
+    if not request_id_raw:
+        return _json_error("validation_error", "conversation_id/session_token and request_id are required.")
 
     try:
         request_uuid = uuid.UUID(request_id_raw)
@@ -2391,10 +2533,20 @@ def portal_agent_request_update(request: HttpRequest) -> JsonResponse:
         return _json_error("validation_error", "resolution is required when resolving a request.")
 
     try:
-        conversation = service.get_conversation(session_token=session_token, include_messages=False)
-        session = service.get_session_state(session_token=session_token, conversation=conversation)
+        conversation, session = _resolve_request_conversation(
+            service=service,
+            request=request,
+            payload=payload,
+            include_messages=False,
+        )
     except PortalNotFoundError as exc:
         return _json_error("not_found", str(exc), status=404)
+    except PortalAuthorizationError as exc:
+        status = 401 if str(exc) == "Authentication is required." else 403
+        code = "auth_required" if status == 401 else "forbidden"
+        return _json_error(code, str(exc), status=status)
+    except PortalValidationError as exc:
+        return _json_error("validation_error", str(exc))
 
     business_id = getattr(conversation, "business_profile_id", None)
     enabled = False
@@ -2418,7 +2570,7 @@ def portal_agent_request_update(request: HttpRequest) -> JsonResponse:
     else:
         actor_snapshot = {
             "type": "portal_session",
-            "session_hash": hashlib.sha256(session_token.encode("utf-8", errors="ignore")).hexdigest()[:16],
+            "session_hash": hashlib.sha256(conversation.session_token.encode("utf-8", errors="ignore")).hexdigest()[:16],
         }
 
     run_payload: dict[str, object] | None = None
@@ -2507,7 +2659,6 @@ def portal_agent_request_update(request: HttpRequest) -> JsonResponse:
     return JsonResponse(response_payload, status=200)
 
 
-@csrf_exempt
 @require_POST
 def portal_tool_history(request: HttpRequest) -> JsonResponse:
     service = _service()
@@ -2515,10 +2666,6 @@ def portal_tool_history(request: HttpRequest) -> JsonResponse:
         payload = _parse_json_body(request)
     except PortalValidationError as exc:
         return _json_error("invalid_json", str(exc))
-
-    session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
-    if not session_token:
-        return _json_error("validation_error", "session_token is required.")
 
     raw_limit = payload.get("limit")
     try:
@@ -2528,10 +2675,20 @@ def portal_tool_history(request: HttpRequest) -> JsonResponse:
     limit = max(1, min(limit, 250))
 
     try:
-        conversation = service.get_conversation(session_token=session_token, include_messages=True)
-        session = service.get_session_state(session_token=session_token, conversation=conversation)
+        conversation, session = _resolve_request_conversation(
+            service=service,
+            request=request,
+            payload=payload,
+            include_messages=True,
+        )
     except PortalNotFoundError as exc:
         return _json_error("not_found", str(exc), status=404)
+    except PortalAuthorizationError as exc:
+        status = 401 if str(exc) == "Authentication is required." else 403
+        code = "auth_required" if status == 401 else "forbidden"
+        return _json_error(code, str(exc), status=status)
+    except PortalValidationError as exc:
+        return _json_error("validation_error", str(exc))
 
     business_id = getattr(conversation, "business_profile_id", None)
     approvals: list[dict[str, object]] = []
@@ -2636,7 +2793,6 @@ def portal_tool_history(request: HttpRequest) -> JsonResponse:
     )
 
 
-@csrf_exempt
 @require_POST
 def portal_email_send_draft(request: HttpRequest) -> JsonResponse:
     service = _service()
@@ -2645,17 +2801,26 @@ def portal_email_send_draft(request: HttpRequest) -> JsonResponse:
     except PortalValidationError as exc:
         return _json_error("invalid_json", str(exc))
 
-    session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
     draft_id = (payload.get("draft_id") or payload.get("draftId") or "").strip()
     email_account_id = (payload.get("email_account_id") or payload.get("emailAccountId") or "").strip()
-    if not session_token or not draft_id:
-        return _json_error("validation_error", "session_token and draft_id are required.")
+    if not draft_id:
+        return _json_error("validation_error", "conversation_id/session_token and draft_id are required.")
 
     try:
-        conversation = service.get_conversation(session_token=session_token, include_messages=False)
-        session = service.get_session_state(session_token=session_token, conversation=conversation)
+        conversation, session = _resolve_request_conversation(
+            service=service,
+            request=request,
+            payload=payload,
+            include_messages=False,
+        )
     except PortalNotFoundError as exc:
         return _json_error("not_found", str(exc), status=404)
+    except PortalAuthorizationError as exc:
+        status = 401 if str(exc) == "Authentication is required." else 403
+        code = "auth_required" if status == 401 else "forbidden"
+        return _json_error(code, str(exc), status=status)
+    except PortalValidationError as exc:
+        return _json_error("validation_error", str(exc))
 
     if not email_account_id:
         email_account_id = _pending_email_account_id_for_draft(conversation, draft_id=draft_id)
@@ -2690,7 +2855,6 @@ def portal_email_send_draft(request: HttpRequest) -> JsonResponse:
     return JsonResponse({"session": _session_to_dict(session), "result": result})
 
 
-@csrf_exempt
 @require_POST
 def portal_email_discard_draft(request: HttpRequest) -> JsonResponse:
     service = _service()
@@ -2699,17 +2863,26 @@ def portal_email_discard_draft(request: HttpRequest) -> JsonResponse:
     except PortalValidationError as exc:
         return _json_error("invalid_json", str(exc))
 
-    session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
     draft_id = (payload.get("draft_id") or payload.get("draftId") or "").strip()
     email_account_id = (payload.get("email_account_id") or payload.get("emailAccountId") or "").strip()
-    if not session_token or not draft_id:
-        return _json_error("validation_error", "session_token and draft_id are required.")
+    if not draft_id:
+        return _json_error("validation_error", "conversation_id/session_token and draft_id are required.")
 
     try:
-        conversation = service.get_conversation(session_token=session_token, include_messages=False)
-        session = service.get_session_state(session_token=session_token, conversation=conversation)
+        conversation, session = _resolve_request_conversation(
+            service=service,
+            request=request,
+            payload=payload,
+            include_messages=False,
+        )
     except PortalNotFoundError as exc:
         return _json_error("not_found", str(exc), status=404)
+    except PortalAuthorizationError as exc:
+        status = 401 if str(exc) == "Authentication is required." else 403
+        code = "auth_required" if status == 401 else "forbidden"
+        return _json_error(code, str(exc), status=status)
+    except PortalValidationError as exc:
+        return _json_error("validation_error", str(exc))
 
     if not email_account_id:
         email_account_id = _pending_email_account_id_for_draft(conversation, draft_id=draft_id)
@@ -2726,13 +2899,18 @@ def portal_email_discard_draft(request: HttpRequest) -> JsonResponse:
 
 @require_GET
 def events(request: HttpRequest) -> StreamingHttpResponse:
-    session_token = request.GET.get("session_token") or request.GET.get("sessionToken")
-    if not session_token:
-        return StreamingHttpResponse(status=400)
     service = _service()
     try:
-        conversation = service.get_conversation(session_token=session_token, include_messages=False)
-        session = service.get_session_state(session_token=session_token, conversation=conversation)
+        conversation, session = _resolve_request_conversation(
+            service=service,
+            request=request,
+            include_messages=False,
+        )
+    except PortalValidationError:
+        return StreamingHttpResponse(status=400)
+    except PortalAuthorizationError as exc:
+        status = 401 if str(exc) == "Authentication is required." else 403
+        return StreamingHttpResponse(status=status)
     except PortalNotFoundError:
         return StreamingHttpResponse(status=404)
 
@@ -3115,80 +3293,38 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
 # ------------------------------------------------------------------
 
 
-@csrf_exempt
-@require_POST
-def list_portal_sessions(request: HttpRequest) -> JsonResponse:
-    """
-    List session summaries for the given session tokens.
-    
-    Used by the frontend to populate the session history sidebar.
-    Request body:
-    {
-        "business_slug": "acme",
-        "agent_slug": "support",
-        "session_tokens": ["token1", "token2", ...]
-    }
-    """
+@require_http_methods(["GET", "POST"])
+def conversations_collection(request: HttpRequest) -> JsonResponse:
     service = _service()
     try:
-        payload = _parse_json_body(request)
-    except PortalValidationError as exc:
-        return _json_error("invalid_json", str(exc))
+        user = _require_authenticated_user(request)
+    except PortalAuthorizationError as exc:
+        return _json_error("auth_required", str(exc), status=401)
 
-    business_slug = (payload.get("business_slug") or payload.get("businessSlug") or "").strip()
-    agent_slug = (payload.get("agent_slug") or payload.get("agentSlug") or "").strip()
-    session_tokens = payload.get("session_tokens") or payload.get("sessionTokens") or []
+    if request.method == "GET":
+        business_slug = (request.GET.get("business_slug") or request.GET.get("businessSlug") or "").strip()
+        agent_slug = (request.GET.get("agent_slug") or request.GET.get("agentSlug") or "").strip()
+        if not business_slug or not agent_slug:
+            return _json_error("validation_error", "business_slug and agent_slug are required.")
+        raw_limit = request.GET.get("limit")
+        try:
+            limit = int(raw_limit) if raw_limit is not None else 50
+        except (TypeError, ValueError):
+            return _json_error("validation_error", "limit must be an integer.")
+        limit = max(1, min(limit, 100))
+        try:
+            sessions = service.list_owned_sessions(
+                owner_user=user,
+                business_slug=business_slug,
+                agent_slug=agent_slug,
+                limit=limit,
+            )
+        except (PortalNotFoundError, PortalAuthorizationError) as exc:
+            status = 403 if isinstance(exc, PortalAuthorizationError) else 404
+            code = "forbidden" if status == 403 else "not_found"
+            return _json_error(code, str(exc), status=status)
+        return JsonResponse({"conversations": [_session_summary_to_dict(item) for item in sessions]})
 
-    if not business_slug or not agent_slug:
-        return _json_error("validation_error", "business_slug and agent_slug are required.")
-
-    if not isinstance(session_tokens, list):
-        return _json_error("validation_error", "session_tokens must be a list.")
-
-    # Sanitize and limit tokens
-    clean_tokens = [str(t).strip() for t in session_tokens if t][:100]
-
-    try:
-        from apps.conversations.portal import PortalSessionSummary
-        sessions = service.list_sessions(
-            business_slug=business_slug,
-            agent_slug=agent_slug,
-            session_tokens=clean_tokens,
-        )
-    except PortalNotFoundError as exc:
-        return _json_error("not_found", str(exc), status=404)
-
-    return JsonResponse({
-        "sessions": [
-            {
-                "session_token": s.session_token,
-                "title": s.title,
-                "started_at": s.started_at.isoformat(),
-                "last_activity_at": s.last_activity_at.isoformat(),
-                "status": s.status,
-                "message_count": s.message_count,
-                "preview": s.preview,
-            }
-            for s in sessions
-        ]
-    })
-
-
-@csrf_exempt
-@require_POST
-def create_portal_session(request: HttpRequest) -> JsonResponse:
-    """
-    Create a new chat session.
-    
-    Used when the user clicks "New Chat" to start a fresh conversation.
-    Request body:
-    {
-        "business_slug": "acme",
-        "agent_slug": "support",
-        "metadata": {}  // optional
-    }
-    """
-    service = _service()
     try:
         payload = _parse_json_body(request)
     except PortalValidationError as exc:
@@ -3197,44 +3333,156 @@ def create_portal_session(request: HttpRequest) -> JsonResponse:
     business_slug = (payload.get("business_slug") or payload.get("businessSlug") or "").strip()
     agent_slug = (payload.get("agent_slug") or payload.get("agentSlug") or "").strip()
     metadata = _with_ui_language(request, _normalize_portal_metadata(payload.get("metadata") or {}))
-
     if not business_slug or not agent_slug:
         return _json_error("validation_error", "business_slug and agent_slug are required.")
 
-    # If the request is from an authenticated tenant user and they belong to the business,
-    # attach actor_user_id so per-user integrations can be resolved safely.
+    metadata = _attach_actor_user_id_if_authorized(
+        service=service,
+        request=request,
+        business_slug=business_slug,
+        agent_slug=agent_slug,
+        metadata=metadata,
+    )
     try:
-        user = getattr(request, "user", None)
-        if user and user.is_authenticated:
-            business, _agent = service.resolve_handle(business_slug, agent_slug)
-            allowed = bool(user.is_staff or user.business_profiles.filter(id=business.id).exists())
-            if allowed and "actor_user_id" not in metadata and "actorUserId" not in metadata:
-                metadata["actor_user_id"] = str(user.id)
-    except Exception:  # pragma: no cover - best effort only
-        pass
-
-    try:
-        result = service.create_new_session(
+        resolve_scope_for_user(
+            service=service,
+            user=user,
+            business_slug=business_slug,
+            agent_slug=agent_slug,
+        )
+        result = service.create_owned_session(
+            owner_user=user,
             business_slug=business_slug,
             agent_slug=agent_slug,
             metadata=metadata,
         )
+    except (PortalNotFoundError, PortalAuthorizationError) as exc:
+        status = 403 if isinstance(exc, PortalAuthorizationError) else 404
+        code = "forbidden" if status == 403 else "not_found"
+        return _json_error(code, str(exc), status=status)
+    return JsonResponse(_bootstrap_to_dict(result), status=201)
+
+
+@require_GET
+def conversation_messages(request: HttpRequest, conversation_id: uuid.UUID) -> JsonResponse:
+    service = _service()
+    try:
+        conversation = get_authorized_conversation(
+            service=service,
+            user=_require_authenticated_user(request),
+            conversation_id=conversation_id,
+            include_messages=False,
+        )
+    except PortalAuthorizationError as exc:
+        status = 401 if str(exc) == "Authentication is required." else 403
+        code = "auth_required" if status == 401 else "forbidden"
+        return _json_error(code, str(exc), status=status)
     except PortalNotFoundError as exc:
         return _json_error("not_found", str(exc), status=404)
 
-    response = JsonResponse(_bootstrap_to_dict(result), status=201)
-    response.set_cookie(
-        f"chat_session_{result.business.slug}_{result.agent.slug}",
-        result.session.session_token,
-        max_age=3600 * 24 * 365,
-        httponly=False,
-        secure=False,
-        samesite="Lax",
+    limit_param = request.GET.get("limit")
+    limit = None
+    if limit_param:
+        try:
+            limit = max(1, min(200, int(limit_param)))
+        except ValueError:
+            return _json_error("validation_error", "limit must be an integer between 1 and 200")
+    messages = service.list_messages_for_conversation(conversation=conversation, limit=limit)
+    session = service.get_session_state_for_conversation(conversation)
+    return JsonResponse(
+        {"session": _session_to_dict(session), "messages": [_message_to_dict(msg) for msg in messages]}
     )
-    return response
 
 
-@csrf_exempt
+@require_POST
+def conversation_turns_create(request: HttpRequest, conversation_id: uuid.UUID) -> JsonResponse:
+    service = _service()
+    try:
+        payload = _parse_json_body(request)
+    except PortalValidationError as exc:
+        return _json_error("invalid_json", str(exc))
+    try:
+        conversation = get_authorized_conversation(
+            service=service,
+            user=_require_authenticated_user(request),
+            conversation_id=conversation_id,
+            include_messages=False,
+        )
+    except PortalAuthorizationError as exc:
+        status = 401 if str(exc) == "Authentication is required." else 403
+        code = "auth_required" if status == 401 else "forbidden"
+        return _json_error(code, str(exc), status=status)
+    except PortalNotFoundError as exc:
+        return _json_error("not_found", str(exc), status=404)
+
+    body = (payload.get("body") or "").strip()
+    metadata = _with_ui_language(request, _normalize_portal_metadata(payload.get("metadata") or {}))
+    if not body:
+        return _json_error("validation_error", "body is required.")
+
+    try:
+        customer_message = service.append_message(
+            session_token=conversation.session_token,
+            sender=ConversationSender.CUSTOMER,
+            body=body,
+            metadata=metadata,
+            conversation=conversation,
+        )
+    except PortalValidationError as exc:
+        return _json_error("validation_error", str(exc))
+
+    agent = conversation.agent_profile
+    if not agent:
+        return _json_error("validation_error", "Agent profile is missing.", status=500)
+
+    execution_mode = str(getattr(settings, "PORTAL_TURN_EXECUTION_MODE", "thread") or "thread").strip().lower()
+    turn_metadata: dict[str, object] = {
+        "source": "portal",
+        "origin": "conversation_turn_create",
+        "execution_mode": execution_mode,
+    }
+    business_id = getattr(conversation, "business_profile_id", None)
+    with tenant_context(business_id):
+        turn = PortalTurn.objects.create(
+            conversation=conversation,
+            agent_profile=agent,
+            status=PortalTurnStatus.STREAMING,
+            run_after=timezone.now(),
+            user_message=body,
+            metadata=turn_metadata,
+        )
+    if execution_mode != "worker":
+        run_turn_background(turn_id=turn.id, business_id=business_id)
+
+    session = service.get_session_state_for_conversation(conversation)
+    return JsonResponse(
+        {
+            "session": _session_to_dict(session),
+            "turn": _portal_turn_to_dict(turn),
+            "customer_message_id": str(customer_message.id) if customer_message else None,
+        },
+        status=201,
+    )
+
+
+@require_POST
+def list_portal_sessions(request: HttpRequest) -> JsonResponse:
+    return _json_error(
+        "deprecated",
+        "Session-token history is retired. Use /api/chat/conversations/ for backend-owned conversation history.",
+        status=410,
+    )
+
+
+@require_POST
+def create_portal_session(request: HttpRequest) -> JsonResponse:
+    return _json_error(
+        "deprecated",
+        "Public session creation is retired. Use POST /api/chat/conversations/ from the authenticated chat workspace.",
+        status=410,
+    )
+
+
 @require_POST
 def portal_turn_create(request: HttpRequest) -> JsonResponse:
     """
@@ -3253,23 +3501,32 @@ def portal_turn_create(request: HttpRequest) -> JsonResponse:
     except PortalValidationError as exc:
         return _json_error("invalid_json", str(exc))
 
-    session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
     body = (payload.get("body") or "").strip()
     metadata = _with_ui_language(request, _normalize_portal_metadata(payload.get("metadata") or {}))
 
-    if not session_token or not body:
-        return _json_error("validation_error", "session_token and body are required.")
+    if not body:
+        return _json_error("validation_error", "body is required.")
 
     try:
-        conversation = service.get_conversation(session_token=session_token, include_messages=False)
-        session = service.get_session_state(session_token=session_token, conversation=conversation)
+        conversation, session = _resolve_request_conversation(
+            service=service,
+            request=request,
+            payload=payload,
+            include_messages=False,
+        )
     except PortalNotFoundError as exc:
         return _json_error("not_found", str(exc), status=404)
+    except PortalAuthorizationError as exc:
+        status = 401 if str(exc) == "Authentication is required." else 403
+        code = "auth_required" if status == 401 else "forbidden"
+        return _json_error(code, str(exc), status=status)
+    except PortalValidationError as exc:
+        return _json_error("validation_error", str(exc))
 
     customer_message: PortalMessage | None = None
     try:
         customer_message = service.append_message(
-            session_token=session_token,
+            session_token=conversation.session_token,
             sender=ConversationSender.CUSTOMER,
             body=body,
             metadata=metadata,
@@ -3380,12 +3637,17 @@ def _open_portal_turn_listen_connection():
 @require_GET
 def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHttpResponse:
     service = _service()
-    session_token = (request.GET.get("session_token") or request.GET.get("sessionToken") or "").strip()
-    if not session_token:
-        return StreamingHttpResponse(status=400)
-
     try:
-        conversation = service.get_conversation(session_token=session_token, include_messages=False)
+        conversation, _session = _resolve_request_conversation(
+            service=service,
+            request=request,
+            include_messages=False,
+        )
+    except PortalValidationError:
+        return StreamingHttpResponse(status=400)
+    except PortalAuthorizationError as exc:
+        status = 401 if str(exc) == "Authentication is required." else 403
+        return StreamingHttpResponse(status=status)
     except PortalNotFoundError:
         return StreamingHttpResponse(status=404)
 
@@ -3850,7 +4112,6 @@ def portal_turn_events(request: HttpRequest, turn_id: uuid.UUID) -> StreamingHtt
     return response
 
 
-@csrf_exempt
 @require_POST
 def portal_turn_cancel(request: HttpRequest, turn_id: uuid.UUID) -> JsonResponse:
     service = _service()
@@ -3859,14 +4120,21 @@ def portal_turn_cancel(request: HttpRequest, turn_id: uuid.UUID) -> JsonResponse
     except PortalValidationError as exc:
         return _json_error("invalid_json", str(exc))
 
-    session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
-    if not session_token:
-        return _json_error("validation_error", "session_token is required.")
-
     try:
-        conversation = service.get_conversation(session_token=session_token, include_messages=False)
+        conversation, _session = _resolve_request_conversation(
+            service=service,
+            request=request,
+            payload=payload,
+            include_messages=False,
+        )
     except PortalNotFoundError as exc:
         return _json_error("not_found", str(exc), status=404)
+    except PortalAuthorizationError as exc:
+        status = 401 if str(exc) == "Authentication is required." else 403
+        code = "auth_required" if status == 401 else "forbidden"
+        return _json_error(code, str(exc), status=status)
+    except PortalValidationError as exc:
+        return _json_error("validation_error", str(exc))
 
     business_id = getattr(conversation, "business_profile_id", None)
     with tenant_context(business_id):

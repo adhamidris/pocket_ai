@@ -35,6 +35,7 @@ from apps.knowledge.knowledge_ingestion import (
     KnowledgeIngestionService,
     PageBlockPayload,
     PageLayout,
+    PdfSpan,
     TableCellPayload,
     TablePayload,
     TableRowPayload,
@@ -104,10 +105,14 @@ class KnowledgeIngestionChunkingTests(SimpleTestCase):
                 self.row_index = 3
                 self.metadata = {
                     "row_type": "data",
-                    "applies_to_columns": ["Prime", "Plus", "Wealth", "Exclusive Wealth", "Private"],
-                    "applicability_mode": "inferred_sparse_expansion",
-                    "applicability_confidence": 0.72,
-                    "applicability_value": "1% (Min USD 2)",
+                    "table_scope_contract_version": "v2",
+                    "observed_value_columns": ["Service", "Wealth"],
+                    "qualifier_columns": ["Service"],
+                    "scope_dimension_columns": ["Prime", "Plus", "Wealth", "Exclusive Wealth", "Private"],
+                    "inferred_scope_columns": ["Prime", "Plus", "Wealth", "Exclusive Wealth", "Private"],
+                    "scope_reason": "inferred_sparse_expansion",
+                    "scope_confidence": 0.72,
+                    "scope_value": "1% (Min USD 2)",
                 }
                 self.cells = _Manager(
                     [
@@ -146,13 +151,108 @@ class KnowledgeIngestionChunkingTests(SimpleTestCase):
         text = str(payload.get("text") or "")
         metadata = payload.get("metadata") or {}
 
-        self.assertIn("[Applies To] Prime, Plus, Wealth, Exclusive Wealth, Private", text)
+        self.assertIn("[Scope] Prime, Plus, Wealth, Exclusive Wealth, Private", text)
         self.assertEqual(
-            metadata.get("table_row_applies_to_columns"),
+            metadata.get("table_row_inferred_scope_columns"),
             ["Prime", "Plus", "Wealth", "Exclusive Wealth", "Private"],
         )
-        self.assertEqual(metadata.get("table_row_applicability_mode"), "inferred_sparse_expansion")
+        self.assertNotIn("table_row_applies_to_columns", metadata)
+        self.assertNotIn("table_row_applicability_mode", metadata)
         self.assertEqual(metadata.get("table_row_fee_value"), "1% (Min USD 2)")
+
+    def test_prefers_flat_text_fallback_when_page_blocks_are_fragmented(self) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        pages = [
+            PageLayout(
+                page_number=1,
+                width=800.0,
+                height=1000.0,
+                rotation=0,
+                text_density=0.3,
+                has_ocr_content=False,
+                content_type="application/pdf",
+                blocks=[
+                    PageBlockPayload(
+                        block_type=KnowledgeBlockType.PARAGRAPH,
+                        order_index=0,
+                        text="Issuance Fees",
+                        bbox={"x0": 0.0, "y0": 0.0, "x1": 120.0, "y1": 20.0},
+                        metadata={},
+                    ),
+                    PageBlockPayload(
+                        block_type=KnowledgeBlockType.PARAGRAPH,
+                        order_index=1,
+                        text="EGP 500",
+                        bbox={"x0": 130.0, "y0": 0.0, "x1": 220.0, "y1": 20.0},
+                        metadata={},
+                    ),
+                    PageBlockPayload(
+                        block_type=KnowledgeBlockType.PARAGRAPH,
+                        order_index=2,
+                        text="Replacement Fees",
+                        bbox={"x0": 0.0, "y0": 22.0, "x1": 140.0, "y1": 40.0},
+                        metadata={},
+                    ),
+                    PageBlockPayload(
+                        block_type=KnowledgeBlockType.PARAGRAPH,
+                        order_index=3,
+                        text="Free",
+                        bbox={"x0": 150.0, "y0": 22.0, "x1": 220.0, "y1": 40.0},
+                        metadata={},
+                    ),
+                    PageBlockPayload(
+                        block_type=KnowledgeBlockType.PARAGRAPH,
+                        order_index=4,
+                        text="Grace Period",
+                        bbox={"x0": 0.0, "y0": 44.0, "x1": 120.0, "y1": 64.0},
+                        metadata={},
+                    ),
+                    PageBlockPayload(
+                        block_type=KnowledgeBlockType.PARAGRAPH,
+                        order_index=5,
+                        text="55 days",
+                        bbox={"x0": 130.0, "y0": 44.0, "x1": 210.0, "y1": 64.0},
+                        metadata={},
+                    ),
+                    PageBlockPayload(
+                        block_type=KnowledgeBlockType.PARAGRAPH,
+                        order_index=6,
+                        text="Cash Withdrawal",
+                        bbox={"x0": 0.0, "y0": 66.0, "x1": 140.0, "y1": 84.0},
+                        metadata={},
+                    ),
+                    PageBlockPayload(
+                        block_type=KnowledgeBlockType.PARAGRAPH,
+                        order_index=7,
+                        text="4% min. EGP 40",
+                        bbox={"x0": 150.0, "y0": 66.0, "x1": 260.0, "y1": 84.0},
+                        metadata={},
+                    ),
+                ],
+                metadata={},
+            )
+        ]
+        page_segments = service._build_text_segments_from_blocks(pages, chunk_chars=220, overlap=0)
+        flat_segments = service._build_flat_text_segment_payloads(
+            "Issuance Fees EGP 500 Replacement Fees Free Grace Period 55 days Cash Withdrawal 4% min. EGP 40",
+            alias_hygiene=False,
+        )
+
+        self.assertTrue(page_segments)
+        self.assertTrue(flat_segments)
+        self.assertTrue(
+            service._should_prefer_flat_text_segments(
+                pages=pages,
+                page_segments=page_segments,
+                flat_segments=flat_segments,
+            )
+        )
+        decision = service._text_chunk_source_decision(
+            pages=pages,
+            page_segments=page_segments,
+            flat_segments=flat_segments,
+        )
+        self.assertEqual(decision.get("selected_source"), "flat_text")
 
     def test_table_row_chunks_derive_scope_with_structural_context_columns(self) -> None:
         class _Manager:
@@ -206,7 +306,17 @@ class KnowledgeIngestionChunkingTests(SimpleTestCase):
         )
         row_two = _Row(
             2,
-            {"row_type": "data"},
+            {
+                "row_type": "data",
+                "table_scope_contract_version": "v2",
+                "observed_value_columns": ["Descriptor A", "Descriptor B", "Band 2"],
+                "qualifier_columns": ["Descriptor A", "Descriptor B"],
+                "scope_dimension_columns": ["Band 1", "Band 2", "Band 3"],
+                "inferred_scope_columns": ["Band 2"],
+                "scope_reason": "single_populated_scope_column",
+                "scope_confidence": 0.82,
+                "scope_value": "2.0%",
+            },
             [
                 _Cell("r2-1", 0, "Remote processing surcharge"),
                 _Cell("r2-2", 1, "Category for foreign currency payouts"),
@@ -234,10 +344,10 @@ class KnowledgeIngestionChunkingTests(SimpleTestCase):
         row_two_payload = next(
             payload for payload in payloads if (payload.get("metadata") or {}).get("table_row_index") == 2
         )
-        applies_to = (row_two_payload.get("metadata") or {}).get("table_row_applies_to_columns") or []
-        self.assertIn("Band 2", applies_to)
-        self.assertNotIn("Descriptor A", applies_to)
-        self.assertNotIn("Descriptor B", applies_to)
+        inferred_scope = (row_two_payload.get("metadata") or {}).get("table_row_inferred_scope_columns") or []
+        self.assertIn("Band 2", inferred_scope)
+        self.assertNotIn("Descriptor A", inferred_scope)
+        self.assertNotIn("Descriptor B", inferred_scope)
 
     def test_table_row_chunks_mark_structural_context_rows(self) -> None:
         class _Manager:
@@ -378,9 +488,15 @@ class KnowledgeIngestionChunkingTests(SimpleTestCase):
         self.assertIn("Annual fee EGP 40", combined)
         self.assertIn("General terms apply", combined)
         residual_segments = [seg for seg in segments if (seg.get("metadata") or {}).get("table_residual")]
-        self.assertTrue(residual_segments)
-        residual_text = "\n".join(str(segment.get("text") or "") for segment in residual_segments)
-        self.assertIn("Annual fee EGP 40", residual_text)
+        self.assertFalse(residual_segments)
+        narrative_segments = [
+            seg
+            for seg in segments
+            if (seg.get("metadata") or {}).get("content_source") == "page_blocks"
+        ]
+        annual_fee_segments = [seg for seg in narrative_segments if "Annual fee EGP 40" in str(seg.get("text") or "")]
+        self.assertTrue(annual_fee_segments)
+        self.assertTrue((annual_fee_segments[0].get("metadata") or {}).get("table_adjacent"))
 
     @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
     def test_pdf_non_overlapping_blocks_remain_chunked(self, _build_embeddings) -> None:
@@ -633,7 +749,7 @@ class KnowledgeIngestionChunkingTests(SimpleTestCase):
         self.assertEqual((residual_segments[0].get("metadata") or {}).get("content_source"), "table_residual")
 
     @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
-    def test_overlap_candidates_emit_residual_segments_per_block(self, _build_embeddings) -> None:
+    def test_overlap_candidates_remain_narrative_page_segments_per_block(self, _build_embeddings) -> None:
         service = KnowledgeIngestionService(enable_ocr=False)
         page = PageLayout(
             page_number=1,
@@ -672,12 +788,15 @@ class KnowledgeIngestionChunkingTests(SimpleTestCase):
         annotated_pages, _ = service._annotate_pdf_blocks_with_table_overlap([page], [table])
         segments = service._build_text_segments_from_blocks(annotated_pages)
         residual_segments = [seg for seg in segments if (seg.get("metadata") or {}).get("table_residual")]
-
-        self.assertEqual(len(residual_segments), 2)
-        self.assertTrue(
-            all((seg.get("metadata") or {}).get("table_residual_granularity") == "block" for seg in residual_segments)
-        )
-        rendered = "\n".join(seg.get("text") or "" for seg in residual_segments)
+        self.assertFalse(residual_segments)
+        narrative_segments = [
+            seg
+            for seg in segments
+            if (seg.get("metadata") or {}).get("content_source") == "page_blocks"
+        ]
+        self.assertEqual(len(narrative_segments), 1)
+        self.assertTrue((narrative_segments[0].get("metadata") or {}).get("table_adjacent"))
+        rendered = "\n".join(seg.get("text") or "" for seg in narrative_segments)
         self.assertIn("same day value date", rendered)
         self.assertIn("extra working day applies", rendered)
 
@@ -983,6 +1102,7 @@ class KnowledgeIngestionChunkingTests(SimpleTestCase):
         narrative_meta = narrative_payload.get("metadata") or {}
         self.assertEqual(narrative_meta.get("canonical_chunk_kind"), "narrative_paragraph")
         self.assertEqual(narrative_meta.get("table_residual_projected"), "narrative")
+        self.assertTrue(narrative_meta.get("table_adjacent"))
         self.assertEqual(
             (stats.get("table_residual_projection") or {}).get("narrative_promoted_segments"),
             1,
@@ -1102,11 +1222,10 @@ class KnowledgeIngestionChunkingTests(SimpleTestCase):
 
         selected, tables, diag = service._select_table_candidates(candidates)
 
-        self.assertEqual(selected, "geometry")
-        self.assertEqual(len(tables), 1)
-        self.assertTrue(diag.get("heuristic_override_applied"))
-        self.assertEqual(diag.get("heuristic_override_from"), "heuristic")
-        self.assertEqual(diag.get("heuristic_override_to"), "geometry")
+        self.assertEqual(selected, "heuristic")
+        self.assertEqual(len(tables), len(heuristic_tables))
+        self.assertEqual(diag.get("selection_mode"), "scored_promotion_v2")
+        self.assertFalse(diag.get("selector_disabled"))
 
     @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
     def test_auto_selection_keeps_heuristic_for_normal_multi_table_layout(
@@ -1167,7 +1286,8 @@ class KnowledgeIngestionChunkingTests(SimpleTestCase):
         selected, _, diag = service._select_table_candidates(candidates)
 
         self.assertEqual(selected, "heuristic")
-        self.assertFalse(diag.get("heuristic_override_applied"))
+        self.assertEqual(diag.get("selection_mode"), "scored_promotion_v2")
+        self.assertFalse(diag.get("selector_disabled"))
 
     @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
     def test_auto_selection_region_blend_prefers_keepable_region_candidate_over_document_winner(
@@ -1217,34 +1337,18 @@ class KnowledgeIngestionChunkingTests(SimpleTestCase):
             "azure:layout": [azure_page_one, azure_page_two],
             "geometry": [geometry_page_one, geometry_page_two],
         }
-        region_ranks = {
-            11: (0, 2, 0.95, 6, "weak_table", "suppress", ["insufficient_keep_evidence"]),
-            12: (1, 3, 0.6, 3, "strong_table", "keep", []),
-            21: (0, 1, 0.5, 4, "layout_fragment", "suppress", ["low_structure_table"]),
-            22: (0, 2, 0.55, 4, "weak_table", "suppress", ["insufficient_keep_evidence"]),
-        }
-
         def _score_table_set(tables: list[TablePayload]) -> float:
             if tables is candidates["azure:layout"]:
                 return 10.0
             return 5.0
 
-        with (
-            mock.patch.object(service, "_score_table_set", side_effect=_score_table_set),
-            mock.patch.object(
-                service,
-                "_table_region_candidate_rank",
-                side_effect=lambda table: region_ranks[table.order_index],
-            ),
-        ):
+        with mock.patch.object(service, "_score_table_set", side_effect=_score_table_set):
             selected, tables, diag = service._select_table_candidates(candidates)
 
-        self.assertEqual(selected, "auto:region_blend")
-        self.assertEqual([table.order_index for table in tables], [12, 22])
-        self.assertEqual(diag.get("region_blend_document_selected"), "azure:layout")
-        self.assertEqual(diag.get("region_blend_extractors_used"), ["geometry"])
-        self.assertEqual(diag.get("region_blend_regions")[0].get("selected_decision"), "keep")
-        self.assertEqual(diag.get("region_blend_regions")[0].get("selected_class"), "strong_table")
+        self.assertEqual(selected, "azure:layout")
+        self.assertEqual([table.order_index for table in tables], [11, 21])
+        self.assertEqual(diag.get("selection_mode"), "scored_promotion_v2")
+        self.assertFalse(diag.get("selector_disabled"))
 
 
 class GeometryLogicalRowReconstructionTests(SimpleTestCase):
@@ -1957,6 +2061,313 @@ class GeometryLogicalRowReconstructionTests(SimpleTestCase):
             + (meta.get("class_counts", {}).get("layout_fragment", 0)),
             2,
         )
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_pdf_table_promotion_gate_recovers_best_bounded_fallback_when_all_candidates_suppress(
+        self,
+        _build_embeddings,
+    ) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        candidate_one = self._narrow_table(
+            [
+                self._narrow_row(1, ["Issuance fees", "EGP 450"]),
+                self._narrow_row(2, ["Replacement fees", "Free"]),
+                self._narrow_row(3, ["Grace period", "55 days"]),
+            ],
+            order_index=20,
+        )
+        candidate_two = self._narrow_table(
+            [
+                self._narrow_row(1, ["Placeholder", "________"]),
+                self._narrow_row(2, ["Template", "________"]),
+            ],
+            order_index=21,
+        )
+
+        assessments = {
+            20: {"quality_score": 0.72, "signals": {}},
+            21: {"quality_score": 0.31, "signals": {}},
+        }
+
+        def _classify(table, assessment, recurrence_stats=None):
+            if table.order_index == 20:
+                return "weak_table", "suppress", ["insufficient_keep_evidence"]
+            return "layout_fragment", "suppress", ["compact_banner_table"]
+
+        with (
+            mock.patch.object(service, "_assess_table_quality", side_effect=lambda table: assessments[table.order_index]),
+            mock.patch.object(service, "_classify_pdf_table_candidate", side_effect=_classify),
+        ):
+            kept, meta, issues = service._apply_pdf_table_promotion_gate([candidate_one, candidate_two])
+
+        self.assertEqual([table.order_index for table in kept], [20])
+        kept_meta = kept[0].metadata or {}
+        self.assertEqual(kept_meta.get("promotion_decision"), "keep_fallback")
+        self.assertTrue(kept_meta.get("promotion_fallback"))
+        self.assertEqual((meta.get("fallback_kept_table") or {}).get("order_index"), 20)
+        self.assertEqual(meta.get("suppressed_tables"), 1)
+        self.assertFalse(any(issue.table_order_index == 20 for issue in issues))
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_pdf_table_promotion_gate_keeps_collapsed_factual_pdfplumber_table(self, _build_embeddings) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        collapsed_table = TablePayload(
+            order_index=22,
+            title="Collapsed factual",
+            section_heading="",
+            page_number=1,
+            bbox={"x0": 0.0, "y0": 0.0, "x1": 100.0, "y1": 100.0},
+            column_schema=["column_1"],
+            data_dictionary={},
+            metadata={"detected_via": "pdfplumber:lines_text"},
+            rows=[
+                self._narrow_row(1, ["Issuance and Renewal Fees EGP 500 EGP 250 EGP 300 EGP 350"]),
+                self._narrow_row(2, ["Replacement Fees Free Free Free Free"]),
+                self._narrow_row(3, ["Supplementary Fees EGP 25 Free Free Free"]),
+                self._narrow_row(4, ["Late Payment Fees EGP 150 EGP 150 EGP 150 EGP 150"]),
+            ],
+        )
+
+        assessment = {
+            "quality_score": 0.58,
+            "signals": {
+                "effective_column_count": 1,
+                "structured_row_ratio": 1.0,
+                "placeholder_cell_ratio": 0.0,
+                "header_confidence": 0.55,
+                "paragraph_like_table": True,
+            },
+        }
+
+        with mock.patch.object(service, "_assess_table_quality", return_value=assessment):
+            kept, meta, issues = service._apply_pdf_table_promotion_gate([collapsed_table])
+
+        self.assertEqual([table.order_index for table in kept], [22])
+        self.assertEqual((kept[0].metadata or {}).get("promotion_class"), "collapsed_factual_table")
+        self.assertEqual(meta.get("suppressed_tables"), 0)
+        self.assertFalse(issues)
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_pdf_table_promotion_gate_keeps_coherent_pdfplumber_native_text_matrix(self, _build_embeddings) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        matrix_table = TablePayload(
+            order_index=23,
+            title="Native text matrix",
+            section_heading="",
+            page_number=1,
+            bbox={"x0": 0.0, "y0": 0.0, "x1": 100.0, "y1": 100.0},
+            column_schema=["card_type", "white", "classic", "gold", "cash_back"],
+            data_dictionary={},
+            metadata={"detected_via": "pdfplumber:lines"},
+            rows=[
+                self._row(1, ["Issuance and Renewal Fees", "EGP 500", "EGP 250", "EGP 300", "EGP 350"]),
+                self._row(2, ["Replacement Fees", "Free", "Free", "Free", "Free"]),
+                self._row(3, ["Supplementary Fees", "EGP 25", "Free", "Free", "Free"]),
+                self._row(4, ["Interest Rate", "3.99%", "3.99%", "3.99%", "3.99%"]),
+                self._row(5, ["Over-Limit Fees", "EGP 150", "EGP 150", "EGP 150", "EGP 150"]),
+                self._row(6, ["Late Payment Fees", "EGP 150", "EGP 150", "EGP 150", "EGP 150"]),
+            ],
+        )
+
+        assessment = {
+            "quality_score": 0.62,
+            "signals": {
+                "effective_column_count": 5,
+                "structured_row_ratio": 0.72,
+                "placeholder_cell_ratio": 0.0,
+                "header_confidence": 0.35,
+                "multi_cell_row_ratio": 1.0,
+                "value_row_ratio": 0.9,
+                "scaffold_row_ratio": 0.0,
+            },
+        }
+
+        with mock.patch.object(service, "_assess_table_quality", return_value=assessment):
+            kept, meta, issues = service._apply_pdf_table_promotion_gate([matrix_table])
+
+        self.assertEqual([table.order_index for table in kept], [23])
+        self.assertEqual((kept[0].metadata or {}).get("promotion_class"), "coherent_native_text_table")
+        self.assertIn("coherent_pdfplumber_keep", (kept[0].metadata or {}).get("promotion_reasons") or [])
+        self.assertEqual(meta.get("suppressed_tables"), 0)
+        self.assertFalse(issues)
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_pdf_table_promotion_gate_keeps_collapsed_uniform_value_matrix(self, _build_embeddings) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        swype_like_table = TablePayload(
+            order_index=24,
+            title="Uniform value matrix",
+            section_heading="",
+            page_number=1,
+            bbox={"x0": 0.0, "y0": 0.0, "x1": 100.0, "y1": 100.0},
+            column_schema=["column_1"],
+            data_dictionary={},
+            metadata={"detected_via": "pdfplumber:lines"},
+            rows=[
+                self._narrow_row(1, ["Card Type Swype 12 Swype 36"]),
+                self._narrow_row(2, ["Issuance and Renewal Fees Free Across all Card Types"]),
+                self._narrow_row(3, ["Replacement Fees Free Across all Card Types"]),
+                self._narrow_row(4, ["Supplementary Card Fees Free Across all Card Types"]),
+                self._narrow_row(5, ["Interest Rate (Installment Payment Plan) - Swype Only 2.67% Across all"]),
+                self._narrow_row(6, ["Admin Fees on Installed Transaction- One time 2% of the installed transaction value"]),
+                self._narrow_row(7, ["Cancellation Fees for Installed Transactions 5 % of the total outstanding transaction value"]),
+                self._narrow_row(8, ["Interest Rate (Non-Installment Transactions ) 3.99% Across All"]),
+                self._narrow_row(9, ["Credit Shield Subscription 0.9% monthly on the outstanding balance available with min. EGP 15"]),
+                self._narrow_row(10, ["Fixed Card Insurance Fees (Solidarity Fees)****** Free across all Swype card types."]),
+                self._narrow_row(11, ["Grace Period 40 Days on Purchase Only"]),
+                self._narrow_row(12, ["Over Limit Fees EGP 150"]),
+                self._narrow_row(13, ["Late Payments Fees EGP 150"]),
+            ],
+        )
+
+        assessment = {
+            "quality_score": 0.78,
+            "signals": {
+                "effective_column_count": 1,
+                "nonsense_columns": True,
+                "structured_row_ratio": 0.67,
+                "placeholder_cell_ratio": 0.0,
+                "header_confidence": 0.0,
+                "multi_cell_row_ratio": 0.0,
+                "value_row_ratio": 0.57,
+                "scaffold_row_ratio": 1.0,
+                "row_consistency": 1.0,
+                "cell_fill_ratio": 1.0,
+                "long_cell_ratio": 0.19,
+                "max_cell_word_count": 13,
+            },
+        }
+
+        with (
+            mock.patch.object(service, "_assess_table_quality", return_value=assessment),
+            mock.patch.object(service, "_table_is_collapsed_factual", return_value=False),
+        ):
+            kept, meta, issues = service._apply_pdf_table_promotion_gate([swype_like_table])
+
+        self.assertEqual([table.order_index for table in kept], [24])
+        self.assertEqual((kept[0].metadata or {}).get("promotion_class"), "collapsed_uniform_value_matrix")
+        self.assertIn("collapsed_uniform_matrix_keep", (kept[0].metadata or {}).get("promotion_reasons") or [])
+        self.assertEqual(meta.get("suppressed_tables"), 0)
+        self.assertFalse(issues)
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_repair_pdf_table_structure_rebuilds_collapsed_native_text_matrix_from_spans(self, _build_embeddings) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+
+        collapsed = TablePayload(
+            order_index=31,
+            title="Collapsed matrix",
+            section_heading="",
+            page_number=1,
+            bbox={"x0": 0.0, "y0": 0.0, "x1": 100.0, "y1": 100.0},
+            column_schema=["card_type_white_classic_gold_cash_back"],
+            data_dictionary={},
+            metadata={"detected_via": "pdfplumber:lines"},
+            rows=[
+                TableRowPayload(
+                    row_index=0,
+                    page_number=1,
+                    raw_text="Card Type White Classic Gold Cash Back",
+                    metadata={"row_type": "header"},
+                    cells=[TableCellPayload(row_index=0, column_index=0, column_key="card_type_white_classic_gold_cash_back", raw_text="Card Type White Classic Gold Cash Back")],
+                ),
+                self._narrow_row(1, ["Issuance and Renewal Fees EGP 500 EGP 250 EGP 300 EGP 350"]),
+                self._narrow_row(2, ["Replacement Fees Free Free Free Free"]),
+                self._narrow_row(3, ["Supplementary Fees EGP 25 Free Free Free"]),
+            ],
+        )
+
+        page_spans = [[
+            PdfSpan(page_number=1, text="White", x0=200.0, y0=90.0, x1=240.0, y1=100.0, font=None, size=9.0),
+            PdfSpan(page_number=1, text="Classic", x0=280.0, y0=90.0, x1=330.0, y1=100.0, font=None, size=9.0),
+            PdfSpan(page_number=1, text="Gold", x0=360.0, y0=90.0, x1=395.0, y1=100.0, font=None, size=9.0),
+            PdfSpan(page_number=1, text="Cash Back", x0=440.0, y0=90.0, x1=500.0, y1=100.0, font=None, size=9.0),
+            PdfSpan(page_number=1, text="Card Type", x0=34.0, y0=96.0, x1=78.0, y1=106.0, font=None, size=9.0),
+            PdfSpan(page_number=1, text="E-Commerce", x0=520.0, y0=96.0, x1=590.0, y1=106.0, font=None, size=9.0),
+            PdfSpan(page_number=1, text="Issuance and Renewal Fees", x0=34.0, y0=118.0, x1=170.0, y1=128.0, font=None, size=9.0),
+            PdfSpan(page_number=1, text="EGP 500", x0=200.0, y0=118.0, x1=240.0, y1=128.0, font=None, size=9.0),
+            PdfSpan(page_number=1, text="EGP 250", x0=280.0, y0=118.0, x1=320.0, y1=128.0, font=None, size=9.0),
+            PdfSpan(page_number=1, text="EGP 300", x0=360.0, y0=118.0, x1=400.0, y1=128.0, font=None, size=9.0),
+            PdfSpan(page_number=1, text="EGP 350", x0=440.0, y0=118.0, x1=480.0, y1=128.0, font=None, size=9.0),
+            PdfSpan(page_number=1, text="EGP 500", x0=520.0, y0=118.0, x1=560.0, y1=128.0, font=None, size=9.0),
+            PdfSpan(page_number=1, text="Replacement Fees", x0=34.0, y0=140.0, x1=140.0, y1=150.0, font=None, size=9.0),
+            PdfSpan(page_number=1, text="Free", x0=200.0, y0=140.0, x1=228.0, y1=150.0, font=None, size=9.0),
+            PdfSpan(page_number=1, text="Free", x0=280.0, y0=140.0, x1=308.0, y1=150.0, font=None, size=9.0),
+            PdfSpan(page_number=1, text="Free", x0=360.0, y0=140.0, x1=388.0, y1=150.0, font=None, size=9.0),
+            PdfSpan(page_number=1, text="Free", x0=440.0, y0=140.0, x1=468.0, y1=150.0, font=None, size=9.0),
+            PdfSpan(page_number=1, text="Free", x0=520.0, y0=140.0, x1=548.0, y1=150.0, font=None, size=9.0),
+            PdfSpan(page_number=1, text="Supplementary Fees", x0=34.0, y0=162.0, x1=150.0, y1=172.0, font=None, size=9.0),
+            PdfSpan(page_number=1, text="EGP 25", x0=200.0, y0=162.0, x1=236.0, y1=172.0, font=None, size=9.0),
+            PdfSpan(page_number=1, text="Free", x0=280.0, y0=162.0, x1=308.0, y1=172.0, font=None, size=9.0),
+            PdfSpan(page_number=1, text="Free", x0=360.0, y0=162.0, x1=388.0, y1=172.0, font=None, size=9.0),
+            PdfSpan(page_number=1, text="Free", x0=440.0, y0=162.0, x1=468.0, y1=172.0, font=None, size=9.0),
+            PdfSpan(page_number=1, text="N/A", x0=520.0, y0=162.0, x1=545.0, y1=172.0, font=None, size=9.0),
+        ]]
+
+        repaired, meta, issues = service._repair_pdf_table_structure(
+            [collapsed],
+            candidates={},
+            page_spans=page_spans,
+            selected_extractor="pdfplumber:lines",
+            selection_context={"format_hint": "pdf", "native_text_pdf": True, "pdf_lane": "native_text"},
+        )
+
+        self.assertEqual(len(repaired), 1)
+        repaired_table = repaired[0]
+        self.assertTrue((repaired_table.metadata or {}).get("structure_reconstructed"))
+        self.assertEqual((repaired_table.metadata or {}).get("canonical_acceptance"), "accepted")
+        self.assertEqual(
+            repaired_table.column_schema,
+            ["card_type", "white", "classic", "gold", "cash_back", "e_commerce"],
+        )
+        issuance_row = repaired_table.rows[1]
+        self.assertEqual([cell.raw_text for cell in issuance_row.cells], [
+            "Issuance and Renewal Fees",
+            "EGP 500",
+            "EGP 250",
+            "EGP 300",
+            "EGP 350",
+            "EGP 500",
+        ])
+        self.assertEqual((meta.get("reconstruction") or {}).get("reconstructed_tables"), 1)
+        self.assertFalse(any(issue.code == "pdf_table_not_canonical" for issue in issues))
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_repair_pdf_table_structure_drops_unreconstructed_collapsed_matrix_from_canonical_persistence(self, _build_embeddings) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        collapsed = TablePayload(
+            order_index=32,
+            title="Unsafe collapsed matrix",
+            section_heading="",
+            page_number=1,
+            bbox={},
+            column_schema=["column_1"],
+            data_dictionary={},
+            metadata={"detected_via": "pdfplumber:lines"},
+            rows=[
+                TableRowPayload(
+                    row_index=0,
+                    page_number=1,
+                    raw_text="Card Type White Classic Gold Cash Back",
+                    metadata={"row_type": "header"},
+                    cells=[TableCellPayload(row_index=0, column_index=0, column_key="column_1", raw_text="Card Type White Classic Gold Cash Back")],
+                ),
+                self._narrow_row(1, ["Issuance and Renewal Fees EGP 500 EGP 250 EGP 300 EGP 350"]),
+                self._narrow_row(2, ["Replacement Fees Free Free Free Free"]),
+                self._narrow_row(3, ["Supplementary Fees EGP 25 Free Free Free"]),
+            ],
+        )
+
+        repaired, meta, issues = service._repair_pdf_table_structure(
+            [collapsed],
+            candidates={},
+            selected_extractor="pdfplumber:lines",
+            selection_context={"format_hint": "pdf", "native_text_pdf": True, "pdf_lane": "native_text"},
+        )
+
+        self.assertEqual(repaired, [])
+        self.assertEqual((meta.get("acceptance") or {}).get("dropped_tables"), 1)
+        self.assertTrue(any(issue.code == "pdf_table_not_canonical" for issue in issues))
 
     @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
     def test_pdf_table_promotion_gate_keeps_fillable_transactional_grid(self, _build_embeddings) -> None:

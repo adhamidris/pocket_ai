@@ -1310,6 +1310,34 @@ class KnowledgeSearchService:
         # Apply strategy effective_limit when available (safety cap: never exceed 4x base)
         if strategy_result and strategy_result.effective_limit:
             limit = min(strategy_result.effective_limit, limit * 4)
+        section_focus_terms: tuple[str, ...] = tuple()
+        if classification and isinstance(classification.retrieval_hints, Mapping):
+            raw_terms = classification.retrieval_hints.get("section_focus_terms") or ()
+            if isinstance(raw_terms, (list, tuple, set)):
+                section_focus_terms = tuple(
+                    str(item).strip().lower()
+                    for item in raw_terms
+                    if str(item).strip()
+                )[:8]
+        prefer_section_context = bool(
+            classification.prefers_section_context() if classification else False
+        )
+        modality_bias = str(
+            classification.modality_bias() if classification else "mixed"
+        ).strip().lower()
+        if strategy_result and strategy_result.hints.prefer_section_context:
+            prefer_section_context = True
+        if strategy_result:
+            strategy_modality_bias = str(strategy_result.hints.modality_bias or "").strip().lower()
+            if strategy_modality_bias in {"table", "text", "mixed"}:
+                modality_bias = strategy_modality_bias
+        if prefer_section_context or section_focus_terms:
+            table_context = dict(table_context)
+            table_context["prefer_section_context"] = prefer_section_context
+            table_context["section_focus_terms"] = list(section_focus_terms)
+        if modality_bias in {"table", "text", "mixed"}:
+            table_context = dict(table_context)
+            table_context["modality_bias"] = modality_bias
 
         table_presence_start = time.perf_counter()
         tables_available = self._business_has_tables(
@@ -1373,6 +1401,20 @@ class KnowledgeSearchService:
             "tabular_table_uploads": table_context.get("table_uploads"),
             "tabular_allow_generic": bool(table_context.get("allow_generic")),
             "tabular_comprehensive_intent": bool(table_context.get("comprehensive_intent")),
+            "tabular_prefer_section_context": bool(table_context.get("prefer_section_context")),
+            "tabular_section_focus_terms": list(table_context.get("section_focus_terms") or ())[:6],
+            "document_continuity_allowed": bool(
+                session_context.get("document_continuity_allowed") if session_context else False
+            ),
+            "document_continuity_reason": (
+                session_context.get("document_continuity_reason") if session_context else None
+            ),
+            "query_rewrite_strategy": (
+                session_context.get("query_rewrite_strategy") if session_context else None
+            ),
+            "query_rewrite_confidence": (
+                session_context.get("query_rewrite_confidence") if session_context else None
+            ),
             "intent_name": classification.intent.value if classification else None,
             "intent_confidence": round(classification.confidence, 3) if classification else None,
             "intent_source": classification.source if classification else None,
@@ -1415,6 +1457,8 @@ class KnowledgeSearchService:
             diagnostics["strategy_multiplier"] = strategy_result.hints.snippet_limit_multiplier
             diagnostics["strategy_diversify_tables"] = strategy_result.hints.diversify_tables
             diagnostics["strategy_comprehensive"] = strategy_result.hints.comprehensive_intent
+            diagnostics["strategy_prefer_section_context"] = strategy_result.hints.prefer_section_context
+            diagnostics["strategy_modality_bias"] = strategy_result.hints.modality_bias
             diagnostics["strategy_applied_limit"] = limit
 
         # Agentic RAG should not block on "clarification". Keep the signal for diagnostics,
@@ -3102,6 +3146,8 @@ class KnowledgeSearchService:
                 f"azure_semantic:{int(azure_semantic)}",
                 f"azure_semantic_config:{azure_semantic_config}",
                 "evidence_grouping:v3",
+                "section" if table_context.get("prefer_section_context") else "chunk",
+                ",".join(str(term) for term in (table_context.get("section_focus_terms") or ())[:4]),
                 normalized_query,
                 str(limit),
                 "table" if table_context.get("has_intent") else "chunk",
@@ -3923,6 +3969,60 @@ class KnowledgeSearchService:
             penalty = max(penalty, min(self.text_chunk_penalty_max, 0.25))
         return penalty
 
+    @staticmethod
+    def _section_label_candidates(metadata: Mapping[str, Any]) -> tuple[str, ...]:
+        if not metadata:
+            return tuple()
+        ordered: list[str] = []
+        seen: set[str] = set()
+
+        def _push(value: object) -> None:
+            text = re.sub(r"\s+", " ", str(value or "")).strip()
+            if not text:
+                return
+            lowered = text.lower()
+            if lowered in seen:
+                return
+            seen.add(lowered)
+            ordered.append(text)
+
+        _push(metadata.get("section_heading"))
+        for key in ("section_headings", "heading_path"):
+            raw = metadata.get(key)
+            if isinstance(raw, (list, tuple, set)):
+                for item in raw:
+                    _push(item)
+        return tuple(ordered[:8])
+
+    def _section_context_boost(
+        self,
+        metadata: Mapping[str, Any],
+        *,
+        query_tokens: Sequence[str],
+        query_text: str,
+        focus_terms: Sequence[str],
+    ) -> float:
+        labels = self._section_label_candidates(metadata)
+        if not labels:
+            return 0.0
+        best = 0.0
+        normalized_query_text = (query_text or "").strip()
+        normalized_tokens = tuple(str(token).strip().lower() for token in query_tokens if str(token).strip())
+        normalized_focus_terms = tuple(str(term).strip().lower() for term in focus_terms if str(term).strip())
+        for label in labels:
+            lexical = self._lexical_score_text(label, normalized_tokens)
+            phrase = self._exact_phrase_boost(label, normalized_query_text, max_boost=0.16)
+            focus_lexical = 0.0
+            focus_phrase = 0.0
+            for term in normalized_focus_terms[:6]:
+                term_tokens = tuple(part for part in term.split() if part)
+                if term_tokens:
+                    focus_lexical = max(focus_lexical, self._lexical_score_text(label, term_tokens))
+                focus_phrase = max(focus_phrase, self._exact_phrase_boost(label, term, max_boost=0.12))
+            label_score = min(0.3, (lexical * 0.12) + phrase + (focus_lexical * 0.14) + focus_phrase)
+            best = max(best, label_score)
+        return best
+
     def _rerank_candidates(
         self,
         candidates: Sequence[ChunkResult],
@@ -3955,6 +4055,15 @@ class KnowledgeSearchService:
         text_penalty_enabled = bool(feature_state and feature_state.rag_text_chunk_penalty)
         table_context = table_context or {}
         table_intent = bool(table_context.get("has_intent"))
+        modality_bias = str(table_context.get("modality_bias") or "").strip().lower()
+        if modality_bias not in {"table", "text", "mixed"}:
+            modality_bias = "table" if table_intent else "text"
+        prefer_section_context = bool(table_context.get("prefer_section_context"))
+        section_focus_terms = tuple(
+            str(item).strip().lower()
+            for item in (table_context.get("section_focus_terms") or ())
+            if str(item).strip()
+        )
         query_tokens = set(table_context.get("query_tokens") or ())
         specific_tokens = set(table_context.get("specific_tokens") or ())
         for idx, cand in enumerate(candidates):
@@ -3979,6 +4088,7 @@ class KnowledgeSearchService:
             quality_penalty = 0.0
             chunk_metadata = cand.chunk.metadata if isinstance(cand.chunk.metadata, dict) else {}
             table_header_bonus = 0.0
+            modality_bias_bonus = 0.0
             table_specific_penalty = 0.0
             table_residual_penalty = 0.0
             table_structural_penalty = 0.0
@@ -4034,12 +4144,26 @@ class KnowledgeSearchService:
                             0.3,
                             max(self.table_header_match_bonus + 0.12, self.table_specific_miss_penalty * 0.8),
                         )
+                if modality_bias == "table":
+                    modality_bias_bonus = 0.04
+                elif modality_bias == "mixed" and table_intent:
+                    modality_bias_bonus = 0.02
 
             text_penalty = 0.0
+            section_context_boost = 0.0
             if text_penalty_enabled and not chunk_metadata.get("is_table_chunk") and not chunk_metadata.get("is_dataset_card"):
                 index_type = chunk_metadata.get("index_type")
                 if index_type in (None, "text"):
                     text_penalty = self._text_quality_penalty(chunk_metadata)
+            if prefer_section_context and not chunk_metadata.get("is_table_chunk") and not chunk_metadata.get("is_dataset_card"):
+                index_type = chunk_metadata.get("index_type")
+                if index_type in (None, "text"):
+                    section_context_boost = self._section_context_boost(
+                        chunk_metadata,
+                        query_tokens=traits.tokens,
+                        query_text=traits.normalized or traits.original or "",
+                        focus_terms=section_focus_terms,
+                    )
             if is_table_residual and not chunk_metadata.get("is_table_chunk"):
                 if table_intent:
                     table_residual_penalty = self.table_residual_table_intent_penalty
@@ -4048,6 +4172,10 @@ class KnowledgeSearchService:
             text_phrase_boost = 0.0
             text_proximity_boost = 0.0
             if not chunk_metadata.get("is_table_chunk"):
+                if modality_bias == "text":
+                    modality_bias_bonus = 0.04
+                elif modality_bias == "mixed" and not table_intent:
+                    modality_bias_bonus = 0.02
                 text_phrase_boost = self._exact_phrase_boost(
                     cand.chunk.content or "",
                     traits.normalized or traits.original or "",
@@ -4075,9 +4203,13 @@ class KnowledgeSearchService:
                     document_name_boost = self._lexical_score_text(doc_label, traits.tokens)
 
             # Document continuity bonus (Conversation-Aware RAG)
-            # Boosts chunks from the same document being discussed in conversation
+            # Boost chunks from the same document only after the agentic scope
+            # decision confirms this is still the same document/topic.
             document_continuity_bonus = 0.0
-            if session_context:
+            continuity_allowed = bool(
+                session_context.get("document_continuity_allowed") if session_context else False
+            )
+            if session_context and continuity_allowed:
                 primary_upload_id = session_context.get("primary_upload_id")
                 if primary_upload_id:
                     chunk_upload_id = str(cand.chunk.upload_id) if cand.chunk.upload_id else None
@@ -4099,6 +4231,8 @@ class KnowledgeSearchService:
                 + table_header_bonus
                 + self.rerank_weights["document_name"] * document_name_boost
                 + document_continuity_bonus  # NEW: Document continuity bonus
+                + section_context_boost
+                + modality_bias_bonus
                 + text_phrase_boost
                 + text_proximity_boost
                 - quality_penalty  # NEW: Subtract quality penalty
@@ -4116,6 +4250,8 @@ class KnowledgeSearchService:
                 "table_header_bonus": round(table_header_bonus, 4),
                 "document_name_boost": round(document_name_boost, 4),
                 "document_continuity_bonus": round(document_continuity_bonus, 4),  # NEW: Include in diagnostics
+                "section_context_boost": round(section_context_boost, 4),
+                "modality_bias_bonus": round(modality_bias_bonus, 4),
                 "quality_penalty": round(quality_penalty, 4),  # NEW: Include in diagnostics
                 "table_specific_penalty": round(table_specific_penalty, 4),
                 "table_structural_penalty": round(table_structural_penalty, 4),
@@ -4128,18 +4264,23 @@ class KnowledgeSearchService:
             cand.diagnostics["table_residual_candidate"] = bool(is_table_residual and not chunk_metadata.get("is_table_chunk"))
             cand.rerank_score = combined
             scored.append((combined, -idx, cand))
-        if table_intent and specific_tokens and self.table_residual_rescue_enabled and scored:
+        comprehensive_intent = bool(table_context.get("comprehensive_intent"))
+        allow_broad_rescue = bool(table_intent and comprehensive_intent and not specific_tokens)
+        if table_intent and self.table_residual_rescue_enabled and scored and (specific_tokens or allow_broad_rescue):
             canonical_candidates = []
             for item in scored:
                 metadata = item[2].chunk.metadata if isinstance(item[2].chunk.metadata, dict) else {}
                 if metadata.get("is_table_chunk"):
                     canonical_candidates.append(item)
             residual_candidates: list[tuple[int, float, int, ChunkResult, float, float]] = []
-            canonical_specific_hits = sum(
-                1
-                for _, _, hit in canonical_candidates
-                if bool(hit.diagnostics.get("specific_match_strong") or hit.diagnostics.get("specific_match"))
-            )
+            if specific_tokens:
+                canonical_specific_hits = sum(
+                    1
+                    for _, _, hit in canonical_candidates
+                    if bool(hit.diagnostics.get("specific_match_strong") or hit.diagnostics.get("specific_match"))
+                )
+            else:
+                canonical_specific_hits = 0
             best_canonical_score = max((score for score, _, _ in canonical_candidates), default=None)
 
             for scored_index, (base_score, order, hit) in enumerate(scored):
@@ -4152,14 +4293,28 @@ class KnowledgeSearchService:
                         or hit_meta.get("region_role") == "table_residual"
                     )
                 )
-                if not is_residual:
+                is_supporting = bool(
+                    (not hit_meta.get("is_table_chunk"))
+                    and (
+                        hit_meta.get("table_annotation")
+                        or hit_meta.get("content_source") == "table_annotation"
+                        or hit_meta.get("region_role") == "table_annotation"
+                    )
+                )
+                if not (is_residual or is_supporting):
                     continue
                 score_breakdown = hit.diagnostics.get("score_breakdown") or {}
                 phrase_boost = float(score_breakdown.get("text_phrase_boost") or 0.0)
                 lexical_component = float(score_breakdown.get("lexical") or 0.0)
-                if phrase_boost < self.table_residual_rescue_phrase_min:
+                phrase_min = self.table_residual_rescue_phrase_min
+                if allow_broad_rescue:
+                    phrase_min = 0.0
+                if phrase_boost < phrase_min:
                     continue
-                if lexical_component < self.table_residual_rescue_lexical_min:
+                lexical_min = self.table_residual_rescue_lexical_min
+                if allow_broad_rescue:
+                    lexical_min = min(lexical_min, 0.45)
+                if lexical_component < lexical_min:
                     continue
                 residual_candidates.append(
                     (scored_index, base_score, order, hit, phrase_boost, lexical_component)
@@ -8893,6 +9048,8 @@ class KnowledgeSearchService:
             decision = "table"
         elif text_score > table_score:
             decision = "text"
+        elif route.startswith("mixed"):
+            decision = "blended"
         elif route.startswith("table"):
             decision = "table"
         elif route.startswith("text"):
@@ -9319,95 +9476,77 @@ class KnowledgeSearchService:
                 table_hits.append(hit)
             else:
                 text_hits.append(hit)
-        specific_tokens = set((table_context or {}).get("specific_tokens") or ())
+        table_context = table_context or {}
+        specific_tokens = set(table_context.get("specific_tokens") or ())
+        query_tokens = set(table_context.get("query_tokens") or ())
 
-        # Authoritative source routing:
-        # - table_intent => stay on table-primary path (with deterministic table refinement only)
-        # - not table_intent => stay on text-primary path
-        # Cross-mode fallback is handled by auto arbitration earlier in the pipeline.
-        if table_intent:
-            if not table_hits:
-                return (
-                    tuple(hits),
-                    tuple(),
-                    {
-                        "index_route": "table_fallback_all",
-                        "index_route_table_hits": len(table_hits),
-                        "index_route_text_hits": len(text_hits),
-                    },
+        filtered_count = 0
+        weak_count = 0
+        strong_count = 0
+        if table_hits and table_intent and specific_tokens:
+            for hit in table_hits:
+                match_info = self._table_chunk_match_info(
+                    hit.chunk,
+                    query_tokens=query_tokens,
+                    specific_tokens=specific_tokens,
                 )
-
-            route = "table_primary"
-            primary_hits: Sequence[ChunkResult] = table_hits
-            filtered_count = 0
-            weak_count = 0
-            strong_count = 0
-
-            if specific_tokens:
-                query_tokens = set((table_context or {}).get("query_tokens") or ())
-                filtered_table_hits: list[ChunkResult] = []
-                strong_table_hits: list[ChunkResult] = []
-                for hit in table_hits:
-                    match_info = self._table_chunk_match_info(
-                        hit.chunk,
-                        query_tokens=query_tokens,
-                        specific_tokens=specific_tokens,
-                    )
-                    hit.diagnostics.update(match_info)
-                    if match_info.get("specific_match"):
-                        filtered_table_hits.append(hit)
-                    if match_info.get("specific_match_strong"):
-                        strong_table_hits.append(hit)
-
-                filtered_count = len(table_hits) - len(filtered_table_hits)
-                strong_count = len(strong_table_hits)
-                weak_count = max(0, len(filtered_table_hits) - len(strong_table_hits))
-
-                if strong_table_hits:
-                    primary_hits = strong_table_hits
-                    route = "table_primary_strong"
-                elif filtered_table_hits:
-                    primary_hits = filtered_table_hits
-                    route = "table_primary_filtered"
+                hit.diagnostics.update(match_info)
+                if match_info.get("specific_match_strong"):
+                    strong_count += 1
+                elif match_info.get("specific_match"):
+                    weak_count += 1
                 else:
-                    primary_hits = table_hits
-                    route = "table_primary_unfiltered"
+                    filtered_count += 1
 
-            diagnostics = {
-                "index_route": route,
-                "index_route_table_hits": len(table_hits),
-                "index_route_text_hits": len(text_hits),
-            }
-            if specific_tokens:
-                diagnostics.update(
-                    {
-                        "table_specific_filtered": filtered_count,
-                        "table_specific_strong_hits": strong_count,
-                        "table_specific_weak_hits": weak_count,
-                    }
-                )
-            return tuple(primary_hits), tuple(text_hits), diagnostics
+        raw_bias = str(table_context.get("modality_bias") or "").strip().lower()
+        if raw_bias not in {"table", "text", "mixed"}:
+            raw_bias = "table" if table_intent else "text"
 
-        if text_hits:
-            return (
-                tuple(text_hits),
-                tuple(table_hits),
+        if table_hits and text_hits:
+            table_biased = raw_bias == "table" or (raw_bias == "mixed" and table_intent)
+            if table_biased:
+                primary_hits = self._interleave_chunk_hits(table_hits, text_hits)
+                secondary_hits = tuple(text_hits)
+                route = "mixed_primary_table_biased"
+                dominant_modality = "table"
+            else:
+                primary_hits = self._interleave_chunk_hits(text_hits, table_hits)
+                secondary_hits = tuple(table_hits)
+                route = "mixed_primary_text_biased"
+                dominant_modality = "text"
+        elif table_hits:
+            primary_hits = tuple(table_hits)
+            secondary_hits = tuple()
+            route = "mixed_primary_table_only"
+            dominant_modality = "table"
+        elif text_hits:
+            primary_hits = tuple(text_hits)
+            secondary_hits = tuple()
+            route = "mixed_primary_text_only"
+            dominant_modality = "text"
+        else:
+            primary_hits = tuple(hits)
+            secondary_hits = tuple()
+            route = "mixed_fallback_all"
+            dominant_modality = "unknown"
+
+        diagnostics = {
+            "index_route": route,
+            "index_route_table_hits": len(table_hits),
+            "index_route_text_hits": len(text_hits),
+            "index_route_modality_bias": raw_bias,
+            "index_route_dominant_modality": dominant_modality,
+            "index_route_mixed": bool(table_hits and text_hits),
+        }
+        if specific_tokens:
+            diagnostics.update(
                 {
-                    "index_route": "text_primary",
-                    "index_route_table_hits": len(table_hits),
-                    "index_route_text_hits": len(text_hits),
-                },
+                    "table_specific_filtered": filtered_count,
+                    "table_specific_strong_hits": strong_count,
+                    "table_specific_weak_hits": weak_count,
+                }
             )
-
-        return (
-            tuple(hits),
-            tuple(),
-            {
-                "index_route": "text_fallback_all",
-                "index_route_table_hits": len(table_hits),
-                "index_route_text_hits": len(text_hits),
-            },
-        )
+        return tuple(primary_hits), secondary_hits, diagnostics
 
     def _table_parent_hits(
         self,

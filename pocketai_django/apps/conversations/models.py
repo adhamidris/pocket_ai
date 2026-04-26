@@ -54,10 +54,11 @@ class ConversationExtractionType(models.TextChoices):
 
 class Conversation(models.Model):
     """
-    Represents a single visitor chat session.
+    Represents a single chat session owned by an authenticated workspace user.
 
-    Each conversation is scoped to an agent profile and is referenced by a random
-    session token that the public portal uses instead of authentication.
+    `session_token` is retained for transport continuity with the existing portal
+    streaming/event contract, but ownership is modeled explicitly through
+    `owner_user` so history and authorization can be backend-driven.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -72,6 +73,11 @@ class Conversation(models.Model):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
+    )
+    owner_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="owned_conversations",
+        on_delete=models.CASCADE,
     )
     session_token = models.CharField(max_length=96, unique=True, db_index=True)
     channel = models.CharField(
@@ -106,6 +112,10 @@ class Conversation(models.Model):
         indexes = [
             models.Index(fields=["business_profile", "status"], name="conv_business_status_idx"),
             models.Index(fields=["business_profile", "last_activity_at"], name="conv_activity_idx"),
+            models.Index(
+                fields=["owner_user", "business_profile", "last_activity_at"],
+                name="conv_owner_biz_activity_idx",
+            ),
         ]
 
     def __str__(self) -> str:
@@ -117,6 +127,26 @@ class Conversation(models.Model):
             while Conversation.objects.filter(session_token=token).exists():
                 token = generate_session_token()
             self.session_token = token
+        if not self.owner_user_id and self.business_profile_id:
+            business_user_id = None
+            business = getattr(self, "business_profile", None)
+            if business is not None and getattr(business, "id", None) == self.business_profile_id:
+                business_user_id = getattr(business, "user_id", None)
+            if not business_user_id:
+                business_user_id = (
+                    Conversation.objects.filter(pk=self.pk)
+                    .values_list("owner_user_id", flat=True)
+                    .first()
+                )
+            if not business_user_id:
+                from apps.accounts.models import BusinessProfile
+
+                business_user_id = (
+                    BusinessProfile.objects.filter(pk=self.business_profile_id)
+                    .values_list("user_id", flat=True)
+                    .first()
+                )
+            self.owner_user_id = business_user_id
         self.last_activity_at = timezone.now()
         if self.status in {ConversationStatus.RESOLVED, ConversationStatus.CLOSED, ConversationStatus.EXPIRED} and not self.closed_at:
             self.closed_at = timezone.now()

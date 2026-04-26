@@ -65,6 +65,8 @@ from apps.knowledge.documents import DocumentListValidationError, list_documents
 from apps.knowledge.knowledge_ingestion import queue_ingestion_job
 from apps.api.chat_portal import bootstrap_session as bootstrap_session_view
 from apps.api.views import start_google_drive_oauth as start_google_drive_oauth_view
+from apps.conversations.portal import ChatPortalService
+from apps.conversations.portal_auth import PortalAuthorizationError, get_authorized_conversation
 
 
 PORTAL_BOOTSTRAP_SCRIPT_ID = "portal-bootstrap-data"
@@ -117,6 +119,7 @@ def _call_portal_bootstrap_api(
     )
     api_request.user = getattr(request, "user", None)
     api_request.COOKIES = request.COOKIES.copy()
+    api_request._dont_enforce_csrf_checks = True
     api_request.META.update(
         {
             "REMOTE_ADDR": request.META.get("REMOTE_ADDR", ""),
@@ -133,6 +136,145 @@ def _call_portal_bootstrap_api(
         return json.loads(response.content.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:  # pragma: no cover - defensive
         raise Http404(_("Invalid bootstrap payload")) from exc
+
+
+def _resolve_dashboard_chat_agent(*, request: HttpRequest, business: BusinessProfile) -> AgentProfile:
+    agent = (
+        AgentProfile.objects.filter(business_profile=business, user=request.user)
+        .select_related("business_profile")
+        .order_by("-updated_at")
+        .first()
+    )
+    if agent:
+        return agent
+    fallback = AgentProfile.objects.filter(business_profile=business).select_related("business_profile").first()
+    if fallback:
+        return fallback
+    raise Http404(_("No chat agent is configured for this business."))
+
+
+def _build_portal_context(
+    *,
+    request: HttpRequest,
+    business_slug: str,
+    agent_slug: str,
+    existing_token: str | None,
+    ui_language: str,
+    bootstrap_payload: dict,
+    chat_surface: str,
+    session_storage_key: str,
+) -> dict[str, object]:
+    capabilities = bootstrap_payload.get("capabilities") if isinstance(bootstrap_payload, dict) else {}
+    subagents_enabled = bool(capabilities.get("subAgentsEnabled")) if isinstance(capabilities, dict) else False
+
+    business = bootstrap_payload.get("business", {})
+    agent = bootstrap_payload.get("agent", {})
+    session = bootstrap_payload.get("session", {})
+    raw_messages = bootstrap_payload.get("messages", [])
+
+    agent_name = agent.get("name") or "Pocket AI"
+    agent_initials = initials_from_name(agent_name) or "AI"
+    messages: list[dict[str, object]] = []
+    for idx, message in enumerate(raw_messages, start=1):
+        message_id = message.get("id") or f"msg_{idx}"
+        sender = (message.get("sender") or "system").lower()
+        content_blocks = message.get("content_blocks") or message.get("contentBlocks") or []
+        if sender == "ai":
+            author = agent_name
+            initials = agent_initials
+        elif sender == "customer":
+            author = "You"
+            initials = "YOU"
+        else:
+            author = "System"
+            initials = "SYS"
+        messages.append(
+            {
+                "id": str(message_id),
+                "author": author,
+                "initials": initials,
+                "sender": sender,
+                "body": message.get("body", ""),
+                "content_blocks": content_blocks,
+                "render_payload": {
+                    "body": message.get("body", ""),
+                    "content_blocks": content_blocks,
+                },
+                "sent_at": message.get("sent_at"),
+                "metadata": message.get("metadata") or {},
+            }
+        )
+
+    session_status = (session.get("status") or "new").lower()
+    cookie_business_slug = business.get("slug") or slugify(business.get("name", "")) or business_slug
+    cookie_agent_slug = agent.get("slug") or agent_slug
+
+    return {
+        "business": {
+            "name": business.get("name", ""),
+            "slug": cookie_business_slug,
+        },
+        "agent": {
+            "name": agent_name,
+            "role": agent.get("role") or "AI Customer Specialist",
+            "bio": "Trained on our knowledge base and policies to provide personalised support.",
+            "initials": agent_initials,
+            "slug": cookie_agent_slug,
+        },
+        "session_token": session.get("session_token", ""),
+        "conversation_id": session.get("conversation_id", ""),
+        "session_storage_key": session_storage_key,
+        "ui_language": ui_language,
+        "conversation_status": session_status.replace("_", " ").title(),
+        "conversation_status_code": session_status,
+        "messages": messages,
+        "csat_scores": [(i, i) for i in range(1, 6)],
+        "bootstrap_payload": bootstrap_payload,
+        "bootstrap_script_id": PORTAL_BOOTSTRAP_SCRIPT_ID,
+        "subagents_enabled": subagents_enabled,
+        "asset_version": getattr(settings, "PORTAL_ASSET_VERSION", "dev"),
+        "chat_surface": chat_surface,
+        "is_authenticated_chat": bool(getattr(request.user, "is_authenticated", False)),
+        "endpoints": {
+            "bootstrap": reverse("api:chat-portal-session"),
+            "conversations": reverse("api:chat-conversations"),
+            "messages": reverse("api:chat-messages"),
+            "turns_create": reverse("api:chat-turns-create"),
+            "turn_events_template": reverse(
+                "api:chat-turns-events",
+                args=["00000000-0000-0000-0000-000000000000"],
+            ).replace("00000000-0000-0000-0000-000000000000", "{turn_id}"),
+            "turn_cancel": reverse(
+                "api:chat-turns-cancel",
+                args=["00000000-0000-0000-0000-000000000000"],
+            ).replace("00000000-0000-0000-0000-000000000000", "{turn_id}"),
+            "events": reverse("api:chat-events"),
+            "csat": reverse("api:chat-csat"),
+            "tool_approval": reverse("api:chat-portal-tools-approve"),
+            "tool_history": reverse("api:chat-portal-tools-history"),
+            "run_approval": reverse("api:chat-portal-runs-approval"),
+            "run_user_input": reverse("api:chat-portal-runs-user-input"),
+            "agent_request_update": reverse("api:chat-portal-agent-requests-update"),
+            "email_send_draft": reverse("api:chat-portal-email-send-draft"),
+            "email_discard_draft": reverse("api:chat-portal-email-discard-draft"),
+            "file_upload": reverse("api:chat-portal-files-upload"),
+            "file_download_url_template": reverse(
+                "api:chat-portal-files-download-url",
+                args=["00000000-0000-0000-0000-000000000000"],
+            ).replace("00000000-0000-0000-0000-000000000000", "{file_id}"),
+        },
+    }
+
+
+def _render_portal_template(
+    *,
+    request: HttpRequest,
+    portal_context: dict[str, object],
+    cookie_key: str | None,
+) -> HttpResponse:
+    get_token(request)
+    response = render(request, "frontend/chat/portal.html", {"portal": portal_context})
+    return response
 
 
 def _format_dashboard_datetime(value: datetime | str | None) -> str | None:
@@ -3024,129 +3166,69 @@ def dashboard_knowledge_integrations_connect(request: HttpRequest) -> HttpRespon
     return redirect(authorization_url)
 
 def chat_portal(request: HttpRequest, business_slug: str, agent_slug: str) -> HttpResponse:
-    """Render the public chat portal view backed by the API bootstrap endpoint."""
+    """Legacy public portal route retired in favor of the authenticated dashboard chat."""
 
-    existing_token = request.GET.get("session") or request.COOKIES.get(f"chat_session_{business_slug}_{agent_slug}")
+    login_url = reverse("accounts:login")
+    if not getattr(request.user, "is_authenticated", False):
+        return redirect(f"{login_url}?next={request.get_full_path()}")
+    return redirect("frontend:dashboard-chat")
+
+
+@login_required
+def dashboard_chat(request: HttpRequest) -> HttpResponse:
+    business = _primary_business_for_user(request.user)
+    if not business:
+        messages.error(request, _("Create a business profile before using chat."))
+        return redirect("frontend:dashboard")
+
+    agent = _resolve_dashboard_chat_agent(request=request, business=business)
+    service = ChatPortalService()
+    business_slug = business.slug or slugify(business.name) or str(business.id)
+    agent_slug = agent.slug or slugify(agent.name) or str(agent.id)
+    existing_token = request.GET.get("session") or None
+    conversation_id = str(request.GET.get("conversation") or "").strip()
+    if conversation_id:
+        try:
+            conversation = get_authorized_conversation(
+                service=service,
+                conversation_id=conversation_id,
+                user=request.user,
+                include_messages=False,
+            )
+        except PortalAuthorizationError as exc:
+            raise Http404(str(exc)) from exc
+        existing_token = conversation.session_token
+    else:
+        sessions = service.list_owned_sessions(
+            owner_user=request.user,
+            business_slug=business_slug,
+            agent_slug=agent_slug,
+            limit=1,
+        )
+        if sessions:
+            existing_token = sessions[0].session_token
+
     ui_language = normalize_language_code(getattr(request, "LANGUAGE_CODE", "")) or "en"
-    visitor_metadata = {
-        "ip": request.META.get("REMOTE_ADDR"),
-        "user_agent": request.META.get("HTTP_USER_AGENT"),
-        "referer": request.META.get("HTTP_REFERER"),
-        "ui_language": ui_language,
-    }
     bootstrap_payload = _call_portal_bootstrap_api(
         request,
         business_slug=business_slug,
         agent_slug=agent_slug,
         existing_session_token=existing_token,
-        metadata=visitor_metadata,
+        metadata={
+            "surface": "dashboard",
+            "ui_language": ui_language,
+            "actor_user_id": str(request.user.id),
+        },
     )
-
-    capabilities = bootstrap_payload.get("capabilities") if isinstance(bootstrap_payload, dict) else {}
-    subagents_enabled = bool(capabilities.get("subAgentsEnabled")) if isinstance(capabilities, dict) else False
-
-    business = bootstrap_payload.get("business", {})
-    agent = bootstrap_payload.get("agent", {})
-    session = bootstrap_payload.get("session", {})
-    raw_messages = bootstrap_payload.get("messages", [])
-
-    agent_name = agent.get("name") or "Pocket AI"
-    agent_initials = initials_from_name(agent_name) or "AI"
-    messages: list[dict[str, object]] = []
-    for idx, message in enumerate(raw_messages, start=1):
-        message_id = message.get("id") or f"msg_{idx}"
-        sender = (message.get("sender") or "system").lower()
-        content_blocks = message.get("content_blocks") or message.get("contentBlocks") or []
-        if sender == "ai":
-            author = agent_name
-            initials = agent_initials
-        elif sender == "customer":
-            author = "You"
-            initials = "YOU"
-        else:
-            author = "System"
-            initials = "SYS"
-        messages.append(
-            {
-                "id": str(message_id),
-                "author": author,
-                "initials": initials,
-                "sender": sender,
-                "body": message.get("body", ""),
-                "content_blocks": content_blocks,
-                "render_payload": {
-                    "body": message.get("body", ""),
-                    "content_blocks": content_blocks,
-                },
-                "sent_at": message.get("sent_at"),
-                "metadata": message.get("metadata") or {},
-            }
-        )
-
-    session_status = (session.get("status") or "new").lower()
-    cookie_business_slug = business.get("slug") or slugify(business.get("name", "")) or business_slug
-    cookie_agent_slug = agent.get("slug") or agent_slug
-    storage_key = f"chat_session_{cookie_business_slug}_{cookie_agent_slug}"
-
-    portal_context = {
-        "business": {
-            "name": business.get("name", ""),
-            "slug": cookie_business_slug,
-        },
-        "agent": {
-            "name": agent_name,
-            "role": agent.get("role") or "AI Customer Specialist",
-            "bio": "Trained on our knowledge base and policies to provide personalised support.",
-            "initials": agent_initials,
-            "slug": cookie_agent_slug,
-        },
-        "session_token": session.get("session_token", ""),
-        "session_storage_key": storage_key,
-        "ui_language": ui_language,
-        "conversation_status": session_status.replace("_", " ").title(),
-        "conversation_status_code": session_status,
-        "messages": messages,
-        "csat_scores": [(i, i) for i in range(1, 6)],
-        "bootstrap_payload": bootstrap_payload,
-        "bootstrap_script_id": PORTAL_BOOTSTRAP_SCRIPT_ID,
-        "subagents_enabled": subagents_enabled,
-        "asset_version": getattr(settings, "PORTAL_ASSET_VERSION", "dev"),
-        "endpoints": {
-            "bootstrap": reverse("api:chat-portal-session"),
-            "messages": reverse("api:chat-messages"),
-            "turns_create": reverse("api:chat-turns-create"),
-            "turn_events_template": reverse(
-                "api:chat-turns-events",
-                args=["00000000-0000-0000-0000-000000000000"],
-            ).replace("00000000-0000-0000-0000-000000000000", "{turn_id}"),
-            "turn_cancel": reverse(
-                "api:chat-turns-cancel",
-                args=["00000000-0000-0000-0000-000000000000"],
-            ).replace("00000000-0000-0000-0000-000000000000", "{turn_id}"),
-            "events": reverse("api:chat-events"),
-            "csat": reverse("api:chat-csat"),
-            "tool_approval": reverse("api:chat-portal-tools-approve"),
-            "tool_history": reverse("api:chat-portal-tools-history"),
-            "run_approval": reverse("api:chat-portal-runs-approval"),
-            "run_user_input": reverse("api:chat-portal-runs-user-input"),
-            "agent_request_update": reverse("api:chat-portal-agent-requests-update"),
-            "email_send_draft": reverse("api:chat-portal-email-send-draft"),
-            "email_discard_draft": reverse("api:chat-portal-email-discard-draft"),
-            "file_upload": reverse("api:chat-portal-files-upload"),
-            "file_download_url_template": reverse(
-                "api:chat-portal-files-download-url",
-                args=["00000000-0000-0000-0000-000000000000"],
-            ).replace("00000000-0000-0000-0000-000000000000", "{file_id}"),
-        },
-    }
-    response = render(request, "frontend/chat/portal.html", {"portal": portal_context})
-    cookie_key = storage_key
-    response.set_cookie(
-        cookie_key,
-        portal_context["session_token"],
-        max_age=3600 * 24 * 365,
-        httponly=False,
-        secure=False,
-        samesite="Lax",
+    portal_context = _build_portal_context(
+        request=request,
+        business_slug=business_slug,
+        agent_slug=agent_slug,
+        existing_token=existing_token,
+        ui_language=ui_language,
+        bootstrap_payload=bootstrap_payload,
+        chat_surface="dashboard",
+        session_storage_key=f"dashboard_chat_{business_slug}_{agent_slug}",
     )
-    return response
+    portal_context["dashboard_chat_url"] = reverse("frontend:dashboard-chat")
+    return _render_portal_template(request=request, portal_context=portal_context, cookie_key=None)

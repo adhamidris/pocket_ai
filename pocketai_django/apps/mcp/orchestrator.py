@@ -6651,12 +6651,83 @@ class McpOrchestratorService:
                     truncated = item.get("truncated")
                     if isinstance(truncated, bool):
                         entry["truncated"] = truncated
+                    complete = item.get("complete")
+                    if isinstance(complete, bool):
+                        entry["complete"] = complete
                     next_cursor = str(item.get("next_cursor") or "").strip()
                     if next_cursor:
                         entry["next_cursor"] = self._clip_text(next_cursor, 120)
                     text = str(item.get("text") or "").strip()
                     if text:
                         entry["text"] = self._clip_text(text, 520)
+                    payload_value = item.get("payload")
+                    if isinstance(payload_value, Mapping):
+                        payload_out: dict[str, object] = {}
+                        for key in ("type", "attribute", "row_count"):
+                            raw_payload_value = payload_value.get(key)
+                            if raw_payload_value is None:
+                                continue
+                            if isinstance(raw_payload_value, str):
+                                if not raw_payload_value.strip():
+                                    continue
+                                payload_out[key] = self._clip_text(raw_payload_value.strip(), 160)
+                            else:
+                                payload_out[key] = raw_payload_value
+                        columns = payload_value.get("columns")
+                        if isinstance(columns, Sequence) and not isinstance(columns, (str, bytes, bytearray)):
+                            payload_out["columns"] = [
+                                self._clip_text(str(column), 80)
+                                for column in list(columns)[:12]
+                            ]
+                        rows = payload_value.get("rows")
+                        if isinstance(rows, Sequence) and not isinstance(rows, (str, bytes, bytearray)):
+                            compact_rows: list[list[str]] = []
+                            for row in list(rows)[: max(1, min(80, int(max_rows)))]:
+                                if not isinstance(row, Sequence) or isinstance(row, (str, bytes, bytearray)):
+                                    continue
+                                compact_rows.append(
+                                    [self._clip_text(str(cell or ""), 140) for cell in list(row)[:12]]
+                                )
+                            if compact_rows:
+                                payload_out["rows"] = compact_rows
+                        source_tables = payload_value.get("source_tables")
+                        if isinstance(source_tables, Sequence) and not isinstance(source_tables, (str, bytes, bytearray)):
+                            compact_sources: list[dict[str, object]] = []
+                            for source in list(source_tables)[:20]:
+                                if not isinstance(source, Mapping):
+                                    continue
+                                source_out: dict[str, object] = {}
+                                for key in ("document", "table", "matched_rows", "returned_items"):
+                                    raw_source_value = source.get(key)
+                                    if raw_source_value is None:
+                                        continue
+                                    if isinstance(raw_source_value, str):
+                                        source_out[key] = self._clip_text(raw_source_value, 120)
+                                    else:
+                                        source_out[key] = raw_source_value
+                                if source_out:
+                                    compact_sources.append(source_out)
+                            if compact_sources:
+                                payload_out["source_tables"] = compact_sources
+                        payload_completeness = payload_value.get("completeness")
+                        if isinstance(payload_completeness, Mapping):
+                            completeness_out = {}
+                            for key in (
+                                "status",
+                                "complete",
+                                "matched_rows",
+                                "expanded_rows",
+                                "returned_items",
+                                "source_table_count",
+                                "truncated_items",
+                            ):
+                                raw_completeness_value = payload_completeness.get(key)
+                                if raw_completeness_value is not None:
+                                    completeness_out[key] = raw_completeness_value
+                            if completeness_out:
+                                payload_out["completeness"] = completeness_out
+                        if payload_out:
+                            entry["payload"] = payload_out
                     if entry:
                         out.append(entry)
                 return out

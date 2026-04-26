@@ -100,6 +100,7 @@ class TestQueryIntentEnumerate(SimpleTestCase):
         self.assertTrue(result.retrieval_hints.get('increase_snippet_limit'))
         self.assertTrue(result.retrieval_hints.get('include_all_tables'))
         self.assertEqual(result.retrieval_hints.get('snippet_limit_multiplier'), 3.0)
+        self.assertEqual(result.retrieval_hints.get('modality_bias'), 'mixed')
 
 
 class TestQueryIntentSpecificLookup(SimpleTestCase):
@@ -136,6 +137,11 @@ class TestQueryIntentSpecificLookup(SimpleTestCase):
         result = self.classifier.classify("list all Gold cards")  # Not a typical query but tests logic
         # Should lean towards ENUMERATE due to "list all"
         self.assertNotEqual(result.intent, QueryIntent.SPECIFIC_LOOKUP)
+
+    def test_section_context_hint_stays_off_for_narrow_lookup(self):
+        result = self.classifier.classify("what is the Gold card annual fee")
+        self.assertFalse(result.prefers_section_context())
+        self.assertEqual(result.modality_bias(), "mixed")
 
 
 class TestQueryIntentCompare(SimpleTestCase):
@@ -183,6 +189,7 @@ class TestQueryIntentCompare(SimpleTestCase):
         """COMPARE queries should have correct retrieval hints."""
         result = self.classifier.classify("compare Gold vs Platinum")
         self.assertEqual(result.retrieval_hints.get('snippet_limit_multiplier'), 1.5)
+        self.assertEqual(result.retrieval_hints.get('modality_bias'), 'mixed')
 
 
 class TestQueryIntentAggregate(SimpleTestCase):
@@ -230,6 +237,7 @@ class TestQueryIntentAggregate(SimpleTestCase):
         result = self.classifier.classify("how many cards are there")
         self.assertTrue(result.retrieval_hints.get('increase_snippet_limit'))
         self.assertEqual(result.retrieval_hints.get('snippet_limit_multiplier'), 2.5)
+        self.assertEqual(result.retrieval_hints.get('modality_bias'), 'mixed')
 
 
 class TestQueryIntentExploratory(SimpleTestCase):
@@ -256,6 +264,15 @@ class TestQueryIntentExploratory(SimpleTestCase):
         """EXPLORATORY should enable table diversification."""
         result = self.classifier.classify("tell me about your products")
         self.assertTrue(result.requires_table_diversification())
+
+    def test_plural_coverage_question_prefers_section_context(self):
+        result = self.classifier.classify("What titles did he work and where?")
+        self.assertTrue(result.prefers_section_context())
+        self.assertIn("titles", result.retrieval_hints.get("section_focus_terms") or [])
+
+    def test_work_experience_phrase_prefers_section_context(self):
+        result = self.classifier.classify("Show me the work experience for Adham")
+        self.assertTrue(result.prefers_section_context())
 
 
 class TestCreditCardRegressionScenario(SimpleTestCase):

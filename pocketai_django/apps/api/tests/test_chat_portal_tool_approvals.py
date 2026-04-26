@@ -67,6 +67,7 @@ class ChatPortalToolApprovalTests(TestCase):
             status=McpConnectionStatus.ENABLED,
             auth_type=McpConnectionAuthType.NONE,
         )
+        self.client.force_login(self.user)
 
     def _create_approval(self, *, metadata: dict | None = None) -> ConversationToolApproval:
         return ConversationToolApproval.objects.create(
@@ -221,8 +222,9 @@ class ChatPortalToolApprovalTests(TestCase):
         self.assertEqual(setting.operation_type, McpToolOperationType.READ)
 
     @override_settings(PORTAL_ALLOW_MCP_TOOL_PREFERENCES=False)
-    def test_portal_tool_approval_remember_ignored_for_anonymous(self) -> None:
+    def test_portal_tool_approval_requires_authentication(self) -> None:
         approval = self._create_approval(metadata={"operation_type": McpToolOperationType.READ})
+        self.client.logout()
 
         url = reverse("api:chat-portal-tools-approve")
         response = self.client.post(
@@ -237,9 +239,7 @@ class ChatPortalToolApprovalTests(TestCase):
             ),
             content_type="application/json",
         )
-        self.assertEqual(response.status_code, 200)
-        payload = response.json()
-        self.assertFalse(payload.get("preferenceSaved"))
+        self.assertEqual(response.status_code, 401)
         self.assertFalse(
             AgentMcpToolSetting.objects.filter(
                 agent_profile=self.agent,
@@ -306,6 +306,7 @@ class ChatPortalRunApprovalTests(TestCase):
                 "pending_approval_id": str(self.approval.id),
             },
         )
+        self.client.force_login(self.user)
 
     def test_portal_agent_run_approval_approve(self) -> None:
         url = reverse("api:chat-portal-runs-approval")
@@ -423,6 +424,7 @@ class ChatPortalPendingToolExecutionTests(TestCase):
                 },
             },
         )
+        self.client.force_login(self.user)
 
     def test_pending_tool_call_preserved_after_approval(self) -> None:
         """Verify pending_tool_call stays in metadata after approval."""
@@ -495,6 +497,7 @@ class ChatPortalBootstrapPendingApprovalsTests(TestCase):
             user=self.user,
             name="Bootstrap Agent",
         )
+        self.client.force_login(self.user)
 
     def _bootstrap(self, *, session_token: str | None = None) -> dict:
         url = reverse("api:chat-portal-session")

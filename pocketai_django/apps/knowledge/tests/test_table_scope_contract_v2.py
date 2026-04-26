@@ -504,11 +504,12 @@ class TableRowSignalFilterTests(SimpleTestCase):
             self.cells = TableRowSignalFilterTests._Manager(cells)
 
     class _Table:
-        def __init__(self, rows):
+        def __init__(self, rows, metadata=None):
             self.id = "table-signal"
             self.title = "Signal Table"
             self.order_index = 1
             self.section_heading = ""
+            self.metadata = metadata or {}
             self.rows = TableRowSignalFilterTests._Manager(rows)
 
     def _build_table(self):
@@ -557,3 +558,39 @@ class TableRowSignalFilterTests(SimpleTestCase):
         self.assertEqual(metadata.get("table_row_index"), 2)
         self.assertTrue(metadata.get("table_row_signal_filter_enabled"))
         self.assertGreater(float(metadata.get("table_row_signal_score") or 0.0), 0.0)
+
+    def test_row_signal_filter_keeps_meaningful_single_cell_rows_for_collapsed_native_tables(self) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        table = self._Table(
+            [
+                self._Row(
+                    row_index=1,
+                    metadata={"row_type": "data"},
+                    cells=[self._Cell("r1-c1", 0, "Card Type Swype 12 Swype 36")],
+                ),
+                self._Row(
+                    row_index=2,
+                    metadata={"row_type": "data"},
+                    cells=[self._Cell("r2-c1", 0, "Issuance and Renewal Fees Free Across all Card Types")],
+                ),
+                self._Row(
+                    row_index=3,
+                    metadata={"row_type": "data"},
+                    cells=[self._Cell("r3-c1", 0, "Over Limit Fees EGP 150")],
+                ),
+            ],
+            metadata={"promotion_class": "collapsed_uniform_value_matrix"},
+        )
+
+        payloads = service._table_row_chunk_payloads(
+            table=table,
+            column_map=[("column_1", "column_1", 0)],
+            raw_schema=["column_1"],
+            privacy_rules={},
+            base_metadata={"is_table_chunk": True, "table_id": "table-signal"},
+            max_rows=50,
+        )
+
+        self.assertEqual(len(payloads), 2)
+        self.assertEqual([payload["metadata"].get("table_row_index") for payload in payloads], [2, 3])
+        self.assertTrue(all(payload["metadata"].get("table_row_signal_override") for payload in payloads))

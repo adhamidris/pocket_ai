@@ -63,6 +63,32 @@ class KnowledgeSearchServiceAutoDecisionContractTests(SimpleTestCase):
         self.assertFalse(contract["conflict_detected"])
         self.assertIsNone(contract["no_result_reason"])
 
+
+class KnowledgeSearchServiceRoutingTests(SimpleTestCase):
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_route_chunk_hits_keeps_text_and_table_candidates_for_table_intent(self, _build_embeddings) -> None:
+        service = KnowledgeSearchService()
+        table_chunk = mock.Mock(metadata={"index_type": "table", "is_table_chunk": True})
+        text_chunk = mock.Mock(metadata={"index_type": "text"})
+
+        routed, context_hits, diagnostics = service._route_chunk_hits(
+            [
+                ChunkResult(chunk=table_chunk, source_stage="hybrid", lexical_score=0.6),
+                ChunkResult(chunk=text_chunk, source_stage="hybrid", lexical_score=0.6),
+            ],
+            table_intent=True,
+            table_context={"modality_bias": "mixed"},
+        )
+
+        self.assertEqual(diagnostics.get("index_route"), "mixed_primary_table_biased")
+        self.assertTrue(diagnostics.get("index_route_mixed"))
+        self.assertEqual(diagnostics.get("index_route_table_hits"), 1)
+        self.assertEqual(diagnostics.get("index_route_text_hits"), 1)
+        self.assertEqual(len(routed), 2)
+        self.assertTrue(any(bool((hit.chunk.metadata or {}).get("is_table_chunk")) for hit in routed))
+        self.assertTrue(any(not bool((hit.chunk.metadata or {}).get("is_table_chunk")) for hit in routed))
+        self.assertEqual(len(context_hits), 1)
+
     def test_contract_marks_clarification_when_required(self) -> None:
         contract = KnowledgeSearchService._derive_auto_decision_contract(
             route_diagnostics={"index_route": "text_first", "index_route_table_hits": 1, "index_route_text_hits": 3},
@@ -1026,7 +1052,7 @@ class KnowledgeSearchServiceTableTests(TestCase):
         self.assertTrue(result.snippets)
         self.assertIn(
             result.diagnostics.get("index_route"),
-            {"table_primary_unfiltered", "table_primary_filtered", "table_primary_strong"},
+            {"mixed_primary_table_biased", "mixed_primary_table_only"},
         )
 
     @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
@@ -2314,6 +2340,65 @@ class KnowledgeSearchServiceTableContextGuardrailTests(TestCase):
         self.assertEqual(float(residual_breakdown.get("table_residual_rescue_bonus") or 0.0), 0.0)
 
     @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_table_residual_rescue_applies_for_broad_enumerate_queries(
+        self,
+        _build_embeddings,
+    ) -> None:
+        service = KnowledgeSearchService()
+        traits = service.analyze_query("list all credit cards and their issuance fees")
+
+        with tenant_context(self.business.id):
+            canonical_table_chunk = KnowledgeUploadChunk.objects.create(
+                upload=self.upload,
+                business_profile=self.business,
+                chunk_index=40,
+                content="[Table] Fees\n[Row] 1\nProgram: EPP\nFee: 3.17%",
+                metadata={
+                    "is_table_chunk": True,
+                    "index_type": "table",
+                    "content_source": "table_summary",
+                    "table_chunk_role": "summary",
+                },
+            )
+            supporting_chunk = KnowledgeUploadChunk.objects.create(
+                upload=self.upload,
+                business_profile=self.business,
+                chunk_index=41,
+                content="Issuance and Renewal Fees World EGP 450 Heya Cards EGP 450 Titanium EGP 700",
+                metadata={
+                    "index_type": "text",
+                    "content_source": "table_annotation",
+                    "region_role": "table_annotation",
+                    "table_annotation": True,
+                    "search_tier": "supporting",
+                },
+            )
+
+        ranked, _, rerank_diag = service._rerank_candidates(
+            [
+                ChunkResult(chunk=canonical_table_chunk, source_stage="hybrid", lexical_score=0.45),
+                ChunkResult(chunk=supporting_chunk, source_stage="hybrid", lexical_score=0.7),
+            ],
+            query_vector=None,
+            traits=traits,
+            table_context={
+                "has_intent": True,
+                "query_tokens": set(traits.tokens),
+                "specific_tokens": set(),
+                "comprehensive_intent": True,
+                "modality_bias": "mixed",
+            },
+        )
+
+        supporting_ranked = next(hit for hit in ranked if hit.chunk_id == supporting_chunk.id)
+        supporting_breakdown = supporting_ranked.diagnostics.get("score_breakdown") or {}
+
+        self.assertTrue(rerank_diag.get("table_residual_rescue_applied"))
+        self.assertEqual(rerank_diag.get("table_residual_rescue_count"), 1)
+        self.assertEqual(rerank_diag.get("table_residual_rescue_reason"), "promoted")
+        self.assertGreater(float(supporting_breakdown.get("table_residual_rescue_bonus") or 0.0), 0.0)
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
     def test_structural_table_rows_are_penalized_for_specific_value_queries(
         self,
         _build_embeddings,
@@ -2471,3 +2556,68 @@ class KnowledgeSearchServiceTableContextGuardrailTests(TestCase):
         self.assertTrue(structural_ranked.diagnostics.get("structural_row"))
         self.assertGreater(int(structural_ranked.diagnostics.get("structural_pair_echo_count") or 0), 0)
         self.assertGreater(float(structural_breakdown.get("table_structural_penalty") or 0.0), 0.0)
+
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_section_aware_reranking_prefers_matching_section_headings(
+        self,
+        _build_embeddings,
+    ) -> None:
+        service = KnowledgeSearchService()
+        traits = service.analyze_query("what titles did he work and where")
+
+        with tenant_context(self.business.id):
+            summary_chunk = KnowledgeUploadChunk.objects.create(
+                upload=self.upload,
+                business_profile=self.business,
+                chunk_index=10,
+                content="Adham Khaled Idris career details and role summary.",
+                metadata={
+                    "index_type": "text",
+                    "content_source": "page_blocks",
+                    "section_heading": "Professional Summary",
+                    "section_headings": ["Professional Summary"],
+                },
+            )
+            work_chunk = KnowledgeUploadChunk.objects.create(
+                upload=self.upload,
+                business_profile=self.business,
+                chunk_index=11,
+                content="Adham Khaled Idris career details and role summary.",
+                metadata={
+                    "index_type": "text",
+                    "content_source": "page_blocks",
+                    "section_heading": "Work Experiences",
+                    "section_headings": ["Work Experiences"],
+                    "heading_path": ["Career", "Work Experiences"],
+                },
+            )
+
+        candidates = [
+            ChunkResult(chunk=summary_chunk, source_stage="hybrid", lexical_score=0.52),
+            ChunkResult(chunk=work_chunk, source_stage="hybrid", lexical_score=0.52),
+        ]
+
+        neutral_ranked, _, _ = service._rerank_candidates(
+            candidates,
+            query_vector=None,
+            traits=traits,
+            table_context={"has_intent": False, "query_tokens": set(), "specific_tokens": set()},
+        )
+        self.assertEqual(neutral_ranked[0].chunk_id, summary_chunk.id)
+
+        section_ranked, _, _ = service._rerank_candidates(
+            candidates,
+            query_vector=None,
+            traits=traits,
+            table_context={
+                "has_intent": False,
+                "query_tokens": set(),
+                "specific_tokens": set(),
+                "prefer_section_context": True,
+                "section_focus_terms": ["titles", "work experience"],
+            },
+        )
+        self.assertEqual(section_ranked[0].chunk_id, work_chunk.id)
+        work_hit = next(hit for hit in section_ranked if hit.chunk_id == work_chunk.id)
+        work_breakdown = work_hit.diagnostics.get("score_breakdown") or {}
+        self.assertGreater(float(work_breakdown.get("section_context_boost") or 0.0), 0.0)

@@ -71,6 +71,7 @@ class ChatPortalFileUploadTests(TestCase):
             agent_profile=self.agent,
             session_token="session_abc",
         )
+        self.client.force_login(self.user)
 
     def test_portal_upload_creates_file_and_chunks_and_downloads(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -127,6 +128,25 @@ class ChatPortalFileUploadTests(TestCase):
                 download_url = reverse("api:chat-portal-files-download", args=[file_id])
                 bad = self.client.get(f"{download_url}?token=not-a-token")
                 self.assertEqual(bad.status_code, 403)
+
+    def test_authenticated_file_actions_support_conversation_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with override_settings(MEDIA_ROOT=tmpdir):
+                self.client.force_login(self.user)
+                pdf_bytes = _build_test_pdf_bytes("Owned PDF")
+                uploaded = SimpleUploadedFile("owned.pdf", pdf_bytes, content_type="application/pdf")
+                upload_url = reverse("api:chat-portal-files-upload")
+                response = self.client.post(
+                    upload_url,
+                    data={"conversation_id": str(self.conversation.id), "file": uploaded},
+                )
+                self.assertEqual(response.status_code, 201)
+                file_id = response.json()["file"]["id"]
+
+                refresh_url = reverse("api:chat-portal-files-download-url", args=[file_id])
+                fresh = self.client.get(refresh_url, {"conversation_id": str(self.conversation.id)})
+                self.assertEqual(fresh.status_code, 200)
+                self.assertTrue(fresh.json().get("download_url"))
 
 
 @override_settings(SECRET_KEY="test-secret-key")

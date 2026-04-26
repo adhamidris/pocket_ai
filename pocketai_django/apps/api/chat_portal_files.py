@@ -4,10 +4,15 @@ import uuid
 from datetime import timedelta
 
 from django.http import HttpRequest, JsonResponse
-from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
-from apps.conversations.portal import ChatPortalService, PortalNotFoundError, PortalValidationError
+from apps.conversations.portal import (
+    ChatPortalService,
+    PortalAuthorizationError,
+    PortalNotFoundError,
+    PortalValidationError,
+)
+from apps.conversations.portal_auth import can_access_conversation, get_authorized_conversation
 from apps.conversations.portal_files import (
     PortalFileError,
     PortalFileTokenError,
@@ -31,6 +36,36 @@ def _service() -> ChatPortalService:
     return ChatPortalService()
 
 
+def _resolve_file_conversation(
+    *,
+    request: HttpRequest,
+    service: ChatPortalService,
+):
+    user = getattr(request, "user", None)
+    if not user or not getattr(user, "is_authenticated", False):
+        raise PortalAuthorizationError("Authentication is required.")
+    conversation_id = (request.POST.get("conversation_id") or request.POST.get("conversationId") or "").strip()
+    if not conversation_id:
+        conversation_id = (request.GET.get("conversation_id") or request.GET.get("conversationId") or "").strip()
+    if conversation_id:
+        return get_authorized_conversation(
+            service=service,
+            user=user,
+            conversation_id=conversation_id,
+            include_messages=False,
+        )
+
+    session_token = (request.POST.get("session_token") or request.POST.get("sessionToken") or "").strip()
+    if not session_token:
+        session_token = (request.GET.get("session_token") or request.GET.get("sessionToken") or "").strip()
+    if not session_token:
+        raise PortalValidationError("conversation_id or session_token is required.")
+    conversation = service.get_conversation(session_token=session_token, include_messages=False)
+    if not can_access_conversation(user, conversation):
+        raise PortalAuthorizationError("You do not have access to this conversation.")
+    return conversation
+
+
 def _serialize_file(obj) -> dict[str, object]:
     return {
         "id": str(obj.id),
@@ -45,20 +80,15 @@ def _serialize_file(obj) -> dict[str, object]:
     }
 
 
-@csrf_exempt
 @require_POST
 def portal_file_upload(request: HttpRequest) -> JsonResponse:
     """
-    Upload a file for a public chat portal session.
+    Upload a file for an authenticated chat conversation.
 
     POST multipart/form-data:
       - session_token
       - file
     """
-
-    session_token = (request.POST.get("session_token") or request.POST.get("sessionToken") or "").strip()
-    if not session_token:
-        return _json_error("validation_error", "session_token is required.")
 
     uploaded = request.FILES.get("file")
     if uploaded is None:
@@ -76,9 +106,15 @@ def portal_file_upload(request: HttpRequest) -> JsonResponse:
 
     service = _service()
     try:
-        conversation = service.get_conversation(session_token=session_token, include_messages=False)
+        conversation = _resolve_file_conversation(request=request, service=service)
     except PortalNotFoundError as exc:
         return _json_error("not_found", str(exc), status=404)
+    except PortalAuthorizationError as exc:
+        status = 401 if str(exc) == "Authentication is required." else 403
+        code = "auth_required" if status == 401 else "forbidden"
+        return _json_error(code, str(exc), status=status)
+    except PortalValidationError as exc:
+        return _json_error("validation_error", str(exc))
 
     with tenant_context(conversation.business_profile_id):
         try:
@@ -101,7 +137,7 @@ def portal_file_upload(request: HttpRequest) -> JsonResponse:
 
         try:
             message = service.append_message(
-                session_token=session_token,
+                session_token=conversation.session_token,
                 sender="customer",
                 body=convo_file.filename,
                 metadata={
@@ -172,7 +208,6 @@ def portal_file_download(request: HttpRequest, file_id: uuid.UUID):
             return _json_error("download_failed", str(exc), status=403)
 
 
-@csrf_exempt
 @require_GET
 def portal_file_download_url(request: HttpRequest, file_id: uuid.UUID) -> JsonResponse:
     """
@@ -181,15 +216,17 @@ def portal_file_download_url(request: HttpRequest, file_id: uuid.UUID) -> JsonRe
     This avoids persisting expiring tokens inside message transcripts.
     """
 
-    session_token = (request.GET.get("session_token") or request.GET.get("sessionToken") or "").strip()
-    if not session_token:
-        return _json_error("validation_error", "session_token is required.")
-
     service = _service()
     try:
-        conversation = service.get_conversation(session_token=session_token, include_messages=False)
+        conversation = _resolve_file_conversation(request=request, service=service)
     except PortalNotFoundError as exc:
         return _json_error("not_found", str(exc), status=404)
+    except PortalAuthorizationError as exc:
+        status = 401 if str(exc) == "Authentication is required." else 403
+        code = "auth_required" if status == 401 else "forbidden"
+        return _json_error(code, str(exc), status=status)
+    except PortalValidationError as exc:
+        return _json_error("validation_error", str(exc))
 
     from apps.conversations.models import ConversationFile
     from django.conf import settings

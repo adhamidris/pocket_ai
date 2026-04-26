@@ -1,7 +1,7 @@
 # Portal Streaming Protocol (v1)
 
 This document captures the **actual** Server-Sent Events (SSE) contract consumed
-by the public chat portal frontend (`frontend/static/js/chat-portal.js`).
+by the authenticated chat workspace frontend (`frontend/static/js/chat-portal.js`).
 
 The portal has two independent SSE streams:
 

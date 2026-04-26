@@ -3787,7 +3787,9 @@
 
 {% block content %}
 <div class="h-[100dvh] w-full flex overflow-hidden" data-chat-portal data-session-token="{{ portal.session_token }}"
+  data-conversation-id="{{ portal.conversation_id|default:'' }}"
   data-session-cache-key="{{ portal.session_storage_key }}" data-endpoint-bootstrap="{{ portal.endpoints.bootstrap }}"
+  data-endpoint-conversations="{{ portal.endpoints.conversations|default:'' }}"
   data-endpoint-messages="{{ portal.endpoints.messages }}"
   data-endpoint-turns-create="{{ portal.endpoints.turns_create }}"
   data-endpoint-turn-events-template="{{ portal.endpoints.turn_events_template }}"
@@ -3807,6 +3809,8 @@
   data-agent-slug="{{ portal.agent.slug }}" data-agent-name="{{ portal.agent.name }}"
   data-agent-initials="{{ portal.agent.initials }}" data-bootstrap-script-id="{{ portal.bootstrap_script_id }}"
   data-subagents-enabled="{{ portal.subagents_enabled|yesno:'true,false' }}"
+  data-chat-surface="{{ portal.chat_surface|default:'public' }}"
+  data-authenticated-chat="{{ portal.is_authenticated_chat|yesno:'true,false' }}"
   data-initial-status="{{ portal.conversation_status_code }}">
 
   <!-- Sidebar - Session Management -->

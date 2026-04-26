@@ -12,6 +12,9 @@ from . import voice_providers
 from apps.crm import api_views as crm_api_views
 from .chat_portal import (
     bootstrap_session,
+    conversations_collection,
+    conversation_messages,
+    conversation_turns_create,
     create_portal_session,
     events,
     list_portal_sessions,
@@ -108,6 +111,9 @@ urlpatterns = [
     path("chat/portal/sessions/", bootstrap_session, name="chat-portal-session"),
     path("chat/portal/sessions/list/", list_portal_sessions, name="chat-portal-sessions-list"),
     path("chat/portal/sessions/create/", create_portal_session, name="chat-portal-sessions-create"),
+    path("chat/conversations/", conversations_collection, name="chat-conversations"),
+    path("chat/conversations/<uuid:conversation_id>/messages/", conversation_messages, name="chat-conversation-messages"),
+    path("chat/conversations/<uuid:conversation_id>/turns/", conversation_turns_create, name="chat-conversation-turns"),
     path("chat/portal/files/upload/", chat_portal_files.portal_file_upload, name="chat-portal-files-upload"),
     path(
         "chat/portal/files/<uuid:file_id>/download/",

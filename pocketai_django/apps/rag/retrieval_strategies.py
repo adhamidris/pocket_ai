@@ -84,6 +84,8 @@ class RetrievalHints:
     entity_names_filter: Sequence[str] = dataclasses.field(default_factory=list)
     comprehensive_intent: bool = False
     expand_table_rows: bool = True
+    prefer_section_context: bool = False
+    modality_bias: str = "mixed"
     
     def to_dict(self) -> dict[str, Any]:
         """Convert hints to a dictionary for diagnostics."""
@@ -97,6 +99,8 @@ class RetrievalHints:
             "entity_names_filter": list(self.entity_names_filter),
             "comprehensive_intent": self.comprehensive_intent,
             "expand_table_rows": self.expand_table_rows,
+            "prefer_section_context": self.prefer_section_context,
+            "modality_bias": self.modality_bias,
         }
 
 
@@ -243,6 +247,8 @@ class EnumerationStrategy(RetrievalStrategy):
             min_tables_coverage="all",
             comprehensive_intent=True,
             expand_table_rows=False,  # Keep preview chunks for full table structure
+            prefer_section_context=context.classification.prefers_section_context(),
+            modality_bias="mixed",
         )
 
 
@@ -281,6 +287,8 @@ class SpecificLookupStrategy(RetrievalStrategy):
             entity_names_filter=entity_names,
             comprehensive_intent=False,
             expand_table_rows=True,  # Expand to get specific cell values
+            prefer_section_context=context.classification.prefers_section_context(),
+            modality_bias="mixed",
         )
 
 
@@ -319,6 +327,8 @@ class ComparisonStrategy(RetrievalStrategy):
             entity_names_filter=entity_names,
             comprehensive_intent=False,
             expand_table_rows=True,
+            prefer_section_context=context.classification.prefers_section_context(),
+            modality_bias="mixed",
         )
 
 
@@ -354,6 +364,8 @@ class AggregateStrategy(RetrievalStrategy):
             min_tables_coverage="all",
             comprehensive_intent=True,
             expand_table_rows=False,  # Need full table structure for aggregation
+            prefer_section_context=context.classification.prefers_section_context(),
+            modality_bias="mixed",
         )
 
 
@@ -387,6 +399,8 @@ class ExploratoryStrategy(RetrievalStrategy):
             include_all_tables=False,
             comprehensive_intent=False,
             expand_table_rows=True,
+            prefer_section_context=context.classification.prefers_section_context(),
+            modality_bias="mixed",
         )
 
 
