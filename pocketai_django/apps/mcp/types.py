@@ -81,6 +81,9 @@ class ToolExecutionContext:
     @property
     def _effective_max_searches(self) -> int:
         """Get the effective max searches, checking Django settings first."""
+        explicit_value = self._explicit_budget_value("max_searches_per_turn")
+        if explicit_value is not None:
+            return explicit_value
         try:
             from django.conf import settings
             configured = getattr(settings, 'MCP_MAX_SEARCHES_PER_TURN', None)
@@ -93,6 +96,9 @@ class ToolExecutionContext:
     @property
     def _effective_max_reads(self) -> int:
         """Get the effective max reads, checking Django settings first."""
+        explicit_value = self._explicit_budget_value("max_reads_per_turn")
+        if explicit_value is not None:
+            return explicit_value
         try:
             from django.conf import settings
             configured = getattr(settings, "MCP_MAX_READS_PER_TURN", None)
@@ -101,6 +107,25 @@ class ToolExecutionContext:
         except Exception:
             pass
         return self.max_reads_per_turn
+
+    def _explicit_budget_value(self, field_name: str) -> int | None:
+        """
+        Return an instance-level budget override when the caller supplied one.
+
+        Runtime contexts normally use dataclass defaults and should follow
+        Django settings. Tests and focused callers may pass a lower limit
+        directly; that must not be silently widened by global settings.
+        """
+
+        try:
+            field_info = self.__dataclass_fields__[field_name]  # type: ignore[attr-defined]
+            default_value = field_info.default
+            current_value = getattr(self, field_name)
+            if current_value != default_value:
+                return int(current_value)
+        except Exception:
+            return None
+        return None
     
     ingestion_warnings: list[JsonDict] = dataclasses.field(default_factory=list)
     retrieval_candidates: list[dict[str, object]] = dataclasses.field(default_factory=list)
@@ -236,8 +261,8 @@ class ToolExecutionContext:
         if projected > effective_limit:
             raise SearchBudgetExceeded(
                 f"Search limit exceeded ({projected} calls this turn, max {effective_limit}). "
-                "You have already searched the knowledge base this turn. Use read_knowledge to get more details "
-                "from the snippets you received, or answer based on what you found."
+                "Do not call search_knowledge again this turn. Use read_knowledge on the refs or snippets you received; "
+                "if the existing evidence is enough, answer from it; otherwise ask one concise clarification question."
             )
         self.searches_used = projected
 
@@ -299,13 +324,22 @@ class ToolExecutionContext:
                 chars_budget = None
 
         warnings: list[str] = []
+        next_action: str | None = None
+        if searches_remaining == 0:
+            warnings.append(
+                "Search budget exhausted. Do not call search_knowledge again this turn; use read_knowledge on existing refs, answer from available evidence, or ask one concise clarification question."
+            )
+            next_action = "read_existing_refs_or_answer_or_ask_clarification"
         if searches_remaining == 1:
-            warnings.append("Last search available this turn. ONLY consume it if needed, otherwise do not waste it.")
+            warnings.append(
+                "Last search available this turn. Prefer read_knowledge on current refs before spending it; use it only for a true new topic or clearly missing evidence."
+            )
+            next_action = "read_existing_refs_before_another_search"
         if reads_remaining == 1:
             warnings.append("Last read available this turn. Batch ids carefully.")
         warning = " ".join(warnings) if warnings else None
 
-        return {
+        snapshot = {
             "searches_used": searches_used,
             "searches_remaining": searches_remaining,
             "reads_used": reads_used,
@@ -314,6 +348,9 @@ class ToolExecutionContext:
             "chars_budget": chars_budget,
             "warning": warning,
         }
+        if next_action:
+            snapshot["next_action"] = next_action
+        return snapshot
 
     def record_llm_usage(
         self,

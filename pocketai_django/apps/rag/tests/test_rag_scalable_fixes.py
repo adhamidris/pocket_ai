@@ -381,71 +381,59 @@ class SearchBudgetEnforcementTest(SimpleTestCase):
 class ToolSchemaCorrectnessTest(SimpleTestCase):
     """Tests for tool schema semantic accuracy using real TOOL_DEFINITIONS."""
 
-    def test_page_description_mentions_page_not_chunk(self):
-        """Page parameter should describe page numbers, not chunk indices."""
+    def _read_knowledge_definition(self):
         from apps.mcp.tools import TOOL_DEFINITIONS
-        
-        # Find read_knowledge tool definition
-        read_knowledge_def = None
-        for tool_def in TOOL_DEFINITIONS:
-            func = tool_def.get("function", {})
-            if func.get("name") == "read_knowledge":
-                read_knowledge_def = func
-                break
-        
-        self.assertIsNotNone(read_knowledge_def, "read_knowledge tool not found in TOOL_DEFINITIONS")
-        
-        # Get page description from text.properties.page
-        text_props = read_knowledge_def.get("parameters", {}).get("properties", {}).get("text", {})
-        page_props = text_props.get("properties", {}).get("page", {})
-        page_description = page_props.get("description", "")
-        
-        # Should NOT say "first chunk"
-        self.assertNotIn("first chunk", page_description.lower())
-        # Should clarify it's NOT chunk index
-        self.assertIn("NOT chunk index", page_description)
 
-    def test_intent_description_clarifies_pdf_routing(self):
-        """Intent description should clarify PDFs route to text mode."""
-        from apps.mcp.tools import TOOL_DEFINITIONS
-        
-        # Find read_knowledge tool definition
-        read_knowledge_def = None
         for tool_def in TOOL_DEFINITIONS:
             func = tool_def.get("function", {})
             if func.get("name") == "read_knowledge":
-                read_knowledge_def = func
-                break
-        
-        self.assertIsNotNone(read_knowledge_def, "read_knowledge tool not found")
-        
-        intent_props = read_knowledge_def.get("parameters", {}).get("properties", {}).get("intent", {})
-        intent_description = intent_props.get("description", "")
-        
-        # Should mention PDFs route to text
-        self.assertIn("PDF", intent_description)
-        self.assertIn("text mode", intent_description)
+                return func
+        self.fail("read_knowledge tool not found in TOOL_DEFINITIONS")
 
-    def test_document_id_description_is_clear(self):
-        """document_id should clarify it can be upload UUID or chunk UUID."""
-        from apps.mcp.tools import TOOL_DEFINITIONS
-        
-        # Find read_knowledge tool definition
-        read_knowledge_def = None
-        for tool_def in TOOL_DEFINITIONS:
-            func = tool_def.get("function", {})
-            if func.get("name") == "read_knowledge":
-                read_knowledge_def = func
-                break
-        
-        self.assertIsNotNone(read_knowledge_def, "read_knowledge tool not found")
-        
-        doc_id_props = read_knowledge_def.get("parameters", {}).get("properties", {}).get("document_id", {})
-        doc_id_description = doc_id_props.get("description", "")
-        
-        # Should clarify both sources
-        self.assertIn("upload", doc_id_description.lower())
-        self.assertIn("chunk", doc_id_description.lower())
+    def test_read_knowledge_schema_uses_agentic_refs_contract(self):
+        """read_knowledge should advertise refs from search_knowledge, not legacy page knobs."""
+        read_knowledge_def = self._read_knowledge_definition()
+
+        properties = read_knowledge_def.get("parameters", {}).get("properties", {})
+        refs_props = properties.get("refs", {})
+        refs_description = refs_props.get("description", "")
+        id_description = (
+            refs_props.get("items", {})
+            .get("properties", {})
+            .get("id", {})
+            .get("description", "")
+        )
+
+        self.assertIn("refs", refs_description)
+        self.assertIn("search_knowledge", id_description)
+        self.assertNotIn("document_id", properties)
+        self.assertNotIn("text", properties)
+        self.assertNotIn("intent", properties)
+
+    def test_read_knowledge_row_paging_schema_is_table_offset_based(self):
+        """Table continuation should be expressed as parent-table row offsets."""
+        read_knowledge_def = self._read_knowledge_definition()
+
+        refs_props = read_knowledge_def.get("parameters", {}).get("properties", {}).get("refs", {})
+        item_props = refs_props.get("items", {}).get("properties", {})
+        row_start_description = item_props.get("row_start", {}).get("description", "")
+        row_limit_description = item_props.get("row_limit", {}).get("description", "")
+
+        self.assertIn("0-based row offset", row_start_description)
+        self.assertIn("table body", row_start_description)
+        self.assertIn("maximum number of rows", row_limit_description)
+        self.assertNotIn("chunk index", row_start_description.lower())
+
+    def test_read_knowledge_schema_requires_refs_and_max_chars(self):
+        """Agentic reads should stay narrow: refs plus max_chars only."""
+        read_knowledge_def = self._read_knowledge_definition()
+
+        required = set(read_knowledge_def.get("parameters", {}).get("required", []))
+        properties = read_knowledge_def.get("parameters", {}).get("properties", {})
+
+        self.assertEqual(required, {"refs", "max_chars"})
+        self.assertIn("max_chars", properties)
+        self.assertEqual(properties.get("refs", {}).get("minItems"), 1)
 
 
 # =============================================================================

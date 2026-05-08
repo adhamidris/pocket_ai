@@ -89,6 +89,8 @@ from .remote_client import (
 )
 from .redaction import redact_tool_input_payload
 from .tool_artifacts import build_prompt_view_for_remote_tool_result, store_remote_tool_output_artifact
+from .budget_guidance import search_budget_exceeded_payload
+from .rag_observability import compact_retrieval_observability
 from .sanitizer import (
     extract_sentences,
     sanitize_with_diagnostics,
@@ -1116,13 +1118,10 @@ class McpOrchestratorService:
                         if tool_name == "search_knowledge" and not policy_tool_result:
                             remaining_searches = self._search_budget_remaining(tool_context)
                             if remaining_searches == 0:
-                                policy_tool_result = {
-                                    "tool": "search_knowledge",
-                                    "status": "blocked",
-                                    "error": "search_unavailable",
-                                    "error_code": "search_budget_exceeded",
-                                    "snippets": [],
-                                }
+                                policy_tool_result = search_budget_exceeded_payload(
+                                    tool_context,
+                                    reason="orchestrator_policy",
+                                )
 
                         ui_spinner_text = _tool_spinner_text(raw_arguments)
 
@@ -3845,6 +3844,10 @@ class McpOrchestratorService:
             if not isinstance(results, list):
                 results = tool_result.get("results")
             out: dict[str, object] = {"status": status}
+            for key in ("error", "error_code", "hint"):
+                value = tool_result.get(key)
+                if isinstance(value, str) and value.strip():
+                    out[key] = self._clip_text(value.strip(), 240)
             if isinstance(results, list):
                 out["results_count"] = len(results)
                 preview_list: list[dict[str, object]] = []
@@ -3901,6 +3904,38 @@ class McpOrchestratorService:
             budget = tool_result.get("budget")
             if isinstance(budget, Mapping):
                 out["budget"] = dict(budget)
+            budget_guidance = tool_result.get("budget_guidance")
+            if isinstance(budget_guidance, Mapping) and budget_guidance:
+                guidance_out: dict[str, object] = {}
+                for key in ("reason", "available_refs_count", "available_read_evidence_count"):
+                    if key in budget_guidance:
+                        guidance_out[key] = budget_guidance.get(key)
+                actions = budget_guidance.get("next_actions")
+                if isinstance(actions, list):
+                    action_names: list[str] = []
+                    for action in actions[:4]:
+                        if not isinstance(action, Mapping):
+                            continue
+                        action_name = str(action.get("action") or "").strip()
+                        if action_name:
+                            action_names.append(action_name)
+                    if action_names:
+                        guidance_out["next_actions"] = action_names
+                if guidance_out:
+                    out["budget_guidance"] = guidance_out
+            repeat_guidance = tool_result.get("search_repeat_guidance")
+            if isinstance(repeat_guidance, Mapping) and repeat_guidance:
+                repeat_out: dict[str, object] = {}
+                for key in ("reason", "available_refs_count", "similarity"):
+                    if key in repeat_guidance:
+                        repeat_out[key] = repeat_guidance.get(key)
+                if repeat_out:
+                    out["search_repeat_guidance"] = repeat_out
+            retrieval_observability = compact_retrieval_observability(
+                tool_result.get("retrieval_observability")
+            )
+            if retrieval_observability:
+                out["retrieval_observability"] = retrieval_observability
             completeness = tool_result.get("completeness")
             if isinstance(completeness, Mapping) and completeness:
                 # Keep this compact: surfaced fields help debug pagination/dedupe without leaking content.
@@ -6329,6 +6364,21 @@ class McpOrchestratorService:
         if isinstance(budget, Mapping) and budget:
             # Budget telemetry is intentionally tiny and safe to preserve.
             compact["budget"] = dict(budget)
+        for guidance_key in ("budget_guidance", "search_repeat_guidance"):
+            guidance = payload.get(guidance_key)
+            if isinstance(guidance, Mapping) and guidance:
+                compact[guidance_key] = dict(guidance)
+        retrieval_observability = compact_retrieval_observability(
+            payload.get("retrieval_observability")
+        )
+        if not retrieval_observability:
+            raw_diagnostics = payload.get("diagnostics")
+            if isinstance(raw_diagnostics, Mapping):
+                retrieval_observability = compact_retrieval_observability(
+                    raw_diagnostics.get("retrieval_observability")
+                )
+        if retrieval_observability:
+            compact["retrieval_observability"] = retrieval_observability
 
         if normalized_name == "mcp_search_tools":
             raw_results = payload.get("results")

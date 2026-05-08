@@ -78,6 +78,74 @@ class AgenticPromptCompactionTests(SimpleTestCase):
         self.assertEqual(summary.get("effective_query"), "cheques")
         self.assertNotIn("scope_resolution", summary)
 
+    def test_search_knowledge_preserves_retrieval_observability(self) -> None:
+        observability = {
+            "query_scope": {
+                "followup_decision": "new_topic",
+                "topic_scope": "new_topic",
+                "strategy": "topic_shift",
+                "reason": "topic_shift",
+                "document_continuity_allowed": False,
+            },
+            "continuity": {
+                "allowed": False,
+                "reason": "topic_shift",
+                "rag_received_context": True,
+                "boosted_candidates": 0,
+            },
+            "enumeration": {
+                "triggered": True,
+                "attribute": "opening fees",
+                "matched_rows": 4,
+                "returned_items": 8,
+                "source_table_count": 3,
+                "completeness_status": "complete",
+            },
+            "table_coverage": {
+                "tables_considered": 6,
+                "tables_returned": 3,
+                "coverage_diversification_applied": True,
+            },
+            "evidence_completeness": {
+                "status": "complete",
+                "shown": 8,
+                "refs_total_found": 8,
+                "has_more": False,
+            },
+        }
+        payload = {
+            "tool": "search_knowledge",
+            "status": "ok",
+            "refs": [{"id": "row-1", "label": "Account Opening Fees"}],
+            "retrieval_observability": observability,
+        }
+
+        compact = self.service._compact_tool_payload_for_prompt(
+            "search_knowledge",
+            payload,
+            max_snippets=4,
+            snippet_content_chars=600,
+            max_rows=12,
+            max_contributions=25,
+            max_cells=12,
+            max_cells_exact=60,
+        )
+        summary = self.service._tool_trace_output_summary("search_knowledge", payload)
+
+        self.assertEqual(
+            compact["retrieval_observability"]["query_scope"]["topic_scope"],
+            "new_topic",
+        )
+        self.assertEqual(
+            compact["retrieval_observability"]["enumeration"]["completeness_status"],
+            "complete",
+        )
+        assert summary is not None
+        self.assertEqual(
+            summary["retrieval_observability"]["table_coverage"]["tables_returned"],
+            3,
+        )
+
     def test_read_knowledge_compacts_agentic_evidence(self) -> None:
         payload = {
             "tool": "read_knowledge",

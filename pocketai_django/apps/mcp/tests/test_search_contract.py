@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import json
+import uuid
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.test import TestCase, override_settings
 
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession, User
 from apps.conversations.models import Conversation
+from apps.mcp import tools as mcp_tools
 from apps.mcp.orchestrator import McpOrchestratorService
+from apps.mcp.types import ToolExecutionContext
 
 
 class _SearchTwiceProvider:
@@ -147,6 +151,12 @@ class McpSearchContractTests(TestCase):
         self.assertEqual(len(search_traces), 2)
         self.assertEqual(sum(1 for t in search_traces if t.get("origin") == "live"), 1)
         self.assertEqual(sum(1 for t in search_traces if t.get("origin") == "policy"), 1)
+        policy_trace = next(t for t in search_traces if t.get("origin") == "policy")
+        self.assertIn("read_knowledge", str(policy_trace.get("hint") or ""))
+        self.assertIn("budget_guidance", policy_trace.get("result_keys") or [])
+        output_summary = policy_trace.get("output_summary") or {}
+        self.assertEqual((output_summary.get("budget") or {}).get("searches_remaining"), 0)
+        self.assertEqual((output_summary.get("budget_guidance") or {}).get("reason"), "orchestrator_policy")
 
         self.assertNotIn("search limit", context.response_text.lower())
         self.assertNotIn("budget", context.response_text.lower())
@@ -197,3 +207,88 @@ class McpSearchContractTests(TestCase):
         self.assertEqual(len(search_traces), 2)
         self.assertEqual(sum(1 for t in search_traces if t.get("origin") == "live"), 2)
         self.assertEqual(sum(1 for t in search_traces if t.get("origin") == "policy"), 0)
+
+    @override_settings(MCP_MAX_SEARCHES_PER_TURN=1)
+    def test_search_budget_exceeded_tool_payload_guides_recovery(self) -> None:
+        context = ToolExecutionContext()
+        context.set_recent_search_refs(
+            [
+                {
+                    "id": str(uuid.uuid4()),
+                    "label": "CIB Account Fees - opening fee row",
+                    "kind": "table_row",
+                    "type": "table",
+                }
+            ]
+        )
+        context.reserve_search()
+
+        result = mcp_tools.execute_tool(
+            "search_knowledge",
+            {"queries": ["account opening fees"]},
+            conversation=self.conversation,
+            context=context,
+        )
+
+        self.assertEqual(result.get("status"), "blocked")
+        self.assertEqual(result.get("error_code"), "search_budget_exceeded")
+        self.assertIn("read_knowledge", str(result.get("hint") or ""))
+        guidance = result.get("budget_guidance") or {}
+        self.assertEqual(guidance.get("reason"), "per_turn_limit")
+        self.assertEqual(guidance.get("available_refs_count"), 1)
+        actions = [entry.get("action") for entry in guidance.get("next_actions") or []]
+        self.assertIn("read_existing_refs", actions)
+        self.assertIn("answer_from_available_evidence", actions)
+        self.assertIn("ask_clarification", actions)
+        self.assertEqual((result.get("budget") or {}).get("searches_remaining"), 0)
+        self.assertEqual(
+            (result.get("budget") or {}).get("next_action"),
+            "read_existing_refs_or_answer_or_ask_clarification",
+        )
+
+    @override_settings(MCP_MAX_SEARCHES_PER_TURN=2, MCP_NEW_CONTRACT_ENABLED=True)
+    @patch("apps.mcp.tools._portal_file_embedding_service")
+    @patch("apps.mcp.tools._knowledge_service")
+    @patch("apps.mcp.tools.FeatureFlagService.snapshot")
+    def test_equivalent_repeated_search_returns_soft_guidance(
+        self,
+        feature_snapshot_mock,
+        knowledge_service_mock,
+        embedding_service_mock,
+    ) -> None:
+        feature_snapshot_mock.return_value = SimpleNamespace(rag_agentic_mode=False)
+        embedding_service_mock.return_value = SimpleNamespace(embed_text=lambda _text: [1.0, 0.0])
+        knowledge_service_mock.return_value = SimpleNamespace(
+            search=lambda **_kwargs: SimpleNamespace(snippets=tuple(), status="not_found", diagnostics={})
+        )
+        context = ToolExecutionContext()
+        context.set_recent_search_refs(
+            [{"id": str(uuid.uuid4()), "label": "CIB Account Fees - account opening row"}]
+        )
+        context.search_history.append(
+            {
+                "intent": "account opening fees",
+                "embedding": [1.0, 0.0],
+                "response": {
+                    "tool": "search_knowledge",
+                    "status": "ok",
+                    "refs": [{"id": str(uuid.uuid4()), "label": "prior account fee ref"}],
+                },
+            }
+        )
+
+        result = mcp_tools.execute_tool(
+            "search_knowledge",
+            {"queries": ["current account opening charges"]},
+            conversation=self.conversation,
+            context=context,
+        )
+
+        self.assertEqual(result.get("tool"), "search_knowledge")
+        self.assertNotEqual(result.get("status"), "duplicate")
+        diagnostics = result.get("diagnostics") or {}
+        self.assertGreaterEqual(diagnostics.get("duplicate_intent_similarity"), 0.85)
+        repeat_guidance = result.get("search_repeat_guidance") or {}
+        self.assertEqual(repeat_guidance.get("reason"), "repeated_equivalent_search")
+        self.assertIn("read", str(repeat_guidance.get("message") or "").lower())
+        self.assertEqual(repeat_guidance.get("available_refs_count"), 1)

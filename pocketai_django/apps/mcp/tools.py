@@ -94,6 +94,8 @@ from .types import (
     ToolRateLimitExceeded,
     CharacterBudgetExceeded,
 )
+from .budget_guidance import build_repeat_search_guidance, search_budget_exceeded_payload
+from .rag_observability import build_query_scope_observability, build_retrieval_observability
 from .tool_artifacts import store_local_tool_output_artifact
 from .models import McpToolOutputArtifact
 from apps.accounts.feature_flags import FeatureFlagService
@@ -1946,33 +1948,34 @@ def execute_tool(
         with tenant_context(business_id):
             result = handler(arguments, conversation=conversation, context=ctx)
     except ToolConstraintError as exc:
-        status = "constraint_error"
-        error_code = "constraint_error"
-        hint_text = str(exc) or "Tool constraint exceeded. Narrow the request and try again."
-        if isinstance(exc, ToolRateLimitExceeded):
-            status = "throttled"
-            error_code = "rate_limited"
-        elif isinstance(exc, CharacterBudgetExceeded):
-            status = "throttled"
-            error_code = "prompt_budget_exceeded"
-        elif isinstance(exc, ChunkReadBudgetExceeded):
-            status = "throttled"
-            error_code = "chunk_read_budget_exceeded"
-        elif isinstance(exc, ChunkPageBudgetExceeded):
-            status = "throttled"
-            error_code = "chunk_page_budget_exceeded"
-        elif isinstance(exc, SearchBudgetExceeded):
-            status = "throttled"
-            error_code = "search_budget_exceeded"
-            hint_text = ""
-        result = {
-            "tool": normalized_name,
-            "status": status,
-            "error": error_code,
-            "error_code": error_code,
-        }
-        if hint_text:
-            result["hint"] = hint_text
+        if isinstance(exc, SearchBudgetExceeded):
+            result = search_budget_exceeded_payload(ctx, reason="tool_constraint")
+            if str(exc).strip():
+                result["detail"] = str(exc).strip()
+        else:
+            status = "constraint_error"
+            error_code = "constraint_error"
+            hint_text = str(exc) or "Tool constraint exceeded. Narrow the request and try again."
+            if isinstance(exc, ToolRateLimitExceeded):
+                status = "throttled"
+                error_code = "rate_limited"
+            elif isinstance(exc, CharacterBudgetExceeded):
+                status = "throttled"
+                error_code = "prompt_budget_exceeded"
+            elif isinstance(exc, ChunkReadBudgetExceeded):
+                status = "throttled"
+                error_code = "chunk_read_budget_exceeded"
+            elif isinstance(exc, ChunkPageBudgetExceeded):
+                status = "throttled"
+                error_code = "chunk_page_budget_exceeded"
+            result = {
+                "tool": normalized_name,
+                "status": status,
+                "error": error_code,
+                "error_code": error_code,
+            }
+            if hint_text:
+                result["hint"] = hint_text
     except Exception:
         logger.exception(
             "mcp.tool_failed tool=%s business=%s conversation=%s",
@@ -2890,6 +2893,27 @@ def _backend_enumeration_value_like(value: object) -> bool:
     return False
 
 
+def _backend_enumeration_descriptor_column(label: object) -> bool:
+    tokens = {_enumeration_norm_token(token) for token in _enumeration_tokenize(label)}
+    descriptor_tokens = {
+        "account",
+        "category",
+        "description",
+        "detail",
+        "item",
+        "label",
+        "name",
+        "plan",
+        "product",
+        "segment",
+        "service",
+        "tariff",
+        "tier",
+        "type",
+    }
+    return bool(tokens & descriptor_tokens)
+
+
 def _backend_enumeration_table_columns(
     table: KnowledgeUploadTable,
     table_rows: Sequence[KnowledgeUploadTableRow],
@@ -3161,7 +3185,14 @@ def _build_backend_enumeration_evidence(
                     if idx != attr_col:
                         context_parts.append(f"{column_label}: {value}")
                     continue
-                if _backend_enumeration_generic_column(column_label) and has_named_value_after and not _backend_enumeration_value_like(value):
+                if (
+                    has_named_value_after
+                    and not _backend_enumeration_value_like(value)
+                    and (
+                        _backend_enumeration_generic_column(column_label)
+                        or _backend_enumeration_descriptor_column(column_label)
+                    )
+                ):
                     context_parts.append(f"{column_label}: {value}")
                     continue
                 value_columns.append((idx, column_label, value))
@@ -4728,7 +4759,10 @@ def _search_knowledge_handler(
         limited = _enforce_search_rate_limit()
         if limited is not None:
             return limited
-        context.reserve_search()
+        try:
+            context.reserve_search()
+        except SearchBudgetExceeded:
+            return search_budget_exceeded_payload(context, reason="cursor_paging_limit")
 
         if not pagination_enabled:
             return {
@@ -4986,6 +5020,7 @@ def _search_knowledge_handler(
     # Rewrite follow-up queries to include document context for better retrieval.
     # Example: "fees for withdrawal" -> "Trade Bills EN: fees for withdrawal"
     rewrite_result = None
+    rewrite_error: str | None = None
     rewrite_enabled = str(getattr(settings, "RAG_CONTEXT_QUERY_REWRITE_ENABLED", "true")).lower() in {"1", "true", "yes"}
     if rewrite_enabled and primary_query and context and context.has_strong_primary_document():
         try:
@@ -5043,7 +5078,25 @@ def _search_knowledge_handler(
                 )
         except Exception as exc:
             # Don't fail the search if rewriting fails
+            rewrite_error = str(exc)
             logger.warning("Query rewriting failed: %s", exc, exc_info=True)
+
+    query_scope_observability = build_query_scope_observability(
+        context=context,
+        rewrite_result=rewrite_result,
+        rewrite_enabled=bool(rewrite_enabled),
+        rewrite_error=rewrite_error,
+    )
+    structured_log(
+        "mcp",
+        "search.scope_decision",
+        query_scope_observability,
+        context={
+            "conversation": conversation.id,
+            "business": conversation.business_profile_id,
+        },
+        logger_obj=logger,
+    )
 
     # Fanout variants are controlled via MCP_SEARCH_MAX_QUERY_VARIANTS.
     # Keep this fully env-configurable so operators can tune recall/cost tradeoffs.
@@ -5188,7 +5241,10 @@ def _search_knowledge_handler(
         limited = _enforce_search_rate_limit()
         if limited is not None:
             return limited
-        context.reserve_search()
+        try:
+            context.reserve_search()
+        except SearchBudgetExceeded:
+            return search_budget_exceeded_payload(context, reason="per_turn_limit")
         search_budget_reserved = True
         return None
 
@@ -5346,6 +5402,23 @@ def _search_knowledge_handler(
             level=logging.WARNING if slow else logging.INFO,
         )
 
+    def _build_search_session_context() -> dict[str, object] | None:
+        if not context:
+            return None
+        return {
+            "primary_upload_id": context.primary_upload_id,
+            "referenced_upload_ids": list(context.referenced_upload_ids),
+            "document_context": context.document_context,
+            "document_continuity_allowed": bool(
+                query_scope_observability.get("document_continuity_allowed")
+            ),
+            "document_continuity_reason": str(
+                query_scope_observability.get("document_continuity_reason") or "rewrite_not_evaluated"
+            ),
+            "query_rewrite_strategy": query_scope_observability.get("strategy"),
+            "query_rewrite_confidence": query_scope_observability.get("confidence"),
+        }
+
     def _execute_single_query(
         query_text: str,
         *,
@@ -5407,30 +5480,6 @@ def _search_knowledge_handler(
         if precomputed_result is not None:
             result = precomputed_result
         else:
-            if context:
-                continuity_allowed = False
-                continuity_reason = "rewrite_not_evaluated"
-                if rewrite_result is not None:
-                    continuity_allowed = bool(
-                        rewrite_result.context_injected
-                        or rewrite_result.rewrite_strategy == "already_contextual"
-                    )
-                    continuity_reason = str(
-                        getattr(rewrite_result, "reason", "")
-                        or rewrite_result.rewrite_strategy
-                        or "unknown"
-                    )
-                session_context = {
-                    "primary_upload_id": context.primary_upload_id,
-                    "referenced_upload_ids": list(context.referenced_upload_ids),
-                    "document_context": context.document_context,
-                    "document_continuity_allowed": continuity_allowed,
-                    "document_continuity_reason": continuity_reason,
-                    "query_rewrite_strategy": rewrite_result.rewrite_strategy if rewrite_result else None,
-                    "query_rewrite_confidence": rewrite_result.confidence if rewrite_result else None,
-                }
-            else:
-                session_context = None
             result = service.search(
                 business_profile=conversation.business_profile,
                 query=query_text,
@@ -5438,7 +5487,7 @@ def _search_knowledge_handler(
                 identifier_filter=identifier_filter,
                 allowed_upload_ids=combined_upload_ids,
                 allowed_explicit_upload_ids=agent_explicit_upload_ids,
-                session_context=session_context,
+                session_context=_build_search_session_context(),
             )
         combined_snippets: list[object] = list(getattr(result, "snippets", []) or [])
         snippet_payloads = _serialize_snippets(combined_snippets)
@@ -5537,6 +5586,7 @@ def _search_knowledge_handler(
             status=result.status,
         )
         result_diagnostics = dict(result.diagnostics or {})
+        result_diagnostics.setdefault("query_scope", dict(query_scope_observability))
 
         payload = {
             "tool": "search_knowledge",
@@ -5648,6 +5698,9 @@ def _search_knowledge_handler(
                     query=query_text,
                     limit=limit_for_run,
                     identifier_filter=identifier_filter,
+                    allowed_upload_ids=combined_upload_ids,
+                    allowed_explicit_upload_ids=agent_explicit_upload_ids,
+                    session_context=_build_search_session_context(),
                 )
                 futures.append((idx, query_text, intent_info, intent, limit_for_run, future))
             else:
@@ -5658,6 +5711,7 @@ def _search_knowledge_handler(
                     identifier_filter=identifier_filter,
                     allowed_upload_ids=combined_upload_ids,
                     allowed_explicit_upload_ids=agent_explicit_upload_ids,
+                    session_context=_build_search_session_context(),
                 )
                 run_payload = _execute_single_query(
                     query_text,
@@ -6027,6 +6081,35 @@ def _search_knowledge_handler(
         }
         logger.warning("Backend enumeration evidence failed: %s", exc, exc_info=True)
 
+    enumeration_status_log = {
+        key: value
+        for key, value in enumeration_diag.items()
+        if key
+        in {
+            "triggered",
+            "reason",
+            "attribute",
+            "candidate_rows",
+            "matched_rows",
+            "expanded_rows",
+            "returned_items",
+            "source_table_count",
+            "completeness_status",
+            "error",
+        }
+    }
+    structured_log(
+        "mcp",
+        "search.enumeration_status",
+        enumeration_status_log,
+        context={
+            "conversation": conversation.id,
+            "business": conversation.business_profile_id,
+        },
+        logger_obj=logger,
+        level=logging.INFO if enumeration_diag.get("triggered") else logging.DEBUG,
+    )
+
     if isinstance(final_response, dict) and enumeration_diag.get("triggered"):
         diagnostics_out = final_response.get("diagnostics")
         if not isinstance(diagnostics_out, dict):
@@ -6094,6 +6177,40 @@ def _search_knowledge_handler(
             }
             final_response["completeness"] = completeness_out
 
+    if isinstance(final_response, dict):
+        diagnostics_out = final_response.get("diagnostics")
+        if not isinstance(diagnostics_out, dict):
+            diagnostics_out = {}
+        diagnostics_out.setdefault("query_scope", dict(query_scope_observability))
+        retrieval_observability = build_retrieval_observability(
+            query_scope=query_scope_observability,
+            diagnostics=diagnostics_out,
+            completeness=(
+                final_response.get("completeness")
+                if isinstance(final_response.get("completeness"), Mapping)
+                else {}
+            ),
+            refs=final_response.get("refs"),
+            snippets=final_response.get("snippets"),
+            enumeration_diag=enumeration_diag,
+            status=str(final_response.get("status") or final_status or ""),
+        )
+        if retrieval_observability:
+            final_response["retrieval_observability"] = retrieval_observability
+            diagnostics_out["retrieval_observability"] = retrieval_observability
+        if diagnostics_out:
+            final_response["diagnostics"] = diagnostics_out
+        structured_log(
+            "mcp",
+            "search.observability",
+            retrieval_observability,
+            context={
+                "conversation": conversation.id,
+                "business": conversation.business_profile_id,
+            },
+            logger_obj=logger,
+        )
+
     result_fingerprint = ""
     result_top_ids: list[str] = []
     if isinstance(final_response, Mapping):
@@ -6145,6 +6262,15 @@ def _search_knowledge_handler(
             diagnostics = {}
         if duplicate_intent_diagnostics:
             diagnostics.update(duplicate_intent_diagnostics)
+            try:
+                similarity_value = duplicate_intent_diagnostics.get("duplicate_intent_similarity")
+                similarity_float = float(similarity_value) if similarity_value is not None else None
+            except (TypeError, ValueError):
+                similarity_float = None
+            final_response["search_repeat_guidance"] = build_repeat_search_guidance(
+                context,
+                similarity=similarity_float,
+            )
         if duplicate_result_diagnostics:
             diagnostics.update(duplicate_result_diagnostics)
         if diagnostics:

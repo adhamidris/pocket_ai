@@ -78,6 +78,53 @@ from core.otel import otel_trace
 logger = logging.getLogger(__name__)
 TRACER = otel_trace.get_tracer(__name__)
 
+DOCUMENT_NAME_GENERIC_TOKENS: frozenset[str] = frozenset(
+    {
+        "a",
+        "all",
+        "an",
+        "and",
+        "any",
+        "amount",
+        "amounts",
+        "by",
+        "charge",
+        "charges",
+        "cost",
+        "costs",
+        "every",
+        "fee",
+        "fees",
+        "for",
+        "from",
+        "give",
+        "in",
+        "list",
+        "me",
+        "of",
+        "on",
+        "or",
+        "per",
+        "price",
+        "prices",
+        "pricing",
+        "rate",
+        "rates",
+        "schedule",
+        "show",
+        "table",
+        "tables",
+        "the",
+        "their",
+        "to",
+        "value",
+        "values",
+        "what",
+        "which",
+        "with",
+    }
+)
+
 
 def _rag_log(
     stage: str,
@@ -630,6 +677,14 @@ class KnowledgeSearchService:
         self.parallel_table_rrf_k = int(
             getattr(settings, "RAG_PARALLEL_TABLE_RRF_K", 60)
         )  # RRF K parameter for rank fusion
+        try:
+            self.coverage_diversification_candidate_multiplier = float(
+                getattr(settings, "RAG_COVERAGE_DIVERSIFICATION_CANDIDATE_MULTIPLIER", 2.0)
+            )
+        except (TypeError, ValueError):
+            self.coverage_diversification_candidate_multiplier = 2.0
+        if not (1.0 <= self.coverage_diversification_candidate_multiplier <= 4.0):
+            self.coverage_diversification_candidate_multiplier = 2.0
         self.table_header_token_cache_limit = max(
             32,
             int(getattr(settings, "RAG_TABLE_HEADER_TOKEN_CACHE", 256)),
@@ -1955,13 +2010,17 @@ class KnowledgeSearchService:
                     k=self.parallel_table_rrf_k,
                 )
 
-                # Apply reranking to merged results
-                blended = list(rrf_merged[:limit])
-
-                # Apply table diversification when strategy requests it
-                if strategy_result and strategy_result.hints.diversify_tables and len(blended) > 1:
-                    blended = self._diversify_table_snippets(blended, limit=limit)
-                    diagnostics["strategy_diversified"] = True
+                if strategy_result and strategy_result.hints.diversify_tables and len(rrf_merged) > 1:
+                    blended, coverage_diag = self._diversify_table_snippets_with_diagnostics(
+                        rrf_merged,
+                        limit=limit,
+                    )
+                    diagnostics.update(coverage_diag)
+                    diagnostics["strategy_diversified"] = bool(
+                        coverage_diag.get("coverage_diversification_applied")
+                    )
+                else:
+                    blended = list(rrf_merged[:limit])
 
                 blended, collapse_diag = self._collapse_snippets_by_evidence_group(
                     blended,
@@ -2015,10 +2074,17 @@ class KnowledgeSearchService:
                 diagnostics["table_reason"] = table_reason
             diagnostics["total_duration_ms"] = self._duration_ms(overall_start)
             diagnostics["snippet_count"] = len(table_snippets)
-            blended: list[KnowledgeSnippet] = list(table_snippets[:limit])
-            remaining = max(0, limit - len(blended))
+            diversify_requested = bool(strategy_result and strategy_result.hints.diversify_tables)
+            candidate_limit = limit
+            if diversify_requested:
+                candidate_limit = max(
+                    limit,
+                    int(math.ceil(limit * self.coverage_diversification_candidate_multiplier)),
+                )
+            blended_candidates: list[KnowledgeSnippet] = list(table_snippets)
+            remaining = max(0, candidate_limit - len(blended_candidates))
             if chunk_hits and remaining:
-                blended.extend(
+                blended_candidates.extend(
                     self._search_chunks(
                         chunk_hits,
                         limit=remaining,
@@ -2027,10 +2093,17 @@ class KnowledgeSearchService:
                         query=traits.normalized or traits.original or query,  # NEW: For query-aware row sampling
                     )
                 )
-            # Apply table diversification when strategy requests it
-            if strategy_result and strategy_result.hints.diversify_tables and len(blended) > 1:
-                blended = self._diversify_table_snippets(blended, limit=limit)
-                diagnostics["strategy_diversified"] = True
+            if diversify_requested and len(blended_candidates) > 1:
+                blended, coverage_diag = self._diversify_table_snippets_with_diagnostics(
+                    blended_candidates,
+                    limit=limit,
+                )
+                diagnostics.update(coverage_diag)
+                diagnostics["strategy_diversified"] = bool(
+                    coverage_diag.get("coverage_diversification_applied")
+                )
+            else:
+                blended = list(blended_candidates[:limit])
 
             blended, collapse_diag = self._collapse_snippets_by_evidence_group(
                 blended,
@@ -2068,10 +2141,17 @@ class KnowledgeSearchService:
             )
             return result_obj
 
+        chunk_snippet_limit = limit
+        diversify_requested = bool(strategy_result and strategy_result.hints.diversify_tables)
+        if diversify_requested:
+            chunk_snippet_limit = max(
+                limit,
+                int(math.ceil(limit * self.coverage_diversification_candidate_multiplier)),
+            )
         snippets = tuple(
             self._search_chunks(
                 chunk_hits,
-                limit=limit,
+                limit=chunk_snippet_limit,
                 business_profile=business_profile,
                 pathway="hybrid",
                 query=traits.normalized or traits.original or query,  # NEW: For query-aware row sampling
@@ -2080,6 +2160,16 @@ class KnowledgeSearchService:
         if snippets:
             diagnostics["path"] = diagnostics.get("path") or "hybrid"
             diagnostics.setdefault("table_reason", table_reason)
+            if diversify_requested and len(snippets) > 1:
+                diversified_snippets, coverage_diag = self._diversify_table_snippets_with_diagnostics(
+                    snippets,
+                    limit=limit,
+                )
+                diagnostics.update(coverage_diag)
+                diagnostics["strategy_diversified"] = bool(
+                    coverage_diag.get("coverage_diversification_applied")
+                )
+                snippets = tuple(diversified_snippets)
             snippets, collapse_diag = self._collapse_snippets_by_evidence_group(
                 snippets,
                 query_text=traits.normalized or traits.original or query,
@@ -2567,56 +2657,81 @@ class KnowledgeSearchService:
         *,
         limit: int,
     ) -> list[KnowledgeSnippet]:
-        """Round-robin across distinct table_ids to spread coverage.
+        diversified, _diagnostics = KnowledgeSearchService._diversify_table_snippets_with_diagnostics(
+            snippets,
+            limit=limit,
+        )
+        return diversified
 
-        Non-table snippets are interleaved at their original positions so
-        they are not pushed to the end.
-        """
-        from collections import OrderedDict
+    @staticmethod
+    def _diversify_table_snippets_with_diagnostics(
+        snippets: Sequence[KnowledgeSnippet],
+        *,
+        limit: int,
+    ) -> tuple[list[KnowledgeSnippet], dict[str, object]]:
+        """Round-robin across table/document buckets before final clipping."""
+        bucketed: OrderedDict[str, list[KnowledgeSnippet]] = OrderedDict()
+        table_bucket_ids: set[str] = set()
+        upload_bucket_ids: set[str] = set()
 
-        buckets: OrderedDict[str, list[KnowledgeSnippet]] = OrderedDict()
-        non_table: list[KnowledgeSnippet] = []
+        for snippet in snippets:
+            diagnostics = snippet.source_diagnostics if isinstance(snippet.source_diagnostics, Mapping) else {}
+            table_id = str(snippet.table_id or diagnostics.get("table_id") or "").strip()
+            upload_id = str(snippet.upload_id or "").strip()
+            if upload_id:
+                upload_bucket_ids.add(upload_id)
 
-        for s in snippets:
-            tid = s.table_id
-            if tid:
-                buckets.setdefault(str(tid), []).append(s)
+            if table_id:
+                bucket_key = f"table:{table_id}"
+                table_bucket_ids.add(table_id)
+            elif upload_id:
+                bucket_key = f"upload:{upload_id}"
             else:
-                non_table.append(s)
+                bucket_key = f"snippet:{snippet.id}"
+            bucketed.setdefault(bucket_key, []).append(snippet)
 
-        # If only one table (or none), nothing to diversify
-        if len(buckets) <= 1:
-            return list(snippets)[:limit]
+        requested_limit = max(0, int(limit or 0))
+        diagnostics_out: dict[str, object] = {
+            "coverage_diversification_method": "table_document_round_robin_v2",
+            "coverage_diversification_input_count": len(snippets),
+            "coverage_diversification_limit": requested_limit,
+            "coverage_diversification_bucket_count": len(bucketed),
+            "coverage_diversification_table_buckets": len(table_bucket_ids),
+            "coverage_diversification_upload_buckets": len(upload_bucket_ids),
+            "coverage_diversification_applied": False,
+            "coverage_diversification_output_count": 0,
+        }
+
+        if requested_limit <= 0 or not snippets:
+            return [], diagnostics_out
+
+        if len(bucketed) <= 1:
+            result = list(snippets)[:requested_limit]
+            diagnostics_out["coverage_diversification_output_count"] = len(result)
+            return result, diagnostics_out
 
         result: list[KnowledgeSnippet] = []
-        table_iter = 0
-        non_table_iter = 0
-        bucket_keys = list(buckets.keys())
+        offsets: dict[str, int] = {key: 0 for key in bucketed}
+        bucket_keys = list(bucketed.keys())
 
-        # Interleave: for each round, take one from each table bucket,
-        # then one non-table snippet.
-        while len(result) < limit:
+        while len(result) < requested_limit:
             added = False
             for key in bucket_keys:
-                if table_iter < len(buckets[key]):
-                    result.append(buckets[key][table_iter])
-                    added = True
-                    if len(result) >= limit:
-                        break
-            if not added and non_table_iter >= len(non_table):
+                offset = offsets[key]
+                bucket = bucketed[key]
+                if offset >= len(bucket):
+                    continue
+                result.append(bucket[offset])
+                offsets[key] = offset + 1
+                added = True
+                if len(result) >= requested_limit:
+                    break
+            if not added:
                 break
-            table_iter += 1
-            # Inject a non-table snippet every round
-            if non_table_iter < len(non_table) and len(result) < limit:
-                result.append(non_table[non_table_iter])
-                non_table_iter += 1
 
-        # Append remaining non-table snippets if space
-        while non_table_iter < len(non_table) and len(result) < limit:
-            result.append(non_table[non_table_iter])
-            non_table_iter += 1
-
-        return result[:limit]
+        diagnostics_out["coverage_diversification_applied"] = True
+        diagnostics_out["coverage_diversification_output_count"] = len(result)
+        return result, diagnostics_out
 
     def _search_chunks(
         self,
@@ -4049,6 +4164,25 @@ class KnowledgeSearchService:
             "table_residual_rescue_count": 0,
             "table_residual_rescue_reason": None,
         }
+        continuity_allowed_for_rerank = bool(
+            session_context.get("document_continuity_allowed") if session_context else False
+        )
+        continuity_reason_for_rerank = (
+            str(session_context.get("document_continuity_reason") or "")
+            if session_context
+            else ""
+        )
+        rerank_diag.update(
+            {
+                "document_continuity_allowed": continuity_allowed_for_rerank,
+                "document_continuity_reason": continuity_reason_for_rerank or None,
+                "document_continuity_primary_present": bool(
+                    session_context and session_context.get("primary_upload_id")
+                ),
+                "document_continuity_boosted_candidates": 0,
+                "document_continuity_max_bonus": 0.0,
+            }
+        )
         top_pool = min(len(candidates), self.rerank_pool)
         scored: list[tuple[float, int, ChunkResult]] = []
         tail: list[ChunkResult] = []
@@ -4066,6 +4200,8 @@ class KnowledgeSearchService:
         )
         query_tokens = set(table_context.get("query_tokens") or ())
         specific_tokens = set(table_context.get("specific_tokens") or ())
+        document_name_tokens = self._document_name_relevance_tokens(traits)
+        rerank_diag["document_name_boost_token_count"] = len(document_name_tokens)
         for idx, cand in enumerate(candidates):
             if idx >= top_pool:
                 tail.append(cand)
@@ -4199,17 +4335,14 @@ class KnowledgeSearchService:
                     getattr(upload, "display_name", "") or
                     getattr(upload, "source_name", "") or ""
                 )
-                if doc_label and traits.tokens:
-                    document_name_boost = self._lexical_score_text(doc_label, traits.tokens)
+                if doc_label and document_name_tokens:
+                    document_name_boost = self._lexical_score_text(doc_label, document_name_tokens)
 
             # Document continuity bonus (Conversation-Aware RAG)
             # Boost chunks from the same document only after the agentic scope
             # decision confirms this is still the same document/topic.
             document_continuity_bonus = 0.0
-            continuity_allowed = bool(
-                session_context.get("document_continuity_allowed") if session_context else False
-            )
-            if session_context and continuity_allowed:
+            if session_context and continuity_allowed_for_rerank:
                 primary_upload_id = session_context.get("primary_upload_id")
                 if primary_upload_id:
                     chunk_upload_id = str(cand.chunk.upload_id) if cand.chunk.upload_id else None
@@ -4221,6 +4354,17 @@ class KnowledgeSearchService:
                             )
                         except (TypeError, ValueError):
                             document_continuity_bonus = 0.35
+            if document_continuity_bonus > 0:
+                rerank_diag["document_continuity_boosted_candidates"] = (
+                    int(rerank_diag.get("document_continuity_boosted_candidates") or 0) + 1
+                )
+                try:
+                    rerank_diag["document_continuity_max_bonus"] = max(
+                        float(rerank_diag.get("document_continuity_max_bonus") or 0.0),
+                        float(document_continuity_bonus),
+                    )
+                except (TypeError, ValueError):
+                    rerank_diag["document_continuity_max_bonus"] = float(document_continuity_bonus)
 
             combined = (
                 self.rerank_weights["vector"] * vector_score
@@ -4249,6 +4393,7 @@ class KnowledgeSearchService:
                 "recency": round(recency_score, 4),
                 "table_header_bonus": round(table_header_bonus, 4),
                 "document_name_boost": round(document_name_boost, 4),
+                "document_name_token_count": len(document_name_tokens),
                 "document_continuity_bonus": round(document_continuity_bonus, 4),  # NEW: Include in diagnostics
                 "section_context_boost": round(section_context_boost, 4),
                 "modality_bias_bonus": round(modality_bias_bonus, 4),
@@ -4422,6 +4567,18 @@ class KnowledgeSearchService:
         if not matches:
             return 0.0
         return matches / len(tokens)
+
+    def _document_name_relevance_tokens(self, traits: QueryTraits) -> tuple[str, ...]:
+        generic_tokens = DOCUMENT_NAME_GENERIC_TOKENS | set(self.table_query_keywords)
+        relevance_tokens: list[str] = []
+        seen: set[str] = set()
+        for token in traits.tokens:
+            normalized = str(token or "").strip().lower()
+            if len(normalized) < 2 or normalized in generic_tokens or normalized in seen:
+                continue
+            seen.add(normalized)
+            relevance_tokens.append(normalized)
+        return tuple(relevance_tokens)
 
     @staticmethod
     def _normalized_match_text(text: str) -> str:
