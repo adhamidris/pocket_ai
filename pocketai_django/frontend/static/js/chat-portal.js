@@ -1637,6 +1637,7 @@ class ChatPortalClient {
           payload.rows = rows;
         }
         const row = { cells: cells.map((cell) => (typeof cell === "string" ? cell : cell == null ? "" : String(cell))) };
+        row.__streamComplete = true;
         if (op.rtl === true) {
           row.rtl = true;
         }
@@ -1661,6 +1662,12 @@ class ChatPortalClient {
         }
         cells[cellIndex] = typeof op.text === "string" ? op.text : op.text == null ? "" : String(op.text);
         row.cells = cells;
+        if (op.row_complete === true || op.rowComplete === true) {
+          row.__streamComplete = true;
+          delete row.__streamDraft;
+        } else if (row.__streamComplete !== true) {
+          row.__streamDraft = true;
+        }
         if (op.rtl === true) {
           row.rtl = true;
         }
@@ -1940,11 +1947,8 @@ class ChatPortalClient {
         const ops = this.streamingPendingBlockOps.get(blockId);
         if (!ops || !ops.length) return;
         if (!wrapper) {
-          this.streamingPendingBlockOps.delete(blockId);
-          this.streamingMissingBlockWrapperCounts.delete(blockId);
           return;
         }
-        this.streamingMissingBlockWrapperCounts.delete(blockId);
         this.streamingPendingBlockOps.delete(blockId);
         this.applyBlockOps(blockId, ops);
       });
@@ -2031,17 +2035,11 @@ class ChatPortalClient {
       const ops = this.streamingPendingBlockOps.get(blockId);
       if (!ops || !ops.length) continue;
       if (!wrapper) {
-        const misses = (this.streamingMissingBlockWrapperCounts.get(blockId) || 0) + 1;
-        if (misses >= 6) {
-          this.streamingPendingBlockOps.delete(blockId);
-          this.streamingMissingBlockWrapperCounts.delete(blockId);
-          continue;
-        }
-        this.streamingMissingBlockWrapperCounts.set(blockId, misses);
-        nextDirty.add(blockId);
+        // The block is registered but its wrapper is delayed (e.g. queued after text reveal).
+        // It will be added back to dirty blocks when mountBlock() eventually runs.
+        // We do not add it to nextDirty to avoid an infinite RAF busy loop.
         continue;
       }
-      this.streamingMissingBlockWrapperCounts.delete(blockId);
 
       if (revealBudget <= 0) {
         nextDirty.add(blockId);
@@ -2185,7 +2183,9 @@ class ChatPortalClient {
 
       const cells = Array.isArray(row.cells) ? row.cells : [];
       if (!cells.length) continue;
-      
+
+      if (row.__streamComplete !== true) continue;
+
       readyRows.push(row);
     }
     return readyRows;

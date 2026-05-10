@@ -424,6 +424,7 @@ def coerce_block_ops(value: object) -> list[dict[str, object]]:
                     "row_index": row_index,
                     "cell_index": cell_index,
                     "text": text_out,
+                    **({"row_complete": True} if entry.get("row_complete") is True else {}),
                 }
             )
     return ops_out
@@ -921,6 +922,7 @@ class RichBlockStreamBuilder:
 
         previous_cells = list(self.active_table_partial_cells)
         ops: list[dict[str, object]] = []
+        row_complete = bool(finalize and len(partial_cells) >= column_count)
         for cell_index, cell_text in enumerate(partial_cells[:TABLE_CELL_LIMIT]):
             previous_text = previous_cells[cell_index] if cell_index < len(previous_cells) else None
             if previous_text == cell_text:
@@ -935,10 +937,38 @@ class RichBlockStreamBuilder:
             )
 
         if not ops:
+            if row_complete and row_index is not None and previous_cells:
+                complete_cell_index = min(len(previous_cells), column_count, TABLE_CELL_LIMIT) - 1
+                if complete_cell_index >= 0:
+                    ops.append(
+                        {
+                            "op": "set_table_cell_text",
+                            "row_index": row_index,
+                            "cell_index": complete_cell_index,
+                            "text": previous_cells[complete_cell_index],
+                            "row_complete": True,
+                        }
+                    )
+            if ops:
+                apply_block_ops(table_block, ops)
+                self.active_table_partial_row_index = None
+                self.active_table_partial_cells = []
+                return [
+                    {
+                        "type": "block_delta",
+                        "payload": {
+                            "block_id": str(table_block.get("block_id") or ""),
+                            "ops": ops,
+                        },
+                    }
+                ]
             if finalize:
                 self.active_table_partial_row_index = None
                 self.active_table_partial_cells = []
             return []
+
+        if row_complete:
+            ops[-1]["row_complete"] = True
 
         apply_block_ops(table_block, ops)
         self.active_table_partial_row_index = None if finalize else row_index

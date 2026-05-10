@@ -189,7 +189,13 @@ class RichBlockStreamingTests(SimpleTestCase):
             final_ops,
             [
                 {"op": "set_table_cell_text", "row_index": 0, "cell_index": 1, "text": "EGP 20 per paper"},
-                {"op": "set_table_cell_text", "row_index": 0, "cell_index": 2, "text": "Max EGP 1,000"},
+                {
+                    "op": "set_table_cell_text",
+                    "row_index": 0,
+                    "cell_index": 2,
+                    "text": "Max EGP 1,000",
+                    "row_complete": True,
+                },
             ],
         )
 
@@ -199,4 +205,35 @@ class RichBlockStreamingTests(SimpleTestCase):
         self.assertEqual(
             payload["rows"],
             [{"cells": ["Plus", "EGP 20 per paper", "Max EGP 1,000"]}],
+        )
+
+    def test_streaming_partial_table_row_marks_complete_when_newline_has_no_cell_changes(self) -> None:
+        builder = RichBlockStreamBuilder()
+
+        builder.feed_text("| Segment | Fee per Paper | Maximum Cap |\n")
+        builder.feed_text("| --- | --- | --- |\n")
+
+        partial = builder.feed_text("| Plus | EGP 20 per paper | Max EGP 1,000 |")
+        self.assertEqual(
+            [str(event.get("type") or "").strip().lower() for event in partial],
+            ["block_delta"],
+        )
+
+        newline = builder.feed_text("\n")
+        self.assertEqual(
+            [str(event.get("type") or "").strip().lower() for event in newline],
+            ["block_delta"],
+        )
+        ops = newline[0]["payload"]["ops"]
+        self.assertEqual(
+            ops,
+            [
+                {
+                    "op": "set_table_cell_text",
+                    "row_index": 0,
+                    "cell_index": 2,
+                    "text": "Max EGP 1,000",
+                    "row_complete": True,
+                }
+            ],
         )

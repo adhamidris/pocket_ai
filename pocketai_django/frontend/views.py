@@ -79,6 +79,16 @@ QUERY_ANALYTICS_WINDOWS: tuple[tuple[int, str], ...] = (
     (24 * 30, "30d"),
 )
 
+
+def _portal_asset_version() -> str:
+    base_version = str(getattr(settings, "PORTAL_ASSET_VERSION", "dev") or "dev")
+    asset_path = Path(settings.BASE_DIR) / "frontend" / "static" / "js" / "chat-portal.js"
+    try:
+        return f"{base_version}-{int(asset_path.stat().st_mtime)}"
+    except OSError:
+        return base_version
+
+
 KNOWLEDGE_UPLOAD_SIMPLE_TYPES: tuple[tuple[str, str], ...] = (
     (KnowledgeSourceType.FILE, _("File Upload")),
     (KnowledgeSourceType.LINK, _("External Link")),
@@ -232,7 +242,7 @@ def _build_portal_context(
         "bootstrap_payload": bootstrap_payload,
         "bootstrap_script_id": PORTAL_BOOTSTRAP_SCRIPT_ID,
         "subagents_enabled": subagents_enabled,
-        "asset_version": getattr(settings, "PORTAL_ASSET_VERSION", "dev"),
+        "asset_version": _portal_asset_version(),
         "chat_surface": chat_surface,
         "is_authenticated_chat": bool(getattr(request.user, "is_authenticated", False)),
         "endpoints": {
