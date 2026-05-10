@@ -6203,24 +6203,14 @@ class McpOrchestratorService:
             compact[key] = value
 
         budget = payload.get("budget")
-        if isinstance(budget, Mapping) and budget:
-            # Budget telemetry is intentionally tiny and safe to preserve.
+        if isinstance(budget, Mapping) and budget and normalized_name != "search_knowledge":
+            # Budget telemetry is useful for read continuations and blocked-tool payloads.
+            # Search success payloads keep model-facing control data in pagination/read hints.
             compact["budget"] = dict(budget)
         for guidance_key in ("budget_guidance", "search_repeat_guidance"):
             guidance = payload.get(guidance_key)
             if isinstance(guidance, Mapping) and guidance:
                 compact[guidance_key] = dict(guidance)
-        retrieval_observability = compact_retrieval_observability(
-            payload.get("retrieval_observability")
-        )
-        if not retrieval_observability:
-            raw_diagnostics = payload.get("diagnostics")
-            if isinstance(raw_diagnostics, Mapping):
-                retrieval_observability = compact_retrieval_observability(
-                    raw_diagnostics.get("retrieval_observability")
-                )
-        if retrieval_observability:
-            compact["retrieval_observability"] = retrieval_observability
 
         if normalized_name == "mcp_search_tools":
             raw_results = payload.get("results")
@@ -6574,27 +6564,37 @@ class McpOrchestratorService:
                     compact["read_budget_hint"] = hint_out
 
             completeness = payload.get("completeness")
+            pagination_out: dict[str, object] = {}
             if isinstance(completeness, Mapping) and completeness:
-                completeness_out: dict[str, object] = {}
-                for key in (
-                    "shown",
-                    "already_seen",
-                    "excluded_seen",
-                    "total_found",
-                    "has_more",
-                    "all_previously_shown",
+                for source_key, target_key in (
+                    ("shown", "shown"),
+                    ("refs_total_found", "total"),
+                    ("total_found", "total"),
+                    ("has_more", "has_more"),
+                    ("message", "message"),
                 ):
-                    value = completeness.get(key)
+                    if target_key in pagination_out:
+                        continue
+                    value = completeness.get(source_key)
                     if value is None:
                         continue
-                    completeness_out[key] = value
-                message = completeness.get("message")
-                if isinstance(message, str) and message.strip():
-                    completeness_out["message"] = self._clip_text(message.strip(), 420)
-                if completeness_out:
-                    compact["completeness"] = completeness_out
+                    if isinstance(value, str) and not value.strip():
+                        continue
+                    pagination_out[target_key] = (
+                        self._clip_text(value.strip(), 420)
+                        if source_key == "message" and isinstance(value, str)
+                        else value
+                    )
+            if "total" not in pagination_out and "total_found" in compact:
+                pagination_out["total"] = compact["total_found"]
+            if "has_more" not in pagination_out and "has_more" in compact:
+                pagination_out["has_more"] = compact["has_more"]
+            if isinstance(next_cursor, str) and next_cursor.strip():
+                pagination_out["next_cursor"] = self._clip_text(next_cursor.strip(), 240)
+            if pagination_out:
+                compact["pagination"] = pagination_out
 
-            for key in ("query", "intent", "query_intent", "match_policy"):
+            for key in ("query", "intent", "match_policy"):
                 if key not in payload:
                     continue
                 value = payload.get(key)
@@ -6616,7 +6616,6 @@ class McpOrchestratorService:
                     entry: dict[str, object] = {}
                     for key in (
                         "id",
-                        "document_id",
                         "label",
                         "kind",
                         "type",
@@ -6637,24 +6636,10 @@ class McpOrchestratorService:
                             entry[key] = self._clip_text(value.strip(), int(snippet_content_chars))
                             continue
                         entry[key] = value
-                    coverage = result.get("coverage_hint")
-                    if isinstance(coverage, Mapping) and coverage:
-                        coverage_out: dict[str, object] = {}
-                        for key in ("page", "table_id", "row_index", "estimated_rows", "estimated_columns"):
-                            value = coverage.get(key)
-                            if value is None:
-                                continue
-                            if isinstance(value, str) and not value.strip():
-                                continue
-                            if isinstance(value, (list, tuple, set, dict)) and not value:
-                                continue
-                            coverage_out[key] = value
-                        if coverage_out:
-                            entry["coverage_hint"] = coverage_out
                     read_hint = result.get("read_hint")
                     if isinstance(read_hint, Mapping) and read_hint:
                         hint_out: dict[str, object] = {}
-                        for key in ("document_id", "page", "pages", "offset", "mode", "intent", "suggested_max_chars"):
+                        for key in ("suggested_max_chars",):
                             value = read_hint.get(key)
                             if value is None:
                                 continue
@@ -6669,7 +6654,6 @@ class McpOrchestratorService:
                         refs_out.append(entry)
             if refs_out:
                 compact["refs"] = refs_out
-                compact["prompt_compact"] = True
                 return compact
             raw_snippets = payload.get("snippets")
             snippets_out: list[dict[str, object]] = []
@@ -6686,7 +6670,6 @@ class McpOrchestratorService:
                         )
                     )
             compact["snippets"] = snippets_out
-            compact["prompt_compact"] = True
             return compact
 
 

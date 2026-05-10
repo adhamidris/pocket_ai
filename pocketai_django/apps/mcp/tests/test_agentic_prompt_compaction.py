@@ -53,13 +53,19 @@ class AgenticPromptCompactionTests(SimpleTestCase):
         self.assertIn("refs", compact)
         self.assertNotIn("snippets", compact)
         self.assertEqual(compact["refs"][0]["id"], "chunk-1")
+        self.assertNotIn("document_id", compact["refs"][0])
         self.assertIn("label", compact["refs"][0])
         self.assertEqual(compact["refs"][0]["read_hint"]["suggested_max_chars"], 15000)
+        self.assertEqual(set(compact["refs"][0]["read_hint"].keys()), {"suggested_max_chars"})
         self.assertEqual(compact.get("total_found"), 1)
         self.assertTrue(compact.get("has_more"))
         self.assertEqual(compact.get("next_cursor"), "cursor-123")
         self.assertEqual(compact.get("read_budget_hint", {}).get("total_suggested_max_chars"), 15000)
-        self.assertEqual(compact.get("completeness", {}).get("total_found"), 50)
+        self.assertNotIn("completeness", compact)
+        self.assertEqual(compact.get("pagination", {}).get("shown"), 1)
+        self.assertEqual(compact.get("pagination", {}).get("total"), 50)
+        self.assertEqual(compact.get("pagination", {}).get("next_cursor"), "cursor-123")
+        self.assertNotIn("prompt_compact", compact)
 
     def test_search_knowledge_trace_summary_uses_requested_query(self) -> None:
         summary = self.service._tool_trace_output_summary(
@@ -78,7 +84,7 @@ class AgenticPromptCompactionTests(SimpleTestCase):
         self.assertEqual(summary.get("effective_query"), "cheques")
         self.assertNotIn("scope_resolution", summary)
 
-    def test_search_knowledge_preserves_retrieval_observability(self) -> None:
+    def test_search_knowledge_keeps_retrieval_observability_out_of_prompt(self) -> None:
         observability = {
             "query_scope": {
                 "followup_decision": "new_topic",
@@ -124,11 +130,7 @@ class AgenticPromptCompactionTests(SimpleTestCase):
         )
         summary = self.service._tool_trace_output_summary("search_knowledge", payload)
 
-        self.assertEqual(
-            compact["retrieval_observability"]["query_scope"]["topic_scope"],
-            "new_topic",
-        )
-        self.assertNotIn("enumeration", compact["retrieval_observability"])
+        self.assertNotIn("retrieval_observability", compact)
         assert summary is not None
         self.assertEqual(
             summary["retrieval_observability"]["table_coverage"]["tables_returned"],
