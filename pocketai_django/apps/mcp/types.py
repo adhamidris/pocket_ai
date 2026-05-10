@@ -178,10 +178,11 @@ class ToolExecutionContext:
     # wrapper-level guardrails can stop retry loops quickly.
     invalid_read_ref_attempts: dict[str, int] = dataclasses.field(default_factory=dict)
     # =========================================================================
-    # Document Context Tracking (Conversation-Aware RAG)
+    # Document Reference Tracking
     # =========================================================================
-    # Tracks which documents were referenced in search results for follow-up queries.
-    # Enables query rewriting, document affinity routing, and ranking bonuses.
+    # Tracks documents referenced/read for debug and persistence only.
+    # This must not drive implicit query rewriting, document affinity routing, or
+    # ranking bonuses.
 
     # Set of all upload_ids referenced in this conversation
     referenced_upload_ids: set[str] = dataclasses.field(default_factory=set)
@@ -589,19 +590,9 @@ class ToolExecutionContext:
 
     def has_strong_primary_document(self) -> bool:
         """
-        Whether the current primary document is "confirmed" by an explicit read.
-
-        We use this to decide when it's safe to apply conversation-scoped retrieval
-        behaviors (affinity search, query rewriting) without overfitting to noisy
-        search results.
+        Document continuity is disabled; there is no implicit primary document.
         """
-        if not self.primary_upload_id:
-            return False
-        meta = self.document_context.get(self.primary_upload_id, {})
-        try:
-            return int(meta.get("read_count", 0) or 0) > 0
-        except (TypeError, ValueError):
-            return False
+        return False
 
     def track_document_reference(
         self,
@@ -615,8 +606,7 @@ class ToolExecutionContext:
         """
         Track a document that was referenced in search results.
 
-        Called after each search to build conversation-level document context.
-        Updates primary_upload_id based on reference frequency and confidence.
+        Called after each search for debug/reference bookkeeping only.
         """
         if not upload_id:
             return
@@ -652,16 +642,9 @@ class ToolExecutionContext:
             # Keep only last 10 confidence scores
             meta["confidences"] = confidences[-10:]
 
-        if update_primary:
-            # Update primary document if this one has higher engagement
-            self._update_primary_document(upload_id)
-
     def track_document_read(self, upload_id: str, *, title: str | None = None) -> None:
         """
         Track an explicit document read.
-
-        This is a stronger signal than "appeared in search results", and should
-        generally drive the primary document for follow-ups.
         """
         if not upload_id:
             return
@@ -686,41 +669,13 @@ class ToolExecutionContext:
         meta["last_read_at"] = self._utc_now_iso()
         meta["last_referenced_at"] = meta.get("last_referenced_at") or meta["last_read_at"]
 
-        # Reads are our strongest conversation signal: treat as the active primary.
-        self.primary_upload_id = upload_id
-
     def _update_primary_document(self, candidate_upload_id: str) -> None:
-        """Update primary_upload_id based on document engagement metrics."""
-        if not self.primary_upload_id:
-            # First document referenced becomes primary
-            self.primary_upload_id = candidate_upload_id
-            return
-
-        # Compare candidate with current primary
-        candidate_meta = self.document_context.get(candidate_upload_id, {})
-        primary_meta = self.document_context.get(self.primary_upload_id, {})
-
-        # If we've explicitly read the primary document, don't override it based on
-        # noisy search-only references.
-        try:
-            if int(primary_meta.get("read_count", 0) or 0) > 0:
-                return
-        except (TypeError, ValueError):
-            pass
-
-        candidate_count = candidate_meta.get("search_count", 0)
-        primary_count = primary_meta.get("search_count", 0)
-
-        # Switch primary if candidate has significantly more references
-        if candidate_count > primary_count + 2:
-            self.primary_upload_id = candidate_upload_id
+        """Primary document selection is disabled."""
+        return
 
     def get_primary_document_title(self) -> str | None:
-        """Get the title of the primary document, if available."""
-        if not self.primary_upload_id:
-            return None
-        meta = self.document_context.get(self.primary_upload_id, {})
-        return meta.get("title") or None
+        """Document continuity is disabled; no primary document is exposed."""
+        return None
 
     def get_document_context_for_query(self) -> dict:
         """
@@ -729,8 +684,8 @@ class ToolExecutionContext:
         Returns a dict suitable for passing to ContextAwareQueryRewriter.
         """
         return {
-            "primary_upload_id": self.primary_upload_id,
-            "primary_document_title": self.get_primary_document_title(),
+            "primary_upload_id": None,
+            "primary_document_title": None,
             "referenced_upload_ids": list(self.referenced_upload_ids),
             "document_metadata": dict(self.document_context),
         }
@@ -747,7 +702,6 @@ class ToolExecutionContext:
             except (TypeError, ValueError):
                 return 0
 
-        primary_id = str(self.primary_upload_id) if self.primary_upload_id else None
         sorted_docs = sorted(
             self.document_context.items(),
             key=lambda item: (
@@ -757,10 +711,7 @@ class ToolExecutionContext:
             ),
             reverse=True,
         )
-        # Keep metadata bounded but ensure the primary doc is included when present.
         selected_ids: list[str] = []
-        if primary_id and primary_id in self.document_context:
-            selected_ids.append(primary_id)
         for upload_id, _ in sorted_docs:
             upload_id = str(upload_id)
             if upload_id in selected_ids:
@@ -780,7 +731,7 @@ class ToolExecutionContext:
         )[:20]
 
         return {
-            "primary_upload_id": self.primary_upload_id,
+            "primary_upload_id": None,
             "referenced_uploads": referenced_sorted,  # Keep top 20 by engagement
             "document_metadata": {
                 k: {
@@ -806,7 +757,7 @@ class ToolExecutionContext:
         if not persisted:
             return
 
-        self.primary_upload_id = persisted.get("primary_upload_id")
+        self.primary_upload_id = None
         self.referenced_upload_ids = set(persisted.get("referenced_uploads", []))
 
         doc_metadata = persisted.get("document_metadata", {})

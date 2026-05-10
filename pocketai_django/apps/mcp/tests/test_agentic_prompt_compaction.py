@@ -93,14 +93,6 @@ class AgenticPromptCompactionTests(SimpleTestCase):
                 "rag_received_context": True,
                 "boosted_candidates": 0,
             },
-            "enumeration": {
-                "triggered": True,
-                "attribute": "opening fees",
-                "matched_rows": 4,
-                "returned_items": 8,
-                "source_table_count": 3,
-                "completeness_status": "complete",
-            },
             "table_coverage": {
                 "tables_considered": 6,
                 "tables_returned": 3,
@@ -136,10 +128,7 @@ class AgenticPromptCompactionTests(SimpleTestCase):
             compact["retrieval_observability"]["query_scope"]["topic_scope"],
             "new_topic",
         )
-        self.assertEqual(
-            compact["retrieval_observability"]["enumeration"]["completeness_status"],
-            "complete",
-        )
+        self.assertNotIn("enumeration", compact["retrieval_observability"])
         assert summary is not None
         self.assertEqual(
             summary["retrieval_observability"]["table_coverage"]["tables_returned"],

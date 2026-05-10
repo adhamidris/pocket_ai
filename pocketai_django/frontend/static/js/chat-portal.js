@@ -2173,11 +2173,29 @@ class ChatPortalClient {
     }
   }
 
+  tableRowsReadyForRender(payload, { streaming = false } = {}) {
+    const columns = payload && typeof payload === "object" && Array.isArray(payload.columns) ? payload.columns : [];
+    const rows = payload && typeof payload === "object" && Array.isArray(payload.rows) ? payload.rows : [];
+    if (!streaming || !columns.length) return rows;
+
+    const readyRows = [];
+    for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+      const row = rows[rowIndex];
+      if (!row || typeof row !== "object") continue;
+
+      const cells = Array.isArray(row.cells) ? row.cells : [];
+      if (!cells.length) continue;
+      
+      readyRows.push(row);
+    }
+    return readyRows;
+  }
+
   updateStreamingTableBlock(wrapper, payload) {
     if (!wrapper || wrapper.nodeType !== Node.ELEMENT_NODE) return null;
     if (!payload || typeof payload !== "object") return wrapper;
     const columns = Array.isArray(payload.columns) ? payload.columns : [];
-    const rows = Array.isArray(payload.rows) ? payload.rows : [];
+    const rows = this.tableRowsReadyForRender(payload, { streaming: true });
     if (!columns.length) return wrapper;
 
     const existingTable = wrapper.querySelector("table");
@@ -2186,7 +2204,10 @@ class ChatPortalClient {
 
     // If the structure isn't what we expect, fall back to rebuilding.
     if (!existingTable || !existingBody || !existingHead) {
-      const replacement = this.buildContentBlockElement({ type: "table", block_id: wrapper.dataset.blockId || "", payload });
+      const replacement = this.buildContentBlockElement(
+        { type: "table", block_id: wrapper.dataset.blockId || "", payload },
+        { streaming: true },
+      );
       if (replacement && wrapper.parentNode) {
         wrapper.replaceWith(replacement);
         return replacement;
@@ -2197,7 +2218,10 @@ class ChatPortalClient {
     // If column count changed, rebuild to avoid drift.
     const headCells = existingHead.querySelectorAll("th");
     if (headCells.length !== columns.length) {
-      const replacement = this.buildContentBlockElement({ type: "table", block_id: wrapper.dataset.blockId || "", payload });
+      const replacement = this.buildContentBlockElement(
+        { type: "table", block_id: wrapper.dataset.blockId || "", payload },
+        { streaming: true },
+      );
       if (replacement && wrapper.parentNode) {
         wrapper.replaceWith(replacement);
         return replacement;
@@ -2220,7 +2244,7 @@ class ChatPortalClient {
       const row = rows[rowIndex];
       if (!row || typeof row !== "object") continue;
       const cells = Array.isArray(row.cells) ? row.cells : [];
-      if (!cells.length) continue;
+      
 
       let tr = existingRows[rowIndex] || null;
       if (!tr) {
@@ -8775,7 +8799,7 @@ class ChatPortalClient {
 
     if (type === "table") {
       const columns = Array.isArray(payload.columns) ? payload.columns : [];
-      const rows = Array.isArray(payload.rows) ? payload.rows : [];
+      const rows = this.tableRowsReadyForRender(payload, { streaming });
       if (!columns.length) return null;
 
       const wrapper = document.createElement("div");

@@ -4164,21 +4164,13 @@ class KnowledgeSearchService:
             "table_residual_rescue_count": 0,
             "table_residual_rescue_reason": None,
         }
-        continuity_allowed_for_rerank = bool(
-            session_context.get("document_continuity_allowed") if session_context else False
-        )
-        continuity_reason_for_rerank = (
-            str(session_context.get("document_continuity_reason") or "")
-            if session_context
-            else ""
-        )
+        continuity_allowed_for_rerank = False
+        continuity_reason_for_rerank = "document_continuity_removed"
         rerank_diag.update(
             {
                 "document_continuity_allowed": continuity_allowed_for_rerank,
                 "document_continuity_reason": continuity_reason_for_rerank or None,
-                "document_continuity_primary_present": bool(
-                    session_context and session_context.get("primary_upload_id")
-                ),
+                "document_continuity_primary_present": False,
                 "document_continuity_boosted_candidates": 0,
                 "document_continuity_max_bonus": 0.0,
             }
@@ -4338,33 +4330,10 @@ class KnowledgeSearchService:
                 if doc_label and document_name_tokens:
                     document_name_boost = self._lexical_score_text(doc_label, document_name_tokens)
 
-            # Document continuity bonus (Conversation-Aware RAG)
-            # Boost chunks from the same document only after the agentic scope
-            # decision confirms this is still the same document/topic.
+            # Document continuity boost has been removed. The previous document
+            # must not influence ranking unless the user/tool explicitly scopes
+            # the search elsewhere.
             document_continuity_bonus = 0.0
-            if session_context and continuity_allowed_for_rerank:
-                primary_upload_id = session_context.get("primary_upload_id")
-                if primary_upload_id:
-                    chunk_upload_id = str(cand.chunk.upload_id) if cand.chunk.upload_id else None
-                    if chunk_upload_id and chunk_upload_id == str(primary_upload_id):
-                        # Read weight from settings, default to 0.35
-                        try:
-                            document_continuity_bonus = float(
-                                getattr(settings, "RAG_WEIGHT_DOCUMENT_CONTINUITY", 0.35)
-                            )
-                        except (TypeError, ValueError):
-                            document_continuity_bonus = 0.35
-            if document_continuity_bonus > 0:
-                rerank_diag["document_continuity_boosted_candidates"] = (
-                    int(rerank_diag.get("document_continuity_boosted_candidates") or 0) + 1
-                )
-                try:
-                    rerank_diag["document_continuity_max_bonus"] = max(
-                        float(rerank_diag.get("document_continuity_max_bonus") or 0.0),
-                        float(document_continuity_bonus),
-                    )
-                except (TypeError, ValueError):
-                    rerank_diag["document_continuity_max_bonus"] = float(document_continuity_bonus)
 
             combined = (
                 self.rerank_weights["vector"] * vector_score
@@ -4374,7 +4343,7 @@ class KnowledgeSearchService:
                 + self.rerank_weights["recency"] * recency_score
                 + table_header_bonus
                 + self.rerank_weights["document_name"] * document_name_boost
-                + document_continuity_bonus  # NEW: Document continuity bonus
+                + document_continuity_bonus
                 + section_context_boost
                 + modality_bias_bonus
                 + text_phrase_boost
@@ -4394,7 +4363,7 @@ class KnowledgeSearchService:
                 "table_header_bonus": round(table_header_bonus, 4),
                 "document_name_boost": round(document_name_boost, 4),
                 "document_name_token_count": len(document_name_tokens),
-                "document_continuity_bonus": round(document_continuity_bonus, 4),  # NEW: Include in diagnostics
+                "document_continuity_bonus": round(document_continuity_bonus, 4),
                 "section_context_boost": round(section_context_boost, 4),
                 "modality_bias_bonus": round(modality_bias_bonus, 4),
                 "quality_penalty": round(quality_penalty, 4),  # NEW: Include in diagnostics

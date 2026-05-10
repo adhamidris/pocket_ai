@@ -96,10 +96,10 @@ class AgenticRagRegressionEvals(SimpleTestCase):
 
         self.assertFalse(result.context_injected)
         self.assertEqual(result.rewritten_query, "account opening fees")
-        self.assertEqual(result.rewrite_strategy, "topic_shift")
-        self.assertEqual(result.reason, "topic_shift")
+        self.assertEqual(result.rewrite_strategy, "disabled")
+        self.assertEqual(result.reason, "document_continuity_removed")
 
-    def test_document_continuity_boost_requires_confirmed_followup_scope(self) -> None:
+    def test_document_continuity_boost_is_removed_even_when_scope_is_passed(self) -> None:
         service = KnowledgeSearchService()
         traits = service.analyze_query("account opening fees")
         primary_upload_id = uuid.uuid4()
@@ -151,14 +151,15 @@ class AgenticRagRegressionEvals(SimpleTestCase):
                 "document_continuity_allowed": True,
             },
         )
-        self.assertEqual(ranked_with_scope[0].chunk.upload_id, primary_upload_id)
-        self.assertGreater(
+        self.assertEqual(ranked_with_scope[0].chunk.upload_id, other_upload_id)
+        self.assertEqual(
             (ranked_with_scope[0].diagnostics.get("score_breakdown") or {}).get("document_continuity_bonus"),
             0.0,
         )
-        self.assertTrue(diag_with_scope.get("document_continuity_allowed"))
-        self.assertEqual(diag_with_scope.get("document_continuity_boosted_candidates"), 1)
-        self.assertGreater(diag_with_scope.get("document_continuity_max_bonus"), 0.0)
+        self.assertFalse(diag_with_scope.get("document_continuity_allowed"))
+        self.assertEqual(diag_with_scope.get("document_continuity_reason"), "document_continuity_removed")
+        self.assertEqual(diag_with_scope.get("document_continuity_boosted_candidates"), 0)
+        self.assertEqual(diag_with_scope.get("document_continuity_max_bonus"), 0.0)
 
     def test_coverage_diversification_runs_before_final_clipping(self) -> None:
         service = KnowledgeSearchService()

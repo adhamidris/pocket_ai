@@ -211,7 +211,8 @@ class AgenticRagProductionAcceptanceGate(TestCase):
         session_context = captured.get("session_context") or {}
         self.assertFalse(session_context.get("document_continuity_allowed"))
         observability = result.get("retrieval_observability") or {}
-        self.assertEqual((observability.get("query_scope") or {}).get("topic_scope"), "new_topic")
+        self.assertEqual((observability.get("query_scope") or {}).get("topic_scope"), "not_evaluated")
+        self.assertEqual((observability.get("query_scope") or {}).get("reason"), "document_continuity_removed")
         self.assertFalse((observability.get("continuity") or {}).get("allowed"))
         refs = result.get("refs") or []
         self.assertTrue(any(str(ref.get("document_id")) == str(self.account_upload.id) for ref in refs))
@@ -236,7 +237,7 @@ class AgenticRagProductionAcceptanceGate(TestCase):
         self.assertEqual(payload.get("selection_mode"), "row_range")
         self.assertEqual(payload.get("upgraded_from_ref"), "table_row")
 
-    def test_enumeration_answers_use_structured_prefetched_evidence(self) -> None:
+    def test_search_does_not_backend_prefetch_enumeration_evidence(self) -> None:
         fake_service = SimpleNamespace(
             search=lambda **_kwargs: KnowledgeSearchResult(
                 snippets=tuple(),
@@ -253,19 +254,13 @@ class AgenticRagProductionAcceptanceGate(TestCase):
                 context=ToolExecutionContext(),
             )
 
-        self.assertEqual(result.get("status"), "ok")
-        self.assertEqual(result.get("prefetched_read_status"), "complete")
-        prefetched = result.get("prefetched_evidence") or []
-        self.assertTrue(prefetched)
-        payload = prefetched[0].get("payload") or {}
-        self.assertEqual(payload.get("type"), "table_enumeration")
-        self.assertEqual((payload.get("completeness") or {}).get("status"), "complete")
-        rendered = {" | ".join(str(cell or "") for cell in row) for row in payload.get("rows") or []}
-        self.assertTrue(any("prime" in row and "EGP 100" in row for row in rendered))
-        self.assertTrue(any("WellSavers Account" in row and "EGP 1000" in row for row in rendered))
-        self.assertFalse(any("Administrative Fees" in row for row in rendered))
+        self.assertIn(result.get("status"), {"empty", "not_found"})
+        self.assertNotIn("prefetched_evidence", result)
+        self.assertNotIn("prefetched_read_status", result)
+        completeness = result.get("completeness") or {}
+        self.assertNotIn("enumeration_evidence", completeness)
         observability = result.get("retrieval_observability") or {}
-        self.assertTrue((observability.get("enumeration") or {}).get("triggered"))
+        self.assertNotIn("enumeration", observability)
 
 
 class AgenticRagIngestionAcceptanceGate(SimpleTestCase):

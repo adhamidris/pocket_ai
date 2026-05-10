@@ -85,6 +85,86 @@ class KnowledgeIngestionChunkingTests(SimpleTestCase):
             KnowledgeIngestionService._has_numeric_table_signal("General policy overview and notes")
         )
 
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_table_row_evidence_groups_are_scoped_to_table_row_anchor(self, _build_embeddings) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        upload = SimpleNamespace(id=uuid.uuid4())
+        segment_payloads = [
+            {
+                "text": f"[Table] Fees – Table {table_id}\n[Row] 1\nCard Type: Issuance and Renewal Fees",
+                "metadata": {
+                    "index_type": "table",
+                    "is_table_chunk": True,
+                    "content_source": "table_row",
+                    "table_chunk_role": "row",
+                    "table_id": table_id,
+                    "table_row_index": 1,
+                    "row_label": "Issuance and Renewal Fees",
+                },
+            }
+            for table_id in ("table-1", "table-3", "table-4", "table-7")
+        ]
+
+        service._assign_evidence_group_metadata(upload=upload, segment_payloads=segment_payloads)
+
+        evidence_keys = [(payload["metadata"] or {}).get("evidence_key") for payload in segment_payloads]
+        evidence_group_ids = [(payload["metadata"] or {}).get("evidence_group_id") for payload in segment_payloads]
+
+        self.assertEqual(
+            evidence_keys,
+            [
+                "table_row:table-1:1",
+                "table_row:table-3:1",
+                "table_row:table-4:1",
+                "table_row:table-7:1",
+            ],
+        )
+        self.assertEqual(len(set(evidence_group_ids)), 4)
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_text_evidence_does_not_link_to_ambiguous_repeated_table_label(self, _build_embeddings) -> None:
+        service = KnowledgeIngestionService(enable_ocr=False)
+        upload = SimpleNamespace(id=uuid.uuid4())
+        segment_payloads = [
+            {
+                "text": "[Table] Fees – Table 1\n[Row] 1\nCard Type: Issuance and Renewal Fees",
+                "metadata": {
+                    "index_type": "table",
+                    "is_table_chunk": True,
+                    "content_source": "table_row",
+                    "table_chunk_role": "row",
+                    "table_id": "table-1",
+                    "table_row_index": 1,
+                    "row_label": "Issuance and Renewal Fees",
+                },
+            },
+            {
+                "text": "[Table] Fees – Table 3\n[Row] 1\nCard Type: Issuance and Renewal Fees",
+                "metadata": {
+                    "index_type": "table",
+                    "is_table_chunk": True,
+                    "content_source": "table_row",
+                    "table_chunk_role": "row",
+                    "table_id": "table-3",
+                    "table_row_index": 1,
+                    "row_label": "Issuance and Renewal Fees",
+                },
+            },
+            {
+                "text": "Issuance and Renewal Fees",
+                "metadata": {
+                    "index_type": "text",
+                    "content_source": "page_blocks",
+                },
+            },
+        ]
+
+        service._assign_evidence_group_metadata(upload=upload, segment_payloads=segment_payloads)
+
+        text_metadata = segment_payloads[-1]["metadata"]
+        self.assertNotIn("evidence_linked_label", text_metadata)
+        self.assertTrue(str(text_metadata.get("evidence_key") or "").startswith("text:"))
+
     def test_table_row_chunks_emit_applies_to_contract(self) -> None:
         class _Manager:
             def __init__(self, items):

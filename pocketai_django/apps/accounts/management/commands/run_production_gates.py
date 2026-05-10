@@ -14,7 +14,6 @@ RAG_CONTRACT_TEST_LABELS = (
     "apps.rag.tests.test_agentic_rag_acceptance_gate",
     "apps.rag.tests.test_agentic_rag_regression_evals",
     "apps.mcp.tests.test_agentic_read_regression_evals",
-    "apps.mcp.tests.test_agentic_enumeration_evidence",
     "apps.knowledge.tests.test_table_semantic_regression_evals",
     "apps.mcp.tests.test_agentic_prompt_compaction",
     "apps.mcp.tests.test_search_contract",

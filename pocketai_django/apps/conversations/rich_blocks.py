@@ -606,7 +606,12 @@ def _split_markdown_table_cells(line: str) -> list[str]:
     return cells[:TABLE_CELL_LIMIT]
 
 
-def _parse_partial_markdown_table_row(line: str, *, expected_columns: int | None = None) -> list[str] | None:
+def _parse_partial_markdown_table_row(
+    line: str,
+    *,
+    expected_columns: int | None = None,
+    pad_to_expected: bool = False,
+) -> list[str] | None:
     raw = (line or "").rstrip("\r")
     stripped = raw.strip()
     if not stripped:
@@ -621,7 +626,7 @@ def _parse_partial_markdown_table_row(line: str, *, expected_columns: int | None
     if not cells:
         return None
     if expected_columns is not None:
-        if len(cells) < expected_columns:
+        if pad_to_expected and len(cells) < expected_columns:
             cells = cells + [""] * (expected_columns - len(cells))
         elif len(cells) > expected_columns:
             cells = cells[:expected_columns]
@@ -895,7 +900,11 @@ class RichBlockStreamBuilder:
         column_count = len(columns) if isinstance(columns, list) else 0
         if column_count <= 1:
             return []
-        partial_cells = _parse_partial_markdown_table_row(line, expected_columns=column_count)
+        partial_cells = _parse_partial_markdown_table_row(
+            line,
+            expected_columns=column_count,
+            pad_to_expected=finalize,
+        )
         if not partial_cells:
             if finalize:
                 self.active_table_partial_row_index = None

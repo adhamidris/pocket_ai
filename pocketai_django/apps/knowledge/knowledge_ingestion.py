@@ -13200,12 +13200,14 @@ class KnowledgeIngestionService:
         table_role = str(metadata.get("table_chunk_role") or "").strip().lower()
 
         if representation == "table":
-            row_label = self._normalize_evidence_phrase(str(metadata.get("row_label") or ""))
-            if row_label:
-                return f"table_row_label:{row_label}"
             row_index = metadata.get("table_row_index")
             if table_id and row_index is not None:
                 return f"table_row:{table_id}:{row_index}"
+            row_label = self._normalize_evidence_phrase(str(metadata.get("row_label") or ""))
+            if table_id and row_label:
+                return f"table_row_label:{table_id}:{row_label}"
+            if row_label:
+                return f"table_row_label:{row_label}"
             if table_id and table_role:
                 return f"table:{table_id}:{table_role}"
             if table_id:
@@ -13245,7 +13247,7 @@ class KnowledgeIngestionService:
         if not segment_payloads:
             return
 
-        table_label_groups: dict[str, str] = {}
+        table_label_groups: dict[str, set[str]] = {}
         prepared: list[tuple[dict[str, Any], dict[str, Any], str, str, str]] = []
 
         for payload in segment_payloads:
@@ -13272,12 +13274,17 @@ class KnowledgeIngestionService:
             metadata["evidence_key"] = evidence_key
             row_label = self._normalize_evidence_phrase(str(metadata.get("row_label") or ""))
             if row_label:
-                table_label_groups.setdefault(row_label, evidence_group_id)
+                table_label_groups.setdefault(row_label, set()).add(evidence_group_id)
 
         if not prepared:
             return
 
-        sorted_table_labels = sorted(table_label_groups.keys(), key=len, reverse=True)
+        unambiguous_table_label_groups = {
+            label: next(iter(group_ids))
+            for label, group_ids in table_label_groups.items()
+            if len(group_ids) == 1
+        }
+        sorted_table_labels = sorted(unambiguous_table_label_groups.keys(), key=len, reverse=True)
 
         for _, metadata, representation, evidence_key, payload_text in prepared:
             if representation == "table":
@@ -13300,8 +13307,10 @@ class KnowledgeIngestionService:
                         for label in sorted_table_labels:
                             if len(label) < 6:
                                 continue
+                            if label not in unambiguous_table_label_groups:
+                                continue
                             if f" {label} " in haystack:
-                                linked_group_id = table_label_groups[label]
+                                linked_group_id = unambiguous_table_label_groups[label]
                                 metadata["evidence_linked_label"] = label
                                 evidence_key = f"linked_table_label:{label}"
                                 break

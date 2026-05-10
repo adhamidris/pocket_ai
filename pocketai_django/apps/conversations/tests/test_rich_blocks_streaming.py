@@ -161,6 +161,7 @@ class RichBlockStreamingTests(SimpleTestCase):
             ["block_delta"],
         )
         first_ops = first_partial[0]["payload"]["ops"]
+        self.assertEqual(len(first_ops), 1)
         self.assertEqual(first_ops[0]["op"], "set_table_cell_text")
         self.assertEqual(first_ops[0]["row_index"], 0)
         self.assertEqual(first_ops[0]["cell_index"], 0)
@@ -172,6 +173,7 @@ class RichBlockStreamingTests(SimpleTestCase):
             ["block_delta"],
         )
         second_ops = second_partial[0]["payload"]["ops"]
+        self.assertEqual(len(second_ops), 1)
         self.assertEqual(second_ops[0]["op"], "set_table_cell_text")
         self.assertEqual(second_ops[0]["row_index"], 0)
         self.assertEqual(second_ops[0]["cell_index"], 1)
@@ -181,6 +183,14 @@ class RichBlockStreamingTests(SimpleTestCase):
         self.assertEqual(
             [str(event.get("type") or "").strip().lower() for event in final_partial],
             ["block_delta"],
+        )
+        final_ops = final_partial[0]["payload"]["ops"]
+        self.assertEqual(
+            final_ops,
+            [
+                {"op": "set_table_cell_text", "row_index": 0, "cell_index": 1, "text": "EGP 20 per paper"},
+                {"op": "set_table_cell_text", "row_index": 0, "cell_index": 2, "text": "Max EGP 1,000"},
+            ],
         )
 
         blocks = builder.snapshot()

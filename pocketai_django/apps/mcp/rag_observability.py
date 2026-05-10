@@ -75,7 +75,9 @@ def build_query_scope_observability(
     if not rewrite_enabled:
         decision = "disabled"
         topic_scope = "not_evaluated"
-        reason = reason or "rewrite_disabled"
+        reason = "document_continuity_removed"
+        primary_upload_id = ""
+        referenced_ids = []
     elif rewrite_error:
         decision = "error"
         topic_scope = "not_evaluated"
@@ -162,11 +164,7 @@ def _completeness_status(
     *,
     status: str,
     completeness: Mapping[str, object],
-    enumeration_diag: Mapping[str, object],
 ) -> str:
-    enum_status = _string(enumeration_diag.get("completeness_status"))
-    if enum_status:
-        return enum_status
     if status == "not_found":
         return "not_found"
     if bool(completeness.get("has_more")):
@@ -214,18 +212,6 @@ def compact_retrieval_observability(value: object) -> dict[str, object]:
             "boosted_candidates",
             "max_bonus",
         ),
-        "enumeration": (
-            "triggered",
-            "reason",
-            "attribute",
-            "candidate_rows",
-            "matched_rows",
-            "expanded_rows",
-            "returned_items",
-            "source_table_count",
-            "completeness_status",
-            "error",
-        ),
         "table_coverage": (
             "tables_considered",
             "tables_returned",
@@ -244,7 +230,6 @@ def compact_retrieval_observability(value: object) -> dict[str, object]:
             "refs_total_found",
             "has_more",
             "paging_mode",
-            "enumeration_status",
         ),
     }
     compact: dict[str, object] = {}
@@ -266,19 +251,16 @@ def build_retrieval_observability(
     completeness: Mapping[str, object] | None,
     refs: object,
     snippets: object,
-    enumeration_diag: Mapping[str, object] | None,
     status: str,
 ) -> dict[str, object]:
     diag = diagnostics or {}
     completion = completeness or {}
-    enum_diag = enumeration_diag or {"triggered": False}
     query_scope_payload = dict(query_scope or {})
     search_status = _string(status) or "unknown"
 
     tables_considered = _first_int(
         diag.get("coverage_diversification_table_buckets"),
         diag.get("tabular_table_count"),
-        enum_diag.get("source_table_count"),
     )
     table_coverage = {
         "tables_considered": tables_considered,
@@ -305,7 +287,6 @@ def build_retrieval_observability(
         "status": _completeness_status(
             status=search_status,
             completeness=completion,
-            enumeration_diag=enum_diag,
         ),
         "search_status": search_status,
         "shown": _first_int(completion.get("shown")),
@@ -314,29 +295,11 @@ def build_retrieval_observability(
         "refs_total_found": _first_int(completion.get("refs_total_found")),
         "has_more": bool(completion.get("has_more")),
         "paging_mode": completion.get("paging_mode"),
-        "enumeration_status": enum_diag.get("completeness_status"),
-    }
-    enumeration = {
-        key: enum_diag.get(key)
-        for key in (
-            "triggered",
-            "reason",
-            "attribute",
-            "candidate_rows",
-            "matched_rows",
-            "expanded_rows",
-            "returned_items",
-            "source_table_count",
-            "completeness_status",
-            "error",
-        )
-        if key in enum_diag
     }
     return compact_retrieval_observability(
         {
             "query_scope": query_scope_payload,
             "continuity": continuity,
-            "enumeration": enumeration,
             "table_coverage": table_coverage,
             "evidence_completeness": evidence_completeness,
         }

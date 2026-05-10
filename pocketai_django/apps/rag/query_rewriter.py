@@ -179,20 +179,11 @@ class RewriteResult:
 
 class ContextAwareQueryRewriter:
     """
-    Rewrites queries using conversation context.
+    Historical query rewriter kept for compatibility with older imports.
 
-    This class implements follow-up query detection and context injection
-    to improve retrieval accuracy in multi-turn conversations.
-
-    Example:
-        Turn 1: "What are the fees in Trade Bills EN?"
-        Turn 2: "What about withdrawal fees?" (follow-up)
-
-        Without rewriting: "What about withdrawal fees?"
-            -> Matches many documents with "withdrawal" and "fees"
-
-        With rewriting: "Trade Bills EN: What about withdrawal fees?"
-            -> Strongly prefers Trade Bills document
+    Document-title query injection is intentionally disabled. Search queries
+    must stay exactly as the agent/user supplied them unless an explicit tool
+    scope is provided elsewhere.
     """
 
     # Patterns that indicate a follow-up query
@@ -248,56 +239,23 @@ class ContextAwareQueryRewriter:
 
     def rewrite(self, query: str, context: RewriteContext) -> RewriteResult:
         """
-        Rewrite a query with conversation context if appropriate.
+        Return the original query unchanged.
 
         Args:
             query: The user's query string
             context: Conversation context for rewriting
 
         Returns:
-            RewriteResult with original and (possibly) rewritten query
+            RewriteResult with no context injection.
         """
         query = (query or "").strip()
-
-        # Short-circuit if disabled or no context
-        if not self.enabled:
-            return RewriteResult(query, query, False, "disabled")
-
-        if not context.primary_document_title:
-            return RewriteResult(query, query, False, "no_context")
-
-        if len(query) < self.MIN_QUERY_LENGTH:
-            return RewriteResult(query, query, False, "query_too_short")
-
-        # Check if query already mentions the primary document
-        if self._query_mentions_document(query, context):
-            return RewriteResult(query, query, False, "already_contextual")
-
-        # Detect follow-up patterns
-        is_followup, confidence, reason = self._detect_followup(query, context)
-
-        if not is_followup or confidence < self.min_confidence:
-            strategy = "topic_shift" if reason == "topic_shift" else "not_followup"
-            return RewriteResult(query, query, False, strategy, confidence, reason)
-
-        # Apply context injection
-        rewritten = self._inject_context(query, context)
-
-        logger.debug(
-            "Query rewritten: '%s' -> '%s' (strategy=%s, confidence=%.2f)",
-            query,
-            rewritten,
-            "prefix" if self.prefix_mode else "suffix",
-            confidence,
-        )
-
         return RewriteResult(
             original_query=query,
-            rewritten_query=rewritten,
-            context_injected=True,
-            rewrite_strategy="prefix" if self.prefix_mode else "suffix",
-            confidence=confidence,
-            reason=reason or "followup",
+            rewritten_query=query,
+            context_injected=False,
+            rewrite_strategy="disabled",
+            confidence=0.0,
+            reason="document_continuity_removed",
         )
 
     def _detect_followup(
@@ -528,9 +486,10 @@ def get_query_rewriter() -> ContextAwareQueryRewriter:
     Returns:
         Configured ContextAwareQueryRewriter instance
     """
-    enabled = str(
-        getattr(settings, "RAG_CONTEXT_QUERY_REWRITE_ENABLED", "true")
-    ).lower() in {"1", "true", "yes"}
+    # Document-title query rewriting has been removed from the active product
+    # contract. The settings are intentionally ignored so old environment values
+    # cannot re-enable implicit file lock-in.
+    enabled = False
 
     try:
         min_confidence = float(

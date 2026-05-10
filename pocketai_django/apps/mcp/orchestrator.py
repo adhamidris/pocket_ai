@@ -63,7 +63,6 @@ from apps.rag.ai_orchestrator import (
     ActionType,
     StreamingTurnContext,
 )
-from apps.rag.query_classifier import QueryClassifier, QueryClassification, QueryIntent
 from apps.rag.rag_logging import structured_log
 from apps.conversations.response_blocks import normalize_response_blocks
 from apps.conversations.rich_blocks import coerce_block_event
@@ -386,7 +385,6 @@ class McpOrchestratorService:
         feature_state = FeatureFlagService.snapshot(conversation.business_profile)
         new_contract_enabled = bool(getattr(settings, "MCP_NEW_CONTRACT_ENABLED", True))
         rag_agentic_enabled = bool(getattr(feature_state, "rag_agentic_mode", False)) and new_contract_enabled
-        query_classification = self._classify_query_intent(user_message)
 
         disable_tools_for_turn = self._is_low_intent_message(user_message)
 
@@ -534,18 +532,6 @@ class McpOrchestratorService:
             self.tool_definitions = tuple([*internal_tool_defs, *remote_tool_defs])
         else:
             self.tool_definitions = tuple(internal_tool_defs)
-        auto_structure_enabled = self._auto_structure_enabled_for_business(conversation.business_profile)
-        if rag_agentic_enabled:
-            auto_structure_enabled = False
-        auto_structure_intent = auto_structure_enabled and query_classification.requires_full_coverage()
-        auto_structure_doc_limit = self._auto_structure_doc_limit(conversation.business_profile)
-        auto_structure_docs: set[str] = set()
-        auto_fetch_enabled = self._auto_fetch_enabled_for_business(conversation.business_profile)
-        if rag_agentic_enabled:
-            auto_fetch_enabled = False
-        auto_fetch_max_rows = self._auto_fetch_max_rows(conversation.business_profile)
-        auto_fetch_max_tables = self._auto_fetch_max_tables(conversation.business_profile)
-        auto_fetch_attributes = tuple(query_classification.attributes or ())
 
         if not self.provider:
             raise RuntimeError("MCP provider is not configured.")
@@ -5087,13 +5073,10 @@ class McpOrchestratorService:
         return normalized
 
     def _hydrate_seen_items(self, conversation: Conversation, context: ToolExecutionContext) -> None:
-        """Load previously-shown chunk/row IDs and document context from conversation metadata.
+        """Load previously-shown chunk/row IDs from conversation metadata.
 
         This enables "are there more?" follow-up queries by tracking what has already
         been shown to the user, allowing the system to return NEW items on subsequent queries.
-
-        Also hydrates document context for conversation-aware RAG (query rewriting,
-        document affinity routing, ranking bonuses).
         """
         metadata = conversation.metadata if isinstance(conversation.metadata, Mapping) else {}
 
@@ -5108,11 +5091,6 @@ class McpOrchestratorService:
             if isinstance(row_ids, list):
                 context.seen_row_ids = {str(rid) for rid in row_ids if rid}
 
-        # Hydrate document context (NEW: Conversation-Aware RAG)
-        doc_context_data = metadata.get("mcp_document_context")
-        if isinstance(doc_context_data, Mapping):
-            context.hydrate_document_context(doc_context_data)
-
         # Hydrate recent search refs (cross-turn read continuity)
         recent_refs_data = metadata.get("mcp_recent_search_refs")
         if isinstance(recent_refs_data, (Mapping, list)):
@@ -5121,7 +5099,6 @@ class McpOrchestratorService:
         if (
             context.seen_chunk_ids
             or context.seen_row_ids
-            or context.primary_upload_id
             or context.recent_search_refs
         ):
             structured_log(
@@ -5130,8 +5107,6 @@ class McpOrchestratorService:
                 {
                     "seen_chunks": len(context.seen_chunk_ids),
                     "seen_rows": len(context.seen_row_ids),
-                    "primary_upload_id": context.primary_upload_id,
-                    "referenced_docs": len(context.referenced_upload_ids),
                     "recent_search_refs": len(context.recent_search_refs),
                 },
                 indent=1,
@@ -5143,12 +5118,10 @@ class McpOrchestratorService:
             )
 
     def _persist_seen_items(self, conversation: Conversation, context: ToolExecutionContext) -> None:
-        """Save newly-shown chunk/row IDs and document context to conversation metadata.
+        """Save newly-shown chunk/row IDs to conversation metadata.
 
         Combines items from previous turns with items shown this turn, capped
         to prevent unbounded growth.
-
-        Also persists document context for conversation-aware RAG.
         """
         MAX_SEEN_ITEMS = 200  # Cap to prevent metadata bloat
 
@@ -5156,9 +5129,8 @@ class McpOrchestratorService:
         new_chunk_ids = all_shown.get("chunk_ids", set())
         new_row_ids = all_shown.get("row_ids", set())
 
-        # Check if we have anything to persist (seen items OR document context)
         has_seen_items = context.newly_shown_chunk_ids or context.newly_shown_row_ids
-        has_document_context = context.primary_upload_id or context.referenced_upload_ids
+        has_document_context = False
         has_recent_search_refs = bool(context.recent_search_refs_updated)
 
         if not has_seen_items and not has_document_context and not has_recent_search_refs:
@@ -5179,11 +5151,7 @@ class McpOrchestratorService:
                 "updated_at": timezone.now().isoformat(),
             }
 
-        # Persist document context (NEW: Conversation-Aware RAG)
-        if has_document_context:
-            doc_context = context.get_document_context_for_persistence()
-            doc_context["updated_at"] = timezone.now().isoformat()
-            new_metadata["mcp_document_context"] = doc_context
+        new_metadata.pop("mcp_document_context", None)
 
         # Persist cross-turn recent refs used by read_knowledge follow-ups.
         if has_recent_search_refs:
@@ -5205,8 +5173,6 @@ class McpOrchestratorService:
                 "newly_shown_rows": len(context.newly_shown_row_ids),
                 "total_chunks": len(list(new_chunk_ids)[-MAX_SEEN_ITEMS:]) if has_seen_items else 0,
                 "total_rows": len(list(new_row_ids)[-MAX_SEEN_ITEMS:]) if has_seen_items else 0,
-                "primary_upload_id": context.primary_upload_id,
-                "referenced_docs": len(context.referenced_upload_ids),
                 "recent_search_refs": len(context.recent_search_refs) if has_recent_search_refs else 0,
             },
             indent=1,
@@ -5709,130 +5675,6 @@ class McpOrchestratorService:
         except (TypeError, ValueError):
             limit = default
         return max(1000, limit)
-
-    @staticmethod
-    def _classify_query_intent(user_message: str) -> QueryClassification:
-        classifier = QueryClassifier()
-        try:
-            return classifier.classify(user_message or "")
-        except Exception as exc:
-            logger.warning("query_classifier.failed error=%s", str(exc)[:200])
-            return QueryClassification(
-                intent=QueryIntent.EXPLORATORY,
-                confidence=0.0,
-                reasoning="classifier_failed",
-            )
-
-    def _auto_structure_enabled_for_business(self, business_profile) -> bool:
-        enabled = bool(getattr(settings, "MCP_ENUMERATION_AUTO_STRUCTURE_ENABLED", True))
-        override = self._business_override(
-            business_profile,
-            "mcp_enumeration_auto_structure_enabled",
-            1 if enabled else 0,
-        )
-        try:
-            return bool(int(override))
-        except (TypeError, ValueError):
-            return enabled
-
-    def _auto_structure_doc_limit(self, business_profile) -> int:
-        default = int(getattr(settings, "MCP_ENUMERATION_MAX_DOCUMENTS", 3) or 3)
-        override = self._business_override(business_profile, "mcp_enumeration_max_documents", default)
-        try:
-            limit = int(override)
-        except (TypeError, ValueError):
-            limit = default
-        return max(1, min(25, limit))
-
-    def _auto_fetch_enabled_for_business(self, business_profile) -> bool:
-        enabled = bool(getattr(settings, "MCP_ENUMERATION_AUTO_FETCH_ENABLED", True))
-        override = self._business_override(
-            business_profile,
-            "mcp_enumeration_auto_fetch_enabled",
-            1 if enabled else 0,
-        )
-        try:
-            return bool(int(override))
-        except (TypeError, ValueError):
-            return enabled
-
-    def _auto_fetch_max_rows(self, business_profile) -> int:
-        default = int(getattr(settings, "MCP_ENUMERATION_AUTO_FETCH_MAX_ROWS", 200) or 200)
-        override = self._business_override(business_profile, "mcp_enumeration_auto_fetch_max_rows", default)
-        try:
-            limit = int(override)
-        except (TypeError, ValueError):
-            limit = default
-        return max(1, min(200, limit))
-
-    def _auto_fetch_max_tables(self, business_profile) -> int:
-        default = int(getattr(settings, "MCP_ENUMERATION_AUTO_FETCH_MAX_TABLES", 3) or 3)
-        override = self._business_override(business_profile, "mcp_enumeration_auto_fetch_max_tables", default)
-        try:
-            limit = int(override)
-        except (TypeError, ValueError):
-            limit = default
-        return max(1, min(20, limit))
-
-    @staticmethod
-    def _normalize_attribute_token(value: str) -> str:
-        token = value.strip().lower()
-        if token.endswith("s") and len(token) > 3:
-            token = token[:-1]
-        return token
-
-    @staticmethod
-    def _normalize_column_label(value: str) -> str:
-        if not value:
-            return ""
-        try:
-            return str(mcp_tools._normalize_column_name(value) or "")
-        except Exception:
-            normalized = re.sub(r"[^a-z0-9]+", " ", str(value).lower())
-            return normalized.strip()
-
-    @classmethod
-    def _numeric_attribute_tokens(cls, attributes: Sequence[str]) -> set[str]:
-        numeric_tokens = {
-            "fee",
-            "fees",
-            "charge",
-            "charges",
-            "cost",
-            "costs",
-            "price",
-            "prices",
-            "rate",
-            "rates",
-            "interest",
-            "percentage",
-            "percent",
-            "limit",
-            "limits",
-            "annual",
-            "monthly",
-            "issuance",
-            "renewal",
-            "late",
-            "penalty",
-            "apr",
-        }
-        normalized = {cls._normalize_attribute_token(attr) for attr in attributes if isinstance(attr, str)}
-        return {token for token in normalized if token in numeric_tokens}
-
-    @classmethod
-    def _match_attribute_columns(cls, columns: Sequence[str], attribute_tokens: Sequence[str]) -> list[str]:
-        if not columns or not attribute_tokens:
-            return []
-        matched: list[str] = []
-        token_set = set(attribute_tokens)
-        for column in columns:
-            normalized = cls._normalize_column_label(column)
-            if not normalized:
-                continue
-            if any(token in normalized for token in token_set):
-                matched.append(column)
-        return matched
 
     @staticmethod
     def _estimate_request_tokens(
@@ -6677,111 +6519,6 @@ class McpOrchestratorService:
             return compact
 
         if normalized_name == "search_knowledge":
-            def _compact_prefetched_evidence(value: object, *, limit: int) -> list[dict[str, object]]:
-                if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
-                    return []
-                out: list[dict[str, object]] = []
-                for item in value[: max(1, int(limit))]:
-                    if not isinstance(item, Mapping):
-                        continue
-                    entry: dict[str, object] = {}
-                    for key in ("id", "document_id", "title", "type", "kind", "chars", "rows_shown", "total_rows"):
-                        if key not in item:
-                            continue
-                        raw = item.get(key)
-                        if raw is None:
-                            continue
-                        if isinstance(raw, str):
-                            text = raw.strip()
-                            if not text:
-                                continue
-                            entry[key] = self._clip_text(text, 180 if key == "title" else 120)
-                        else:
-                            entry[key] = raw
-                    truncated = item.get("truncated")
-                    if isinstance(truncated, bool):
-                        entry["truncated"] = truncated
-                    complete = item.get("complete")
-                    if isinstance(complete, bool):
-                        entry["complete"] = complete
-                    next_cursor = str(item.get("next_cursor") or "").strip()
-                    if next_cursor:
-                        entry["next_cursor"] = self._clip_text(next_cursor, 120)
-                    text = str(item.get("text") or "").strip()
-                    if text:
-                        entry["text"] = self._clip_text(text, 520)
-                    payload_value = item.get("payload")
-                    if isinstance(payload_value, Mapping):
-                        payload_out: dict[str, object] = {}
-                        for key in ("type", "attribute", "row_count"):
-                            raw_payload_value = payload_value.get(key)
-                            if raw_payload_value is None:
-                                continue
-                            if isinstance(raw_payload_value, str):
-                                if not raw_payload_value.strip():
-                                    continue
-                                payload_out[key] = self._clip_text(raw_payload_value.strip(), 160)
-                            else:
-                                payload_out[key] = raw_payload_value
-                        columns = payload_value.get("columns")
-                        if isinstance(columns, Sequence) and not isinstance(columns, (str, bytes, bytearray)):
-                            payload_out["columns"] = [
-                                self._clip_text(str(column), 80)
-                                for column in list(columns)[:12]
-                            ]
-                        rows = payload_value.get("rows")
-                        if isinstance(rows, Sequence) and not isinstance(rows, (str, bytes, bytearray)):
-                            compact_rows: list[list[str]] = []
-                            for row in list(rows)[: max(1, min(80, int(max_rows)))]:
-                                if not isinstance(row, Sequence) or isinstance(row, (str, bytes, bytearray)):
-                                    continue
-                                compact_rows.append(
-                                    [self._clip_text(str(cell or ""), 140) for cell in list(row)[:12]]
-                                )
-                            if compact_rows:
-                                payload_out["rows"] = compact_rows
-                        source_tables = payload_value.get("source_tables")
-                        if isinstance(source_tables, Sequence) and not isinstance(source_tables, (str, bytes, bytearray)):
-                            compact_sources: list[dict[str, object]] = []
-                            for source in list(source_tables)[:20]:
-                                if not isinstance(source, Mapping):
-                                    continue
-                                source_out: dict[str, object] = {}
-                                for key in ("document", "table", "matched_rows", "returned_items"):
-                                    raw_source_value = source.get(key)
-                                    if raw_source_value is None:
-                                        continue
-                                    if isinstance(raw_source_value, str):
-                                        source_out[key] = self._clip_text(raw_source_value, 120)
-                                    else:
-                                        source_out[key] = raw_source_value
-                                if source_out:
-                                    compact_sources.append(source_out)
-                            if compact_sources:
-                                payload_out["source_tables"] = compact_sources
-                        payload_completeness = payload_value.get("completeness")
-                        if isinstance(payload_completeness, Mapping):
-                            completeness_out = {}
-                            for key in (
-                                "status",
-                                "complete",
-                                "matched_rows",
-                                "expanded_rows",
-                                "returned_items",
-                                "source_table_count",
-                                "truncated_items",
-                            ):
-                                raw_completeness_value = payload_completeness.get(key)
-                                if raw_completeness_value is not None:
-                                    completeness_out[key] = raw_completeness_value
-                            if completeness_out:
-                                payload_out["completeness"] = completeness_out
-                        if payload_out:
-                            entry["payload"] = payload_out
-                    if entry:
-                        out.append(entry)
-                return out
-
             raw_diagnostics = payload.get("diagnostics")
             compact_diagnostics: dict[str, object] = {}
             if isinstance(raw_diagnostics, Mapping):
@@ -6805,15 +6542,6 @@ class McpOrchestratorService:
 
             if compact_diagnostics:
                 compact["diagnostics"] = compact_diagnostics
-            prefetched_evidence = _compact_prefetched_evidence(
-                payload.get("prefetched_evidence"),
-                limit=4,
-            )
-            if prefetched_evidence:
-                compact["prefetched_evidence"] = prefetched_evidence
-            prefetched_read_status = str(payload.get("prefetched_read_status") or "").strip().lower()
-            if prefetched_read_status:
-                compact["prefetched_read_status"] = prefetched_read_status
 
             # Preserve control-plane fields so the LLM can plan coverage and paginate.
             # NOTE: Without these, broad queries degrade because the model can't see there
