@@ -1850,6 +1850,20 @@ class ChatPortalClient {
 
       // Non-text ops: pass through immediately.
       emitOps.push({ ...op });
+      
+      if (kind === "append_table_row") {
+        consumedChars += 1;
+        remainingBudget -= 1;
+      } else if (kind === "set_table_cell_text") {
+        const textLen = typeof op.text === "string" ? op.text.length : 1;
+        consumedChars += textLen || 1;
+        remainingBudget -= (textLen || 1);
+      } else {
+        // Generic fallback cost for unknown ops
+        consumedChars += 1;
+        remainingBudget -= 1;
+      }
+
       if (remainingBudget <= 0) {
         for (let j = idx + 1; j < ops.length; j += 1) remainingOps.push(ops[j]);
         break;
