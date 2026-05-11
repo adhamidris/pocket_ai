@@ -3859,14 +3859,19 @@ class McpOrchestratorService:
                                 entry[key] = int(item.get(key) or 0)
                             except (TypeError, ValueError):
                                 pass
-                    hint = item.get("read_hint")
-                    if isinstance(hint, Mapping):
-                        try:
-                            suggested = int(hint.get("suggested_max_chars") or 0)
-                        except (TypeError, ValueError):
-                            suggested = 0
-                        if suggested:
-                            entry["suggested_max_chars"] = suggested
+                    try:
+                        suggested = int(item.get("read_chars") or 0)
+                    except (TypeError, ValueError):
+                        suggested = 0
+                    if not suggested:
+                        hint = item.get("read_hint")
+                        if isinstance(hint, Mapping):
+                            try:
+                                suggested = int(hint.get("suggested_max_chars") or 0)
+                            except (TypeError, ValueError):
+                                suggested = 0
+                    if suggested:
+                        entry["read_chars"] = suggested
                     why = item.get("why")
                     if isinstance(why, list) and why:
                         why_out = [self._clip_text(str(token), 80) for token in why[:2] if str(token).strip()]
@@ -3881,7 +3886,11 @@ class McpOrchestratorService:
                         preview_list.append(entry)
                 if preview_list:
                     out["results_preview"] = preview_list
+            pagination = tool_result.get("pagination")
+            pagination_map = pagination if isinstance(pagination, Mapping) else {}
             total_found = tool_result.get("total_found")
+            if total_found is None:
+                total_found = pagination_map.get("total")
             if isinstance(total_found, (int, float)) or (isinstance(total_found, str) and total_found.strip().isdigit()):
                 try:
                     out["total_found"] = int(total_found)
@@ -3947,9 +3956,12 @@ class McpOrchestratorService:
                 if completeness_out:
                     out["completeness"] = completeness_out
             has_more = tool_result.get("has_more")
+            if has_more is None:
+                has_more = pagination_map.get("has_more")
             if isinstance(has_more, bool):
                 out["has_more"] = has_more
-            next_cursor_fp = _cursor_fingerprint(tool_result.get("next_cursor"))
+            next_cursor_value = tool_result.get("next_cursor") or pagination_map.get("next_cursor")
+            next_cursor_fp = _cursor_fingerprint(next_cursor_value)
             if next_cursor_fp:
                 out["next_cursor"] = next_cursor_fp
 
@@ -5240,9 +5252,9 @@ class McpOrchestratorService:
             replacement_id = str(recent_refs[0].get("id") or "").strip()
         else:
             document_ids = {
-                str(ref.get("document_id") or "").strip()
+                str(ref.get("document_id") or ref.get("document") or "").strip()
                 for ref in recent_refs
-                if str(ref.get("document_id") or "").strip()
+                if str(ref.get("document_id") or ref.get("document") or "").strip()
             }
             if len(document_ids) == 1:
                 replacement_id = str(recent_refs[0].get("id") or "").strip()
@@ -6122,13 +6134,13 @@ class McpOrchestratorService:
         Compact tool results before they are injected into the LLM prompt.
 
         - Knowledge tools can return very large payloads (full page reads, table previews).
-          Use the legacy structured compactor to preserve IDs + evidence while keeping
+          Use the knowledge-tool compactor to preserve IDs + evidence while keeping
           messages within the prompt tool-output budget.
         - Other tools are passed through as-is, with a safety truncation for extreme cases.
         """
         normalized_name = (tool_name or payload.get("tool") or "").strip()
         if normalized_name and self._is_knowledge_tool(normalized_name):
-            return self._legacy_compact_tool_payload_for_prompt(
+            return self._compact_knowledge_tool_payload_for_prompt(
                 tool_name,
                 payload,
                 max_snippets=max_snippets,
@@ -6172,7 +6184,7 @@ class McpOrchestratorService:
             return [self._truncate_large_fields(item, max_total, max_field, max_list_items=max_list_items) for item in items]
         return obj
 
-    def _legacy_compact_tool_payload_for_prompt(
+    def _compact_knowledge_tool_payload_for_prompt(
         self,
         tool_name: str,
         payload: Mapping[str, object],
@@ -6184,7 +6196,7 @@ class McpOrchestratorService:
         max_cells: int = 12,
         max_cells_exact: int = 60,
     ) -> dict[str, object]:
-        """Structured prompt compaction for high-volume tools (knowledge + table evidence)."""
+        """Prompt compaction for high-volume knowledge and table evidence tools."""
         normalized_name = (tool_name or payload.get("tool") or "").strip()
         compact: dict[str, object] = {"tool": normalized_name or payload.get("tool") or tool_name}
         status = payload.get("status")
@@ -6534,26 +6546,31 @@ class McpOrchestratorService:
                 compact["diagnostics"] = compact_diagnostics
 
             # Preserve control-plane fields so the LLM can plan coverage and paginate.
-            # NOTE: Without these, broad queries degrade because the model can't see there
-            # are more results nor how to fetch them (cursor paging).
+            # Keep pagination fields under `pagination`; top-level duplicates are
+            # intentionally omitted from the compact public/search payload.
             total_found = payload.get("total_found")
+            total_found_int: int | None = None
             if isinstance(total_found, (int, float)) and int(total_found) >= 0:
-                compact["total_found"] = int(total_found)
+                total_found_int = int(total_found)
             elif isinstance(total_found, str) and total_found.strip().isdigit():
-                compact["total_found"] = int(total_found.strip())
+                total_found_int = int(total_found.strip())
 
-            if "has_more" in payload:
-                compact["has_more"] = bool(payload.get("has_more"))
+            has_more = bool(payload.get("has_more")) if "has_more" in payload else None
 
             next_cursor = payload.get("next_cursor")
-            if isinstance(next_cursor, str) and next_cursor.strip():
-                compact["next_cursor"] = self._clip_text(next_cursor.strip(), 240)
 
-            read_budget_hint = payload.get("read_budget_hint")
-            if isinstance(read_budget_hint, Mapping) and read_budget_hint:
+            read_budget = payload.get("read_budget")
+            if not isinstance(read_budget, Mapping) or not read_budget:
+                legacy_budget = payload.get("read_budget_hint")
+                if isinstance(legacy_budget, Mapping):
+                    read_budget = {
+                        "suggested_chars": legacy_budget.get("total_suggested_max_chars"),
+                        "max_chars": legacy_budget.get("max_chars_allowed"),
+                    }
+            if isinstance(read_budget, Mapping) and read_budget:
                 hint_out: dict[str, object] = {}
-                for key in ("total_suggested_max_chars", "max_chars_allowed"):
-                    value = read_budget_hint.get(key)
+                for key in ("suggested_chars", "max_chars"):
+                    value = read_budget.get(key)
                     if value is None:
                         continue
                     try:
@@ -6561,10 +6578,25 @@ class McpOrchestratorService:
                     except (TypeError, ValueError):
                         continue
                 if hint_out:
-                    compact["read_budget_hint"] = hint_out
+                    compact["read_budget"] = hint_out
 
             completeness = payload.get("completeness")
             pagination_out: dict[str, object] = {}
+            pagination_in = payload.get("pagination")
+            if isinstance(pagination_in, Mapping) and pagination_in:
+                for key in ("shown", "total", "has_more", "next_cursor", "message"):
+                    value = pagination_in.get(key)
+                    if value is None:
+                        continue
+                    if isinstance(value, str) and not value.strip():
+                        continue
+                    pagination_out[key] = (
+                        self._clip_text(value.strip(), 420)
+                        if key == "message" and isinstance(value, str)
+                        else self._clip_text(value.strip(), 240)
+                        if key == "next_cursor" and isinstance(value, str)
+                        else value
+                    )
             if isinstance(completeness, Mapping) and completeness:
                 for source_key, target_key in (
                     ("shown", "shown"),
@@ -6585,12 +6617,12 @@ class McpOrchestratorService:
                         if source_key == "message" and isinstance(value, str)
                         else value
                     )
-            if "total" not in pagination_out and "total_found" in compact:
-                pagination_out["total"] = compact["total_found"]
-            if "has_more" not in pagination_out and "has_more" in compact:
-                pagination_out["has_more"] = compact["has_more"]
+            if "total" not in pagination_out and total_found_int is not None:
+                pagination_out["total"] = total_found_int
+            if "has_more" not in pagination_out and has_more is not None:
+                pagination_out["has_more"] = has_more
             if isinstance(next_cursor, str) and next_cursor.strip():
-                pagination_out["next_cursor"] = self._clip_text(next_cursor.strip(), 240)
+                pagination_out.setdefault("next_cursor", self._clip_text(next_cursor.strip(), 240))
             if pagination_out:
                 compact["pagination"] = pagination_out
 
@@ -6616,14 +6648,10 @@ class McpOrchestratorService:
                     entry: dict[str, object] = {}
                     for key in (
                         "id",
-                        "label",
+                        "document",
                         "kind",
-                        "type",
-                        "source",
-                        "score",
-                        "char_estimate",
                         "preview",
-                        "preview_truncated",
+                        "read_chars",
                     ):
                         if key not in result:
                             continue
@@ -6636,20 +6664,16 @@ class McpOrchestratorService:
                             entry[key] = self._clip_text(value.strip(), int(snippet_content_chars))
                             continue
                         entry[key] = value
-                    read_hint = result.get("read_hint")
-                    if isinstance(read_hint, Mapping) and read_hint:
-                        hint_out: dict[str, object] = {}
-                        for key in ("suggested_max_chars",):
-                            value = read_hint.get(key)
-                            if value is None:
-                                continue
-                            if isinstance(value, str) and not value.strip():
-                                continue
-                            if isinstance(value, (list, tuple, set, dict)) and not value:
-                                continue
-                            hint_out[key] = value
-                        if hint_out:
-                            entry["read_hint"] = hint_out
+                    if "document" not in entry:
+                        label = result.get("label") or result.get("title")
+                        if isinstance(label, str) and label.strip():
+                            entry["document"] = self._clip_text(label.strip(), 180)
+                    if "read_chars" not in entry:
+                        read_hint = result.get("read_hint")
+                        if isinstance(read_hint, Mapping):
+                            value = read_hint.get("suggested_max_chars")
+                            if value not in (None, ""):
+                                entry["read_chars"] = value
                     if entry:
                         refs_out.append(entry)
             if refs_out:
@@ -6678,13 +6702,15 @@ class McpOrchestratorService:
             # Agentic contract (Phase 2): evidence is a list of canonical payloads.
             evidence_list = payload.get("evidence")
             if isinstance(evidence_list, list):
-                for key in ("mode", "total_chars", "max_chars", "max_chars_allowed"):
-                    value = payload.get(key)
-                    if value is None:
-                        continue
-                    if isinstance(value, str) and not value.strip():
-                        continue
-                    compact[key] = value
+                budget_in = compact.pop("budget", None)
+                if isinstance(budget_in, Mapping):
+                    budget_out: dict[str, object] = {}
+                    for key in ("warning", "next_action"):
+                        value = budget_in.get(key)
+                        if isinstance(value, str) and value.strip():
+                            budget_out[key] = self._clip_text(value.strip(), 260)
+                    if budget_out:
+                        compact["budget"] = budget_out
 
                 evidence_out: list[dict[str, object]] = []
                 for entry in evidence_list[: max(1, max_snippets)]:
@@ -6696,20 +6722,44 @@ class McpOrchestratorService:
                         out_entry["id"] = entry_id.strip()
                     title = entry.get("title")
                     if isinstance(title, str) and title.strip():
-                        out_entry["title"] = self._clip_text(title.strip(), 180)
-                    entry_type = entry.get("type")
-                    if isinstance(entry_type, str) and entry_type.strip():
-                        out_entry["type"] = entry_type.strip()
+                        out_entry["document"] = self._clip_text(title.strip(), 180)
                     kind = entry.get("kind")
                     if isinstance(kind, str) and kind.strip():
                         out_entry["kind"] = kind.strip()
-                    for key in ("chars", "complete", "truncated", "artifact_id", "cursor_used", "next_cursor"):
+                    if bool(entry.get("truncated")):
+                        out_entry["truncated"] = True
+                    if entry.get("complete") is False:
+                        out_entry["complete"] = False
+                    for key in ("artifact_id", "cursor_used", "next_cursor"):
                         if key in entry and entry.get(key) not in {None, ""}:
                             out_entry[key] = entry.get(key)
                     payload_obj = entry.get("payload")
                     if isinstance(payload_obj, Mapping) and payload_obj:
-                        # Do not truncate canonical payloads here; read_knowledge is already bounded by max_chars.
-                        out_entry["payload"] = dict(payload_obj)
+                        payload_type = str(payload_obj.get("type") or entry.get("type") or "").strip()
+                        if payload_type == "table":
+                            columns = payload_obj.get("columns")
+                            rows = payload_obj.get("rows")
+                            if isinstance(columns, list):
+                                out_entry["columns"] = list(columns)
+                            if isinstance(rows, list):
+                                out_entry["rows"] = list(rows)
+
+                            selection_mode = str(payload_obj.get("selection_mode") or "").strip()
+                            is_exact_row = selection_mode == "row_ref"
+                            if not is_exact_row:
+                                for key in ("row_offset", "rows_shown", "total_rows", "next_row_start"):
+                                    value = payload_obj.get(key)
+                                    if value not in (None, ""):
+                                        out_entry[key] = value
+                                if bool(entry.get("more_rows_available")):
+                                    out_entry["more_rows_available"] = True
+                        elif payload_type == "text":
+                            text_value = payload_obj.get("text")
+                            if isinstance(text_value, str):
+                                # Do not truncate canonical text here; read_knowledge is already bounded by max_chars.
+                                out_entry["text"] = text_value
+                        else:
+                            out_entry["payload"] = dict(payload_obj)
                     if out_entry:
                         evidence_out.append(out_entry)
 

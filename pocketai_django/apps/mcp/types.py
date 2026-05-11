@@ -154,6 +154,10 @@ class ToolExecutionContext:
     # Maps handle -> signed cursor payload, and reverse map for stable reuse.
     read_cursor_handles: dict[str, str] = dataclasses.field(default_factory=dict)
     read_cursor_reverse_handles: dict[str, str] = dataclasses.field(default_factory=dict)
+    # Opaque cursor handles exposed to the model for search_knowledge pagination.
+    # Search still stores signed cursors internally, but the model sees short handles.
+    search_cursor_handles: dict[str, str] = dataclasses.field(default_factory=dict)
+    search_cursor_reverse_handles: dict[str, str] = dataclasses.field(default_factory=dict)
     llm_usage: dict[str, int] = dataclasses.field(
         default_factory=lambda: {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     )
@@ -516,6 +520,9 @@ class ToolExecutionContext:
         label = str(ref.get("label") or ref.get("title") or "").strip()
         if label:
             normalized["label"] = ToolExecutionContext._clip_text(label, limit=180)
+        document = str(ref.get("document") or ref.get("document_name") or "").strip()
+        if document:
+            normalized["document"] = ToolExecutionContext._clip_text(document, limit=180)
         kind = str(ref.get("kind") or "").strip().lower()
         if kind:
             normalized["kind"] = kind

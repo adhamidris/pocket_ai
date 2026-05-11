@@ -627,10 +627,6 @@ RAG_ALIAS_FTS_THRESHOLD = float(os.getenv("RAG_ALIAS_FTS_THRESHOLD", "0.25"))
 RAG_ALIAS_LOW_CONFIDENCE_THRESHOLD = float(os.getenv("RAG_ALIAS_LOW_CONFIDENCE_THRESHOLD", "0.35"))
 
 # -- Reranking --
-# RAG_CROSS_ENCODER_WEIGHT: Blend weight for cross-encoder scores in fusion.
-RAG_CROSS_ENCODER_WEIGHT = float(os.getenv("RAG_CROSS_ENCODER_WEIGHT", "0.6"))
-# RAG_CROSS_ENCODER_CACHE_SIZE: LRU cache size for cross-encoder (query, chunk) pairs.
-RAG_CROSS_ENCODER_CACHE_SIZE = int(os.getenv("RAG_CROSS_ENCODER_CACHE_SIZE", "500"))
 # RAG_SNIPPET_RERANK_POOL: Candidate pool size for snippet-level reranking.
 RAG_SNIPPET_RERANK_POOL = int(os.getenv("RAG_SNIPPET_RERANK_POOL", "20"))
 # RAG_WEIGHT_DOCUMENT_NAME: Fusion weight for document-name matching signal.
@@ -1209,58 +1205,6 @@ RAG_TABLE_SMALL_ROW_LIMIT = int(os.getenv("RAG_TABLE_SMALL_ROW_LIMIT", "2000"))
 RAG_TABLE_LARGE_ROW_LIMIT = int(os.getenv("RAG_TABLE_LARGE_ROW_LIMIT", "20000"))
 # RAG_TABLE_MAX_HARD_CAP: Hard cap on table rows processed/indexed.
 RAG_TABLE_MAX_HARD_CAP = int(os.getenv("RAG_TABLE_MAX_HARD_CAP", "100000"))
-# RAG_ENABLE_CROSS_ENCODER: Enable cross-encoder reranking (slower; improves precision).
-RAG_ENABLE_CROSS_ENCODER = os.getenv("RAG_ENABLE_CROSS_ENCODER", "true").lower() in {"1", "true", "yes"}
-# RAG_CROSS_ENCODER_MODEL: Cross-encoder model name used for reranking.
-RAG_CROSS_ENCODER_MODEL = os.getenv("RAG_CROSS_ENCODER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
-# RAG_CROSS_ENCODER_DEVICE: Device override for cross-encoder ("cpu", "cuda", etc).
-RAG_CROSS_ENCODER_DEVICE = os.getenv("RAG_CROSS_ENCODER_DEVICE")
-# RAG_CROSS_ENCODER_TIMEOUT_S: Timeout (seconds) for cross-encoder predict calls (P0 #4: prevents hangs).
-try:
-    RAG_CROSS_ENCODER_TIMEOUT_S = float(os.getenv("RAG_CROSS_ENCODER_TIMEOUT_S", "3.0"))
-except (TypeError, ValueError):
-    RAG_CROSS_ENCODER_TIMEOUT_S = 3.0
-RAG_CROSS_ENCODER_TIMEOUT_S = max(0.5, min(30.0, RAG_CROSS_ENCODER_TIMEOUT_S))
-# RAG_CROSS_ENCODER_POLICY: "always"|"auto"|"off".
-# - When unset: the retrieval layer defaults to "auto" if MCP orchestrator is enabled, else "always".
-RAG_CROSS_ENCODER_POLICY = (os.getenv("RAG_CROSS_ENCODER_POLICY", "") or "").strip().lower()
-if RAG_CROSS_ENCODER_POLICY not in {"", "always", "auto", "off"}:
-    RAG_CROSS_ENCODER_POLICY = ""
-try:
-    # RAG_CROSS_ENCODER_AUTO_MIN_TOKENS: Minimum query token count to run cross-encoder in "auto".
-    RAG_CROSS_ENCODER_AUTO_MIN_TOKENS = int(os.getenv("RAG_CROSS_ENCODER_AUTO_MIN_TOKENS", "4"))
-except (TypeError, ValueError):
-    RAG_CROSS_ENCODER_AUTO_MIN_TOKENS = 4
-RAG_CROSS_ENCODER_AUTO_MIN_TOKENS = max(0, RAG_CROSS_ENCODER_AUTO_MIN_TOKENS)
-try:
-    # RAG_CROSS_ENCODER_AUTO_MIN_CANDIDATES: Minimum candidate pool size to run cross-encoder in "auto".
-    RAG_CROSS_ENCODER_AUTO_MIN_CANDIDATES = int(os.getenv("RAG_CROSS_ENCODER_AUTO_MIN_CANDIDATES", "12"))
-except (TypeError, ValueError):
-    RAG_CROSS_ENCODER_AUTO_MIN_CANDIDATES = 12
-RAG_CROSS_ENCODER_AUTO_MIN_CANDIDATES = max(0, RAG_CROSS_ENCODER_AUTO_MIN_CANDIDATES)
-try:
-    # RAG_CROSS_ENCODER_AUTO_MAX_PAIRS: Max pairs scored by cross-encoder in "auto".
-    RAG_CROSS_ENCODER_AUTO_MAX_PAIRS = int(os.getenv("RAG_CROSS_ENCODER_AUTO_MAX_PAIRS", "12"))
-except (TypeError, ValueError):
-    RAG_CROSS_ENCODER_AUTO_MAX_PAIRS = 12
-RAG_CROSS_ENCODER_AUTO_MAX_PAIRS = max(1, RAG_CROSS_ENCODER_AUTO_MAX_PAIRS)
-try:
-    # RAG_CROSS_ENCODER_AUTO_MAX_CHARS: Max chars per candidate passed to cross-encoder in "auto".
-    RAG_CROSS_ENCODER_AUTO_MAX_CHARS = int(os.getenv("RAG_CROSS_ENCODER_AUTO_MAX_CHARS", "1600"))
-except (TypeError, ValueError):
-    RAG_CROSS_ENCODER_AUTO_MAX_CHARS = 1600
-RAG_CROSS_ENCODER_AUTO_MAX_CHARS = max(200, RAG_CROSS_ENCODER_AUTO_MAX_CHARS)
-try:
-    # RAG_CROSS_ENCODER_AUTO_MARGIN_SKIP: Skip cross-encoder in "auto" when base-score margin is >= this value.
-    RAG_CROSS_ENCODER_AUTO_MARGIN_SKIP = float(os.getenv("RAG_CROSS_ENCODER_AUTO_MARGIN_SKIP", "0.25"))
-except (TypeError, ValueError):
-    RAG_CROSS_ENCODER_AUTO_MARGIN_SKIP = 0.25
-RAG_CROSS_ENCODER_AUTO_MARGIN_SKIP = max(0.0, min(5.0, RAG_CROSS_ENCODER_AUTO_MARGIN_SKIP))
-# RAG_CROSS_ENCODER_AUTO_SKIP_TABLE_INTENT: Skip cross-encoder in "auto" for table-intent queries.
-# Default false: table queries with many competing documents benefit most from neural reranking.
-RAG_CROSS_ENCODER_AUTO_SKIP_TABLE_INTENT = (
-    os.getenv("RAG_CROSS_ENCODER_AUTO_SKIP_TABLE_INTENT", "false").lower() in {"1", "true", "yes"}
-)
 # TABLE_MAX_ROWS_DEFAULT: Default max rows to scan/preview for table operations.
 TABLE_MAX_ROWS_DEFAULT = int(os.getenv("TABLE_MAX_ROWS_DEFAULT", "5000"))
 # TABLE_MAX_COLUMNS_DEFAULT: Default max columns to include for table operations (0 = unlimited/auto).

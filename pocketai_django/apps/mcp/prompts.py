@@ -725,15 +725,15 @@ def _recent_search_refs_note(conversation: Conversation, *, limit: int = 6) -> s
         ref_id = str(ref.get("id") or "").strip()
         if not ref_id:
             continue
-        label = str(ref.get("label") or "").strip()
-        if label:
-            label = label[:160]
+        document = str(ref.get("document") or ref.get("label") or "").strip()
+        if document:
+            document = document[:160]
         kind = str(ref.get("kind") or "").strip().lower()
         details: list[str] = [f"id={ref_id}"]
         if kind:
             details.append(f"kind={kind}")
-        if label:
-            details.append(f"label={label}")
+        if document:
+            details.append(f"document={document}")
         lines.append("- " + "; ".join(details))
         added += 1
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from types import SimpleNamespace
 
+from django.core.cache import cache
 from django.test import SimpleTestCase, TestCase, override_settings
 
 from apps.accounts.models import (
@@ -96,12 +97,12 @@ class AgenticSearchTableRefTests(SimpleTestCase):
         self.assertEqual([ref.get("kind") for ref in refs], ["table_row", "table_row"])
         first_ref = refs[0]
         second_ref = refs[1]
-        self.assertIn("chunk 11", str(first_ref.get("label") or "").lower())
-        self.assertIn("chunk 4", str(second_ref.get("label") or "").lower())
-        self.assertEqual(first_ref.get("coverage_hint", {}).get("row_index"), 10)
-        self.assertEqual(second_ref.get("coverage_hint", {}).get("row_index"), 3)
-        self.assertNotIn("matched_row_index", first_ref.get("coverage_hint", {}))
-        self.assertNotIn("anchor_row_indexes", first_ref.get("coverage_hint", {}))
+        self.assertEqual(first_ref.get("document"), "CIB-Loans-EN.pdf")
+        self.assertEqual(second_ref.get("document"), "CIB-Loans-EN.pdf")
+        self.assertNotIn("label", first_ref)
+        self.assertNotIn("type", first_ref)
+        self.assertNotIn("char_estimate", first_ref)
+        self.assertIn("read_chars", first_ref)
 
     def test_text_chunk_hits_remain_distinct_refs_without_document_grouping(self) -> None:
         upload_id = str(uuid.uuid4())
@@ -151,8 +152,9 @@ class AgenticSearchTableRefTests(SimpleTestCase):
         self.assertEqual(len(refs), 2)
         self.assertEqual([ref.get("id") for ref in refs], [first_chunk_id, second_chunk_id])
         self.assertEqual([ref.get("kind") for ref in refs], ["text_anchor", "text_anchor"])
-        self.assertEqual(refs[0].get("coverage_hint", {}).get("page"), 2)
-        self.assertEqual(refs[1].get("coverage_hint", {}).get("page"), 3)
+        self.assertEqual(refs[0].get("document"), "Handbook chunk 4")
+        self.assertEqual(refs[1].get("document"), "Handbook chunk 7")
+        self.assertNotIn("coverage_hint", refs[0])
 
     def test_table_chunk_ref_is_suppressed_when_same_table_has_multiple_row_refs(self) -> None:
         table_id = str(uuid.uuid4())
@@ -325,9 +327,12 @@ class AgenticSearchTableRefTests(SimpleTestCase):
             {"cib-chunk", "neighbor-a", "neighbor-b"},
         )
 
-    def test_agentic_refs_are_sorted_by_confidence_before_emission(self) -> None:
+    def test_agentic_refs_preserve_rag_order_and_hide_public_scores(self) -> None:
         low_chunk_id = str(uuid.uuid4())
         high_chunk_id = str(uuid.uuid4())
+        signed_cursor = tools._encode_search_cursor(session_id=str(uuid.uuid4()), offset=2)
+        context = ToolExecutionContext()
+        conversation = SimpleNamespace(id=uuid.uuid4(), business_profile_id=uuid.uuid4())
         legacy_payload = {
             "tool": "search_knowledge",
             "status": "ok",
@@ -356,16 +361,34 @@ class AgenticSearchTableRefTests(SimpleTestCase):
                 },
             ],
             "completeness": {"shown": 2, "total_found": 2},
+            "has_more": True,
+            "next_cursor": signed_cursor,
         }
 
         result = tools._convert_to_agentic_search_response(
             legacy_payload,
-            conversation=SimpleNamespace(id=uuid.uuid4(), business_profile_id=uuid.uuid4()),
-            context=ToolExecutionContext(),
+            conversation=conversation,
+            context=context,
         )
 
         refs = result.get("refs") or []
-        self.assertEqual([ref.get("id") for ref in refs], [high_chunk_id, low_chunk_id])
+        self.assertEqual([ref.get("id") for ref in refs], [low_chunk_id, high_chunk_id])
+        self.assertTrue(refs)
+        self.assertTrue(all("score" not in ref for ref in refs))
+        self.assertNotIn("total_found", result)
+        self.assertNotIn("has_more", result)
+        self.assertNotIn("next_cursor", result)
+        pagination = result.get("pagination") or {}
+        self.assertEqual(pagination.get("shown"), 2)
+        self.assertEqual(pagination.get("total"), 2)
+        self.assertTrue(pagination.get("has_more"))
+        cursor_handle = str(pagination.get("next_cursor") or "")
+        self.assertRegex(cursor_handle, r"^s_[0-9a-f]{20}$")
+        self.assertEqual(context.search_cursor_handles.get(cursor_handle), signed_cursor)
+        self.assertEqual(
+            cache.get(tools._search_cursor_handle_cache_key(conversation=conversation, handle=cursor_handle)),
+            signed_cursor,
+        )
 
     def test_exact_table_row_read_hint_is_sized_smaller_than_table_context_hint(self) -> None:
         table_id = str(uuid.uuid4())
@@ -423,8 +446,8 @@ class AgenticSearchTableRefTests(SimpleTestCase):
 
         refs = result.get("refs") or []
         by_id = {str(ref.get("id")): ref for ref in refs}
-        row_hint = int(((by_id[row_chunk_id].get("read_hint") or {}).get("suggested_max_chars")) or 0)
-        table_hint = int(((by_id[table_chunk_id].get("read_hint") or {}).get("suggested_max_chars")) or 0)
+        row_hint = int(by_id[row_chunk_id].get("read_chars") or 0)
+        table_hint = int(by_id[table_chunk_id].get("read_chars") or 0)
         self.assertGreater(row_hint, 0)
         self.assertGreater(table_hint, 0)
         self.assertLess(row_hint, table_hint)

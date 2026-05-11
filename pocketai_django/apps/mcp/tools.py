@@ -232,12 +232,22 @@ SEARCH_PREFETCH_ABSOLUTE_CAP = 200
 # search_knowledge pagination (cursor) helpers
 SEARCH_KNOWLEDGE_CURSOR_SALT = "mcp.search_knowledge.cursor.v1"
 SEARCH_KNOWLEDGE_CURSOR_CACHE_PREFIX = "mcp:search_knowledge:cursor:v1"
+SEARCH_KNOWLEDGE_CURSOR_HANDLE_CACHE_PREFIX = "mcp:search_knowledge:cursor_handle:v1"
 def _search_cursor_cache_key(*, conversation: Conversation, session_id: str) -> str:
     return (
         f"{SEARCH_KNOWLEDGE_CURSOR_CACHE_PREFIX}:"
         f"{conversation.business_profile_id}:"
         f"{conversation.id}:"
         f"{session_id}"
+    )
+
+
+def _search_cursor_handle_cache_key(*, conversation: Conversation, handle: str) -> str:
+    return (
+        f"{SEARCH_KNOWLEDGE_CURSOR_HANDLE_CACHE_PREFIX}:"
+        f"{conversation.business_profile_id}:"
+        f"{conversation.id}:"
+        f"{handle}"
     )
 
 
@@ -252,6 +262,80 @@ def _decode_search_cursor(token: str, *, max_age_seconds: int) -> dict[str, obje
     except Exception:
         return None
     return decoded if isinstance(decoded, dict) else None
+
+
+def _search_cursor_ttl_seconds() -> int:
+    try:
+        cursor_ttl_seconds = int(getattr(settings, "MCP_SEARCH_PAGINATION_TTL_SECONDS", 3600) or 3600)
+    except (TypeError, ValueError):
+        cursor_ttl_seconds = 3600
+    return max(60, cursor_ttl_seconds)
+
+
+def _resolve_search_cursor_from_handle(
+    context: ToolExecutionContext | None,
+    conversation: Conversation,
+    cursor_token: str | None,
+) -> str | None:
+    token = str(cursor_token or "").strip()
+    if not token:
+        return None
+    cache_value = getattr(context, "search_cursor_handles", None)
+    if isinstance(cache_value, dict):
+        mapped = cache_value.get(token)
+        if isinstance(mapped, str) and mapped.strip():
+            return mapped.strip()
+    if token.startswith("s_"):
+        mapped = cache.get(_search_cursor_handle_cache_key(conversation=conversation, handle=token))
+        if isinstance(mapped, str) and mapped.strip():
+            return mapped.strip()
+    return token
+
+
+def _store_search_cursor_handle(
+    context: ToolExecutionContext | None,
+    conversation: Conversation,
+    cursor_signed: str | None,
+    *,
+    ttl_seconds: int | None = None,
+) -> str | None:
+    token = str(cursor_signed or "").strip()
+    if not token:
+        return None
+    ttl = _search_cursor_ttl_seconds() if ttl_seconds is None else max(60, int(ttl_seconds))
+    cache_value = getattr(context, "search_cursor_handles", None)
+    reverse_cache_value = getattr(context, "search_cursor_reverse_handles", None)
+    if not isinstance(cache_value, dict) or not isinstance(reverse_cache_value, dict):
+        return token
+
+    existing_handle = reverse_cache_value.get(token)
+    if isinstance(existing_handle, str) and existing_handle.strip():
+        cached_token = cache_value.get(existing_handle.strip())
+        if isinstance(cached_token, str) and cached_token == token:
+            cache.set(
+                _search_cursor_handle_cache_key(conversation=conversation, handle=existing_handle.strip()),
+                token,
+                ttl,
+            )
+            return existing_handle.strip()
+
+    handle = f"s_{uuid.uuid4().hex[:20]}"
+    cache_value[handle] = token
+    reverse_cache_value[token] = handle
+    cache.set(_search_cursor_handle_cache_key(conversation=conversation, handle=handle), token, ttl)
+
+    while len(cache_value) > 500:
+        oldest_handle = next(iter(cache_value))
+        oldest_cursor = cache_value.pop(oldest_handle, None)
+        if isinstance(oldest_cursor, str):
+            reverse_cache_value.pop(oldest_cursor, None)
+    while len(reverse_cache_value) > 500:
+        oldest_cursor_key = next(iter(reverse_cache_value))
+        oldest_handle_value = reverse_cache_value.pop(oldest_cursor_key, None)
+        if isinstance(oldest_handle_value, str):
+            cache_value.pop(oldest_handle_value, None)
+
+    return handle
 
 
 def _mcp_log_pii_enabled() -> bool:
@@ -3084,6 +3168,36 @@ def _convert_to_agentic_search_response(
         text = str(value or "").strip().lower()
         return bool(text and "chunk " in text)
 
+    def _strip_locator_suffix(value: object) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        text = re.sub(r"\s+[–-]\s+chunk\s+\d+\s*$", "", text, flags=re.IGNORECASE).strip()
+        text = re.sub(r"\s+[–-]\s+table\s+preview\s*$", "", text, flags=re.IGNORECASE).strip()
+        text = re.sub(r"\s+[–-]\s+table\s+\d+\s*$", "", text, flags=re.IGNORECASE).strip()
+        return text
+
+    def _document_name(snippet: Mapping[str, object], *, fallback_title: object) -> str:
+        diagnostics = (
+            snippet.get("source_diagnostics")
+            if isinstance(snippet.get("source_diagnostics"), Mapping)
+            else {}
+        )
+        for candidate in (
+            snippet.get("document"),
+            snippet.get("document_name"),
+            snippet.get("file_name"),
+            snippet.get("source_file"),
+            diagnostics.get("document_name"),
+            diagnostics.get("file_name"),
+            fallback_title,
+            diagnostics.get("table_title"),
+        ):
+            text = _strip_locator_suffix(candidate)
+            if text and text.lower() not in {"file upload", "table_direct", "table direct"}:
+                return text[:180]
+        return "Knowledge"
+
     def _anchor_key(snippet: Mapping[str, object]) -> str:
         """Canonical dedupe key for EvidenceRefs (avoid duplicates across search stages)."""
         diagnostics = snippet.get("source_diagnostics") if isinstance(snippet.get("source_diagnostics"), Mapping) else {}
@@ -3439,29 +3553,10 @@ def _convert_to_agentic_search_response(
 
     promoted_table_anchor_manifests: dict[str, dict[str, object]] = {}
 
-    def _ref_sort_key(snippet: Mapping[str, object]) -> tuple[float, int]:
-        diagnostics = (
-            snippet.get("source_diagnostics")
-            if isinstance(snippet.get("source_diagnostics"), Mapping)
-            else {}
-        )
-        row_index_local = diagnostics.get("row_index")
-        if row_index_local is None:
-            row_index_local = diagnostics.get("table_row_index")
-        is_table_local = bool(snippet.get("is_table_chunk"))
-        if is_table_local and row_index_local is not None:
-            specificity_rank = 0
-        elif not is_table_local:
-            specificity_rank = 1
-        else:
-            specificity_rank = 2
-        try:
-            confidence = float(snippet.get("confidence_score") or 0.0)
-        except (TypeError, ValueError):
-            confidence = 0.0
-        return (-confidence, specificity_rank)
-
-    for snippet in sorted(planned_snippets, key=_ref_sort_key):
+    # Preserve the service-provided RAG order. The retriever has already fused
+    # table-direct, lexical, vector, alias, and context signals; re-sorting here
+    # by confidence can promote generic anchors over exact table rows.
+    for snippet in planned_snippets:
         
         # Determine type
         is_table = bool(snippet.get("is_table_chunk"))
@@ -3533,14 +3628,6 @@ def _convert_to_agentic_search_response(
         if isinstance(label, str) and len(label) > 240:
             label = f"{label[:240].rstrip()}…"
 
-        score_val: float | None = None
-        try:
-            raw_score = snippet.get("confidence_score")
-            if raw_score is not None:
-                score_val = float(raw_score)
-        except (TypeError, ValueError):
-            score_val = None
-
         kind = "text_anchor"
         promote_table_ref = bool(
             content_type == "table"
@@ -3583,13 +3670,6 @@ def _convert_to_agentic_search_response(
                 chunk_index = snippet.get("chunk_index")
                 if isinstance(chunk_index, int):
                     coverage_hint["offset"] = chunk_index
-
-        read_hint_in = snippet.get("read_hint")
-        read_hint_out: dict[str, object] = {"suggested_max_chars": suggested_max_chars}
-        if not agentic_read_v2_enabled and isinstance(read_hint_in, Mapping) and read_hint_in:
-            # Preserve legacy read hint metadata for non-v2 agentic reads.
-            read_hint_out = dict(read_hint_in)
-            read_hint_out.setdefault("suggested_max_chars", suggested_max_chars)
 
         ref_id = chunk_id
         if promote_table_ref and canonical_table_id:
@@ -3649,15 +3729,12 @@ def _convert_to_agentic_search_response(
                 why.append("kind:table")
         else:
             why.append("kind:text")
+        document = _document_name(snippet, fallback_title=title)
         ref_item: dict[str, object] = {
             "id": ref_id,
-            "document_id": upload_id,
+            "document": document,
             "kind": kind,
-            "type": content_type,
-            "label": label,
-            "score": score_val if score_val is not None else 0.0,
-            "char_estimate": char_estimate,
-            "read_hint": read_hint_out,
+            "read_chars": suggested_max_chars,
         }
         include_preview = False
         preview_cap = preview_chars_cap
@@ -3674,24 +3751,9 @@ def _convert_to_agentic_search_response(
                 if preview_truncated:
                     ref_item["preview_truncated"] = True
                 previews_attached += 1
-        if why:
-            ref_item["why"] = why[:3]
-        if evidence_group_id:
-            ref_item["evidence_group_id"] = evidence_group_id
-        if evidence_type:
-            ref_item["evidence_type"] = evidence_type
-        if representation:
-            ref_item["representation"] = representation
         conflict_flag = bool(diagnostics.get("evidence_conflict")) or (evidence_key in conflict_keys)
         if conflict_flag:
-            ref_item["conflict"] = {
-                "type": "representation_mismatch",
-                "resolution": "read_full",
-            }
-            read_hint_out["suggested_mode"] = "full"
             why.append("evidence_conflict")
-            ref_item["read_hint"] = read_hint_out
-            ref_item["why"] = why[:3]
         if promote_table_ref and isinstance(coverage_hint, dict):
             matched_row_index: int | None = None
             anchor_row_indexes: list[int] = []
@@ -3718,14 +3780,6 @@ def _convert_to_agentic_search_response(
                     if not (row_index_value in seen_anchor_rows or seen_anchor_rows.add(row_index_value))
                 ][:5]
             coverage_hint.pop("row_index", None)
-        if coverage_hint:
-            ref_item["coverage_hint"] = coverage_hint
-        # Keep source metadata for internal debugging / operator traces.
-        source_val = snippet.get("source_file") or snippet.get("source")
-        if isinstance(source_val, str) and source_val.strip():
-            ref_item["source"] = source_val.strip()
-        if diagnostics.get("table_truncated"):
-            ref_item["partial_index"] = True
         refs.append(ref_item)
 
     if context is not None and promoted_table_anchor_manifests:
@@ -3745,26 +3799,22 @@ def _convert_to_agentic_search_response(
         "tool": "search_knowledge",
         "status": status if refs else "empty",
         "refs": refs,
-        "total_found": total_found,
     }
 
-    # Provide a read_budget_hint so the LLM can plan max_chars for read_knowledge.
+    # Provide a compact read budget so the LLM can plan max_chars for read_knowledge.
     if refs:
         total_suggested = 0
         for ref in refs:
             if not isinstance(ref, Mapping):
                 continue
-            read_hint = ref.get("read_hint")
-            if not isinstance(read_hint, Mapping):
-                continue
             try:
-                total_suggested += int(read_hint.get("suggested_max_chars") or 0)
+                total_suggested += int(ref.get("read_chars") or 0)
             except (TypeError, ValueError):
                 continue
         max_chars_allowed = int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_MAX)
-        agentic_response["read_budget_hint"] = {
-            "total_suggested_max_chars": min(total_suggested, max_chars_allowed),
-            "max_chars_allowed": max_chars_allowed,
+        agentic_response["read_budget"] = {
+            "suggested_chars": min(total_suggested, max_chars_allowed),
+            "max_chars": max_chars_allowed,
         }
 
     # NOTE: In agentic mode, we may dedupe/collapse a legacy "page" of N snippets
@@ -3810,12 +3860,21 @@ def _convert_to_agentic_search_response(
     if completeness_out:
         agentic_response["completeness"] = completeness_out
 
-    # Pagination hints (cursor-based "next page" support).
+    # Pagination hints (cursor-based "next page" support). Keep these in one
+    # canonical object so the public tool payload does not duplicate control
+    # fields at the top level.
+    pagination_out: dict[str, object] = {
+        "shown": len(refs),
+        "total": total_found,
+    }
+    if "has_more" in completeness_out:
+        pagination_out["has_more"] = bool(completeness_out.get("has_more"))
     next_cursor = legacy_payload.get("next_cursor")
     if isinstance(next_cursor, str) and next_cursor.strip():
-        agentic_response["next_cursor"] = next_cursor.strip()
-    if "has_more" in legacy_payload:
-        agentic_response["has_more"] = bool(legacy_payload.get("has_more"))
+        pagination_out["next_cursor"] = (
+            _store_search_cursor_handle(context, conversation, next_cursor.strip()) or next_cursor.strip()
+        )
+    agentic_response["pagination"] = pagination_out
 
     # Log the conversion for debugging
     structured_log(
@@ -3839,6 +3898,7 @@ def _convert_to_agentic_search_response(
             "previews_hybrid_enabled": preview_hybrid_enabled,
             "previews_attached_count": previews_attached,
             "table_anchor_manifests_cached": len(promoted_table_anchor_manifests),
+            "rank_preserved": True,
         },
         context={
             "conversation": conversation.id,
@@ -3953,11 +4013,7 @@ def _search_knowledge_handler(
     rag_agentic_enabled = bool(getattr(feature_state, "rag_agentic_mode", False)) and new_contract_enabled
 
     pagination_enabled = bool(getattr(settings, "MCP_SEARCH_PAGINATION_ENABLED", True))
-    try:
-        cursor_ttl_seconds = int(getattr(settings, "MCP_SEARCH_PAGINATION_TTL_SECONDS", 3600) or 3600)
-    except (TypeError, ValueError):
-        cursor_ttl_seconds = 3600
-    cursor_ttl_seconds = max(60, cursor_ttl_seconds)
+    cursor_ttl_seconds = _search_cursor_ttl_seconds()
     try:
         pagination_prefetch_min = int(getattr(settings, "MCP_SEARCH_PAGINATION_PREFETCH_MIN", 50) or 50)
     except (TypeError, ValueError):
@@ -4028,24 +4084,21 @@ def _search_knowledge_handler(
 
         return out, idx, has_more, excluded
 
-    def _read_budget_hint_for_refs(refs: Sequence[Mapping[str, object]]) -> dict[str, int] | None:
+    def _read_budget_for_refs(refs: Sequence[Mapping[str, object]]) -> dict[str, int] | None:
         if not refs:
             return None
         total_suggested = 0
         for ref in refs:
             if not isinstance(ref, Mapping):
                 continue
-            read_hint = ref.get("read_hint")
-            if not isinstance(read_hint, Mapping):
-                continue
             try:
-                total_suggested += int(read_hint.get("suggested_max_chars") or 0)
+                total_suggested += int(ref.get("read_chars") or 0)
             except (TypeError, ValueError):
                 continue
         max_chars_allowed = int(READ_KNOWLEDGE_MAX_CHARS_SCHEMA_MAX)
         return {
-            "total_suggested_max_chars": min(int(total_suggested), int(max_chars_allowed)),
-            "max_chars_allowed": int(max_chars_allowed),
+            "suggested_chars": min(int(total_suggested), int(max_chars_allowed)),
+            "max_chars": int(max_chars_allowed),
         }
 
     def _extract_agentic_manifests(
@@ -4106,6 +4159,7 @@ def _search_knowledge_handler(
 
     raw_cursor = _coerce_str(arguments.get("cursor")).strip()
     if raw_cursor:
+        resolved_cursor = _resolve_search_cursor_from_handle(context, conversation, raw_cursor) or raw_cursor
         # Cursor paging: bypass duplicate-intent reuse and serve next page from server cache.
         limited = _enforce_search_rate_limit()
         if limited is not None:
@@ -4123,7 +4177,7 @@ def _search_knowledge_handler(
                 "error_code": "pagination_disabled",
             }
 
-        decoded = _decode_search_cursor(raw_cursor, max_age_seconds=cursor_ttl_seconds)
+        decoded = _decode_search_cursor(resolved_cursor, max_age_seconds=cursor_ttl_seconds)
         if not decoded:
             return {
                 "tool": "search_knowledge",
@@ -4226,15 +4280,26 @@ def _search_knowledge_handler(
                     "status": "ok" if refs_page else "not_found",
                     "diagnostics": {"cursor_used": True, "offset": offset_refs, "paging_mode": "refs"},
                     "refs": refs_page,
-                    "total_found": int(refs_total_found),
                     "completeness": completeness,
-                    "has_more": bool(has_more_refs),
+                    "pagination": {
+                        "shown": len(refs_page),
+                        "total": int(refs_total_found),
+                        "has_more": bool(has_more_refs),
+                    },
                 }
-                read_budget_hint = _read_budget_hint_for_refs(refs_page)
-                if read_budget_hint:
-                    payload["read_budget_hint"] = read_budget_hint
+                read_budget = _read_budget_for_refs(refs_page)
+                if read_budget:
+                    payload["read_budget"] = read_budget
                 if next_cursor:
-                    payload["next_cursor"] = next_cursor
+                    payload["pagination"]["next_cursor"] = (
+                        _store_search_cursor_handle(
+                            context,
+                            conversation,
+                            next_cursor,
+                            ttl_seconds=cursor_ttl_seconds,
+                        )
+                        or next_cursor
+                    )
 
                 structured_log(
                     "mcp",
@@ -5297,23 +5362,33 @@ def _search_knowledge_handler(
             completeness_out["has_more"] = bool(has_more_refs)
 
             final_response = {
-                **{k: v for k, v in dict(agentic_full).items() if k not in {"refs", "next_cursor", "has_more", "total_found", "read_budget_hint", "completeness"}},
+                **{k: v for k, v in dict(agentic_full).items() if k not in {"refs", "next_cursor", "has_more", "total_found", "read_budget", "read_budget_hint", "completeness", "pagination"}},
                 "tool": "search_knowledge",
                 "query": payload.get("query"),
                 "limit": int(page_size),
                 "query_intent": payload.get("query_intent"),
                 "status": agentic_full.get("status") if refs_page else "not_found",
                 "refs": refs_page,
-                # In agentic ref paging, total_found refers to refs (not snippets).
-                "total_found": int(refs_total_found),
                 "completeness": completeness_out,
-                "has_more": bool(has_more_refs),
+                "pagination": {
+                    "shown": len(refs_page),
+                    "total": int(refs_total_found),
+                    "has_more": bool(has_more_refs),
+                },
             }
-            read_budget_hint = _read_budget_hint_for_refs(refs_page)
-            if read_budget_hint:
-                final_response["read_budget_hint"] = read_budget_hint
+            read_budget = _read_budget_for_refs(refs_page)
+            if read_budget:
+                final_response["read_budget"] = read_budget
             if next_cursor:
-                final_response["next_cursor"] = next_cursor
+                final_response["pagination"]["next_cursor"] = (
+                    _store_search_cursor_handle(
+                        context,
+                        conversation,
+                        next_cursor,
+                        ttl_seconds=cursor_ttl_seconds,
+                    )
+                    or next_cursor
+                )
 
             structured_log(
                 "mcp",
