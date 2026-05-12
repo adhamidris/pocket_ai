@@ -243,18 +243,28 @@ def configure_agent_profile(
             "tone": (tone or "").strip(),
             "traits": sanitized_traits,
             "escalation_rule": (escalation_rule or "").strip(),
+            "agent_type": AgentProfile.AgentTypeChoices.MAIN,
+            "can_manage_tasks": True,
+            "can_manage_departments": True,
         }
 
-        profile, created = AgentProfile.objects.select_for_update().get_or_create(
-            business_profile=business,
-            defaults=defaults,
+        profile = (
+            AgentProfile.objects.select_for_update()
+            .filter(business_profile=business, agent_type=AgentProfile.AgentTypeChoices.MAIN)
+            .exclude(status=AgentProfile.StatusChoices.ARCHIVED)
+            .order_by("created_at", "id")
+            .first()
         )
-        if not created:
+        if profile is None:
+            profile = AgentProfile.objects.create(business_profile=business, **defaults)
+        else:
             profile.name = agent_name
             profile.role = defaults["role"]
             profile.tone = defaults["tone"]
             profile.traits = sanitized_traits
             profile.escalation_rule = defaults["escalation_rule"]
+            profile.can_manage_tasks = True
+            profile.can_manage_departments = True
             profile.save()
 
     return AgentProfileResult(profile=profile, session=session)

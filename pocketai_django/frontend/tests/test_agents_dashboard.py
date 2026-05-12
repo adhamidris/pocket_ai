@@ -34,9 +34,13 @@ class AgentsDashboardTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         content = response.content.decode("utf-8")
+        self.assertIn("Create department", content)
+        self.assertIn("Create agent", content)
         self.assertIn('data-agent-tab="tasks"', content)
         self.assertIn('data-agent-tab="runs"', content)
         self.assertIn('data-agent-tab="memory"', content)
         self.assertIn('data-agent-tab="permissions"', content)
         self.assertIn("Task processing is not active", content)
+        self.assertNotIn("Escalation on", content)
+        self.assertNotIn("No KPIs selected", content)
         self.assertNotIn("data-subagents-enabled", content)

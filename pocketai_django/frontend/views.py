@@ -34,6 +34,7 @@ from django.views.decorators.http import require_http_methods
 from pocketai.language import normalize_language_code
 
 from apps.accounts.models import (
+    AgentDepartment,
     AgentProfile,
     BusinessProfile,
     IntegrationSyncFrequency,
@@ -55,6 +56,7 @@ from apps.rag.query_analytics import build_query_analytics_report
 from apps.accounts.agents import (
     AgentListValidationError,
     agent_identifier,
+    display_agent_type_label,
     display_role_label,
     display_tone_label,
     initials_from_name,
@@ -175,9 +177,7 @@ def _build_portal_context(
     session_storage_key: str,
 ) -> dict[str, object]:
     capabilities = bootstrap_payload.get("capabilities") if isinstance(bootstrap_payload, dict) else {}
-    agent_runs_enabled = bool(
-        capabilities.get("agentRunsEnabled", capabilities.get("subAgentsEnabled"))
-    ) if isinstance(capabilities, dict) else False
+    agent_runs_enabled = bool(capabilities.get("agentWorkforceEnabled")) if isinstance(capabilities, dict) else False
 
     business = bootstrap_payload.get("business", {})
     agent = bootstrap_payload.get("agent", {})
@@ -2256,6 +2256,8 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
     has_error = False
     business = request.user.business_profiles.order_by("-created_at").first() if request.user.is_authenticated else None
     agent_ids: list[uuid.UUID] = []
+    departments: list[dict[str, str]] = []
+    has_active_main_agent = False
 
     def _format_duration(seconds: float | None) -> str | None:
         if not seconds:
@@ -2270,6 +2272,15 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
         return f"{hours}h {minutes:02d}m"
 
     if business:
+        departments = [
+            {
+                "id": str(department.id),
+                "name": department.name,
+                "status": department.status,
+                "lead_agent_id": str(department.lead_agent_id) if department.lead_agent_id else "",
+            }
+            for department in AgentDepartment.objects.filter(business_profile=business).order_by("name")
+        ]
         try:
             result = list_agents(
                 business_profile=business,
@@ -2282,6 +2293,8 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
             business_slug = slugify(business.name)
             for item in result.items:
                 agent_ids.append(item.id)
+                if item.agent_type == AgentProfile.AgentTypeChoices.MAIN and item.status == AgentProfile.StatusChoices.ACTIVE:
+                    has_active_main_agent = True
                 initials = initials_from_name(item.name)
                 identifier = agent_identifier(item.id)
                 role_label = display_role_label(item.role)
@@ -2300,6 +2313,13 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
                         "roles": [role_label],
                         "primary_role": role_label,
                         "role_code": item.role or "",
+                        "agent_type": item.agent_type,
+                        "agent_type_label": display_agent_type_label(item.agent_type),
+                        "department_id": str(item.department_id) if item.department_id else "",
+                        "department_name": item.department_name,
+                        "manager_agent_id": str(item.manager_agent_id) if item.manager_agent_id else "",
+                        "can_manage_tasks": item.can_manage_tasks,
+                        "can_manage_departments": item.can_manage_departments,
                         "tone_label": tone_label,
                         "tone_code": item.tone or "",
                         "satisfaction": None,
@@ -2326,7 +2346,7 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
                         queryset=KnowledgeUpload.objects.filter(business_profile=business).only("id", "status", "is_active"),
                     ),
                 )
-                .only("id", "escalation_rule", "business_profile__name", "business_profile__slug")
+                .only("id", "business_profile__name", "business_profile__slug")
             }
             active_knowledge_qs = (
                 KnowledgeUpload.objects.filter(business_profile=business, is_active=True)
@@ -2378,13 +2398,10 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
                     agent["knowledge_processing"] = knowledge_processing_total
                     agent["knowledge_failed"] = knowledge_failed_total
 
-                agent["escalation_enabled"] = False
-                agent["escalation_rule"] = ""
-
     context = {
         "user_name": user_name,
         "business_id": str(getattr(business, "id", "")) if business else "",
-        "agents_can_create": bool(business and (total_agents or len(agents)) == 0),
+        "agents_can_create": bool(business),
         "agents_filters": {
             "search_placeholder": _("Search name, ID, role…"),
             "limit": 25,
@@ -2395,18 +2412,24 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
         "agents_error_message": _("Unable to load agents right now.") if has_error else None,
         "skeleton_rows": range(6),
         "agents": agents,
+        "departments": departments,
         "agents_empty_message": _("No agents created yet. Launch your first AI teammate to get started."),
         "agents_showing_count": len(agents),
         "agents_total": total_agents or len(agents),
+        "agents_has_active_main": has_active_main_agent,
         "agents_has_prev": False,
         "agents_has_next": bool(total_agents and total_agents > len(agents)),
         "agents_panel_empty_title": _("No agent selected"),
-        "agents_panel_empty_message": _("Choose an agent from the cards to preview configuration and analytics."),
-        "agents_modal_roles": [
-            _("Support Agent"),
-            _("Sales Associate"),
-            _("Technical Specialist"),
-            _("Customer Success"),
+        "agents_panel_empty_message": _("Choose an agent from the cards to preview configuration, tasks, memory, and permissions."),
+        "agents_modal_types": (
+            [{"value": "main", "label": _("Main Agent")}]
+            if not has_active_main_agent
+            else []
+        )
+        + [
+            {"value": "specialist", "label": _("Specialist")},
+            {"value": "department_lead", "label": _("Department Lead")},
+            {"value": "background", "label": _("Background Agent")},
         ],
     }
     return render(request, "frontend/agents.html", context)

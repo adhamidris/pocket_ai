@@ -32,7 +32,7 @@ class FeatureState:
     rag_eval_logging: bool
     rag_agentic_mode: bool  # 2-tool retrieval: search (metadata) → read (content)
     mcp_gateway_mode: bool  # Small gateway tool surface for external MCP
-    agent_workforce_v1: bool  # Agents, workflows, runs, inbox, memory
+    agent_workforce_v1: bool  # Legacy metadata; agent workforce is core platform behavior
     crm_v1: bool  # Standalone CRM v1 runtime
 
     def as_dict(self) -> dict[str, bool]:
@@ -75,8 +75,8 @@ class FeatureFlagService:
         normalized = sanitize_feature_payload(payload)
         state = cls._state_from_payload(normalized)
 
-        # Global rollout override (mainly for dev/ops). When set, it forces the
-        # agent workforce flag regardless of per-business metadata.
+        # Historical rollout override retained so old diagnostics/tests can read
+        # a consistent value. Runtime workforce behavior no longer gates on it.
         try:
             from django.conf import settings
 

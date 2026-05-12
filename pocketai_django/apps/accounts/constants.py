@@ -18,8 +18,8 @@ FEATURE_FLAG_DEFAULTS: dict[str, bool] = {
     # When enabled, expose a small "gateway" tool surface for external MCP tools
     # instead of inlining every remote tool schema into the LLM prompt.
     "mcp_gateway_mode": True,
-    # Enable multi-agent workforce surfaces (agents, workflows, runs, inbox, memory).
-    "agent_workforce_v1": False,
+    # Legacy metadata key retained for old diagnostics; the agent workforce is now core.
+    "agent_workforce_v1": True,
     # Enable the new standalone CRM runtime.
     "crm_v1": False,
 }

@@ -58,7 +58,12 @@ class Command(BaseCommand):
         parser.add_argument(
             "--watch",
             action="store_true",
-            help="Keep running and poll for new runs instead of exiting when the queue is empty.",
+            help="Deprecated compatibility flag; workers now watch by default.",
+        )
+        parser.add_argument(
+            "--once",
+            action="store_true",
+            help="Process currently queued runs once, then exit.",
         )
         parser.add_argument(
             "--sleep",
@@ -93,7 +98,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         max_runs = options.get("max_runs")
-        watch = bool(options.get("watch"))
+        watch = not bool(options.get("once"))
         sleep_seconds = float(options.get("sleep") or 0.0)
         log_metrics_every = int(options.get("log_metrics_every") or 10)
         if watch and sleep_seconds <= 0:
@@ -108,8 +113,11 @@ class Command(BaseCommand):
         # Log initial queue health
         if log_metrics_every > 0:
             self.log_queue_health()
+        if watch:
+            self.stdout.write(self.style.SUCCESS("Watching for queued agent runs. Use --once for a single pass."))
 
         processed = 0
+        idle_notified = False
         while True:
             cache.set("agent_run_processor_heartbeat", {"at": timezone.now().isoformat()}, timeout=180)
             if max_runs is not None and processed >= int(max_runs):
@@ -118,8 +126,9 @@ class Command(BaseCommand):
             result = service.process_next_run()
             if result is None:
                 if watch:
-                    if processed == 0:
+                    if not idle_notified:
                         self.stdout.write(self.style.WARNING("No queued agent runs. Watching for new work..."))
+                        idle_notified = True
                     if sleep_seconds:
                         time.sleep(sleep_seconds)
                     continue
@@ -128,6 +137,7 @@ class Command(BaseCommand):
                 break
 
             processed += 1
+            idle_notified = False
             if result.status == AgentRunStatus.COMPLETED:
                 self.stdout.write(self.style.SUCCESS(f"Completed run {result.run_id}."))
             elif result.status in {AgentRunStatus.WAITING_APPROVAL, AgentRunStatus.WAITING_USER, AgentRunStatus.WAITING_EXTERNAL}:

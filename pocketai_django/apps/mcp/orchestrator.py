@@ -446,6 +446,11 @@ class McpOrchestratorService:
                 "continue_agent_run",
                 "list_agents",
                 "consult_agent",
+                "list_tasks",
+                "draft_task",
+                "update_task",
+                "request_task_activation",
+                "pause_task",
                 "search_memory",
                 "save_memory",
                 "forget_memory",
@@ -485,7 +490,16 @@ class McpOrchestratorService:
 
         # Background runs must not be able to spawn more background runs.
         if is_agent_run_conversation:
-            forbidden = {"start_agent_run", "continue_agent_run", "list_agent_runs", "get_agent_run"}
+            forbidden = {
+                "start_agent_run",
+                "continue_agent_run",
+                "list_agent_runs",
+                "get_agent_run",
+                "draft_task",
+                "update_task",
+                "request_task_activation",
+                "pause_task",
+            }
             if normalized_tool_allowlist is not None:
                 normalized_tool_allowlist -= forbidden
             internal_tool_defs = [

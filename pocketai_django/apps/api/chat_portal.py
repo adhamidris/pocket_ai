@@ -1574,15 +1574,7 @@ def _bootstrap_to_dict(result: PortalSessionBootstrap) -> dict:
         payload["active_turn"] = _portal_turn_to_dict(active_turn) if active_turn else None
     except Exception:  # pragma: no cover - best effort only
         payload["active_turn"] = None
-    try:
-        from apps.accounts.feature_flags import FeatureFlagService
-
-        feature_state = FeatureFlagService.snapshot(result.business)
-        payload["capabilities"] = {
-            "agentWorkforceEnabled": bool(getattr(feature_state, "agent_workforce_v1", False)),
-        }
-    except Exception:  # pragma: no cover - best effort only
-        payload["capabilities"] = {"agentWorkforceEnabled": False}
+    payload["capabilities"] = {"agentWorkforceEnabled": True}
     return payload
 
 
@@ -2047,6 +2039,28 @@ def portal_tool_approval(request: HttpRequest) -> JsonResponse:
                     },
                     created_by=actor_user,
                 )
+                if run.workflow_id:
+                    MemoryItem.objects.create(
+                        business_profile=run.business_profile,
+                        scope=MemoryScope.WORKFLOW,
+                        agent_profile=run.agent_profile,
+                        workflow=run.workflow,
+                        run=run,
+                        conversation=run.conversation,
+                        kind=MemoryKind.DECISION,
+                        key="tool_approval",
+                        content=decision_value,
+                        payload={
+                            "decision": decision_value,
+                            "approval_id": str(approval.id),
+                            "tool_name": approval.tool_name,
+                            "remote_tool_name": approval.remote_tool_name,
+                            "actor": actor_snapshot,
+                            "source_run_id": str(run.id),
+                        },
+                        visibility=MemoryVisibility.SHARED,
+                        created_by=actor_user,
+                    )
 
                 next_meta = dict(meta)
                 next_meta.pop("pending_approval_id", None)
@@ -2179,21 +2193,6 @@ def portal_agent_run_user_input(request: HttpRequest) -> JsonResponse:
     except PortalValidationError as exc:
         return _json_error("validation_error", str(exc))
 
-    business_id = getattr(conversation, "business_profile_id", None)
-    enabled = False
-    try:
-        from apps.accounts.feature_flags import FeatureFlagService
-        from apps.accounts.models import BusinessProfile
-
-        if business_id:
-            with tenant_context(business_id):
-                business = BusinessProfile.objects.filter(id=business_id).only("id", "metadata").first()
-            enabled = bool(getattr(FeatureFlagService.snapshot(business), "agent_workforce_v1", False)) if business else False
-    except Exception:  # pragma: no cover - best effort only
-        enabled = False
-
-    if not enabled:
-        return _json_error("feature_disabled", "Agent workforce are not enabled for this business.", status=403)
     actor_user = request.user if getattr(request, "user", None) and request.user.is_authenticated else None
     if actor_user:
         actor_snapshot: dict[str, object] = {"type": "user", "user_id": str(getattr(actor_user, "id", "") or "")}
@@ -2203,6 +2202,7 @@ def portal_agent_run_user_input(request: HttpRequest) -> JsonResponse:
             "session_hash": hashlib.sha256(conversation.session_token.encode("utf-8", errors="ignore")).hexdigest()[:16],
         }
 
+    business_id = getattr(conversation, "business_profile_id", None)
     with tenant_context(business_id):
         run = AgentRun.objects.filter(id=run_uuid, conversation_id=conversation.id).first()
         if run is None:
@@ -2232,6 +2232,21 @@ def portal_agent_run_user_input(request: HttpRequest) -> JsonResponse:
             visibility=MemoryVisibility.PRIVATE,
             created_by=actor_user,
         )
+        if run.workflow_id:
+            MemoryItem.objects.create(
+                business_profile=run.business_profile,
+                scope=MemoryScope.WORKFLOW,
+                agent_profile=run.agent_profile,
+                workflow=run.workflow,
+                run=run,
+                conversation=run.conversation,
+                kind=MemoryKind.STATE_NOTE,
+                key="user_input",
+                content=message[:4000],
+                payload={"actor": actor_snapshot, "payload": extra_payload, "source_run_id": str(run.id)},
+                visibility=MemoryVisibility.SHARED,
+                created_by=actor_user,
+            )
 
         next_meta = run.metadata if isinstance(getattr(run, "metadata", None), dict) else {}
         next_meta = dict(next_meta)
@@ -2333,21 +2348,6 @@ def portal_agent_run_approval(request: HttpRequest) -> JsonResponse:
     except PortalValidationError as exc:
         return _json_error("validation_error", str(exc))
 
-    business_id = getattr(conversation, "business_profile_id", None)
-    enabled = False
-    try:
-        from apps.accounts.feature_flags import FeatureFlagService
-
-        if business_id:
-            with tenant_context(business_id):
-                business = BusinessProfile.objects.filter(id=business_id).only("id", "metadata").first()
-            enabled = bool(getattr(FeatureFlagService.snapshot(business), "agent_workforce_v1", False)) if business else False
-    except Exception:  # pragma: no cover - best effort only
-        enabled = False
-
-    if not enabled:
-        return _json_error("feature_disabled", "Agent workforce are not enabled for this business.", status=403)
-
     actor_user = request.user if getattr(request, "user", None) and request.user.is_authenticated else None
     if actor_user:
         actor_snapshot: dict[str, object] = {"type": "user", "user_id": str(getattr(actor_user, "id", "") or "")}
@@ -2359,6 +2359,7 @@ def portal_agent_run_approval(request: HttpRequest) -> JsonResponse:
 
     run: AgentRun | None = None
     approval: ConversationToolApproval | None = None
+    business_id = getattr(conversation, "business_profile_id", None)
     with transaction.atomic():
         with tenant_context(business_id):
             run = AgentRun.objects.select_for_update().filter(id=run_uuid, conversation_id=conversation.id).first()
@@ -2428,6 +2429,28 @@ def portal_agent_run_approval(request: HttpRequest) -> JsonResponse:
                 },
                 created_by=actor_user,
             )
+            if run.workflow_id:
+                MemoryItem.objects.create(
+                    business_profile=run.business_profile,
+                    scope=MemoryScope.WORKFLOW,
+                    agent_profile=run.agent_profile,
+                    workflow=run.workflow,
+                    run=run,
+                    conversation=run.conversation,
+                    kind=MemoryKind.DECISION,
+                    key="tool_approval",
+                    content=decision_value,
+                    payload={
+                        "decision": decision_value,
+                        "approval_id": str(approval.id),
+                        "tool_name": approval.tool_name,
+                        "remote_tool_name": approval.remote_tool_name,
+                        "actor": actor_snapshot,
+                        "source_run_id": str(run.id),
+                    },
+                    visibility=MemoryVisibility.SHARED,
+                    created_by=actor_user,
+                )
 
             next_meta = dict(meta)
             next_meta.pop("pending_approval_id", None)
@@ -2566,21 +2589,6 @@ def portal_agent_request_update(request: HttpRequest) -> JsonResponse:
     except PortalValidationError as exc:
         return _json_error("validation_error", str(exc))
 
-    business_id = getattr(conversation, "business_profile_id", None)
-    enabled = False
-    try:
-        from apps.accounts.feature_flags import FeatureFlagService
-        from apps.accounts.models import BusinessProfile
-
-        if business_id:
-            with tenant_context(business_id):
-                business = BusinessProfile.objects.filter(id=business_id).only("id", "metadata").first()
-            enabled = bool(getattr(FeatureFlagService.snapshot(business), "agent_workforce_v1", False)) if business else False
-    except Exception:  # pragma: no cover - best effort only
-        enabled = False
-
-    if not enabled:
-        return _json_error("feature_disabled", "Agent workforce are not enabled for this business.", status=403)
     agent_profile_id = getattr(conversation, "agent_profile_id", None)
     actor_user = request.user if getattr(request, "user", None) and request.user.is_authenticated else None
     if actor_user:
@@ -2592,6 +2600,7 @@ def portal_agent_request_update(request: HttpRequest) -> JsonResponse:
         }
 
     run_payload: dict[str, object] | None = None
+    business_id = getattr(conversation, "business_profile_id", None)
     with transaction.atomic():
         with tenant_context(business_id):
             qs = AgentRequest.objects.select_for_update().select_related("from_agent_profile", "to_agent_profile").filter(
@@ -2940,17 +2949,7 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
     conversation_id = getattr(conversation, "id", None)
     business_id = getattr(conversation, "business_profile_id", None)
     agent_profile_id = getattr(conversation, "agent_profile_id", None)
-    agent_workforce_enabled = False
-    try:
-        from apps.accounts.feature_flags import FeatureFlagService
-        from apps.accounts.models import BusinessProfile
-
-        if business_id:
-            with tenant_context(business_id):
-                business = BusinessProfile.objects.filter(id=business_id).first()
-            agent_workforce_enabled = bool(getattr(FeatureFlagService.snapshot(business), "agent_workforce_v1", False)) if business else False
-    except Exception:  # pragma: no cover - best effort only
-        agent_workforce_enabled = False
+    agent_workforce_enabled = True
 
     def event_stream() -> Iterable[str]:
         metrics_enabled = bool(getattr(settings, "PORTAL_STREAM_METRICS", False))
@@ -3079,11 +3078,6 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
                                 ).strip()
                                 if not event_name:
                                     continue
-                                if not agent_workforce_enabled and event_name in {"agentRunEvent", "agentRequestEvent", "conversationMessage"}:
-                                    # Keep behavior compatible with legacy polling mode:
-                                    # when agent workforce are disabled, don't surface Tasks/Inbox messages.
-                                    continue
-
                                 raw_payload = fields.get(b"payload") if isinstance(fields, dict) else None
                                 if raw_payload is None and isinstance(fields, dict):
                                     raw_payload = fields.get("payload")  # type: ignore[index]

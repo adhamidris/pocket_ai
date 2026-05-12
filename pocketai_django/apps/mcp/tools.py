@@ -1368,6 +1368,70 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
         required=("agent_id", "question"),
     ),
     _function_schema(
+        name="list_tasks",
+        description="List saved agent tasks/workflows for the current business, optionally filtered by agent or status.",
+        properties={
+            "agent_id": {"type": "string", "description": "Optional agent UUID."},
+            "status": {"type": "string", "enum": ["draft", "active", "paused", "archived", "all"]},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+        },
+        required=(),
+    ),
+    _function_schema(
+        name="draft_task",
+        description=(
+            "Create an inactive task/workflow draft. Use for persistent scheduled, webhook, email inbox, or manual tasks. "
+            "Drafts must be approved by the user before activation."
+        ),
+        properties={
+            "agent_id": {"type": "string", "description": "Optional owning agent UUID. Defaults to the current agent."},
+            "name": {"type": "string", "description": "Short task name."},
+            "goal": {"type": "string", "description": "What the task should accomplish."},
+            "description": {"type": "string"},
+            "trigger_type": {"type": "string", "enum": ["manual", "schedule", "webhook", "email_inbox"]},
+            "trigger_config": {"type": "object", "additionalProperties": True},
+            "source_config": {"type": "object", "additionalProperties": True},
+            "visibility": {"type": "string", "enum": ["initiator", "managers", "workspace"]},
+        },
+        required=("name", "goal"),
+    ),
+    _function_schema(
+        name="update_task",
+        description="Update an existing saved task/workflow draft or paused task.",
+        properties={
+            "task_id": {"type": "string", "description": "Workflow/task UUID."},
+            "name": {"type": "string"},
+            "goal": {"type": "string"},
+            "description": {"type": "string"},
+            "trigger_type": {"type": "string", "enum": ["manual", "schedule", "webhook", "email_inbox"]},
+            "trigger_config": {"type": "object", "additionalProperties": True},
+            "source_config": {"type": "object", "additionalProperties": True},
+            "visibility": {"type": "string", "enum": ["initiator", "managers", "workspace"]},
+        },
+        required=("task_id",),
+    ),
+    _function_schema(
+        name="request_task_activation",
+        description=(
+            "Activate a saved task only after explicit user approval. "
+            "If approved is false or omitted, returns an approval-needed payload instead of activating."
+        ),
+        properties={
+            "task_id": {"type": "string", "description": "Workflow/task UUID."},
+            "approved": {"type": "boolean", "description": "Set true only after the user explicitly approves activation."},
+        },
+        required=("task_id",),
+    ),
+    _function_schema(
+        name="pause_task",
+        description="Pause an active saved task/workflow.",
+        properties={
+            "task_id": {"type": "string", "description": "Workflow/task UUID."},
+            "reason": {"type": "string"},
+        },
+        required=("task_id",),
+    ),
+    _function_schema(
         name="search_memory",
         description="Search scoped long-term memory for relevant facts, preferences, decisions, or workflow state.",
         properties={
@@ -10291,20 +10355,6 @@ def _start_agent_run_handler(
 ) -> Mapping[str, object]:
     del context
 
-    feature_state = FeatureFlagService.snapshot(conversation.business_profile)
-    if not bool(getattr(feature_state, "agent_workforce_v1", False)):
-        return {
-            "tool": "start_agent_run",
-            "status": "error",
-            "error_code": "feature_disabled",
-            "error": "agent_workforce_disabled",
-            "hint": (
-                "Agent workforce are disabled for this business. "
-                "Enable the per-business feature flag `agent_workforce_v1` or set `AGENT_WORKFORCE_V1_GLOBAL_OVERRIDE=true` "
-                "and restart the server."
-            ),
-        }
-
     convo_meta = conversation.metadata if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
     convo_source = str(convo_meta.get("source") or "").strip().lower()
     if convo_source == "agent_run" or convo_meta.get("agent_run_id") or convo_meta.get("agentRunId"):
@@ -10414,7 +10464,7 @@ def _start_agent_run_handler(
             "delegat",
             "subagent",
             "background agent",
-            "sub agent",
+            "specialist agent",
             "background",
             "in the background",
             "run this in background",
@@ -10964,7 +11014,7 @@ def _list_agents_handler(
     from apps.accounts.models import AgentProfile
 
     include_paused = bool(arguments.get("include_paused"))
-    qs = AgentProfile.objects.filter(business_profile_id=conversation.business_profile_id).order_by("name")
+    qs = AgentProfile.objects.select_related("department").filter(business_profile_id=conversation.business_profile_id).order_by("name")
     if not include_paused:
         qs = qs.filter(status="active")
     return {
@@ -10976,6 +11026,11 @@ def _list_agents_handler(
                 "name": agent.name,
                 "status": agent.status,
                 "role": agent.role or "",
+                "agent_type": getattr(agent, "agent_type", "specialist"),
+                "department_id": str(agent.department_id) if agent.department_id else None,
+                "department": getattr(agent.department, "name", "") if agent.department_id else "",
+                "can_manage_tasks": bool(getattr(agent, "can_manage_tasks", False)),
+                "can_manage_departments": bool(getattr(agent, "can_manage_departments", False)),
                 "responsibilities": list(agent.responsibilities or []),
                 "tone": agent.tone or "",
             }
@@ -11024,6 +11079,224 @@ def _consult_agent_handler(
         "to_agent": {"id": str(target.id), "name": target.name, "role": target.role or ""},
         "hint": "Async agent request created. The target agent can answer through its inbox.",
     }
+
+
+def _workflow_payload(workflow) -> dict[str, object]:
+    return {
+        "id": str(workflow.id),
+        "agent_id": str(workflow.agent_profile_id),
+        "department_id": str(workflow.department_id) if workflow.department_id else None,
+        "name": workflow.name,
+        "description": workflow.description or "",
+        "status": workflow.status,
+        "visibility": workflow.visibility,
+        "trigger_type": workflow.trigger_type,
+        "trigger_config": workflow.trigger_config if isinstance(workflow.trigger_config, dict) else {},
+        "source_config": workflow.source_config if isinstance(workflow.source_config, dict) else {},
+        "instructions": workflow.instructions if isinstance(workflow.instructions, dict) else {},
+        "next_trigger_at": workflow.next_trigger_at.isoformat() if workflow.next_trigger_at else None,
+        "last_triggered_at": workflow.last_triggered_at.isoformat() if workflow.last_triggered_at else None,
+        "last_error": workflow.last_error or "",
+    }
+
+
+def _resolve_task_agent(conversation: Conversation, raw_agent_id: object = None):
+    from apps.accounts.models import AgentProfile
+
+    if raw_agent_id:
+        try:
+            agent_id = uuid.UUID(str(raw_agent_id))
+        except (TypeError, ValueError):
+            return None, {"status": "error", "error_code": "validation_failed", "error": "agent_id must be a UUID."}
+        agent = AgentProfile.objects.select_related("department").filter(id=agent_id, business_profile_id=conversation.business_profile_id).first()
+        if agent is None:
+            return None, {"status": "error", "error_code": "agent_not_found", "error": "Agent not found."}
+        return agent, None
+    agent = getattr(conversation, "agent_profile", None)
+    if agent is None:
+        return None, {"status": "error", "error_code": "missing_agent_profile", "error": "Conversation is not linked to an agent."}
+    return agent, None
+
+
+def _list_tasks_handler(
+    arguments: Mapping[str, object],
+    *,
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context
+    from apps.conversations.models import AgentWorkflow
+
+    qs = AgentWorkflow.objects.select_related("agent_profile", "department").filter(business_profile_id=conversation.business_profile_id)
+    agent_id_raw = arguments.get("agent_id") or arguments.get("agentId")
+    if agent_id_raw:
+        try:
+            qs = qs.filter(agent_profile_id=uuid.UUID(str(agent_id_raw)))
+        except (TypeError, ValueError):
+            return {"tool": "list_tasks", "status": "error", "error_code": "validation_failed", "error": "agent_id must be a UUID."}
+    status = str(arguments.get("status") or "all").strip().lower()
+    if status and status != "all":
+        qs = qs.filter(status=status)
+    limit = max(1, min(int(arguments.get("limit") or 20), 50))
+    return {"tool": "list_tasks", "status": "ok", "tasks": [_workflow_payload(item) for item in qs.order_by("-updated_at")[:limit]]}
+
+
+def _draft_task_handler(
+    arguments: Mapping[str, object],
+    *,
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context
+    from apps.conversations.models import AgentRunVisibility, AgentWorkflow, AgentWorkflowStatus, AgentWorkflowTriggerType
+    from apps.conversations.workflow_contracts import normalize_workflow_instructions
+
+    agent, error = _resolve_task_agent(conversation, arguments.get("agent_id") or arguments.get("agentId"))
+    if error:
+        return {"tool": "draft_task", **error}
+    name = str(arguments.get("name") or "").strip()
+    goal = str(arguments.get("goal") or "").strip()
+    if not name or not goal:
+        return {"tool": "draft_task", "status": "error", "error_code": "validation_failed", "error": "name and goal are required."}
+    trigger_type = str(arguments.get("trigger_type") or arguments.get("triggerType") or AgentWorkflowTriggerType.MANUAL).strip().lower()
+    if trigger_type not in {choice for choice, _ in AgentWorkflowTriggerType.choices}:
+        return {"tool": "draft_task", "status": "error", "error_code": "validation_failed", "error": "Invalid trigger_type."}
+    visibility = str(arguments.get("visibility") or AgentRunVisibility.INITIATOR).strip().lower()
+    if visibility not in {choice for choice, _ in AgentRunVisibility.choices}:
+        visibility = AgentRunVisibility.INITIATOR
+    workflow = AgentWorkflow.objects.create(
+        business_profile_id=conversation.business_profile_id,
+        agent_profile=agent,
+        department=getattr(agent, "department", None),
+        created_by=getattr(conversation, "owner_user", None) or getattr(agent, "user", None),
+        name=name[:160],
+        description=str(arguments.get("description") or "")[:4000],
+        status=AgentWorkflowStatus.DRAFT,
+        visibility=visibility,
+        trigger_type=trigger_type,
+        trigger_config=dict(arguments.get("trigger_config") or arguments.get("triggerConfig") or {}),
+        source_config=dict(arguments.get("source_config") or arguments.get("sourceConfig") or {}),
+        instructions=normalize_workflow_instructions({"goal": goal[:6000]}),
+        metadata={"source": "chat_task_draft", "activation_requires_user_approval": True},
+    )
+    return {
+        "tool": "draft_task",
+        "status": "ok",
+        "task": _workflow_payload(workflow),
+        "activation_required": True,
+        "hint": "Task draft saved. Ask the user to approve activation before calling request_task_activation with approved=true.",
+    }
+
+
+def _update_task_handler(
+    arguments: Mapping[str, object],
+    *,
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context
+    from apps.conversations.models import AgentRunVisibility, AgentWorkflow, AgentWorkflowTriggerType
+    from apps.conversations.workflow_contracts import normalize_workflow_instructions
+
+    try:
+        task_id = uuid.UUID(str(arguments.get("task_id") or arguments.get("taskId") or ""))
+    except (TypeError, ValueError):
+        return {"tool": "update_task", "status": "error", "error_code": "validation_failed", "error": "task_id must be a UUID."}
+    workflow = AgentWorkflow.objects.filter(id=task_id, business_profile_id=conversation.business_profile_id).first()
+    if workflow is None:
+        return {"tool": "update_task", "status": "error", "error_code": "not_found", "error": "Task not found."}
+    updates: list[str] = []
+    for key, field, limit in (("name", "name", 160), ("description", "description", 4000)):
+        if key in arguments:
+            setattr(workflow, field, str(arguments.get(key) or "").strip()[:limit])
+            updates.append(field)
+    if "goal" in arguments:
+        current = dict(workflow.instructions or {}) if isinstance(workflow.instructions, dict) else {}
+        current["goal"] = str(arguments.get("goal") or "").strip()[:6000]
+        workflow.instructions = normalize_workflow_instructions(current)
+        updates.append("instructions")
+    if "trigger_type" in arguments or "triggerType" in arguments:
+        trigger_type = str(arguments.get("trigger_type") or arguments.get("triggerType") or "").strip().lower()
+        if trigger_type not in {choice for choice, _ in AgentWorkflowTriggerType.choices}:
+            return {"tool": "update_task", "status": "error", "error_code": "validation_failed", "error": "Invalid trigger_type."}
+        workflow.trigger_type = trigger_type
+        updates.append("trigger_type")
+    for key, field in (("trigger_config", "trigger_config"), ("triggerConfig", "trigger_config"), ("source_config", "source_config"), ("sourceConfig", "source_config")):
+        if key in arguments:
+            setattr(workflow, field, dict(arguments.get(key) or {}))
+            updates.append(field)
+    if "visibility" in arguments:
+        visibility = str(arguments.get("visibility") or "").strip().lower()
+        if visibility not in {choice for choice, _ in AgentRunVisibility.choices}:
+            return {"tool": "update_task", "status": "error", "error_code": "validation_failed", "error": "Invalid visibility."}
+        workflow.visibility = visibility
+        updates.append("visibility")
+    if updates:
+        workflow.save(update_fields=sorted(set([*updates, "updated_at"])))
+    return {"tool": "update_task", "status": "ok", "task": _workflow_payload(workflow)}
+
+
+def _request_task_activation_handler(
+    arguments: Mapping[str, object],
+    *,
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context
+    from django.utils import timezone as django_timezone
+    from apps.conversations.models import AgentWorkflow, AgentWorkflowStatus, AgentWorkflowTriggerType
+    from apps.conversations.workflow_scheduling import CronScheduleError, compute_next_workflow_schedule_at
+
+    try:
+        task_id = uuid.UUID(str(arguments.get("task_id") or arguments.get("taskId") or ""))
+    except (TypeError, ValueError):
+        return {"tool": "request_task_activation", "status": "error", "error_code": "validation_failed", "error": "task_id must be a UUID."}
+    workflow = AgentWorkflow.objects.filter(id=task_id, business_profile_id=conversation.business_profile_id).first()
+    if workflow is None:
+        return {"tool": "request_task_activation", "status": "error", "error_code": "not_found", "error": "Task not found."}
+    if not bool(arguments.get("approved")):
+        return {
+            "tool": "request_task_activation",
+            "status": "needs_user",
+            "task": _workflow_payload(workflow),
+            "prompt": "Please approve activating this persistent task before it starts running.",
+        }
+    next_trigger_at = None
+    if workflow.trigger_type == AgentWorkflowTriggerType.SCHEDULE:
+        try:
+            next_trigger_at = compute_next_workflow_schedule_at("cron", dict(workflow.trigger_config or {}), after=django_timezone.now())
+        except CronScheduleError as exc:
+            return {"tool": "request_task_activation", "status": "error", "error_code": "validation_failed", "error": str(exc)}
+    workflow.status = AgentWorkflowStatus.ACTIVE
+    workflow.next_trigger_at = next_trigger_at
+    workflow.save(update_fields=["status", "next_trigger_at", "updated_at"])
+    return {"tool": "request_task_activation", "status": "ok", "task": _workflow_payload(workflow), "activated": True}
+
+
+def _pause_task_handler(
+    arguments: Mapping[str, object],
+    *,
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context
+    from apps.conversations.models import AgentWorkflow, AgentWorkflowStatus
+
+    try:
+        task_id = uuid.UUID(str(arguments.get("task_id") or arguments.get("taskId") or ""))
+    except (TypeError, ValueError):
+        return {"tool": "pause_task", "status": "error", "error_code": "validation_failed", "error": "task_id must be a UUID."}
+    workflow = AgentWorkflow.objects.filter(id=task_id, business_profile_id=conversation.business_profile_id).first()
+    if workflow is None:
+        return {"tool": "pause_task", "status": "error", "error_code": "not_found", "error": "Task not found."}
+    metadata = dict(workflow.metadata or {}) if isinstance(workflow.metadata, dict) else {}
+    if arguments.get("reason"):
+        metadata["last_pause_reason"] = str(arguments.get("reason"))[:500]
+    workflow.status = AgentWorkflowStatus.PAUSED
+    workflow.next_trigger_at = None
+    workflow.metadata = metadata
+    workflow.save(update_fields=["status", "next_trigger_at", "metadata", "updated_at"])
+    return {"tool": "pause_task", "status": "ok", "task": _workflow_payload(workflow)}
 
 
 def _search_memory_handler(
@@ -12336,6 +12609,11 @@ _TOOL_HANDLERS: dict[str, ToolHandler] = {
     "continue_agent_run": _continue_agent_run_handler,
     "list_agents": _list_agents_handler,
     "consult_agent": _consult_agent_handler,
+    "list_tasks": _list_tasks_handler,
+    "draft_task": _draft_task_handler,
+    "update_task": _update_task_handler,
+    "request_task_activation": _request_task_activation_handler,
+    "pause_task": _pause_task_handler,
     "search_memory": _search_memory_handler,
     "save_memory": _save_memory_handler,
     "forget_memory": _forget_memory_handler,

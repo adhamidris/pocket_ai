@@ -2342,9 +2342,6 @@ def _controls_agentic_operational_tool_names(
     enabled_connections: list[McpConnection],
     available_integration_tool_names: set[str],
 ) -> set[str]:
-    feature_state = FeatureFlagService.snapshot(business)
-    agent_workforce_enabled = bool(getattr(feature_state, "agent_workforce_v1", False))
-
     # Keep Controls aligned with the operational agentic surface, while excluding
     # UI/internal helpers and legacy retrieval tools.
     allowed: set[str] = {
@@ -2357,21 +2354,21 @@ def _controls_agentic_operational_tool_names(
         "pdf_extract_pages",
         "pdf_extract_text",
         "initiate_phone_call",
+        "start_agent_run",
+        "list_agent_runs",
+        "get_agent_run",
+        "continue_agent_run",
+        "list_agents",
+        "consult_agent",
+        "list_tasks",
+        "draft_task",
+        "update_task",
+        "request_task_activation",
+        "pause_task",
+        "search_memory",
+        "save_memory",
+        "forget_memory",
     }
-    if agent_workforce_enabled:
-        allowed.update(
-            {
-                "start_agent_run",
-                "list_agent_runs",
-                "get_agent_run",
-                "continue_agent_run",
-                "list_agents",
-                "consult_agent",
-                "search_memory",
-                "save_memory",
-                "forget_memory",
-            }
-        )
     if enabled_connections:
         allowed.update({"mcp_search_tools", "mcp_call_tool"})
     allowed.update(available_integration_tool_names)

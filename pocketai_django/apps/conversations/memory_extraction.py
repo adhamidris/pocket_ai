@@ -179,6 +179,27 @@ class MemoryExtractionService:
                 )
                 created_items.append(item)
                 rule_based_created += 1
+                if getattr(run, "workflow_id", None) and kind in {MemoryKind.DECISION, MemoryKind.EXTRACTED_DATA, MemoryKind.FACT}:
+                    MemoryItem.objects.create(
+                        business_profile=run.business_profile,
+                        scope=MemoryScope.WORKFLOW,
+                        agent_profile=run.agent_profile,
+                        workflow=run.workflow,
+                        run=run,
+                        conversation=run.conversation,
+                        kind=kind,
+                        key=f"{key_prefix}_{key}",
+                        content=content_str,
+                        payload={
+                            "tool_name": tool_name,
+                            "extraction_method": "rule_based",
+                            "extracted_at": timezone.now().isoformat(),
+                            "original_key": key,
+                            "source_run_id": str(run.id),
+                        },
+                        visibility=MemoryVisibility.SHARED,
+                        created_by=user,
+                    )
             except Exception as exc:
                 logger.warning(
                     "Failed to create memory item: run=%s tool=%s key=%s error=%s",
@@ -215,6 +236,27 @@ class MemoryExtractionService:
                     )
                     created_items.append(item)
                     llm_created += 1
+                    if getattr(run, "workflow_id", None):
+                        MemoryItem.objects.create(
+                            business_profile=run.business_profile,
+                            scope=MemoryScope.WORKFLOW,
+                            agent_profile=run.agent_profile,
+                            workflow=run.workflow,
+                            run=run,
+                            conversation=run.conversation,
+                            kind=kind,
+                            key=item_data.get("key", f"{tool_name}_llm_extracted"),
+                            content=str(item_data.get("content", ""))[:4000],
+                            payload={
+                                "tool_name": tool_name,
+                                "extraction_method": "llm",
+                                "extracted_at": timezone.now().isoformat(),
+                                "confidence": item_data.get("confidence", 0.8),
+                                "source_run_id": str(run.id),
+                            },
+                            visibility=MemoryVisibility.SHARED,
+                            created_by=user,
+                        )
                 except Exception as exc:
                     logger.warning(
                         "Failed to create LLM-extracted memory item: run=%s tool=%s error=%s",

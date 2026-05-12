@@ -8,8 +8,7 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
-from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
+from apps.accounts.models import AgentDepartment, AgentProfile, BusinessProfile, RegistrationSession
 from apps.conversations.models import AgentRun, AgentRunStatus, AgentWorkflow, AgentWorkflowStatus, MemoryItem, MemoryStatus
 from apps.conversations.workflow_processing import AgentWorkflowProcessingService
 from apps.integrations.models import EmailAccount, EmailAccountProvider, EmailAccountStatus
@@ -28,10 +27,58 @@ class AgentRunsApiTests(TestCase):
             name="Acme Co",
             industry="Retail",
             status="active",
-            metadata={FEATURE_FLAG_METADATA_KEY: {"agent_workforce_v1": True}},
         )
         self.agent = AgentProfile.objects.create(business_profile=self.business, user=self.user, name="Ops Agent")
         self.client.force_login(self.user)
+
+    def test_departments_and_agent_hierarchy_create_via_api(self) -> None:
+        dept_res = self.client.post(
+            reverse("api:departments-list") + f"?business_id={self.business.id}",
+            data=json.dumps({"name": "Finance", "description": "Money work"}),
+            content_type="application/json",
+        )
+        self.assertEqual(dept_res.status_code, 201)
+        department_id = dept_res.json()["department"]["id"]
+
+        lead_res = self.client.post(
+            reverse("api:agents-list") + f"?business_id={self.business.id}",
+            data=json.dumps({"name": "Finance Lead", "agentType": "department_lead", "departmentId": department_id}),
+            content_type="application/json",
+        )
+        self.assertEqual(lead_res.status_code, 201)
+        self.assertEqual(lead_res.json()["agent"]["departmentId"], department_id)
+        self.assertTrue(lead_res.json()["agent"]["canManageTasks"])
+
+        specialist_res = self.client.post(
+            reverse("api:agents-list") + f"?business_id={self.business.id}",
+            data=json.dumps(
+                {
+                    "name": "Invoice Checker",
+                    "agentType": "background",
+                    "departmentId": department_id,
+                    "managerAgentId": lead_res.json()["agent"]["id"],
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(specialist_res.status_code, 201)
+        self.assertEqual(specialist_res.json()["agent"]["managerAgentId"], lead_res.json()["agent"]["id"])
+        self.assertTrue(AgentDepartment.objects.filter(id=uuid.UUID(department_id), agents__name="Invoice Checker").exists())
+
+    def test_api_rejects_second_active_main_agent(self) -> None:
+        main_res = self.client.post(
+            reverse("api:agents-list") + f"?business_id={self.business.id}",
+            data=json.dumps({"name": "Main", "agentType": "main"}),
+            content_type="application/json",
+        )
+        self.assertEqual(main_res.status_code, 201)
+
+        duplicate_res = self.client.post(
+            reverse("api:agents-list") + f"?business_id={self.business.id}",
+            data=json.dumps({"name": "Second Main", "agentType": "main"}),
+            content_type="application/json",
+        )
+        self.assertEqual(duplicate_res.status_code, 400)
 
     def test_workflow_create_list_and_manual_run(self) -> None:
         url = reverse("api:agent-workflows", args=[self.agent.id])
@@ -50,6 +97,8 @@ class AgentRunsApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 201)
         workflow_id = response.json()["workflow"]["id"]
+        self.assertEqual(response.json()["workflow"]["reviewMode"], "on_risk")
+        self.assertEqual(response.json()["workflow"]["autonomyMode"], "draft_for_approval")
 
         response = self.client.get(url)
         self.assertEqual(response.status_code, 200)
@@ -60,6 +109,49 @@ class AgentRunsApiTests(TestCase):
         self.assertEqual(run_res.status_code, 201)
         self.assertEqual(run_res.json()["run"]["workflowId"], workflow_id)
         self.assertEqual(run_res.json()["run"]["status"], AgentRunStatus.QUEUED)
+
+    def test_pausing_workflow_cancels_open_runs_by_default(self) -> None:
+        workflow = AgentWorkflow.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            created_by=self.user,
+            name="Recurring task",
+            status=AgentWorkflowStatus.ACTIVE,
+            trigger_type="schedule",
+            trigger_config={"cron": "* * * * *"},
+            instructions={"goal": "Check things"},
+            next_trigger_at=timezone.now(),
+        )
+        queued = AgentRun.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            workflow=workflow,
+            created_by=self.user,
+            title="Queued",
+            status=AgentRunStatus.QUEUED,
+        )
+        waiting = AgentRun.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            workflow=workflow,
+            created_by=self.user,
+            title="Waiting",
+            status=AgentRunStatus.WAITING_APPROVAL,
+        )
+
+        response = self.client.patch(
+            reverse("api:agent-workflow-detail", args=[self.agent.id, workflow.id]),
+            data=json.dumps({"status": "paused"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["workflow"]["status"], "paused")
+        self.assertIsNone(response.json()["workflow"]["nextTriggerAt"])
+        queued.refresh_from_db()
+        waiting.refresh_from_db()
+        self.assertEqual(queued.status, AgentRunStatus.CANCELLED)
+        self.assertEqual(waiting.status, AgentRunStatus.CANCELLED)
 
     def test_runs_create_cancel_user_input_and_events(self) -> None:
         runs_url = reverse("api:agent-runs", args=[self.agent.id])

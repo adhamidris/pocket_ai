@@ -9,7 +9,17 @@ from django.utils import timezone
 from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
 from apps.conversations.agent_run_processing import AgentRunProcessingService
-from apps.conversations.models import AgentRun, AgentRunStatus, Conversation
+from apps.conversations.models import (
+    AgentRun,
+    AgentRunNotification,
+    AgentRunSource,
+    AgentRunStatus,
+    AgentWorkflow,
+    AgentWorkflowStatus,
+    Conversation,
+    MemoryItem,
+    MemoryScope,
+)
 
 
 User = get_user_model()
@@ -106,3 +116,58 @@ class AgentRunProcessingTests(TestCase):
         run.refresh_from_db()
         self.assertEqual(run.conversation_id, anchor.id)
         self.assertEqual(str(run.execution_conversation_id or ""), str(getattr(called_conversation, "id", "")))
+
+    def test_workflow_run_persists_report_memory_and_notification(self) -> None:
+        workflow = AgentWorkflow.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            created_by=self.user,
+            name="Subscription checker",
+            status=AgentWorkflowStatus.ACTIVE,
+            trigger_type="schedule",
+            trigger_config={"cron": "* * * * *"},
+            instructions={"goal": "Check subscriptions"},
+        )
+        anchor = Conversation.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            session_token="workflow-anchor",
+            metadata={"actor_user_id": str(self.user.id), "type": "workflow_thread"},
+        )
+        workflow.conversation = anchor
+        workflow.save(update_fields=["conversation", "updated_at"])
+        run = AgentRun.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            workflow=workflow,
+            conversation=anchor,
+            created_by=self.user,
+            title="Subscription checker",
+            source=AgentRunSource.SCHEDULE,
+            status=AgentRunStatus.RUNNING,
+            started_at=timezone.now(),
+            lease_expires_at=timezone.now(),
+            workflow_snapshot={"goal": "Check subscriptions"},
+            max_attempts=2,
+        )
+
+        service = AgentRunProcessingService(lease_seconds=1.0, max_retries_default=2, max_retry_delay_seconds=1.0)
+        mock_turn = mock.Mock(
+            response_text='{"run_report":{"objective":"Check subscriptions","status":"completed","findings":["A plan renews soon"],"actions_taken":[],"evidence_refs":[],"confidence":0.9,"changed_entities":[{"type":"subscription","identity":"demo","state":{"renewal":"2026-06-01","price":"10"}}],"notification_candidate":{"kind":"run_result","priority":"normal","title":"Subscription update","body":"A plan renews soon","payload":{}},"recommended_next_step":"Review"}}',
+            response_blocks=[],
+            planned_actions=[],
+            extractions=[],
+            llm_usage={},
+            tool_trace=[],
+        )
+        with mock.patch("apps.llm.llm_provider.load_mcp_provider", return_value=mock.Mock()):
+            with mock.patch("apps.mcp.orchestrator.McpOrchestratorService.stream_turn", return_value=mock_turn):
+                result = service._execute_run(run)
+
+        self.assertEqual(result.status, AgentRunStatus.COMPLETED)
+        run.refresh_from_db()
+        self.assertIn("run_report", run.result)
+        workflow.refresh_from_db()
+        self.assertIn("last_run_report", workflow.state)
+        self.assertTrue(MemoryItem.objects.filter(workflow=workflow, scope=MemoryScope.WORKFLOW, key=f"run_report_{run.id}").exists())
+        self.assertTrue(AgentRunNotification.objects.filter(run=run, status="delivered").exists())

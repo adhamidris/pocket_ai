@@ -17,7 +17,6 @@ from django.views.decorators.http import require_http_methods, require_POST
 
 from core.tenancy import tenant_bypass, tenant_context
 
-from apps.accounts.feature_flags import FeatureFlagService
 from apps.accounts.models import AgentProfile, EmailAccountStatus
 from apps.conversations.workflow_scheduling import CronScheduleError, compute_next_workflow_schedule_at
 from apps.conversations.models import (
@@ -28,7 +27,10 @@ from apps.conversations.models import (
     AgentRunSource,
     AgentRunStatus,
     AgentRunVisibility,
+    AgentRunNotification,
     AgentWorkflow,
+    AgentWorkflowAutonomyMode,
+    AgentWorkflowReviewMode,
     AgentWorkflowStatus,
     AgentWorkflowTriggerType,
     Conversation,
@@ -69,7 +71,7 @@ def _parse_uuid(value: object, *, field: str) -> tuple[uuid.UUID | None, JsonRes
 def _resolve_agent_for_request(request: HttpRequest, agent_id: uuid.UUID) -> tuple[AgentProfile | None, JsonResponse | None]:
     if not request.user.is_authenticated:
         return None, JsonResponse({"error": "UNAUTHORIZED", "message": "Login required."}, status=HTTPStatus.UNAUTHORIZED)
-    qs = AgentProfile.objects.select_related("business_profile")
+    qs = AgentProfile.objects.select_related("business_profile", "department")
     if not request.user.is_staff:
         qs = qs.filter(Q(user=request.user) | Q(business_profile__user=request.user))
     agent = qs.filter(id=agent_id).first()
@@ -80,23 +82,6 @@ def _resolve_agent_for_request(request: HttpRequest, agent_id: uuid.UUID) -> tup
 
 def _user_is_business_owner(request: HttpRequest, agent: AgentProfile) -> bool:
     return bool(request.user.is_authenticated and getattr(agent.business_profile, "user_id", None) == request.user.id)
-
-
-def _ensure_agent_workforce_enabled(
-    request: HttpRequest,
-    *,
-    agent: AgentProfile,
-    allow_read_only: bool = True,
-) -> JsonResponse | None:
-    if request.user.is_staff:
-        return None
-    enabled = bool(getattr(FeatureFlagService.snapshot(agent.business_profile), "agent_workforce_v1", False))
-    if enabled or (allow_read_only and request.method == "GET"):
-        return None
-    return JsonResponse(
-        {"error": "FEATURE_DISABLED", "message": "Agent workforce features are not enabled for this business."},
-        status=HTTPStatus.FORBIDDEN,
-    )
 
 
 def _run_visibility_filter(request: HttpRequest, *, agent: AgentProfile) -> Q:
@@ -120,6 +105,9 @@ def _workflow_snapshot(workflow: AgentWorkflow | None, payload: dict[str, Any] |
                 "trigger_config": workflow.trigger_config if isinstance(workflow.trigger_config, dict) else {},
                 "source_config": workflow.source_config if isinstance(workflow.source_config, dict) else {},
                 "destination_config": workflow.destination_config if isinstance(workflow.destination_config, dict) else {},
+                "notification_config": workflow.notification_config if isinstance(workflow.notification_config, dict) else {},
+                "review_mode": workflow.review_mode,
+                "autonomy_mode": workflow.autonomy_mode,
             }
         )
     return normalize_workflow_instructions(payload or {})
@@ -130,6 +118,7 @@ def _serialize_workflow(workflow: AgentWorkflow) -> dict[str, object]:
         "id": str(workflow.id),
         "agentId": str(workflow.agent_profile_id),
         "businessId": str(workflow.business_profile_id),
+        "departmentId": str(workflow.department_id) if workflow.department_id else None,
         "conversationId": str(workflow.conversation_id) if workflow.conversation_id else None,
         "emailAccountId": str(workflow.email_account_id) if workflow.email_account_id else None,
         "name": workflow.name,
@@ -140,6 +129,9 @@ def _serialize_workflow(workflow: AgentWorkflow) -> dict[str, object]:
         "triggerConfig": workflow.trigger_config if isinstance(workflow.trigger_config, dict) else {},
         "sourceConfig": workflow.source_config if isinstance(workflow.source_config, dict) else {},
         "destinationConfig": workflow.destination_config if isinstance(workflow.destination_config, dict) else {},
+        "notificationConfig": workflow.notification_config if isinstance(workflow.notification_config, dict) else {},
+        "reviewMode": workflow.review_mode,
+        "autonomyMode": workflow.autonomy_mode,
         "instructions": workflow.instructions if isinstance(workflow.instructions, dict) else {},
         "state": workflow.state if isinstance(workflow.state, dict) else {},
         "pollIntervalSeconds": int(workflow.poll_interval_seconds or 0),
@@ -198,6 +190,22 @@ def _serialize_run(run: AgentRun) -> dict[str, object]:
         "result": run.result if isinstance(run.result, dict) else {},
         "artifacts": artifacts,
         "metadata": run.metadata if isinstance(run.metadata, dict) else {},
+        "notifications": [
+            {
+                "id": str(item.id),
+                "status": item.status,
+                "kind": item.kind,
+                "priority": item.priority,
+                "title": item.title or "",
+                "body": item.body or "",
+                "targetConversationId": str(item.target_conversation_id) if item.target_conversation_id else None,
+                "dedupeKey": item.dedupe_key or "",
+                "payload": item.payload if isinstance(item.payload, dict) else {},
+                "deliveredAt": item.delivered_at.isoformat() if item.delivered_at else None,
+                "createdAt": item.created_at.isoformat() if item.created_at else None,
+            }
+            for item in AgentRunNotification.objects.filter(run=run).order_by("-created_at")[:20]
+        ],
         "createdBy": str(run.created_by_id) if run.created_by_id else None,
         "createdAt": run.created_at.isoformat() if run.created_at else None,
         "updatedAt": run.updated_at.isoformat() if run.updated_at else None,
@@ -356,6 +364,42 @@ def _ensure_workflow_conversation(workflow: AgentWorkflow) -> Conversation:
     return conversation
 
 
+def _cancel_open_workflow_runs(workflow: AgentWorkflow, *, reason: str) -> int:
+    open_statuses = [
+        AgentRunStatus.QUEUED,
+        AgentRunStatus.RUNNING,
+        AgentRunStatus.WAITING_USER,
+        AgentRunStatus.WAITING_APPROVAL,
+        AgentRunStatus.WAITING_EXTERNAL,
+        AgentRunStatus.PAUSED,
+    ]
+    runs = list(AgentRun.objects.filter(workflow=workflow, status__in=open_statuses).only("id", "metadata")[:200])
+    now = timezone.now()
+    cancelled = 0
+    for run in runs:
+        _append_run_event(
+            run.id,
+            stream=AgentRunEventStream.SYSTEM,
+            event_type=AgentRunEventType.CANCELLED,
+            label="Cancelled by workflow pause",
+            payload={"reason": reason, "workflow_id": str(workflow.id)},
+        )
+        meta = run.metadata if isinstance(getattr(run, "metadata", None), dict) else {}
+        next_meta = dict(meta)
+        next_meta["cancelled_by_workflow_pause"] = True
+        AgentRun.objects.filter(id=run.id).update(
+            status=AgentRunStatus.CANCELLED,
+            finished_at=now,
+            lease_expires_at=None,
+            run_after=None,
+            error_detail=reason[:2000],
+            metadata=next_meta,
+            updated_at=now,
+        )
+        cancelled += 1
+    return cancelled
+
+
 def _normalize_trigger_type(value: object) -> str:
     raw = str(value or AgentWorkflowTriggerType.MANUAL).strip().lower()
     if raw == "cron":
@@ -378,9 +422,6 @@ def agent_workflows_collection(request: HttpRequest, agent_id: uuid.UUID) -> Jso
     if error:
         return error
     assert agent is not None
-    feature_err = _ensure_agent_workforce_enabled(request, agent=agent, allow_read_only=True)
-    if feature_err:
-        return feature_err
 
     with tenant_context(agent.business_profile_id):
         if request.method == "GET":
@@ -402,6 +443,12 @@ def agent_workflows_collection(request: HttpRequest, agent_id: uuid.UUID) -> Jso
         visibility = str((payload or {}).get("visibility") or AgentRunVisibility.INITIATOR).strip().lower()
         if visibility not in {choice for choice, _ in AgentRunVisibility.choices}:
             return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid visibility."}, status=HTTPStatus.BAD_REQUEST)
+        review_mode = str((payload or {}).get("reviewMode") or (payload or {}).get("review_mode") or AgentWorkflowReviewMode.ON_RISK).strip().lower()
+        if review_mode not in {choice for choice, _ in AgentWorkflowReviewMode.choices}:
+            return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid reviewMode."}, status=HTTPStatus.BAD_REQUEST)
+        autonomy_mode = str((payload or {}).get("autonomyMode") or (payload or {}).get("autonomy_mode") or AgentWorkflowAutonomyMode.DRAFT_FOR_APPROVAL).strip().lower()
+        if autonomy_mode not in {choice for choice, _ in AgentWorkflowAutonomyMode.choices}:
+            return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid autonomyMode."}, status=HTTPStatus.BAD_REQUEST)
         trigger_type = _normalize_trigger_type((payload or {}).get("triggerType") or (payload or {}).get("trigger_type"))
         if trigger_type not in {choice for choice, _ in AgentWorkflowTriggerType.choices}:
             return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid triggerType."}, status=HTTPStatus.BAD_REQUEST)
@@ -434,6 +481,7 @@ def agent_workflows_collection(request: HttpRequest, agent_id: uuid.UUID) -> Jso
         workflow = AgentWorkflow.objects.create(
             business_profile=agent.business_profile,
             agent_profile=agent,
+            department=agent.department,
             created_by=request.user,
             email_account=email_account,
             name=name[:160],
@@ -444,6 +492,9 @@ def agent_workflows_collection(request: HttpRequest, agent_id: uuid.UUID) -> Jso
             trigger_config=trigger_config,
             source_config=dict((payload or {}).get("sourceConfig") or (payload or {}).get("source_config") or {}),
             destination_config=dict((payload or {}).get("destinationConfig") or (payload or {}).get("destination_config") or {}),
+            notification_config=dict((payload or {}).get("notificationConfig") or (payload or {}).get("notification_config") or {}),
+            review_mode=review_mode,
+            autonomy_mode=autonomy_mode,
             instructions=normalize_workflow_instructions((payload or {}).get("instructions") or (payload or {}).get("workflow") or {}),
             state=dict((payload or {}).get("state") or {}),
             poll_interval_seconds=max(60, min(int((payload or {}).get("pollIntervalSeconds") or (payload or {}).get("poll_interval_seconds") or 300), 86400)),
@@ -462,9 +513,6 @@ def agent_workflow_detail(request: HttpRequest, agent_id: uuid.UUID, workflow_id
     if error:
         return error
     assert agent is not None
-    feature_err = _ensure_agent_workforce_enabled(request, agent=agent, allow_read_only=True)
-    if feature_err:
-        return feature_err
 
     with tenant_context(agent.business_profile_id):
         workflow = AgentWorkflow.objects.filter(id=workflow_id, agent_profile=agent).first()
@@ -477,6 +525,7 @@ def agent_workflow_detail(request: HttpRequest, agent_id: uuid.UUID, workflow_id
             workflow.next_trigger_at = None
             workflow.lease_expires_at = None
             workflow.save(update_fields=["status", "next_trigger_at", "lease_expires_at", "updated_at"])
+            _cancel_open_workflow_runs(workflow, reason="Workflow archived")
             return JsonResponse({}, status=HTTPStatus.NO_CONTENT)
 
         payload, error = _parse_json_body(request)
@@ -499,13 +548,25 @@ def agent_workflow_detail(request: HttpRequest, agent_id: uuid.UUID, workflow_id
                 return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid visibility."}, status=HTTPStatus.BAD_REQUEST)
             workflow.visibility = visibility
             updates.append("visibility")
+        if "reviewMode" in payload or "review_mode" in payload:
+            review_mode = str(payload.get("reviewMode") or payload.get("review_mode") or "").strip().lower()
+            if review_mode not in {choice for choice, _ in AgentWorkflowReviewMode.choices}:
+                return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid reviewMode."}, status=HTTPStatus.BAD_REQUEST)
+            workflow.review_mode = review_mode
+            updates.append("review_mode")
+        if "autonomyMode" in payload or "autonomy_mode" in payload:
+            autonomy_mode = str(payload.get("autonomyMode") or payload.get("autonomy_mode") or "").strip().lower()
+            if autonomy_mode not in {choice for choice, _ in AgentWorkflowAutonomyMode.choices}:
+                return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid autonomyMode."}, status=HTTPStatus.BAD_REQUEST)
+            workflow.autonomy_mode = autonomy_mode
+            updates.append("autonomy_mode")
         if "triggerType" in payload or "trigger_type" in payload:
             trigger_type = _normalize_trigger_type(payload.get("triggerType") or payload.get("trigger_type"))
             if trigger_type not in {choice for choice, _ in AgentWorkflowTriggerType.choices}:
                 return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid triggerType."}, status=HTTPStatus.BAD_REQUEST)
             workflow.trigger_type = trigger_type
             updates.append("trigger_type")
-        for public, field in (("triggerConfig", "trigger_config"), ("sourceConfig", "source_config"), ("destinationConfig", "destination_config"), ("instructions", "instructions"), ("state", "state"), ("metadata", "metadata")):
+        for public, field in (("triggerConfig", "trigger_config"), ("sourceConfig", "source_config"), ("destinationConfig", "destination_config"), ("notificationConfig", "notification_config"), ("instructions", "instructions"), ("state", "state"), ("metadata", "metadata")):
             if public in payload or field in payload:
                 value = payload.get(public) if public in payload else payload.get(field)
                 setattr(workflow, field, normalize_workflow_instructions(value) if field == "instructions" else dict(value or {}))
@@ -545,6 +606,14 @@ def agent_workflow_detail(request: HttpRequest, agent_id: uuid.UUID, workflow_id
         if not updates:
             return JsonResponse({"workflow": _serialize_workflow(workflow)}, status=HTTPStatus.OK)
         workflow.save(update_fields=sorted(set([*updates, "updated_at"])))
+        if "status" in updates and workflow.status == AgentWorkflowStatus.PAUSED:
+            cancel_existing = bool((payload or {}).get("cancelOpenRuns", True))
+            if cancel_existing:
+                cancelled = _cancel_open_workflow_runs(workflow, reason="Workflow paused")
+                workflow_meta = dict(workflow.metadata or {}) if isinstance(workflow.metadata, dict) else {}
+                workflow_meta["last_pause_cancelled_runs"] = cancelled
+                AgentWorkflow.objects.filter(id=workflow.id).update(metadata=workflow_meta, updated_at=timezone.now())
+                workflow.metadata = workflow_meta
         if workflow.conversation_id is None:
             _ensure_workflow_conversation(workflow)
         return JsonResponse({"workflow": _serialize_workflow(workflow)}, status=HTTPStatus.OK)
@@ -557,9 +626,6 @@ def agent_operations_status(request: HttpRequest, agent_id: uuid.UUID) -> JsonRe
     if error:
         return error
     assert agent is not None
-    feature_err = _ensure_agent_workforce_enabled(request, agent=agent, allow_read_only=True)
-    if feature_err:
-        return feature_err
 
     now = timezone.now()
     stale_before = now - timedelta(seconds=90)
@@ -622,9 +688,6 @@ def agent_workflow_run(request: HttpRequest, agent_id: uuid.UUID, workflow_id: u
     if error:
         return error
     assert agent is not None
-    feature_err = _ensure_agent_workforce_enabled(request, agent=agent, allow_read_only=False)
-    if feature_err:
-        return feature_err
     with tenant_context(agent.business_profile_id):
         workflow = AgentWorkflow.objects.filter(id=workflow_id, agent_profile=agent).first()
         if workflow is None:
@@ -662,8 +725,6 @@ def workflow_webhook_trigger(request: HttpRequest, workflow_id: uuid.UUID, token
         secret_value = str((workflow.trigger_config or {}).get("secret") or "").strip()
         if not secret_value or not secrets.compare_digest(secret_value, token_value):
             return JsonResponse({"error": "NOT_FOUND", "message": "Workflow not found."}, status=HTTPStatus.NOT_FOUND)
-        if not bool(getattr(FeatureFlagService.snapshot(workflow.business_profile), "agent_workforce_v1", False)):
-            return JsonResponse({"error": "FEATURE_DISABLED", "message": "Agent workforce features are not enabled for this business."}, status=HTTPStatus.FORBIDDEN)
         conversation = _ensure_workflow_conversation(workflow)
         run = _create_run(
             agent=workflow.agent_profile,
@@ -687,9 +748,6 @@ def agent_runs_collection(request: HttpRequest, agent_id: uuid.UUID) -> JsonResp
     if error:
         return error
     assert agent is not None
-    feature_err = _ensure_agent_workforce_enabled(request, agent=agent, allow_read_only=True)
-    if feature_err:
-        return feature_err
     with tenant_context(agent.business_profile_id):
         if request.method == "GET":
             qs = (
@@ -759,9 +817,6 @@ def agent_run_detail(request: HttpRequest, agent_id: uuid.UUID, run_id: uuid.UUI
     if error:
         return error
     assert agent is not None
-    feature_err = _ensure_agent_workforce_enabled(request, agent=agent, allow_read_only=True)
-    if feature_err:
-        return feature_err
     with tenant_context(agent.business_profile_id):
         run = AgentRun.objects.filter(id=run_id, agent_profile=agent).filter(_run_visibility_filter(request, agent=agent)).first()
         if run is None:
@@ -825,9 +880,6 @@ def _run_state_action(request: HttpRequest, agent_id: uuid.UUID, run_id: uuid.UU
     if error:
         return error
     assert agent is not None
-    feature_err = _ensure_agent_workforce_enabled(request, agent=agent, allow_read_only=False)
-    if feature_err:
-        return feature_err
     payload, error = _parse_json_body(request)
     if error:
         return error
@@ -865,9 +917,6 @@ def _run_note_action(request: HttpRequest, agent_id: uuid.UUID, run_id: uuid.UUI
     if error:
         return error
     assert agent is not None
-    feature_err = _ensure_agent_workforce_enabled(request, agent=agent, allow_read_only=False)
-    if feature_err:
-        return feature_err
     payload, error = _parse_json_body(request)
     if error:
         return error
@@ -895,6 +944,22 @@ def _run_note_action(request: HttpRequest, agent_id: uuid.UUID, run_id: uuid.UUI
         status=MemoryStatus.ACTIVE,
         created_by=request.user,
     )
+    if run.workflow_id:
+        MemoryItem.objects.create(
+            business_profile=run.business_profile,
+            scope=MemoryScope.WORKFLOW,
+            agent_profile=run.agent_profile,
+            workflow=run.workflow,
+            run=run,
+            conversation=run.conversation,
+            kind=kind,
+            key="approval" if kind == MemoryKind.DECISION else "user_input",
+            content=message[:4000],
+            payload={**extra, "source_run_id": str(run.id)},
+            visibility=MemoryVisibility.SHARED,
+            status=MemoryStatus.ACTIVE,
+            created_by=request.user,
+        )
     MemoryAuditEvent.objects.create(memory_item=item, business_profile=item.business_profile, actor_user=request.user, action=MemoryAuditAction.CREATED, after=_serialize_memory(item))
     if kind == MemoryKind.DECISION and str((payload or {}).get("decision") or "").strip().lower() == "deny":
         _set_run_status(run.id, status=AgentRunStatus.CANCELLED, error_detail=message or "denied", finished=True)

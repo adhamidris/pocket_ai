@@ -660,6 +660,19 @@ class AgentWorkflowTriggerType(models.TextChoices):
     EMAIL_INBOX = "email_inbox", "Email inbox"
 
 
+class AgentWorkflowReviewMode(models.TextChoices):
+    NONE = "none", "None"
+    ON_RISK = "on_risk", "On risk"
+    ALWAYS = "always", "Always"
+
+
+class AgentWorkflowAutonomyMode(models.TextChoices):
+    SUGGEST_ONLY = "suggest_only", "Suggest only"
+    DRAFT_FOR_APPROVAL = "draft_for_approval", "Draft for approval"
+    AUTONOMOUS_WITH_POLICY = "autonomous_with_policy", "Autonomous with policy"
+    FULL_AUTONOMY_EXPLICIT = "full_autonomy_explicit", "Full autonomy explicit"
+
+
 class AgentWorkflow(models.Model):
     """
     Canonical repeatable task/workflow owned by one agent.
@@ -679,6 +692,13 @@ class AgentWorkflow(models.Model):
         "accounts.AgentProfile",
         related_name="workflows",
         on_delete=models.CASCADE,
+    )
+    department = models.ForeignKey(
+        "accounts.AgentDepartment",
+        related_name="workflows",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
     )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -716,6 +736,23 @@ class AgentWorkflow(models.Model):
     trigger_config = models.JSONField(default=dict, blank=True)
     source_config = models.JSONField(default=dict, blank=True)
     destination_config = models.JSONField(default=dict, blank=True)
+    notification_config = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Delivery preferences for workflow notifications. Ownership stays separate from delivery.",
+    )
+    review_mode = models.CharField(
+        max_length=24,
+        choices=AgentWorkflowReviewMode.choices,
+        default=AgentWorkflowReviewMode.ON_RISK,
+        db_index=True,
+    )
+    autonomy_mode = models.CharField(
+        max_length=32,
+        choices=AgentWorkflowAutonomyMode.choices,
+        default=AgentWorkflowAutonomyMode.DRAFT_FOR_APPROVAL,
+        db_index=True,
+    )
     instructions = models.JSONField(
         default=dict,
         blank=True,
@@ -740,6 +777,7 @@ class AgentWorkflow(models.Model):
         indexes = [
             models.Index(fields=["business_profile", "status"], name="workflow_biz_status_idx"),
             models.Index(fields=["agent_profile", "status"], name="workflow_agent_status_idx"),
+            models.Index(fields=["department", "status"], name="workflow_dept_status_idx"),
             models.Index(fields=["status", "trigger_type", "next_trigger_at"], name="workflow_due_idx"),
             models.Index(fields=["status", "lease_expires_at"], name="workflow_lease_idx"),
             models.Index(fields=["business_profile", "created_at"], name="workflow_biz_created_idx"),
@@ -751,6 +789,8 @@ class AgentWorkflow(models.Model):
     def save(self, *args, **kwargs):
         if self.agent_profile_id and not self.business_profile_id and getattr(self, "agent_profile", None):
             self.business_profile = self.agent_profile.business_profile
+        if self.agent_profile_id and not self.department_id and getattr(self, "agent_profile", None):
+            self.department = self.agent_profile.department
         if self.conversation_id and not self.business_profile_id and getattr(self, "conversation", None):
             self.business_profile = self.conversation.business_profile
         if self.email_account_id and not self.business_profile_id and getattr(self, "email_account", None):
@@ -1053,6 +1093,93 @@ class AgentRunArtifact(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"{self.run_id}:{self.kind}:{self.id}"
+
+
+class AgentRunNotificationStatus(models.TextChoices):
+    CANDIDATE = "candidate", "Candidate"
+    DELIVERED = "delivered", "Delivered"
+    SUPPRESSED = "suppressed", "Suppressed"
+    FAILED = "failed", "Failed"
+
+
+class AgentRunNotification(models.Model):
+    """
+    Unified notification candidate/delivery record for background work.
+
+    Runs produce candidates; routing decides whether and where to deliver them.
+    This keeps execution scratchpads from becoming direct user-notification surfaces.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        "accounts.BusinessProfile",
+        related_name="agent_run_notifications",
+        on_delete=models.CASCADE,
+    )
+    agent_profile = models.ForeignKey(
+        "accounts.AgentProfile",
+        related_name="agent_run_notifications",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    owner_agent_profile = models.ForeignKey(
+        "accounts.AgentProfile",
+        related_name="owned_run_notifications",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    owner_department = models.ForeignKey(
+        "accounts.AgentDepartment",
+        related_name="agent_run_notifications",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    workflow = models.ForeignKey(AgentWorkflow, related_name="notifications", on_delete=models.SET_NULL, null=True, blank=True)
+    run = models.ForeignKey(AgentRun, related_name="notifications", on_delete=models.CASCADE)
+    target_conversation = models.ForeignKey(
+        Conversation,
+        related_name="agent_run_notifications",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    status = models.CharField(
+        max_length=24,
+        choices=AgentRunNotificationStatus.choices,
+        default=AgentRunNotificationStatus.CANDIDATE,
+        db_index=True,
+    )
+    kind = models.CharField(max_length=48, default="run_update", db_index=True)
+    priority = models.CharField(max_length=24, default="normal", db_index=True)
+    title = models.CharField(max_length=240, blank=True, default="")
+    body = models.TextField(blank=True, default="")
+    dedupe_key = models.CharField(max_length=255, blank=True, default="", db_index=True)
+    payload = models.JSONField(default=dict, blank=True)
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "conversations_agent_run_notification"
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["business_profile", "status", "created_at"], name="run_notif_biz_status_idx"),
+            models.Index(fields=["workflow", "created_at"], name="run_notif_workflow_idx"),
+            models.Index(fields=["run", "created_at"], name="run_notif_run_idx"),
+            models.Index(fields=["target_conversation", "created_at"], name="run_notif_target_idx"),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.run_id and not self.business_profile_id and getattr(self, "run", None):
+            self.business_profile = self.run.business_profile
+        if self.run_id and not self.agent_profile_id and getattr(self, "run", None):
+            self.agent_profile = self.run.agent_profile
+        if self.workflow_id and not self.business_profile_id and getattr(self, "workflow", None):
+            self.business_profile = self.workflow.business_profile
+        super().save(*args, **kwargs)
 
 
 class MemoryScope(models.TextChoices):

@@ -11,7 +11,6 @@ from django.utils import timezone
 
 from core.tenancy import tenant_context
 
-from apps.accounts.feature_flags import FeatureFlagService
 from apps.accounts.models import EmailAccountProvider, EmailAccountStatus
 from apps.conversations.workflow_scheduling import CronScheduleError, compute_next_workflow_schedule_at
 from apps.conversations.models import (
@@ -67,6 +66,9 @@ def workflow_snapshot(workflow: AgentWorkflow) -> dict[str, Any]:
             "trigger_config": workflow.trigger_config if isinstance(workflow.trigger_config, dict) else {},
             "source_config": workflow.source_config if isinstance(workflow.source_config, dict) else {},
             "destination_config": workflow.destination_config if isinstance(workflow.destination_config, dict) else {},
+            "notification_config": workflow.notification_config if isinstance(workflow.notification_config, dict) else {},
+            "review_mode": workflow.review_mode,
+            "autonomy_mode": workflow.autonomy_mode,
         }
     )
 
@@ -132,14 +134,6 @@ class AgentWorkflowProcessingService:
             workflow = qs.select_for_update(**for_update_kwargs).first()
             if workflow is None:
                 return None
-            enabled = bool(getattr(FeatureFlagService.snapshot(workflow.business_profile), "agent_workforce_v1", False))
-            if not enabled:
-                AgentWorkflow.objects.filter(id=workflow.id).update(
-                    state={**(workflow.state or {}), "last_skip": {"at": now.isoformat(), "reason": "agent_workforce_disabled"}},
-                    next_trigger_at=now,
-                    updated_at=now,
-                )
-                return AgentWorkflowProcessResult(workflow_id=str(workflow.id), action="skipped", error="agent_workforce_disabled")
             if workflow.trigger_type == AgentWorkflowTriggerType.SCHEDULE:
                 return self._trigger_scheduled(workflow, now=now)
             return self._poll_email_inbox(workflow, now=now)
@@ -163,7 +157,11 @@ class AgentWorkflowProcessingService:
             source=AgentRunSource.SCHEDULE,
             status=AgentRunStatus.QUEUED,
             visibility=workflow.visibility,
-            metadata={"workflow_id": str(workflow.id), "trigger": "schedule"},
+            metadata={
+                "workflow_id": str(workflow.id),
+                "trigger": "schedule",
+                "responsible_context": self._responsible_context_snapshot(workflow),
+            },
             run_after=now,
         )
         append_run_event(run, label="Queued (workflow schedule)", payload={"workflow_id": str(workflow.id), "trigger": "schedule"})
@@ -225,7 +223,12 @@ class AgentWorkflowProcessingService:
                 source=AgentRunSource.EMAIL_INBOX,
                 status=AgentRunStatus.QUEUED,
                 visibility=workflow.visibility,
-                metadata={"workflow_id": str(workflow.id), "trigger": "email_inbox", "message": message},
+                metadata={
+                    "workflow_id": str(workflow.id),
+                    "trigger": "email_inbox",
+                    "message": message,
+                    "responsible_context": self._responsible_context_snapshot(workflow),
+                },
                 run_after=now,
             )
             append_run_event(run, label="Queued (email inbox workflow)", payload={"workflow_id": str(workflow.id), "message_id": message_id})
@@ -241,6 +244,15 @@ class AgentWorkflowProcessingService:
             updated_at=now,
         )
         return AgentWorkflowProcessResult(workflow_id=str(workflow.id), action="polled", triggered_run_ids=tuple(triggered))
+
+    @staticmethod
+    def _responsible_context_snapshot(workflow: AgentWorkflow) -> dict[str, object]:
+        department_id = getattr(workflow, "department_id", None)
+        return {
+            "mode": "department" if department_id else "main_agent",
+            "agent_id": str(workflow.agent_profile_id) if workflow.agent_profile_id else None,
+            "department_id": str(department_id) if department_id else None,
+        }
 
     @staticmethod
     def _email_dedupe_key(provider: str, account_id: object, message_id: str) -> str:

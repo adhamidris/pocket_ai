@@ -414,6 +414,81 @@ class TenantMemoryConfigurationAuditEvent(models.Model):
         return f"TenantMemoryConfigurationAuditEvent<{self.business_profile_id}:{self.action}>"
 
 
+class AgentDepartment(models.Model):
+    """
+    Optional department/team boundary for grouping AI employees inside a business.
+
+    Departments are deliberately lighter than business workspaces, but they give
+    tasks, memory, permissions, and lead agents a stable organizational owner.
+    """
+
+    class StatusChoices(models.TextChoices):
+        ACTIVE = "active", "Active"
+        PAUSED = "paused", "Paused"
+        ARCHIVED = "archived", "Archived"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        BusinessProfile,
+        related_name="agent_departments",
+        on_delete=models.CASCADE,
+    )
+    name = models.CharField(max_length=120)
+    slug = models.SlugField(max_length=160, blank=True)
+    description = models.TextField(blank=True, default="")
+    status = models.CharField(max_length=24, choices=StatusChoices.choices, default=StatusChoices.ACTIVE, db_index=True)
+    instructions = models.TextField(blank=True, default="")
+    metadata = models.JSONField(default=dict, blank=True)
+    created_by = models.ForeignKey(
+        User,
+        related_name="created_agent_departments",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    lead_agent = models.ForeignKey(
+        "AgentProfile",
+        related_name="lead_departments",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "accounts_agent_department"
+        ordering = ("name",)
+        indexes = [
+            models.Index(fields=["business_profile", "status"], name="dept_business_status_idx"),
+            models.Index(fields=["business_profile", "slug"], name="dept_business_slug_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["business_profile", "slug"],
+                condition=~models.Q(slug=""),
+                name="dept_unique_business_slug",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.name} ({self.business_profile.name})"
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        if not self.slug:
+            base_slug = slugify(self.name) or "department"
+            candidate = base_slug
+            suffix = 1
+            while AgentDepartment.objects.filter(
+                business_profile=self.business_profile,
+                slug=candidate,
+            ).exclude(pk=self.pk).exists():
+                suffix += 1
+                candidate = f"{base_slug}-{suffix}"
+            self.slug = candidate
+        super().save(*args, **kwargs)
+
+
 class AgentProfile(models.Model):
     """
     Stores one AI employee profile for a business workspace.
@@ -438,6 +513,12 @@ class AgentProfile(models.Model):
         PAUSED = "paused", "Paused"
         ARCHIVED = "archived", "Archived"
 
+    class AgentTypeChoices(models.TextChoices):
+        MAIN = "main", "Main Agent"
+        DEPARTMENT_LEAD = "department_lead", "Department Lead"
+        SPECIALIST = "specialist", "Specialist"
+        BACKGROUND = "background", "Background Agent"
+
     business_profile = models.ForeignKey(
         BusinessProfile,
         related_name="agent_profiles",
@@ -452,10 +533,33 @@ class AgentProfile(models.Model):
         help_text="Shareable slug segment used to route requests to this agent (e.g. 'agentnameai').",
     )
     role = models.CharField(max_length=120, blank=True)
+    agent_type = models.CharField(
+        max_length=32,
+        choices=AgentTypeChoices.choices,
+        default=AgentTypeChoices.SPECIALIST,
+        db_index=True,
+    )
+    department = models.ForeignKey(
+        AgentDepartment,
+        related_name="agents",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    manager_agent = models.ForeignKey(
+        "self",
+        related_name="managed_agents",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
     responsibilities = models.JSONField(default=list, blank=True)
     instructions = models.TextField(blank=True, default="")
     tone = models.CharField(max_length=60, blank=True)
     traits = models.JSONField(default=list, blank=True)
+    can_manage_tasks = models.BooleanField(default=False)
+    can_manage_departments = models.BooleanField(default=False)
+    permission_config = models.JSONField(default=dict, blank=True)
     escalation_rule = models.CharField(max_length=60, blank=True)
     selected_kpis = models.JSONField(
         default=list,
@@ -502,13 +606,21 @@ class AgentProfile(models.Model):
         ordering = ("-created_at",)
         indexes = [
             models.Index(fields=["business_profile", "slug"], name="agent_business_slug_idx"),
+            models.Index(fields=["business_profile", "agent_type"], name="agent_business_type_idx"),
+            models.Index(fields=["department", "status"], name="agent_dept_status_idx"),
+            models.Index(fields=["manager_agent", "status"], name="agent_manager_status_idx"),
         ]
         constraints = [
             models.UniqueConstraint(
                 fields=["business_profile", "slug"],
                 condition=~models.Q(slug=""),
                 name="agent_unique_business_slug",
-            )
+            ),
+            models.UniqueConstraint(
+                fields=["business_profile", "agent_type"],
+                condition=models.Q(agent_type="main", status="active"),
+                name="agent_unique_active_main",
+            ),
         ]
 
     def __str__(self) -> str:
