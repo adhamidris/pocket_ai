@@ -6,7 +6,6 @@ from django.db import migrations
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('accounts', '0003_remove_agentprofile_allowed_collections'),
         ('knowledge', '0004_knowledge_lexicon_foundation'),
     ]
 

@@ -319,7 +319,7 @@
 
 	          <section class="px-6 pt-6" aria-label="{% if LANGUAGE_BIDI %}تبويبات تفاصيل الوكيل{% else %}Agent detail tabs{% endif %}">
 	            <div
-	              class="grid grid-cols-3 gap-1 rounded-lg border border-border/60 bg-muted/40 p-1"
+	              class="grid grid-cols-2 gap-1 rounded-lg border border-border/60 bg-muted/40 p-1 sm:grid-cols-5"
 	              role="tablist"
 	              aria-label="{% if LANGUAGE_BIDI %}أقسام تفاصيل الوكيل{% else %}Agent detail sections{% endif %}"
 	              data-agent-tabs
@@ -337,27 +337,51 @@
 	              </button>
 	              <button
 	                type="button"
-	                id="agent-tab-capabilities"
+	                id="agent-tab-tasks"
 	                class="inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-background/60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
 	                role="tab"
 	                aria-selected="false"
-	                aria-controls="agent-tabpanel-capabilities"
+	                aria-controls="agent-tabpanel-tasks"
 	                tabindex="-1"
-	                data-agent-tab="capabilities"
+	                data-agent-tab="tasks"
 	              >
-	                {% if LANGUAGE_BIDI %}القدرات{% else %}Capabilities{% endif %}
+	                {% if LANGUAGE_BIDI %}المهام{% else %}Tasks{% endif %}
 	              </button>
 	              <button
 	                type="button"
-	                id="agent-tab-knowledge"
+	                id="agent-tab-runs"
 	                class="inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-background/60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
 	                role="tab"
 	                aria-selected="false"
-	                aria-controls="agent-tabpanel-knowledge"
+	                aria-controls="agent-tabpanel-runs"
 	                tabindex="-1"
-	                data-agent-tab="knowledge"
+	                data-agent-tab="runs"
 	              >
-	                {% if LANGUAGE_BIDI %}الوصول إلى المعرفة{% else %}Knowledge Access{% endif %}
+	                {% if LANGUAGE_BIDI %}التشغيلات{% else %}Runs{% endif %}
+	              </button>
+	              <button
+	                type="button"
+	                id="agent-tab-memory"
+	                class="inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-background/60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+	                role="tab"
+	                aria-selected="false"
+	                aria-controls="agent-tabpanel-memory"
+	                tabindex="-1"
+	                data-agent-tab="memory"
+	              >
+	                {% if LANGUAGE_BIDI %}الذاكرة{% else %}Memory{% endif %}
+	              </button>
+	              <button
+	                type="button"
+	                id="agent-tab-permissions"
+	                class="inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-background/60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+	                role="tab"
+	                aria-selected="false"
+	                aria-controls="agent-tabpanel-permissions"
+	                tabindex="-1"
+	                data-agent-tab="permissions"
+	              >
+	                {% if LANGUAGE_BIDI %}الصلاحيات{% else %}Permissions{% endif %}
 	              </button>
 	            </div>
 	          </section>
@@ -460,11 +484,134 @@
 	          </section>
 
 	          <section
-	            id="agent-tabpanel-capabilities"
+	            id="agent-tabpanel-tasks"
 	            class="space-y-4 px-6"
 	            role="tabpanel"
-	            aria-labelledby="agent-tab-capabilities"
-	            data-agent-tab-panel="capabilities"
+	            aria-labelledby="agent-tab-tasks"
+	            data-agent-tab-panel="tasks"
+	            hidden
+	          >
+	            <div class="rounded-xl border border-border/60 bg-card/95 p-4 space-y-4 shadow-sm">
+	              <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+	                <div class="space-y-1">
+	                  <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{% if LANGUAGE_BIDI %}مهام الوكيل{% else %}Agent Tasks{% endif %}</div>
+	                  <p class="text-xs text-muted-foreground">{% if LANGUAGE_BIDI %}أنشئ مهام يدوية أو مجدولة أو مرتبطة بويب هوك أو صندوق بريد.{% else %}Create manual, scheduled, webhook, and inbox-triggered tasks for this agent.{% endif %}</p>
+	                </div>
+	                <button type="button" class="inline-flex items-center justify-center rounded-md bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground" data-task-new>
+	                  {% if LANGUAGE_BIDI %}مهمة جديدة{% else %}New task{% endif %}
+	                </button>
+	              </div>
+	              <div class="rounded-lg border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-900 hidden" data-operations-warning>
+	                {% if LANGUAGE_BIDI %}معالجة المهام غير نشطة حالياً.{% else %}Task processing is not active. Start process_agent_workflows and process_agent_runs for scheduled/background work.{% endif %}
+	              </div>
+	              <div class="grid grid-cols-2 gap-3 text-xs sm:grid-cols-4" data-operations-summary>
+	                <div class="rounded-lg border border-border/60 bg-muted/20 p-3"><div class="text-muted-foreground">{% if LANGUAGE_BIDI %}مستحقة{% else %}Due tasks{% endif %}</div><div class="mt-1 text-lg font-semibold" data-ops-due>—</div></div>
+	                <div class="rounded-lg border border-border/60 bg-muted/20 p-3"><div class="text-muted-foreground">{% if LANGUAGE_BIDI %}بالانتظار{% else %}Queued{% endif %}</div><div class="mt-1 text-lg font-semibold" data-ops-queued>—</div></div>
+	                <div class="rounded-lg border border-border/60 bg-muted/20 p-3"><div class="text-muted-foreground">{% if LANGUAGE_BIDI %}قيد التشغيل{% else %}Running{% endif %}</div><div class="mt-1 text-lg font-semibold" data-ops-running>—</div></div>
+	                <div class="rounded-lg border border-border/60 bg-muted/20 p-3"><div class="text-muted-foreground">{% if LANGUAGE_BIDI %}فاشلة{% else %}Failed{% endif %}</div><div class="mt-1 text-lg font-semibold" data-ops-failed>—</div></div>
+	              </div>
+	              <div class="hidden rounded-xl border border-border/60 bg-muted/20 p-4 space-y-4" data-task-form>
+	                <div class="grid gap-3 sm:grid-cols-2">
+	                  <label class="space-y-1 text-xs font-medium text-muted-foreground">{% if LANGUAGE_BIDI %}الاسم{% else %}Name{% endif %}<input class="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground" data-task-input="name"></label>
+	                  <label class="space-y-1 text-xs font-medium text-muted-foreground">{% if LANGUAGE_BIDI %}الحالة{% else %}Status{% endif %}<select class="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground" data-task-input="status"><option value="draft">Draft</option><option value="active">Active</option><option value="paused">Paused</option></select></label>
+	                  <label class="space-y-1 text-xs font-medium text-muted-foreground">{% if LANGUAGE_BIDI %}المشغل{% else %}Trigger{% endif %}<select class="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground" data-task-input="triggerType"><option value="manual">Manual</option><option value="schedule">Schedule</option><option value="webhook">Webhook</option><option value="email_inbox">Email inbox</option></select></label>
+	                  <label class="space-y-1 text-xs font-medium text-muted-foreground">{% if LANGUAGE_BIDI %}الرؤية{% else %}Visibility{% endif %}<select class="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground" data-task-input="visibility"><option value="initiator">Private to initiator</option><option value="managers">Managers</option><option value="workspace">Workspace</option></select></label>
+	                </div>
+	                <label class="block space-y-1 text-xs font-medium text-muted-foreground">{% if LANGUAGE_BIDI %}الهدف / التعليمات{% else %}Goal / instructions{% endif %}<textarea class="mt-1 min-h-[92px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground" data-task-input="goal"></textarea></label>
+	                <label class="block space-y-1 text-xs font-medium text-muted-foreground">{% if LANGUAGE_BIDI %}الوصف{% else %}Description{% endif %}<textarea class="mt-1 min-h-[68px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground" data-task-input="description"></textarea></label>
+	                <div class="space-y-3" data-trigger-config-panels>
+	                  <div class="hidden grid gap-3 sm:grid-cols-3" data-trigger-panel="schedule">
+	                    <label class="space-y-1 text-xs font-medium text-muted-foreground">Preset<select class="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground" data-task-input="schedulePreset"><option value="hourly">Every hour</option><option value="minutes">Every X minutes</option><option value="daily">Daily at time</option><option value="weekdays">Weekdays at time</option><option value="advanced">Advanced cron</option></select></label>
+	                    <label class="space-y-1 text-xs font-medium text-muted-foreground">Every X minutes<input type="number" min="5" max="1440" value="60" class="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground" data-task-input="scheduleEveryMinutes"></label>
+	                    <label class="space-y-1 text-xs font-medium text-muted-foreground">Time<input type="time" value="09:00" class="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground" data-task-input="scheduleTime"></label>
+	                    <label class="space-y-1 text-xs font-medium text-muted-foreground sm:col-span-2">Advanced cron<input class="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground" placeholder="0 9 * * *" data-task-input="scheduleCron"></label>
+	                    <label class="space-y-1 text-xs font-medium text-muted-foreground">Timezone<input class="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground" value="{{ TIME_ZONE|default:'UTC' }}" data-task-input="timezone"></label>
+	                  </div>
+	                  <div class="hidden space-y-2" data-trigger-panel="webhook">
+	                    <div class="rounded-md border border-border/60 bg-background px-3 py-2 text-xs font-mono break-all" data-task-webhook-url>Save this task to generate a webhook URL.</div>
+	                    <button type="button" class="rounded-md border border-input bg-background px-3 py-2 text-xs font-medium" data-task-rotate-webhook>{% if LANGUAGE_BIDI %}تدوير الرمز{% else %}Rotate token{% endif %}</button>
+	                  </div>
+	                  <div class="hidden grid gap-3 sm:grid-cols-2" data-trigger-panel="email_inbox">
+	                    <label class="space-y-1 text-xs font-medium text-muted-foreground">Email account<select class="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground" data-task-input="emailAccountId"></select></label>
+	                    <label class="space-y-1 text-xs font-medium text-muted-foreground">Poll interval seconds<input type="number" min="60" value="300" class="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground" data-task-input="pollIntervalSeconds"></label>
+	                    <label class="flex items-center gap-2 text-xs font-medium text-muted-foreground"><input type="checkbox" checked data-task-input="unreadOnly">Unread only</label>
+	                    <label class="space-y-1 text-xs font-medium text-muted-foreground">Max events per poll<input type="number" min="1" max="25" value="5" class="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground" data-task-input="maxEventsPerPoll"></label>
+	                    <label class="space-y-1 text-xs font-medium text-muted-foreground sm:col-span-2">Query/filter<input class="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground" placeholder="newer_than:1d" data-task-input="emailQuery"></label>
+	                  </div>
+	                </div>
+	                <p class="hidden text-xs text-destructive" data-task-form-error></p>
+	                <div class="flex justify-end gap-2">
+	                  <button type="button" class="rounded-md border border-input bg-background px-3 py-2 text-xs font-medium" data-task-cancel>{% if LANGUAGE_BIDI %}إلغاء{% else %}Cancel{% endif %}</button>
+	                  <button type="button" class="rounded-md bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground" data-task-save>{% if LANGUAGE_BIDI %}حفظ المهمة{% else %}Save task{% endif %}</button>
+	                </div>
+	              </div>
+	              <div class="space-y-3" data-task-list>
+	                <p class="text-xs text-muted-foreground">{% if LANGUAGE_BIDI %}اختر وكيلاً لتحميل المهام.{% else %}Select an agent to load tasks.{% endif %}</p>
+	              </div>
+	            </div>
+	          </section>
+
+	          <section
+	            id="agent-tabpanel-runs"
+	            class="space-y-4 px-6"
+	            role="tabpanel"
+	            aria-labelledby="agent-tab-runs"
+	            data-agent-tab-panel="runs"
+	            hidden
+	          >
+	            <div class="rounded-xl border border-border/60 bg-card/95 p-4 space-y-4 shadow-sm">
+	              <div class="flex items-start justify-between gap-3">
+	                <div>
+	                  <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{% if LANGUAGE_BIDI %}النشاط والتشغيلات{% else %}Runs & Activity{% endif %}</div>
+	                  <p class="mt-1 text-xs text-muted-foreground">{% if LANGUAGE_BIDI %}راجع التشغيلات الخلفية والنتائج والأخطاء وموافقات المستخدم.{% else %}Inspect background executions, results, errors, artifacts, and approval waits.{% endif %}</p>
+	                </div>
+	                <button type="button" class="rounded-md border border-input bg-background px-3 py-2 text-xs font-medium" data-runs-refresh>{% if LANGUAGE_BIDI %}تحديث{% else %}Refresh{% endif %}</button>
+	              </div>
+	              <div class="space-y-3" data-run-list></div>
+	              <div class="hidden rounded-xl border border-border/60 bg-muted/20 p-4 space-y-3" data-run-detail></div>
+	            </div>
+	          </section>
+
+	          <section
+	            id="agent-tabpanel-memory"
+	            class="space-y-4 px-6"
+	            role="tabpanel"
+	            aria-labelledby="agent-tab-memory"
+	            data-agent-tab-panel="memory"
+	            hidden
+	          >
+	            <div class="rounded-xl border border-border/60 bg-card/95 p-4 space-y-4 shadow-sm">
+	              <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+	                <div>
+	                  <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{% if LANGUAGE_BIDI %}ذاكرة الوكيل{% else %}Agent Memory{% endif %}</div>
+	                  <p class="mt-1 text-xs text-muted-foreground">{% if LANGUAGE_BIDI %}راجع الذاكرة النشطة والمعلقة والمؤرشفة بنطاقاتها وسجلها.{% else %}Review active, pending, and archived memory with scope and audit context.{% endif %}</p>
+	                </div>
+	                <div class="flex gap-2">
+	                  <select class="rounded-md border border-input bg-background px-3 py-2 text-xs" data-memory-status><option value="active">Active</option><option value="pending_review">Pending review</option><option value="archived">Archived</option></select>
+	                  <button type="button" class="rounded-md border border-input bg-background px-3 py-2 text-xs font-medium" data-memory-refresh>{% if LANGUAGE_BIDI %}تحديث{% else %}Refresh{% endif %}</button>
+	                </div>
+	              </div>
+	              <div class="rounded-xl border border-border/60 bg-muted/20 p-4 space-y-3">
+	                <div class="grid gap-3 sm:grid-cols-3">
+	                  <select class="rounded-md border border-input bg-background px-3 py-2 text-sm" data-memory-input="scope"><option value="agent">Agent</option><option value="workspace">Workspace</option><option value="workflow">Workflow</option><option value="conversation">Conversation</option><option value="crm_contact">CRM contact</option><option value="crm_company">CRM company</option></select>
+	                  <select class="rounded-md border border-input bg-background px-3 py-2 text-sm" data-memory-input="kind"><option value="fact">Fact</option><option value="instruction">Instruction</option><option value="preference">Preference</option><option value="decision">Decision</option><option value="state_note">State note</option></select>
+	                  <select class="rounded-md border border-input bg-background px-3 py-2 text-sm" data-memory-input="sensitivity"><option value="normal">Normal</option><option value="sensitive">Sensitive</option><option value="secret">Secret</option></select>
+	                </div>
+	                <input class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" placeholder="Key" data-memory-input="key">
+	                <textarea class="min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm" placeholder="Markdown-like memory note" data-memory-input="content"></textarea>
+	                <p class="hidden text-xs text-destructive" data-memory-error></p>
+	                <div class="flex justify-end"><button type="button" class="rounded-md bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground" data-memory-save>{% if LANGUAGE_BIDI %}حفظ الذاكرة{% else %}Save memory{% endif %}</button></div>
+	              </div>
+	              <div class="space-y-3" data-memory-list></div>
+	            </div>
+	          </section>
+
+	          <section
+	            id="agent-tabpanel-permissions"
+	            class="space-y-4 px-6"
+	            role="tabpanel"
+	            aria-labelledby="agent-tab-permissions"
+	            data-agent-tab-panel="permissions"
 	            hidden
 	          >
 	            <div class="rounded-xl border border-border/60 bg-card/95 p-4 space-y-4 shadow-sm" data-agent-approval-card>
@@ -512,32 +659,23 @@
 	                <p class="text-xs text-muted-foreground">{% if LANGUAGE_BIDI %}لا توجد تكاملات أصلية متصلة بعد.{% else %}No native integrations connected yet.{% endif %}</p>
 	              </div>
 	            </div>
+
+	            <div class="rounded-xl border border-border/60 bg-card/95 p-4 space-y-4 shadow-sm">
+	              <div class="flex items-start justify-between gap-3">
+	                <div class="space-y-1">
+	                  <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{% if LANGUAGE_BIDI %}الوصول إلى المعرفة{% else %}Knowledge Access{% endif %}</div>
+	                  <p class="text-xs text-muted-foreground" data-agent-knowledge-mode>{% if LANGUAGE_BIDI %}يستخدم جميع مصادر معرفة النشاط.{% else %}Uses all business knowledge sources.{% endif %}</p>
+	                </div>
+	              </div>
+
+	              <div class="rounded-lg border border-border/60 bg-muted/30 p-3 space-y-2">
+	                <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{% if LANGUAGE_BIDI %}مستندات محددة{% else %}Explicit documents{% endif %}</div>
+	                <ul class="divide-y divide-border/60 rounded-lg border border-border/60" data-agent-knowledge-list>
+	                  <li class="px-3 py-2 text-sm text-muted-foreground">{% if LANGUAGE_BIDI %}لا توجد عناصر معرفة مرفقة.{% else %}No knowledge items attached.{% endif %}</li>
+	                </ul>
+	              </div>
+	            </div>
 	          </section>
-
-	          <section
-	            id="agent-tabpanel-knowledge"
-	            class="space-y-4 px-6"
-	            role="tabpanel"
-	            aria-labelledby="agent-tab-knowledge"
-	            data-agent-tab-panel="knowledge"
-	            hidden
-		          >
-		            <div class="rounded-xl border border-border/60 bg-card/95 p-4 space-y-4 shadow-sm">
-		              <div class="flex items-start justify-between gap-3">
-		                <div class="space-y-1">
-		                  <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{% if LANGUAGE_BIDI %}الوصول إلى المعرفة{% else %}Knowledge Access{% endif %}</div>
-		                  <p class="text-xs text-muted-foreground" data-agent-knowledge-mode>{% if LANGUAGE_BIDI %}يستخدم جميع مصادر معرفة النشاط.{% else %}Uses all business knowledge sources.{% endif %}</p>
-		                </div>
-		              </div>
-
-			              <div class="rounded-lg border border-border/60 bg-muted/30 p-3 space-y-2">
-			                <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{% if LANGUAGE_BIDI %}مستندات محددة{% else %}Explicit documents{% endif %}</div>
-			                <ul class="divide-y divide-border/60 rounded-lg border border-border/60" data-agent-knowledge-list>
-			                  <li class="px-3 py-2 text-sm text-muted-foreground">{% if LANGUAGE_BIDI %}لا توجد عناصر معرفة مرفقة.{% else %}No knowledge items attached.{% endif %}</li>
-			                </ul>
-			              </div>
-			            </div>
-			          </section>
 	        </div>
 	      </div>
 	    </div>
@@ -665,6 +803,28 @@
 	    var shareableState = panel.querySelector("[data-agent-shareable-state]");
 	    var shareableOpen = panel.querySelector("[data-agent-shareable-open]");
 	    var shareableCopy = panel.querySelector("[data-agent-shareable-copy]");
+	    var taskList = panel.querySelector("[data-task-list]");
+	    var taskForm = panel.querySelector("[data-task-form]");
+	    var taskFormError = panel.querySelector("[data-task-form-error]");
+	    var taskNewButton = panel.querySelector("[data-task-new]");
+	    var taskSaveButton = panel.querySelector("[data-task-save]");
+	    var taskCancelButton = panel.querySelector("[data-task-cancel]");
+	    var taskRotateWebhookButton = panel.querySelector("[data-task-rotate-webhook]");
+	    var taskWebhookUrl = panel.querySelector("[data-task-webhook-url]");
+	    var triggerPanels = Array.prototype.slice.call(panel.querySelectorAll("[data-trigger-panel]") || []);
+	    var operationsWarning = panel.querySelector("[data-operations-warning]");
+	    var opsDue = panel.querySelector("[data-ops-due]");
+	    var opsQueued = panel.querySelector("[data-ops-queued]");
+	    var opsRunning = panel.querySelector("[data-ops-running]");
+	    var opsFailed = panel.querySelector("[data-ops-failed]");
+	    var runList = panel.querySelector("[data-run-list]");
+	    var runDetail = panel.querySelector("[data-run-detail]");
+	    var runsRefreshButton = panel.querySelector("[data-runs-refresh]");
+	    var memoryList = panel.querySelector("[data-memory-list]");
+	    var memoryStatus = panel.querySelector("[data-memory-status]");
+	    var memoryRefreshButton = panel.querySelector("[data-memory-refresh]");
+	    var memorySaveButton = panel.querySelector("[data-memory-save]");
+	    var memoryError = panel.querySelector("[data-memory-error]");
 	    var tabsList = panel.querySelector("[data-agent-tabs]");
 	    var tabsButtons = tabsList
 	      ? Array.prototype.slice.call(tabsList.querySelectorAll("[data-agent-tab]") || [])
@@ -679,6 +839,11 @@
 	    var currentAgentTitle = "";
 		    var shareableLinkValue = "";
 	    var currentTab = "overview";
+	    var currentAgentId = "";
+	    var currentAgentDetail = null;
+	    var currentWorkflows = [];
+	    var currentEmailAccounts = [];
+	    var editingWorkflowId = "";
 	    var SETUP_URLS = {
 	      mcp: "{% url 'frontend:dashboard-mcp' %}",
 	      integrations: "{% url 'frontend:dashboard-integrations' %}"
@@ -759,6 +924,26 @@
 	      unableToLoadAgentDetails: "{% if LANGUAGE_BIDI %}تعذر تحميل تفاصيل الوكيل. يرجى المحاولة مرة أخرى.{% else %}Unable to load agent details. Please try again.{% endif %}",
 	      copyLink: "{% if LANGUAGE_BIDI %}نسخ الرابط{% else %}Copy link{% endif %}",
 	      copied: "{% if LANGUAGE_BIDI %}تم النسخ{% else %}Copied{% endif %}",
+	      loadingTasks: "{% if LANGUAGE_BIDI %}جارٍ تحميل المهام…{% else %}Loading tasks…{% endif %}",
+	      noTasks: "{% if LANGUAGE_BIDI %}لا توجد مهام لهذا الوكيل بعد.{% else %}No tasks created for this agent yet.{% endif %}",
+	      taskSaveFailed: "{% if LANGUAGE_BIDI %}تعذّر حفظ المهمة.{% else %}Failed to save task.{% endif %}",
+	      taskNameRequired: "{% if LANGUAGE_BIDI %}اسم المهمة مطلوب.{% else %}Task name is required.{% endif %}",
+	      runNow: "{% if LANGUAGE_BIDI %}تشغيل الآن{% else %}Run now{% endif %}",
+	      edit: "{% if LANGUAGE_BIDI %}تعديل{% else %}Edit{% endif %}",
+	      archive: "{% if LANGUAGE_BIDI %}أرشفة{% else %}Archive{% endif %}",
+	      webhookUrlReady: "{% if LANGUAGE_BIDI %}رابط الويب هوك جاهز{% else %}Webhook URL is ready{% endif %}",
+	      loadingRuns: "{% if LANGUAGE_BIDI %}جارٍ تحميل التشغيلات…{% else %}Loading runs…{% endif %}",
+	      noRuns: "{% if LANGUAGE_BIDI %}لا توجد تشغيلات بعد.{% else %}No runs yet.{% endif %}",
+	      result: "{% if LANGUAGE_BIDI %}النتيجة{% else %}Result{% endif %}",
+	      events: "{% if LANGUAGE_BIDI %}الأحداث{% else %}Events{% endif %}",
+	      artifacts: "{% if LANGUAGE_BIDI %}المخرجات{% else %}Artifacts{% endif %}",
+	      loadingMemory: "{% if LANGUAGE_BIDI %}جارٍ تحميل الذاكرة…{% else %}Loading memory…{% endif %}",
+	      noMemory: "{% if LANGUAGE_BIDI %}لا توجد عناصر ذاكرة لهذا العرض.{% else %}No memory items for this view.{% endif %}",
+	      memorySaveFailed: "{% if LANGUAGE_BIDI %}تعذّر حفظ الذاكرة.{% else %}Failed to save memory.{% endif %}",
+	      memoryContentRequired: "{% if LANGUAGE_BIDI %}محتوى الذاكرة مطلوب.{% else %}Memory content is required.{% endif %}",
+	      approve: "{% if LANGUAGE_BIDI %}اعتماد{% else %}Approve{% endif %}",
+	      reject: "{% if LANGUAGE_BIDI %}رفض{% else %}Reject{% endif %}",
+	      webhookCopy: "{% if LANGUAGE_BIDI %}نسخ الويب هوك{% else %}Copy webhook{% endif %}",
 	    };
 
       // ------------------------------------------------------------
@@ -1008,6 +1193,9 @@
 	      });
 
 	      currentTab = normalized;
+	      if (!options.skipLoad) {
+	        ensureTabData(normalized);
+	      }
 	      if (scrollRoot && options.scrollTop !== false) {
 	        scrollRoot.scrollTop = 0;
 	      }
@@ -1624,6 +1812,551 @@
       return match ? decodeURIComponent(match[1]) : "";
     }
 
+    function apiJson(url, options) {
+      options = options || {};
+      var headers = options.headers || {};
+      headers.Accept = "application/json";
+      if (options.body && !headers["Content-Type"]) {
+        headers["Content-Type"] = "application/json";
+      }
+      if (options.method && options.method !== "GET") {
+        headers["X-CSRFToken"] = getCsrfToken();
+        headers["X-Requested-With"] = "XMLHttpRequest";
+      }
+      return fetch(url, {
+        method: options.method || "GET",
+        headers: headers,
+        credentials: "same-origin",
+        body: options.body,
+      }).then(function (response) {
+        if (response.status === 204) {
+          return {};
+        }
+        return response.json().catch(function () {
+          return {};
+        }).then(function (payload) {
+          if (!response.ok) {
+            throw new Error((payload && payload.message) || (payload && payload.error) || "Request failed");
+          }
+          return payload;
+        });
+      });
+    }
+
+    function taskInput(name) {
+      return taskForm ? taskForm.querySelector('[data-task-input="' + name + '"]') : null;
+    }
+
+    function memoryInput(name) {
+      return panel.querySelector('[data-memory-input="' + name + '"]');
+    }
+
+    function setTaskFormError(message) {
+      if (!taskFormError) return;
+      taskFormError.textContent = message || "";
+      taskFormError.classList.toggle("hidden", !message);
+    }
+
+    function setMemoryError(message) {
+      if (!memoryError) return;
+      memoryError.textContent = message || "";
+      memoryError.classList.toggle("hidden", !message);
+    }
+
+    function statusPill(status) {
+      var normalized = String(status || "").replace(/_/g, " ");
+      return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+    }
+
+    function workflowWebhookUrl(workflow) {
+      if (!workflow || !workflow.id) return "";
+      var config = workflow.triggerConfig || {};
+      var secret = config.secret || "";
+      if (!secret) return "";
+      return window.location.origin.replace(/\/$/, "") + "/api/webhooks/workflows/" + workflow.id + "/" + secret + "/";
+    }
+
+    function refreshWebhookPreview(workflow) {
+      if (!taskWebhookUrl) return;
+      var url = workflowWebhookUrl(workflow);
+      taskWebhookUrl.textContent = url || "Save this task to generate a webhook URL.";
+      taskWebhookUrl.dataset.url = url || "";
+    }
+
+    function populateEmailAccounts(selectedId) {
+      var select = taskInput("emailAccountId");
+      if (!select) return;
+      select.innerHTML = "";
+      if (!currentEmailAccounts.length) {
+        var empty = document.createElement("option");
+        empty.value = "";
+        empty.textContent = "No connected email accounts";
+        select.appendChild(empty);
+        return;
+      }
+      currentEmailAccounts.forEach(function (account) {
+        var option = document.createElement("option");
+        option.value = account.id || "";
+        option.textContent = (account.displayName || account.email || "Email account") + " · " + (account.provider || "");
+        option.selected = selectedId && selectedId === account.id;
+        select.appendChild(option);
+      });
+    }
+
+    function buildCronFromForm() {
+      var preset = (taskInput("schedulePreset") && taskInput("schedulePreset").value) || "hourly";
+      var everyMinutes = Number((taskInput("scheduleEveryMinutes") && taskInput("scheduleEveryMinutes").value) || 60);
+      var timeValue = (taskInput("scheduleTime") && taskInput("scheduleTime").value) || "09:00";
+      var parts = timeValue.split(":");
+      var minute = Math.max(0, Math.min(Number(parts[1] || 0), 59));
+      var hour = Math.max(0, Math.min(Number(parts[0] || 9), 23));
+      if (preset === "minutes") {
+        everyMinutes = Math.max(5, Math.min(everyMinutes || 60, 1440));
+        if (everyMinutes < 60) return "*/" + everyMinutes + " * * * *";
+        return String(minute) + " */" + Math.max(1, Math.round(everyMinutes / 60)) + " * * *";
+      }
+      if (preset === "daily") return String(minute) + " " + String(hour) + " * * *";
+      if (preset === "weekdays") return String(minute) + " " + String(hour) + " * * 1-5";
+      if (preset === "advanced") return (taskInput("scheduleCron") && taskInput("scheduleCron").value.trim()) || "0 9 * * *";
+      return "0 * * * *";
+    }
+
+    function showTriggerPanel(triggerType) {
+      triggerPanels.forEach(function (section) {
+        var key = section.getAttribute("data-trigger-panel");
+        section.classList.toggle("hidden", key !== triggerType);
+      });
+    }
+
+    function openTaskForm(workflow) {
+      if (!taskForm) return;
+      editingWorkflowId = workflow && workflow.id ? workflow.id : "";
+      taskForm.classList.remove("hidden");
+      setTaskFormError("");
+      if (taskInput("name")) taskInput("name").value = (workflow && workflow.name) || "";
+      if (taskInput("description")) taskInput("description").value = (workflow && workflow.description) || "";
+      if (taskInput("goal")) taskInput("goal").value = (workflow && workflow.instructions && (workflow.instructions.goal || workflow.instructions.task || workflow.instructions.instructions)) || "";
+      if (taskInput("status")) taskInput("status").value = (workflow && workflow.status) || "draft";
+      if (taskInput("triggerType")) taskInput("triggerType").value = (workflow && workflow.triggerType) || "manual";
+      if (taskInput("visibility")) taskInput("visibility").value = (workflow && workflow.visibility) || "initiator";
+      if (taskInput("timezone")) taskInput("timezone").value = (workflow && workflow.triggerConfig && workflow.triggerConfig.timezone) || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+      if (taskInput("scheduleCron")) taskInput("scheduleCron").value = (workflow && workflow.triggerConfig && workflow.triggerConfig.cron) || "";
+      if (taskInput("emailQuery")) taskInput("emailQuery").value = (workflow && workflow.sourceConfig && workflow.sourceConfig.query) || "newer_than:1d";
+      if (taskInput("unreadOnly")) taskInput("unreadOnly").checked = !(workflow && workflow.sourceConfig && workflow.sourceConfig.unreadOnly === false);
+      if (taskInput("pollIntervalSeconds")) taskInput("pollIntervalSeconds").value = (workflow && workflow.pollIntervalSeconds) || 300;
+      if (taskInput("maxEventsPerPoll")) taskInput("maxEventsPerPoll").value = (workflow && workflow.maxEventsPerPoll) || 5;
+      populateEmailAccounts(workflow && workflow.emailAccountId);
+      showTriggerPanel((taskInput("triggerType") && taskInput("triggerType").value) || "manual");
+      refreshWebhookPreview(workflow);
+    }
+
+    function closeTaskForm() {
+      editingWorkflowId = "";
+      if (taskForm) taskForm.classList.add("hidden");
+      setTaskFormError("");
+    }
+
+    function workflowPayloadFromForm() {
+      var name = taskInput("name") ? taskInput("name").value.trim() : "";
+      if (!name) throw new Error(I18N.taskNameRequired);
+      var triggerType = taskInput("triggerType") ? taskInput("triggerType").value : "manual";
+      var triggerConfig = {};
+      var sourceConfig = {};
+      var body = {
+        name: name,
+        description: taskInput("description") ? taskInput("description").value.trim() : "",
+        status: taskInput("status") ? taskInput("status").value : "draft",
+        visibility: taskInput("visibility") ? taskInput("visibility").value : "initiator",
+        triggerType: triggerType,
+        instructions: { goal: taskInput("goal") ? taskInput("goal").value.trim() : "" },
+      };
+      if (triggerType === "schedule") {
+        triggerConfig = {
+          type: "cron",
+          cron: buildCronFromForm(),
+          timezone: taskInput("timezone") ? taskInput("timezone").value.trim() : "UTC",
+        };
+      }
+      if (triggerType === "email_inbox") {
+        body.emailAccountId = taskInput("emailAccountId") ? taskInput("emailAccountId").value : "";
+        body.pollIntervalSeconds = Number(taskInput("pollIntervalSeconds") ? taskInput("pollIntervalSeconds").value : 300);
+        body.maxEventsPerPoll = Number(taskInput("maxEventsPerPoll") ? taskInput("maxEventsPerPoll").value : 5);
+        sourceConfig = {
+          query: taskInput("emailQuery") ? taskInput("emailQuery").value.trim() : "newer_than:1d",
+          unreadOnly: taskInput("unreadOnly") ? taskInput("unreadOnly").checked : true,
+        };
+      }
+      if (triggerType === "webhook" && editingWorkflowId) {
+        var existing = currentWorkflows.find(function (item) { return item.id === editingWorkflowId; });
+        triggerConfig = Object.assign({}, existing && existing.triggerConfig ? existing.triggerConfig : {});
+      }
+      body.triggerConfig = triggerConfig;
+      body.sourceConfig = sourceConfig;
+      return body;
+    }
+
+    function renderOperations(operations) {
+      operations = operations || {};
+      if (opsDue) opsDue.textContent = formatNumber(operations.dueWorkflows, 0);
+      if (opsQueued) opsQueued.textContent = formatNumber(operations.queuedRuns, 0);
+      if (opsRunning) opsRunning.textContent = formatNumber(operations.runningRuns, 0);
+      if (opsFailed) opsFailed.textContent = formatNumber(operations.failedRuns, 0);
+      if (operationsWarning) {
+        operationsWarning.classList.toggle("hidden", Boolean(operations.taskProcessingActive));
+      }
+    }
+
+    function renderWorkflows(workflows) {
+      if (!taskList) return;
+      taskList.innerHTML = "";
+      if (!workflows || !workflows.length) {
+        var empty = document.createElement("p");
+        empty.className = "text-xs text-muted-foreground";
+        empty.textContent = I18N.noTasks;
+        taskList.appendChild(empty);
+        return;
+      }
+      workflows.forEach(function (workflow) {
+        var card = document.createElement("div");
+        card.className = "rounded-lg border border-border/70 bg-muted/20 p-3 space-y-2";
+        var header = document.createElement("div");
+        header.className = "flex items-start justify-between gap-3";
+        var info = document.createElement("div");
+        info.className = "min-w-0";
+        var title = document.createElement("div");
+        title.className = "text-sm font-semibold text-foreground";
+        title.textContent = workflow.name || "Task";
+        var meta = document.createElement("div");
+        meta.className = "mt-1 flex flex-wrap gap-2 text-[11px] text-muted-foreground";
+        meta.textContent = statusPill(workflow.triggerType) + " · " + statusPill(workflow.status) + " · Next: " + (formatDateTime(workflow.nextTriggerAt) || "—") + " · Last: " + (formatDateTime(workflow.lastTriggeredAt) || "—");
+        var error = document.createElement("div");
+        error.className = workflow.lastError ? "text-xs text-destructive" : "hidden";
+        error.textContent = workflow.lastError || "";
+        info.appendChild(title);
+        info.appendChild(meta);
+        info.appendChild(error);
+        var actions = document.createElement("div");
+        actions.className = "flex shrink-0 flex-wrap justify-end gap-2";
+        var runBtn = document.createElement("button");
+        runBtn.type = "button";
+        runBtn.className = "rounded-md bg-primary px-2.5 py-1.5 text-[11px] font-semibold text-primary-foreground";
+        runBtn.textContent = I18N.runNow;
+        runBtn.addEventListener("click", function () { runWorkflowNow(workflow.id, runBtn); });
+        var editBtn = document.createElement("button");
+        editBtn.type = "button";
+        editBtn.className = "rounded-md border border-input bg-background px-2.5 py-1.5 text-[11px] font-medium";
+        editBtn.textContent = I18N.edit;
+        editBtn.addEventListener("click", function () { openTaskForm(workflow); });
+        var archiveBtn = document.createElement("button");
+        archiveBtn.type = "button";
+        archiveBtn.className = "rounded-md border border-input bg-background px-2.5 py-1.5 text-[11px] font-medium text-muted-foreground";
+        archiveBtn.textContent = I18N.archive;
+        archiveBtn.addEventListener("click", function () { archiveWorkflow(workflow.id, archiveBtn); });
+        actions.appendChild(runBtn);
+        actions.appendChild(editBtn);
+        actions.appendChild(archiveBtn);
+        header.appendChild(info);
+        header.appendChild(actions);
+        card.appendChild(header);
+        if (workflow.triggerType === "webhook") {
+          var webhook = document.createElement("button");
+          webhook.type = "button";
+          webhook.className = "text-left text-[11px] font-mono text-primary break-all hover:underline";
+          webhook.textContent = workflowWebhookUrl(workflow) || I18N.webhookUrlReady;
+          webhook.addEventListener("click", function () { copyShareableLink(workflowWebhookUrl(workflow)); });
+          card.appendChild(webhook);
+        }
+        taskList.appendChild(card);
+      });
+    }
+
+    function loadOperations() {
+      if (!currentAgentId) return Promise.resolve();
+      return apiJson("/api/agents/" + encodeURIComponent(currentAgentId) + "/operations/")
+        .then(function (payload) {
+          currentEmailAccounts = payload.emailAccounts || [];
+          populateEmailAccounts();
+          renderOperations(payload.operations || {});
+        })
+        .catch(function () {
+          renderOperations({ taskProcessingActive: false });
+        });
+    }
+
+    function loadWorkflows() {
+      if (!currentAgentId || !taskList) return Promise.resolve();
+      taskList.innerHTML = '<p class="text-xs text-muted-foreground">' + I18N.loadingTasks + "</p>";
+      return Promise.all([
+        apiJson("/api/agents/" + encodeURIComponent(currentAgentId) + "/workflows/"),
+        loadOperations(),
+      ]).then(function (results) {
+        currentWorkflows = (results[0] && results[0].workflows) || [];
+        renderWorkflows(currentWorkflows);
+      }).catch(function (error) {
+        taskList.innerHTML = '<p class="text-xs text-destructive">' + (error && error.message ? error.message : I18N.taskSaveFailed) + "</p>";
+      });
+    }
+
+    function saveWorkflow() {
+      if (!currentAgentId) return;
+      setTaskFormError("");
+      var body;
+      try {
+        body = workflowPayloadFromForm();
+      } catch (error) {
+        setTaskFormError(error.message || I18N.taskSaveFailed);
+        return;
+      }
+      var url = "/api/agents/" + encodeURIComponent(currentAgentId) + "/workflows/";
+      var method = "POST";
+      if (editingWorkflowId) {
+        url += encodeURIComponent(editingWorkflowId) + "/";
+        method = "PATCH";
+      }
+      if (taskSaveButton) taskSaveButton.disabled = true;
+      apiJson(url, { method: method, body: JSON.stringify(body) })
+        .then(function () {
+          closeTaskForm();
+          return loadWorkflows();
+        })
+        .catch(function (error) {
+          setTaskFormError((error && error.message) || I18N.taskSaveFailed);
+        })
+        .finally(function () {
+          if (taskSaveButton) taskSaveButton.disabled = false;
+        });
+    }
+
+    function archiveWorkflow(workflowId, button) {
+      if (!currentAgentId || !workflowId) return;
+      if (button) button.disabled = true;
+      apiJson("/api/agents/" + encodeURIComponent(currentAgentId) + "/workflows/" + encodeURIComponent(workflowId) + "/", { method: "DELETE" })
+        .then(loadWorkflows)
+        .finally(function () {
+          if (button) button.disabled = false;
+        });
+    }
+
+    function runWorkflowNow(workflowId, button) {
+      if (!currentAgentId || !workflowId) return;
+      if (button) button.disabled = true;
+      apiJson("/api/agents/" + encodeURIComponent(currentAgentId) + "/workflows/" + encodeURIComponent(workflowId) + "/runs/", {
+        method: "POST",
+        body: JSON.stringify({}),
+      }).then(function () {
+        setActiveTab("runs");
+        return loadRuns();
+      }).finally(function () {
+        if (button) button.disabled = false;
+      });
+    }
+
+    function rotateWebhookToken() {
+      if (!editingWorkflowId) return;
+      var existing = currentWorkflows.find(function (item) { return item.id === editingWorkflowId; });
+      if (!existing) return;
+      var body = {
+        triggerConfig: Object.assign({}, existing.triggerConfig || {}, {
+          secret: Math.random().toString(36).slice(2) + Date.now().toString(36),
+        }),
+      };
+      apiJson("/api/agents/" + encodeURIComponent(currentAgentId) + "/workflows/" + encodeURIComponent(editingWorkflowId) + "/", {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      }).then(function (payload) {
+        var workflow = payload.workflow;
+        refreshWebhookPreview(workflow);
+        return loadWorkflows();
+      }).catch(function (error) {
+        setTaskFormError((error && error.message) || I18N.taskSaveFailed);
+      });
+    }
+
+    function renderRuns(runs) {
+      if (!runList) return;
+      runList.innerHTML = "";
+      if (runDetail) {
+        runDetail.classList.add("hidden");
+        runDetail.innerHTML = "";
+      }
+      if (!runs || !runs.length) {
+        runList.innerHTML = '<p class="text-xs text-muted-foreground">' + I18N.noRuns + "</p>";
+        return;
+      }
+      runs.forEach(function (run) {
+        var row = document.createElement("button");
+        row.type = "button";
+        row.className = "block w-full rounded-lg border border-border/70 bg-muted/20 p-3 text-left hover:border-primary/40";
+        var duration = "";
+        if (run.startedAt && run.finishedAt) {
+          duration = " · " + formatDuration((new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime()) / 1000);
+        }
+        row.innerHTML = '<div class="flex items-start justify-between gap-3"><div><div class="text-sm font-semibold text-foreground"></div><div class="mt-1 text-[11px] text-muted-foreground"></div></div><span class="text-[11px] text-muted-foreground"></span></div>';
+        row.querySelector(".text-sm").textContent = run.title || run.workflowName || "Run";
+        row.querySelector(".mt-1").textContent = statusPill(run.source) + " · " + (formatDateTime(run.createdAt) || "") + duration;
+        row.querySelector("span").textContent = statusPill(run.status);
+        row.addEventListener("click", function () { showRunDetail(run); });
+        runList.appendChild(row);
+      });
+    }
+
+    function loadRuns() {
+      if (!currentAgentId || !runList) return Promise.resolve();
+      runList.innerHTML = '<p class="text-xs text-muted-foreground">' + I18N.loadingRuns + "</p>";
+      return apiJson("/api/agents/" + encodeURIComponent(currentAgentId) + "/runs/?limit=50")
+        .then(function (payload) {
+          renderRuns(payload.runs || []);
+        })
+        .catch(function (error) {
+          runList.innerHTML = '<p class="text-xs text-destructive">' + ((error && error.message) || "Failed to load runs") + "</p>";
+        });
+    }
+
+    function showRunDetail(run) {
+      if (!runDetail || !currentAgentId || !run.id) return;
+      runDetail.classList.remove("hidden");
+      runDetail.innerHTML = '<p class="text-xs text-muted-foreground">' + I18N.loadingRuns + "</p>";
+      Promise.all([
+        apiJson("/api/agents/" + encodeURIComponent(currentAgentId) + "/runs/" + encodeURIComponent(run.id) + "/"),
+        apiJson("/api/agents/" + encodeURIComponent(currentAgentId) + "/runs/" + encodeURIComponent(run.id) + "/events/"),
+      ]).then(function (results) {
+        var detail = (results[0] && results[0].run) || run;
+        var events = (results[1] && results[1].events) || [];
+        runDetail.innerHTML = "";
+        var title = document.createElement("div");
+        title.className = "text-sm font-semibold text-foreground";
+        title.textContent = detail.title || "Run";
+        var meta = document.createElement("div");
+        meta.className = "text-xs text-muted-foreground";
+        meta.textContent = statusPill(detail.status) + " · " + statusPill(detail.source) + " · " + (formatDateTime(detail.createdAt) || "");
+        runDetail.appendChild(title);
+        runDetail.appendChild(meta);
+        if (detail.errorDetail) {
+          var error = document.createElement("pre");
+          error.className = "whitespace-pre-wrap rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive";
+          error.textContent = detail.errorDetail;
+          runDetail.appendChild(error);
+        }
+        var result = document.createElement("pre");
+        result.className = "max-h-56 overflow-auto rounded-md border border-border/60 bg-background p-3 text-xs";
+        result.textContent = I18N.result + "\n" + JSON.stringify(detail.result || {}, null, 2);
+        runDetail.appendChild(result);
+        var eventWrap = document.createElement("div");
+        eventWrap.className = "space-y-2";
+        events.forEach(function (event) {
+          var item = document.createElement("div");
+          item.className = "rounded-md border border-border/60 bg-background px-3 py-2 text-xs";
+          item.textContent = "#" + event.sequenceIndex + " " + (event.label || event.type) + " · " + (formatDateTime(event.createdAt) || "");
+          eventWrap.appendChild(item);
+        });
+        runDetail.appendChild(eventWrap);
+      });
+    }
+
+    function renderMemory(items) {
+      if (!memoryList) return;
+      memoryList.innerHTML = "";
+      if (!items || !items.length) {
+        memoryList.innerHTML = '<p class="text-xs text-muted-foreground">' + I18N.noMemory + "</p>";
+        return;
+      }
+      items.forEach(function (item) {
+        var card = document.createElement("div");
+        card.className = "rounded-lg border border-border/70 bg-muted/20 p-3 space-y-2";
+        var title = document.createElement("div");
+        title.className = "flex items-start justify-between gap-3";
+        var label = document.createElement("div");
+        label.className = "text-sm font-semibold text-foreground";
+        label.textContent = (item.key || item.kind || "Memory") + " · " + statusPill(item.scope);
+        var status = document.createElement("span");
+        status.className = "text-[11px] text-muted-foreground";
+        status.textContent = statusPill(item.status);
+        title.appendChild(label);
+        title.appendChild(status);
+        var content = document.createElement("p");
+        content.className = "whitespace-pre-wrap text-sm text-foreground";
+        content.textContent = item.content || "";
+        var meta = document.createElement("div");
+        meta.className = "text-[11px] text-muted-foreground";
+        meta.textContent = statusPill(item.visibility) + " · " + statusPill(item.sensitivity) + " · " + (formatDateTime(item.updatedAt) || "");
+        card.appendChild(title);
+        card.appendChild(content);
+        card.appendChild(meta);
+        if (item.status === "pending_review") {
+          var actions = document.createElement("div");
+          actions.className = "flex gap-2";
+          var approve = document.createElement("button");
+          approve.type = "button";
+          approve.className = "rounded-md bg-primary px-2.5 py-1.5 text-[11px] font-semibold text-primary-foreground";
+          approve.textContent = I18N.approve;
+          approve.addEventListener("click", function () { memoryAction(item.id, "approve"); });
+          var reject = document.createElement("button");
+          reject.type = "button";
+          reject.className = "rounded-md border border-input bg-background px-2.5 py-1.5 text-[11px] font-medium";
+          reject.textContent = I18N.reject;
+          reject.addEventListener("click", function () { memoryAction(item.id, "reject"); });
+          actions.appendChild(approve);
+          actions.appendChild(reject);
+          card.appendChild(actions);
+        }
+        memoryList.appendChild(card);
+      });
+    }
+
+    function loadMemory() {
+      if (!currentAgentId || !memoryList) return Promise.resolve();
+      var status = memoryStatus ? memoryStatus.value : "active";
+      memoryList.innerHTML = '<p class="text-xs text-muted-foreground">' + I18N.loadingMemory + "</p>";
+      return apiJson("/api/memory/?agentId=" + encodeURIComponent(currentAgentId) + "&status=" + encodeURIComponent(status))
+        .then(function (payload) {
+          renderMemory(payload.memory || []);
+        })
+        .catch(function (error) {
+          memoryList.innerHTML = '<p class="text-xs text-destructive">' + ((error && error.message) || I18N.memorySaveFailed) + "</p>";
+        });
+    }
+
+    function saveMemoryItem() {
+      setMemoryError("");
+      var content = memoryInput("content") ? memoryInput("content").value.trim() : "";
+      if (!content) {
+        setMemoryError(I18N.memoryContentRequired);
+        return;
+      }
+      var body = {
+        agentId: currentAgentId,
+        scope: memoryInput("scope") ? memoryInput("scope").value : "agent",
+        kind: memoryInput("kind") ? memoryInput("kind").value : "fact",
+        sensitivity: memoryInput("sensitivity") ? memoryInput("sensitivity").value : "normal",
+        key: memoryInput("key") ? memoryInput("key").value.trim() : "",
+        content: content,
+        visibility: "shared",
+      };
+      apiJson("/api/memory/", { method: "POST", body: JSON.stringify(body) })
+        .then(function () {
+          if (memoryInput("content")) memoryInput("content").value = "";
+          return loadMemory();
+        })
+        .catch(function (error) {
+          setMemoryError((error && error.message) || I18N.memorySaveFailed);
+        });
+    }
+
+    function memoryAction(memoryId, action) {
+      if (!memoryId) return;
+      apiJson("/api/memory/" + encodeURIComponent(memoryId) + "/" + action + "/", {
+        method: "POST",
+        body: JSON.stringify({}),
+      }).then(loadMemory);
+    }
+
+    function ensureTabData(tab) {
+      if (!currentAgentId) return;
+      if (tab === "tasks") loadWorkflows();
+      if (tab === "runs") loadRuns();
+      if (tab === "memory") loadMemory();
+    }
+
     function updateAgentApprovalDefault(agentId, mode) {
       if (!agentId || !businessId) return Promise.resolve();
       setCapabilityFlash(I18N.capabilitySaving, false);
@@ -1650,7 +2383,7 @@
         .then(function () {
           setCapabilityFlash(I18N.capabilityReady, false);
           if (activeRow) {
-            handleRowActivation(activeRow, { forceReload: true, tab: "capabilities" });
+            handleRowActivation(activeRow, { forceReload: true, tab: "permissions" });
           }
         })
         .catch(function (error) {
@@ -1689,7 +2422,7 @@
         .then(function () {
           setCapabilityFlash(I18N.capabilityReady, false);
           if (activeRow) {
-            handleRowActivation(activeRow, { forceReload: true, tab: "capabilities" });
+            handleRowActivation(activeRow, { forceReload: true, tab: "permissions" });
           }
         })
         .catch(function (error) {
@@ -1755,6 +2488,8 @@
 
     function populatePanel(agent, rowDataset) {
       rowDataset = rowDataset || {};
+      currentAgentDetail = agent || {};
+      currentAgentId = agent.id || rowDataset.agentUuid || currentAgentId;
       currentAgentTitle = agent.name || rowDataset.agentName || I18N.agent;
       if (fieldName) fieldName.textContent = currentAgentTitle;
       if (fieldIdentifier) fieldIdentifier.textContent = agent.identifier || rowDataset.agentIdentifier || "";
@@ -1840,6 +2575,11 @@
       var uuid = row.getAttribute("data-agent-uuid");
       if (!uuid) return;
       options = options || {};
+      currentAgentId = uuid;
+      currentAgentDetail = null;
+      currentWorkflows = [];
+      currentEmailAccounts = [];
+      closeTaskForm();
       setActiveTab(options.tab || "overview", { scrollTop: false });
       if (!options.forceReload && activeRow === row && isPanelOpen && panel.dataset.state === "content") {
         openPanel();
@@ -2011,6 +2751,43 @@
         if (!activeRow) return;
         updateAgentApprovalDefault(activeRow.getAttribute("data-agent-uuid"), capabilityApprovalSelect.value || "inherit");
       });
+    }
+
+    if (taskNewButton) {
+      taskNewButton.addEventListener("click", function () {
+        openTaskForm(null);
+      });
+    }
+    if (taskCancelButton) {
+      taskCancelButton.addEventListener("click", closeTaskForm);
+    }
+    if (taskSaveButton) {
+      taskSaveButton.addEventListener("click", saveWorkflow);
+    }
+    if (taskRotateWebhookButton) {
+      taskRotateWebhookButton.addEventListener("click", rotateWebhookToken);
+    }
+    if (taskWebhookUrl) {
+      taskWebhookUrl.addEventListener("click", function () {
+        copyShareableLink(taskWebhookUrl.dataset.url || "");
+      });
+    }
+    if (taskInput("triggerType")) {
+      taskInput("triggerType").addEventListener("change", function () {
+        showTriggerPanel(taskInput("triggerType").value || "manual");
+      });
+    }
+    if (runsRefreshButton) {
+      runsRefreshButton.addEventListener("click", loadRuns);
+    }
+    if (memoryRefreshButton) {
+      memoryRefreshButton.addEventListener("click", loadMemory);
+    }
+    if (memoryStatus) {
+      memoryStatus.addEventListener("change", loadMemory);
+    }
+    if (memorySaveButton) {
+      memorySaveButton.addEventListener("click", saveMemoryItem);
     }
 
     setPanelState("empty");

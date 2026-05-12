@@ -12,7 +12,7 @@ urlpatterns = [
     path("i18n/setlang/", set_language, name="set_language"),
     path("jsi18n/", JavaScriptCatalog.as_view(), name="javascript-catalog"),
     path("", include(("apps.accounts.urls", "accounts"), namespace="accounts")),
-    path("", include("frontend.urls")),
     path("api/", include("apps.api.urls")),
     path("voice/", include(("apps.voice.urls", "voice"), namespace="voice")),
+    path("", include("frontend.urls")),
 ]

@@ -12,7 +12,7 @@ from core.tenancy import tenant_bypass
 
 
 class Command(BaseCommand):
-    help = "Purge expired derived memory (AgentRunMemoryItem + CompactedHistorySegment) per-tenant retention policy."
+    help = "Purge expired memory items and compacted history segments per-tenant retention policy."
 
     def add_arguments(self, parser) -> None:
         parser.add_argument(
@@ -126,7 +126,7 @@ class Command(BaseCommand):
             return
 
         tables = (
-            "conversations_agent_run_memory_item",
+            "conversations_memory_item",
             "conversations_compacted_history_segment",
         )
         # VACUUM cannot run inside a transaction; ensure autocommit.
@@ -141,4 +141,3 @@ class Command(BaseCommand):
         finally:
             if not was_autocommit:
                 connection.set_autocommit(False)
-

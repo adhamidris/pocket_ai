@@ -175,7 +175,9 @@ def _build_portal_context(
     session_storage_key: str,
 ) -> dict[str, object]:
     capabilities = bootstrap_payload.get("capabilities") if isinstance(bootstrap_payload, dict) else {}
-    subagents_enabled = bool(capabilities.get("subAgentsEnabled")) if isinstance(capabilities, dict) else False
+    agent_runs_enabled = bool(
+        capabilities.get("agentRunsEnabled", capabilities.get("subAgentsEnabled"))
+    ) if isinstance(capabilities, dict) else False
 
     business = bootstrap_payload.get("business", {})
     agent = bootstrap_payload.get("agent", {})
@@ -241,7 +243,7 @@ def _build_portal_context(
         "csat_scores": [(i, i) for i in range(1, 6)],
         "bootstrap_payload": bootstrap_payload,
         "bootstrap_script_id": PORTAL_BOOTSTRAP_SCRIPT_ID,
-        "subagents_enabled": subagents_enabled,
+        "agent_runs_enabled": agent_runs_enabled,
         "asset_version": _portal_asset_version(),
         "chat_surface": chat_surface,
         "is_authenticated_chat": bool(getattr(request.user, "is_authenticated", False)),

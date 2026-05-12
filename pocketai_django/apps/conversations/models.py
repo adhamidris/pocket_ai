@@ -641,97 +641,165 @@ class ConversationFileChunk(models.Model):
 
 
 class AgentRunVisibility(models.TextChoices):
-    """
-    High-level visibility control for agent runs.
-
-    Teams/hierarchy is deferred, so these map to workspace-level defaults for now.
-    """
-
     INITIATOR = "initiator", "Initiator"
     MANAGERS = "managers", "Managers"
     WORKSPACE = "workspace", "Workspace"
 
 
-class AgentRunSpecStatus(models.TextChoices):
+class AgentWorkflowStatus(models.TextChoices):
     DRAFT = "draft", "Draft"
     ACTIVE = "active", "Active"
+    PAUSED = "paused", "Paused"
     ARCHIVED = "archived", "Archived"
 
 
-class AgentRunSpec(models.Model):
-    """
-    Run specification/template owned by a tenant/agent.
+class AgentWorkflowTriggerType(models.TextChoices):
+    MANUAL = "manual", "Manual"
+    SCHEDULE = "schedule", "Schedule"
+    WEBHOOK = "webhook", "Webhook"
+    EMAIL_INBOX = "email_inbox", "Email inbox"
 
-    This represents the *contract* for a background run:
-    goal, success criteria, tool allowlist, constraints, output schema, approval requirements, and visibility.
+
+class AgentWorkflow(models.Model):
+    """
+    Canonical repeatable task/workflow owned by one agent.
+
+    This is the single owner for repeatable agent tasks.
+    Trigger/source configuration lives on the workflow; every execution is an
+    AgentRun with an immutable workflow_snapshot.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     business_profile = models.ForeignKey(
         "accounts.BusinessProfile",
-        related_name="agent_run_specs",
+        related_name="agent_workflows",
         on_delete=models.CASCADE,
     )
     agent_profile = models.ForeignKey(
         "accounts.AgentProfile",
-        related_name="run_specs",
+        related_name="workflows",
         on_delete=models.CASCADE,
     )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        related_name="created_run_specs",
+        related_name="created_agent_workflows",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
     )
+    conversation = models.ForeignKey(
+        Conversation,
+        related_name="agent_workflows",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Optional destination conversation for workflow run results.",
+    )
+    email_account = models.ForeignKey(
+        "integrations.EmailAccount",
+        related_name="agent_workflows",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Email account used by email-inbox workflows.",
+    )
     name = models.CharField(max_length=160)
-    status = models.CharField(
+    description = models.TextField(blank=True, default="")
+    status = models.CharField(max_length=24, choices=AgentWorkflowStatus.choices, default=AgentWorkflowStatus.DRAFT, db_index=True)
+    visibility = models.CharField(max_length=24, choices=AgentRunVisibility.choices, default=AgentRunVisibility.INITIATOR)
+    trigger_type = models.CharField(
         max_length=24,
-        choices=AgentRunSpecStatus.choices,
-        default=AgentRunSpecStatus.DRAFT,
+        choices=AgentWorkflowTriggerType.choices,
+        default=AgentWorkflowTriggerType.MANUAL,
+        db_index=True,
     )
-    visibility = models.CharField(
-        max_length=24,
-        choices=AgentRunVisibility.choices,
-        default=AgentRunVisibility.INITIATOR,
-    )
-    spec = models.JSONField(
+    trigger_config = models.JSONField(default=dict, blank=True)
+    source_config = models.JSONField(default=dict, blank=True)
+    destination_config = models.JSONField(default=dict, blank=True)
+    instructions = models.JSONField(
         default=dict,
         blank=True,
-        help_text="Serialized RunSpec payload (goal, tools, constraints, output schema, approvals).",
+        help_text="Workflow contract: goal, success criteria, tool allowlist, constraints, output preferences.",
     )
+    state = models.JSONField(default=dict, blank=True)
+    poll_interval_seconds = models.PositiveIntegerField(default=300)
+    max_events_per_poll = models.PositiveSmallIntegerField(default=5)
+    last_triggered_at = models.DateTimeField(null=True, blank=True)
+    last_polled_at = models.DateTimeField(null=True, blank=True)
+    next_trigger_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    lease_expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    error_count = models.PositiveSmallIntegerField(default=0)
+    last_error = models.TextField(blank=True, default="")
     metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = "conversations_agent_run_spec"
+        db_table = "conversations_agent_workflow"
         ordering = ("-created_at",)
         indexes = [
-            models.Index(fields=["business_profile", "status"], name="run_spec_biz_status_idx"),
-            models.Index(fields=["agent_profile", "status"], name="run_spec_agent_status_idx"),
-            models.Index(fields=["business_profile", "created_at"], name="run_spec_biz_created_idx"),
+            models.Index(fields=["business_profile", "status"], name="workflow_biz_status_idx"),
+            models.Index(fields=["agent_profile", "status"], name="workflow_agent_status_idx"),
+            models.Index(fields=["status", "trigger_type", "next_trigger_at"], name="workflow_due_idx"),
+            models.Index(fields=["status", "lease_expires_at"], name="workflow_lease_idx"),
+            models.Index(fields=["business_profile", "created_at"], name="workflow_biz_created_idx"),
         ]
         constraints = [
-            models.UniqueConstraint(
-                fields=["agent_profile", "name"],
-                name="run_spec_unique_agent_name",
-            )
+            models.UniqueConstraint(fields=["agent_profile", "name"], name="workflow_unique_agent_name"),
         ]
 
     def save(self, *args, **kwargs):
         if self.agent_profile_id and not self.business_profile_id and getattr(self, "agent_profile", None):
             self.business_profile = self.agent_profile.business_profile
+        if self.conversation_id and not self.business_profile_id and getattr(self, "conversation", None):
+            self.business_profile = self.conversation.business_profile
+        if self.email_account_id and not self.business_profile_id and getattr(self, "email_account", None):
+            self.business_profile = self.email_account.business_profile
         super().save(*args, **kwargs)
 
-    def __str__(self) -> str:  # pragma: no cover - human readable only
-        return f"{self.agent_profile_id}:{self.name}"
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.agent_profile_id}:{self.status}:{self.name}"
+
+
+class AgentWorkflowDedupeKey(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        "accounts.BusinessProfile",
+        related_name="agent_workflow_dedupe_keys",
+        on_delete=models.CASCADE,
+    )
+    workflow = models.ForeignKey(
+        AgentWorkflow,
+        related_name="dedupe_keys",
+        on_delete=models.CASCADE,
+    )
+    dedupe_key = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = "conversations_agent_workflow_dedupe_key"
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["workflow", "created_at"], name="workflow_dedupe_created_idx"),
+            models.Index(fields=["business_profile", "created_at"], name="wf_dedupe_biz_created_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(fields=["workflow", "dedupe_key"], name="workflow_dedupe_unique_key"),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.workflow_id and not self.business_profile_id and getattr(self, "workflow", None):
+            self.business_profile = self.workflow.business_profile
+        super().save(*args, **kwargs)
 
 
 class AgentRunSource(models.TextChoices):
     CHAT = "chat", "Chat"
-    AUTOMATION = "automation", "Automation"
-    WATCHER = "watcher", "Watcher"
+    WORKFLOW = "workflow", "Workflow"
+    SCHEDULE = "schedule", "Schedule"
+    WEBHOOK = "webhook", "Webhook"
+    EMAIL_INBOX = "email_inbox", "Email inbox"
+    DELEGATION = "delegation", "Delegation"
     API = "api", "API"
 
 
@@ -749,9 +817,9 @@ class AgentRunStatus(models.TextChoices):
 
 class AgentRun(models.Model):
     """
-    A single background execution of a RunSpec.
+    A single background execution owned by an agent.
 
-    Runs may be spawned from a chat request, an automation trigger, a watcher, or the API.
+    Runs may be spawned from chat, workflows, schedules, webhooks, email inbox triggers, delegation, or the API.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -771,7 +839,7 @@ class AgentRun(models.Model):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        help_text="Optional anchor conversation (chat-originated run or automation thread).",
+        help_text="Optional anchor conversation (chat-originated run or workflow thread).",
     )
     execution_conversation = models.ForeignKey(
         Conversation,
@@ -788,17 +856,31 @@ class AgentRun(models.Model):
         null=True,
         blank=True,
     )
-    run_spec = models.ForeignKey(
-        AgentRunSpec,
+    workflow = models.ForeignKey(
+        AgentWorkflow,
         related_name="runs",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
     )
-    run_spec_snapshot = models.JSONField(
+    parent_run = models.ForeignKey(
+        "self",
+        related_name="child_runs",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    delegated_by_agent = models.ForeignKey(
+        "accounts.AgentProfile",
+        related_name="delegated_runs",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    workflow_snapshot = models.JSONField(
         default=dict,
         blank=True,
-        help_text="Immutable RunSpec snapshot used for this run (copied from run_spec at creation time).",
+        help_text="Immutable AgentWorkflow snapshot used for this run.",
     )
     title = models.CharField(max_length=200, blank=True, default="")
     source = models.CharField(
@@ -848,6 +930,8 @@ class AgentRun(models.Model):
             models.Index(fields=["status", "lease_expires_at"], name="run_status_lease_idx"),
             models.Index(fields=["conversation", "created_at"], name="run_conv_created_idx"),
             models.Index(fields=["business_profile", "created_at"], name="run_biz_created_idx"),
+            models.Index(fields=["workflow", "created_at"], name="run_workflow_created_idx"),
+            models.Index(fields=["parent_run", "created_at"], name="run_parent_created_idx"),
         ]
 
     def save(self, *args, **kwargs):
@@ -971,53 +1055,161 @@ class AgentRunArtifact(models.Model):
         return f"{self.run_id}:{self.kind}:{self.id}"
 
 
-class AgentRunMemoryKind(models.TextChoices):
+class MemoryScope(models.TextChoices):
+    WORKSPACE = "workspace", "Workspace"
+    AGENT = "agent", "Agent"
+    WORKFLOW = "workflow", "Workflow"
+    RUN = "run", "Run"
+    CONVERSATION = "conversation", "Conversation"
+    CRM_CONTACT = "crm_contact", "CRM contact"
+    CRM_COMPANY = "crm_company", "CRM company"
+
+
+class MemoryKind(models.TextChoices):
     FACT = "fact", "Fact"
-    SOP = "sop", "SOP"
+    PREFERENCE = "preference", "Preference"
+    POLICY = "policy", "Policy"
     DECISION = "decision", "Decision"
-    NOTE = "note", "Note"
-    # New kinds for context optimization (Phase 2)
-    EXTRACTED_DATA = "extracted_data", "Extracted Data"
-    WORKFLOW_STATE = "workflow_state", "Workflow State"
-    CONTEXT_SNAPSHOT = "context_snapshot", "Context Snapshot"
+    INSTRUCTION = "instruction", "Instruction"
+    RELATIONSHIP = "relationship", "Relationship"
+    STATE_NOTE = "state_note", "State note"
+    ARTIFACT_REF = "artifact_ref", "Artifact reference"
+    EXTRACTED_DATA = "extracted_data", "Extracted data"
 
 
-class AgentRunMemoryItem(models.Model):
+class MemoryStatus(models.TextChoices):
+    ACTIVE = "active", "Active"
+    PENDING_REVIEW = "pending_review", "Pending review"
+    ARCHIVED = "archived", "Archived"
+    DELETED = "deleted", "Deleted"
+
+
+class MemoryVisibility(models.TextChoices):
+    PRIVATE = "private", "Private"
+    SHARED = "shared", "Shared"
+
+
+class MemorySensitivity(models.TextChoices):
+    NORMAL = "normal", "Normal"
+    SENSITIVE = "sensitive", "Sensitive"
+    SECRET = "secret", "Secret"
+
+
+class MemoryItem(models.Model):
     """
-    Structured memory entries emitted during a run (facts, SOP steps, decisions).
+    Unified long-term memory record.
 
-    Raw tool dumps should be stored as artifacts or in executed logs, not as memory items.
+    Conversation compaction stays in CompactedHistorySegment; this model stores
+    scoped durable facts, preferences, policies, decisions, and workflow state.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    run = models.ForeignKey(
-        AgentRun,
+    business_profile = models.ForeignKey(
+        "accounts.BusinessProfile",
         related_name="memory_items",
         on_delete=models.CASCADE,
     )
-    kind = models.CharField(max_length=24, choices=AgentRunMemoryKind.choices)
-    key = models.CharField(max_length=160, blank=True, default="", db_index=True)
-    content = models.TextField(blank=True, default="")
-    payload = models.JSONField(default=dict, blank=True)
-    created_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        related_name="created_agent_run_memory_items",
+    scope = models.CharField(max_length=32, choices=MemoryScope.choices, default=MemoryScope.WORKSPACE, db_index=True)
+    agent_profile = models.ForeignKey(
+        "accounts.AgentProfile",
+        related_name="memory_items",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
     )
+    workflow = models.ForeignKey(AgentWorkflow, related_name="memory_items", on_delete=models.SET_NULL, null=True, blank=True)
+    run = models.ForeignKey(AgentRun, related_name="memory_items", on_delete=models.SET_NULL, null=True, blank=True)
+    conversation = models.ForeignKey(Conversation, related_name="memory_items", on_delete=models.SET_NULL, null=True, blank=True)
+    crm_contact = models.ForeignKey("crm.CrmContact", related_name="memory_items", on_delete=models.SET_NULL, null=True, blank=True)
+    crm_company = models.ForeignKey("crm.CrmCompany", related_name="memory_items", on_delete=models.SET_NULL, null=True, blank=True)
+    kind = models.CharField(max_length=32, choices=MemoryKind.choices, default=MemoryKind.FACT, db_index=True)
+    key = models.CharField(max_length=160, blank=True, default="", db_index=True)
+    content = models.TextField(blank=True, default="")
+    payload = models.JSONField(default=dict, blank=True)
+    visibility = models.CharField(max_length=16, choices=MemoryVisibility.choices, default=MemoryVisibility.SHARED, db_index=True)
+    sensitivity = models.CharField(max_length=16, choices=MemorySensitivity.choices, default=MemorySensitivity.NORMAL, db_index=True)
+    status = models.CharField(max_length=24, choices=MemoryStatus.choices, default=MemoryStatus.ACTIVE, db_index=True)
+    source_type = models.CharField(max_length=64, blank=True, default="")
+    source_id = models.UUIDField(null=True, blank=True)
+    confidence = models.FloatField(default=1.0, validators=[MinValueValidator(0), MaxValueValidator(1)])
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="created_memory_items",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="reviewed_memory_items",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = "conversations_agent_run_memory_item"
-        ordering = ("-created_at",)
+        db_table = "conversations_memory_item"
+        ordering = ("-updated_at", "-created_at")
         indexes = [
-            models.Index(fields=["run", "created_at"], name="run_memory_created_idx"),
-            models.Index(fields=["run", "kind"], name="run_memory_kind_idx"),
+            models.Index(fields=["business_profile", "status", "visibility"], name="mem_biz_status_vis_idx"),
+            models.Index(fields=["business_profile", "scope", "status"], name="memory_biz_scope_status_idx"),
+            models.Index(fields=["agent_profile", "status", "updated_at"], name="memory_agent_status_time_idx"),
+            models.Index(fields=["workflow", "status", "updated_at"], name="mem_wf_status_time_idx"),
+            models.Index(fields=["run", "created_at"], name="memory_run_created_idx"),
+            models.Index(fields=["conversation", "created_at"], name="memory_conv_created_idx"),
+            models.Index(fields=["crm_contact", "status"], name="memory_contact_status_idx"),
+            models.Index(fields=["crm_company", "status"], name="memory_company_status_idx"),
         ]
 
+    def save(self, *args, **kwargs):
+        if self.agent_profile_id and not self.business_profile_id and getattr(self, "agent_profile", None):
+            self.business_profile = self.agent_profile.business_profile
+        if self.workflow_id and not self.business_profile_id and getattr(self, "workflow", None):
+            self.business_profile = self.workflow.business_profile
+        if self.run_id and not self.business_profile_id and getattr(self, "run", None):
+            self.business_profile = self.run.business_profile
+        if self.conversation_id and not self.business_profile_id and getattr(self, "conversation", None):
+            self.business_profile = self.conversation.business_profile
+        super().save(*args, **kwargs)
+
     def __str__(self) -> str:  # pragma: no cover
-        return f"{self.run_id}:{self.kind}:{self.id}"
+        return f"{self.business_profile_id}:{self.scope}:{self.kind}:{self.id}"
+
+
+class MemoryAuditAction(models.TextChoices):
+    CREATED = "created", "Created"
+    UPDATED = "updated", "Updated"
+    APPROVED = "approved", "Approved"
+    REJECTED = "rejected", "Rejected"
+    ARCHIVED = "archived", "Archived"
+    DELETED = "deleted", "Deleted"
+    PROMOTED = "promoted", "Promoted"
+
+
+class MemoryAuditEvent(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    memory_item = models.ForeignKey(MemoryItem, related_name="audit_events", on_delete=models.CASCADE)
+    business_profile = models.ForeignKey("accounts.BusinessProfile", related_name="memory_audit_events", on_delete=models.CASCADE)
+    actor_user = models.ForeignKey(settings.AUTH_USER_MODEL, related_name="memory_audit_events", on_delete=models.SET_NULL, null=True, blank=True)
+    action = models.CharField(max_length=32, choices=MemoryAuditAction.choices)
+    description = models.TextField(blank=True, default="")
+    before = models.JSONField(default=dict, blank=True)
+    after = models.JSONField(default=dict, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    occurred_at = models.DateTimeField(default=timezone.now, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "conversations_memory_audit_event"
+        ordering = ("-occurred_at",)
+        indexes = [
+            models.Index(fields=["business_profile", "occurred_at"], name="memory_audit_biz_time_idx"),
+            models.Index(fields=["memory_item", "occurred_at"], name="memory_audit_item_time_idx"),
+        ]
 
 
 class AgentRequestStatus(models.TextChoices):
@@ -1115,277 +1307,3 @@ class AgentRequest(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"{self.from_agent_profile_id}->{self.to_agent_profile_id}:{self.status}:{self.id}"
-
-
-class AgentAutomationStatus(models.TextChoices):
-    DRAFT = "draft", "Draft"
-    ACTIVE = "active", "Active"
-    PAUSED = "paused", "Paused"
-    ARCHIVED = "archived", "Archived"
-
-
-class AgentAutomationTriggerType(models.TextChoices):
-    CRON = "cron", "Cron"
-    WEBHOOK = "webhook", "Webhook"
-    MANUAL = "manual", "Manual"
-
-
-class AgentAutomation(models.Model):
-    """
-    A tenant-owned automation that spawns AgentRuns based on a trigger configuration.
-
-    Scheduling/execution is handled by a worker loop; this model captures persistence + UI/API wiring.
-    """
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    business_profile = models.ForeignKey(
-        "accounts.BusinessProfile",
-        related_name="agent_automations",
-        on_delete=models.CASCADE,
-    )
-    agent_profile = models.ForeignKey(
-        "accounts.AgentProfile",
-        related_name="automations",
-        on_delete=models.CASCADE,
-    )
-    created_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        related_name="created_agent_automations",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-    )
-    run_spec = models.ForeignKey(
-        AgentRunSpec,
-        related_name="automations",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-    )
-    run_spec_snapshot = models.JSONField(
-        default=dict,
-        blank=True,
-        help_text="Immutable RunSpec snapshot used when spawning runs from this automation.",
-    )
-    conversation = models.ForeignKey(
-        Conversation,
-        related_name="agent_automations",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        help_text="Optional automation thread conversation used as the default destination for results.",
-    )
-    name = models.CharField(max_length=160)
-    status = models.CharField(
-        max_length=24,
-        choices=AgentAutomationStatus.choices,
-        default=AgentAutomationStatus.DRAFT,
-        db_index=True,
-    )
-    visibility = models.CharField(
-        max_length=24,
-        choices=AgentRunVisibility.choices,
-        default=AgentRunVisibility.INITIATOR,
-    )
-    trigger_type = models.CharField(
-        max_length=24,
-        choices=AgentAutomationTriggerType.choices,
-        default=AgentAutomationTriggerType.CRON,
-    )
-    trigger_config = models.JSONField(default=dict, blank=True)
-    destination_config = models.JSONField(
-        default=dict,
-        blank=True,
-        help_text="Destination policy (automation thread, notifications) for spawned runs.",
-    )
-    last_triggered_at = models.DateTimeField(null=True, blank=True)
-    next_trigger_at = models.DateTimeField(null=True, blank=True, db_index=True)
-    metadata = models.JSONField(default=dict, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = "conversations_agent_automation"
-        ordering = ("-created_at",)
-        indexes = [
-            models.Index(fields=["business_profile", "status"], name="automation_biz_status_idx"),
-            models.Index(fields=["agent_profile", "status"], name="automation_agent_status_idx"),
-            models.Index(fields=["status", "next_trigger_at"], name="automation_status_next_idx"),
-            models.Index(fields=["business_profile", "created_at"], name="automation_biz_created_idx"),
-        ]
-        constraints = [
-            models.UniqueConstraint(fields=["agent_profile", "name"], name="automation_unique_agent_name"),
-        ]
-
-    def save(self, *args, **kwargs):
-        if self.agent_profile_id and not self.business_profile_id and getattr(self, "agent_profile", None):
-            self.business_profile = self.agent_profile.business_profile
-        if self.conversation_id and not self.business_profile_id and getattr(self, "conversation", None):
-            self.business_profile = self.conversation.business_profile
-        super().save(*args, **kwargs)
-
-    def __str__(self) -> str:  # pragma: no cover
-        return f"{self.agent_profile_id}:{self.status}:{self.name}"
-
-
-class AgentWatcherStatus(models.TextChoices):
-    DRAFT = "draft", "Draft"
-    ACTIVE = "active", "Active"
-    PAUSED = "paused", "Paused"
-    ARCHIVED = "archived", "Archived"
-
-
-class AgentWatcherType(models.TextChoices):
-    EMAIL_INBOX = "email_inbox", "Email inbox"
-
-
-class AgentWatcher(models.Model):
-    """
-    A tenant-owned watcher that polls an external system and spawns AgentRuns.
-
-    V1 scope is email inbox polling. Webhook/push watchers will be added later.
-    """
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    business_profile = models.ForeignKey(
-        "accounts.BusinessProfile",
-        related_name="agent_watchers",
-        on_delete=models.CASCADE,
-    )
-    agent_profile = models.ForeignKey(
-        "accounts.AgentProfile",
-        related_name="watchers",
-        on_delete=models.CASCADE,
-    )
-    created_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        related_name="created_agent_watchers",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-    )
-    run_spec = models.ForeignKey(
-        AgentRunSpec,
-        related_name="watchers",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-    )
-    run_spec_snapshot = models.JSONField(
-        default=dict,
-        blank=True,
-        help_text="Immutable RunSpec snapshot used when spawning runs from this watcher.",
-    )
-    conversation = models.ForeignKey(
-        Conversation,
-        related_name="agent_watchers",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        help_text="Optional destination conversation used as the default thread for watcher runs.",
-    )
-    email_account = models.ForeignKey(
-        "integrations.EmailAccount",
-        related_name="agent_watchers",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        help_text="Email account used by email-based watchers.",
-    )
-    name = models.CharField(max_length=160)
-    status = models.CharField(
-        max_length=24,
-        choices=AgentWatcherStatus.choices,
-        default=AgentWatcherStatus.DRAFT,
-        db_index=True,
-    )
-    visibility = models.CharField(
-        max_length=24,
-        choices=AgentRunVisibility.choices,
-        default=AgentRunVisibility.INITIATOR,
-    )
-    watcher_type = models.CharField(
-        max_length=24,
-        choices=AgentWatcherType.choices,
-        default=AgentWatcherType.EMAIL_INBOX,
-    )
-    watch_config = models.JSONField(default=dict, blank=True)
-    destination_config = models.JSONField(
-        default=dict,
-        blank=True,
-        help_text="Destination policy (watcher thread, notifications) for spawned runs.",
-    )
-    poll_interval_seconds = models.PositiveIntegerField(default=300, help_text="Minimum seconds between polls.")
-    max_events_per_poll = models.PositiveSmallIntegerField(default=5)
-    last_polled_at = models.DateTimeField(null=True, blank=True)
-    next_poll_at = models.DateTimeField(null=True, blank=True, db_index=True)
-    lease_expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
-    error_count = models.PositiveSmallIntegerField(default=0)
-    last_error = models.TextField(blank=True, default="")
-    metadata = models.JSONField(default=dict, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = "conversations_agent_watcher"
-        ordering = ("-created_at",)
-        indexes = [
-            models.Index(fields=["business_profile", "status"], name="watcher_biz_status_idx"),
-            models.Index(fields=["agent_profile", "status"], name="watcher_agent_status_idx"),
-            models.Index(fields=["status", "next_poll_at"], name="watcher_status_next_poll_idx"),
-            models.Index(fields=["status", "lease_expires_at"], name="watcher_status_lease_idx"),
-        ]
-        constraints = [
-            models.UniqueConstraint(fields=["agent_profile", "name"], name="watcher_unique_agent_name"),
-        ]
-
-    def save(self, *args, **kwargs):
-        if self.agent_profile_id and not self.business_profile_id and getattr(self, "agent_profile", None):
-            self.business_profile = self.agent_profile.business_profile
-        if self.conversation_id and not self.business_profile_id and getattr(self, "conversation", None):
-            self.business_profile = self.conversation.business_profile
-        if self.email_account_id and not self.business_profile_id and getattr(self, "email_account", None):
-            self.business_profile = self.email_account.business_profile
-        super().save(*args, **kwargs)
-
-    def __str__(self) -> str:  # pragma: no cover
-        return f"{self.agent_profile_id}:{self.status}:{self.name}"
-
-
-class AgentWatcherDedupeKey(models.Model):
-    """
-    Dedupe keys for watcher-triggered events to prevent duplicate runs.
-    """
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    business_profile = models.ForeignKey(
-        "accounts.BusinessProfile",
-        related_name="agent_watcher_dedupe_keys",
-        on_delete=models.CASCADE,
-    )
-    watcher = models.ForeignKey(
-        AgentWatcher,
-        related_name="dedupe_keys",
-        on_delete=models.CASCADE,
-    )
-    dedupe_key = models.CharField(max_length=255)
-    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
-
-    class Meta:
-        db_table = "conversations_agent_watcher_dedupe_key"
-        ordering = ("-created_at",)
-        indexes = [
-            models.Index(fields=["watcher", "created_at"], name="watcher_dedupe_created_idx"),
-            models.Index(fields=["business_profile", "created_at"], name="watcher_dedupe_biz_created_idx"),
-        ]
-        constraints = [
-            models.UniqueConstraint(fields=["watcher", "dedupe_key"], name="watcher_dedupe_unique_key"),
-        ]
-
-    def save(self, *args, **kwargs):
-        if self.watcher_id and not self.business_profile_id and getattr(self, "watcher", None):
-            self.business_profile = self.watcher.business_profile
-        super().save(*args, **kwargs)
-
-    def __str__(self) -> str:  # pragma: no cover
-        return f"{self.watcher_id}:{self.dedupe_key}"

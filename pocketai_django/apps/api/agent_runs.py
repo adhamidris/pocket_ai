@@ -3,87 +3,74 @@ from __future__ import annotations
 import json
 import secrets
 import uuid
+from datetime import datetime, timedelta, timezone as dt_timezone
 from http import HTTPStatus
 from typing import Any
 
+from django.core.cache import cache
 from django.db import transaction
 from django.db.models import Max, Q
 from django.http import HttpRequest, JsonResponse
 from django.utils import timezone
-from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.csrf import csrf_protect
-from django.views.decorators.http import require_http_methods
-from django.views.decorators.http import require_POST
+from django.views.decorators.csrf import csrf_exempt, csrf_protect
+from django.views.decorators.http import require_http_methods, require_POST
 
 from core.tenancy import tenant_bypass, tenant_context
 
-from apps.accounts.models import (
-    AgentProfile,
-    EmailAccountStatus,
-)
-from apps.integrations.models import EmailAccount
 from apps.accounts.feature_flags import FeatureFlagService
+from apps.accounts.models import AgentProfile, EmailAccountStatus
+from apps.conversations.workflow_scheduling import CronScheduleError, compute_next_workflow_schedule_at
 from apps.conversations.models import (
-    AgentAutomation,
-    AgentAutomationStatus,
-    AgentAutomationTriggerType,
     AgentRun,
     AgentRunEvent,
     AgentRunEventStream,
     AgentRunEventType,
-    AgentRunMemoryItem,
-    AgentRunMemoryKind,
     AgentRunSource,
-    AgentRunSpec,
-    AgentRunSpecStatus,
     AgentRunStatus,
     AgentRunVisibility,
-    AgentWatcher,
-    AgentWatcherStatus,
-    AgentWatcherType,
+    AgentWorkflow,
+    AgentWorkflowStatus,
+    AgentWorkflowTriggerType,
     Conversation,
+    ConversationChannel,
+    ConversationStatus,
+    MemoryAuditAction,
+    MemoryAuditEvent,
+    MemoryItem,
+    MemoryKind,
+    MemoryScope,
+    MemorySensitivity,
+    MemoryStatus,
+    MemoryVisibility,
 )
-from apps.conversations.automation_scheduling import CronScheduleError, compute_next_automation_trigger_at
-from apps.conversations.output_destinations import ensure_automation_thread, ensure_watcher_thread
-from apps.conversations.run_contracts import normalize_run_spec
+from apps.conversations.workflow_contracts import normalize_workflow_instructions
+from apps.integrations.models import EmailAccount
 
 
 def _parse_json_body(request: HttpRequest) -> tuple[dict[str, Any] | None, JsonResponse | None]:
     try:
         payload = json.loads(request.body.decode("utf-8") or "{}")
     except (json.JSONDecodeError, UnicodeDecodeError):
-        return None, JsonResponse(
-            {"error": "INVALID_JSON", "message": "Request body must be valid JSON."},
-            status=HTTPStatus.BAD_REQUEST,
-        )
+        return None, JsonResponse({"error": "INVALID_JSON", "message": "Request body must be valid JSON."}, status=HTTPStatus.BAD_REQUEST)
     if not isinstance(payload, dict):
-        return None, JsonResponse(
-            {"error": "INVALID_JSON", "message": "Request body must be a JSON object."},
-            status=HTTPStatus.BAD_REQUEST,
-        )
+        return None, JsonResponse({"error": "INVALID_JSON", "message": "Request body must be a JSON object."}, status=HTTPStatus.BAD_REQUEST)
     return payload, None
 
 
 def _parse_uuid(value: object, *, field: str) -> tuple[uuid.UUID | None, JsonResponse | None]:
-    if value is None or value == "":
+    if value in (None, ""):
         return None, None
     try:
         return uuid.UUID(str(value)), None
     except (TypeError, ValueError):
-        return None, JsonResponse(
-            {"error": "VALIDATION_ERROR", "message": f"{field} must be a valid UUID."},
-            status=HTTPStatus.BAD_REQUEST,
-        )
+        return None, JsonResponse({"error": "VALIDATION_ERROR", "message": f"{field} must be a valid UUID."}, status=HTTPStatus.BAD_REQUEST)
 
 
 def _resolve_agent_for_request(request: HttpRequest, agent_id: uuid.UUID) -> tuple[AgentProfile | None, JsonResponse | None]:
     if not request.user.is_authenticated:
         return None, JsonResponse({"error": "UNAUTHORIZED", "message": "Login required."}, status=HTTPStatus.UNAUTHORIZED)
-
     qs = AgentProfile.objects.select_related("business_profile")
     if not request.user.is_staff:
-        # Teams/roles are pending; for now treat the business owner as "manager"
-        # with visibility into the workspace, in addition to the agent's assigned user.
         qs = qs.filter(Q(user=request.user) | Q(business_profile__user=request.user))
     agent = qs.filter(id=agent_id).first()
     if agent is None:
@@ -92,77 +79,110 @@ def _resolve_agent_for_request(request: HttpRequest, agent_id: uuid.UUID) -> tup
 
 
 def _user_is_business_owner(request: HttpRequest, agent: AgentProfile) -> bool:
-    business = getattr(agent, "business_profile", None)
-    owner_id = getattr(business, "user_id", None)
-    return bool(request.user.is_authenticated and owner_id and owner_id == request.user.id)
+    return bool(request.user.is_authenticated and getattr(agent.business_profile, "user_id", None) == request.user.id)
 
 
-def _ensure_subagents_enabled(
+def _ensure_agent_workforce_enabled(
     request: HttpRequest,
     *,
     agent: AgentProfile,
     allow_read_only: bool = True,
 ) -> JsonResponse | None:
-    """
-    Enforce per-business rollout toggle for sub-agents surfaces.
-
-    Teams/roles are pending; this is a coarse per-tenant feature gate.
-    """
-
     if request.user.is_staff:
         return None
-    enabled = bool(getattr(FeatureFlagService.snapshot(agent.business_profile), "sub_agents_v1", False))
-    if enabled:
-        return None
-    if allow_read_only and request.method == "GET":
+    enabled = bool(getattr(FeatureFlagService.snapshot(agent.business_profile), "agent_workforce_v1", False))
+    if enabled or (allow_read_only and request.method == "GET"):
         return None
     return JsonResponse(
-        {"error": "FEATURE_DISABLED", "message": "Sub-agents are not enabled for this business."},
+        {"error": "FEATURE_DISABLED", "message": "Agent workforce features are not enabled for this business."},
         status=HTTPStatus.FORBIDDEN,
     )
 
 
 def _run_visibility_filter(request: HttpRequest, *, agent: AgentProfile) -> Q:
-    """
-    Runs are workspace-scoped but may be restricted by visibility.
-
-    - initiator: only the initiating user (created_by)
-    - managers: initiator + business owner (until full team RBAC lands)
-    - workspace: any user who can access this agent in this tenant
-    """
-
     if request.user.is_staff:
         return Q()
-
     base = Q(created_by=request.user) | Q(visibility=AgentRunVisibility.WORKSPACE)
     if _user_is_business_owner(request, agent):
         base |= Q(visibility=AgentRunVisibility.MANAGERS)
     return base
 
 
-def _serialize_run_spec(spec: AgentRunSpec) -> dict[str, object]:
+def _workflow_snapshot(workflow: AgentWorkflow | None, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    if workflow is not None:
+        instructions = workflow.instructions if isinstance(workflow.instructions, dict) else {}
+        return normalize_workflow_instructions(
+            {
+                **instructions,
+                "name": workflow.name,
+                "description": workflow.description,
+                "trigger_type": workflow.trigger_type,
+                "trigger_config": workflow.trigger_config if isinstance(workflow.trigger_config, dict) else {},
+                "source_config": workflow.source_config if isinstance(workflow.source_config, dict) else {},
+                "destination_config": workflow.destination_config if isinstance(workflow.destination_config, dict) else {},
+            }
+        )
+    return normalize_workflow_instructions(payload or {})
+
+
+def _serialize_workflow(workflow: AgentWorkflow) -> dict[str, object]:
     return {
-        "id": str(spec.id),
-        "agentId": str(spec.agent_profile_id),
-        "businessId": str(spec.business_profile_id),
-        "name": spec.name,
-        "status": spec.status,
-        "visibility": spec.visibility,
-        "spec": spec.spec if isinstance(spec.spec, dict) else {},
-        "metadata": spec.metadata if isinstance(spec.metadata, dict) else {},
-        "createdBy": str(spec.created_by_id) if spec.created_by_id else None,
-        "createdAt": spec.created_at.isoformat() if spec.created_at else None,
-        "updatedAt": spec.updated_at.isoformat() if spec.updated_at else None,
+        "id": str(workflow.id),
+        "agentId": str(workflow.agent_profile_id),
+        "businessId": str(workflow.business_profile_id),
+        "conversationId": str(workflow.conversation_id) if workflow.conversation_id else None,
+        "emailAccountId": str(workflow.email_account_id) if workflow.email_account_id else None,
+        "name": workflow.name,
+        "description": workflow.description or "",
+        "status": workflow.status,
+        "visibility": workflow.visibility,
+        "triggerType": workflow.trigger_type,
+        "triggerConfig": workflow.trigger_config if isinstance(workflow.trigger_config, dict) else {},
+        "sourceConfig": workflow.source_config if isinstance(workflow.source_config, dict) else {},
+        "destinationConfig": workflow.destination_config if isinstance(workflow.destination_config, dict) else {},
+        "instructions": workflow.instructions if isinstance(workflow.instructions, dict) else {},
+        "state": workflow.state if isinstance(workflow.state, dict) else {},
+        "pollIntervalSeconds": int(workflow.poll_interval_seconds or 0),
+        "maxEventsPerPoll": int(workflow.max_events_per_poll or 0),
+        "lastTriggeredAt": workflow.last_triggered_at.isoformat() if workflow.last_triggered_at else None,
+        "lastPolledAt": workflow.last_polled_at.isoformat() if workflow.last_polled_at else None,
+        "nextTriggerAt": workflow.next_trigger_at.isoformat() if workflow.next_trigger_at else None,
+        "leaseExpiresAt": workflow.lease_expires_at.isoformat() if workflow.lease_expires_at else None,
+        "errorCount": int(workflow.error_count or 0),
+        "lastError": workflow.last_error or "",
+        "metadata": workflow.metadata if isinstance(workflow.metadata, dict) else {},
+        "createdBy": str(workflow.created_by_id) if workflow.created_by_id else None,
+        "createdAt": workflow.created_at.isoformat() if workflow.created_at else None,
+        "updatedAt": workflow.updated_at.isoformat() if workflow.updated_at else None,
     }
 
 
 def _serialize_run(run: AgentRun) -> dict[str, object]:
+    artifacts_qs = getattr(run, "artifacts", None)
+    artifacts = []
+    if artifacts_qs is not None:
+        artifacts = [
+            {
+                "id": str(artifact.id),
+                "kind": artifact.kind,
+                "label": artifact.label or "",
+                "url": artifact.url or "",
+                "referenceType": artifact.reference_type or "",
+                "referenceId": str(artifact.reference_id) if artifact.reference_id else None,
+                "metadata": artifact.metadata if isinstance(artifact.metadata, dict) else {},
+                "createdAt": artifact.created_at.isoformat() if artifact.created_at else None,
+            }
+            for artifact in artifacts_qs.all()[:20]
+        ]
     return {
         "id": str(run.id),
         "agentId": str(run.agent_profile_id),
         "businessId": str(run.business_profile_id),
         "conversationId": str(run.conversation_id) if run.conversation_id else None,
-        "runSpecId": str(run.run_spec_id) if run.run_spec_id else None,
+        "workflowId": str(run.workflow_id) if run.workflow_id else None,
+        "workflowName": getattr(getattr(run, "workflow", None), "name", "") or "",
+        "parentRunId": str(run.parent_run_id) if run.parent_run_id else None,
+        "delegatedByAgentId": str(run.delegated_by_agent_id) if run.delegated_by_agent_id else None,
         "title": run.title or "",
         "source": run.source,
         "status": run.status,
@@ -176,6 +196,7 @@ def _serialize_run(run: AgentRun) -> dict[str, object]:
         "errorDetail": run.error_detail or "",
         "plan": run.plan if isinstance(run.plan, dict) else {},
         "result": run.result if isinstance(run.result, dict) else {},
+        "artifacts": artifacts,
         "metadata": run.metadata if isinstance(run.metadata, dict) else {},
         "createdBy": str(run.created_by_id) if run.created_by_id else None,
         "createdAt": run.created_at.isoformat() if run.created_at else None,
@@ -196,53 +217,46 @@ def _serialize_run_event(event: AgentRunEvent) -> dict[str, object]:
     }
 
 
-def _serialize_automation(automation: AgentAutomation) -> dict[str, object]:
+def _serialize_memory(item: MemoryItem) -> dict[str, object]:
+    audit_events = []
+    events_qs = getattr(item, "audit_events", None)
+    if events_qs is not None:
+        audit_events = [
+            {
+                "id": str(event.id),
+                "action": event.action,
+                "actorUserId": str(event.actor_user_id) if event.actor_user_id else None,
+                "createdAt": event.created_at.isoformat() if event.created_at else None,
+            }
+            for event in events_qs.all()[:10]
+        ]
     return {
-        "id": str(automation.id),
-        "agentId": str(automation.agent_profile_id),
-        "businessId": str(automation.business_profile_id),
-        "conversationId": str(automation.conversation_id) if automation.conversation_id else None,
-        "runSpecId": str(automation.run_spec_id) if automation.run_spec_id else None,
-        "name": automation.name,
-        "status": automation.status,
-        "visibility": automation.visibility,
-        "triggerType": automation.trigger_type,
-        "triggerConfig": automation.trigger_config if isinstance(automation.trigger_config, dict) else {},
-        "destinationConfig": automation.destination_config if isinstance(automation.destination_config, dict) else {},
-        "lastTriggeredAt": automation.last_triggered_at.isoformat() if automation.last_triggered_at else None,
-        "nextTriggerAt": automation.next_trigger_at.isoformat() if automation.next_trigger_at else None,
-        "metadata": automation.metadata if isinstance(automation.metadata, dict) else {},
-        "createdBy": str(automation.created_by_id) if automation.created_by_id else None,
-        "createdAt": automation.created_at.isoformat() if automation.created_at else None,
-        "updatedAt": automation.updated_at.isoformat() if automation.updated_at else None,
-    }
-
-
-def _serialize_watcher(watcher: AgentWatcher) -> dict[str, object]:
-    return {
-        "id": str(watcher.id),
-        "agentId": str(watcher.agent_profile_id),
-        "businessId": str(watcher.business_profile_id),
-        "conversationId": str(watcher.conversation_id) if watcher.conversation_id else None,
-        "runSpecId": str(watcher.run_spec_id) if watcher.run_spec_id else None,
-        "emailAccountId": str(watcher.email_account_id) if watcher.email_account_id else None,
-        "name": watcher.name,
-        "status": watcher.status,
-        "visibility": watcher.visibility,
-        "watcherType": watcher.watcher_type,
-        "watchConfig": watcher.watch_config if isinstance(watcher.watch_config, dict) else {},
-        "destinationConfig": watcher.destination_config if isinstance(getattr(watcher, "destination_config", None), dict) else {},
-        "pollIntervalSeconds": int(watcher.poll_interval_seconds or 0),
-        "maxEventsPerPoll": int(watcher.max_events_per_poll or 0),
-        "lastPolledAt": watcher.last_polled_at.isoformat() if watcher.last_polled_at else None,
-        "nextPollAt": watcher.next_poll_at.isoformat() if watcher.next_poll_at else None,
-        "leaseExpiresAt": watcher.lease_expires_at.isoformat() if watcher.lease_expires_at else None,
-        "errorCount": int(watcher.error_count or 0),
-        "lastError": watcher.last_error or "",
-        "metadata": watcher.metadata if isinstance(watcher.metadata, dict) else {},
-        "createdBy": str(watcher.created_by_id) if watcher.created_by_id else None,
-        "createdAt": watcher.created_at.isoformat() if watcher.created_at else None,
-        "updatedAt": watcher.updated_at.isoformat() if watcher.updated_at else None,
+        "id": str(item.id),
+        "businessId": str(item.business_profile_id),
+        "scope": item.scope,
+        "agentId": str(item.agent_profile_id) if item.agent_profile_id else None,
+        "workflowId": str(item.workflow_id) if item.workflow_id else None,
+        "runId": str(item.run_id) if item.run_id else None,
+        "conversationId": str(item.conversation_id) if item.conversation_id else None,
+        "crmContactId": str(item.crm_contact_id) if item.crm_contact_id else None,
+        "crmCompanyId": str(item.crm_company_id) if item.crm_company_id else None,
+        "kind": item.kind,
+        "key": item.key or "",
+        "content": item.content or "",
+        "payload": item.payload if isinstance(item.payload, dict) else {},
+        "visibility": item.visibility,
+        "sensitivity": item.sensitivity,
+        "status": item.status,
+        "sourceType": item.source_type or "",
+        "sourceId": str(item.source_id) if item.source_id else None,
+        "confidence": float(item.confidence or 0),
+        "createdBy": str(item.created_by_id) if item.created_by_id else None,
+        "reviewedBy": str(item.reviewed_by_id) if item.reviewed_by_id else None,
+        "reviewedAt": item.reviewed_at.isoformat() if item.reviewed_at else None,
+        "expiresAt": item.expires_at.isoformat() if item.expires_at else None,
+        "createdAt": item.created_at.isoformat() if item.created_at else None,
+        "updatedAt": item.updated_at.isoformat() if item.updated_at else None,
+        "auditEvents": audit_events,
     }
 
 
@@ -256,9 +270,7 @@ def _append_run_event(
 ) -> AgentRunEvent:
     with transaction.atomic():
         locked_run = AgentRun.objects.select_for_update().get(id=run_id)
-        next_index = (
-            AgentRunEvent.objects.filter(run=locked_run).aggregate(max_index=Max("sequence_index")).get("max_index") or 0
-        )
+        next_index = AgentRunEvent.objects.filter(run=locked_run).aggregate(max_index=Max("sequence_index")).get("max_index") or 0
         return AgentRunEvent.objects.create(
             run=locked_run,
             sequence_index=int(next_index) + 1,
@@ -269,14 +281,47 @@ def _append_run_event(
         )
 
 
-def _set_run_status(
-    run_id: uuid.UUID,
+def _create_run(
     *,
-    status: str,
-    error_detail: str | None = None,
-    finished: bool = False,
-    run_after: bool = False,
-) -> None:
+    agent: AgentProfile,
+    created_by,
+    workflow: AgentWorkflow | None,
+    conversation: Conversation | None,
+    title: str,
+    source: str,
+    visibility: str,
+    snapshot: dict[str, Any],
+    metadata: dict[str, Any] | None = None,
+    parent_run: AgentRun | None = None,
+    delegated_by_agent: AgentProfile | None = None,
+) -> AgentRun:
+    run = AgentRun.objects.create(
+        business_profile=agent.business_profile,
+        agent_profile=agent,
+        conversation=conversation,
+        created_by=created_by,
+        workflow=workflow,
+        parent_run=parent_run,
+        delegated_by_agent=delegated_by_agent,
+        workflow_snapshot=snapshot,
+        title=(title or snapshot.get("name") or snapshot.get("goal") or "Agent run")[:200],
+        source=source,
+        status=AgentRunStatus.QUEUED,
+        visibility=visibility,
+        metadata=metadata or {},
+        run_after=timezone.now(),
+    )
+    _append_run_event(
+        run.id,
+        stream=AgentRunEventStream.SYSTEM,
+        event_type=AgentRunEventType.PROGRESS,
+        label="Queued",
+        payload={"status": AgentRunStatus.QUEUED, "workflow_id": str(workflow.id) if workflow else None},
+    )
+    return run
+
+
+def _set_run_status(run_id: uuid.UUID, *, status: str, error_detail: str | None = None, finished: bool = False, run_after: bool = False) -> None:
     updates: dict[str, object] = {"status": status, "updated_at": timezone.now()}
     if error_detail is not None:
         updates["error_detail"] = (error_detail or "")[:2000]
@@ -291,958 +336,92 @@ def _set_run_status(
 
 def _ensure_run_mutable(run: AgentRun) -> JsonResponse | None:
     if run.status in {AgentRunStatus.COMPLETED, AgentRunStatus.FAILED, AgentRunStatus.CANCELLED}:
-        return JsonResponse(
-            {"error": "RUN_IMMUTABLE", "message": "Run is already finished."},
-            status=HTTPStatus.CONFLICT,
-        )
+        return JsonResponse({"error": "RUN_IMMUTABLE", "message": "Run is already finished."}, status=HTTPStatus.CONFLICT)
     return None
 
 
+def _ensure_workflow_conversation(workflow: AgentWorkflow) -> Conversation:
+    if workflow.conversation_id:
+        return workflow.conversation
+    conversation = Conversation.objects.create(
+        business_profile=workflow.business_profile,
+        agent_profile=workflow.agent_profile,
+        owner_user=workflow.created_by or workflow.agent_profile.user,
+        channel=ConversationChannel.API,
+        status=ConversationStatus.LIVE,
+        metadata={"workflow_id": str(workflow.id), "purpose": "workflow_thread"},
+    )
+    AgentWorkflow.objects.filter(id=workflow.id).update(conversation=conversation, updated_at=timezone.now())
+    workflow.conversation = conversation
+    return conversation
+
+
+def _normalize_trigger_type(value: object) -> str:
+    raw = str(value or AgentWorkflowTriggerType.MANUAL).strip().lower()
+    if raw == "cron":
+        return AgentWorkflowTriggerType.SCHEDULE
+    return raw
+
+
+def _compute_next_trigger(trigger_type: str, trigger_config: dict[str, Any], *, after=None):
+    if trigger_type != AgentWorkflowTriggerType.SCHEDULE:
+        return None
+    cron_config = dict(trigger_config)
+    cron_config.setdefault("type", "cron")
+    return compute_next_workflow_schedule_at("cron", cron_config, after=after or timezone.now())
+
+
 @csrf_protect
 @require_http_methods(["GET", "POST"])
-def agent_run_specs_collection(request: HttpRequest, agent_id: uuid.UUID) -> JsonResponse:
+def agent_workflows_collection(request: HttpRequest, agent_id: uuid.UUID) -> JsonResponse:
     agent, error = _resolve_agent_for_request(request, agent_id)
     if error:
         return error
     assert agent is not None
-    feature_err = _ensure_subagents_enabled(request, agent=agent, allow_read_only=True)
+    feature_err = _ensure_agent_workforce_enabled(request, agent=agent, allow_read_only=True)
     if feature_err:
         return feature_err
 
     with tenant_context(agent.business_profile_id):
         if request.method == "GET":
             status = str(request.GET.get("status") or "").strip().lower()
-            qs = AgentRunSpec.objects.filter(agent_profile=agent).order_by("-created_at")
+            qs = AgentWorkflow.objects.filter(agent_profile=agent).order_by("-created_at")
             if status:
                 qs = qs.filter(status=status)
-            items = [_serialize_run_spec(item) for item in qs[:200]]
-            return JsonResponse({"runSpecs": items}, status=HTTPStatus.OK)
+            return JsonResponse({"workflows": [_serialize_workflow(item) for item in qs[:200]]}, status=HTTPStatus.OK)
 
         payload, error = _parse_json_body(request)
         if error:
             return error
-
         name = str((payload or {}).get("name") or "").strip()
         if not name:
             return JsonResponse({"error": "VALIDATION_ERROR", "message": "name is required."}, status=HTTPStatus.BAD_REQUEST)
-
-        status = str((payload or {}).get("status") or AgentRunSpecStatus.DRAFT).strip().lower()
-        if status not in {choice for choice, _ in AgentRunSpecStatus.choices}:
+        status = str((payload or {}).get("status") or AgentWorkflowStatus.DRAFT).strip().lower()
+        if status not in {choice for choice, _ in AgentWorkflowStatus.choices}:
             return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid status."}, status=HTTPStatus.BAD_REQUEST)
-
         visibility = str((payload or {}).get("visibility") or AgentRunVisibility.INITIATOR).strip().lower()
         if visibility not in {choice for choice, _ in AgentRunVisibility.choices}:
             return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid visibility."}, status=HTTPStatus.BAD_REQUEST)
-
-        spec_payload = (payload or {}).get("spec") or (payload or {}).get("runSpec") or {}
-        spec_normalized = normalize_run_spec(spec_payload)
-
-        run_spec = AgentRunSpec.objects.create(
-            business_profile=agent.business_profile,
-            agent_profile=agent,
-            created_by=request.user,
-            name=name,
-            status=status,
-            visibility=visibility,
-            spec=spec_normalized,
-            metadata=(payload or {}).get("metadata") if isinstance((payload or {}).get("metadata"), dict) else {},
-        )
-        return JsonResponse({"runSpec": _serialize_run_spec(run_spec)}, status=HTTPStatus.CREATED)
-
-
-@csrf_protect
-@require_http_methods(["GET", "PUT", "DELETE"])
-def agent_run_spec_detail(request: HttpRequest, agent_id: uuid.UUID, spec_id: uuid.UUID) -> JsonResponse:
-    agent, error = _resolve_agent_for_request(request, agent_id)
-    if error:
-        return error
-    assert agent is not None
-    feature_err = _ensure_subagents_enabled(request, agent=agent, allow_read_only=True)
-    if feature_err:
-        return feature_err
-
-    with tenant_context(agent.business_profile_id):
-        run_spec = AgentRunSpec.objects.filter(id=spec_id, agent_profile=agent).first()
-        if run_spec is None:
-            return JsonResponse({"error": "RUN_SPEC_NOT_FOUND", "message": "Run spec not found."}, status=HTTPStatus.NOT_FOUND)
-
-        if request.method == "GET":
-            return JsonResponse({"runSpec": _serialize_run_spec(run_spec)}, status=HTTPStatus.OK)
-
-        if request.method == "DELETE":
-            run_spec.status = AgentRunSpecStatus.ARCHIVED
-            run_spec.save(update_fields=["status", "updated_at"])
-            return JsonResponse({}, status=HTTPStatus.NO_CONTENT)
-
-        payload, error = _parse_json_body(request)
-        if error:
-            return error
-
-        if "name" in payload:
-            name = str(payload.get("name") or "").strip()
-            if not name:
-                return JsonResponse({"error": "VALIDATION_ERROR", "message": "name cannot be blank."}, status=HTTPStatus.BAD_REQUEST)
-            run_spec.name = name[:160]
-        if "status" in payload:
-            status = str(payload.get("status") or "").strip().lower()
-            if status not in {choice for choice, _ in AgentRunSpecStatus.choices}:
-                return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid status."}, status=HTTPStatus.BAD_REQUEST)
-            run_spec.status = status
-        if "visibility" in payload:
-            visibility = str(payload.get("visibility") or "").strip().lower()
-            if visibility not in {choice for choice, _ in AgentRunVisibility.choices}:
-                return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid visibility."}, status=HTTPStatus.BAD_REQUEST)
-            run_spec.visibility = visibility
-        if "spec" in payload or "runSpec" in payload:
-            spec_payload = payload.get("spec") or payload.get("runSpec") or {}
-            run_spec.spec = normalize_run_spec(spec_payload)
-        if "metadata" in payload and isinstance(payload.get("metadata"), dict):
-            run_spec.metadata = dict(payload.get("metadata") or {})
-
-        run_spec.save(update_fields=["name", "status", "visibility", "spec", "metadata", "updated_at"])
-        return JsonResponse({"runSpec": _serialize_run_spec(run_spec)}, status=HTTPStatus.OK)
-
-
-@csrf_protect
-@require_http_methods(["GET", "POST"])
-def agent_runs_collection(request: HttpRequest, agent_id: uuid.UUID) -> JsonResponse:
-    agent, error = _resolve_agent_for_request(request, agent_id)
-    if error:
-        return error
-    assert agent is not None
-    feature_err = _ensure_subagents_enabled(request, agent=agent, allow_read_only=True)
-    if feature_err:
-        return feature_err
-
-    with tenant_context(agent.business_profile_id):
-        if request.method == "GET":
-            status = str(request.GET.get("status") or "").strip().lower()
-            conversation_id = request.GET.get("conversation_id") or request.GET.get("conversationId")
-            limit = int(str(request.GET.get("limit") or "50") or 50)
-            offset = int(str(request.GET.get("offset") or "0") or 0)
-            limit = max(1, min(limit, 200))
-            offset = max(0, offset)
-
-            qs = AgentRun.objects.filter(agent_profile=agent).filter(_run_visibility_filter(request, agent=agent)).order_by("-created_at")
-            if status:
-                qs = qs.filter(status=status)
-            if conversation_id:
-                conv_uuid, err = _parse_uuid(conversation_id, field="conversation_id")
-                if err:
-                    return err
-                if conv_uuid:
-                    qs = qs.filter(conversation_id=conv_uuid)
-
-            total = qs.count()
-            items = [_serialize_run(item) for item in qs[offset : offset + limit]]
-            return JsonResponse({"runs": items, "total": total, "limit": limit, "offset": offset}, status=HTTPStatus.OK)
-
-        payload, error = _parse_json_body(request)
-        if error:
-            return error
-
-        run_spec_id_raw = (payload or {}).get("runSpecId") or (payload or {}).get("run_spec_id")
-        run_spec_id, err = _parse_uuid(run_spec_id_raw, field="runSpecId")
-        if err:
-            return err
-
-        conversation_id_raw = (payload or {}).get("conversationId") or (payload or {}).get("conversation_id")
-        conversation_id, err = _parse_uuid(conversation_id_raw, field="conversationId")
-        if err:
-            return err
-
-        conversation = None
-        if conversation_id:
-            conversation = Conversation.objects.filter(id=conversation_id, business_profile=agent.business_profile).first()
-            if conversation is None:
-                return JsonResponse({"error": "CONVERSATION_NOT_FOUND", "message": "Conversation not found."}, status=HTTPStatus.NOT_FOUND)
-
-        run_spec = None
-        run_spec_snapshot: dict[str, Any] = {}
-        if run_spec_id:
-            run_spec = AgentRunSpec.objects.filter(id=run_spec_id, agent_profile=agent).first()
-            if run_spec is None:
-                return JsonResponse({"error": "RUN_SPEC_NOT_FOUND", "message": "Run spec not found."}, status=HTTPStatus.NOT_FOUND)
-            run_spec_snapshot = normalize_run_spec(run_spec.spec)
-        else:
-            snapshot_payload = (payload or {}).get("runSpec") or (payload or {}).get("runSpecSnapshot") or {}
-            run_spec_snapshot = normalize_run_spec(snapshot_payload)
-
-        visibility = str((payload or {}).get("visibility") or AgentRunVisibility.INITIATOR).strip().lower()
-        if visibility not in {choice for choice, _ in AgentRunVisibility.choices}:
-            return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid visibility."}, status=HTTPStatus.BAD_REQUEST)
-
-        title = str((payload or {}).get("title") or "").strip()
-        if not title:
-            title = str(run_spec_snapshot.get("goal") or run_spec_snapshot.get("name") or run_spec.name if run_spec else "").strip()
-
-        plan = (payload or {}).get("plan")
-        plan_dict = dict(plan) if isinstance(plan, dict) else {}
-
-        source = str((payload or {}).get("source") or AgentRunSource.CHAT).strip().lower() or AgentRunSource.CHAT
-        if source not in {choice for choice, _ in AgentRunSource.choices}:
-            return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid source."}, status=HTTPStatus.BAD_REQUEST)
-
-        run = AgentRun.objects.create(
-            business_profile=agent.business_profile,
-            agent_profile=agent,
-            conversation=conversation,
-            created_by=request.user,
-            run_spec=run_spec,
-            run_spec_snapshot=run_spec_snapshot,
-            title=title[:200],
-            source=source,
-            status=AgentRunStatus.QUEUED,
-            visibility=visibility,
-            plan=plan_dict,
-            metadata=(payload or {}).get("metadata") if isinstance((payload or {}).get("metadata"), dict) else {},
-            run_after=timezone.now(),
-        )
-        _append_run_event(
-            run.id,
-            stream=AgentRunEventStream.SYSTEM,
-            event_type=AgentRunEventType.PROGRESS,
-            label="Queued",
-            payload={"status": AgentRunStatus.QUEUED},
-        )
-        return JsonResponse({"run": _serialize_run(run)}, status=HTTPStatus.CREATED)
-
-
-@csrf_protect
-@require_http_methods(["GET", "PUT"])
-def agent_run_detail(request: HttpRequest, agent_id: uuid.UUID, run_id: uuid.UUID) -> JsonResponse:
-    agent, error = _resolve_agent_for_request(request, agent_id)
-    if error:
-        return error
-    assert agent is not None
-    feature_err = _ensure_subagents_enabled(request, agent=agent, allow_read_only=True)
-    if feature_err:
-        return feature_err
-
-    with tenant_context(agent.business_profile_id):
-        run = (
-            AgentRun.objects.filter(id=run_id, agent_profile=agent)
-            .filter(_run_visibility_filter(request, agent=agent))
-            .first()
-        )
-        if run is None:
-            return JsonResponse({"error": "RUN_NOT_FOUND", "message": "Run not found."}, status=HTTPStatus.NOT_FOUND)
-
-        if request.method == "GET":
-            return JsonResponse({"run": _serialize_run(run)}, status=HTTPStatus.OK)
-
-        payload, error = _parse_json_body(request)
-        if error:
-            return error
-
-        updates: list[str] = []
-        if "title" in payload:
-            run.title = str(payload.get("title") or "").strip()[:200]
-            updates.append("title")
-        if "visibility" in payload:
-            visibility = str(payload.get("visibility") or "").strip().lower()
-            if visibility not in {choice for choice, _ in AgentRunVisibility.choices}:
-                return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid visibility."}, status=HTTPStatus.BAD_REQUEST)
-            run.visibility = visibility
-            updates.append("visibility")
-        if "plan" in payload and isinstance(payload.get("plan"), dict):
-            run.plan = dict(payload.get("plan") or {})
-            updates.append("plan")
-        if "metadata" in payload and isinstance(payload.get("metadata"), dict):
-            run.metadata = dict(payload.get("metadata") or {})
-            updates.append("metadata")
-        if not updates:
-            return JsonResponse({"run": _serialize_run(run)}, status=HTTPStatus.OK)
-
-        updates.append("updated_at")
-        run.save(update_fields=updates)
-        return JsonResponse({"run": _serialize_run(run)}, status=HTTPStatus.OK)
-
-
-@csrf_protect
-@require_http_methods(["GET"])
-def agent_run_events(request: HttpRequest, agent_id: uuid.UUID, run_id: uuid.UUID) -> JsonResponse:
-    agent, error = _resolve_agent_for_request(request, agent_id)
-    if error:
-        return error
-    assert agent is not None
-    feature_err = _ensure_subagents_enabled(request, agent=agent, allow_read_only=True)
-    if feature_err:
-        return feature_err
-
-    with tenant_context(agent.business_profile_id):
-        run = (
-            AgentRun.objects.filter(id=run_id, agent_profile=agent)
-            .filter(_run_visibility_filter(request, agent=agent))
-            .first()
-        )
-        if run is None:
-            return JsonResponse({"error": "RUN_NOT_FOUND", "message": "Run not found."}, status=HTTPStatus.NOT_FOUND)
-
-        after = request.GET.get("after")
-        limit = int(str(request.GET.get("limit") or "200") or 200)
-        limit = max(1, min(limit, 500))
-        qs = AgentRunEvent.objects.filter(run=run).order_by("sequence_index")
-        if after:
-            try:
-                after_index = int(str(after))
-            except ValueError:
-                return JsonResponse({"error": "VALIDATION_ERROR", "message": "after must be an integer."}, status=HTTPStatus.BAD_REQUEST)
-            qs = qs.filter(sequence_index__gt=after_index)
-        events = [_serialize_run_event(event) for event in qs[:limit]]
-        return JsonResponse({"events": events}, status=HTTPStatus.OK)
-
-
-@csrf_protect
-@require_http_methods(["POST"])
-def agent_run_cancel(request: HttpRequest, agent_id: uuid.UUID, run_id: uuid.UUID) -> JsonResponse:
-    agent, error = _resolve_agent_for_request(request, agent_id)
-    if error:
-        return error
-    assert agent is not None
-    feature_err = _ensure_subagents_enabled(request, agent=agent, allow_read_only=False)
-    if feature_err:
-        return feature_err
-
-    payload, error = _parse_json_body(request)
-    if error:
-        return error
-
-    reason = str((payload or {}).get("reason") or "").strip()
-
-    with tenant_context(agent.business_profile_id):
-        run = (
-            AgentRun.objects.filter(id=run_id, agent_profile=agent)
-            .filter(_run_visibility_filter(request, agent=agent))
-            .first()
-        )
-        if run is None:
-            return JsonResponse({"error": "RUN_NOT_FOUND", "message": "Run not found."}, status=HTTPStatus.NOT_FOUND)
-
-        immutable = _ensure_run_mutable(run)
-        if immutable:
-            return immutable
-
-        _append_run_event(
-            run.id,
-            stream=AgentRunEventStream.EXECUTED,
-            event_type=AgentRunEventType.CANCELLED,
-            label="Cancelled",
-            payload={"reason": reason} if reason else {},
-        )
-        _set_run_status(run.id, status=AgentRunStatus.CANCELLED, error_detail=reason or "cancelled", finished=True)
-        run.refresh_from_db()
-        return JsonResponse({"run": _serialize_run(run)}, status=HTTPStatus.OK)
-
-
-@csrf_protect
-@require_http_methods(["POST"])
-def agent_run_user_input(request: HttpRequest, agent_id: uuid.UUID, run_id: uuid.UUID) -> JsonResponse:
-    agent, error = _resolve_agent_for_request(request, agent_id)
-    if error:
-        return error
-    assert agent is not None
-    feature_err = _ensure_subagents_enabled(request, agent=agent, allow_read_only=False)
-    if feature_err:
-        return feature_err
-
-    payload, error = _parse_json_body(request)
-    if error:
-        return error
-
-    message = str((payload or {}).get("message") or "").strip()
-    extra = (payload or {}).get("payload")
-    extra_payload = dict(extra) if isinstance(extra, dict) else {}
-
-    if not message and not extra_payload:
-        return JsonResponse(
-            {"error": "VALIDATION_ERROR", "message": "message or payload is required."},
-            status=HTTPStatus.BAD_REQUEST,
-        )
-
-    with tenant_context(agent.business_profile_id):
-        run = (
-            AgentRun.objects.filter(id=run_id, agent_profile=agent)
-            .filter(_run_visibility_filter(request, agent=agent))
-            .first()
-        )
-        if run is None:
-            return JsonResponse({"error": "RUN_NOT_FOUND", "message": "Run not found."}, status=HTTPStatus.NOT_FOUND)
-
-        immutable = _ensure_run_mutable(run)
-        if immutable:
-            return immutable
-
-        if run.status not in {AgentRunStatus.WAITING_USER, AgentRunStatus.PAUSED, AgentRunStatus.WAITING_EXTERNAL}:
-            return JsonResponse(
-                {"error": "RUN_NOT_WAITING_USER", "message": "Run is not waiting for user input."},
-                status=HTTPStatus.CONFLICT,
-            )
-
-        _append_run_event(
-            run.id,
-            stream=AgentRunEventStream.EXECUTED,
-            event_type=AgentRunEventType.PROGRESS,
-            label="User input received",
-            payload={"message": message, "payload": extra_payload} if extra_payload else {"message": message},
-        )
-        AgentRunMemoryItem.objects.create(
-            run=run,
-            kind=AgentRunMemoryKind.NOTE,
-            key="user_input",
-            content=message[:4000],
-            payload=extra_payload,
-            created_by=request.user,
-        )
-        _set_run_status(run.id, status=AgentRunStatus.QUEUED, run_after=True)
-        run.refresh_from_db()
-        return JsonResponse({"run": _serialize_run(run)}, status=HTTPStatus.OK)
-
-
-@csrf_protect
-@require_http_methods(["POST"])
-def agent_run_approval(request: HttpRequest, agent_id: uuid.UUID, run_id: uuid.UUID) -> JsonResponse:
-    agent, error = _resolve_agent_for_request(request, agent_id)
-    if error:
-        return error
-    assert agent is not None
-    feature_err = _ensure_subagents_enabled(request, agent=agent, allow_read_only=False)
-    if feature_err:
-        return feature_err
-
-    payload, error = _parse_json_body(request)
-    if error:
-        return error
-
-    decision = str((payload or {}).get("decision") or "").strip().lower()
-    if decision not in {"approve", "deny"}:
-        return JsonResponse(
-            {"error": "VALIDATION_ERROR", "message": "decision must be 'approve' or 'deny'."},
-            status=HTTPStatus.BAD_REQUEST,
-        )
-
-    note = str((payload or {}).get("note") or "").strip()
-    extra = (payload or {}).get("payload")
-    extra_payload = dict(extra) if isinstance(extra, dict) else {}
-
-    with tenant_context(agent.business_profile_id):
-        run = (
-            AgentRun.objects.filter(id=run_id, agent_profile=agent)
-            .filter(_run_visibility_filter(request, agent=agent))
-            .first()
-        )
-        if run is None:
-            return JsonResponse({"error": "RUN_NOT_FOUND", "message": "Run not found."}, status=HTTPStatus.NOT_FOUND)
-
-        immutable = _ensure_run_mutable(run)
-        if immutable:
-            return immutable
-
-        if run.status not in {AgentRunStatus.WAITING_APPROVAL, AgentRunStatus.PAUSED}:
-            return JsonResponse(
-                {"error": "RUN_NOT_WAITING_APPROVAL", "message": "Run is not waiting for approval."},
-                status=HTTPStatus.CONFLICT,
-            )
-
-        _append_run_event(
-            run.id,
-            stream=AgentRunEventStream.EXECUTED,
-            event_type=AgentRunEventType.PROGRESS,
-            label="Approved" if decision == "approve" else "Denied",
-            payload={"decision": decision, "note": note, "payload": extra_payload} if extra_payload else {"decision": decision, "note": note},
-        )
-        AgentRunMemoryItem.objects.create(
-            run=run,
-            kind=AgentRunMemoryKind.DECISION,
-            key="approval",
-            content=(note or decision)[:4000],
-            payload={"decision": decision, **extra_payload},
-            created_by=request.user,
-        )
-
-        if decision == "deny":
-            _set_run_status(run.id, status=AgentRunStatus.CANCELLED, error_detail=note or "denied", finished=True)
-        else:
-            _set_run_status(run.id, status=AgentRunStatus.QUEUED, run_after=True)
-
-        run.refresh_from_db()
-        return JsonResponse({"run": _serialize_run(run)}, status=HTTPStatus.OK)
-
-
-@csrf_protect
-@require_http_methods(["POST"])
-def agent_run_resume(request: HttpRequest, agent_id: uuid.UUID, run_id: uuid.UUID) -> JsonResponse:
-    agent, error = _resolve_agent_for_request(request, agent_id)
-    if error:
-        return error
-    assert agent is not None
-    feature_err = _ensure_subagents_enabled(request, agent=agent, allow_read_only=False)
-    if feature_err:
-        return feature_err
-
-    payload, error = _parse_json_body(request)
-    if error:
-        return error
-
-    reason = str((payload or {}).get("reason") or "").strip()
-
-    with tenant_context(agent.business_profile_id):
-        run = (
-            AgentRun.objects.filter(id=run_id, agent_profile=agent)
-            .filter(_run_visibility_filter(request, agent=agent))
-            .first()
-        )
-        if run is None:
-            return JsonResponse({"error": "RUN_NOT_FOUND", "message": "Run not found."}, status=HTTPStatus.NOT_FOUND)
-
-        immutable = _ensure_run_mutable(run)
-        if immutable:
-            return immutable
-
-        if run.status not in {
-            AgentRunStatus.PAUSED,
-            AgentRunStatus.WAITING_USER,
-            AgentRunStatus.WAITING_APPROVAL,
-            AgentRunStatus.WAITING_EXTERNAL,
-        }:
-            return JsonResponse(
-                {"error": "RUN_NOT_RESUMABLE", "message": "Run is not resumable from its current state."},
-                status=HTTPStatus.CONFLICT,
-            )
-
-        _append_run_event(
-            run.id,
-            stream=AgentRunEventStream.EXECUTED,
-            event_type=AgentRunEventType.PROGRESS,
-            label="Resumed",
-            payload={"reason": reason} if reason else {},
-        )
-        _set_run_status(run.id, status=AgentRunStatus.QUEUED, run_after=True)
-        run.refresh_from_db()
-        return JsonResponse({"run": _serialize_run(run)}, status=HTTPStatus.OK)
-
-
-@csrf_protect
-@require_http_methods(["GET", "POST"])
-def agent_automations_collection(request: HttpRequest, agent_id: uuid.UUID) -> JsonResponse:
-    agent, error = _resolve_agent_for_request(request, agent_id)
-    if error:
-        return error
-    assert agent is not None
-    feature_err = _ensure_subagents_enabled(request, agent=agent, allow_read_only=True)
-    if feature_err:
-        return feature_err
-
-    with tenant_context(agent.business_profile_id):
-        if request.method == "GET":
-            status = str(request.GET.get("status") or "").strip().lower()
-            qs = AgentAutomation.objects.filter(agent_profile=agent).order_by("-created_at")
-            if status:
-                qs = qs.filter(status=status)
-            items = [_serialize_automation(item) for item in qs[:200]]
-            return JsonResponse({"automations": items}, status=HTTPStatus.OK)
-
-        payload, error = _parse_json_body(request)
-        if error:
-            return error
-
-        name = str((payload or {}).get("name") or "").strip()
-        if not name:
-            return JsonResponse({"error": "VALIDATION_ERROR", "message": "name is required."}, status=HTTPStatus.BAD_REQUEST)
-
-        status = str((payload or {}).get("status") or AgentAutomationStatus.DRAFT).strip().lower()
-        if status not in {choice for choice, _ in AgentAutomationStatus.choices}:
-            return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid status."}, status=HTTPStatus.BAD_REQUEST)
-
-        visibility = str((payload or {}).get("visibility") or AgentRunVisibility.INITIATOR).strip().lower()
-        if visibility not in {choice for choice, _ in AgentRunVisibility.choices}:
-            return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid visibility."}, status=HTTPStatus.BAD_REQUEST)
-
-        trigger_type = str((payload or {}).get("triggerType") or (payload or {}).get("trigger_type") or AgentAutomationTriggerType.CRON).strip().lower()
-        if trigger_type not in {"cron", "webhook", "manual"}:
+        trigger_type = _normalize_trigger_type((payload or {}).get("triggerType") or (payload or {}).get("trigger_type"))
+        if trigger_type not in {choice for choice, _ in AgentWorkflowTriggerType.choices}:
             return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid triggerType."}, status=HTTPStatus.BAD_REQUEST)
-
-        trigger_config = (payload or {}).get("triggerConfig")
-        trigger_config = dict(trigger_config) if isinstance(trigger_config, dict) else {}
-
-        if trigger_type == AgentAutomationTriggerType.WEBHOOK:
-            secret_value = str(trigger_config.get("secret") or "").strip()
-            if not secret_value:
-                trigger_config["secret"] = secrets.token_urlsafe(24)
-
-        destination_config = (payload or {}).get("destinationConfig")
-        destination_config = dict(destination_config) if isinstance(destination_config, dict) else {}
-
-        conversation_id_raw = (payload or {}).get("conversationId") or (payload or {}).get("conversation_id")
-        conversation_id, err = _parse_uuid(conversation_id_raw, field="conversationId")
-        if err:
-            return err
-
-        conversation = None
-        if conversation_id:
-            conversation = Conversation.objects.filter(id=conversation_id, business_profile=agent.business_profile).first()
-            if conversation is None:
-                return JsonResponse({"error": "CONVERSATION_NOT_FOUND", "message": "Conversation not found."}, status=HTTPStatus.NOT_FOUND)
-
-        run_spec_id_raw = (payload or {}).get("runSpecId") or (payload or {}).get("run_spec_id")
-        run_spec_id, err = _parse_uuid(run_spec_id_raw, field="runSpecId")
-        if err:
-            return err
-
-        run_spec = None
-        run_spec_snapshot: dict[str, Any] = {}
-        if run_spec_id:
-            run_spec = AgentRunSpec.objects.filter(id=run_spec_id, agent_profile=agent).first()
-            if run_spec is None:
-                return JsonResponse({"error": "RUN_SPEC_NOT_FOUND", "message": "Run spec not found."}, status=HTTPStatus.NOT_FOUND)
-            run_spec_snapshot = normalize_run_spec(run_spec.spec)
-        else:
-            snapshot_payload = (payload or {}).get("runSpec") or (payload or {}).get("runSpecSnapshot") or {}
-            run_spec_snapshot = normalize_run_spec(snapshot_payload)
-
+        trigger_config = dict((payload or {}).get("triggerConfig") or (payload or {}).get("trigger_config") or {})
+        if trigger_type == AgentWorkflowTriggerType.WEBHOOK and not str(trigger_config.get("secret") or "").strip():
+            trigger_config["secret"] = secrets.token_urlsafe(24)
         next_trigger_at = None
-        if status == AgentAutomationStatus.ACTIVE and trigger_type == AgentAutomationTriggerType.CRON:
+        if status == AgentWorkflowStatus.ACTIVE:
             try:
-                next_trigger_at = compute_next_automation_trigger_at(trigger_type, trigger_config, after=timezone.now())
+                next_trigger_at = _compute_next_trigger(trigger_type, trigger_config, after=timezone.now())
             except CronScheduleError as exc:
                 return JsonResponse({"error": "VALIDATION_ERROR", "message": str(exc)}, status=HTTPStatus.BAD_REQUEST)
 
-        automation = AgentAutomation.objects.create(
-            business_profile=agent.business_profile,
-            agent_profile=agent,
-            created_by=request.user,
-            run_spec=run_spec,
-            run_spec_snapshot=run_spec_snapshot,
-            conversation=conversation,
-            name=name,
-            status=status,
-            visibility=visibility,
-            trigger_type=trigger_type,
-            trigger_config=trigger_config,
-            destination_config=destination_config,
-            next_trigger_at=next_trigger_at,
-            metadata=(payload or {}).get("metadata") if isinstance((payload or {}).get("metadata"), dict) else {},
-        )
-        if automation.conversation_id is None:
-            ensure_automation_thread(automation)
-        return JsonResponse({"automation": _serialize_automation(automation)}, status=HTTPStatus.CREATED)
-
-
-@csrf_protect
-@require_http_methods(["GET", "PUT", "DELETE"])
-def agent_automation_detail(request: HttpRequest, agent_id: uuid.UUID, automation_id: uuid.UUID) -> JsonResponse:
-    agent, error = _resolve_agent_for_request(request, agent_id)
-    if error:
-        return error
-    assert agent is not None
-    feature_err = _ensure_subagents_enabled(request, agent=agent, allow_read_only=True)
-    if feature_err:
-        return feature_err
-
-    with tenant_context(agent.business_profile_id):
-        automation = AgentAutomation.objects.filter(id=automation_id, agent_profile=agent).first()
-        if automation is None:
-            return JsonResponse({"error": "AUTOMATION_NOT_FOUND", "message": "Automation not found."}, status=HTTPStatus.NOT_FOUND)
-
-        if request.method == "GET":
-            return JsonResponse({"automation": _serialize_automation(automation)}, status=HTTPStatus.OK)
-
-        if request.method == "DELETE":
-            automation.status = AgentAutomationStatus.ARCHIVED
-            automation.save(update_fields=["status", "updated_at"])
-            return JsonResponse({}, status=HTTPStatus.NO_CONTENT)
-
-        payload, error = _parse_json_body(request)
-        if error:
-            return error
-
-        updates: list[str] = []
-        if "name" in payload:
-            name = str(payload.get("name") or "").strip()
-            if not name:
-                return JsonResponse({"error": "VALIDATION_ERROR", "message": "name cannot be blank."}, status=HTTPStatus.BAD_REQUEST)
-            automation.name = name[:160]
-            updates.append("name")
-        if "status" in payload:
-            status = str(payload.get("status") or "").strip().lower()
-            if status not in {choice for choice, _ in AgentAutomationStatus.choices}:
-                return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid status."}, status=HTTPStatus.BAD_REQUEST)
-            automation.status = status
-            updates.append("status")
-        if "visibility" in payload:
-            visibility = str(payload.get("visibility") or "").strip().lower()
-            if visibility not in {choice for choice, _ in AgentRunVisibility.choices}:
-                return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid visibility."}, status=HTTPStatus.BAD_REQUEST)
-            automation.visibility = visibility
-            updates.append("visibility")
-        if "triggerType" in payload or "trigger_type" in payload:
-            trigger_type = str(payload.get("triggerType") or payload.get("trigger_type") or "").strip().lower()
-            if trigger_type not in {"cron", "webhook", "manual"}:
-                return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid triggerType."}, status=HTTPStatus.BAD_REQUEST)
-            automation.trigger_type = trigger_type
-            updates.append("trigger_type")
-        if "triggerConfig" in payload and isinstance(payload.get("triggerConfig"), dict):
-            automation.trigger_config = dict(payload.get("triggerConfig") or {})
-            updates.append("trigger_config")
-        if "destinationConfig" in payload and isinstance(payload.get("destinationConfig"), dict):
-            automation.destination_config = dict(payload.get("destinationConfig") or {})
-            updates.append("destination_config")
-        if "metadata" in payload and isinstance(payload.get("metadata"), dict):
-            automation.metadata = dict(payload.get("metadata") or {})
-            updates.append("metadata")
-
-        if ("trigger_type" in updates or "trigger_config" in updates) and automation.trigger_type == AgentAutomationTriggerType.WEBHOOK:
-            current_config = dict(automation.trigger_config or {}) if isinstance(automation.trigger_config, dict) else {}
-            secret_value = str(current_config.get("secret") or "").strip()
-            if not secret_value:
-                current_config["secret"] = secrets.token_urlsafe(24)
-                automation.trigger_config = current_config
-                if "trigger_config" not in updates:
-                    updates.append("trigger_config")
-
-        if {"status", "trigger_type", "trigger_config"} & set(updates):
-            next_trigger_at = None
-            if automation.status == AgentAutomationStatus.ACTIVE and automation.trigger_type == AgentAutomationTriggerType.CRON:
-                try:
-                    next_trigger_at = compute_next_automation_trigger_at(
-                        automation.trigger_type,
-                        automation.trigger_config,
-                        after=timezone.now(),
-                    )
-                except CronScheduleError as exc:
-                    return JsonResponse({"error": "VALIDATION_ERROR", "message": str(exc)}, status=HTTPStatus.BAD_REQUEST)
-            automation.next_trigger_at = next_trigger_at
-            updates.append("next_trigger_at")
-
-        if not updates:
-            return JsonResponse({"automation": _serialize_automation(automation)}, status=HTTPStatus.OK)
-
-        updates.append("updated_at")
-        automation.save(update_fields=updates)
-        if automation.conversation_id is None:
-            ensure_automation_thread(automation)
-        return JsonResponse({"automation": _serialize_automation(automation)}, status=HTTPStatus.OK)
-
-
-@csrf_exempt
-@require_POST
-def automation_webhook_trigger(request: HttpRequest, automation_id: uuid.UUID, token: str) -> JsonResponse:
-    """
-    Trigger a webhook automation without a user session.
-
-    Security model (V1): UUID + per-automation shared secret in trigger_config.secret.
-    """
-
-    token_value = str(token or "").strip()
-    if not token_value:
-        return JsonResponse({"error": "NOT_FOUND", "message": "Automation not found."}, status=HTTPStatus.NOT_FOUND)
-
-    with tenant_bypass():
-        automation = (
-            AgentAutomation.objects.select_related("agent_profile", "business_profile", "conversation", "run_spec")
-            .filter(id=automation_id, trigger_type=AgentAutomationTriggerType.WEBHOOK)
-            .first()
-        )
-        if automation is None:
-            return JsonResponse({"error": "NOT_FOUND", "message": "Automation not found."}, status=HTTPStatus.NOT_FOUND)
-
-        config = automation.trigger_config if isinstance(automation.trigger_config, dict) else {}
-        secret_value = str(config.get("secret") or "").strip()
-        if not secret_value or not secrets.compare_digest(secret_value, token_value):
-            return JsonResponse({"error": "NOT_FOUND", "message": "Automation not found."}, status=HTTPStatus.NOT_FOUND)
-
-        enabled = bool(getattr(FeatureFlagService.snapshot(automation.business_profile), "sub_agents_v1", False))
-        if not enabled:
-            return JsonResponse(
-                {"error": "FEATURE_DISABLED", "message": "Sub-agents are not enabled for this business."},
-                status=HTTPStatus.FORBIDDEN,
-            )
-
-        if automation.status not in {AgentAutomationStatus.ACTIVE, AgentAutomationStatus.PAUSED, AgentAutomationStatus.DRAFT}:
-            return JsonResponse(
-                {"error": "AUTOMATION_NOT_TRIGGERABLE", "message": "Automation is not triggerable."},
-                status=HTTPStatus.CONFLICT,
-            )
-
-        now = timezone.now()
-        with tenant_context(automation.business_profile_id):
-            if automation.conversation_id is None:
-                ensure_automation_thread(automation)
-        run = AgentRun.objects.create(
-            business_profile=automation.business_profile,
-            agent_profile=automation.agent_profile,
-            conversation=automation.conversation,
-            created_by=None,
-            run_spec=automation.run_spec,
-            run_spec_snapshot=normalize_run_spec(automation.run_spec_snapshot),
-            title=(automation.name or "Automation run")[:200],
-            source=AgentRunSource.AUTOMATION,
-            status=AgentRunStatus.QUEUED,
-            visibility=automation.visibility,
-            metadata={"automation_id": str(automation.id), "trigger": "webhook", "destination_config": dict(automation.destination_config or {}) if isinstance(automation.destination_config, dict) else {}},
-            run_after=now,
-        )
-        _append_run_event(
-            run.id,
-            stream=AgentRunEventStream.SYSTEM,
-            event_type=AgentRunEventType.PROGRESS,
-            label="Queued (automation)",
-            payload={"automation_id": str(automation.id), "trigger": "webhook"},
-        )
-        AgentAutomation.objects.filter(id=automation.id).update(last_triggered_at=now, updated_at=now)
-        return JsonResponse({"runId": str(run.id)}, status=HTTPStatus.CREATED)
-
-
-@csrf_protect
-@require_http_methods(["POST"])
-def agent_automation_trigger(request: HttpRequest, agent_id: uuid.UUID, automation_id: uuid.UUID) -> JsonResponse:
-    """
-    Manually trigger an automation to spawn a run (used by "Run now" and future schedulers).
-    """
-
-    agent, error = _resolve_agent_for_request(request, agent_id)
-    if error:
-        return error
-    assert agent is not None
-    feature_err = _ensure_subagents_enabled(request, agent=agent, allow_read_only=False)
-    if feature_err:
-        return feature_err
-
-    with tenant_context(agent.business_profile_id):
-        automation = AgentAutomation.objects.filter(id=automation_id, agent_profile=agent).first()
-        if automation is None:
-            return JsonResponse({"error": "AUTOMATION_NOT_FOUND", "message": "Automation not found."}, status=HTTPStatus.NOT_FOUND)
-
-        if automation.status not in {AgentAutomationStatus.ACTIVE, AgentAutomationStatus.PAUSED, AgentAutomationStatus.DRAFT}:
-            return JsonResponse(
-                {"error": "AUTOMATION_NOT_TRIGGERABLE", "message": "Automation is not triggerable."},
-                status=HTTPStatus.CONFLICT,
-            )
-
-        if automation.conversation_id is None:
-            ensure_automation_thread(automation)
-
-        run = AgentRun.objects.create(
-            business_profile=agent.business_profile,
-            agent_profile=agent,
-            conversation=automation.conversation,
-            created_by=request.user,
-            run_spec=automation.run_spec,
-            run_spec_snapshot=normalize_run_spec(automation.run_spec_snapshot),
-            title=(automation.name or "Automation run")[:200],
-            source=AgentRunSource.AUTOMATION,
-            status=AgentRunStatus.QUEUED,
-            visibility=automation.visibility,
-            metadata={"automation_id": str(automation.id), "destination_config": dict(automation.destination_config or {}) if isinstance(automation.destination_config, dict) else {}},
-            run_after=timezone.now(),
-        )
-        _append_run_event(
-            run.id,
-            stream=AgentRunEventStream.SYSTEM,
-            event_type=AgentRunEventType.PROGRESS,
-            label="Queued (automation)",
-            payload={"automation_id": str(automation.id)},
-        )
-        AgentAutomation.objects.filter(id=automation.id).update(last_triggered_at=timezone.now(), updated_at=timezone.now())
-        return JsonResponse({"run": _serialize_run(run)}, status=HTTPStatus.CREATED)
-
-
-@csrf_protect
-@require_http_methods(["GET", "POST"])
-def agent_watchers_collection(request: HttpRequest, agent_id: uuid.UUID) -> JsonResponse:
-    agent, error = _resolve_agent_for_request(request, agent_id)
-    if error:
-        return error
-    assert agent is not None
-    feature_err = _ensure_subagents_enabled(request, agent=agent, allow_read_only=True)
-    if feature_err:
-        return feature_err
-
-    with tenant_context(agent.business_profile_id):
-        if request.method == "GET":
-            status = str(request.GET.get("status") or "").strip().lower()
-            qs = AgentWatcher.objects.filter(agent_profile=agent).order_by("-created_at")
-            if status:
-                qs = qs.filter(status=status)
-            items = [_serialize_watcher(item) for item in qs[:200]]
-            return JsonResponse({"watchers": items}, status=HTTPStatus.OK)
-
-        payload, error = _parse_json_body(request)
-        if error:
-            return error
-
-        name = str((payload or {}).get("name") or "").strip()
-        if not name:
-            return JsonResponse({"error": "VALIDATION_ERROR", "message": "name is required."}, status=HTTPStatus.BAD_REQUEST)
-
-        status = str((payload or {}).get("status") or AgentWatcherStatus.DRAFT).strip().lower()
-        if status not in {choice for choice, _ in AgentWatcherStatus.choices}:
-            return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid status."}, status=HTTPStatus.BAD_REQUEST)
-
-        visibility = str((payload or {}).get("visibility") or AgentRunVisibility.INITIATOR).strip().lower()
-        if visibility not in {choice for choice, _ in AgentRunVisibility.choices}:
-            return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid visibility."}, status=HTTPStatus.BAD_REQUEST)
-
-        watcher_type = str((payload or {}).get("watcherType") or (payload or {}).get("watcher_type") or AgentWatcherType.EMAIL_INBOX).strip().lower()
-        if watcher_type not in {choice for choice, _ in AgentWatcherType.choices}:
-            return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid watcherType."}, status=HTTPStatus.BAD_REQUEST)
-
-        try:
-            poll_interval = int((payload or {}).get("pollIntervalSeconds") or (payload or {}).get("poll_interval_seconds") or 300)
-        except (TypeError, ValueError):
-            poll_interval = 300
-        poll_interval = max(60, min(int(poll_interval), 24 * 60 * 60))
-
-        try:
-            max_events = int((payload or {}).get("maxEventsPerPoll") or (payload or {}).get("max_events_per_poll") or 5)
-        except (TypeError, ValueError):
-            max_events = 5
-        max_events = max(1, min(int(max_events), 25))
-
-        watch_config = (payload or {}).get("watchConfig") or (payload or {}).get("watch_config") or {}
-        watch_config = dict(watch_config) if isinstance(watch_config, dict) else {}
-
-        destination_config = (payload or {}).get("destinationConfig") or (payload or {}).get("destination_config") or {}
-        destination_config = dict(destination_config) if isinstance(destination_config, dict) else {}
-
-        conversation_id_raw = (payload or {}).get("conversationId") or (payload or {}).get("conversation_id")
-        conversation_id, err = _parse_uuid(conversation_id_raw, field="conversationId")
-        if err:
-            return err
-
-        conversation = None
-        if conversation_id:
-            conversation = Conversation.objects.filter(id=conversation_id, business_profile=agent.business_profile).first()
-            if conversation is None:
-                return JsonResponse({"error": "CONVERSATION_NOT_FOUND", "message": "Conversation not found."}, status=HTTPStatus.NOT_FOUND)
-
-        run_spec_id_raw = (payload or {}).get("runSpecId") or (payload or {}).get("run_spec_id")
-        run_spec_id, err = _parse_uuid(run_spec_id_raw, field="runSpecId")
-        if err:
-            return err
-
-        run_spec = None
-        run_spec_snapshot: dict[str, Any] = {}
-        if run_spec_id:
-            run_spec = AgentRunSpec.objects.filter(id=run_spec_id, agent_profile=agent).first()
-            if run_spec is None:
-                return JsonResponse({"error": "RUN_SPEC_NOT_FOUND", "message": "Run spec not found."}, status=HTTPStatus.NOT_FOUND)
-            run_spec_snapshot = normalize_run_spec(run_spec.spec)
-        else:
-            snapshot_payload = (payload or {}).get("runSpec") or (payload or {}).get("runSpecSnapshot") or {}
-            run_spec_snapshot = normalize_run_spec(snapshot_payload)
-
         email_account = None
-        email_account_id_raw = (payload or {}).get("emailAccountId") or (payload or {}).get("email_account_id")
-        email_account_id, err = _parse_uuid(email_account_id_raw, field="emailAccountId")
+        email_account_id, err = _parse_uuid((payload or {}).get("emailAccountId") or (payload or {}).get("email_account_id"), field="emailAccountId")
         if err:
             return err
-        if watcher_type == AgentWatcherType.EMAIL_INBOX:
+        if trigger_type == AgentWorkflowTriggerType.EMAIL_INBOX:
             if not email_account_id:
-                return JsonResponse(
-                    {"error": "VALIDATION_ERROR", "message": "emailAccountId is required for email watchers."},
-                    status=HTTPStatus.BAD_REQUEST,
-                )
+                return JsonResponse({"error": "VALIDATION_ERROR", "message": "emailAccountId is required for email inbox workflows."}, status=HTTPStatus.BAD_REQUEST)
             account_qs = EmailAccount.objects.filter(id=email_account_id, business_profile=agent.business_profile)
             if not request.user.is_staff:
                 account_qs = account_qs.filter(user=request.user)
@@ -1250,121 +429,95 @@ def agent_watchers_collection(request: HttpRequest, agent_id: uuid.UUID) -> Json
             if email_account is None:
                 return JsonResponse({"error": "EMAIL_ACCOUNT_NOT_FOUND", "message": "Email account not found."}, status=HTTPStatus.NOT_FOUND)
             if email_account.status != EmailAccountStatus.CONNECTED:
-                return JsonResponse(
-                    {"error": "VALIDATION_ERROR", "message": "Email account must be connected before enabling a watcher."},
-                    status=HTTPStatus.BAD_REQUEST,
-                )
+                return JsonResponse({"error": "VALIDATION_ERROR", "message": "Email account must be connected before enabling an email inbox workflow."}, status=HTTPStatus.BAD_REQUEST)
 
-        next_poll_at = timezone.now() if status == AgentWatcherStatus.ACTIVE else None
-
-        watcher = AgentWatcher.objects.create(
+        workflow = AgentWorkflow.objects.create(
             business_profile=agent.business_profile,
             agent_profile=agent,
             created_by=request.user,
-            run_spec=run_spec,
-            run_spec_snapshot=run_spec_snapshot,
-            conversation=conversation,
             email_account=email_account,
-            name=name,
+            name=name[:160],
+            description=str((payload or {}).get("description") or "")[:4000],
             status=status,
             visibility=visibility,
-            watcher_type=watcher_type,
-            watch_config=watch_config,
-            destination_config=destination_config,
-            poll_interval_seconds=poll_interval,
-            max_events_per_poll=max_events,
-            next_poll_at=next_poll_at,
-            metadata=(payload or {}).get("metadata") if isinstance((payload or {}).get("metadata"), dict) else {},
+            trigger_type=trigger_type,
+            trigger_config=trigger_config,
+            source_config=dict((payload or {}).get("sourceConfig") or (payload or {}).get("source_config") or {}),
+            destination_config=dict((payload or {}).get("destinationConfig") or (payload or {}).get("destination_config") or {}),
+            instructions=normalize_workflow_instructions((payload or {}).get("instructions") or (payload or {}).get("workflow") or {}),
+            state=dict((payload or {}).get("state") or {}),
+            poll_interval_seconds=max(60, min(int((payload or {}).get("pollIntervalSeconds") or (payload or {}).get("poll_interval_seconds") or 300), 86400)),
+            max_events_per_poll=max(1, min(int((payload or {}).get("maxEventsPerPoll") or (payload or {}).get("max_events_per_poll") or 5), 25)),
+            next_trigger_at=next_trigger_at,
+            metadata=dict((payload or {}).get("metadata") or {}),
         )
-        if watcher.conversation_id is None:
-            ensure_watcher_thread(watcher)
-        return JsonResponse({"watcher": _serialize_watcher(watcher)}, status=HTTPStatus.CREATED)
+        _ensure_workflow_conversation(workflow)
+        return JsonResponse({"workflow": _serialize_workflow(workflow)}, status=HTTPStatus.CREATED)
 
 
 @csrf_protect
-@require_http_methods(["GET", "PUT", "DELETE"])
-def agent_watcher_detail(request: HttpRequest, agent_id: uuid.UUID, watcher_id: uuid.UUID) -> JsonResponse:
+@require_http_methods(["GET", "PATCH", "PUT", "DELETE"])
+def agent_workflow_detail(request: HttpRequest, agent_id: uuid.UUID, workflow_id: uuid.UUID) -> JsonResponse:
     agent, error = _resolve_agent_for_request(request, agent_id)
     if error:
         return error
     assert agent is not None
-    feature_err = _ensure_subagents_enabled(request, agent=agent, allow_read_only=True)
+    feature_err = _ensure_agent_workforce_enabled(request, agent=agent, allow_read_only=True)
     if feature_err:
         return feature_err
 
     with tenant_context(agent.business_profile_id):
-        watcher = AgentWatcher.objects.filter(id=watcher_id, agent_profile=agent).select_related("email_account").first()
-        if watcher is None:
-            return JsonResponse({"error": "WATCHER_NOT_FOUND", "message": "Watcher not found."}, status=HTTPStatus.NOT_FOUND)
-
+        workflow = AgentWorkflow.objects.filter(id=workflow_id, agent_profile=agent).first()
+        if workflow is None:
+            return JsonResponse({"error": "WORKFLOW_NOT_FOUND", "message": "Workflow not found."}, status=HTTPStatus.NOT_FOUND)
         if request.method == "GET":
-            return JsonResponse({"watcher": _serialize_watcher(watcher)}, status=HTTPStatus.OK)
-
+            return JsonResponse({"workflow": _serialize_workflow(workflow)}, status=HTTPStatus.OK)
         if request.method == "DELETE":
-            watcher.status = AgentWatcherStatus.ARCHIVED
-            watcher.next_poll_at = None
-            watcher.lease_expires_at = None
-            watcher.save(update_fields=["status", "next_poll_at", "lease_expires_at", "updated_at"])
+            workflow.status = AgentWorkflowStatus.ARCHIVED
+            workflow.next_trigger_at = None
+            workflow.lease_expires_at = None
+            workflow.save(update_fields=["status", "next_trigger_at", "lease_expires_at", "updated_at"])
             return JsonResponse({}, status=HTTPStatus.NO_CONTENT)
 
         payload, error = _parse_json_body(request)
         if error:
             return error
-
         updates: list[str] = []
-        if "name" in payload:
-            name = str(payload.get("name") or "").strip()
-            if not name:
-                return JsonResponse({"error": "VALIDATION_ERROR", "message": "name cannot be blank."}, status=HTTPStatus.BAD_REQUEST)
-            watcher.name = name[:160]
-            updates.append("name")
+        for field in ("name", "description"):
+            if field in payload:
+                setattr(workflow, field, str(payload.get(field) or "").strip()[: 160 if field == "name" else 4000])
+                updates.append(field)
         if "status" in payload:
             status = str(payload.get("status") or "").strip().lower()
-            if status not in {choice for choice, _ in AgentWatcherStatus.choices}:
+            if status not in {choice for choice, _ in AgentWorkflowStatus.choices}:
                 return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid status."}, status=HTTPStatus.BAD_REQUEST)
-            watcher.status = status
+            workflow.status = status
             updates.append("status")
         if "visibility" in payload:
             visibility = str(payload.get("visibility") or "").strip().lower()
             if visibility not in {choice for choice, _ in AgentRunVisibility.choices}:
                 return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid visibility."}, status=HTTPStatus.BAD_REQUEST)
-            watcher.visibility = visibility
+            workflow.visibility = visibility
             updates.append("visibility")
-        if "watcherType" in payload or "watcher_type" in payload:
-            watcher_type = str(payload.get("watcherType") or payload.get("watcher_type") or "").strip().lower()
-            if watcher_type not in {choice for choice, _ in AgentWatcherType.choices}:
-                return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid watcherType."}, status=HTTPStatus.BAD_REQUEST)
-            watcher.watcher_type = watcher_type
-            updates.append("watcher_type")
-        if "watchConfig" in payload and isinstance(payload.get("watchConfig"), dict):
-            watcher.watch_config = dict(payload.get("watchConfig") or {})
-            updates.append("watch_config")
-        if "destinationConfig" in payload and isinstance(payload.get("destinationConfig"), dict):
-            watcher.destination_config = dict(payload.get("destinationConfig") or {})
-            updates.append("destination_config")
+        if "triggerType" in payload or "trigger_type" in payload:
+            trigger_type = _normalize_trigger_type(payload.get("triggerType") or payload.get("trigger_type"))
+            if trigger_type not in {choice for choice, _ in AgentWorkflowTriggerType.choices}:
+                return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid triggerType."}, status=HTTPStatus.BAD_REQUEST)
+            workflow.trigger_type = trigger_type
+            updates.append("trigger_type")
+        for public, field in (("triggerConfig", "trigger_config"), ("sourceConfig", "source_config"), ("destinationConfig", "destination_config"), ("instructions", "instructions"), ("state", "state"), ("metadata", "metadata")):
+            if public in payload or field in payload:
+                value = payload.get(public) if public in payload else payload.get(field)
+                setattr(workflow, field, normalize_workflow_instructions(value) if field == "instructions" else dict(value or {}))
+                updates.append(field)
         if "pollIntervalSeconds" in payload or "poll_interval_seconds" in payload:
-            raw = payload.get("pollIntervalSeconds") if "pollIntervalSeconds" in payload else payload.get("poll_interval_seconds")
-            try:
-                poll_interval = int(raw)
-            except (TypeError, ValueError):
-                poll_interval = int(watcher.poll_interval_seconds or 300)
-            watcher.poll_interval_seconds = max(60, min(int(poll_interval), 24 * 60 * 60))
+            workflow.poll_interval_seconds = max(60, min(int(payload.get("pollIntervalSeconds") or payload.get("poll_interval_seconds") or 300), 86400))
             updates.append("poll_interval_seconds")
         if "maxEventsPerPoll" in payload or "max_events_per_poll" in payload:
-            raw = payload.get("maxEventsPerPoll") if "maxEventsPerPoll" in payload else payload.get("max_events_per_poll")
-            try:
-                max_events = int(raw)
-            except (TypeError, ValueError):
-                max_events = int(watcher.max_events_per_poll or 5)
-            watcher.max_events_per_poll = max(1, min(int(max_events), 25))
+            workflow.max_events_per_poll = max(1, min(int(payload.get("maxEventsPerPoll") or payload.get("max_events_per_poll") or 5), 25))
             updates.append("max_events_per_poll")
-        if "metadata" in payload and isinstance(payload.get("metadata"), dict):
-            watcher.metadata = dict(payload.get("metadata") or {})
-            updates.append("metadata")
-
         if "emailAccountId" in payload or "email_account_id" in payload:
-            email_account_id_raw = payload.get("emailAccountId") or payload.get("email_account_id")
-            email_account_id, err = _parse_uuid(email_account_id_raw, field="emailAccountId")
+            email_account_id, err = _parse_uuid(payload.get("emailAccountId") or payload.get("email_account_id"), field="emailAccountId")
             if err:
                 return err
             email_account = None
@@ -1375,85 +528,504 @@ def agent_watcher_detail(request: HttpRequest, agent_id: uuid.UUID, watcher_id: 
                 email_account = account_qs.first()
                 if email_account is None:
                     return JsonResponse({"error": "EMAIL_ACCOUNT_NOT_FOUND", "message": "Email account not found."}, status=HTTPStatus.NOT_FOUND)
-            watcher.email_account = email_account
+            workflow.email_account = email_account
             updates.append("email_account")
-
-        if "conversationId" in payload or "conversation_id" in payload:
-            conversation_id_raw = payload.get("conversationId") or payload.get("conversation_id")
-            conversation_id, err = _parse_uuid(conversation_id_raw, field="conversationId")
-            if err:
-                return err
-            conversation = None
-            if conversation_id:
-                conversation = Conversation.objects.filter(id=conversation_id, business_profile=agent.business_profile).first()
-                if conversation is None:
-                    return JsonResponse({"error": "CONVERSATION_NOT_FOUND", "message": "Conversation not found."}, status=HTTPStatus.NOT_FOUND)
-            watcher.conversation = conversation
-            updates.append("conversation")
-
-        if "runSpecId" in payload or "run_spec_id" in payload:
-            run_spec_id_raw = payload.get("runSpecId") or payload.get("run_spec_id")
-            run_spec_id, err = _parse_uuid(run_spec_id_raw, field="runSpecId")
-            if err:
-                return err
-            run_spec = None
-            if run_spec_id:
-                run_spec = AgentRunSpec.objects.filter(id=run_spec_id, agent_profile=agent).first()
-                if run_spec is None:
-                    return JsonResponse({"error": "RUN_SPEC_NOT_FOUND", "message": "Run spec not found."}, status=HTTPStatus.NOT_FOUND)
-                watcher.run_spec_snapshot = normalize_run_spec(run_spec.spec)
-            watcher.run_spec = run_spec
-            updates.append("run_spec")
-            updates.append("run_spec_snapshot")
-
-        if watcher.status == AgentWatcherStatus.ACTIVE:
-            watcher.next_poll_at = timezone.now()
-            watcher.lease_expires_at = None
-            updates.extend(["next_poll_at", "lease_expires_at"])
-        elif watcher.status in {AgentWatcherStatus.PAUSED, AgentWatcherStatus.ARCHIVED, AgentWatcherStatus.DRAFT}:
-            watcher.next_poll_at = None
-            watcher.lease_expires_at = None
-            updates.extend(["next_poll_at", "lease_expires_at"])
-
+        if workflow.trigger_type == AgentWorkflowTriggerType.WEBHOOK:
+            cfg = dict(workflow.trigger_config or {})
+            if not str(cfg.get("secret") or "").strip():
+                cfg["secret"] = secrets.token_urlsafe(24)
+                workflow.trigger_config = cfg
+                updates.append("trigger_config")
+        if {"status", "trigger_type", "trigger_config"} & set(updates):
+            try:
+                workflow.next_trigger_at = _compute_next_trigger(workflow.trigger_type, workflow.trigger_config, after=timezone.now()) if workflow.status == AgentWorkflowStatus.ACTIVE else None
+            except CronScheduleError as exc:
+                return JsonResponse({"error": "VALIDATION_ERROR", "message": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            updates.append("next_trigger_at")
         if not updates:
-            return JsonResponse({"watcher": _serialize_watcher(watcher)}, status=HTTPStatus.OK)
-
-        updates.append("updated_at")
-        watcher.save(update_fields=sorted(set(updates)))
-        if watcher.conversation_id is None:
-            ensure_watcher_thread(watcher)
-        return JsonResponse({"watcher": _serialize_watcher(watcher)}, status=HTTPStatus.OK)
+            return JsonResponse({"workflow": _serialize_workflow(workflow)}, status=HTTPStatus.OK)
+        workflow.save(update_fields=sorted(set([*updates, "updated_at"])))
+        if workflow.conversation_id is None:
+            _ensure_workflow_conversation(workflow)
+        return JsonResponse({"workflow": _serialize_workflow(workflow)}, status=HTTPStatus.OK)
 
 
 @csrf_protect
-@require_http_methods(["POST"])
-def agent_watcher_trigger(request: HttpRequest, agent_id: uuid.UUID, watcher_id: uuid.UUID) -> JsonResponse:
-    """
-    Manually nudge a watcher to poll immediately (used by "Run now").
-    """
-
+@require_http_methods(["GET"])
+def agent_operations_status(request: HttpRequest, agent_id: uuid.UUID) -> JsonResponse:
     agent, error = _resolve_agent_for_request(request, agent_id)
     if error:
         return error
     assert agent is not None
-    feature_err = _ensure_subagents_enabled(request, agent=agent, allow_read_only=False)
+    feature_err = _ensure_agent_workforce_enabled(request, agent=agent, allow_read_only=True)
     if feature_err:
         return feature_err
 
+    now = timezone.now()
+    stale_before = now - timedelta(seconds=90)
+    workflow_heartbeat = cache.get("agent_workflow_processor_heartbeat")
+    run_heartbeat = cache.get("agent_run_processor_heartbeat")
+
+    def _heartbeat_payload(value: object) -> dict[str, object]:
+        if not isinstance(value, dict):
+            return {"active": False, "lastSeenAt": None}
+        raw_seen = value.get("at")
+        last_seen = None
+        if raw_seen:
+            try:
+                last_seen = datetime.fromisoformat(str(raw_seen))
+                if timezone.is_naive(last_seen):
+                    last_seen = timezone.make_aware(last_seen, timezone=dt_timezone.utc)
+            except ValueError:
+                last_seen = None
+        active = bool(last_seen and last_seen >= stale_before)
+        return {"active": active, "lastSeenAt": last_seen.isoformat() if last_seen else None}
+
     with tenant_context(agent.business_profile_id):
-        watcher = AgentWatcher.objects.filter(id=watcher_id, agent_profile=agent).first()
-        if watcher is None:
-            return JsonResponse({"error": "WATCHER_NOT_FOUND", "message": "Watcher not found."}, status=HTTPStatus.NOT_FOUND)
+        runs = AgentRun.objects.filter(agent_profile=agent)
+        workflows = AgentWorkflow.objects.filter(agent_profile=agent)
+        email_accounts = EmailAccount.objects.filter(business_profile=agent.business_profile)
+        if not request.user.is_staff:
+            email_accounts = email_accounts.filter(user=request.user)
+        payload = {
+            "operations": {
+                "taskProcessingActive": bool(_heartbeat_payload(workflow_heartbeat)["active"] and _heartbeat_payload(run_heartbeat)["active"]),
+                "workflowProcessor": _heartbeat_payload(workflow_heartbeat),
+                "runProcessor": _heartbeat_payload(run_heartbeat),
+                "dueWorkflows": workflows.filter(
+                    status=AgentWorkflowStatus.ACTIVE,
+                    trigger_type__in=[AgentWorkflowTriggerType.SCHEDULE, AgentWorkflowTriggerType.EMAIL_INBOX],
+                    next_trigger_at__lte=now,
+                ).count(),
+                "queuedRuns": runs.filter(status=AgentRunStatus.QUEUED).count(),
+                "runningRuns": runs.filter(status=AgentRunStatus.RUNNING).count(),
+                "failedRuns": runs.filter(status=AgentRunStatus.FAILED).count(),
+            },
+            "emailAccounts": [
+                {
+                    "id": str(account.id),
+                    "provider": account.provider,
+                    "email": account.email_address,
+                    "displayName": account.email_address or account.get_provider_display(),
+                    "status": account.status,
+                }
+                for account in email_accounts.order_by("provider", "email_address")[:100]
+            ],
+        }
+    return JsonResponse(payload, status=HTTPStatus.OK)
 
-        if watcher.status == AgentWatcherStatus.ARCHIVED:
-            return JsonResponse(
-                {"error": "WATCHER_NOT_TRIGGERABLE", "message": "Watcher is archived."},
-                status=HTTPStatus.CONFLICT,
+
+@csrf_protect
+@require_http_methods(["POST"])
+def agent_workflow_run(request: HttpRequest, agent_id: uuid.UUID, workflow_id: uuid.UUID) -> JsonResponse:
+    agent, error = _resolve_agent_for_request(request, agent_id)
+    if error:
+        return error
+    assert agent is not None
+    feature_err = _ensure_agent_workforce_enabled(request, agent=agent, allow_read_only=False)
+    if feature_err:
+        return feature_err
+    with tenant_context(agent.business_profile_id):
+        workflow = AgentWorkflow.objects.filter(id=workflow_id, agent_profile=agent).first()
+        if workflow is None:
+            return JsonResponse({"error": "WORKFLOW_NOT_FOUND", "message": "Workflow not found."}, status=HTTPStatus.NOT_FOUND)
+        conversation = _ensure_workflow_conversation(workflow)
+        run = _create_run(
+            agent=agent,
+            created_by=request.user,
+            workflow=workflow,
+            conversation=conversation,
+            title=workflow.name,
+            source=AgentRunSource.WORKFLOW,
+            visibility=workflow.visibility,
+            snapshot=_workflow_snapshot(workflow),
+            metadata={"workflow_id": str(workflow.id), "trigger": "manual"},
+        )
+        AgentWorkflow.objects.filter(id=workflow.id).update(last_triggered_at=timezone.now(), updated_at=timezone.now())
+        return JsonResponse({"run": _serialize_run(run)}, status=HTTPStatus.CREATED)
+
+
+@csrf_exempt
+@require_POST
+def workflow_webhook_trigger(request: HttpRequest, workflow_id: uuid.UUID, token: str) -> JsonResponse:
+    token_value = str(token or "").strip()
+    if not token_value:
+        return JsonResponse({"error": "NOT_FOUND", "message": "Workflow not found."}, status=HTTPStatus.NOT_FOUND)
+    with tenant_bypass():
+        workflow = (
+            AgentWorkflow.objects.select_related("agent_profile", "business_profile", "conversation")
+            .filter(id=workflow_id, trigger_type=AgentWorkflowTriggerType.WEBHOOK)
+            .first()
+        )
+        if workflow is None:
+            return JsonResponse({"error": "NOT_FOUND", "message": "Workflow not found."}, status=HTTPStatus.NOT_FOUND)
+        secret_value = str((workflow.trigger_config or {}).get("secret") or "").strip()
+        if not secret_value or not secrets.compare_digest(secret_value, token_value):
+            return JsonResponse({"error": "NOT_FOUND", "message": "Workflow not found."}, status=HTTPStatus.NOT_FOUND)
+        if not bool(getattr(FeatureFlagService.snapshot(workflow.business_profile), "agent_workforce_v1", False)):
+            return JsonResponse({"error": "FEATURE_DISABLED", "message": "Agent workforce features are not enabled for this business."}, status=HTTPStatus.FORBIDDEN)
+        conversation = _ensure_workflow_conversation(workflow)
+        run = _create_run(
+            agent=workflow.agent_profile,
+            created_by=None,
+            workflow=workflow,
+            conversation=conversation,
+            title=workflow.name,
+            source=AgentRunSource.WEBHOOK,
+            visibility=workflow.visibility,
+            snapshot=_workflow_snapshot(workflow),
+            metadata={"workflow_id": str(workflow.id), "trigger": "webhook"},
+        )
+        AgentWorkflow.objects.filter(id=workflow.id).update(last_triggered_at=timezone.now(), updated_at=timezone.now())
+        return JsonResponse({"runId": str(run.id)}, status=HTTPStatus.CREATED)
+
+
+@csrf_protect
+@require_http_methods(["GET", "POST"])
+def agent_runs_collection(request: HttpRequest, agent_id: uuid.UUID) -> JsonResponse:
+    agent, error = _resolve_agent_for_request(request, agent_id)
+    if error:
+        return error
+    assert agent is not None
+    feature_err = _ensure_agent_workforce_enabled(request, agent=agent, allow_read_only=True)
+    if feature_err:
+        return feature_err
+    with tenant_context(agent.business_profile_id):
+        if request.method == "GET":
+            qs = (
+                AgentRun.objects.select_related("workflow")
+                .prefetch_related("artifacts")
+                .filter(agent_profile=agent)
+                .filter(_run_visibility_filter(request, agent=agent))
+                .order_by("-created_at")
             )
+            status = str(request.GET.get("status") or "").strip().lower()
+            if status:
+                qs = qs.filter(status=status)
+            workflow_id, err = _parse_uuid(request.GET.get("workflowId") or request.GET.get("workflow_id"), field="workflowId")
+            if err:
+                return err
+            if workflow_id:
+                qs = qs.filter(workflow_id=workflow_id)
+            limit = max(1, min(int(str(request.GET.get("limit") or "50")), 200))
+            offset = max(0, int(str(request.GET.get("offset") or "0")))
+            return JsonResponse({"runs": [_serialize_run(item) for item in qs[offset : offset + limit]], "total": qs.count(), "limit": limit, "offset": offset}, status=HTTPStatus.OK)
 
-        if watcher.conversation_id is None:
-            ensure_watcher_thread(watcher)
+        payload, error = _parse_json_body(request)
+        if error:
+            return error
+        workflow_id, err = _parse_uuid((payload or {}).get("workflowId") or (payload or {}).get("workflow_id"), field="workflowId")
+        if err:
+            return err
+        workflow = None
+        if workflow_id:
+            workflow = AgentWorkflow.objects.filter(id=workflow_id, agent_profile=agent).first()
+            if workflow is None:
+                return JsonResponse({"error": "WORKFLOW_NOT_FOUND", "message": "Workflow not found."}, status=HTTPStatus.NOT_FOUND)
+        conversation_id, err = _parse_uuid((payload or {}).get("conversationId") or (payload or {}).get("conversation_id"), field="conversationId")
+        if err:
+            return err
+        conversation = None
+        if conversation_id:
+            conversation = Conversation.objects.filter(id=conversation_id, business_profile=agent.business_profile).first()
+            if conversation is None:
+                return JsonResponse({"error": "CONVERSATION_NOT_FOUND", "message": "Conversation not found."}, status=HTTPStatus.NOT_FOUND)
+        elif workflow:
+            conversation = _ensure_workflow_conversation(workflow)
+        visibility = str((payload or {}).get("visibility") or (workflow.visibility if workflow else AgentRunVisibility.INITIATOR)).strip().lower()
+        if visibility not in {choice for choice, _ in AgentRunVisibility.choices}:
+            return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid visibility."}, status=HTTPStatus.BAD_REQUEST)
+        source = str((payload or {}).get("source") or (AgentRunSource.WORKFLOW if workflow else AgentRunSource.CHAT)).strip().lower()
+        if source not in {choice for choice, _ in AgentRunSource.choices}:
+            return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid source."}, status=HTTPStatus.BAD_REQUEST)
+        run = _create_run(
+            agent=agent,
+            created_by=request.user,
+            workflow=workflow,
+            conversation=conversation,
+            title=str((payload or {}).get("title") or (workflow.name if workflow else "")),
+            source=source,
+            visibility=visibility,
+            snapshot=_workflow_snapshot(workflow, (payload or {}).get("workflowSnapshot") or (payload or {}).get("workflow") or {}),
+            metadata=dict((payload or {}).get("metadata") or {}),
+        )
+        return JsonResponse({"run": _serialize_run(run)}, status=HTTPStatus.CREATED)
 
-        AgentWatcher.objects.filter(id=watcher.id).update(next_poll_at=timezone.now(), lease_expires_at=None, updated_at=timezone.now())
-        watcher.refresh_from_db()
-        return JsonResponse({"watcher": _serialize_watcher(watcher)}, status=HTTPStatus.OK)
+
+@csrf_protect
+@require_http_methods(["GET", "PATCH", "PUT"])
+def agent_run_detail(request: HttpRequest, agent_id: uuid.UUID, run_id: uuid.UUID) -> JsonResponse:
+    agent, error = _resolve_agent_for_request(request, agent_id)
+    if error:
+        return error
+    assert agent is not None
+    feature_err = _ensure_agent_workforce_enabled(request, agent=agent, allow_read_only=True)
+    if feature_err:
+        return feature_err
+    with tenant_context(agent.business_profile_id):
+        run = AgentRun.objects.filter(id=run_id, agent_profile=agent).filter(_run_visibility_filter(request, agent=agent)).first()
+        if run is None:
+            return JsonResponse({"error": "RUN_NOT_FOUND", "message": "Run not found."}, status=HTTPStatus.NOT_FOUND)
+        if request.method == "GET":
+            return JsonResponse({"run": _serialize_run(run)}, status=HTTPStatus.OK)
+        payload, error = _parse_json_body(request)
+        if error:
+            return error
+        updates: list[str] = []
+        for field in ("title", "plan", "metadata"):
+            if field in payload:
+                setattr(run, field, dict(payload.get(field) or {}) if field in {"plan", "metadata"} else str(payload.get(field) or "")[:200])
+                updates.append(field)
+        if "visibility" in payload:
+            visibility = str(payload.get("visibility") or "").strip().lower()
+            if visibility not in {choice for choice, _ in AgentRunVisibility.choices}:
+                return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid visibility."}, status=HTTPStatus.BAD_REQUEST)
+            run.visibility = visibility
+            updates.append("visibility")
+        if updates:
+            run.save(update_fields=[*updates, "updated_at"])
+        return JsonResponse({"run": _serialize_run(run)}, status=HTTPStatus.OK)
+
+
+@csrf_protect
+@require_http_methods(["GET"])
+def agent_run_events(request: HttpRequest, agent_id: uuid.UUID, run_id: uuid.UUID) -> JsonResponse:
+    agent, error = _resolve_agent_for_request(request, agent_id)
+    if error:
+        return error
+    assert agent is not None
+    run = AgentRun.objects.filter(id=run_id, agent_profile=agent).filter(_run_visibility_filter(request, agent=agent)).first()
+    if run is None:
+        return JsonResponse({"error": "RUN_NOT_FOUND", "message": "Run not found."}, status=HTTPStatus.NOT_FOUND)
+    limit = max(1, min(int(str(request.GET.get("limit") or "200")), 500))
+    qs = AgentRunEvent.objects.filter(run=run).order_by("sequence_index")
+    after = request.GET.get("after")
+    if after:
+        try:
+            qs = qs.filter(sequence_index__gt=int(str(after)))
+        except ValueError:
+            return JsonResponse({"error": "VALIDATION_ERROR", "message": "after must be an integer."}, status=HTTPStatus.BAD_REQUEST)
+    return JsonResponse({"events": [_serialize_run_event(event) for event in qs[:limit]]}, status=HTTPStatus.OK)
+
+
+@csrf_protect
+@require_http_methods(["POST"])
+def agent_run_cancel(request: HttpRequest, agent_id: uuid.UUID, run_id: uuid.UUID) -> JsonResponse:
+    return _run_state_action(request, agent_id, run_id, action="cancel")
+
+
+@csrf_protect
+@require_http_methods(["POST"])
+def agent_run_resume(request: HttpRequest, agent_id: uuid.UUID, run_id: uuid.UUID) -> JsonResponse:
+    return _run_state_action(request, agent_id, run_id, action="resume")
+
+
+def _run_state_action(request: HttpRequest, agent_id: uuid.UUID, run_id: uuid.UUID, *, action: str) -> JsonResponse:
+    agent, error = _resolve_agent_for_request(request, agent_id)
+    if error:
+        return error
+    assert agent is not None
+    feature_err = _ensure_agent_workforce_enabled(request, agent=agent, allow_read_only=False)
+    if feature_err:
+        return feature_err
+    payload, error = _parse_json_body(request)
+    if error:
+        return error
+    run = AgentRun.objects.filter(id=run_id, agent_profile=agent).filter(_run_visibility_filter(request, agent=agent)).first()
+    if run is None:
+        return JsonResponse({"error": "RUN_NOT_FOUND", "message": "Run not found."}, status=HTTPStatus.NOT_FOUND)
+    immutable = _ensure_run_mutable(run)
+    if immutable:
+        return immutable
+    reason = str((payload or {}).get("reason") or "").strip()
+    if action == "cancel":
+        _append_run_event(run.id, stream=AgentRunEventStream.EXECUTED, event_type=AgentRunEventType.CANCELLED, label="Cancelled", payload={"reason": reason} if reason else {})
+        _set_run_status(run.id, status=AgentRunStatus.CANCELLED, error_detail=reason or "cancelled", finished=True)
+    else:
+        _append_run_event(run.id, stream=AgentRunEventStream.EXECUTED, event_type=AgentRunEventType.PROGRESS, label="Resumed", payload={"reason": reason} if reason else {})
+        _set_run_status(run.id, status=AgentRunStatus.QUEUED, run_after=True)
+    run.refresh_from_db()
+    return JsonResponse({"run": _serialize_run(run)}, status=HTTPStatus.OK)
+
+
+@csrf_protect
+@require_http_methods(["POST"])
+def agent_run_user_input(request: HttpRequest, agent_id: uuid.UUID, run_id: uuid.UUID) -> JsonResponse:
+    return _run_note_action(request, agent_id, run_id, kind=MemoryKind.STATE_NOTE, event_label="User input received", status=AgentRunStatus.QUEUED)
+
+
+@csrf_protect
+@require_http_methods(["POST"])
+def agent_run_approval(request: HttpRequest, agent_id: uuid.UUID, run_id: uuid.UUID) -> JsonResponse:
+    return _run_note_action(request, agent_id, run_id, kind=MemoryKind.DECISION, event_label="Approval resolved", status=None)
+
+
+def _run_note_action(request: HttpRequest, agent_id: uuid.UUID, run_id: uuid.UUID, *, kind: str, event_label: str, status: str | None) -> JsonResponse:
+    agent, error = _resolve_agent_for_request(request, agent_id)
+    if error:
+        return error
+    assert agent is not None
+    feature_err = _ensure_agent_workforce_enabled(request, agent=agent, allow_read_only=False)
+    if feature_err:
+        return feature_err
+    payload, error = _parse_json_body(request)
+    if error:
+        return error
+    run = AgentRun.objects.filter(id=run_id, agent_profile=agent).filter(_run_visibility_filter(request, agent=agent)).first()
+    if run is None:
+        return JsonResponse({"error": "RUN_NOT_FOUND", "message": "Run not found."}, status=HTTPStatus.NOT_FOUND)
+    immutable = _ensure_run_mutable(run)
+    if immutable:
+        return immutable
+    message = str((payload or {}).get("message") or (payload or {}).get("note") or (payload or {}).get("decision") or "").strip()
+    extra = dict((payload or {}).get("payload") or {})
+    _append_run_event(run.id, stream=AgentRunEventStream.EXECUTED, event_type=AgentRunEventType.PROGRESS, label=event_label, payload={"message": message, "payload": extra})
+    item = MemoryItem.objects.create(
+        business_profile=run.business_profile,
+        scope=MemoryScope.RUN,
+        agent_profile=run.agent_profile,
+        workflow=run.workflow,
+        run=run,
+        conversation=run.conversation,
+        kind=kind,
+        key="approval" if kind == MemoryKind.DECISION else "user_input",
+        content=message[:4000],
+        payload=extra,
+        visibility=MemoryVisibility.PRIVATE,
+        status=MemoryStatus.ACTIVE,
+        created_by=request.user,
+    )
+    MemoryAuditEvent.objects.create(memory_item=item, business_profile=item.business_profile, actor_user=request.user, action=MemoryAuditAction.CREATED, after=_serialize_memory(item))
+    if kind == MemoryKind.DECISION and str((payload or {}).get("decision") or "").strip().lower() == "deny":
+        _set_run_status(run.id, status=AgentRunStatus.CANCELLED, error_detail=message or "denied", finished=True)
+    else:
+        _set_run_status(run.id, status=status or AgentRunStatus.QUEUED, run_after=True)
+    run.refresh_from_db()
+    return JsonResponse({"run": _serialize_run(run)}, status=HTTPStatus.OK)
+
+
+@csrf_protect
+@require_http_methods(["GET", "POST"])
+def memory_collection(request: HttpRequest) -> JsonResponse:
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "UNAUTHORIZED", "message": "Login required."}, status=HTTPStatus.UNAUTHORIZED)
+    if request.method == "GET":
+        agent_id, err = _parse_uuid(request.GET.get("agentId") or request.GET.get("agent_id"), field="agentId")
+        if err:
+            return err
+        business_id, err = _parse_uuid(request.GET.get("businessId") or request.GET.get("business_id"), field="businessId")
+        if err:
+            return err
+        qs = MemoryItem.objects.select_related("business_profile", "agent_profile", "workflow", "run", "conversation")
+        if business_id:
+            qs = qs.filter(business_profile_id=business_id)
+        else:
+            qs = qs.filter(Q(business_profile__user=request.user) | Q(agent_profile__user=request.user))
+        if agent_id:
+            qs = qs.filter(Q(agent_profile_id=agent_id) | Q(visibility=MemoryVisibility.SHARED))
+        status = str(request.GET.get("status") or MemoryStatus.ACTIVE).strip().lower()
+        if status:
+            qs = qs.filter(status=status)
+        query = str(request.GET.get("q") or "").strip()
+        if query:
+            qs = qs.filter(Q(content__icontains=query) | Q(key__icontains=query))
+        limit = max(1, min(int(str(request.GET.get("limit") or "50")), 200))
+        return JsonResponse({"memory": [_serialize_memory(item) for item in qs.order_by("-updated_at")[:limit]]}, status=HTTPStatus.OK)
+
+    payload, error = _parse_json_body(request)
+    if error:
+        return error
+    business_id, err = _parse_uuid((payload or {}).get("businessId") or (payload or {}).get("business_id"), field="businessId")
+    if err:
+        return err
+    agent_id, err = _parse_uuid((payload or {}).get("agentId") or (payload or {}).get("agent_id"), field="agentId")
+    if err:
+        return err
+    agent = None
+    if agent_id:
+        agent = AgentProfile.objects.select_related("business_profile").filter(id=agent_id).filter(Q(user=request.user) | Q(business_profile__user=request.user)).first()
+        if agent is None:
+            return JsonResponse({"error": "AGENT_NOT_FOUND", "message": "Agent profile not found."}, status=HTTPStatus.NOT_FOUND)
+    if not business_id and agent is not None:
+        business_id = agent.business_profile_id
+    if not business_id:
+        return JsonResponse({"error": "VALIDATION_ERROR", "message": "businessId or agentId is required."}, status=HTTPStatus.BAD_REQUEST)
+    content = str((payload or {}).get("content") or "").strip()
+    if not content:
+        return JsonResponse({"error": "VALIDATION_ERROR", "message": "content is required."}, status=HTTPStatus.BAD_REQUEST)
+    sensitivity = str((payload or {}).get("sensitivity") or MemorySensitivity.NORMAL).strip().lower()
+    kind = str((payload or {}).get("kind") or MemoryKind.FACT).strip().lower()
+    status = MemoryStatus.PENDING_REVIEW if sensitivity in {MemorySensitivity.SENSITIVE, MemorySensitivity.SECRET} or kind == MemoryKind.INSTRUCTION else MemoryStatus.ACTIVE
+    item = MemoryItem.objects.create(
+        business_profile_id=business_id,
+        agent_profile=agent,
+        scope=str((payload or {}).get("scope") or (MemoryScope.AGENT if agent else MemoryScope.WORKSPACE)).strip().lower(),
+        kind=kind,
+        key=str((payload or {}).get("key") or "").strip()[:160],
+        content=content[:8000],
+        payload=dict((payload or {}).get("payload") or {}),
+        visibility=str((payload or {}).get("visibility") or MemoryVisibility.SHARED).strip().lower(),
+        sensitivity=sensitivity,
+        status=status,
+        source_type=str((payload or {}).get("sourceType") or (payload or {}).get("source_type") or "api")[:64],
+        created_by=request.user,
+    )
+    MemoryAuditEvent.objects.create(memory_item=item, business_profile=item.business_profile, actor_user=request.user, action=MemoryAuditAction.CREATED, after=_serialize_memory(item))
+    return JsonResponse({"memory": _serialize_memory(item)}, status=HTTPStatus.CREATED)
+
+
+@csrf_protect
+@require_http_methods(["GET", "PATCH", "PUT"])
+def memory_detail(request: HttpRequest, memory_id: uuid.UUID) -> JsonResponse:
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "UNAUTHORIZED", "message": "Login required."}, status=HTTPStatus.UNAUTHORIZED)
+    item = MemoryItem.objects.filter(id=memory_id).filter(Q(business_profile__user=request.user) | Q(agent_profile__user=request.user)).first()
+    if item is None:
+        return JsonResponse({"error": "MEMORY_NOT_FOUND", "message": "Memory item not found."}, status=HTTPStatus.NOT_FOUND)
+    if request.method == "GET":
+        return JsonResponse({"memory": _serialize_memory(item)}, status=HTTPStatus.OK)
+    before = _serialize_memory(item)
+    payload, error = _parse_json_body(request)
+    if error:
+        return error
+    for field in ("scope", "kind", "key", "content", "visibility", "sensitivity", "status"):
+        if field in payload:
+            setattr(item, field, str(payload.get(field) or "").strip()[:8000 if field == "content" else 160])
+    if "payload" in payload and isinstance(payload.get("payload"), dict):
+        item.payload = dict(payload.get("payload") or {})
+    item.save()
+    MemoryAuditEvent.objects.create(memory_item=item, business_profile=item.business_profile, actor_user=request.user, action=MemoryAuditAction.UPDATED, before=before, after=_serialize_memory(item))
+    return JsonResponse({"memory": _serialize_memory(item)}, status=HTTPStatus.OK)
+
+
+@csrf_protect
+@require_http_methods(["POST"])
+def memory_approve(request: HttpRequest, memory_id: uuid.UUID) -> JsonResponse:
+    return _memory_status_action(request, memory_id, status=MemoryStatus.ACTIVE, action=MemoryAuditAction.APPROVED)
+
+
+@csrf_protect
+@require_http_methods(["POST"])
+def memory_reject(request: HttpRequest, memory_id: uuid.UUID) -> JsonResponse:
+    return _memory_status_action(request, memory_id, status=MemoryStatus.ARCHIVED, action=MemoryAuditAction.REJECTED)
+
+
+@csrf_protect
+@require_http_methods(["POST"])
+def memory_archive(request: HttpRequest, memory_id: uuid.UUID) -> JsonResponse:
+    return _memory_status_action(request, memory_id, status=MemoryStatus.ARCHIVED, action=MemoryAuditAction.ARCHIVED)
+
+
+def _memory_status_action(request: HttpRequest, memory_id: uuid.UUID, *, status: str, action: str) -> JsonResponse:
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "UNAUTHORIZED", "message": "Login required."}, status=HTTPStatus.UNAUTHORIZED)
+    item = MemoryItem.objects.filter(id=memory_id).filter(Q(business_profile__user=request.user) | Q(agent_profile__user=request.user)).first()
+    if item is None:
+        return JsonResponse({"error": "MEMORY_NOT_FOUND", "message": "Memory item not found."}, status=HTTPStatus.NOT_FOUND)
+    before = _serialize_memory(item)
+    item.status = status
+    item.reviewed_by = request.user
+    item.reviewed_at = timezone.now()
+    item.save(update_fields=["status", "reviewed_by", "reviewed_at", "updated_at"])
+    MemoryAuditEvent.objects.create(memory_item=item, business_profile=item.business_profile, actor_user=request.user, action=action, before=before, after=_serialize_memory(item))
+    return JsonResponse({"memory": _serialize_memory(item)}, status=HTTPStatus.OK)

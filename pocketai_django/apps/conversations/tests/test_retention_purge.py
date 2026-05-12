@@ -9,11 +9,13 @@ from django.utils import timezone
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession, TenantMemoryConfiguration
 from apps.conversations.models import (
     AgentRun,
-    AgentRunMemoryItem,
     CompactedHistorySegment,
     Conversation,
     ConversationMessage,
     ConversationSender,
+    MemoryItem,
+    MemoryKind,
+    MemoryScope,
 )
 from apps.conversations.retention_purge import TenantRetentionPurgeService
 
@@ -54,25 +56,31 @@ class TenantRetentionPurgeTests(TestCase):
             agent_profile=self.agent,
             created_by=self.user,
             title="Test Run",
-            run_spec_snapshot={"goal": "Do something"},
+            workflow_snapshot={"goal": "Do something"},
         )
 
-        mem_old = AgentRunMemoryItem.objects.create(
+        mem_old = MemoryItem.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
             run=run,
-            kind="fact",
+            scope=MemoryScope.RUN,
+            kind=MemoryKind.FACT,
             key="old",
             content="old memory",
             created_by=self.user,
         )
-        mem_new = AgentRunMemoryItem.objects.create(
+        mem_new = MemoryItem.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
             run=run,
-            kind="fact",
+            scope=MemoryScope.RUN,
+            kind=MemoryKind.FACT,
             key="new",
             content="new memory",
             created_by=self.user,
         )
-        AgentRunMemoryItem.objects.filter(id=mem_old.id).update(created_at=now - timedelta(days=45))
-        AgentRunMemoryItem.objects.filter(id=mem_new.id).update(created_at=now - timedelta(days=10))
+        MemoryItem.objects.filter(id=mem_old.id).update(created_at=now - timedelta(days=45))
+        MemoryItem.objects.filter(id=mem_new.id).update(created_at=now - timedelta(days=10))
 
         conversation = Conversation.objects.create(
             business_profile=self.business,
@@ -183,8 +191,8 @@ class TenantRetentionPurgeTests(TestCase):
         self.assertEqual(result.max_retention_days, cutoff_days)
 
         # Memory items: only the new one remains.
-        self.assertFalse(AgentRunMemoryItem.objects.filter(id=mem_old.id).exists())
-        self.assertTrue(AgentRunMemoryItem.objects.filter(id=mem_new.id).exists())
+        self.assertFalse(MemoryItem.objects.filter(id=mem_old.id).exists())
+        self.assertTrue(MemoryItem.objects.filter(id=mem_new.id).exists())
 
         # Expired segment is deleted.
         self.assertFalse(CompactedHistorySegment.objects.filter(id=expired_segment.id).exists())
@@ -209,20 +217,22 @@ class TenantRetentionPurgeTests(TestCase):
             agent_profile=self.agent,
             created_by=self.user,
             title="Test Run",
-            run_spec_snapshot={"goal": "Do something"},
+            workflow_snapshot={"goal": "Do something"},
         )
-        mem_old = AgentRunMemoryItem.objects.create(
+        mem_old = MemoryItem.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
             run=run,
-            kind="fact",
+            scope=MemoryScope.RUN,
+            kind=MemoryKind.FACT,
             key="old",
             content="old memory",
             created_by=self.user,
         )
-        AgentRunMemoryItem.objects.filter(id=mem_old.id).update(created_at=now - timedelta(days=45))
+        MemoryItem.objects.filter(id=mem_old.id).update(created_at=now - timedelta(days=45))
 
         service = TenantRetentionPurgeService()
         result = service.purge_business(self.business, dry_run=False, batch_size=50, now=now)
         self.assertTrue(result.skipped)
         self.assertEqual(result.skip_reason, "legal_hold")
-        self.assertTrue(AgentRunMemoryItem.objects.filter(id=mem_old.id).exists())
-
+        self.assertTrue(MemoryItem.objects.filter(id=mem_old.id).exists())

@@ -49,14 +49,16 @@ from apps.conversations.models import (
     AgentRunEvent,
     AgentRunEventStream,
     AgentRunEventType,
-    AgentRunMemoryItem,
-    AgentRunMemoryKind,
     AgentRunStatus,
     Conversation,
     ConversationMessage,
     ConversationSender,
     ConversationToolApproval,
     ConversationToolApprovalStatus,
+    MemoryItem,
+    MemoryKind,
+    MemoryScope,
+    MemoryVisibility,
     PortalTurn,
     PortalTurnStatus,
 )
@@ -1577,10 +1579,10 @@ def _bootstrap_to_dict(result: PortalSessionBootstrap) -> dict:
 
         feature_state = FeatureFlagService.snapshot(result.business)
         payload["capabilities"] = {
-            "subAgentsEnabled": bool(getattr(feature_state, "sub_agents_v1", False)),
+            "agentWorkforceEnabled": bool(getattr(feature_state, "agent_workforce_v1", False)),
         }
     except Exception:  # pragma: no cover - best effort only
-        payload["capabilities"] = {"subAgentsEnabled": False}
+        payload["capabilities"] = {"agentWorkforceEnabled": False}
     return payload
 
 
@@ -2026,9 +2028,14 @@ def portal_tool_approval(request: HttpRequest) -> JsonResponse:
                         "remote_tool_name": approval.remote_tool_name,
                     },
                 )
-                AgentRunMemoryItem.objects.create(
+                MemoryItem.objects.create(
+                    business_profile=run.business_profile,
+                    scope=MemoryScope.RUN,
+                    agent_profile=run.agent_profile,
+                    workflow=run.workflow,
                     run=run,
-                    kind=AgentRunMemoryKind.DECISION,
+                    conversation=run.conversation,
+                    kind=MemoryKind.DECISION,
                     key="tool_approval",
                     content=decision_value,
                     payload={
@@ -2181,12 +2188,12 @@ def portal_agent_run_user_input(request: HttpRequest) -> JsonResponse:
         if business_id:
             with tenant_context(business_id):
                 business = BusinessProfile.objects.filter(id=business_id).only("id", "metadata").first()
-            enabled = bool(getattr(FeatureFlagService.snapshot(business), "sub_agents_v1", False)) if business else False
+            enabled = bool(getattr(FeatureFlagService.snapshot(business), "agent_workforce_v1", False)) if business else False
     except Exception:  # pragma: no cover - best effort only
         enabled = False
 
     if not enabled:
-        return _json_error("feature_disabled", "Sub-agents are not enabled for this business.", status=403)
+        return _json_error("feature_disabled", "Agent workforce are not enabled for this business.", status=403)
     actor_user = request.user if getattr(request, "user", None) and request.user.is_authenticated else None
     if actor_user:
         actor_snapshot: dict[str, object] = {"type": "user", "user_id": str(getattr(actor_user, "id", "") or "")}
@@ -2211,12 +2218,18 @@ def portal_agent_run_user_input(request: HttpRequest) -> JsonResponse:
             label="User input received",
             payload={"message": message, "payload": extra_payload} if extra_payload else {"message": message},
         )
-        AgentRunMemoryItem.objects.create(
+        MemoryItem.objects.create(
+            business_profile=run.business_profile,
+            scope=MemoryScope.RUN,
+            agent_profile=run.agent_profile,
+            workflow=run.workflow,
             run=run,
-            kind=AgentRunMemoryKind.NOTE,
+            conversation=run.conversation,
+            kind=MemoryKind.STATE_NOTE,
             key="user_input",
             content=message[:4000],
             payload={"actor": actor_snapshot, "payload": extra_payload},
+            visibility=MemoryVisibility.PRIVATE,
             created_by=actor_user,
         )
 
@@ -2328,12 +2341,12 @@ def portal_agent_run_approval(request: HttpRequest) -> JsonResponse:
         if business_id:
             with tenant_context(business_id):
                 business = BusinessProfile.objects.filter(id=business_id).only("id", "metadata").first()
-            enabled = bool(getattr(FeatureFlagService.snapshot(business), "sub_agents_v1", False)) if business else False
+            enabled = bool(getattr(FeatureFlagService.snapshot(business), "agent_workforce_v1", False)) if business else False
     except Exception:  # pragma: no cover - best effort only
         enabled = False
 
     if not enabled:
-        return _json_error("feature_disabled", "Sub-agents are not enabled for this business.", status=403)
+        return _json_error("feature_disabled", "Agent workforce are not enabled for this business.", status=403)
 
     actor_user = request.user if getattr(request, "user", None) and request.user.is_authenticated else None
     if actor_user:
@@ -2396,9 +2409,14 @@ def portal_agent_run_approval(request: HttpRequest) -> JsonResponse:
                     "remote_tool_name": approval.remote_tool_name,
                 },
             )
-            AgentRunMemoryItem.objects.create(
+            MemoryItem.objects.create(
+                business_profile=run.business_profile,
+                scope=MemoryScope.RUN,
+                agent_profile=run.agent_profile,
+                workflow=run.workflow,
                 run=run,
-                kind=AgentRunMemoryKind.DECISION,
+                conversation=run.conversation,
+                kind=MemoryKind.DECISION,
                 key="tool_approval",
                 content=decision_value,
                 payload={
@@ -2557,12 +2575,12 @@ def portal_agent_request_update(request: HttpRequest) -> JsonResponse:
         if business_id:
             with tenant_context(business_id):
                 business = BusinessProfile.objects.filter(id=business_id).only("id", "metadata").first()
-            enabled = bool(getattr(FeatureFlagService.snapshot(business), "sub_agents_v1", False)) if business else False
+            enabled = bool(getattr(FeatureFlagService.snapshot(business), "agent_workforce_v1", False)) if business else False
     except Exception:  # pragma: no cover - best effort only
         enabled = False
 
     if not enabled:
-        return _json_error("feature_disabled", "Sub-agents are not enabled for this business.", status=403)
+        return _json_error("feature_disabled", "Agent workforce are not enabled for this business.", status=403)
     agent_profile_id = getattr(conversation, "agent_profile_id", None)
     actor_user = request.user if getattr(request, "user", None) and request.user.is_authenticated else None
     if actor_user:
@@ -2608,9 +2626,14 @@ def portal_agent_request_update(request: HttpRequest) -> JsonResponse:
                             "subject": agent_request.subject,
                         },
                     )
-                    AgentRunMemoryItem.objects.create(
+                    MemoryItem.objects.create(
+                        business_profile=run.business_profile,
+                        scope=MemoryScope.RUN,
+                        agent_profile=run.agent_profile,
+                        workflow=run.workflow,
                         run=run,
-                        kind=AgentRunMemoryKind.NOTE,
+                        conversation=run.conversation,
+                        kind=MemoryKind.STATE_NOTE,
                         key="agent_request",
                         content=resolution[:4000],
                         payload={
@@ -2917,7 +2940,7 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
     conversation_id = getattr(conversation, "id", None)
     business_id = getattr(conversation, "business_profile_id", None)
     agent_profile_id = getattr(conversation, "agent_profile_id", None)
-    subagents_enabled = False
+    agent_workforce_enabled = False
     try:
         from apps.accounts.feature_flags import FeatureFlagService
         from apps.accounts.models import BusinessProfile
@@ -2925,9 +2948,9 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
         if business_id:
             with tenant_context(business_id):
                 business = BusinessProfile.objects.filter(id=business_id).first()
-            subagents_enabled = bool(getattr(FeatureFlagService.snapshot(business), "sub_agents_v1", False)) if business else False
+            agent_workforce_enabled = bool(getattr(FeatureFlagService.snapshot(business), "agent_workforce_v1", False)) if business else False
     except Exception:  # pragma: no cover - best effort only
-        subagents_enabled = False
+        agent_workforce_enabled = False
 
     def event_stream() -> Iterable[str]:
         metrics_enabled = bool(getattr(settings, "PORTAL_STREAM_METRICS", False))
@@ -2940,7 +2963,7 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
         run_since = timezone.now()
         request_since = timezone.now()
         message_since = timezone.now()
-        if conversation_id and subagents_enabled:
+        if conversation_id and agent_workforce_enabled:
             try:
                 snapshot = _build_portal_agent_runs_snapshot(
                     conversation_id=conversation_id,
@@ -3014,7 +3037,7 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
                     start_ms = max(0, int(time.time() * 1000) - 1)
                     start_id = f"{start_ms}-0"
                 redis_stream_positions[portal_session_conversation_stream_key(conversation_id=conversation_id)] = start_id
-                if subagents_enabled and agent_profile_id:
+                if agent_workforce_enabled and agent_profile_id:
                     redis_stream_positions[portal_session_agent_requests_stream_key(agent_profile_id=agent_profile_id)] = start_id
             else:
                 redis_conn = None
@@ -3056,9 +3079,9 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
                                 ).strip()
                                 if not event_name:
                                     continue
-                                if not subagents_enabled and event_name in {"agentRunEvent", "agentRequestEvent", "conversationMessage"}:
+                                if not agent_workforce_enabled and event_name in {"agentRunEvent", "agentRequestEvent", "conversationMessage"}:
                                     # Keep behavior compatible with legacy polling mode:
-                                    # when sub-agents are disabled, don't surface Tasks/Inbox messages.
+                                    # when agent workforce are disabled, don't surface Tasks/Inbox messages.
                                     continue
 
                                 raw_payload = fields.get(b"payload") if isinstance(fields, dict) else None
@@ -3124,7 +3147,7 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
                         last_heartbeat = now
                     continue
 
-                if conversation_id and subagents_enabled:
+                if conversation_id and agent_workforce_enabled:
                     with tenant_context(business_id):
                         events_batch = list(
                             AgentRunEvent.objects.select_related("run")
@@ -3159,7 +3182,7 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
                             yield f"data: {json.dumps(payload)}\n\n"
                         run_since = latest_created_at
 
-                if conversation_id and subagents_enabled:
+                if conversation_id and agent_workforce_enabled:
                     from apps.conversations.models import ConversationMessage
 
                     def _serialize_message(msg: ConversationMessage) -> dict[str, object]:
@@ -3204,7 +3227,7 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
                             yield f"data: {json.dumps(payload)}\n\n"
                         message_since = latest_created_at
 
-                if business_id and agent_profile_id and subagents_enabled:
+                if business_id and agent_profile_id and agent_workforce_enabled:
                     with tenant_context(business_id):
                         requests_batch = list(
                             AgentRequest.objects.select_related("from_agent_profile", "to_agent_profile")
@@ -3276,7 +3299,7 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
                         "first_event_ms": int(max(0.0, (first_event_at - started_at) * 1000.0)) if first_event_at else None,
                         "events_sent": int(events_sent),
                         "heartbeats_sent": int(keepalives_sent),
-                        "subagents_enabled": bool(subagents_enabled),
+                        "agent_workforce_enabled": bool(agent_workforce_enabled),
                         "event_bus": str(session_bus or "postgres"),
                     },
                 )

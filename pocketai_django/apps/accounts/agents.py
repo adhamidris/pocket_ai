@@ -52,6 +52,7 @@ class AgentListValidationError(ValueError):
 class AgentListItem:
     id: uuid.UUID
     name: str
+    status: str
     role: str
     tone: str | None
     public_slug: str
@@ -225,6 +226,7 @@ def list_agents(
         AgentListItem(
             id=row.id,
             name=row.name,
+            status=getattr(row, "status", "active"),
             role=row.role or "",
             tone=row.tone or None,
             public_slug=row.slug or "",
@@ -309,6 +311,7 @@ def get_agent_detail(
     summary = AgentListItem(
         id=agent.id,
         name=agent.name,
+        status=getattr(agent, "status", "active"),
         role=agent.role or "",
         tone=agent.tone or None,
         public_slug=agent.slug or "",

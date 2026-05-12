@@ -2114,7 +2114,7 @@ def _controls_tool_description(tool_name: str, description: str, *, source_type:
     if language_code.startswith("ar"):
         arabic_overrides = {
             "continue_agent_run": "استأنف تشغيلًا خلفيًا قائمًا (وكيلًا فرعيًا) برسالة متابعة. استخدمه لإرسال تعليمات إضافية بدل إنشاء تشغيل جديد.",
-            "create_agent_run": "أنشئ تشغيلًا خلفيًا (وكيلًا فرعيًا) مرتبطًا بهذه المحادثة للمهام الطويلة أو متعددة الخطوات.",
+            "start_agent_run": "أنشئ تشغيلًا خلفيًا (وكيلًا فرعيًا) مرتبطًا بهذه المحادثة للمهام الطويلة أو متعددة الخطوات.",
             "list_agent_runs": "اعرض قائمة التشغيلات الخلفية الخاصة بالمحادثة مع حالتها الحالية.",
             "get_agent_run": "اجلب الحالة التفصيلية ونتيجة تشغيل خلفي معيّن.",
             "initiate_phone_call": "ابدأ مكالمة هاتفية صادرة واحدة عبر مزوّد المكالمات المهيّأ.",
@@ -2160,12 +2160,12 @@ def _controls_tool_description(tool_name: str, description: str, *, source_type:
 
     localized_overrides = {
         "continue_agent_run": _(
-            "Continue an existing background run (sub-agent) with a follow-up message. "
+            "Continue an existing background run (background agent) with a follow-up message. "
             "Use this to send additional instructions to a completed or waiting run instead of creating a new one. "
-            "The sub-agent will resume with its full conversation history."
+            "The background agent will resume with its full conversation history."
         ),
-        "create_agent_run": _(
-            "Create a background AgentRun (sub-agent) anchored to this conversation. "
+        "start_agent_run": _(
+            "Create a background AgentRun (background agent) anchored to this conversation. "
             "Use this when the visitor asks for a long-running or multi-step task so the chat can continue "
             "while the work happens in the Tasks panel."
         ),
@@ -2343,7 +2343,7 @@ def _controls_agentic_operational_tool_names(
     available_integration_tool_names: set[str],
 ) -> set[str]:
     feature_state = FeatureFlagService.snapshot(business)
-    sub_agents_enabled = bool(getattr(feature_state, "sub_agents_v1", False))
+    agent_workforce_enabled = bool(getattr(feature_state, "agent_workforce_v1", False))
 
     # Keep Controls aligned with the operational agentic surface, while excluding
     # UI/internal helpers and legacy retrieval tools.
@@ -2358,13 +2358,18 @@ def _controls_agentic_operational_tool_names(
         "pdf_extract_text",
         "initiate_phone_call",
     }
-    if sub_agents_enabled:
+    if agent_workforce_enabled:
         allowed.update(
             {
-                "create_agent_run",
+                "start_agent_run",
                 "list_agent_runs",
                 "get_agent_run",
                 "continue_agent_run",
+                "list_agents",
+                "consult_agent",
+                "search_memory",
+                "save_memory",
+                "forget_memory",
             }
         )
     if enabled_connections:

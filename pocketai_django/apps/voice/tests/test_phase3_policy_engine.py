@@ -27,7 +27,7 @@ class VoicePhase3PolicyEngineTests(TestCase):
             name="Acme Co",
             industry="Retail",
             status="active",
-            metadata={FEATURE_FLAG_METADATA_KEY: {"sub_agents_v1": True}},
+            metadata={FEATURE_FLAG_METADATA_KEY: {"agent_workforce_v1": True}},
         )
         self.agent = AgentProfile.objects.create(business_profile=self.business, user=user, name="Ops Agent")
 

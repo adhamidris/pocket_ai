@@ -22,11 +22,11 @@ class RunConstraints(TypedDict, total=False):
     concurrency_key: str
 
 
-class RunSpec(TypedDict, total=False):
+class WorkflowInstructions(TypedDict, total=False):
     """
-    Serializable specification for a background run.
+    Serializable instruction contract for a background run.
 
-    Stored in `AgentRunSpec.spec` and snapshot into `AgentRun.run_spec_snapshot`.
+    Stored on `AgentWorkflow.instructions` and snapshot into `AgentRun.workflow_snapshot`.
     """
 
     version: int
@@ -60,9 +60,9 @@ class RunEvent(TypedDict, total=False):
     payload: dict[str, Any]
 
 
-def normalize_run_spec(spec: object | None) -> dict[str, Any]:
+def normalize_workflow_instructions(spec: object | None) -> dict[str, Any]:
     """
-    Best-effort normalization to keep RunSpec payloads stable and JSON-serializable.
+    Best-effort normalization to keep workflow instruction payloads stable and JSON-serializable.
 
     This is intentionally conservative: it avoids complex transformations so the
     caller (orchestrator/worker) can remain the source of truth.

@@ -118,7 +118,7 @@ Chat + Portal
 - GET  `/api/chat/turns/<turn_id>/events/` — stream turn events (SSE)
 - POST `/api/chat/turns/<turn_id>/cancel/` — cancel an active turn
 - POST `/api/chat/messages/` — persist non-stream messages
-- GET  `/api/chat/events/` — portal status + sub-agent events
+- GET  `/api/chat/events/` — portal status + background run events
 - POST `/api/chat/csat/` — submit CSAT rating
 - POST `/api/chat/feedback/` — submit feedback (e.g., incorrect answer)
 

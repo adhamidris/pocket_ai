@@ -25,7 +25,7 @@ class PortalTurnProcessingTests(TestCase):
             name="Worker Co",
             industry="Support",
             status="active",
-            metadata={FEATURE_FLAG_METADATA_KEY: {"sub_agents_v1": False}},
+            metadata={FEATURE_FLAG_METADATA_KEY: {"agent_workforce_v1": False}},
         )
         self.agent = AgentProfile.objects.create(
             business_profile=self.business,

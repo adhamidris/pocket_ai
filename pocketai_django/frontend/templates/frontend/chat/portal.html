@@ -938,7 +938,7 @@
     position: relative;
   }
 
-  /* Left rail (match tool calls + sub-agents). */
+  /* Left rail (match tool calls + background runs). */
   [data-chat-portal] .portal-call-approval::after {
     content: "";
     position: absolute;
@@ -3808,7 +3808,7 @@
   data-business-slug="{{ portal.business.slug }}"
   data-agent-slug="{{ portal.agent.slug }}" data-agent-name="{{ portal.agent.name }}"
   data-agent-initials="{{ portal.agent.initials }}" data-bootstrap-script-id="{{ portal.bootstrap_script_id }}"
-  data-subagents-enabled="{{ portal.subagents_enabled|yesno:'true,false' }}"
+  data-agent-runs-enabled="{{ portal.agent_runs_enabled|yesno:'true,false' }}"
   data-chat-surface="{{ portal.chat_surface|default:'public' }}"
   data-authenticated-chat="{{ portal.is_authenticated_chat|yesno:'true,false' }}"
   data-initial-status="{{ portal.conversation_status_code }}">

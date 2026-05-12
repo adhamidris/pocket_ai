@@ -12,7 +12,6 @@ class Migration(migrations.Migration):
     initial = True
 
     dependencies = [
-        ('accounts', '0003_remove_agentprofile_allowed_collections'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 

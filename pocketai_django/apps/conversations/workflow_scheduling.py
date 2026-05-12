@@ -129,11 +129,13 @@ def compute_next_cron_trigger_at(schedule: CronSchedule, *, after: datetime | No
         raise CronScheduleError("Cron expression must have 5 parts: minute hour dom month dow.")
 
     minute_field, hour_field, dom_field, month_field, dow_field = parts
-    if dom_field != "*" or month_field != "*" or dow_field != "*":
-        raise CronScheduleError("Cron V1 supports only minute/hour schedules (dom/month/dow must be '*').")
+    if dom_field != "*" or month_field != "*":
+        raise CronScheduleError("Cron V1 supports minute/hour schedules with optional day-of-week only (dom/month must be '*').")
 
     minutes = sorted(_parse_cron_field(minute_field, minimum=0, maximum=59))
     hours = sorted(_parse_cron_field(hour_field, minimum=0, maximum=23))
+    cron_dows = _parse_cron_field(dow_field, minimum=0, maximum=7) if dow_field != "*" else set(range(0, 8))
+    normalized_dows = {0 if value == 7 else int(value) for value in cron_dows}
     if not minutes or not hours:
         raise CronScheduleError("Cron schedule resolved to an empty set of times.")
 
@@ -156,6 +158,9 @@ def compute_next_cron_trigger_at(schedule: CronSchedule, *, after: datetime | No
 
     for day_offset in range(0, 367):
         day = base_date + timedelta(days=day_offset)
+        cron_dow = (day.weekday() + 1) % 7
+        if cron_dow not in normalized_dows:
+            continue
         min_hour = base_hour if day_offset == 0 else 0
         min_minute = base_minute if day_offset == 0 else 0
 
@@ -178,10 +183,9 @@ def compute_next_cron_trigger_at(schedule: CronSchedule, *, after: datetime | No
     raise CronScheduleError("Unable to find next cron trigger within 366 days.")
 
 
-def compute_next_automation_trigger_at(trigger_type: str, trigger_config: object, *, after: datetime | None = None) -> datetime | None:
+def compute_next_workflow_schedule_at(trigger_type: str, trigger_config: object, *, after: datetime | None = None) -> datetime | None:
     trigger_type = str(trigger_type or "").strip().lower()
     if trigger_type != "cron":
         return None
     schedule = normalize_cron_schedule(trigger_config)
     return compute_next_cron_trigger_at(schedule, after=after)
-

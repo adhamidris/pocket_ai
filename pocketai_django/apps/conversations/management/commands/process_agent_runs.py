@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import time
 
+from django.core.cache import cache
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 class Command(BaseCommand):
-    help = "Process queued agent runs (background sub-agent executions)."
+    help = "Process queued agent runs (background executions)."
 
     def log_queue_health(self) -> None:
         """Log queue health metrics for monitoring."""
@@ -110,6 +111,7 @@ class Command(BaseCommand):
 
         processed = 0
         while True:
+            cache.set("agent_run_processor_heartbeat", {"at": timezone.now().isoformat()}, timeout=180)
             if max_runs is not None and processed >= int(max_runs):
                 break
 

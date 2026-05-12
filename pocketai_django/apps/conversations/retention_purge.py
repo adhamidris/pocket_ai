@@ -15,7 +15,7 @@ from django.utils.dateparse import parse_datetime
 
 from apps.accounts.models import BusinessProfile, TenantMemoryConfiguration
 from apps.conversations.compaction_service import ContextCompactionService
-from apps.conversations.models import AgentRunMemoryItem, CompactedHistorySegment
+from apps.conversations.models import CompactedHistorySegment, MemoryItem
 from core.tenancy import tenant_context
 
 
@@ -83,7 +83,7 @@ class TenantRetentionPurgeService:
     """
     Phase 7: retention enforcement (delete derived memory beyond max retention).
 
-    Scope: deletes AgentRunMemoryItem + CompactedHistorySegment rows that are older than the
+    Scope: deletes MemoryItem + CompactedHistorySegment rows that are older than the
     tenant's maximum_retention_days. (ConversationMessage retention is intentionally out of scope.)
     """
 
@@ -207,8 +207,8 @@ class TenantRetentionPurgeService:
             # ------------------------------------------------------------------
             # Purge run memory items
             # ------------------------------------------------------------------
-            mem_qs = AgentRunMemoryItem.objects.filter(
-                run__business_profile_id=business.id,
+            mem_qs = MemoryItem.objects.filter(
+                business_profile_id=business.id,
                 created_at__lt=cutoff,
             )
             deleted_memory_items = _purge_queryset_in_batches(mem_qs, batch_size=batch_size, dry_run=dry_run)
@@ -353,4 +353,3 @@ class TenantRetentionPurgeService:
             updated_segments=updated_segments,
             errors=tuple(errors),
         )
-

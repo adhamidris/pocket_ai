@@ -25,11 +25,38 @@ from apps.conversations.models import (
     AgentRunSource,
     AgentRunStatus,
 )
-from apps.conversations.output_destinations import parse_summary_destination_id, parse_summary_max_chars
 from apps.rag.rag_logging import structured_log
 
 
 logger = logging.getLogger(__name__)
+
+
+def parse_summary_destination_id(destination_config: object) -> uuid.UUID | None:
+    if not isinstance(destination_config, dict):
+        return None
+    raw = (
+        destination_config.get("postSummaryToConversationId")
+        or destination_config.get("post_summary_to_conversation_id")
+        or destination_config.get("summaryConversationId")
+        or destination_config.get("summary_conversation_id")
+    )
+    if not raw:
+        return None
+    try:
+        return uuid.UUID(str(raw))
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_summary_max_chars(destination_config: object, *, default: int = 800) -> int:
+    if not isinstance(destination_config, dict):
+        return max(100, min(int(default), 4000))
+    raw = destination_config.get("summaryMaxChars") or destination_config.get("summary_max_chars") or default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = int(default)
+    return max(100, min(int(value), 4000))
 
 
 def _clip_text(value: object, limit: int) -> str:
@@ -578,7 +605,7 @@ class AgentRunProcessingService:
                 enabled_by_business: dict[object, bool] = {}
                 if business_ids:
                     for business in BusinessProfile.objects.filter(id__in=business_ids).only("id", "metadata"):
-                        enabled_by_business[business.id] = bool(getattr(FeatureFlagService.snapshot(business), "sub_agents_v1", False))
+                        enabled_by_business[business.id] = bool(getattr(FeatureFlagService.snapshot(business), "agent_workforce_v1", False))
 
                 running_by_business: dict[object, int] = {}
                 if max_running > 0 and business_ids:
@@ -607,8 +634,8 @@ class AgentRunProcessingService:
                             run,
                             now=now,
                             delay_seconds=self.disabled_backoff_seconds,
-                            label="Queued (sub-agents disabled)",
-                            reason="sub_agents_disabled",
+                            label="Queued (agent workforce disabled)",
+                            reason="agent_workforce_disabled",
                         )
                         continue
 
@@ -980,14 +1007,14 @@ class AgentRunProcessingService:
         if not business_id:
             raise RuntimeError("run missing business_profile_id")
 
-        # Rollout guard: do not execute runs when sub-agents are disabled for this tenant.
+        # Rollout guard: do not execute runs when agent workforce are disabled for this tenant.
         try:
             from apps.accounts.feature_flags import FeatureFlagService
             from apps.accounts.models import BusinessProfile
 
             with tenant_context(business_id):
                 business = BusinessProfile.objects.filter(id=business_id).only("id", "metadata").first()
-            enabled = bool(getattr(FeatureFlagService.snapshot(business), "sub_agents_v1", False)) if business else False
+            enabled = bool(getattr(FeatureFlagService.snapshot(business), "agent_workforce_v1", False)) if business else False
         except Exception:  # pragma: no cover - best effort only
             enabled = False
 
@@ -1007,14 +1034,14 @@ class AgentRunProcessingService:
                     run,
                     stream=AgentRunEventStream.SYSTEM,
                     event_type=AgentRunEventType.PROGRESS,
-                    label="Queued (sub-agents disabled)",
-                    payload={"reason": "sub_agents_disabled", "run_after": run_after.isoformat()},
+                    label="Queued (agent workforce disabled)",
+                    payload={"reason": "agent_workforce_disabled", "run_after": run_after.isoformat()},
                 )
             return AgentRunProcessResult(
                 run_id=str(run.id),
                 status=AgentRunStatus.QUEUED,
                 requeued=True,
-                error="sub_agents_disabled",
+                error="agent_workforce_disabled",
             )
 
         provider = load_mcp_provider()
@@ -1022,7 +1049,7 @@ class AgentRunProcessingService:
             raise RuntimeError("MCP provider is not configured.")
 
         started = time.monotonic()
-        spec = dict(run.run_spec_snapshot or {}) if isinstance(run.run_spec_snapshot, dict) else {}
+        spec = dict(run.workflow_snapshot or {}) if isinstance(run.workflow_snapshot, dict) else {}
         goal = str(spec.get("goal") or spec.get("name") or run.title or "").strip()
         if not goal:
             raise RuntimeError("run has no goal/title to execute")
@@ -1733,6 +1760,13 @@ class AgentRunProcessingService:
                 except Exception:  # pragma: no cover - observability must not block agent run processing
                     pass
 
+            workflow_sources = {
+                AgentRunSource.WORKFLOW,
+                AgentRunSource.SCHEDULE,
+                AgentRunSource.WEBHOOK,
+                AgentRunSource.EMAIL_INBOX,
+            }
+
             if next_status == AgentRunStatus.COMPLETED:
                 self._append_event(
                     run,
@@ -1747,10 +1781,8 @@ class AgentRunProcessingService:
                 followup_mode = str(followup_meta.get("followup_mode") or "").strip().lower() or "handoff"
                 if followup_mode not in {"handoff", "supervisor"}:
                     followup_mode = "handoff"
-                should_post_followup = bool(
-                    run.source in {AgentRunSource.AUTOMATION, AgentRunSource.WATCHER} or followup_requested
-                )
-                if run.source in {AgentRunSource.AUTOMATION, AgentRunSource.WATCHER}:
+                should_post_followup = bool(run.source in workflow_sources or followup_requested)
+                if run.source in workflow_sources:
                     response_text = str(turn.response_text or "").strip()
                     if response_text:
                         already_written = ConversationMessage.objects.filter(
@@ -1901,7 +1933,7 @@ class AgentRunProcessingService:
                     and tool_name_value in {"initiate_phone_call", "phone_call"}
                 )
                 should_post_followup = bool(
-                    run.source in {AgentRunSource.AUTOMATION, AgentRunSource.WATCHER} or followup_requested or force_followup
+                    run.source in workflow_sources or followup_requested or force_followup
                 )
                 if should_post_followup:
                     already_posted = False

@@ -27,7 +27,7 @@ class PortalSessionRedisEventBusTests(TestCase):
             name="Session Redis Co",
             industry="Support",
             status="active",
-            metadata={FEATURE_FLAG_METADATA_KEY: {"sub_agents_v1": False}},
+            metadata={FEATURE_FLAG_METADATA_KEY: {"agent_workforce_v1": False}},
         )
         self.agent = AgentProfile.objects.create(
             business_profile=self.business,
@@ -54,7 +54,7 @@ class PortalSessionRedisEventBusTests(TestCase):
             (stream_key, [(b"1700000000000-0", {b"event": b"agentRunEvent", b"payload": json.dumps(payload).encode("utf-8")})])
         ]
 
-        with mock.patch("apps.accounts.feature_flags.FeatureFlagService.snapshot", return_value=mock.Mock(sub_agents_v1=True)):
+        with mock.patch("apps.accounts.feature_flags.FeatureFlagService.snapshot", return_value=mock.Mock(agent_workforce_v1=True)):
             with mock.patch.object(chat_portal, "get_portal_redis_client", return_value=redis_conn):
                 response = chat_portal.events(request)
 

@@ -1032,13 +1032,13 @@ try:
 except (TypeError, ValueError):
     MCP_MEMORY_RECENT_MESSAGES = 20
 try:
-    # MCP_EXECUTION_HISTORY_LIMIT: Number of messages kept for execution conversations (sub-agents).
-    # Sub-agents need larger history to maintain context across multi-step tool executions and approval flows.
+    # MCP_EXECUTION_HISTORY_LIMIT: Number of messages kept for execution conversations.
+    # Background runs need larger history to maintain context across multi-step tool executions and approval flows.
     MCP_EXECUTION_HISTORY_LIMIT = int(os.getenv("MCP_EXECUTION_HISTORY_LIMIT", "30"))
 except (TypeError, ValueError):
     MCP_EXECUTION_HISTORY_LIMIT = 30
 
-# Agent run memory extraction (structured memory for sub-agent workflows).
+# Agent run memory extraction for workflow-backed background runs.
 MCP_RUN_MEMORY_ENABLED = os.getenv("MCP_RUN_MEMORY_ENABLED", "true").lower() in {"1", "true", "yes"}
 MCP_MEMORY_LLM_EXTRACTION_ENABLED = (
     os.getenv("MCP_MEMORY_LLM_EXTRACTION_ENABLED", "false").lower() in {"1", "true", "yes"}
@@ -1850,26 +1850,26 @@ PORTAL_FILE_CHUNK_CHARS = int(os.getenv("PORTAL_FILE_CHUNK_CHARS", "1200"))
 PORTAL_FILE_CHUNK_OVERLAP_CHARS = int(os.getenv("PORTAL_FILE_CHUNK_OVERLAP_CHARS", "160"))
 
 # ---------------------------------------------------------------------------
-# Sub-agents / background runs (AgentRuns, Automations, Watchers)
+# Agent workforce / background runs (AgentRuns, Workflows, Inbox, Memory)
 
-# SUB_AGENTS_V1_GLOBAL_OVERRIDE: Optional global override for the sub-agents rollout.
+# AGENT_WORKFORCE_V1_GLOBAL_OVERRIDE: Optional global override for the agent workforce rollout.
 # - Set to "true"/"1" to force-enable for all tenants.
 # - Set to "false"/"0" to force-disable for all tenants.
-# - Leave unset/blank to rely on per-business feature flag `sub_agents_v1`.
-_sub_agents_override_raw = str(os.getenv("SUB_AGENTS_V1_GLOBAL_OVERRIDE", "") or "").strip().lower()
-if _sub_agents_override_raw in {"1", "true", "yes", "on", "enabled"}:
-    SUB_AGENTS_V1_GLOBAL_OVERRIDE = True
-elif _sub_agents_override_raw in {"0", "false", "no", "off", "disabled"}:
-    SUB_AGENTS_V1_GLOBAL_OVERRIDE = False
+# - Leave unset/blank to rely on per-business feature flag `agent_workforce_v1`.
+_agent_workforce_override_raw = str(os.getenv("AGENT_WORKFORCE_V1_GLOBAL_OVERRIDE", "") or "").strip().lower()
+if _agent_workforce_override_raw in {"1", "true", "yes", "on", "enabled"}:
+    AGENT_WORKFORCE_V1_GLOBAL_OVERRIDE = True
+elif _agent_workforce_override_raw in {"0", "false", "no", "off", "disabled"}:
+    AGENT_WORKFORCE_V1_GLOBAL_OVERRIDE = False
 else:
-    SUB_AGENTS_V1_GLOBAL_OVERRIDE = None
+    AGENT_WORKFORCE_V1_GLOBAL_OVERRIDE = None
 
 # AGENT_RUN_MAX_RUNNING_PER_BUSINESS: Soft concurrency cap per tenant.
 # When exceeded, queued runs are deferred instead of failing.
 AGENT_RUN_MAX_RUNNING_PER_BUSINESS = int(os.getenv("AGENT_RUN_MAX_RUNNING_PER_BUSINESS", "3"))
 # AGENT_RUN_CAPACITY_BACKOFF_SECONDS: Delay before retrying a run deferred due to capacity limits.
 AGENT_RUN_CAPACITY_BACKOFF_SECONDS = float(os.getenv("AGENT_RUN_CAPACITY_BACKOFF_SECONDS", "15"))
-# AGENT_RUN_DISABLED_BACKOFF_SECONDS: Delay before retrying a run when sub-agents are disabled for the tenant.
+# AGENT_RUN_DISABLED_BACKOFF_SECONDS: Delay before retrying a run when agent workforce is disabled for the tenant.
 AGENT_RUN_DISABLED_BACKOFF_SECONDS = float(os.getenv("AGENT_RUN_DISABLED_BACKOFF_SECONDS", "900"))
 # AGENT_RUN_CLAIM_SCAN_LIMIT: Number of queued runs to scan per claim attempt before giving up.
 AGENT_RUN_CLAIM_SCAN_LIMIT = int(os.getenv("AGENT_RUN_CLAIM_SCAN_LIMIT", "25"))

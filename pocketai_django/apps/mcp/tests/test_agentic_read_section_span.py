@@ -285,7 +285,7 @@ class AgenticReadSectionSpanTests(TestCase):
             rag_eval_logging=False,
             rag_agentic_mode=True,
             mcp_gateway_mode=False,
-            sub_agents_v1=False,
+            agent_workforce_v1=False,
             crm_v1=False,
         )
 

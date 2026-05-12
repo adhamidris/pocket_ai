@@ -416,10 +416,10 @@ class TenantMemoryConfigurationAuditEvent(models.Model):
 
 class AgentProfile(models.Model):
     """
-    Stores the virtual agent configuration gathered during registration step 3.
+    Stores one AI employee profile for a business workspace.
 
-    The agent is linked one-to-one with a business profile, ensuring future
-    retrieval/knowledge settings can pivot off the same business entity.
+    A business can own multiple named agents. Each agent has its own role,
+    instructions, permissions, workflows, and scoped memory.
     """
 
     class KPIChoices(models.TextChoices):
@@ -433,19 +433,27 @@ class AgentProfile(models.Model):
         AVERAGE_HANDLING_TIME = "average_handling_time", "Average Handling Time"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    business_profile = models.OneToOneField(
+    class StatusChoices(models.TextChoices):
+        ACTIVE = "active", "Active"
+        PAUSED = "paused", "Paused"
+        ARCHIVED = "archived", "Archived"
+
+    business_profile = models.ForeignKey(
         BusinessProfile,
-        related_name="agent_profile",
+        related_name="agent_profiles",
         on_delete=models.CASCADE,
     )
     user = models.ForeignKey(User, related_name="agent_profiles", on_delete=models.CASCADE)
     name = models.CharField(max_length=120)
+    status = models.CharField(max_length=24, choices=StatusChoices.choices, default=StatusChoices.ACTIVE, db_index=True)
     slug = models.SlugField(
         max_length=160,
         blank=True,
         help_text="Shareable slug segment used to route requests to this agent (e.g. 'agentnameai').",
     )
     role = models.CharField(max_length=120, blank=True)
+    responsibilities = models.JSONField(default=list, blank=True)
+    instructions = models.TextField(blank=True, default="")
     tone = models.CharField(max_length=60, blank=True)
     traits = models.JSONField(default=list, blank=True)
     escalation_rule = models.CharField(max_length=60, blank=True)

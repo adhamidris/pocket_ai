@@ -61,7 +61,7 @@ class PortalSseContractV1Tests(TestCase):
             registration_session=self.registration,
             name="SSE Corp",
             industry="Support",
-            metadata={FEATURE_FLAG_METADATA_KEY: {"sub_agents_v1": False}},
+            metadata={FEATURE_FLAG_METADATA_KEY: {"agent_workforce_v1": False}},
         )
         self.agent = AgentProfile.objects.create(
             business_profile=self.business,

@@ -47,7 +47,7 @@ class ChatPortalToolApprovalTests(TestCase):
             registration_session=self.registration,
             name="Approval Corp",
             industry="Support",
-            metadata={FEATURE_FLAG_METADATA_KEY: {"sub_agents_v1": True}},
+            metadata={FEATURE_FLAG_METADATA_KEY: {"agent_workforce_v1": True}},
         )
         self.agent = AgentProfile.objects.create(
             business_profile=self.business,
@@ -258,7 +258,7 @@ class ChatPortalRunApprovalTests(TestCase):
             registration_session=self.registration,
             name="Run Approval Corp",
             industry="Ops",
-            metadata={FEATURE_FLAG_METADATA_KEY: {"sub_agents_v1": True}},
+            metadata={FEATURE_FLAG_METADATA_KEY: {"agent_workforce_v1": True}},
         )
         self.agent = AgentProfile.objects.create(
             business_profile=self.business,
@@ -301,7 +301,7 @@ class ChatPortalRunApprovalTests(TestCase):
             created_by=self.user,
             title="Email something",
             status=AgentRunStatus.WAITING_APPROVAL,
-            run_spec_snapshot={"goal": "Email something"},
+            workflow_snapshot={"goal": "Email something"},
             metadata={
                 "pending_approval_id": str(self.approval.id),
             },
@@ -363,7 +363,7 @@ class ChatPortalPendingToolExecutionTests(TestCase):
             registration_session=self.registration,
             name="Pending Tool Corp",
             industry="Tech",
-            metadata={FEATURE_FLAG_METADATA_KEY: {"sub_agents_v1": True}},
+            metadata={FEATURE_FLAG_METADATA_KEY: {"agent_workforce_v1": True}},
         )
         self.agent = AgentProfile.objects.create(
             business_profile=self.business,
@@ -407,7 +407,7 @@ class ChatPortalPendingToolExecutionTests(TestCase):
             created_by=self.user,
             title="Email something with pending tool",
             status=AgentRunStatus.WAITING_APPROVAL,
-            run_spec_snapshot={"goal": "Email something"},
+            workflow_snapshot={"goal": "Email something"},
             metadata={
                 "pending_approval_id": str(self.approval.id),
                 "pending_tool_call": {

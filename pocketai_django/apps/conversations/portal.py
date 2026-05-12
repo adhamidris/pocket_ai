@@ -113,15 +113,12 @@ class ChatPortalService:
 
     def resolve_handle(self, business_slug: str, agent_slug: str) -> tuple[BusinessProfile, AgentProfile]:
         business = self._get_business_by_slug(business_slug)
-        try:
-            agent = business.agent_profile
-        except AgentProfile.DoesNotExist as exc:  # pragma: no cover - defensive (OneToOne)
-            raise PortalNotFoundError("Agent not configured for this business") from exc
-
-        if not agent.slug:
-            raise PortalNotFoundError("Agent does not have a shareable slug")
-
-        if agent.slug.lower() != agent_slug.lower():
+        agent = (
+            AgentProfile.objects.filter(business_profile=business, slug__iexact=agent_slug)
+            .select_related("business_profile")
+            .first()
+        )
+        if agent is None:
             raise PortalNotFoundError("Agent handle not found")
 
         return business, agent
@@ -524,7 +521,6 @@ class ChatPortalService:
         normalized = slugify(slug_value)
         business = (
             BusinessProfile.objects.filter(slug__iexact=normalized)
-            .select_related("agent_profile")
             .first()
         )
         if business is None:

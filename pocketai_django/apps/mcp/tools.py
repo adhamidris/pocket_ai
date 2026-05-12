@@ -1216,9 +1216,9 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
         required=(),
     ),
     _function_schema(
-        name="create_agent_run",
+        name="start_agent_run",
         description=(
-            "Create a background AgentRun (sub-agent) anchored to this conversation. "
+            "Create a background AgentRun (background agent) anchored to this conversation. "
             "Use this when the visitor asks for a long-running or multi-step task so the chat can continue "
             "while the work happens in the Tasks panel."
         ),
@@ -1285,7 +1285,7 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
     _function_schema(
         name="list_agent_runs",
         description=(
-            "List background runs (sub-agents) for this conversation. "
+            "List background runs (agent workforce) for this conversation. "
             "Returns status, title, and summary for each run so you can track progress and results."
         ),
         properties={
@@ -1328,9 +1328,9 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
     _function_schema(
         name="continue_agent_run",
         description=(
-            "Continue an existing background run (sub-agent) with a follow-up message. "
+            "Continue an existing background run (background agent) with a follow-up message. "
             "Use this to send additional instructions to a completed or waiting run instead of creating a new one. "
-            "The sub-agent will resume with its full conversation history."
+            "The background agent will resume with its full conversation history."
         ),
         properties={
             "run_id": {
@@ -1339,10 +1339,62 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
             },
             "message": {
                 "type": "string",
-                "description": "Follow-up instruction or message for the sub-agent.",
+                "description": "Follow-up instruction or message for the background agent.",
             },
         },
         required=("run_id", "message"),
+    ),
+    _function_schema(
+        name="list_agents",
+        description="List active agents in this business and their responsibilities so work can be routed to the right AI employee.",
+        properties={
+            "include_paused": {"type": "boolean", "description": "Include paused agents (default false)."},
+        },
+        required=(),
+    ),
+    _function_schema(
+        name="consult_agent",
+        description="Create an async request for another agent when their role or responsibilities are better suited to answer.",
+        properties={
+            "agent_id": {"type": "string", "description": "UUID of the agent to consult."},
+            "subject": {"type": "string", "description": "Short subject for the request."},
+            "question": {"type": "string", "description": "The concrete question or task for that agent."},
+            "context_refs": {
+                "type": "array",
+                "description": "Optional structured context references, not raw dumps.",
+                "items": {"type": "object"},
+            },
+        },
+        required=("agent_id", "question"),
+    ),
+    _function_schema(
+        name="search_memory",
+        description="Search scoped long-term memory for relevant facts, preferences, decisions, or workflow state.",
+        properties={
+            "query": {"type": "string", "description": "Search text."},
+            "scope": {"type": "string", "enum": ["workspace", "agent", "workflow", "run", "conversation", "crm_contact", "crm_company"]},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+        },
+        required=("query",),
+    ),
+    _function_schema(
+        name="save_memory",
+        description="Save a scoped memory item. Sensitive or behavior-changing memories are routed to review.",
+        properties={
+            "content": {"type": "string", "description": "Memory content."},
+            "kind": {"type": "string", "enum": ["fact", "preference", "policy", "decision", "instruction", "relationship", "state_note", "artifact_ref", "extracted_data"]},
+            "scope": {"type": "string", "enum": ["workspace", "agent", "workflow", "run", "conversation"]},
+            "key": {"type": "string"},
+            "sensitivity": {"type": "string", "enum": ["normal", "sensitive", "secret"]},
+            "visibility": {"type": "string", "enum": ["private", "shared"]},
+        },
+        required=("content",),
+    ),
+    _function_schema(
+        name="forget_memory",
+        description="Archive a memory item that is stale, wrong, or no longer needed.",
+        properties={"memory_id": {"type": "string", "description": "UUID of the memory item to archive."}},
+        required=("memory_id",),
     ),
     _function_schema(
         name="search_knowledge",
@@ -10231,7 +10283,7 @@ def _request_user_input_handler(
     }
 
 
-def _create_agent_run_handler(
+def _start_agent_run_handler(
     arguments: Mapping[str, object],
     *,
     conversation: Conversation,
@@ -10240,15 +10292,15 @@ def _create_agent_run_handler(
     del context
 
     feature_state = FeatureFlagService.snapshot(conversation.business_profile)
-    if not bool(getattr(feature_state, "sub_agents_v1", False)):
+    if not bool(getattr(feature_state, "agent_workforce_v1", False)):
         return {
-            "tool": "create_agent_run",
+            "tool": "start_agent_run",
             "status": "error",
             "error_code": "feature_disabled",
-            "error": "sub_agents_disabled",
+            "error": "agent_workforce_disabled",
             "hint": (
-                "Sub-agents are disabled for this business. "
-                "Enable the per-business feature flag `sub_agents_v1` or set `SUB_AGENTS_V1_GLOBAL_OVERRIDE=true` "
+                "Agent workforce are disabled for this business. "
+                "Enable the per-business feature flag `agent_workforce_v1` or set `AGENT_WORKFORCE_V1_GLOBAL_OVERRIDE=true` "
                 "and restart the server."
             ),
         }
@@ -10257,7 +10309,7 @@ def _create_agent_run_handler(
     convo_source = str(convo_meta.get("source") or "").strip().lower()
     if convo_source == "agent_run" or convo_meta.get("agent_run_id") or convo_meta.get("agentRunId"):
         return {
-            "tool": "create_agent_run",
+            "tool": "start_agent_run",
             "status": "error",
             "error_code": "nested_runs_forbidden",
             "error": "nested_runs_forbidden",
@@ -10267,7 +10319,7 @@ def _create_agent_run_handler(
     agent_profile = getattr(conversation, "agent_profile", None)
     if not agent_profile:
         return {
-            "tool": "create_agent_run",
+            "tool": "start_agent_run",
             "status": "error",
             "error_code": "missing_agent_profile",
             "error": "missing_agent_profile",
@@ -10277,11 +10329,11 @@ def _create_agent_run_handler(
     goal = str(arguments.get("goal") or "").strip()
     if not goal:
         return {
-            "tool": "create_agent_run",
+            "tool": "start_agent_run",
             "status": "error",
             "error_code": "validation_failed",
             "error": "missing_goal",
-            "hint": "Provide goal for create_agent_run.",
+            "hint": "Provide goal for start_agent_run.",
         }
 
     title = str(arguments.get("title") or "").strip()
@@ -10305,7 +10357,7 @@ def _create_agent_run_handler(
 
     if not actor_id:
         return {
-            "tool": "create_agent_run",
+            "tool": "start_agent_run",
             "status": "error",
             "error_code": "missing_actor_user",
             "error": "missing_actor_user",
@@ -10314,7 +10366,7 @@ def _create_agent_run_handler(
 
     if actor_id not in {business_owner_id, agent_user_id}:
         return {
-            "tool": "create_agent_run",
+            "tool": "start_agent_run",
             "status": "error",
             "error_code": "forbidden",
             "error": "forbidden",
@@ -10361,7 +10413,7 @@ def _create_agent_run_handler(
             "delegate",
             "delegat",
             "subagent",
-            "sub-agent",
+            "background agent",
             "sub agent",
             "background",
             "in the background",
@@ -10391,9 +10443,9 @@ def _create_agent_run_handler(
         Conversation,
         ConversationChannel,
     )
-    from apps.conversations.run_contracts import normalize_run_spec
+    from apps.conversations.workflow_contracts import normalize_workflow_instructions
 
-    run_spec_snapshot = normalize_run_spec(
+    workflow_snapshot = normalize_workflow_instructions(
         {
             "version": 1,
             "goal": goal[:6000],
@@ -10448,7 +10500,7 @@ def _create_agent_run_handler(
                 AgentRun.objects.filter(id=existing_run.id).update(metadata=next_meta, updated_at=now)
                 existing_run.metadata = next_meta
             return {
-                "tool": "create_agent_run",
+                "tool": "start_agent_run",
                 "status": "ok",
                 "run_id": str(existing_run.id),
                 "deduped": True,
@@ -10467,7 +10519,7 @@ def _create_agent_run_handler(
             agent_profile_id=agent_profile.id,
             conversation_id=conversation.id,
             created_by_id=actor_id,
-            run_spec_snapshot=run_spec_snapshot,
+            workflow_snapshot=workflow_snapshot,
             title=title[:200],
             source=AgentRunSource.CHAT,
             status=AgentRunStatus.QUEUED,
@@ -10512,7 +10564,7 @@ def _create_agent_run_handler(
         )
 
     return {
-        "tool": "create_agent_run",
+        "tool": "start_agent_run",
         "status": "ok",
         "run_id": str(run.id),
         "run": {
@@ -10867,7 +10919,7 @@ def _continue_agent_run_handler(
             "updated_at": now,
         }
         if next_spec_snapshot is not None:
-            update_fields["run_spec_snapshot"] = next_spec_snapshot
+            update_fields["workflow_snapshot"] = next_spec_snapshot
 
         AgentRun.objects.filter(id=run.id).update(**update_fields)
 
@@ -10900,6 +10952,204 @@ def _continue_agent_run_handler(
         "message_appended": True,
         "hint": "Run re-queued with your follow-up message. It will continue with full conversation history.",
     }
+
+
+def _list_agents_handler(
+    arguments: Mapping[str, object],
+    *,
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context
+    from apps.accounts.models import AgentProfile
+
+    include_paused = bool(arguments.get("include_paused"))
+    qs = AgentProfile.objects.filter(business_profile_id=conversation.business_profile_id).order_by("name")
+    if not include_paused:
+        qs = qs.filter(status="active")
+    return {
+        "tool": "list_agents",
+        "status": "ok",
+        "agents": [
+            {
+                "id": str(agent.id),
+                "name": agent.name,
+                "status": agent.status,
+                "role": agent.role or "",
+                "responsibilities": list(agent.responsibilities or []),
+                "tone": agent.tone or "",
+            }
+            for agent in qs[:50]
+        ],
+    }
+
+
+def _consult_agent_handler(
+    arguments: Mapping[str, object],
+    *,
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context
+    from apps.accounts.models import AgentProfile
+    from apps.conversations.models import AgentRequest, AgentRequestStatus
+
+    try:
+        target_id = uuid.UUID(str(arguments.get("agent_id") or arguments.get("agentId") or ""))
+    except (TypeError, ValueError):
+        return {"tool": "consult_agent", "status": "error", "error_code": "validation_failed", "error": "agent_id must be a UUID."}
+    question = str(arguments.get("question") or "").strip()
+    if not question:
+        return {"tool": "consult_agent", "status": "error", "error_code": "validation_failed", "error": "question is required."}
+    from_agent = getattr(conversation, "agent_profile", None)
+    target = AgentProfile.objects.filter(id=target_id, business_profile_id=conversation.business_profile_id).first()
+    if not from_agent or target is None:
+        return {"tool": "consult_agent", "status": "error", "error_code": "agent_not_found", "error": "Source or target agent not found."}
+    raw_refs = arguments.get("context_refs") or arguments.get("contextRefs") or []
+    agent_request = AgentRequest.objects.create(
+        business_profile_id=conversation.business_profile_id,
+        from_agent_profile=from_agent,
+        to_agent_profile=target,
+        conversation=conversation,
+        created_by=getattr(conversation, "owner_user", None),
+        status=AgentRequestStatus.OPEN,
+        subject=str(arguments.get("subject") or question[:120])[:240],
+        question=question[:8000],
+        context_refs=(raw_refs if isinstance(raw_refs, list) else [])[:20],
+    )
+    return {
+        "tool": "consult_agent",
+        "status": "ok",
+        "request_id": str(agent_request.id),
+        "to_agent": {"id": str(target.id), "name": target.name, "role": target.role or ""},
+        "hint": "Async agent request created. The target agent can answer through its inbox.",
+    }
+
+
+def _search_memory_handler(
+    arguments: Mapping[str, object],
+    *,
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context
+    from django.db.models import Q
+    from apps.conversations.models import MemoryItem, MemoryStatus, MemoryVisibility
+
+    query = str(arguments.get("query") or "").strip()
+    if not query:
+        return {"tool": "search_memory", "status": "error", "error_code": "validation_failed", "error": "query is required."}
+    limit = max(1, min(int(arguments.get("limit") or 10), 20))
+    qs = MemoryItem.objects.filter(business_profile_id=conversation.business_profile_id, status=MemoryStatus.ACTIVE).filter(
+        Q(visibility=MemoryVisibility.SHARED) | Q(agent_profile_id=conversation.agent_profile_id)
+    )
+    scope = str(arguments.get("scope") or "").strip().lower()
+    if scope:
+        qs = qs.filter(scope=scope)
+    qs = qs.filter(Q(content__icontains=query) | Q(key__icontains=query)).order_by("-updated_at")
+    return {
+        "tool": "search_memory",
+        "status": "ok",
+        "memory": [
+            {
+                "id": str(item.id),
+                "scope": item.scope,
+                "kind": item.kind,
+                "key": item.key,
+                "content": item.content[:1200],
+                "visibility": item.visibility,
+                "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+            }
+            for item in qs[:limit]
+        ],
+    }
+
+
+def _save_memory_handler(
+    arguments: Mapping[str, object],
+    *,
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context
+    from apps.conversations.models import (
+        MemoryAuditAction,
+        MemoryAuditEvent,
+        MemoryItem,
+        MemoryKind,
+        MemoryScope,
+        MemorySensitivity,
+        MemoryStatus,
+        MemoryVisibility,
+    )
+
+    content = str(arguments.get("content") or "").strip()
+    if not content:
+        return {"tool": "save_memory", "status": "error", "error_code": "validation_failed", "error": "content is required."}
+    kind = str(arguments.get("kind") or MemoryKind.FACT).strip().lower()
+    sensitivity = str(arguments.get("sensitivity") or MemorySensitivity.NORMAL).strip().lower()
+    status = MemoryStatus.PENDING_REVIEW if sensitivity in {MemorySensitivity.SENSITIVE, MemorySensitivity.SECRET} or kind == MemoryKind.INSTRUCTION else MemoryStatus.ACTIVE
+    item = MemoryItem.objects.create(
+        business_profile_id=conversation.business_profile_id,
+        agent_profile_id=conversation.agent_profile_id,
+        conversation=conversation if str(arguments.get("scope") or "") == MemoryScope.CONVERSATION else None,
+        scope=str(arguments.get("scope") or MemoryScope.AGENT).strip().lower(),
+        kind=kind,
+        key=str(arguments.get("key") or "")[:160],
+        content=content[:8000],
+        sensitivity=sensitivity,
+        visibility=str(arguments.get("visibility") or MemoryVisibility.SHARED).strip().lower(),
+        status=status,
+        source_type="mcp_tool",
+    )
+    MemoryAuditEvent.objects.create(
+        memory_item=item,
+        business_profile_id=conversation.business_profile_id,
+        actor_user=getattr(conversation, "owner_user", None) or getattr(conversation.agent_profile, "user", None),
+        action=MemoryAuditAction.CREATED,
+        after={
+            "scope": item.scope,
+            "kind": item.kind,
+            "key": item.key,
+            "content": item.content,
+            "visibility": item.visibility,
+            "sensitivity": item.sensitivity,
+            "status": item.status,
+        },
+        metadata={"source": "save_memory_tool"},
+    )
+    return {"tool": "save_memory", "status": "ok", "memory_id": str(item.id), "review_required": status == MemoryStatus.PENDING_REVIEW}
+
+
+def _forget_memory_handler(
+    arguments: Mapping[str, object],
+    *,
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context
+    from apps.conversations.models import MemoryAuditAction, MemoryAuditEvent, MemoryItem, MemoryStatus
+
+    try:
+        memory_id = uuid.UUID(str(arguments.get("memory_id") or arguments.get("memoryId") or ""))
+    except (TypeError, ValueError):
+        return {"tool": "forget_memory", "status": "error", "error_code": "validation_failed", "error": "memory_id must be a UUID."}
+    item = MemoryItem.objects.filter(id=memory_id, business_profile_id=conversation.business_profile_id).first()
+    if item is None:
+        return {"tool": "forget_memory", "status": "error", "error_code": "not_found", "error": "Memory item not found."}
+    before = {"status": item.status, "content": item.content, "scope": item.scope, "kind": item.kind, "key": item.key}
+    item.status = MemoryStatus.ARCHIVED
+    item.save(update_fields=["status", "updated_at"])
+    MemoryAuditEvent.objects.create(
+        memory_item=item,
+        business_profile_id=conversation.business_profile_id,
+        actor_user=getattr(conversation, "owner_user", None) or getattr(conversation.agent_profile, "user", None),
+        action=MemoryAuditAction.ARCHIVED,
+        before=before,
+        after={"status": item.status, "content": item.content, "scope": item.scope, "kind": item.kind, "key": item.key},
+        metadata={"source": "forget_memory_tool"},
+    )
+    return {"tool": "forget_memory", "status": "ok", "memory_id": str(item.id)}
 
 
 def _retrieve_earlier_context_handler(
@@ -12080,10 +12330,15 @@ _TOOL_HANDLERS: dict[str, ToolHandler] = {
     "mcp_search_tools": _mcp_search_tools_handler,
     "mcp_call_tool": _mcp_call_tool_handler,
     "request_user_input": _request_user_input_handler,
-    "create_agent_run": _create_agent_run_handler,
+    "start_agent_run": _start_agent_run_handler,
     "list_agent_runs": _list_agent_runs_handler,
     "get_agent_run": _get_agent_run_handler,
     "continue_agent_run": _continue_agent_run_handler,
+    "list_agents": _list_agents_handler,
+    "consult_agent": _consult_agent_handler,
+    "search_memory": _search_memory_handler,
+    "save_memory": _save_memory_handler,
+    "forget_memory": _forget_memory_handler,
     "search_knowledge": _search_knowledge_handler,
     "search_conversation_files": _search_conversation_files_handler,
     "read_knowledge": _read_knowledge_handler,

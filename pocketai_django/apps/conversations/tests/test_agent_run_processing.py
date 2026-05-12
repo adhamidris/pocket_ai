@@ -25,7 +25,7 @@ class AgentRunProcessingTests(TestCase):
             name="Acme Co",
             industry="Retail",
             status="active",
-            metadata={FEATURE_FLAG_METADATA_KEY: {"sub_agents_v1": True}},
+            metadata={FEATURE_FLAG_METADATA_KEY: {"agent_workforce_v1": True}},
         )
         self.agent = AgentProfile.objects.create(
             business_profile=self.business,
@@ -41,7 +41,7 @@ class AgentRunProcessingTests(TestCase):
             title="Test Run",
             status=AgentRunStatus.QUEUED,
             run_after=timezone.now(),
-            run_spec_snapshot={"goal": "Do something safely"},
+            workflow_snapshot={"goal": "Do something safely"},
             max_attempts=2,
         )
 
@@ -75,7 +75,7 @@ class AgentRunProcessingTests(TestCase):
             status=AgentRunStatus.RUNNING,
             started_at=timezone.now(),
             lease_expires_at=timezone.now(),
-            run_spec_snapshot={"goal": "Say Hello world"},
+            workflow_snapshot={"goal": "Say Hello world"},
             max_attempts=2,
         )
 

@@ -2,7 +2,7 @@
 Memory Extraction Service for Agent Runs
 
 Extracts structured facts and decisions from tool executions to persist
-in AgentRunMemoryItem for context preservation across turns.
+in MemoryItem for context preservation across turns.
 
 Uses a hybrid approach:
 - Rule-based extraction for known tool patterns (fast, deterministic)
@@ -29,7 +29,7 @@ class MemoryExtractionService:
     Extracts structured facts from tool executions for context preservation.
 
     This service analyzes tool results and extracts key information that should
-    be persisted as AgentRunMemoryItem records. This ensures that important
+    be persisted as MemoryItem records. This ensures that important
     data survives context compaction and approval flows.
     """
 
@@ -104,7 +104,7 @@ class MemoryExtractionService:
         arguments: dict[str, Any],
         result: dict[str, Any],
         user: Any | None = None,  # User
-    ) -> list[Any]:  # list[AgentRunMemoryItem]
+    ) -> list[Any]:  # list[MemoryItem]
         """
         Extract facts/decisions from a tool result and create memory items.
 
@@ -118,12 +118,12 @@ class MemoryExtractionService:
             user: Optional user who triggered the execution
 
         Returns:
-            List of created AgentRunMemoryItem records
+            List of created MemoryItem records
         """
-        from apps.conversations.models import AgentRunMemoryItem, AgentRunMemoryKind
+        from apps.conversations.models import MemoryItem, MemoryKind, MemoryScope, MemoryVisibility
 
         started = time.perf_counter()
-        created_items: list[AgentRunMemoryItem] = []
+        created_items: list[MemoryItem] = []
         llm_enabled = bool(getattr(settings, "MCP_MEMORY_LLM_EXTRACTION_ENABLED", False))
         llm_attempted = False
         llm_created = 0
@@ -148,18 +148,23 @@ class MemoryExtractionService:
                 continue
 
             # Determine the kind based on store_as
-            kind = AgentRunMemoryKind.EXTRACTED_DATA
+            kind = MemoryKind.EXTRACTED_DATA
             if store_as == "decision":
-                kind = AgentRunMemoryKind.DECISION
+                kind = MemoryKind.DECISION
             elif store_as == "fact":
-                kind = AgentRunMemoryKind.FACT
+                kind = MemoryKind.FACT
 
             # Truncate content to max length
             content_str = str(value)[:4000]
 
             try:
-                item = AgentRunMemoryItem.objects.create(
+                item = MemoryItem.objects.create(
+                    business_profile=run.business_profile,
+                    scope=MemoryScope.RUN,
+                    agent_profile=run.agent_profile,
+                    workflow=run.workflow,
                     run=run,
+                    conversation=run.conversation,
                     kind=kind,
                     key=f"{key_prefix}_{key}",
                     content=content_str,
@@ -169,6 +174,7 @@ class MemoryExtractionService:
                         "extracted_at": timezone.now().isoformat(),
                         "original_key": key,
                     },
+                    visibility=MemoryVisibility.PRIVATE,
                     created_by=user,
                 )
                 created_items.append(item)
@@ -186,10 +192,15 @@ class MemoryExtractionService:
             for item_data in llm_extracted:
                 try:
                     kind_str = item_data.get("kind", "extracted_data")
-                    kind = getattr(AgentRunMemoryKind, kind_str.upper(), AgentRunMemoryKind.EXTRACTED_DATA)
+                    kind = getattr(MemoryKind, kind_str.upper(), MemoryKind.EXTRACTED_DATA)
 
-                    item = AgentRunMemoryItem.objects.create(
+                    item = MemoryItem.objects.create(
+                        business_profile=run.business_profile,
+                        scope=MemoryScope.RUN,
+                        agent_profile=run.agent_profile,
+                        workflow=run.workflow,
                         run=run,
+                        conversation=run.conversation,
                         kind=kind,
                         key=item_data.get("key", f"{tool_name}_llm_extracted"),
                         content=str(item_data.get("content", ""))[:4000],
@@ -199,6 +210,7 @@ class MemoryExtractionService:
                             "extracted_at": timezone.now().isoformat(),
                             "confidence": item_data.get("confidence", 0.8),
                         },
+                        visibility=MemoryVisibility.PRIVATE,
                         created_by=user,
                     )
                     created_items.append(item)
@@ -474,9 +486,9 @@ def extract_workflow_state(
         user: Optional user
 
     Returns:
-        Created AgentRunMemoryItem or None
+        Created MemoryItem or None
     """
-    from apps.conversations.models import AgentRunMemoryItem, AgentRunMemoryKind
+    from apps.conversations.models import MemoryItem, MemoryKind, MemoryScope, MemoryVisibility
 
     try:
         content = f"Step {current_step}/{total_steps}: {step_description}"
@@ -489,12 +501,18 @@ def extract_workflow_state(
             "created_at": timezone.now().isoformat(),
         }
 
-        return AgentRunMemoryItem.objects.create(
+        return MemoryItem.objects.create(
+            business_profile=run.business_profile,
+            scope=MemoryScope.RUN,
+            agent_profile=run.agent_profile,
+            workflow=run.workflow,
             run=run,
-            kind=AgentRunMemoryKind.WORKFLOW_STATE,
+            conversation=run.conversation,
+            kind=MemoryKind.STATE_NOTE,
             key=f"workflow_step_{current_step}",
             content=content,
             payload=payload,
+            visibility=MemoryVisibility.PRIVATE,
             created_by=user,
         )
     except Exception as exc:

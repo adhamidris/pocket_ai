@@ -52,17 +52,17 @@ PORTAL_SPINNER_HINT_INSTRUCTIONS = (
     "When calling tools, include `__ui.spinner_text` (short label) in tool arguments for portal display."
 )
 
-SUB_AGENT_BACKGROUND_RUN_INSTRUCTIONS = textwrap.dedent(
+AGENT_WORKFORCE_BACKGROUND_RUN_INSTRUCTIONS = textwrap.dedent(
     """
     ---
 
-    ## Background Runs (Sub-Agents)
+    ## Background Runs (Agent Workforce)
 
     When the visitor asks for a long-running, multi-step, or operational task (multiple tools, multiple deliverables,
     or likely >1 minute), you MAY proactively delegate it to a background run so the chat stays responsive.
 
     **Creating runs:**
-    - Use `create_agent_run(goal=..., title=..., success_criteria=[...], constraints={...}, plan={...})`.
+    - Use `start_agent_run(goal=..., title=..., success_criteria=[...], constraints={...}, plan={...})`.
     - Prefer spawning at most ONE background run per user turn, unless the visitor explicitly asks for multiple.
     - Do not delegate simple Q&A or small single-step tasks.
     - If key details are missing, ask the visitor first instead of starting the run.
@@ -79,21 +79,21 @@ SUB_AGENT_BACKGROUND_RUN_INSTRUCTIONS = textwrap.dedent(
 
     **Continuing existing runs:**
     - Use `continue_agent_run(run_id=..., message=...)` to send follow-up instructions to an existing run.
-    - The sub-agent will resume with its FULL conversation history - it remembers everything.
+    - The background run will resume with its full execution conversation history.
     - Use this when: "now email that", "also do X", "send that to Y", "add more details".
     - Do NOT create a new run when you can continue an existing one.
-    - Runs automatically have access to available tools (sub-agent tools are blocked).
+    - Runs automatically have access to available tools. Starting further background runs from inside a run is blocked.
 
     **When to use each tool:**
-    - `create_agent_run` → Brand new multi-step task with no prior context needed
-    - `continue_agent_run` → Follow-up work on an existing task (sub-agent has context)
+    - `start_agent_run` → Brand new multi-step task with no prior context needed
+    - `continue_agent_run` → Follow-up work on an existing task
     - Direct tools (email_create_draft, etc.) → Simple one-shot actions you can do yourself
 
     **Example flow:**
-    1. Visitor: "Research competitor pricing" → `create_agent_run(goal="Research...")`
+    1. Visitor: "Research competitor pricing" → `start_agent_run(goal="Research...")`
     2. Run completes with research data
     3. Visitor: "Now email that to my boss" → `continue_agent_run(run_id=..., message="Email the research to boss@...")`
-    4. Same sub-agent continues, already has the research, just needs to email it
+    4. Same background run continues, already has the research, just needs to email it
     """
 ).strip()
 
@@ -327,56 +327,50 @@ def _conversation_memory_note(
             return text
         return text[: max(0, limit - 1)].rstrip() + "…"
 
-    metadata = conversation.metadata if isinstance(conversation.metadata, Mapping) else {}
-    memory_v2 = (
-        metadata.get("structured_memory_v2")
-        if isinstance(metadata.get("structured_memory_v2"), Mapping)
-        else {}
-    )
-
-    def _clean_list(value: object, *, limit: int) -> list[str]:
-        if limit <= 0:
-            return []
-        if not isinstance(value, list):
-            return []
-        items: list[str] = []
-        for item in value:
-            text = sanitize_text(str(item or "").strip())
-            if not text:
-                continue
-            if item_max_chars:
-                text = _clip(text, item_max_chars)
-            if text in items:
-                continue
-            items.append(text)
-            if len(items) >= limit:
-                break
-        return items
-
-    facts = _clean_list(memory_v2.get("facts"), limit=max_facts)
-    preferences = _clean_list(memory_v2.get("preferences"), limit=max_prefs)
-    open_tasks = _clean_list(memory_v2.get("open_tasks"), limit=max_tasks)
-    decisions = _clean_list(memory_v2.get("decisions"), limit=max_decisions)
-
+    facts: list[str] = []
+    preferences: list[str] = []
+    open_tasks: list[str] = []
+    decisions: list[str] = []
     artifact_lines: list[str] = []
-    raw_artifacts = memory_v2.get("artifact_refs")
-    if max_artifacts > 0 and isinstance(raw_artifacts, list):
-        for item in raw_artifacts:
-            if len(artifact_lines) >= max_artifacts:
-                break
-            if not isinstance(item, Mapping):
+
+    try:
+        from django.db.models import Q as DjangoQ
+        from apps.conversations.models import MemoryItem, MemoryKind, MemoryScope, MemoryStatus, MemoryVisibility
+
+        qs = (
+            MemoryItem.objects.filter(business_profile_id=conversation.business_profile_id, status=MemoryStatus.ACTIVE)
+            .filter(DjangoQ(visibility=MemoryVisibility.SHARED) | DjangoQ(agent_profile_id=conversation.agent_profile_id))
+            .filter(
+                DjangoQ(scope=MemoryScope.WORKSPACE)
+                | DjangoQ(scope=MemoryScope.AGENT, agent_profile_id=conversation.agent_profile_id)
+                | DjangoQ(scope=MemoryScope.CONVERSATION, conversation_id=conversation.id)
+            )
+            .order_by("-updated_at", "-created_at")[: max(10, max_facts + max_prefs + max_tasks + max_decisions + max_artifacts)]
+        )
+        seen: set[str] = set()
+        for item in qs:
+            key = sanitize_text(str(item.key or "").strip())
+            content = sanitize_text(str(item.content or "").strip())
+            if not content and not key:
                 continue
-            artifact_id = str(item.get("artifact_id") or "").strip()
-            if not artifact_id:
+            line = f"{key}: {content}" if key and content else (content or key)
+            if item_max_chars:
+                line = _clip(line, item_max_chars)
+            if line in seen:
                 continue
-            label = str(item.get("label") or "").strip()
-            status = str(item.get("status") or "").strip()
-            label = _clip(label, artifact_label_chars) if artifact_label_chars else label
-            suffix = f" ({status})" if status else ""
-            if label:
-                artifact_lines.append(f"- {artifact_id}: {label}{suffix}")
-            else:
-                artifact_lines.append(f"- {artifact_id}{suffix}")
+            seen.add(line)
+            if item.kind == MemoryKind.PREFERENCE and len(preferences) < max_prefs:
+                preferences.append(line)
+            elif item.kind == MemoryKind.DECISION and len(decisions) < max_decisions:
+                decisions.append(line)
+            elif item.kind == MemoryKind.STATE_NOTE and len(open_tasks) < max_tasks:
+                open_tasks.append(line)
+            elif item.kind == MemoryKind.ARTIFACT_REF and len(artifact_lines) < max_artifacts:
+                artifact_lines.append(f"- {_clip(line, artifact_label_chars) if artifact_label_chars else line}")
+            elif len(facts) < max_facts:
+                facts.append(line)
+    except Exception:  # pragma: no cover - defensive
+        pass
 
     has_structured = bool(facts or preferences or open_tasks or decisions or artifact_lines)
     summary = ""
@@ -420,7 +414,7 @@ def _build_run_memory_context(
     """
     Build structured memory context for an agent run.
 
-    This uses AgentRunMemoryItem records to preserve key facts/decisions
+    This uses run-scoped MemoryItem records to preserve key facts/decisions
     across approval flows and long-running tasks.
     """
     if not getattr(settings, "MCP_RUN_MEMORY_ENABLED", True):
@@ -455,10 +449,10 @@ def _build_run_memory_context(
         return text[: max(0, limit - 1)].rstrip() + "…"
 
     try:
-        from apps.conversations.models import AgentRunMemoryItem, AgentRunMemoryKind
+        from apps.conversations.models import MemoryItem, MemoryKind, MemoryScope, MemoryStatus
 
         qs = (
-            AgentRunMemoryItem.objects.filter(run_id=run_id)
+            MemoryItem.objects.filter(run_id=run_id, scope=MemoryScope.RUN, status=MemoryStatus.ACTIVE)
             .order_by("-created_at")
             .only("kind", "key", "content", "created_at")[:max_items]
         )
@@ -563,13 +557,13 @@ def _build_run_memory_context(
             line = f"{line} (stale)"
 
         kind = item.kind
-        if kind in {AgentRunMemoryKind.EXTRACTED_DATA, AgentRunMemoryKind.FACT}:
+        if kind in {MemoryKind.EXTRACTED_DATA, MemoryKind.FACT}:
             if len(facts) < max_facts:
                 facts.append(line)
-        elif kind == AgentRunMemoryKind.DECISION:
+        elif kind == MemoryKind.DECISION:
             if len(decisions) < max_decisions:
                 decisions.append(line)
-        elif kind == AgentRunMemoryKind.WORKFLOW_STATE:
+        elif kind == MemoryKind.STATE_NOTE and key.startswith("workflow_step_"):
             if len(workflow) < max_workflow:
                 workflow.append(line)
         else:
@@ -821,9 +815,9 @@ def build_messages(
             system_sections.append(PORTAL_SPINNER_HINT_INSTRUCTIONS.strip())
             try:
                 feature_state = FeatureFlagService.snapshot(business_profile)
-                subagents_enabled = bool(getattr(feature_state, "sub_agents_v1", False))
+                agent_workforce_enabled = bool(getattr(feature_state, "agent_workforce_v1", False))
             except Exception:  # pragma: no cover - best effort only
-                subagents_enabled = False
+                agent_workforce_enabled = False
 
             convo_meta = getattr(conversation, "metadata", None)
             convo_meta_map = convo_meta if isinstance(convo_meta, Mapping) else {}
@@ -839,8 +833,8 @@ def build_messages(
             agent_user_id = getattr(agent, "user_id", None) if agent else None
             actor_allowed = bool(actor_uuid and actor_uuid in {owner_id, agent_user_id})
 
-            if subagents_enabled and actor_allowed and not is_agent_run:
-                system_sections.append(SUB_AGENT_BACKGROUND_RUN_INSTRUCTIONS.strip())
+            if agent_workforce_enabled and actor_allowed and not is_agent_run:
+                system_sections.append(AGENT_WORKFORCE_BACKGROUND_RUN_INSTRUCTIONS.strip())
                 # Inject active runs context so the LLM knows about existing tasks
                 runs_context = _build_runs_context_summary(conversation)
                 if runs_context:
@@ -882,7 +876,7 @@ def build_messages(
 
         messages: list[Mapping[str, object]] = [{"role": "system", "content": system_message}]
 
-        # Determine if this is an execution conversation (sub-agent)
+        # Determine if this is an execution conversation for a background run.
         # Use is_agent_run which is already computed above, or check metadata directly
         convo_meta_for_history = getattr(conversation, "metadata", None)
         convo_meta_for_history_map = convo_meta_for_history if isinstance(convo_meta_for_history, Mapping) else {}
@@ -892,7 +886,7 @@ def build_messages(
             or convo_meta_for_history_map.get("agentRunId")
         )
 
-        # Execution conversations (sub-agents) get larger history to maintain context
+        # Execution conversations (agent workforce) get larger history to maintain context
         # across multi-step tool executions and approval flows
         if is_execution_conversation:
             history_limit = int(getattr(settings, "MCP_EXECUTION_HISTORY_LIMIT", 30))

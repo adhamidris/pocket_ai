@@ -33,8 +33,8 @@ class ChatPortalClient {
     this.chatSurface = container.getAttribute("data-chat-surface") || "public";
     const authenticatedChatAttr = (container.getAttribute("data-authenticated-chat") || "").toString().trim().toLowerCase();
     this.authenticatedChat = authenticatedChatAttr === "true" || authenticatedChatAttr === "1" || authenticatedChatAttr === "yes";
-    const subAgentsAttr = (container.getAttribute("data-subagents-enabled") || "").toString().trim().toLowerCase();
-    this.subAgentsEnabled = subAgentsAttr === "true" || subAgentsAttr === "1" || subAgentsAttr === "yes";
+    const agentRunsAttr = (container.getAttribute("data-agent-runs-enabled") || "").toString().trim().toLowerCase();
+    this.agentRunsEnabled = agentRunsAttr === "true" || agentRunsAttr === "1" || agentRunsAttr === "yes";
     this.currentStatus = container.getAttribute("data-initial-status") || "new";
     this.eventSource = null;
 	    this.awaitingReply = false;
@@ -245,7 +245,7 @@ class ChatPortalClient {
         if (ta) requestAnimationFrame(() => ta.focus());
       }
 
-      if (this.subAgentsEnabled) {
+      if (this.agentRunsEnabled) {
         this.initTasksPanel();
         this.initInboxPanel();
       } else {
@@ -5412,7 +5412,7 @@ class ChatPortalClient {
       }
     });
 
-    if (this.subAgentsEnabled) {
+    if (this.agentRunsEnabled) {
       this.eventSource.addEventListener("agentRunsSnapshot", (event) => {
         try {
           const payload = event && event.data ? JSON.parse(event.data) : null;
@@ -9584,8 +9584,8 @@ class ChatPortalClient {
       email_get_thread: "read email thread",
       search_knowledge: "search knowledge base",
       read_knowledge: "read documents",
-      create_agent_run: "start sub-agent",
-      continue_agent_run: "continue sub-agent",
+      start_agent_run: "start background run",
+      continue_agent_run: "continue background run",
     };
     if (Object.prototype.hasOwnProperty.call(mapping, normalized)) {
       return mapping[normalized];
@@ -10218,7 +10218,7 @@ class ChatPortalClient {
     const actions = card.querySelector("[data-tool-approval-actions]");
     if (actions) actions.remove();
 
-    // Default: collapsed in sub-agent previews until the user explicitly expands.
+    // Default: collapsed in background-run previews until the user explicitly expands.
     if (card.dataset.agentRunPreviewInit !== "true") {
       card.dataset.agentRunPreviewInit = "true";
       card.dataset.callApprovalDetailsUser = "true";

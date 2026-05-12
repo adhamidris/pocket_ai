@@ -914,13 +914,66 @@ def _serialize_document_detail(detail: DocumentDetail) -> dict:
     return payload
 
 
-@require_http_methods(["GET"])
+def _parse_json_object(request: HttpRequest) -> tuple[dict[str, object] | None, JsonResponse | None]:
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None, JsonResponse({"error": "INVALID_JSON", "message": "Request body must be valid JSON."}, status=HTTPStatus.BAD_REQUEST)
+    if not isinstance(payload, dict):
+        return None, JsonResponse({"error": "INVALID_JSON", "message": "Request body must be a JSON object."}, status=HTTPStatus.BAD_REQUEST)
+    return payload, None
+
+
+def _serialize_agent_summary(agent: AgentProfile) -> dict[str, object]:
+    return {
+        "id": str(agent.id),
+        "identifier": agent_identifier(agent.id),
+        "name": agent.name,
+        "status": getattr(agent, "status", "active"),
+        "role": agent.role or "",
+        "roleLabel": display_role_label(agent.role),
+        "responsibilities": list(agent.responsibilities or []),
+        "instructions": agent.instructions or "",
+        "tone": agent.tone or None,
+        "toneLabel": display_tone_label(agent.tone),
+        "traits": list(agent.traits or []),
+        "publicSlug": agent.slug or "",
+        "createdAt": _iso(agent.created_at),
+        "updatedAt": _iso(agent.updated_at),
+    }
+
+
+@require_http_methods(["GET", "POST"])
 def agents_collection(request: HttpRequest) -> JsonResponse:
     business_id = request.GET.get("business_id")
     business, error = _resolve_business_profile(request, business_id)
     if error:
         return error
     assert business is not None
+
+    if request.method == "POST":
+        payload, error = _parse_json_object(request)
+        if error:
+            return error
+        name = str((payload or {}).get("name") or "").strip()
+        if not name:
+            return JsonResponse({"error": "VALIDATION_ERROR", "message": "name is required."}, status=HTTPStatus.BAD_REQUEST)
+        status = str((payload or {}).get("status") or AgentProfile.StatusChoices.ACTIVE).strip().lower()
+        if status not in {choice for choice, _ in AgentProfile.StatusChoices.choices}:
+            return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid status."}, status=HTTPStatus.BAD_REQUEST)
+        agent = AgentProfile.objects.create(
+            business_profile=business,
+            user=request.user,
+            name=name[:120],
+            status=status,
+            role=str((payload or {}).get("role") or "")[:120],
+            responsibilities=list((payload or {}).get("responsibilities") or []),
+            instructions=str((payload or {}).get("instructions") or "")[:12000],
+            tone=str((payload or {}).get("tone") or "")[:60],
+            traits=list((payload or {}).get("traits") or []),
+            escalation_rule=str((payload or {}).get("escalationRule") or (payload or {}).get("escalation_rule") or "")[:60],
+        )
+        return JsonResponse({"agent": _serialize_agent_summary(agent)}, status=HTTPStatus.CREATED)
 
     q_name = request.GET.get("q_name") or request.GET.get("qName")
     role = request.GET.get("role")
@@ -957,6 +1010,7 @@ def agents_collection(request: HttpRequest) -> JsonResponse:
                 "id": str(item.id),
                 "identifier": agent_identifier(item.id),
                 "name": item.name,
+                "status": item.status,
                 "role": item.role,
                 "roleLabel": display_role_label(item.role),
                 "tone": item.tone,
@@ -981,6 +1035,32 @@ def agents_collection(request: HttpRequest) -> JsonResponse:
 
 
 @require_http_methods(["GET"])
+def agents_directory(request: HttpRequest) -> JsonResponse:
+    business_id = request.GET.get("business_id")
+    business, error = _resolve_business_profile(request, business_id)
+    if error:
+        return error
+    assert business is not None
+    agents = AgentProfile.objects.filter(business_profile=business).order_by("name")
+    return JsonResponse(
+        {
+            "agents": [
+                {
+                    "id": str(agent.id),
+                    "name": agent.name,
+                    "status": agent.status,
+                    "role": agent.role or "",
+                    "responsibilities": list(agent.responsibilities or []),
+                    "tone": agent.tone or "",
+                }
+                for agent in agents
+            ]
+        },
+        status=HTTPStatus.OK,
+    )
+
+
+@require_http_methods(["GET", "PATCH", "PUT", "DELETE"])
 def agent_detail_view(request: HttpRequest, agent_id: uuid.UUID) -> JsonResponse:
     business_id = request.GET.get("business_id")
     business, error = _resolve_business_profile(request, business_id)
@@ -988,13 +1068,48 @@ def agent_detail_view(request: HttpRequest, agent_id: uuid.UUID) -> JsonResponse
         return error
     assert business is not None
 
-    try:
-        detail = get_agent_detail(business_profile=business, agent_id=agent_id)
-    except AgentProfile.DoesNotExist:
+    agent_obj = AgentProfile.objects.filter(id=agent_id, business_profile=business).first()
+    if agent_obj is None:
         return JsonResponse(
             {"error": "AGENT_NOT_FOUND", "message": "Agent profile not found."},
             status=HTTPStatus.NOT_FOUND,
         )
+    if request.method == "DELETE":
+        agent_obj.status = AgentProfile.StatusChoices.ARCHIVED
+        agent_obj.save(update_fields=["status", "updated_at"])
+        return JsonResponse({}, status=HTTPStatus.NO_CONTENT)
+    if request.method in {"PATCH", "PUT"}:
+        payload, error = _parse_json_object(request)
+        if error:
+            return error
+        updates: list[str] = []
+        for public, field, limit in (
+            ("name", "name", 120),
+            ("status", "status", 24),
+            ("role", "role", 120),
+            ("instructions", "instructions", 12000),
+            ("tone", "tone", 60),
+            ("escalationRule", "escalation_rule", 60),
+        ):
+            if public in payload or field in payload:
+                raw = payload.get(public) if public in payload else payload.get(field)
+                value = str(raw or "").strip()[:limit]
+                if field == "status" and value not in {choice for choice, _ in AgentProfile.StatusChoices.choices}:
+                    return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid status."}, status=HTTPStatus.BAD_REQUEST)
+                setattr(agent_obj, field, value)
+                updates.append(field)
+        for public, field in (("responsibilities", "responsibilities"), ("traits", "traits")):
+            if public in payload and isinstance(payload.get(public), list):
+                setattr(agent_obj, field, list(payload.get(public) or []))
+                updates.append(field)
+        if updates:
+            agent_obj.save(update_fields=sorted(set([*updates, "updated_at"])))
+        return JsonResponse({"agent": _serialize_agent_summary(agent_obj)}, status=HTTPStatus.OK)
+
+    try:
+        detail = get_agent_detail(business_profile=business, agent_id=agent_id)
+    except AgentProfile.DoesNotExist:
+        return JsonResponse({"error": "AGENT_NOT_FOUND", "message": "Agent profile not found."}, status=HTTPStatus.NOT_FOUND)
     capability_graph = resolve_agent_capabilities(
         AgentProfile.objects.select_related("business_profile")
         .prefetch_related("action_permissions", "allowed_documents")
@@ -1007,8 +1122,11 @@ def agent_detail_view(request: HttpRequest, agent_id: uuid.UUID) -> JsonResponse
             "id": str(detail.summary.id),
             "identifier": agent_identifier(detail.summary.id),
             "name": detail.summary.name,
+            "status": agent_obj.status,
             "role": detail.summary.role,
             "roleLabel": display_role_label(detail.summary.role),
+            "responsibilities": list(agent_obj.responsibilities or []),
+            "instructions": agent_obj.instructions or "",
             "tone": detail.summary.tone,
             "toneLabel": display_tone_label(detail.summary.tone),
             "publicSlug": detail.summary.public_slug,
