@@ -1,20 +1,17 @@
 {% extends "frontend/base_app.html" %}
 {% load i18n %}
 
-{% block title %}{% trans "MCP Connector (BETA)" %} | Pocket AI{% endblock %}
+{% block title %}{% trans "Connectors" %} | Pocket AI{% endblock %}
 
 {% block content %}
-<div class="h-screen bg-background flex overflow-hidden">
-  {% include "frontend/components/dashboard/sidebar.html" with active="mcp" user_name=user_name %}
+<div class="connectors-page h-screen bg-background flex overflow-hidden">
+  {% include "frontend/components/dashboard/sidebar.html" with active="connectors" user_name=user_name %}
   <main class="flex-1 overflow-auto">
     <div class="w-full px-4 md:px-6 lg:px-8 py-6 space-y-6">
       <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div class="space-y-1.5">
-          <div class="flex flex-wrap items-center gap-2">
-            <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">{% trans "MCP Connector" %}</h1>
-            <span class="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-400">{% trans "Beta" %}</span>
-          </div>
-          <p class="text-sm text-muted-foreground">{% trans "Connect MCP servers, toggle them on/off, and control which agents can use them." %}</p>
+          <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">{% trans "Connectors" %}</h1>
+          <p class="text-sm text-muted-foreground">{% trans "Connect native integrations and MCP servers, then control which agents can use them." %}</p>
         </div>
         <div class="flex flex-wrap items-center justify-start md:justify-end gap-2">
           <button
@@ -32,34 +29,60 @@
             <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
             </svg>
-            {% trans "Add MCP server" %}
+            {% trans "Add custom MCP server" %}
           </button>
         </div>
       </header>
-      <section class="space-y-4" data-mcp-tabs data-active-tab="industry">
-        <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div class="inline-flex rounded-lg border border-border/40 bg-muted/70 p-1" data-tabs-list>
-            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase transition-colors bg-primary text-primary-foreground shadow-sm" data-tab-button="industry">{% trans "Industry Tools" %}</button>
-            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase transition-colors text-muted-foreground hover:text-primary" data-tab-button="all">{% trans "All MCPs" %}</button>
-            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase transition-colors text-muted-foreground hover:text-primary" data-tab-button="connected">{% trans "Connected" %}</button>
+      <div class="rounded-xl border border-border/60 bg-muted/30 p-4 text-sm hidden" data-mcp-flash role="status" aria-live="polite"></div>
+
+      <section class="connectors-section">
+        <div class="connectors-section__header">
+          <div>
+            <div class="connectors-eyebrow">{% trans "Connected" %}</div>
+            <p class="connectors-section__copy">{% trans "All active connector accounts and MCP servers in one place." %}</p>
           </div>
-	          <div class="flex flex-wrap items-center gap-2 md:ml-auto">
-	            <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-refresh>
-                <svg class="h-3.5 w-3.5 text-muted-foreground" data-mcp-refresh-icon xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M3 12a9 9 0 0 1 15.3-6.3" />
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M18.3 3.7V8h-4.3" />
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 0 1-15.3 6.3" />
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M5.7 20.3V16H10" />
-                </svg>
-                <span data-mcp-refresh-label>{% trans "Refresh" %}</span>
-	            </button>
-	          </div>
-	        </div>
+          <div class="connectors-section__actions">
+            <div class="connectors-count" data-mcp-count>—</div>
+            <button type="button" class="connectors-btn connectors-btn--outline" data-mcp-refresh>
+              <svg class="h-3.5 w-3.5 text-muted-foreground" data-mcp-refresh-icon xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 12a9 9 0 0 1 15.3-6.3" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M18.3 3.7V8h-4.3" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 0 1-15.3 6.3" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5.7 20.3V16H10" />
+              </svg>
+              <span data-mcp-refresh-label>{% trans "Refresh" %}</span>
+            </button>
+          </div>
+        </div>
+        <div class="connectors-list" data-mcp-connection-list>
+          <div class="connectors-empty">{% trans "Loading connectors..." %}</div>
+        </div>
+      </section>
 
-        <div class="rounded-xl border border-border/60 bg-muted/30 p-4 text-sm hidden" data-mcp-flash role="status" aria-live="polite"></div>
+      <section class="space-y-4" data-mcp-tabs data-active-tab="native">
+        <div class="connectors-section__header">
+          <div>
+            <div class="connectors-eyebrow">{% trans "Add Connectors" %}</div>
+            <p class="connectors-section__copy">{% trans "Choose a first-party native integration or connect an MCP server from the marketplace." %}</p>
+          </div>
+        </div>
+        <div class="connector-segmented" data-tabs-list>
+          <button type="button" class="connector-segmented__button is-active" data-tab-button="native">{% trans "Native integrations" %}</button>
+          <button type="button" class="connector-segmented__button" data-tab-button="mcp">{% trans "MCP marketplace" %}</button>
+        </div>
 
-        <!-- INDUSTRY TOOLS TAB -->
-        <div class="space-y-6" data-tab-panel="industry">
+        <div class="space-y-4" data-tab-panel="native">
+          <div class="connectors-panel">
+            <div>
+              <div class="text-sm font-semibold text-foreground">{% trans "Available native integrations" %}</div>
+              <div class="text-xs text-muted-foreground">{% trans "First-party OAuth connections hosted directly by Pocket AI." %}</div>
+            </div>
+            <div class="text-xs text-muted-foreground" data-native-marketplace-count>—</div>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" data-native-marketplace-grid></div>
+        </div>
+
+        <div class="space-y-6 hidden" data-tab-panel="mcp">
           <div class="rounded-xl border border-border/70 bg-background/60 p-4">
             <div class="flex items-center justify-between gap-3">
               <div>
@@ -81,10 +104,7 @@
             </div>
           </div>
           <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" data-mcp-common-grid></div>
-        </div>
 
-        <!-- ALL MCPs TAB -->
-        <div class="space-y-4 hidden" data-tab-panel="all">
           <div class="rounded-xl border border-border/70 bg-background/60 p-4">
             <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
@@ -102,23 +122,6 @@
           </div>
           <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" data-mcp-marketplace-grid></div>
         </div>
-
-        <!-- CONNECTED TAB -->
-	        <div class="space-y-4 hidden" data-tab-panel="connected">
-	          <div class="rounded-xl border border-border/70 bg-background/60 p-4">
-	            <div class="flex items-center justify-between gap-3">
-	              <div>
-	                <div class="text-sm font-semibold text-foreground">{% trans "Your Connected MCPs" %}</div>
-	                <div class="text-xs text-muted-foreground">{% trans "Enable/disable connections, test connectivity, and manage agent opt-outs." %}</div>
-	              </div>
-	              <div class="text-xs text-muted-foreground" data-mcp-count>—</div>
-	            </div>
-	          </div>
-
-	          <div class="space-y-3" data-mcp-connection-list>
-	            <div class="rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">{% trans "Loading MCP connections…" %}</div>
-	          </div>
-	        </div>
       </section>
     </div>
   </main>
@@ -130,8 +133,140 @@
       transform: rotate(360deg);
     }
   }
+  .connectors-page,
+  .connectors-page * {
+    box-sizing: border-box;
+  }
+  .connectors-section,
+  .connectors-panel {
+    border: 1px solid hsl(var(--border) / 0.72);
+    border-radius: 14px;
+    background: hsl(var(--card) / 0.96);
+    box-shadow: 0 10px 28px hsl(215 25% 8% / 0.06);
+  }
+  .connectors-section {
+    padding: 1rem;
+  }
+  .connectors-panel {
+    padding: 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+  .connectors-section__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .connectors-section__actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.65rem;
+    flex-wrap: wrap;
+  }
+  .connectors-eyebrow {
+    color: hsl(var(--muted-foreground));
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+  .connectors-section__copy {
+    margin-top: 0.25rem;
+    color: hsl(var(--muted-foreground));
+    font-size: 0.78rem;
+    line-height: 1.45;
+  }
+  .connectors-count {
+    color: hsl(var(--muted-foreground));
+    font-size: 0.74rem;
+    white-space: nowrap;
+  }
+  .connectors-list {
+    display: grid;
+    gap: 0.75rem;
+  }
+  .connectors-empty {
+    border: 1px dashed hsl(var(--border) / 0.75);
+    border-radius: 12px;
+    background: hsl(var(--muted) / 0.2);
+    color: hsl(var(--muted-foreground));
+    padding: 1rem;
+    font-size: 0.82rem;
+  }
+  .connectors-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    min-height: 2.15rem;
+    border-radius: 8px;
+    padding: 0.48rem 0.8rem;
+    font-size: 0.76rem;
+    font-weight: 650;
+    line-height: 1;
+    transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast), opacity var(--transition-fast);
+  }
+  .connectors-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.58;
+  }
+  .connectors-btn--outline {
+    border: 1px solid hsl(var(--input));
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+  }
+  .connectors-btn--outline:hover {
+    border-color: hsl(var(--border));
+    background: hsl(var(--accent));
+    color: hsl(var(--accent-foreground));
+  }
+  .connector-segmented {
+    display: flex;
+    width: 100%;
+    gap: 0.25rem;
+    border: 1px solid hsl(var(--border) / 0.78);
+    border-radius: 12px;
+    background: hsl(var(--muted) / 0.58);
+    padding: 0.25rem;
+  }
+  .connector-segmented__button {
+    flex: 1 1 0;
+    min-height: 2.3rem;
+    border: 0;
+    border-radius: 9px;
+    background: transparent;
+    color: hsl(var(--muted-foreground));
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    transition: background var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
+  }
+  .connector-segmented__button:hover {
+    color: hsl(var(--foreground));
+  }
+  .connector-segmented__button.is-active {
+    background: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
+    box-shadow: 0 8px 18px hsl(var(--primary) / 0.22);
+  }
   [data-mcp-refresh].is-loading [data-mcp-refresh-icon] {
     animation: mcp-refresh-spin 0.9s linear infinite;
+  }
+  @media (max-width: 640px) {
+    .connectors-section__header,
+    .connectors-panel {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .connectors-section__actions {
+      justify-content: space-between;
+    }
   }
 </style>
 
@@ -324,14 +459,15 @@
     }
 
     var tabRoot = document.querySelector("[data-mcp-tabs]");
-    var industryPanel = document.querySelector('[data-tab-panel="industry"]');
-    var allPanel = document.querySelector('[data-tab-panel="all"]');
-    var connectedPanel = document.querySelector('[data-tab-panel="connected"]');
+    var nativePanel = document.querySelector('[data-tab-panel="native"]');
+    var mcpPanel = document.querySelector('[data-tab-panel="mcp"]');
 	    var listEl = document.querySelector("[data-mcp-connection-list]");
 	    var countEl = document.querySelector("[data-mcp-count]");
 	    var flashEl = document.querySelector("[data-mcp-flash]");
 	    var marketplaceGrid = document.querySelector("[data-mcp-marketplace-grid]");
 	    var marketplaceCount = document.querySelector("[data-mcp-marketplace-count]");
+    var nativeMarketplaceGrid = document.querySelector("[data-native-marketplace-grid]");
+    var nativeMarketplaceCount = document.querySelector("[data-native-marketplace-count]");
 
     // New elements for industry tools
     var industryGrid = document.querySelector("[data-mcp-industry-grid]");
@@ -344,6 +480,7 @@
 
     // State for filtering
     var cachedMarketplace = [];
+    var cachedNativeMarketplace = [];
     var cachedIndustryTools = [];
     var cachedCommonTools = [];
     var cachedCategories = [];
@@ -447,39 +584,26 @@
       }
 
     function setTab(tab) {
-      var industryBtn = document.querySelector('[data-tab-button="industry"]');
-      var allBtn = document.querySelector('[data-tab-button="all"]');
-      var connectedBtn = document.querySelector('[data-tab-button="connected"]');
-      var active = ["industry", "all", "connected"].includes(tab) ? tab : "industry";
+      var nativeBtn = document.querySelector('[data-tab-button="native"]');
+      var mcpBtn = document.querySelector('[data-tab-button="mcp"]');
+      var active = ["native", "mcp"].includes(tab) ? tab : "native";
       
       if (tabRoot) {
         tabRoot.setAttribute("data-active-tab", active);
       }
-      if (industryPanel) {
-        industryPanel.classList.toggle("hidden", active !== "industry");
+      if (nativePanel) {
+        nativePanel.classList.toggle("hidden", active !== "native");
       }
-      if (allPanel) {
-        allPanel.classList.toggle("hidden", active !== "all");
-      }
-      if (connectedPanel) {
-        connectedPanel.classList.toggle("hidden", active !== "connected");
+      if (mcpPanel) {
+        mcpPanel.classList.toggle("hidden", active !== "mcp");
       }
 
-      var activeClasses = ["bg-primary", "text-primary-foreground", "shadow-sm"];
-      var inactiveClasses = ["text-muted-foreground", "hover:text-primary"];
-
-      [industryBtn, allBtn, connectedBtn].forEach(function (btn) {
+      [nativeBtn, mcpBtn].forEach(function (btn) {
         if (!btn) return;
         var btnTab = btn.getAttribute("data-tab-button");
         var isActive = btnTab === active;
-        
-        if (isActive) {
-          btn.classList.add(...activeClasses);
-          btn.classList.remove(...inactiveClasses);
-        } else {
-          btn.classList.remove(...activeClasses);
-          btn.classList.add(...inactiveClasses);
-        }
+        btn.classList.toggle("is-active", isActive);
+        btn.setAttribute("aria-selected", isActive ? "true" : "false");
       });
     }
 
@@ -588,10 +712,17 @@
             else providerLabel = providerLabel || "Email";
             showFlash("Connected " + providerLabel + " email account.", "success");
             loadAll();
+          } else if (data.type === "integration_oauth_success") {
+            showFlash("Connected " + (data.identifier || data.integrationType || "native integration") + ".", "success");
+            loadAll();
           } else if (data.type === "email_oauth_error") {
             var emailError = (data.error || "unknown_error").toString();
             var emailHint = data.hint ? (" " + String(data.hint)) : "";
             showFlash("Email connection failed: " + emailError + "." + emailHint, "error");
+          } else if (data.type === "integration_oauth_error") {
+            var integrationError = (data.error || "unknown_error").toString();
+            var integrationHint = data.hint ? (" " + String(data.hint)) : "";
+            showFlash("Native integration connection failed: " + integrationError + "." + integrationHint, "error");
           } else if (data.type === "mcp_oauth_error") {
             var code = (data.error || "unknown_error").toString();
             var hint = data.hint ? (" " + String(data.hint)) : "";
@@ -1298,69 +1429,122 @@
       });
     }
 
-    function renderConnections(connections, emailAccounts) {
+    function isNativeMarketplaceItem(item) {
+      var type = item && item.connectionType ? String(item.connectionType) : "";
+      return type === "email_oauth" || type === "integration_oauth";
+    }
+
+    function getNativeAccountKey(account) {
+      if (!account) return "";
+      if (account.marketplaceKey) return String(account.marketplaceKey);
+      if (account.integration_type) return String(account.integration_type);
+      if (account.provider === "google") return "gmail";
+      if (account.provider === "microsoft") return "outlook";
+      return String(account.provider || "");
+    }
+
+    function getConnectorLogoHtml(key, label) {
+      var logo = mapToolToLogo(key || label);
+      if (key === "gmail") logo = "/static/img/mcp/gmail.svg";
+      if (key === "outlook") logo = "/static/img/mcp/microsoftoutlook.svg";
+      if (key === "google_calendar") logo = "/static/img/mcp/googlecalendar.svg";
+      if (key === "google_drive") logo = "/static/img/mcp/googledrive.svg";
+      if (key === "onedrive") logo = "/static/img/mcp/microsoftonedrive.svg";
+      if (logo) {
+        return '<img src="' + escapeHtml(logo) + '" alt="' + escapeHtml(label || "Connector") + '" class="h-8 w-8 rounded-md object-contain bg-muted/30 p-1" loading="lazy" decoding="async" />';
+      }
+      return '<span class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border/60 bg-muted/40 text-xs font-semibold text-muted-foreground">' + escapeHtml(String(label || "?").charAt(0).toUpperCase() || "?") + '</span>';
+    }
+
+    function renderSourceBadge(source) {
+      if (source === "native") {
+        return '<span class="inline-flex items-center rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-400">Native</span>';
+      }
+      return '<span class="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-400">MCP</span>';
+    }
+
+    function renderNativeMarketplace(items) {
+      if (!nativeMarketplaceGrid) return;
+      var rows = items || [];
+      if (nativeMarketplaceCount) {
+        nativeMarketplaceCount.textContent = rows.length ? rows.length + " integrations" : "All connected";
+      }
+      nativeMarketplaceGrid.innerHTML = "";
+      if (!rows.length) {
+        nativeMarketplaceGrid.innerHTML = '<div class="col-span-full rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">All native integrations are connected.</div>';
+        return;
+      }
+      rows.forEach(function (item) {
+        renderMcpCard(item, nativeMarketplaceGrid);
+      });
+    }
+
+    function renderConnections(connections, emailAccounts, integrationAccounts) {
       if (!listEl) return;
       var mcpRows = connections || [];
       var emailRows = emailAccounts || [];
-      var totalCount = mcpRows.length + emailRows.length;
+      var integrationRows = integrationAccounts || [];
+      var totalCount = mcpRows.length + emailRows.length + integrationRows.length;
       if (countEl) {
         countEl.textContent = totalCount ? totalCount + " connections" : "No connections";
       }
       if (!totalCount) {
-        listEl.innerHTML = '<div class="rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">No connections yet. Add one from the marketplace or manually.</div>';
+        listEl.innerHTML = '<div class="connectors-empty">No connectors yet. Add a native integration or MCP server below.</div>';
         return;
       }
       listEl.innerHTML = "";
 
-      // Render email accounts first (native Gmail/Outlook)
-      emailRows.forEach(function (account) {
+      emailRows.concat(integrationRows).forEach(function (account) {
+        var isEmail = account.type === "email_account";
+        var key = getNativeAccountKey(account);
+        var name = isEmail
+          ? (account.name || "Email account")
+          : (key ? key.replace(/_/g, " ").replace(/\b\w/g, function (char) { return char.toUpperCase(); }) : "Native integration");
+        var identifier = isEmail ? (account.emailAddress || "") : (account.account_identifier || "");
         var statusBadge = account.status === "connected"
           ? '<span class="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-400">Connected</span>'
           : account.status === "error"
           ? '<span class="inline-flex items-center rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-400">Error</span>'
           : '<span class="inline-flex items-center rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">' + escapeHtml(account.status || "Unknown") + '</span>';
 
-        var sendModeBadge = account.sendMode === "auto_send"
+        var sendModeBadge = isEmail && account.sendMode === "auto_send"
           ? '<span class="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-400" title="Emails send automatically">Auto-Send</span>'
-          : '<span class="inline-flex items-center rounded-full border border-teal-500/30 bg-teal-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-teal-400" title="Emails require approval before sending">Draft + Approval</span>';
-
-        var providerIcon = account.provider === "google"
-          ? '<img src="/static/img/mcp/gmail.svg" alt="Gmail" class="h-5 w-5" />'
-          : account.provider === "microsoft"
-          ? '<img src="/static/img/mcp/microsoftteams.svg" alt="Outlook" class="h-5 w-5" />'
-          : '<span class="h-5 w-5 flex items-center justify-center text-xs">📧</span>';
+          : isEmail
+            ? '<span class="inline-flex items-center rounded-full border border-teal-500/30 bg-teal-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-teal-400" title="Emails require approval before sending">Draft + Approval</span>'
+            : "";
 
         var errorMeta = account.lastError ? ('<div class="text-[11px] text-rose-400 truncate" title="' + escapeHtml(account.lastError) + '">' + escapeHtml(account.lastError) + "</div>") : "";
-
         var el = document.createElement("div");
-        el.setAttribute("data-email-account-card", account.id || "");
+        el.setAttribute("data-native-account-card", account.id || "");
         el.className = "rounded-xl border border-border/70 bg-background/60 p-4 shadow-sm";
         el.innerHTML =
           '<div class="flex items-start justify-between gap-4">' +
-            '<div class="min-w-0 space-y-1">' +
+            '<div class="flex min-w-0 gap-3">' +
+              '<div class="shrink-0">' + getConnectorLogoHtml(key, name) + '</div>' +
+              '<div class="min-w-0 space-y-1">' +
               '<div class="flex flex-wrap items-center gap-2">' +
-                providerIcon +
-                '<div class="text-sm font-semibold text-foreground truncate">' + escapeHtml(account.name || "Email Account") + "</div>" +
+                '<div class="text-sm font-semibold text-foreground truncate">' + escapeHtml(name) + "</div>" +
                 statusBadge +
                 sendModeBadge +
-                '<span class="inline-flex items-center rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-400">Native</span>' +
+                renderSourceBadge("native") +
               "</div>" +
-              '<div class="text-xs text-muted-foreground truncate">' + escapeHtml(account.emailAddress || "") + "</div>" +
+              '<div class="text-xs text-muted-foreground truncate">' + escapeHtml(identifier || account.provider || "") + "</div>" +
               '<div class="text-[11px] text-muted-foreground">' +
-                "Email read/search/send" +
+                escapeHtml(String(account.enabledToolCount || 0)) + "/" + escapeHtml(String(account.totalToolCount || 0)) + " tools enabled" +
                 (account.lastHealthCheckedAt ? " · Last checked " + new Date(account.lastHealthCheckedAt).toLocaleDateString() : "") +
               "</div>" +
               errorMeta +
+              "</div>" +
             "</div>" +
             '<div class="flex flex-col items-end gap-2 shrink-0">' +
-              '<button type="button" class="inline-flex items-center gap-2 rounded-md border border-rose-500/50 bg-rose-500/10 text-rose-400 px-3 py-2 text-xs font-medium hover:bg-rose-500/20 hover:border-rose-500" data-email-disconnect="' + escapeHtml(account.id) + '" title="Disconnect email account">' +
+              '<button type="button" class="inline-flex items-center gap-2 rounded-md border border-rose-500/50 bg-rose-500/10 text-rose-400 px-3 py-2 text-xs font-medium hover:bg-rose-500/20 hover:border-rose-500" data-native-disconnect="' + escapeHtml(account.id) + '" data-native-disconnect-kind="' + (isEmail ? "email" : "integration") + '" data-native-disconnect-key="' + escapeHtml(key) + '" title="Disconnect native connector">' +
                 '<svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>' +
                 'Disconnect' +
               '</button>' +
             "</div>" +
           "</div>";
 
-        el.__emailAccount = account;
+        el.__nativeAccount = account;
         listEl.appendChild(el);
       });
 
@@ -1398,10 +1582,13 @@
 	        el.className = "rounded-xl border border-border/70 bg-background/60 p-4 shadow-sm";
 	        el.innerHTML =
 	          '<div class="flex items-start justify-between gap-4">' +
-	            '<div class="min-w-0 space-y-1">' +
+	            '<div class="flex min-w-0 gap-3">' +
+                '<div class="shrink-0">' + getConnectorLogoHtml(conn.marketplaceKey || conn.name, conn.name || "MCP Connection") + '</div>' +
+	              '<div class="min-w-0 space-y-1">' +
 	              '<div class="flex flex-wrap items-center gap-2">' +
 	                '<div class="text-sm font-semibold text-foreground truncate">' + escapeHtml(conn.name || "MCP Connection") + "</div>" +
 	                statusBadge +
+                  renderSourceBadge("mcp") +
 	                approvalBadge +
 	                (conn.sourceType === "marketplace" ? '<span class="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-400">Marketplace</span>' : "") +
 	                testingBadge +
@@ -1413,6 +1600,7 @@
 	                (conn.lastTestedAt ? " · Tested" : "") +
 	              "</div>" +
 	              errorMeta +
+                "</div>" +
 	            "</div>" +
 	            '<div class="flex flex-col items-end gap-2 shrink-0">' +
 	              '<label class="inline-flex items-center gap-2 text-xs text-muted-foreground">' +
@@ -1454,12 +1642,13 @@
             setRefreshState("loading");
           }
 			      if (!listEl) return;
-			      listEl.innerHTML = '<div class="rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">Loading MCP connections…</div>';
+			      listEl.innerHTML = '<div class="connectors-empty">Loading connectors...</div>';
+        if (nativeMarketplaceGrid) nativeMarketplaceGrid.innerHTML = '<div class="col-span-full rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">Loading native integrations...</div>';
         if (industryGrid) industryGrid.innerHTML = '<div class="col-span-full rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">Loading tools…</div>';
         if (commonGrid) commonGrid.innerHTML = '<div class="col-span-full rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">Loading tools…</div>';
         if (marketplaceGrid) marketplaceGrid.innerHTML = '<div class="col-span-full rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">Loading tools…</div>';
 
-	      return apiFetch("/api/mcp/connections/", { method: "GET" }).then(function (data) {
+	      return apiFetch("/api/mcp/connections/?business_id=" + encodeURIComponent(businessId || "") + "&surface=integrations", { method: "GET" }).then(function (data) {
           // Update connected keys set for visual feedback
           cachedConnectedKeys = new Set();
           (data.connections || []).forEach(function (conn) {
@@ -1473,16 +1662,31 @@
               cachedConnectedKeys.add(account.marketplaceKey);
             }
           });
+          (data.integrationAccounts || []).forEach(function (account) {
+            if (account.integration_type) {
+              cachedConnectedKeys.add(account.integration_type);
+            }
+          });
 
           // Cache data for filtering
-          cachedMarketplace = data.marketplace || [];
-          cachedIndustryTools = data.industryTools || [];
-          cachedCommonTools = data.commonTools || [];
+          cachedNativeMarketplace = (data.marketplace || []).filter(isNativeMarketplaceItem).filter(function (item) {
+            return !cachedConnectedKeys.has(item.key);
+          });
+          cachedMarketplace = (data.marketplace || []).filter(function (item) {
+            return !isNativeMarketplaceItem(item);
+          });
+          cachedIndustryTools = (data.industryTools || []).filter(function (item) {
+            return !isNativeMarketplaceItem(item);
+          });
+          cachedCommonTools = (data.commonTools || []).filter(function (item) {
+            return !isNativeMarketplaceItem(item);
+          });
           cachedCategories = data.categories || [];
 
-          // Render all sections (including email accounts in connections view)
-	        renderConnections(data.connections || [], data.emailAccounts || []);
+          // Render all sections.
+	        renderConnections(data.connections || [], data.emailAccounts || [], data.integrationAccounts || []);
 	        var hasAutoTests = updateAutoTestStatuses(data.connections || []);
+          renderNativeMarketplace(cachedNativeMarketplace);
           renderIndustryTools(cachedIndustryTools, data.industryDisplay || "");
           renderCommonTools(cachedCommonTools);
           renderCategoryFilters(cachedCategories);
@@ -1948,6 +2152,43 @@
             return;
           }
 
+          // Native OAuth integrations: Google Calendar, Drive, OneDrive, Slack, HubSpot.
+          if (connType === "integration_oauth" && item.oauthProvider) {
+            if (!businessId) {
+              showFlash("Missing business context. Refresh the page and try again.", "error");
+              return;
+            }
+
+            var nativeOauthUrl = "/api/integrations/oauth/start/" +
+              encodeURIComponent(item.key) + "/" +
+              "?business_id=" + encodeURIComponent(businessId) +
+              "&redirect=" + encodeURIComponent(window.location.href);
+
+            var nativeWidth = 500, nativeHeight = 650;
+            var nativeLeft = Math.max(0, (window.innerWidth - nativeWidth) / 2);
+            var nativeTop = Math.max(0, (window.innerHeight - nativeHeight) / 2);
+
+            var nativePopup = window.open(
+              nativeOauthUrl,
+              "integration_oauth_popup",
+              "width=" + nativeWidth + ",height=" + nativeHeight + ",left=" + nativeLeft + ",top=" + nativeTop
+            );
+
+            if (!nativePopup) {
+              showFlash("Popup blocked. Please allow popups for this site and try again.", "error");
+              return;
+            }
+
+            var nativePollTimer = window.setInterval(function () {
+              if (nativePopup.closed) {
+                window.clearInterval(nativePollTimer);
+                loadAll();
+              }
+            }, 500);
+
+            return;
+          }
+
           // OAuth: open provider popup when configured (MCP marketplace connectors)
           if (connType === "oauth" && item.oauthProvider) {
             if (!businessId) {
@@ -2069,6 +2310,45 @@
         return;
       }
 
+      var nativeDisconnect = target.closest("[data-native-disconnect]");
+      if (nativeDisconnect) {
+        var nativeKind = nativeDisconnect.getAttribute("data-native-disconnect-kind") || "";
+        var nativeKey = nativeDisconnect.getAttribute("data-native-disconnect-key") || "";
+        var nativeUrl = "";
+        if (nativeKind === "email") {
+          var providerKey = nativeKey === "gmail" ? "google" : nativeKey === "outlook" ? "microsoft" : "";
+          if (!providerKey) {
+            showFlash("Unsupported email connector.", "error");
+            return;
+          }
+          nativeUrl = "/api/email/oauth/disconnect/" + encodeURIComponent(providerKey) + "/";
+        } else if (nativeKind === "integration") {
+          if (!nativeKey) {
+            showFlash("Missing integration type.", "error");
+            return;
+          }
+          nativeUrl = "/api/integrations/oauth/disconnect/" + encodeURIComponent(nativeKey) + "/";
+        } else {
+          showFlash("Unsupported connector.", "error");
+          return;
+        }
+        if (!confirm("Disconnect this native connector?")) {
+          return;
+        }
+        nativeDisconnect.disabled = true;
+        apiFetch(nativeUrl, {
+          method: "POST",
+          body: JSON.stringify({ businessId: businessId || undefined })
+        }).then(function () {
+          showFlash("Native connector disconnected.", "success");
+          return loadAll();
+        }).catch(function (err) {
+          showFlash("Failed to disconnect connector: " + ((err && err.message) || "Unknown error"), "error");
+          nativeDisconnect.disabled = false;
+        });
+        return;
+      }
+
       var openCreateBtn = target.closest("[data-mcp-open-create]");
       if (openCreateBtn) {
         openCreate({});
@@ -2077,7 +2357,7 @@
 
       var openMarketBtn = target.closest("[data-mcp-open-marketplace]");
       if (openMarketBtn) {
-        setTab("all");
+        setTab("mcp");
         return;
       }
 

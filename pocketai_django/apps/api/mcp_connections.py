@@ -1352,7 +1352,7 @@ def mcp_connections_collection(request: HttpRequest) -> JsonResponse:
         return JsonResponse(
             {
                 "businessId": str(business.id),
-                "dashboardUrl": "/dashboard/mcp/",
+                "dashboardUrl": "/dashboard/connectors/",
                 "connections": connections_payload,
                 "emailAccounts": email_accounts_payload,
                 "integrationAccounts": integration_accounts_payload,

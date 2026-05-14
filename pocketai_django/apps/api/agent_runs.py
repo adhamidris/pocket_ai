@@ -112,11 +112,27 @@ def _workflow_snapshot(workflow: AgentWorkflow | None, payload: dict[str, Any] |
     return normalize_workflow_instructions(payload or {})
 
 
+def _run_workflow_id(run: AgentRun) -> str | None:
+    if run.workflow_id:
+        return str(run.workflow_id)
+    metadata = run.metadata if isinstance(getattr(run, "metadata", None), dict) else {}
+    value = str(metadata.get("workflow_id") or metadata.get("workflowId") or "").strip()
+    return value or None
+
+
+def _run_workflow_name(run: AgentRun) -> str:
+    workflow_name = getattr(getattr(run, "workflow", None), "name", "") or ""
+    if workflow_name:
+        return workflow_name
+    snapshot = run.workflow_snapshot if isinstance(getattr(run, "workflow_snapshot", None), dict) else {}
+    return str(snapshot.get("name") or snapshot.get("task") or "").strip()
+
+
 def _serialize_run_summary(run: AgentRun) -> dict[str, object]:
     return {
         "id": str(run.id),
-        "workflowId": str(run.workflow_id) if run.workflow_id else None,
-        "workflowName": getattr(getattr(run, "workflow", None), "name", "") or "",
+        "workflowId": _run_workflow_id(run),
+        "workflowName": _run_workflow_name(run),
         "title": run.title or "",
         "source": run.source,
         "status": run.status,
@@ -187,8 +203,8 @@ def _serialize_run(run: AgentRun) -> dict[str, object]:
         "agentId": str(run.agent_profile_id),
         "businessId": str(run.business_profile_id),
         "conversationId": str(run.conversation_id) if run.conversation_id else None,
-        "workflowId": str(run.workflow_id) if run.workflow_id else None,
-        "workflowName": getattr(getattr(run, "workflow", None), "name", "") or "",
+        "workflowId": _run_workflow_id(run),
+        "workflowName": _run_workflow_name(run),
         "parentRunId": str(run.parent_run_id) if run.parent_run_id else None,
         "delegatedByAgentId": str(run.delegated_by_agent_id) if run.delegated_by_agent_id else None,
         "title": run.title or "",
@@ -394,14 +410,14 @@ def _ensure_workflow_conversation(workflow: AgentWorkflow) -> Conversation:
         owner_user=workflow.created_by or workflow.agent_profile.user,
         channel=ConversationChannel.API,
         status=ConversationStatus.LIVE,
-        metadata={"workflow_id": str(workflow.id), "purpose": "workflow_thread"},
+        metadata={"type": "workflow_thread", "workflow_id": str(workflow.id), "workflow_name": workflow.name},
     )
     AgentWorkflow.objects.filter(id=workflow.id).update(conversation=conversation, updated_at=timezone.now())
     workflow.conversation = conversation
     return conversation
 
 
-def _cancel_open_workflow_runs(workflow: AgentWorkflow, *, reason: str) -> int:
+def _cancel_open_workflow_runs(workflow: AgentWorkflow, *, reason: str, action: str = "pause") -> int:
     open_statuses = [
         AgentRunStatus.QUEUED,
         AgentRunStatus.RUNNING,
@@ -418,12 +434,16 @@ def _cancel_open_workflow_runs(workflow: AgentWorkflow, *, reason: str) -> int:
             run.id,
             stream=AgentRunEventStream.SYSTEM,
             event_type=AgentRunEventType.CANCELLED,
-            label="Cancelled by workflow pause",
+            label="Cancelled by workflow deletion" if action == "delete" else "Cancelled by workflow pause",
             payload={"reason": reason, "workflow_id": str(workflow.id)},
         )
         meta = run.metadata if isinstance(getattr(run, "metadata", None), dict) else {}
         next_meta = dict(meta)
-        next_meta["cancelled_by_workflow_pause"] = True
+        next_meta["cancelled_by_workflow"] = action
+        if action == "pause":
+            next_meta["cancelled_by_workflow_pause"] = True
+        elif action == "delete":
+            next_meta["cancelled_by_workflow_delete"] = True
         AgentRun.objects.filter(id=run.id).update(
             status=AgentRunStatus.CANCELLED,
             finished_at=now,
@@ -435,6 +455,17 @@ def _cancel_open_workflow_runs(workflow: AgentWorkflow, *, reason: str) -> int:
         )
         cancelled += 1
     return cancelled
+
+
+def _is_dedicated_workflow_thread(workflow: AgentWorkflow, conversation: Conversation | None) -> bool:
+    if conversation is None or conversation.business_profile_id != workflow.business_profile_id:
+        return False
+    if conversation.agent_workflows.exclude(id=workflow.id).exists():
+        return False
+    metadata = conversation.metadata if isinstance(conversation.metadata, dict) else {}
+    metadata_workflow_id = str(metadata.get("workflow_id") or metadata.get("workflowId") or "").strip()
+    metadata_type = str(metadata.get("type") or metadata.get("purpose") or "").strip().lower()
+    return metadata_workflow_id == str(workflow.id) or metadata_type == "workflow_thread"
 
 
 def _normalize_trigger_type(value: object) -> str:
@@ -464,7 +495,7 @@ def agent_workflows_collection(request: HttpRequest, agent_id: uuid.UUID) -> Jso
         if request.method == "GET":
             status = str(request.GET.get("status") or "").strip().lower()
             qs = AgentWorkflow.objects.filter(agent_profile=agent).order_by("-created_at")
-            if status:
+            if status and status != "all":
                 qs = qs.filter(status=status)
             workflows = list(qs[:200])
             workflow_ids = [item.id for item in workflows]
@@ -573,11 +604,17 @@ def agent_workflow_detail(request: HttpRequest, agent_id: uuid.UUID, workflow_id
         if request.method == "GET":
             return JsonResponse({"workflow": _serialize_workflow(workflow)}, status=HTTPStatus.OK)
         if request.method == "DELETE":
-            workflow.status = AgentWorkflowStatus.ARCHIVED
-            workflow.next_trigger_at = None
-            workflow.lease_expires_at = None
-            workflow.save(update_fields=["status", "next_trigger_at", "lease_expires_at", "updated_at"])
-            _cancel_open_workflow_runs(workflow, reason="Workflow archived")
+            with transaction.atomic():
+                workflow = (
+                    AgentWorkflow.objects.select_for_update()
+                    .get(id=workflow.id)
+                )
+                conversation = workflow.conversation
+                delete_thread = _is_dedicated_workflow_thread(workflow, conversation)
+                _cancel_open_workflow_runs(workflow, reason="Workflow deleted", action="delete")
+                workflow.delete()
+                if delete_thread and conversation is not None:
+                    conversation.delete()
             return JsonResponse({}, status=HTTPStatus.NO_CONTENT)
 
         payload, error = _parse_json_body(request)
@@ -769,7 +806,7 @@ def workflow_webhook_trigger(request: HttpRequest, workflow_id: uuid.UUID, token
     with tenant_bypass():
         workflow = (
             AgentWorkflow.objects.select_related("agent_profile", "business_profile", "conversation")
-            .filter(id=workflow_id, trigger_type=AgentWorkflowTriggerType.WEBHOOK)
+            .filter(id=workflow_id, trigger_type=AgentWorkflowTriggerType.WEBHOOK, status=AgentWorkflowStatus.ACTIVE)
             .first()
         )
         if workflow is None:

@@ -1372,7 +1372,7 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
         description="List saved agent tasks/workflows for the current business, optionally filtered by agent or status.",
         properties={
             "agent_id": {"type": "string", "description": "Optional agent UUID."},
-            "status": {"type": "string", "enum": ["draft", "active", "paused", "archived", "all"]},
+            "status": {"type": "string", "enum": ["draft", "active", "paused", "all"]},
             "limit": {"type": "integer", "minimum": 1, "maximum": 50},
         },
         required=(),

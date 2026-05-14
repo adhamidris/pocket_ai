@@ -419,7 +419,7 @@ def resolve_agent_capabilities(agent: AgentProfile) -> AgentCapabilityGraph:
 
     all_connections = list(
         McpConnection.objects.filter(business_profile=business)
-        .only("id", "name", "status", "default_approval_mode", "metadata")
+        .only("id", "name", "status", "default_approval_mode", "marketplace_key", "metadata")
         .order_by("name")
     )
     opted_out_ids = set(
@@ -490,6 +490,7 @@ def resolve_agent_capabilities(agent: AgentProfile) -> AgentCapabilityGraph:
                 reason=reason,
                 metadata={
                     "connectionId": str(connection_id),
+                    "marketplaceKey": connection.marketplace_key or "",
                     "toolCount": len(cached_tools),
                     "status": connection.status,
                     "defaultApprovalMode": connection.default_approval_mode,

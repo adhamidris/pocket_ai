@@ -21,7 +21,7 @@
     border: 1px solid hsl(var(--border) / 0.65);
     border-radius: 999px;
     color: hsl(var(--muted-foreground));
-    display: inline-flex;
+    display: flex;
     font-size: 12px;
     font-weight: 650;
     gap: 6px;
@@ -152,10 +152,118 @@
     border-color: hsl(var(--primary));
     color: hsl(var(--primary-foreground));
   }
+  .agent-task-action--danger {
+    border-color: hsl(var(--destructive) / 0.35);
+    color: hsl(var(--destructive));
+  }
   .agent-run-filter {
     color: hsl(var(--muted-foreground));
     font-size: 12px;
     padding: 10px 12px;
+  }
+  .agent-run-group {
+    border: 1px solid hsl(var(--border) / 0.7);
+    border-radius: 8px;
+    background: hsl(var(--background) / 0.68);
+    overflow: hidden;
+  }
+  .agent-run-group__button {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    color: hsl(var(--foreground));
+    display: flex;
+    gap: 12px;
+    justify-content: space-between;
+    min-height: 58px;
+    padding: 13px 14px;
+    text-align: left;
+    width: 100%;
+  }
+  .agent-run-group__button:hover {
+    background: hsl(var(--muted) / 0.28);
+  }
+  .agent-run-group__title {
+    color: hsl(var(--foreground));
+    font-size: 14px;
+    font-weight: 750;
+    line-height: 1.35;
+  }
+  .agent-run-group__meta {
+    color: hsl(var(--muted-foreground));
+    font-size: 11px;
+    line-height: 1.4;
+    margin-top: 4px;
+  }
+  .agent-run-group__summary {
+    align-items: flex-end;
+    color: hsl(var(--muted-foreground));
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    font-size: 11px;
+    gap: 4px;
+    text-align: right;
+  }
+  .agent-run-group__body {
+    border-top: 1px solid hsl(var(--border) / 0.55);
+    padding: 8px;
+  }
+  .agent-run-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .agent-run-row {
+    border: 1px solid hsl(var(--border) / 0.65);
+    border-radius: 7px;
+    background: hsl(var(--card) / 0.72);
+    overflow: hidden;
+  }
+  .agent-run-row__button {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    color: hsl(var(--foreground));
+    display: flex;
+    gap: 10px;
+    justify-content: space-between;
+    padding: 11px 12px;
+    text-align: left;
+    width: 100%;
+  }
+  .agent-run-row__button:hover {
+    background: hsl(var(--muted) / 0.24);
+  }
+  .agent-run-row[data-expanded="true"] {
+    border-color: hsl(var(--primary) / 0.45);
+  }
+  .agent-run-row__title {
+    color: hsl(var(--foreground));
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .agent-run-row__meta {
+    color: hsl(var(--muted-foreground));
+    font-size: 11px;
+    margin-top: 4px;
+  }
+  .agent-run-row__status {
+    color: hsl(var(--muted-foreground));
+    flex-shrink: 0;
+    font-size: 11px;
+    text-align: right;
+  }
+  .agent-run-row__detail {
+    border-top: 1px solid hsl(var(--border) / 0.55);
+    padding: 12px;
+  }
+  .agent-run-empty {
+    border: 1px dashed hsl(var(--border) / 0.7);
+    border-radius: 7px;
+    color: hsl(var(--muted-foreground));
+    font-size: 12px;
+    padding: 12px;
   }
   .agent-memory-panel {
     border: 1px solid hsl(var(--border) / 0.7);
@@ -267,6 +375,280 @@
     font-size: 13px;
     padding: 18px;
     text-align: center;
+  }
+  [data-agent-panel] .agent-detail-close {
+    align-items: center;
+    background: hsl(var(--background));
+    border: 1px solid hsl(var(--border) / 0.75);
+    border-radius: 999px;
+    color: hsl(var(--muted-foreground));
+    display: flex;
+    height: 34px;
+    justify-content: center;
+    position: absolute;
+    right: 14px;
+    top: 14px;
+    transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
+    width: 34px;
+    z-index: 2;
+  }
+  [data-agent-panel] .agent-detail-close:hover {
+    background: hsl(var(--muted) / 0.65);
+    border-color: hsl(var(--border));
+    color: hsl(var(--foreground));
+  }
+  [data-agent-panel] .agent-detail-header {
+    background: hsl(var(--card) / 0.96);
+    border-bottom: 1px solid hsl(var(--border) / 0.7);
+    padding: 32px 64px 24px 24px;
+  }
+  [data-agent-panel] .agent-detail-header__inner {
+    align-items: center;
+    display: flex;
+    gap: 14px;
+    min-width: 0;
+  }
+  [data-agent-panel] .agent-detail-avatar {
+    align-items: center;
+    background: hsl(var(--primary) / 0.12);
+    border-radius: 999px;
+    color: hsl(var(--primary));
+    display: inline-flex;
+    flex: 0 0 auto;
+    font-size: 14px;
+    font-weight: 750;
+    height: 48px;
+    justify-content: center;
+    text-transform: uppercase;
+    width: 48px;
+  }
+  [data-agent-panel] .agent-detail-title {
+    color: hsl(var(--foreground));
+    font-size: 18px;
+    font-weight: 750;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+  }
+  [data-agent-panel] .agent-detail-main {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  [data-agent-panel] .agent-detail-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+  }
+  [data-agent-panel] .agent-detail-chip {
+    align-items: center;
+    background: hsl(var(--background) / 0.78);
+    border: 1px solid hsl(var(--border) / 0.7);
+    border-radius: 999px;
+    color: hsl(var(--muted-foreground));
+    display: inline-flex;
+    font-size: 12px;
+    font-weight: 650;
+    line-height: 1;
+    min-height: 26px;
+    padding: 0 9px;
+  }
+  [data-agent-panel] .agent-detail-tabs-shell {
+    padding: 24px;
+  }
+  [data-agent-panel] .agent-detail-tabs {
+    align-items: center;
+    background: hsl(var(--muted) / 0.5);
+    border: 1px solid hsl(var(--border) / 0.78);
+    border-radius: 12px;
+    box-shadow: inset 0 1px 0 hsl(var(--background) / 0.72);
+    display: flex;
+    gap: 2px;
+    max-width: 100%;
+    min-height: 42px;
+    overflow-x: auto;
+    padding: 4px;
+    scrollbar-width: none;
+    white-space: nowrap;
+    width: 100%;
+  }
+  [data-agent-panel] .agent-detail-tabs::-webkit-scrollbar {
+    display: none;
+  }
+  [data-agent-panel] .agent-detail-tab {
+    align-items: center;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 9px;
+    color: hsl(var(--muted-foreground));
+    display: inline-flex;
+    flex: 1 1 0;
+    font-size: 11px;
+    font-weight: 800;
+    justify-content: center;
+    letter-spacing: 0.06em;
+    min-height: 32px;
+    min-width: 0;
+    outline: 0;
+    padding: 0 12px;
+    text-transform: uppercase;
+    transition: background 150ms ease, border-color 150ms ease, box-shadow 150ms ease, color 150ms ease;
+  }
+  [data-agent-panel] .agent-detail-tab:hover {
+    background: hsl(var(--background) / 0.72);
+    color: hsl(var(--foreground));
+  }
+  [data-agent-panel] .agent-detail-tab[aria-selected="true"] {
+    background: hsl(var(--primary));
+    border-color: hsl(var(--primary));
+    box-shadow: 0 1px 2px hsl(var(--primary) / 0.28);
+    color: hsl(var(--primary-foreground));
+  }
+  [data-agent-panel] .agent-detail-tab:focus-visible {
+    box-shadow: 0 0 0 2px hsl(var(--primary) / 0.3);
+  }
+  [data-agent-panel] .agent-connector-list {
+    display: grid;
+    gap: 0.75rem;
+  }
+  [data-agent-panel] .agent-connector-card {
+    border: 1px solid hsl(var(--border) / 0.74);
+    border-radius: 12px;
+    background: hsl(var(--background) / 0.72);
+    overflow: hidden;
+  }
+  [data-agent-panel] .agent-connector-card__button {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.85rem;
+    text-align: left;
+  }
+  [data-agent-panel] .agent-connector-card__main {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  [data-agent-panel] .agent-connector-icon {
+    align-items: center;
+    background: hsl(var(--muted) / 0.35);
+    border: 1px solid hsl(var(--border) / 0.65);
+    border-radius: 9px;
+    display: inline-flex;
+    height: 2.25rem;
+    justify-content: center;
+    min-width: 2.25rem;
+    overflow: hidden;
+    width: 2.25rem;
+  }
+  [data-agent-panel] .agent-connector-icon img {
+    height: 1.45rem;
+    object-fit: contain;
+    width: 1.45rem;
+  }
+  [data-agent-panel] .agent-connector-icon span {
+    color: hsl(var(--muted-foreground));
+    font-size: 0.75rem;
+    font-weight: 800;
+  }
+  [data-agent-panel] .agent-connector-title {
+    color: hsl(var(--foreground));
+    font-size: 0.9rem;
+    font-weight: 700;
+    line-height: 1.25;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  [data-agent-panel] .agent-connector-meta {
+    align-items: center;
+    color: hsl(var(--muted-foreground));
+    display: flex;
+    flex-wrap: wrap;
+    font-size: 0.68rem;
+    gap: 0.35rem;
+    margin-top: 0.18rem;
+  }
+  [data-agent-panel] .agent-connector-badge {
+    align-items: center;
+    background: hsl(var(--muted) / 0.42);
+    border: 1px solid hsl(var(--border) / 0.78);
+    border-radius: 999px;
+    color: hsl(var(--muted-foreground));
+    display: inline-flex;
+    font-size: 0.62rem;
+    font-weight: 750;
+    letter-spacing: 0.04em;
+    padding: 0.12rem 0.46rem;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  [data-agent-panel] .agent-connector-badge.native {
+    background: hsl(214 82% 58% / 0.12);
+    border-color: hsl(214 82% 58% / 0.32);
+    color: hsl(214 72% 48%);
+  }
+  [data-agent-panel] .agent-connector-badge.mcp {
+    background: hsl(35 92% 50% / 0.13);
+    border-color: hsl(35 92% 50% / 0.36);
+    color: hsl(35 86% 42%);
+  }
+  [data-agent-panel] .agent-connector-card__side {
+    align-items: center;
+    display: flex;
+    flex-shrink: 0;
+    gap: 0.6rem;
+  }
+  [data-agent-panel] .agent-connector-card__body {
+    background: hsl(var(--card) / 0.75);
+    border-top: 1px solid hsl(var(--border) / 0.66);
+    display: none;
+    padding: 0.8rem;
+  }
+  [data-agent-panel] .agent-connector-card.is-open .agent-connector-card__body {
+    display: block;
+  }
+  [data-agent-panel] .agent-connector-tools {
+    display: grid;
+    gap: 0.5rem;
+  }
+  [data-agent-panel] .agent-connector-tool {
+    background: hsl(var(--background) / 0.76);
+    border: 1px solid hsl(var(--border) / 0.64);
+    border-radius: 9px;
+    padding: 0.65rem 0.7rem;
+  }
+  [data-agent-panel] .agent-connector-tool__head {
+    align-items: center;
+    display: flex;
+    gap: 0.75rem;
+    justify-content: space-between;
+  }
+  [data-agent-panel] .agent-connector-tool__title {
+    color: hsl(var(--foreground));
+    font-size: 0.78rem;
+    font-weight: 700;
+  }
+  [data-agent-panel] .agent-connector-tool__copy {
+    color: hsl(var(--muted-foreground));
+    font-size: 0.7rem;
+    line-height: 1.4;
+    margin-top: 0.25rem;
+  }
+  @media (max-width: 640px) {
+    [data-agent-panel] .agent-detail-header {
+      padding: 26px 58px 20px 18px;
+    }
+    [data-agent-panel] .agent-detail-tabs-shell {
+      padding-left: 18px;
+      padding-right: 18px;
+    }
+    [data-agent-panel] .agent-detail-tab {
+      flex-basis: auto;
+      min-width: 104px;
+    }
   }
 </style>
 <div class="h-screen bg-background flex overflow-hidden">
@@ -515,7 +897,7 @@
     </div>
     <button
       type="button"
-      class="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-background/80 text-muted-foreground transition hover:bg-background"
+      class="agent-detail-close"
       data-agent-close
       aria-label="{% if LANGUAGE_BIDI %}إغلاق تفاصيل الوكيل{% else %}Close agent detail{% endif %}"
     >
@@ -572,30 +954,24 @@
             {% if LANGUAGE_BIDI %}إعادة المحاولة{% else %}Retry{% endif %}
           </button>
         </div>
-	        <div class="hidden space-y-6 pb-16" data-agent-content>
-	          <section class="border-b border-border/70 bg-card/90 px-6 pt-10 pb-6">
-	            <div class="flex items-start gap-3">
-	              <span class="inline-flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary font-semibold uppercase" data-agent-initials>AI</span>
-	              <div class="flex-1 min-w-0">
-	                <div class="text-lg font-semibold text-foreground leading-tight" data-agent-name>{% if LANGUAGE_BIDI %}اسم الوكيل{% else %}Agent name{% endif %}</div>
-	                <div class="mt-1 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
-	                  <span data-agent-identifier>ID</span>
-	                  <span aria-hidden="true">•</span>
-	                  <span data-agent-role>{% if LANGUAGE_BIDI %}وكيل{% else %}Agent{% endif %}</span>
-	                  <span aria-hidden="true">•</span>
-	                  <span data-agent-tone>{% if LANGUAGE_BIDI %}نبرة ودّية{% else %}Friendly tone{% endif %}</span>
+	        <div class="hidden pb-16" data-agent-content>
+	          <section class="agent-detail-header">
+	            <div class="agent-detail-header__inner">
+	              <span class="agent-detail-avatar" data-agent-initials>AI</span>
+	              <div class="agent-detail-main">
+	                <div class="agent-detail-title" data-agent-name>{% if LANGUAGE_BIDI %}اسم الوكيل{% else %}Agent name{% endif %}</div>
+	                <div class="agent-detail-meta">
+	                  <span class="agent-detail-chip" data-agent-identifier>ID</span>
+	                  <span class="agent-detail-chip" data-agent-role>{% if LANGUAGE_BIDI %}وكيل{% else %}Agent{% endif %}</span>
+	                  <span class="agent-detail-chip" data-agent-tone>{% if LANGUAGE_BIDI %}نبرة ودّية{% else %}Friendly{% endif %}</span>
 	                </div>
 	              </div>
-	              <span class="text-xs text-muted-foreground" data-agent-last-active>—</span>
-	            </div>
-	            <div class="mt-3 flex flex-wrap items-center gap-2">
-	              <span class="text-xs text-muted-foreground" data-agent-updated>{% if LANGUAGE_BIDI %}آخر تحديث —{% else %}Updated —{% endif %}</span>
 	            </div>
 	          </section>
 
-	          <section class="px-6 pt-6" aria-label="{% if LANGUAGE_BIDI %}تبويبات تفاصيل الوكيل{% else %}Agent detail tabs{% endif %}">
+	          <section class="agent-detail-tabs-shell" aria-label="{% if LANGUAGE_BIDI %}تبويبات تفاصيل الوكيل{% else %}Agent detail tabs{% endif %}">
 	            <div
-	              class="grid grid-cols-2 gap-1 rounded-lg border border-border/60 bg-muted/40 p-1 sm:grid-cols-5"
+	              class="agent-detail-tabs"
 	              role="tablist"
 	              aria-label="{% if LANGUAGE_BIDI %}أقسام تفاصيل الوكيل{% else %}Agent detail sections{% endif %}"
 	              data-agent-tabs
@@ -603,7 +979,7 @@
 	              <button
 	                type="button"
 	                id="agent-tab-overview"
-	                class="inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium bg-background text-foreground shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+	                class="agent-detail-tab"
 	                role="tab"
 	                aria-selected="true"
 	                aria-controls="agent-tabpanel-overview"
@@ -614,7 +990,7 @@
 	              <button
 	                type="button"
 	                id="agent-tab-tasks"
-	                class="inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-background/60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+	                class="agent-detail-tab"
 	                role="tab"
 	                aria-selected="false"
 	                aria-controls="agent-tabpanel-tasks"
@@ -626,7 +1002,7 @@
 	              <button
 	                type="button"
 	                id="agent-tab-runs"
-	                class="inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-background/60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+	                class="agent-detail-tab"
 	                role="tab"
 	                aria-selected="false"
 	                aria-controls="agent-tabpanel-runs"
@@ -638,7 +1014,7 @@
 	              <button
 	                type="button"
 	                id="agent-tab-memory"
-	                class="inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-background/60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+	                class="agent-detail-tab"
 	                role="tab"
 	                aria-selected="false"
 	                aria-controls="agent-tabpanel-memory"
@@ -650,7 +1026,7 @@
 	              <button
 	                type="button"
 	                id="agent-tab-permissions"
-	                class="inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-background/60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+	                class="agent-detail-tab"
 	                role="tab"
 	                aria-selected="false"
 	                aria-controls="agent-tabpanel-permissions"
@@ -811,16 +1187,11 @@
 	              <div class="flex items-start justify-between gap-3">
 	                <div>
 	                  <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{% if LANGUAGE_BIDI %}النشاط والتشغيلات{% else %}Runs & Activity{% endif %}</div>
-	                  <p class="mt-1 text-xs text-muted-foreground">{% if LANGUAGE_BIDI %}راجع التشغيلات الخلفية والنتائج والأخطاء وموافقات المستخدم.{% else %}Inspect background executions, results, errors, artifacts, and approval waits.{% endif %}</p>
+	                  <p class="mt-1 text-xs text-muted-foreground">{% if LANGUAGE_BIDI %}راجع تشغيلات المهام والنتائج والأخطاء وموافقات المستخدم.{% else %}Inspect task executions, results, errors, artifacts, and approval waits.{% endif %}</p>
 	                </div>
 	                <button type="button" class="rounded-md border border-input bg-background px-3 py-2 text-xs font-medium" data-runs-refresh>{% if LANGUAGE_BIDI %}تحديث{% else %}Refresh{% endif %}</button>
 	              </div>
-	              <div class="agent-run-filter hidden" data-run-filter>
-	                <span data-run-filter-label></span>
-	                <button type="button" class="agent-task-action" data-run-filter-clear>{% if LANGUAGE_BIDI %}عرض كل التشغيلات{% else %}Show all runs{% endif %}</button>
-	              </div>
 	              <div class="space-y-3" data-run-list></div>
-	              <div class="hidden rounded-xl border border-border/60 bg-muted/20 p-4 space-y-3" data-run-detail></div>
 	            </div>
 	          </section>
 
@@ -864,49 +1235,28 @@
 	            data-agent-tab-panel="permissions"
 	            hidden
 	          >
-	            <div class="rounded-xl border border-border/60 bg-card/95 p-4 space-y-4 shadow-sm" data-agent-approval-card>
-	              <div class="flex items-start justify-between gap-3">
-	                <div class="space-y-1">
-	                  <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{% if LANGUAGE_BIDI %}سياسة الموافقة الافتراضية{% else %}Default approval policy{% endif %}</div>
-	                  <p class="text-xs text-muted-foreground">{% if LANGUAGE_BIDI %}تحدد السياسة الافتراضية لكيفية التعامل مع الأدوات المتصلة عندما لا يوجد إعداد أكثر تحديداً.{% else %}Defines the default handling for connected tools when no more specific rule exists.{% endif %}</p>
-	                </div>
-	                <span class="text-xs text-muted-foreground" data-agent-capability-flash>{% if LANGUAGE_BIDI %}جاهز{% else %}Ready{% endif %}</span>
+	            <div class="rounded-xl border border-border/60 bg-card/95 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm" data-agent-approval-card>
+	              <div class="flex items-center gap-3">
+	                <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{% if LANGUAGE_BIDI %}سياسة الموافقة الافتراضية{% else %}Default approval policy{% endif %}</div>
+	                <span class="text-[10px] text-muted-foreground/80 hidden sm:inline-block" data-agent-capability-flash>{% if LANGUAGE_BIDI %}جاهز{% else %}Ready{% endif %}</span>
 	              </div>
-	              <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-	                <div class="text-sm text-foreground" data-agent-approval-summary>{% if LANGUAGE_BIDI %}موروث من الاتصال{% else %}Inherited from connections{% endif %}</div>
-	                <label class="flex items-center gap-3 text-sm text-foreground">
-	                  <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{% if LANGUAGE_BIDI %}الوضع{% else %}Mode{% endif %}</span>
-	                  <select class="h-10 rounded-md border border-border/60 bg-background px-3 text-sm" data-agent-approval-select>
-	                    <option value="inherit">{% if LANGUAGE_BIDI %}موروث{% else %}Inherited{% endif %}</option>
-	                    <option value="auto">{% if LANGUAGE_BIDI %}تلقائي{% else %}Auto approve{% endif %}</option>
-	                    <option value="approve_writes">{% if LANGUAGE_BIDI %}موافقة على الكتابة{% else %}Approve writes{% endif %}</option>
-	                    <option value="approve_all">{% if LANGUAGE_BIDI %}موافقة على الكل{% else %}Approve all{% endif %}</option>
-	                  </select>
-	                </label>
-	              </div>
+	              <select class="h-9 w-full sm:w-auto min-w-[150px] rounded-md border border-border/60 bg-background px-3 py-1 text-sm cursor-pointer focus-visible:ring-0 focus-visible:border-border transition-colors" data-agent-approval-select>
+	                <option value="inherit">{% if LANGUAGE_BIDI %}موروث{% else %}Inherited{% endif %}</option>
+	                <option value="auto">{% if LANGUAGE_BIDI %}تلقائي{% else %}Auto approve{% endif %}</option>
+	                <option value="approve_writes">{% if LANGUAGE_BIDI %}موافقة على الكتابة{% else %}Approve writes{% endif %}</option>
+	                <option value="approve_all">{% if LANGUAGE_BIDI %}موافقة على الكل{% else %}Approve all{% endif %}</option>
+	              </select>
 	            </div>
 
 	            <div class="rounded-xl border border-border/60 bg-card/95 p-4 space-y-4 shadow-sm">
 	              <div class="flex items-start justify-between gap-3">
 	                <div class="space-y-1">
-	                  <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{% if LANGUAGE_BIDI %}اتصالات MCP{% else %}MCP connections{% endif %}</div>
-	                  <p class="text-xs text-muted-foreground">{% if LANGUAGE_BIDI %}إدارة الوصول إلى اتصالات MCP مع عرض الأدوات المحسومة وسياسة التنفيذ الفعلية داخل كل اتصال.{% else %}Manage MCP connection access and inspect the resolved tools plus effective execution policy inside each connection.{% endif %}</p>
+	                  <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{% if LANGUAGE_BIDI %}الموصلات المتاحة{% else %}Connected connectors{% endif %}</div>
+	                  <p class="text-xs text-muted-foreground">{% if LANGUAGE_BIDI %}إدارة وصول الوكيل إلى الموصلات الأصلية وموصلات MCP من مكان واحد، مع عرض الأدوات وسياسة التنفيذ عند التوسيع.{% else %}Manage this agent's access to native integrations and MCP connectors in one place. Expand a connector to inspect its tools and execution policy.{% endif %}</p>
 	                </div>
 	              </div>
-	              <div class="space-y-3" data-agent-capability-connections>
-	                <p class="text-xs text-muted-foreground">{% if LANGUAGE_BIDI %}لا توجد اتصالات MCP بعد.{% else %}No MCP connections available yet.{% endif %}</p>
-	              </div>
-	            </div>
-
-	            <div class="rounded-xl border border-border/60 bg-card/95 p-4 space-y-4 shadow-sm">
-	              <div class="flex items-start justify-between gap-3">
-	                <div class="space-y-1">
-	                  <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{% if LANGUAGE_BIDI %}التكاملات الأصلية{% else %}Native integrations{% endif %}</div>
-	                  <p class="text-xs text-muted-foreground">{% if LANGUAGE_BIDI %}يعرض الحسابات الأصلية المتصلة مثل Gmail وOutlook وGoogle Drive وGoogle Calendar مع الأدوات المتاحة لها.{% else %}Shows connected first-party accounts such as Gmail, Outlook, Google Drive, and Google Calendar with their available tools.{% endif %}</p>
-	                </div>
-	              </div>
-	              <div class="space-y-3" data-agent-capability-native-connections>
-	                <p class="text-xs text-muted-foreground">{% if LANGUAGE_BIDI %}لا توجد تكاملات أصلية متصلة بعد.{% else %}No native integrations connected yet.{% endif %}</p>
+	              <div class="agent-connector-list" data-agent-capability-connections>
+	                <p class="text-xs text-muted-foreground">{% if LANGUAGE_BIDI %}لا توجد موصلات متصلة بعد.{% else %}No connectors available yet.{% endif %}</p>
 	              </div>
 	            </div>
 
@@ -1058,8 +1408,6 @@
     var fieldRole = panel.querySelector("[data-agent-role]");
     var fieldTone = panel.querySelector("[data-agent-tone]");
     var fieldInitials = panel.querySelector("[data-agent-initials]");
-    var fieldUpdated = panel.querySelector("[data-agent-updated]");
-    var fieldLastActive = panel.querySelector("[data-agent-last-active]");
     var fieldMetricScope = panel.querySelector("[data-agent-metric-scope]");
     var fieldMetricDocuments = panel.querySelector("[data-agent-metric-documents]");
     var fieldMetricConnections = panel.querySelector("[data-agent-metric-connections]");
@@ -1073,7 +1421,6 @@
 		    var capabilityApprovalSummary = panel.querySelector("[data-agent-approval-summary]");
 		    var capabilityApprovalSelect = panel.querySelector("[data-agent-approval-select]");
 		    var capabilityConnections = panel.querySelector("[data-agent-capability-connections]");
-		    var capabilityNativeConnections = panel.querySelector("[data-agent-capability-native-connections]");
 		    var shareableField = panel.querySelector("[data-agent-shareable]");
 	    var shareableState = panel.querySelector("[data-agent-shareable-state]");
 	    var shareableOpen = panel.querySelector("[data-agent-shareable-open]");
@@ -1091,10 +1438,6 @@
 	    var opsRunning = panel.querySelector("[data-ops-running]");
 	    var opsFailed = panel.querySelector("[data-ops-failed]");
 	    var runList = panel.querySelector("[data-run-list]");
-	    var runDetail = panel.querySelector("[data-run-detail]");
-	    var runFilter = panel.querySelector("[data-run-filter]");
-	    var runFilterLabel = panel.querySelector("[data-run-filter-label]");
-	    var runFilterClear = panel.querySelector("[data-run-filter-clear]");
 	    var runsRefreshButton = panel.querySelector("[data-runs-refresh]");
 	    var memoryList = panel.querySelector("[data-memory-list]");
 	    var memoryViewButtons = Array.prototype.slice.call(panel.querySelectorAll("[data-memory-view]") || []);
@@ -1117,19 +1460,23 @@
 	    var currentAgentId = "";
 	    var currentAgentDetail = null;
 	    var currentWorkflows = [];
+	    var currentRuns = [];
 	    var currentEmailAccounts = [];
 	    var editingWorkflowId = "";
 	    var currentRunWorkflowFilter = "";
 	    var currentRunWorkflowLabel = "";
+	    var currentRunsExpandedWorkflowId = "";
+	    var currentRunsExpandedRunId = "";
 	    var currentMemoryView = "saved";
 	    var memorySearchTimer = null;
 	    var SETUP_URLS = {
-	      mcp: "{% url 'frontend:dashboard-mcp' %}",
-	      integrations: "{% url 'frontend:dashboard-integrations' %}"
+	      mcp: "{% url 'frontend:dashboard-connectors' %}",
+	      integrations: "{% url 'frontend:dashboard-connectors' %}",
+	      connectors: "{% url 'frontend:dashboard-connectors' %}"
 	    };
 
-	    var tabActiveClasses = ["bg-background", "text-foreground", "shadow-sm"];
-	    var tabInactiveClasses = ["text-muted-foreground", "hover:text-foreground", "hover:bg-background/60"];
+	    var tabActiveClasses = [];
+	    var tabInactiveClasses = [];
 	    var I18N = {
 	      createNameMin: "{% if LANGUAGE_BIDI %}يجب أن يتكون اسم الوكيل من حرفين على الأقل.{% else %}Agent name must be at least 2 characters.{% endif %}",
 	      noBusinessSelected: "{% if LANGUAGE_BIDI %}لا يوجد نشاط محدد. حدّث الصفحة ثم حاول مرة أخرى.{% else %}No business selected. Refresh the page and try again.{% endif %}",
@@ -1151,8 +1498,6 @@
 	      updatedPrefix: "{% if LANGUAGE_BIDI %}آخر تحديث {% else %}Updated {% endif %}",
 	      live: "{% if LANGUAGE_BIDI %}نشط{% else %}Live{% endif %}",
 	      notPublished: "{% if LANGUAGE_BIDI %}غير منشور{% else %}Not published{% endif %}",
-	      lastActivePrefix: "{% if LANGUAGE_BIDI %}آخر نشاط {% else %}Last active {% endif %}",
-	      noRecentActivity: "{% if LANGUAGE_BIDI %}لا يوجد نشاط حديث{% else %}No recent activity{% endif %}",
 	      noTraits: "{% if LANGUAGE_BIDI %}لا توجد سمات مُعدّة.{% else %}No traits configured.{% endif %}",
 	      usesAllBusinessKnowledge: "{% if LANGUAGE_BIDI %}يستخدم جميع مصادر معرفة النشاط.{% else %}Uses all business knowledge sources.{% endif %}",
 	      knowledgeScopeAll: "{% if LANGUAGE_BIDI %}كل المعرفة{% else %}All knowledge{% endif %}",
@@ -1172,15 +1517,13 @@
 	      capabilityConnectionUnavailable: "{% if LANGUAGE_BIDI %}غير متاح{% else %}Unavailable{% endif %}",
 	      capabilityEnable: "{% if LANGUAGE_BIDI %}تفعيل{% else %}Enable{% endif %}",
 	      capabilityDisable: "{% if LANGUAGE_BIDI %}تعطيل{% else %}Disable{% endif %}",
-	      capabilityNoConnections: "{% if LANGUAGE_BIDI %}لا توجد اتصالات MCP بعد.{% else %}No MCP connections available yet.{% endif %}",
+	      capabilityNoConnectors: "{% if LANGUAGE_BIDI %}لا توجد موصلات متصلة بعد.{% else %}No connectors available yet.{% endif %}",
+	      capabilitySetupConnectors: "{% if LANGUAGE_BIDI %}إعداد الموصلات{% else %}Set up connectors{% endif %}",
+	      nativeConnector: "{% if LANGUAGE_BIDI %}أصلي{% else %}Native{% endif %}",
+	      mcpConnector: "{% if LANGUAGE_BIDI %}MCP{% else %}MCP{% endif %}",
 	      capabilityConnectionFallback: "{% if LANGUAGE_BIDI %}اتصال{% else %}Connection{% endif %}",
 	      capabilityToolCountFormat: "{% if LANGUAGE_BIDI %}{count} أداة{% else %}{count} tools{% endif %}",
 	      capabilityNoConnectionTools: "{% if LANGUAGE_BIDI %}لا توجد أدوات محسومة لهذا الاتصال.{% else %}No resolved tools for this connection.{% endif %}",
-	      capabilityNoNativeConnections: "{% if LANGUAGE_BIDI %}لا توجد تكاملات أصلية متصلة بعد.{% else %}No native integrations connected yet.{% endif %}",
-	      capabilitySetupMcp: "{% if LANGUAGE_BIDI %}إعداد MCP{% else %}Set up MCP{% endif %}",
-	      capabilitySetupNative: "{% if LANGUAGE_BIDI %}إعداد التكاملات{% else %}Set up integrations{% endif %}",
-	      capabilitySendModeLabel: "{% if LANGUAGE_BIDI %}سياسة الإرسال{% else %}Send policy{% endif %}",
-	      capabilityNativeIntegrationFallback: "{% if LANGUAGE_BIDI %}تكامل أصلي{% else %}Native integration{% endif %}",
 	      capabilitySourceDefault: "{% if LANGUAGE_BIDI %}افتراضي{% else %}Default{% endif %}",
 	      capabilitySourceAgentOverride: "{% if LANGUAGE_BIDI %}تخصيص الوكيل{% else %}Agent override{% endif %}",
 	      capabilitySourceConnectionOverride: "{% if LANGUAGE_BIDI %}تخصيص الاتصال{% else %}Connection override{% endif %}",
@@ -1204,7 +1547,8 @@
 	      taskNameRequired: "{% if LANGUAGE_BIDI %}اسم المهمة مطلوب.{% else %}Task name is required.{% endif %}",
 	      runNow: "{% if LANGUAGE_BIDI %}تشغيل الآن{% else %}Run now{% endif %}",
 	      edit: "{% if LANGUAGE_BIDI %}تعديل{% else %}Edit{% endif %}",
-	      archive: "{% if LANGUAGE_BIDI %}أرشفة{% else %}Archive{% endif %}",
+	      deleteTask: "{% if LANGUAGE_BIDI %}حذف{% else %}Delete{% endif %}",
+	      deleteTaskConfirm: "{% if LANGUAGE_BIDI %}هل تريد حذف هذه المهمة؟ سيتم إيقاف التشغيلات المفتوحة وإزالة سلسلة المهمة.{% else %}Delete this task? Open runs will be stopped and the task thread will be removed.{% endif %}",
 	      pause: "{% if LANGUAGE_BIDI %}إيقاف مؤقت{% else %}Pause{% endif %}",
 	      resume: "{% if LANGUAGE_BIDI %}استئناف{% else %}Resume{% endif %}",
 	      viewActivity: "{% if LANGUAGE_BIDI %}عرض النشاط{% else %}View activity{% endif %}",
@@ -1214,6 +1558,10 @@
 	      webhookUrlReady: "{% if LANGUAGE_BIDI %}رابط الويب هوك جاهز{% else %}Webhook URL is ready{% endif %}",
 	      loadingRuns: "{% if LANGUAGE_BIDI %}جارٍ تحميل التشغيلات…{% else %}Loading runs…{% endif %}",
 	      noRuns: "{% if LANGUAGE_BIDI %}لا توجد تشغيلات بعد.{% else %}No runs yet.{% endif %}",
+	      noRunsForTask: "{% if LANGUAGE_BIDI %}لم يتم تشغيل هذه المهمة بعد.{% else %}This task has not run yet.{% endif %}",
+	      runSingular: "{% if LANGUAGE_BIDI %}تشغيل{% else %}run{% endif %}",
+	      runPlural: "{% if LANGUAGE_BIDI %}تشغيلات{% else %}runs{% endif %}",
+	      latestRunLabel: "{% if LANGUAGE_BIDI %}آخر تشغيل{% else %}Latest{% endif %}",
 	      result: "{% if LANGUAGE_BIDI %}النتيجة{% else %}Result{% endif %}",
 	      events: "{% if LANGUAGE_BIDI %}الأحداث{% else %}Events{% endif %}",
 	      artifacts: "{% if LANGUAGE_BIDI %}المخرجات{% else %}Artifacts{% endif %}",
@@ -1660,6 +2008,11 @@
 	        setActiveTab(nextButton.getAttribute("data-agent-tab"), { focus: true });
 	      });
 	    }
+    function escapeHtml(value) {
+      var div = document.createElement("div");
+      div.textContent = value == null ? "" : String(value);
+      return div.innerHTML;
+    }
 
     function formatNumber(value, fallback) {
       var candidate = value;
@@ -1984,202 +2337,168 @@
       container.appendChild(wrap);
     }
 
-    function renderCapabilityConnections(group, agentId, toolGroup) {
+    function connectorIconSrc(item, source) {
+      var metadata = item && item.metadata ? item.metadata : {};
+      var key = String(
+        metadata.marketplaceKey ||
+        metadata.integrationType ||
+        metadata.provider ||
+        item && item.label ||
+        ""
+      ).toLowerCase();
+      if (key.indexOf("gmail") !== -1 || key === "google") return "/static/img/mcp/gmail.svg";
+      if (key.indexOf("outlook") !== -1 || key.indexOf("microsoft_email") !== -1) return "/static/img/mcp/microsoftoutlook.svg";
+      if (key.indexOf("google_calendar") !== -1) return "/static/img/mcp/googlecalendar.svg";
+      if (key.indexOf("google_drive") !== -1) return "/static/img/mcp/googledrive.svg";
+      if (key.indexOf("onedrive") !== -1 || key.indexOf("microsoft_drive") !== -1) return "/static/img/mcp/microsoftonedrive.svg";
+      if (key.indexOf("slack") !== -1) return "/static/img/mcp/slack.svg";
+      if (key.indexOf("hubspot") !== -1) return "/static/img/mcp/hubspot.svg";
+      if (key.indexOf("github") !== -1) return "/static/img/mcp/github.svg";
+      if (key.indexOf("notion") !== -1) return "/static/img/mcp/notion-logo.svg";
+      if (key.indexOf("salesforce") !== -1) return "/static/img/mcp/salesforce.svg";
+      if (key.indexOf("postgres") !== -1) return "/static/img/mcp/postgresql.svg";
+      if (source === "native" && metadata.accountKind === "email") return "/static/img/mcp/gmail.svg";
+      return "";
+    }
+
+    function connectorDisplayName(item, source) {
+      var metadata = item && item.metadata ? item.metadata : {};
+      if (source === "native") {
+        var integrationType = String(metadata.integrationType || "").replace(/_/g, " ");
+        if (integrationType) {
+          return integrationType.replace(/\b\w/g, function (char) { return char.toUpperCase(); });
+        }
+        var provider = String(metadata.provider || "").toLowerCase();
+        if (provider === "google") return "Gmail";
+        if (provider === "microsoft") return "Outlook";
+      }
+      return item && item.label ? item.label : I18N.capabilityConnectionFallback;
+    }
+
+    function renderConnectorIcon(item, source) {
+      var label = connectorDisplayName(item, source);
+      var src = connectorIconSrc(item, source);
+      if (src) {
+        return '<span class="agent-connector-icon"><img src="' + src + '" alt="' + escapeHtml(label) + '" loading="lazy" decoding="async"></span>';
+      }
+      return '<span class="agent-connector-icon"><span>' + escapeHtml(String(label || "?").charAt(0).toUpperCase() || "?") + '</span></span>';
+    }
+
+    function connectorToolMatches(tool, item, source) {
+      var toolMeta = tool && tool.metadata ? tool.metadata : {};
+      var itemMeta = item && item.metadata ? item.metadata : {};
+      if (source === "native") {
+        return toolMeta.accountId && itemMeta.accountId && toolMeta.accountId === itemMeta.accountId;
+      }
+      return toolMeta.connectionId && itemMeta.connectionId && toolMeta.connectionId === itemMeta.connectionId;
+    }
+
+    function renderCapabilityConnections(group, agentId, toolGroup, nativeGroup, nativeToolGroup) {
       if (!capabilityConnections) return;
       capabilityConnections.innerHTML = "";
-      var items = group && Array.isArray(group.items) ? group.items : [];
-      var tools = toolGroup && Array.isArray(toolGroup.items) ? toolGroup.items : [];
-      if (!items.length) {
-        renderCapabilityEmptyState(capabilityConnections, I18N.capabilityNoConnections, I18N.capabilitySetupMcp, SETUP_URLS.mcp);
+      var mcpItems = group && Array.isArray(group.items) ? group.items : [];
+      var nativeItems = nativeGroup && Array.isArray(nativeGroup.items) ? nativeGroup.items : [];
+      var mcpTools = toolGroup && Array.isArray(toolGroup.items) ? toolGroup.items : [];
+      var nativeTools = nativeToolGroup && Array.isArray(nativeToolGroup.items) ? nativeToolGroup.items : [];
+      var rows = nativeItems.map(function (item) {
+        return { item: item, tools: nativeTools, source: "native" };
+      }).concat(mcpItems.map(function (item) {
+        return { item: item, tools: mcpTools, source: "mcp" };
+      }));
+      if (!rows.length) {
+        renderCapabilityEmptyState(capabilityConnections, I18N.capabilityNoConnectors, I18N.capabilitySetupConnectors, SETUP_URLS.connectors);
         return;
       }
-      items.forEach(function (item) {
+      rows.forEach(function (entry, index) {
+        var item = entry.item;
+        var sourceType = entry.source;
+        var metadata = item && item.metadata ? item.metadata : {};
+        var sourceLabel = sourceType === "native" ? I18N.nativeConnector : I18N.mcpConnector;
+        var connectorName = connectorDisplayName(item, sourceType);
+        var identifier = sourceType === "native" && item.label && item.label !== connectorName ? item.label : "";
+        var isOpen = index === 0;
         var row = document.createElement("div");
-        row.className = "flex items-start justify-between gap-3 rounded-lg border border-border/70 bg-muted/20 px-3 py-3";
-        var info = document.createElement("div");
-        info.className = "min-w-0 space-y-1";
-        var connectionId = item.metadata && item.metadata.connectionId;
-        var title = document.createElement("div");
-        title.className = "text-sm font-semibold text-foreground";
-        title.textContent = item.label || I18N.capabilityConnectionFallback;
-        var meta = document.createElement("div");
-        meta.className = "flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground";
-        var availability = document.createElement("span");
-        availability.textContent = item.availability === "enabled"
+        row.className = "agent-connector-card" + (isOpen ? " is-open" : "");
+        var availabilityLabel = item.availability === "enabled"
           ? I18N.capabilityConnectionEnabled
           : item.source === "system"
             ? I18N.capabilityConnectionUnavailable
             : I18N.capabilityConnectionDisabled;
-        var source = document.createElement("span");
-        source.textContent = formatCapabilitySource(item.source);
-        var toolCount = document.createElement("span");
-        toolCount.textContent = I18N.capabilityToolCountFormat.replace(
-          "{count}",
-          formatNumber(item.metadata && item.metadata.toolCount, 0)
-        );
-        meta.appendChild(availability);
-        meta.appendChild(source);
-        meta.appendChild(toolCount);
-        var reason = document.createElement("p");
-        reason.className = "text-xs text-muted-foreground";
-        reason.textContent = item.reason || "";
-        info.appendChild(title);
-        info.appendChild(meta);
-        info.appendChild(reason);
-
-        var connectionTools = tools.filter(function (tool) {
-          return tool && tool.metadata && tool.metadata.connectionId === connectionId;
+        var matchedTools = (entry.tools || []).filter(function (tool) {
+          return connectorToolMatches(tool, item, sourceType);
         });
-        var toolsWrap = document.createElement("div");
-        toolsWrap.className = "mt-3 space-y-2";
-        if (connectionTools.length) {
-          connectionTools.forEach(function (tool) {
-            var toolRow = document.createElement("div");
-            toolRow.className = "rounded-md border border-border/60 bg-background/70 px-3 py-2 space-y-1";
-            var toolHeader = document.createElement("div");
-            toolHeader.className = "flex items-center justify-between gap-2";
-            var toolTitle = document.createElement("div");
-            toolTitle.className = "text-xs font-semibold text-foreground";
-            toolTitle.textContent = tool.label || tool.key;
-            var toolPolicy = document.createElement("span");
-            toolPolicy.className = "inline-flex items-center rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground";
-            toolPolicy.textContent = formatExecutionPolicy(tool.executionPolicy);
-            toolHeader.appendChild(toolTitle);
-            toolHeader.appendChild(toolPolicy);
-
-            var toolMeta = document.createElement("div");
-            toolMeta.className = "flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground";
-            var toolSource = document.createElement("span");
-            toolSource.textContent = formatCapabilitySource(tool.source);
-            toolMeta.appendChild(toolSource);
-
-            var toolReason = document.createElement("p");
-            toolReason.className = "text-[11px] text-muted-foreground";
-            toolReason.textContent = tool.reason || "";
-
-            toolRow.appendChild(toolHeader);
-            toolRow.appendChild(toolMeta);
-            toolRow.appendChild(toolReason);
-            toolsWrap.appendChild(toolRow);
-          });
-        } else {
-          var emptyTools = document.createElement("p");
-          emptyTools.className = "text-[11px] text-muted-foreground";
-          emptyTools.textContent = I18N.capabilityNoConnectionTools;
-          toolsWrap.appendChild(emptyTools);
-        }
-        info.appendChild(toolsWrap);
-        row.appendChild(info);
-
-        var actionable = Boolean(connectionId) && item.source !== "system";
-        if (actionable) {
-          var button = document.createElement("button");
-          button.type = "button";
-          button.className = "inline-flex items-center justify-center rounded-md border border-input bg-background px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors";
-          button.textContent = item.availability === "enabled" ? I18N.capabilityDisable : I18N.capabilityEnable;
+        var sourceClass = sourceType === "native" ? "native" : "mcp";
+        row.innerHTML =
+          '<button type="button" class="agent-connector-card__button" aria-expanded="' + (isOpen ? "true" : "false") + '">' +
+            '<span class="agent-connector-card__main">' +
+              renderConnectorIcon(item, sourceType) +
+              '<span class="min-w-0">' +
+                '<span class="agent-connector-title">' + escapeHtml(connectorName) + '</span>' +
+                '<span class="agent-connector-meta">' +
+                  '<span class="agent-connector-badge ' + sourceClass + '">' + escapeHtml(sourceLabel) + '</span>' +
+                  '<span>' + escapeHtml(availabilityLabel) + '</span>' +
+                  '<span>' + escapeHtml(formatCapabilitySource(item.source)) + '</span>' +
+                  '<span>' + escapeHtml(I18N.capabilityToolCountFormat.replace("{count}", formatNumber(metadata.toolCount, matchedTools.length))) + '</span>' +
+                  (identifier ? '<span>' + escapeHtml(identifier) + '</span>' : '') +
+                '</span>' +
+              '</span>' +
+            '</span>' +
+            '<span class="agent-connector-card__side">' +
+              '<span class="agent-connector-badge">' + escapeHtml(formatExecutionPolicy(item.executionPolicy)) + '</span>' +
+              '<span aria-hidden="true">▾</span>' +
+            '</span>' +
+          '</button>' +
+          '<div class="agent-connector-card__body">' +
+            '<p class="text-xs text-muted-foreground mb-3">' + escapeHtml(item.reason || "") + '</p>' +
+            '<div class="agent-connector-tools"></div>' +
+          '</div>';
+        var button = row.querySelector(".agent-connector-card__button");
+        if (button) {
           button.addEventListener("click", function () {
-            updateAgentConnection(agentId, connectionId, item.availability !== "enabled", button);
+            var nextOpen = !row.classList.contains("is-open");
+            row.classList.toggle("is-open", nextOpen);
+            button.setAttribute("aria-expanded", nextOpen ? "true" : "false");
           });
-          row.appendChild(button);
+        }
+        var toolsWrap = row.querySelector(".agent-connector-tools");
+        if (toolsWrap) {
+          if (matchedTools.length) {
+            matchedTools.forEach(function (tool) {
+              var toolRow = document.createElement("div");
+              toolRow.className = "agent-connector-tool";
+              toolRow.innerHTML =
+                '<div class="agent-connector-tool__head">' +
+                  '<div class="agent-connector-tool__title">' + escapeHtml(tool.label || tool.key) + '</div>' +
+                  '<span class="agent-connector-badge">' + escapeHtml(formatExecutionPolicy(tool.executionPolicy)) + '</span>' +
+                '</div>' +
+                '<div class="agent-connector-meta">' +
+                  '<span>' + escapeHtml(formatCapabilitySource(tool.source)) + '</span>' +
+                  (tool.metadata && tool.metadata.operationType ? '<span>' + escapeHtml(tool.metadata.operationType) + '</span>' : '') +
+                '</div>' +
+                '<p class="agent-connector-tool__copy">' + escapeHtml(tool.reason || "") + '</p>';
+              toolsWrap.appendChild(toolRow);
+            });
+          } else {
+            var emptyTools = document.createElement("p");
+            emptyTools.className = "text-[11px] text-muted-foreground";
+            emptyTools.textContent = I18N.capabilityNoConnectionTools;
+            toolsWrap.appendChild(emptyTools);
+          }
+        }
+        var actionable = sourceType === "mcp" && Boolean(metadata.connectionId) && item.source !== "system";
+        if (actionable) {
+          var side = row.querySelector(".agent-connector-card__side");
+          var actionButton = document.createElement("button");
+          actionButton.type = "button";
+          actionButton.className = "inline-flex items-center justify-center rounded-md border border-input bg-background px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors";
+          actionButton.textContent = item.availability === "enabled" ? I18N.capabilityDisable : I18N.capabilityEnable;
+          actionButton.addEventListener("click", function (event) {
+            event.stopPropagation();
+            updateAgentConnection(agentId, metadata.connectionId, item.availability !== "enabled", actionButton);
+          });
+          if (side) side.insertBefore(actionButton, side.firstChild);
         }
         capabilityConnections.appendChild(row);
-      });
-    }
-
-    function renderNativeConnections(group, toolGroup) {
-      if (!capabilityNativeConnections) return;
-      capabilityNativeConnections.innerHTML = "";
-      var items = group && Array.isArray(group.items) ? group.items : [];
-      var tools = toolGroup && Array.isArray(toolGroup.items) ? toolGroup.items : [];
-      if (!items.length) {
-        renderCapabilityEmptyState(
-          capabilityNativeConnections,
-          I18N.capabilityNoNativeConnections,
-          I18N.capabilitySetupNative,
-          SETUP_URLS.integrations
-        );
-        return;
-      }
-      items.forEach(function (item) {
-        var row = document.createElement("div");
-        row.className = "flex items-start justify-between gap-3 rounded-lg border border-border/70 bg-muted/20 px-3 py-3";
-        var info = document.createElement("div");
-        info.className = "min-w-0 space-y-1";
-        var accountId = item.metadata && item.metadata.accountId;
-        var title = document.createElement("div");
-        title.className = "text-sm font-semibold text-foreground";
-        title.textContent = item.label || I18N.capabilityNativeIntegrationFallback;
-        var meta = document.createElement("div");
-        meta.className = "flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground";
-        var availability = document.createElement("span");
-        availability.textContent = I18N.capabilityConnectionEnabled;
-        var source = document.createElement("span");
-        source.textContent = formatCapabilitySource(item.source);
-        var toolCount = document.createElement("span");
-        toolCount.textContent = I18N.capabilityToolCountFormat.replace(
-          "{count}",
-          formatNumber(item.metadata && item.metadata.toolCount, 0)
-        );
-        meta.appendChild(availability);
-        meta.appendChild(source);
-        meta.appendChild(toolCount);
-        if (item.metadata && item.metadata.sendMode) {
-          var sendMode = document.createElement("span");
-          sendMode.textContent = I18N.capabilitySendModeLabel + ": " + formatApprovalModeLabel(
-            item.metadata.sendMode === "draft_approval" ? "approve_writes" : item.metadata.sendMode
-          );
-          meta.appendChild(sendMode);
-        }
-        var reason = document.createElement("p");
-        reason.className = "text-xs text-muted-foreground";
-        reason.textContent = item.reason || "";
-        info.appendChild(title);
-        info.appendChild(meta);
-        info.appendChild(reason);
-
-        var accountTools = tools.filter(function (tool) {
-          return tool && tool.metadata && tool.metadata.accountId === accountId;
-        });
-        var toolsWrap = document.createElement("div");
-        toolsWrap.className = "mt-3 space-y-2";
-        if (accountTools.length) {
-          accountTools.forEach(function (tool) {
-            var toolRow = document.createElement("div");
-            toolRow.className = "rounded-md border border-border/60 bg-background/70 px-3 py-2 space-y-1";
-            var toolHeader = document.createElement("div");
-            toolHeader.className = "flex items-center justify-between gap-2";
-            var toolTitle = document.createElement("div");
-            toolTitle.className = "text-xs font-semibold text-foreground";
-            toolTitle.textContent = tool.label || tool.key;
-            var toolPolicy = document.createElement("span");
-            toolPolicy.className = "inline-flex items-center rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground";
-            toolPolicy.textContent = formatExecutionPolicy(tool.executionPolicy);
-            toolHeader.appendChild(toolTitle);
-            toolHeader.appendChild(toolPolicy);
-
-            var toolMeta = document.createElement("div");
-            toolMeta.className = "flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground";
-            var toolSource = document.createElement("span");
-            toolSource.textContent = formatCapabilitySource(tool.source);
-            toolMeta.appendChild(toolSource);
-            var toolReason = document.createElement("p");
-            toolReason.className = "text-[11px] text-muted-foreground";
-            toolReason.textContent = tool.reason || "";
-
-            toolRow.appendChild(toolHeader);
-            toolRow.appendChild(toolMeta);
-            toolRow.appendChild(toolReason);
-            toolsWrap.appendChild(toolRow);
-          });
-        } else {
-          var emptyTools = document.createElement("p");
-          emptyTools.className = "text-[11px] text-muted-foreground";
-          emptyTools.textContent = I18N.capabilityNoConnectionTools;
-          toolsWrap.appendChild(emptyTools);
-        }
-        info.appendChild(toolsWrap);
-        row.appendChild(info);
-        capabilityNativeConnections.appendChild(row);
       });
     }
 
@@ -2492,16 +2811,16 @@
         editBtn.className = "agent-task-action";
         editBtn.textContent = I18N.edit;
         editBtn.addEventListener("click", function () { openTaskForm(workflow); });
-        var archiveBtn = document.createElement("button");
-        archiveBtn.type = "button";
-        archiveBtn.className = "agent-task-action";
-        archiveBtn.textContent = I18N.archive;
-        archiveBtn.addEventListener("click", function () { archiveWorkflow(workflow.id, archiveBtn); });
+        var deleteBtn = document.createElement("button");
+        deleteBtn.type = "button";
+        deleteBtn.className = "agent-task-action agent-task-action--danger";
+        deleteBtn.textContent = I18N.deleteTask;
+        deleteBtn.addEventListener("click", function () { deleteWorkflow(workflow.id, deleteBtn); });
         actions.appendChild(runBtn);
         actions.appendChild(statusBtn);
         actions.appendChild(activityBtn);
         actions.appendChild(editBtn);
-        actions.appendChild(archiveBtn);
+        actions.appendChild(deleteBtn);
         header.appendChild(info);
         header.appendChild(actions);
         card.appendChild(header);
@@ -2586,8 +2905,9 @@
         });
     }
 
-    function archiveWorkflow(workflowId, button) {
+    function deleteWorkflow(workflowId, button) {
       if (!currentAgentId || !workflowId) return;
+      if (!window.confirm(I18N.deleteTaskConfirm)) return;
       if (button) button.disabled = true;
       apiJson("/api/agents/" + encodeURIComponent(currentAgentId) + "/workflows/" + encodeURIComponent(workflowId) + "/", { method: "DELETE" })
         .then(loadWorkflows)
@@ -2612,6 +2932,8 @@
       if (!workflow || !workflow.id) return;
       currentRunWorkflowFilter = workflow.id;
       currentRunWorkflowLabel = workflow.name || "Task";
+      currentRunsExpandedWorkflowId = workflow.id;
+      currentRunsExpandedRunId = "";
       setActiveTab("runs");
       loadRuns();
     }
@@ -2626,6 +2948,8 @@
         var workflow = currentWorkflows.find(function (item) { return item && item.id === workflowId; });
         currentRunWorkflowFilter = workflowId;
         currentRunWorkflowLabel = (workflow && workflow.name) || "Task";
+        currentRunsExpandedWorkflowId = workflowId;
+        currentRunsExpandedRunId = "";
         setActiveTab("runs");
         return loadRuns();
       }).finally(function () {
@@ -2654,83 +2978,232 @@
       });
     }
 
-    function renderRuns(runs) {
+    function runCountLabel(count) {
+      var value = Number(count || 0);
+      return value + " " + (value === 1 ? I18N.runSingular : I18N.runPlural);
+    }
+
+    function runDuration(run) {
+      if (!run || !run.startedAt || !run.finishedAt) return "";
+      return formatDuration((new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime()) / 1000);
+    }
+
+    function runTimestamp(run) {
+      return new Date((run && (run.createdAt || run.startedAt || run.updatedAt)) || 0).getTime() || 0;
+    }
+
+    function buildRunGroups(workflows, runs) {
+      var groups = [];
+      var groupsById = {};
+      (workflows || []).forEach(function (workflow) {
+        if (!workflow || !workflow.id) return;
+        var group = {
+          id: workflow.id,
+          title: workflow.name || "Task",
+          meta: workflowTriggerSummary(workflow),
+          status: workflow.status || "",
+          runs: [],
+          currentTask: true,
+        };
+        groups.push(group);
+        groupsById[group.id] = group;
+      });
+      (runs || []).forEach(function (run) {
+        if (!run || !run.id) return;
+        var workflowId = run.workflowId || "";
+        if (!workflowId) return;
+        var group = groupsById[workflowId];
+        if (!group) {
+          var fallbackId = "detached-" + workflowId;
+          group = groupsById[fallbackId];
+          if (!group) {
+            group = {
+              id: fallbackId,
+              title: run.workflowName || run.title || "Task",
+              meta: statusPill(run.source || "workflow"),
+              status: "",
+              runs: [],
+              currentTask: false,
+            };
+            groups.push(group);
+            groupsById[fallbackId] = group;
+          }
+        }
+        group.runs.push(run);
+      });
+      groups.forEach(function (group) {
+        group.runs.sort(function (a, b) { return runTimestamp(b) - runTimestamp(a); });
+        group.latestRun = group.runs[0] || null;
+      });
+      groups.sort(function (a, b) {
+        var aFocused = currentRunWorkflowFilter && (a.id === currentRunWorkflowFilter || a.id === "detached-" + currentRunWorkflowFilter);
+        var bFocused = currentRunWorkflowFilter && (b.id === currentRunWorkflowFilter || b.id === "detached-" + currentRunWorkflowFilter);
+        if (aFocused !== bFocused) return aFocused ? -1 : 1;
+        var latestDiff = runTimestamp(b.latestRun) - runTimestamp(a.latestRun);
+        if (latestDiff) return latestDiff;
+        if (a.currentTask !== b.currentTask) return a.currentTask ? -1 : 1;
+        return String(a.title || "").localeCompare(String(b.title || ""));
+      });
+      return groups;
+    }
+
+    function renderRuns(runs, workflows) {
       if (!runList) return;
       runList.innerHTML = "";
-      if (runDetail) {
-        runDetail.classList.add("hidden");
-        runDetail.innerHTML = "";
-      }
-      if (!runs || !runs.length) {
-        runList.innerHTML = '<p class="text-xs text-muted-foreground">' + I18N.noRuns + "</p>";
+      var groups = buildRunGroups(workflows || currentWorkflows, runs || []);
+      if (!groups.length) {
+        runList.innerHTML = '<div class="agent-run-empty">' + I18N.noRuns + "</div>";
         return;
       }
-      runs.forEach(function (run) {
-        var row = document.createElement("button");
-        row.type = "button";
-        row.className = "block w-full rounded-lg border border-border/70 bg-muted/20 p-3 text-left hover:border-primary/40";
-        var duration = "";
-        if (run.startedAt && run.finishedAt) {
-          duration = " · " + formatDuration((new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime()) / 1000);
+      var hasExpandedGroup = groups.some(function (group) { return group.id === currentRunsExpandedWorkflowId; });
+      if (!hasExpandedGroup) {
+        currentRunsExpandedWorkflowId = currentRunWorkflowFilter || "";
+        currentRunsExpandedRunId = "";
+      }
+      groups.forEach(function (group) {
+        var expanded = group.id === currentRunsExpandedWorkflowId || (currentRunWorkflowFilter && group.id === "detached-" + currentRunWorkflowFilter);
+        var card = document.createElement("article");
+        card.className = "agent-run-group";
+        card.dataset.expanded = expanded ? "true" : "false";
+
+        var button = document.createElement("button");
+        button.type = "button";
+        button.className = "agent-run-group__button";
+        button.setAttribute("aria-expanded", expanded ? "true" : "false");
+        var left = document.createElement("div");
+        left.className = "min-w-0";
+        var title = document.createElement("div");
+        title.className = "agent-run-group__title";
+        title.textContent = group.title || "Task";
+        var meta = document.createElement("div");
+        meta.className = "agent-run-group__meta";
+        meta.textContent = group.meta || "";
+        left.appendChild(title);
+        left.appendChild(meta);
+        var summary = document.createElement("div");
+        summary.className = "agent-run-group__summary";
+        var count = document.createElement("span");
+        count.textContent = runCountLabel(group.runs.length);
+        var latest = document.createElement("span");
+        latest.textContent = group.latestRun ? (I18N.latestRunLabel + " " + (formatDateTime(group.latestRun.createdAt) || "")) : statusPill(group.status || "");
+        summary.appendChild(count);
+        if (latest.textContent) summary.appendChild(latest);
+        button.appendChild(left);
+        button.appendChild(summary);
+        button.addEventListener("click", function () {
+          currentRunWorkflowFilter = "";
+          currentRunWorkflowLabel = "";
+          currentRunsExpandedWorkflowId = expanded ? "" : group.id;
+          currentRunsExpandedRunId = "";
+          renderRuns(currentRuns, currentWorkflows);
+        });
+        card.appendChild(button);
+
+        if (expanded) {
+          var body = document.createElement("div");
+          body.className = "agent-run-group__body";
+          if (!group.runs.length) {
+            var empty = document.createElement("div");
+            empty.className = "agent-run-empty";
+            empty.textContent = I18N.noRunsForTask;
+            body.appendChild(empty);
+          } else {
+            var list = document.createElement("div");
+            list.className = "agent-run-list";
+            group.runs.forEach(function (run) {
+              var runExpanded = run.id === currentRunsExpandedRunId;
+              var item = document.createElement("div");
+              item.className = "agent-run-row";
+              item.dataset.expanded = runExpanded ? "true" : "false";
+              var runButton = document.createElement("button");
+              runButton.type = "button";
+              runButton.className = "agent-run-row__button";
+              var runLeft = document.createElement("div");
+              runLeft.className = "min-w-0";
+              var runTitle = document.createElement("div");
+              runTitle.className = "agent-run-row__title";
+              runTitle.textContent = (formatDateTime(run.createdAt) || run.title || "Run");
+              var runMeta = document.createElement("div");
+              runMeta.className = "agent-run-row__meta";
+              var duration = runDuration(run);
+              runMeta.textContent = statusPill(run.source) + (duration ? " · " + duration : "");
+              runLeft.appendChild(runTitle);
+              runLeft.appendChild(runMeta);
+              var runStatus = document.createElement("div");
+              runStatus.className = "agent-run-row__status";
+              runStatus.textContent = statusPill(run.status);
+              runButton.appendChild(runLeft);
+              runButton.appendChild(runStatus);
+              runButton.addEventListener("click", function () {
+                currentRunsExpandedWorkflowId = group.id;
+                currentRunsExpandedRunId = runExpanded ? "" : run.id;
+                renderRuns(currentRuns, currentWorkflows);
+              });
+              item.appendChild(runButton);
+              if (runExpanded) {
+                var detail = document.createElement("div");
+                detail.className = "agent-run-row__detail";
+                item.appendChild(detail);
+                showRunDetailIn(detail, run);
+              }
+              list.appendChild(item);
+            });
+            body.appendChild(list);
+          }
+          card.appendChild(body);
         }
-        row.innerHTML = '<div class="flex items-start justify-between gap-3"><div><div class="text-sm font-semibold text-foreground"></div><div class="mt-1 text-[11px] text-muted-foreground"></div></div><span class="text-[11px] text-muted-foreground"></span></div>';
-        row.querySelector(".text-sm").textContent = run.title || run.workflowName || "Run";
-        row.querySelector(".mt-1").textContent = statusPill(run.source) + " · " + (formatDateTime(run.createdAt) || "") + duration;
-        row.querySelector("span").textContent = statusPill(run.status);
-        row.addEventListener("click", function () { showRunDetail(run); });
-        runList.appendChild(row);
+        runList.appendChild(card);
       });
     }
 
     function loadRuns() {
       if (!currentAgentId || !runList) return Promise.resolve();
       runList.innerHTML = '<p class="text-xs text-muted-foreground">' + I18N.loadingRuns + "</p>";
-      if (runFilter && runFilterLabel) {
-        runFilter.classList.toggle("hidden", !currentRunWorkflowFilter);
-        runFilterLabel.textContent = currentRunWorkflowFilter
-          ? I18N.showingTaskRuns.replace("{name}", currentRunWorkflowLabel || "Task")
-          : "";
-      }
-      var url = "/api/agents/" + encodeURIComponent(currentAgentId) + "/runs/?limit=50";
-      if (currentRunWorkflowFilter) url += "&workflowId=" + encodeURIComponent(currentRunWorkflowFilter);
-      return apiJson(url)
-        .then(function (payload) {
-          renderRuns(payload.runs || []);
+      return Promise.all([
+        apiJson("/api/agents/" + encodeURIComponent(currentAgentId) + "/workflows/"),
+        apiJson("/api/agents/" + encodeURIComponent(currentAgentId) + "/runs/?limit=200"),
+      ])
+        .then(function (results) {
+          currentWorkflows = (results[0] && results[0].workflows) || [];
+          currentRuns = (results[1] && results[1].runs) || [];
+          if (currentRunWorkflowFilter && !currentRunsExpandedWorkflowId) {
+            currentRunsExpandedWorkflowId = currentRunWorkflowFilter;
+          }
+          renderRuns(currentRuns, currentWorkflows);
         })
         .catch(function (error) {
           runList.innerHTML = '<p class="text-xs text-destructive">' + ((error && error.message) || "Failed to load runs") + "</p>";
         });
     }
 
-    function showRunDetail(run) {
-      if (!runDetail || !currentAgentId || !run.id) return;
-      runDetail.classList.remove("hidden");
-      runDetail.innerHTML = '<p class="text-xs text-muted-foreground">' + I18N.loadingRuns + "</p>";
+    function showRunDetailIn(container, run) {
+      if (!container || !currentAgentId || !run.id) return;
+      container.innerHTML = '<p class="text-xs text-muted-foreground">' + I18N.loadingRuns + "</p>";
       Promise.all([
         apiJson("/api/agents/" + encodeURIComponent(currentAgentId) + "/runs/" + encodeURIComponent(run.id) + "/"),
         apiJson("/api/agents/" + encodeURIComponent(currentAgentId) + "/runs/" + encodeURIComponent(run.id) + "/events/"),
       ]).then(function (results) {
         var detail = (results[0] && results[0].run) || run;
         var events = (results[1] && results[1].events) || [];
-        runDetail.innerHTML = "";
+        container.innerHTML = "";
         var title = document.createElement("div");
         title.className = "text-sm font-semibold text-foreground";
         title.textContent = detail.title || "Run";
         var meta = document.createElement("div");
         meta.className = "text-xs text-muted-foreground";
         meta.textContent = statusPill(detail.status) + " · " + statusPill(detail.source) + " · " + (formatDateTime(detail.createdAt) || "");
-        runDetail.appendChild(title);
-        runDetail.appendChild(meta);
+        container.appendChild(title);
+        container.appendChild(meta);
         if (detail.errorDetail) {
           var error = document.createElement("pre");
           error.className = "whitespace-pre-wrap rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive";
           error.textContent = detail.errorDetail;
-          runDetail.appendChild(error);
+          container.appendChild(error);
         }
         var result = document.createElement("pre");
         result.className = "max-h-56 overflow-auto rounded-md border border-border/60 bg-background p-3 text-xs";
         result.textContent = I18N.result + "\n" + JSON.stringify(detail.result || {}, null, 2);
-        runDetail.appendChild(result);
+        container.appendChild(result);
         var eventWrap = document.createElement("div");
         eventWrap.className = "space-y-2";
         events.forEach(function (event) {
@@ -2739,7 +3212,9 @@
           item.textContent = "#" + event.sequenceIndex + " " + (event.label || event.type) + " · " + (formatDateTime(event.createdAt) || "");
           eventWrap.appendChild(item);
         });
-        runDetail.appendChild(eventWrap);
+        container.appendChild(eventWrap);
+      }).catch(function (error) {
+        container.innerHTML = '<p class="text-xs text-destructive">' + ((error && error.message) || "Failed to load run detail") + "</p>";
       });
     }
 
@@ -2961,14 +3436,6 @@
       if (fieldRole) fieldRole.textContent = roleSummary;
       if (fieldTone) fieldTone.textContent = dataset.agentTone || "—";
       if (fieldInitials) fieldInitials.textContent = dataset.agentInitials || getInitials(currentAgentTitle);
-      if (fieldUpdated) {
-        var updated = dataset.agentUpdatedIso ? formatDateTime(dataset.agentUpdatedIso) : dataset.agentUpdated || "";
-        fieldUpdated.textContent = updated ? I18N.updatedPrefix + updated : "";
-      }
-      if (fieldLastActive) {
-        var lastActive = dataset.agentLastActive ? formatDateTime(dataset.agentLastActive) : "";
-        fieldLastActive.textContent = lastActive ? I18N.lastActivePrefix + lastActive : I18N.noRecentActivity;
-      }
       if (fieldMetricScope) fieldMetricScope.textContent = formatKnowledgeScopeLabel(dataset.agentKnowledgeMode);
       if (fieldMetricDocuments) fieldMetricDocuments.textContent = formatNumber(dataset.agentKnowledgeTotal);
       if (fieldMetricConnections) fieldMetricConnections.textContent = "—";
@@ -2978,7 +3445,6 @@
       if (capabilityApprovalSelect) capabilityApprovalSelect.value = "inherit";
       if (capabilityApprovalCard) capabilityApprovalCard.hidden = true;
       renderCapabilityConnections(null, dataset.agentUuid || "", null);
-      renderNativeConnections(null, null);
       setCapabilityFlash(I18N.capabilityReady, false);
       updateShareable(dataset.agentShareable || "");
     }
@@ -2999,10 +3465,6 @@
       if (fieldTone) fieldTone.textContent = agent.toneLabel || rowDataset.agentTone || "—";
       if (fieldInitials) {
         fieldInitials.textContent = getInitials(agent.name || rowDataset.agentName, rowDataset.agentInitials);
-      }
-      if (fieldUpdated) {
-        var updatedValue = agent.updatedAt || rowDataset.agentUpdatedIso || rowDataset.agentUpdated;
-        fieldUpdated.textContent = updatedValue ? I18N.updatedPrefix + formatDateTime(updatedValue) : "";
       }
       if (fieldMetricScope) {
         var knowledgeMode = agent.knowledge && agent.knowledge.mode ? agent.knowledge.mode : rowDataset.agentKnowledgeMode;
@@ -3036,11 +3498,6 @@
       if (capabilityApprovalCard) {
         capabilityApprovalCard.hidden = !hasAnyConnectedCapabilities(agent);
       }
-      if (fieldLastActive) {
-        var stats = agent.stats || {};
-        var lastActive = stats.lastActiveAt || rowDataset.agentLastActive;
-        fieldLastActive.textContent = lastActive ? I18N.lastActivePrefix + formatDateTime(lastActive) : I18N.noRecentActivity;
-      }
       populateChips(fieldTraits, agent.traits, I18N.noTraits);
       if (fieldKnowledgeMode) {
 	        fieldKnowledgeMode.textContent = formatKnowledgeScopeLabel(capabilitySummary.knowledgeScope || agent.knowledge && agent.knowledge.mode);
@@ -3048,9 +3505,7 @@
       renderCapabilityConnections(
         getCapabilityGroup(agent, "mcp_connection"),
         agent.id || rowDataset.agentUuid || "",
-        getCapabilityGroup(agent, "mcp_tool")
-      );
-      renderNativeConnections(
+        getCapabilityGroup(agent, "mcp_tool"),
         getCapabilityGroup(agent, "native_integration"),
         getCapabilityGroup(agent, "native_tool")
       );
@@ -3070,9 +3525,12 @@
       currentAgentId = uuid;
       currentAgentDetail = null;
       currentWorkflows = [];
+      currentRuns = [];
       currentEmailAccounts = [];
       currentRunWorkflowFilter = "";
       currentRunWorkflowLabel = "";
+      currentRunsExpandedWorkflowId = "";
+      currentRunsExpandedRunId = "";
       currentMemoryView = "saved";
       if (memorySearchInput) memorySearchInput.value = "";
       closeTaskForm();
@@ -3278,13 +3736,6 @@
     }
     if (runsRefreshButton) {
       runsRefreshButton.addEventListener("click", loadRuns);
-    }
-    if (runFilterClear) {
-      runFilterClear.addEventListener("click", function () {
-        currentRunWorkflowFilter = "";
-        currentRunWorkflowLabel = "";
-        loadRuns();
-      });
     }
     if (memoryRefreshButton) {
       memoryRefreshButton.addEventListener("click", loadMemory);

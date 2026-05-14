@@ -21,6 +21,7 @@ urlpatterns = [
     path("dashboard/crm/fields/", crm_frontend_views.dashboard_crm_fields, name="dashboard-crm-fields"),
     path("dashboard/agents/", views.dashboard_agents, name="dashboard-agents"),
     path("dashboard/knowledge/", views.dashboard_knowledge, name="dashboard-knowledge"),
+    path("dashboard/connectors/", views.dashboard_connectors, name="dashboard-connectors"),
     path("dashboard/integrations/", views.dashboard_integrations, name="dashboard-integrations"),
     path("dashboard/mcp/", views.dashboard_mcp, name="dashboard-mcp"),
     path("dashboard/controls/", views.dashboard_controls, name="dashboard-controls"),

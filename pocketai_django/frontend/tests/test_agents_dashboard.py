@@ -44,3 +44,14 @@ class AgentsDashboardTests(TestCase):
         self.assertNotIn("Escalation on", content)
         self.assertNotIn("No KPIs selected", content)
         self.assertNotIn("data-subagents-enabled", content)
+
+    def test_connectors_dashboard_unifies_native_and_mcp_surfaces(self) -> None:
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("frontend:dashboard-connectors"))
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+        self.assertIn("Connectors", content)
+        self.assertIn("Native integrations", content)
+        self.assertIn("MCP marketplace", content)
+        self.assertIn("data-mcp-connection-list", content)

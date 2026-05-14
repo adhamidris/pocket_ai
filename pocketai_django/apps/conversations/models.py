@@ -650,7 +650,6 @@ class AgentWorkflowStatus(models.TextChoices):
     DRAFT = "draft", "Draft"
     ACTIVE = "active", "Active"
     PAUSED = "paused", "Paused"
-    ARCHIVED = "archived", "Archived"
 
 
 class AgentWorkflowTriggerType(models.TextChoices):

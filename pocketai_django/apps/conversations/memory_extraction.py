@@ -33,6 +33,18 @@ class MemoryExtractionService:
     data survives context compaction and approval flows.
     """
 
+    OPERATIONAL_ID_FIELDS = {
+        "id",
+        "draft_id",
+        "draftid",
+        "message_id",
+        "messageid",
+        "thread_id",
+        "threadid",
+        "event_id",
+        "eventid",
+    }
+
     # Rule-based extraction patterns per tool type
     EXTRACTION_RULES: dict[str, dict[str, Any]] = {
         # Knowledge search tools - extract fees, prices, rates
@@ -58,31 +70,31 @@ class MemoryExtractionService:
             "extract_fields": ["content", "title"],
             "store_as": "extracted_data",
         },
-        # Email tools - extract draft/message IDs, recipients
+        # Email tools - extract user-meaningful fields, not provider/tool ids.
         "email_create_draft": {
-            "extract_fields": ["draft_id", "draftId", "recipient", "to", "subject"],
+            "extract_fields": ["recipient", "to", "subject"],
             "store_as": "decision",
             "key_prefix": "email_draft",
         },
         "email_send": {
-            "extract_fields": ["message_id", "messageId", "status", "recipient", "to"],
+            "extract_fields": ["status", "recipient", "to"],
             "store_as": "decision",
             "key_prefix": "email_sent",
         },
         "email_send_draft": {
-            "extract_fields": ["message_id", "messageId", "draft_id", "draftId", "status"],
+            "extract_fields": ["status"],
             "store_as": "decision",
             "key_prefix": "email_sent",
         },
         # Calendar tools
         "calendar_create_event": {
-            "extract_fields": ["event_id", "eventId", "title", "start_time", "startTime"],
+            "extract_fields": ["title", "start_time", "startTime"],
             "store_as": "decision",
             "key_prefix": "calendar_event",
         },
         # Generic patterns for unknown tools
         "_default": {
-            "extract_fields": ["id", "status", "result"],
+            "extract_fields": ["status", "result"],
             "store_as": "extracted_data",
         },
     }
@@ -145,6 +157,8 @@ class MemoryExtractionService:
         # Create memory items from extracted data
         for key, value in extracted.items():
             if not value:
+                continue
+            if self._is_operational_id_field(key):
                 continue
 
             # Determine the kind based on store_as
@@ -299,6 +313,11 @@ class MemoryExtractionService:
             )
 
         return created_items
+
+    def _is_operational_id_field(self, key: object) -> bool:
+        normalized = str(key or "").strip().replace("-", "_").lower()
+        compact = normalized.replace("_", "")
+        return normalized in self.OPERATIONAL_ID_FIELDS or compact in self.OPERATIONAL_ID_FIELDS
 
     def _rule_based_extraction(
         self,

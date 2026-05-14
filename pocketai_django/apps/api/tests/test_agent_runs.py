@@ -14,6 +14,9 @@ from apps.conversations.models import (
     AgentRunStatus,
     AgentWorkflow,
     AgentWorkflowStatus,
+    Conversation,
+    ConversationChannel,
+    ConversationStatus,
     MemoryItem,
     MemoryKind,
     MemoryScope,
@@ -167,6 +170,64 @@ class AgentRunsApiTests(TestCase):
         waiting.refresh_from_db()
         self.assertEqual(queued.status, AgentRunStatus.CANCELLED)
         self.assertEqual(waiting.status, AgentRunStatus.CANCELLED)
+
+    def test_deleting_workflow_removes_flow_and_cancels_open_runs(self) -> None:
+        thread = Conversation.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            owner_user=self.user,
+            channel=ConversationChannel.API,
+            status=ConversationStatus.LIVE,
+            metadata={"type": "workflow_thread"},
+        )
+        workflow = AgentWorkflow.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            created_by=self.user,
+            conversation=thread,
+            name="Delete me",
+            status=AgentWorkflowStatus.ACTIVE,
+            trigger_type="schedule",
+            trigger_config={"cron": "* * * * *"},
+            instructions={"goal": "Check things"},
+            next_trigger_at=timezone.now(),
+        )
+        thread.metadata = {"type": "workflow_thread", "workflow_id": str(workflow.id), "workflow_name": workflow.name}
+        thread.save(update_fields=["metadata", "last_activity_at"])
+        queued = AgentRun.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            conversation=thread,
+            workflow=workflow,
+            created_by=self.user,
+            title="Queued",
+            status=AgentRunStatus.QUEUED,
+        )
+        completed = AgentRun.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            conversation=thread,
+            workflow=workflow,
+            created_by=self.user,
+            title="Completed",
+            status=AgentRunStatus.COMPLETED,
+            workflow_snapshot={"name": workflow.name, "goal": "Check things"},
+        )
+
+        response = self.client.delete(reverse("api:agent-workflow-detail", args=[self.agent.id, workflow.id]))
+
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(AgentWorkflow.objects.filter(id=workflow.id).exists())
+        self.assertFalse(Conversation.objects.filter(id=thread.id).exists())
+        queued.refresh_from_db()
+        completed.refresh_from_db()
+        self.assertEqual(queued.status, AgentRunStatus.CANCELLED)
+        self.assertIsNone(queued.workflow_id)
+        self.assertIsNone(queued.conversation_id)
+        self.assertEqual(queued.metadata["cancelled_by_workflow"], "delete")
+        self.assertEqual(completed.status, AgentRunStatus.COMPLETED)
+        self.assertIsNone(completed.workflow_id)
+        self.assertEqual(completed.workflow_snapshot["name"], "Delete me")
 
     def test_runs_create_cancel_user_input_and_events(self) -> None:
         runs_url = reverse("api:agent-runs", args=[self.agent.id])

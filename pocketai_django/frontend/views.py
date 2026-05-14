@@ -2438,19 +2438,7 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
     return render(request, "frontend/agents.html", context)
 
 @login_required
-def dashboard_integrations(request: HttpRequest) -> HttpResponse:
-    user_name = _current_user_name(request)
-    business = _primary_business_for_user(request.user)
-    get_token(request)
-    context = {
-        "user_name": user_name,
-        "business_id": str(business.id) if business else "",
-    }
-    return render(request, "frontend/integrations.html", context)
-
-
-@login_required
-def dashboard_mcp(request: HttpRequest) -> HttpResponse:
+def dashboard_connectors(request: HttpRequest) -> HttpResponse:
     user_name = _current_user_name(request)
     business = _primary_business_for_user(request.user)
     get_token(request)
@@ -2459,6 +2447,16 @@ def dashboard_mcp(request: HttpRequest) -> HttpResponse:
         "business_id": str(business.id) if business else "",
     }
     return render(request, "frontend/mcp.html", context)
+
+
+@login_required
+def dashboard_integrations(request: HttpRequest) -> HttpResponse:
+    return redirect("frontend:dashboard-connectors")
+
+
+@login_required
+def dashboard_mcp(request: HttpRequest) -> HttpResponse:
+    return redirect("frontend:dashboard-connectors")
 
 
 @login_required
