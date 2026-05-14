@@ -11,6 +11,7 @@ from django.utils import timezone
 from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
 from apps.conversations.models import (
+    AgentWorkflow,
     Conversation,
     ConversationMessage,
     ConversationSender,
@@ -85,6 +86,39 @@ class AuthenticatedConversationApiTests(TestCase):
         payload = response.json()
         self.assertEqual(len(payload["conversations"]), 1)
         self.assertEqual(payload["conversations"][0]["conversation_id"], str(self.conversation.id))
+        self.assertEqual(payload["conversations"][0]["session_type"], "chat")
+
+    def test_conversations_collection_marks_workflow_threads(self) -> None:
+        workflow_thread = Conversation.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            owner_user=self.owner,
+            session_token="workflow-thread",
+            metadata={"type": "workflow_thread"},
+        )
+        workflow = AgentWorkflow.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            created_by=self.owner,
+            conversation=workflow_thread,
+            name="Daily report",
+        )
+        self.client.force_login(self.owner)
+
+        response = self.client.get(
+            reverse("api:chat-conversations"),
+            {"business_slug": self.business.slug, "agent_slug": self.agent.slug},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        task = next(item for item in response.json()["conversations"] if item["conversation_id"] == str(workflow_thread.id))
+        self.assertEqual(task["session_type"], "task")
+        self.assertEqual(task["workflow_id"], str(workflow.id))
+        self.assertEqual(task["title"], "Daily report")
+
+        messages_response = self.client.get(reverse("api:chat-conversation-messages", args=[workflow_thread.id]))
+        self.assertEqual(messages_response.status_code, 200)
+        self.assertEqual(messages_response.json()["session"]["session_type"], "task")
 
     def test_conversations_collection_orders_by_recent_activity(self) -> None:
         older = Conversation.objects.create(

@@ -41,7 +41,6 @@ from apps.conversations.models import (
     MemoryItem,
     MemoryKind,
     MemoryScope,
-    MemorySensitivity,
     MemoryStatus,
     MemoryVisibility,
 )
@@ -113,7 +112,23 @@ def _workflow_snapshot(workflow: AgentWorkflow | None, payload: dict[str, Any] |
     return normalize_workflow_instructions(payload or {})
 
 
-def _serialize_workflow(workflow: AgentWorkflow) -> dict[str, object]:
+def _serialize_run_summary(run: AgentRun) -> dict[str, object]:
+    return {
+        "id": str(run.id),
+        "workflowId": str(run.workflow_id) if run.workflow_id else None,
+        "workflowName": getattr(getattr(run, "workflow", None), "name", "") or "",
+        "title": run.title or "",
+        "source": run.source,
+        "status": run.status,
+        "startedAt": run.started_at.isoformat() if run.started_at else None,
+        "finishedAt": run.finished_at.isoformat() if run.finished_at else None,
+        "errorDetail": run.error_detail or "",
+        "createdAt": run.created_at.isoformat() if run.created_at else None,
+        "updatedAt": run.updated_at.isoformat() if run.updated_at else None,
+    }
+
+
+def _serialize_workflow(workflow: AgentWorkflow, latest_run: AgentRun | None = None) -> dict[str, object]:
     return {
         "id": str(workflow.id),
         "agentId": str(workflow.agent_profile_id),
@@ -142,6 +157,7 @@ def _serialize_workflow(workflow: AgentWorkflow) -> dict[str, object]:
         "leaseExpiresAt": workflow.lease_expires_at.isoformat() if workflow.lease_expires_at else None,
         "errorCount": int(workflow.error_count or 0),
         "lastError": workflow.last_error or "",
+        "latestRun": _serialize_run_summary(latest_run) if latest_run is not None else None,
         "metadata": workflow.metadata if isinstance(workflow.metadata, dict) else {},
         "createdBy": str(workflow.created_by_id) if workflow.created_by_id else None,
         "createdAt": workflow.created_at.isoformat() if workflow.created_at else None,
@@ -266,6 +282,27 @@ def _serialize_memory(item: MemoryItem) -> dict[str, object]:
         "updatedAt": item.updated_at.isoformat() if item.updated_at else None,
         "auditEvents": audit_events,
     }
+
+
+CURATED_MEMORY_KINDS = {
+    MemoryKind.FACT,
+    MemoryKind.PREFERENCE,
+    MemoryKind.POLICY,
+    MemoryKind.DECISION,
+    MemoryKind.INSTRUCTION,
+    MemoryKind.RELATIONSHIP,
+}
+
+
+def _curated_memory_filter() -> Q:
+    return (
+        Q(kind__in=CURATED_MEMORY_KINDS)
+        & ~Q(scope=MemoryScope.RUN)
+        & ~Q(key__startswith="run_report_")
+        & ~Q(key__startswith="search_")
+        & ~Q(key__contains="_arg_")
+        & ~Q(key__contains="_status")
+    )
 
 
 def _append_run_event(
@@ -429,7 +466,22 @@ def agent_workflows_collection(request: HttpRequest, agent_id: uuid.UUID) -> Jso
             qs = AgentWorkflow.objects.filter(agent_profile=agent).order_by("-created_at")
             if status:
                 qs = qs.filter(status=status)
-            return JsonResponse({"workflows": [_serialize_workflow(item) for item in qs[:200]]}, status=HTTPStatus.OK)
+            workflows = list(qs[:200])
+            workflow_ids = [item.id for item in workflows]
+            latest_runs: dict[uuid.UUID, AgentRun] = {}
+            if workflow_ids:
+                run_qs = (
+                    AgentRun.objects.select_related("workflow")
+                    .filter(agent_profile=agent, workflow_id__in=workflow_ids)
+                    .filter(_run_visibility_filter(request, agent=agent))
+                    .order_by("-created_at")[:500]
+                )
+                for run in run_qs:
+                    if run.workflow_id not in latest_runs:
+                        latest_runs[run.workflow_id] = run
+                    if len(latest_runs) == len(workflow_ids):
+                        break
+            return JsonResponse({"workflows": [_serialize_workflow(item, latest_runs.get(item.id)) for item in workflows]}, status=HTTPStatus.OK)
 
         payload, error = _parse_json_body(request)
         if error:
@@ -970,96 +1022,46 @@ def _run_note_action(request: HttpRequest, agent_id: uuid.UUID, run_id: uuid.UUI
 
 
 @csrf_protect
-@require_http_methods(["GET", "POST"])
+@require_http_methods(["GET"])
 def memory_collection(request: HttpRequest) -> JsonResponse:
     if not request.user.is_authenticated:
         return JsonResponse({"error": "UNAUTHORIZED", "message": "Login required."}, status=HTTPStatus.UNAUTHORIZED)
-    if request.method == "GET":
-        agent_id, err = _parse_uuid(request.GET.get("agentId") or request.GET.get("agent_id"), field="agentId")
-        if err:
-            return err
-        business_id, err = _parse_uuid(request.GET.get("businessId") or request.GET.get("business_id"), field="businessId")
-        if err:
-            return err
-        qs = MemoryItem.objects.select_related("business_profile", "agent_profile", "workflow", "run", "conversation")
-        if business_id:
-            qs = qs.filter(business_profile_id=business_id)
-        else:
-            qs = qs.filter(Q(business_profile__user=request.user) | Q(agent_profile__user=request.user))
-        if agent_id:
-            qs = qs.filter(Q(agent_profile_id=agent_id) | Q(visibility=MemoryVisibility.SHARED))
-        status = str(request.GET.get("status") or MemoryStatus.ACTIVE).strip().lower()
-        if status:
-            qs = qs.filter(status=status)
-        query = str(request.GET.get("q") or "").strip()
-        if query:
-            qs = qs.filter(Q(content__icontains=query) | Q(key__icontains=query))
-        limit = max(1, min(int(str(request.GET.get("limit") or "50")), 200))
-        return JsonResponse({"memory": [_serialize_memory(item) for item in qs.order_by("-updated_at")[:limit]]}, status=HTTPStatus.OK)
-
-    payload, error = _parse_json_body(request)
-    if error:
-        return error
-    business_id, err = _parse_uuid((payload or {}).get("businessId") or (payload or {}).get("business_id"), field="businessId")
+    agent_id, err = _parse_uuid(request.GET.get("agentId") or request.GET.get("agent_id"), field="agentId")
     if err:
         return err
-    agent_id, err = _parse_uuid((payload or {}).get("agentId") or (payload or {}).get("agent_id"), field="agentId")
+    business_id, err = _parse_uuid(request.GET.get("businessId") or request.GET.get("business_id"), field="businessId")
     if err:
         return err
-    agent = None
+    qs = MemoryItem.objects.select_related("business_profile", "agent_profile", "workflow", "run", "conversation")
+    if business_id:
+        qs = qs.filter(business_profile_id=business_id)
+    else:
+        qs = qs.filter(Q(business_profile__user=request.user) | Q(agent_profile__user=request.user))
     if agent_id:
-        agent = AgentProfile.objects.select_related("business_profile").filter(id=agent_id).filter(Q(user=request.user) | Q(business_profile__user=request.user)).first()
-        if agent is None:
-            return JsonResponse({"error": "AGENT_NOT_FOUND", "message": "Agent profile not found."}, status=HTTPStatus.NOT_FOUND)
-    if not business_id and agent is not None:
-        business_id = agent.business_profile_id
-    if not business_id:
-        return JsonResponse({"error": "VALIDATION_ERROR", "message": "businessId or agentId is required."}, status=HTTPStatus.BAD_REQUEST)
-    content = str((payload or {}).get("content") or "").strip()
-    if not content:
-        return JsonResponse({"error": "VALIDATION_ERROR", "message": "content is required."}, status=HTTPStatus.BAD_REQUEST)
-    sensitivity = str((payload or {}).get("sensitivity") or MemorySensitivity.NORMAL).strip().lower()
-    kind = str((payload or {}).get("kind") or MemoryKind.FACT).strip().lower()
-    status = MemoryStatus.PENDING_REVIEW if sensitivity in {MemorySensitivity.SENSITIVE, MemorySensitivity.SECRET} or kind == MemoryKind.INSTRUCTION else MemoryStatus.ACTIVE
-    item = MemoryItem.objects.create(
-        business_profile_id=business_id,
-        agent_profile=agent,
-        scope=str((payload or {}).get("scope") or (MemoryScope.AGENT if agent else MemoryScope.WORKSPACE)).strip().lower(),
-        kind=kind,
-        key=str((payload or {}).get("key") or "").strip()[:160],
-        content=content[:8000],
-        payload=dict((payload or {}).get("payload") or {}),
-        visibility=str((payload or {}).get("visibility") or MemoryVisibility.SHARED).strip().lower(),
-        sensitivity=sensitivity,
-        status=status,
-        source_type=str((payload or {}).get("sourceType") or (payload or {}).get("source_type") or "api")[:64],
-        created_by=request.user,
+        qs = qs.filter(Q(agent_profile_id=agent_id) | Q(visibility=MemoryVisibility.SHARED))
+    view = str(request.GET.get("view") or "saved").strip().lower()
+    if view not in {"saved", "pending_review"}:
+        return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid memory view."}, status=HTTPStatus.BAD_REQUEST)
+    status = MemoryStatus.PENDING_REVIEW if view == "pending_review" else MemoryStatus.ACTIVE
+    qs = qs.filter(_curated_memory_filter(), status=status)
+    query = str(request.GET.get("q") or "").strip()
+    if query:
+        qs = qs.filter(Q(content__icontains=query) | Q(key__icontains=query))
+    limit = max(1, min(int(str(request.GET.get("limit") or "50")), 200))
+    return JsonResponse(
+        {"memory": [_serialize_memory(item) for item in qs.order_by("-updated_at")[:limit]], "view": view},
+        status=HTTPStatus.OK,
     )
-    MemoryAuditEvent.objects.create(memory_item=item, business_profile=item.business_profile, actor_user=request.user, action=MemoryAuditAction.CREATED, after=_serialize_memory(item))
-    return JsonResponse({"memory": _serialize_memory(item)}, status=HTTPStatus.CREATED)
 
 
 @csrf_protect
-@require_http_methods(["GET", "PATCH", "PUT"])
+@require_http_methods(["GET"])
 def memory_detail(request: HttpRequest, memory_id: uuid.UUID) -> JsonResponse:
     if not request.user.is_authenticated:
         return JsonResponse({"error": "UNAUTHORIZED", "message": "Login required."}, status=HTTPStatus.UNAUTHORIZED)
     item = MemoryItem.objects.filter(id=memory_id).filter(Q(business_profile__user=request.user) | Q(agent_profile__user=request.user)).first()
     if item is None:
         return JsonResponse({"error": "MEMORY_NOT_FOUND", "message": "Memory item not found."}, status=HTTPStatus.NOT_FOUND)
-    if request.method == "GET":
-        return JsonResponse({"memory": _serialize_memory(item)}, status=HTTPStatus.OK)
-    before = _serialize_memory(item)
-    payload, error = _parse_json_body(request)
-    if error:
-        return error
-    for field in ("scope", "kind", "key", "content", "visibility", "sensitivity", "status"):
-        if field in payload:
-            setattr(item, field, str(payload.get(field) or "").strip()[:8000 if field == "content" else 160])
-    if "payload" in payload and isinstance(payload.get("payload"), dict):
-        item.payload = dict(payload.get("payload") or {})
-    item.save()
-    MemoryAuditEvent.objects.create(memory_item=item, business_profile=item.business_profile, actor_user=request.user, action=MemoryAuditAction.UPDATED, before=before, after=_serialize_memory(item))
     return JsonResponse({"memory": _serialize_memory(item)}, status=HTTPStatus.OK)
 
 
@@ -1079,6 +1081,12 @@ def memory_reject(request: HttpRequest, memory_id: uuid.UUID) -> JsonResponse:
 @require_http_methods(["POST"])
 def memory_archive(request: HttpRequest, memory_id: uuid.UUID) -> JsonResponse:
     return _memory_status_action(request, memory_id, status=MemoryStatus.ARCHIVED, action=MemoryAuditAction.ARCHIVED)
+
+
+@csrf_protect
+@require_http_methods(["POST"])
+def memory_delete(request: HttpRequest, memory_id: uuid.UUID) -> JsonResponse:
+    return _memory_status_action(request, memory_id, status=MemoryStatus.DELETED, action=MemoryAuditAction.DELETED)
 
 
 def _memory_status_action(request: HttpRequest, memory_id: uuid.UUID, *, status: str, action: str) -> JsonResponse:

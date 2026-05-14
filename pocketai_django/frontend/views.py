@@ -218,6 +218,7 @@ def _build_portal_context(
         )
 
     session_status = (session.get("status") or "new").lower()
+    session_type = (session.get("session_type") or session.get("sessionType") or "chat").lower()
     cookie_business_slug = business.get("slug") or slugify(business.get("name", "")) or business_slug
     cookie_agent_slug = agent.get("slug") or agent_slug
 
@@ -235,6 +236,8 @@ def _build_portal_context(
         },
         "session_token": session.get("session_token", ""),
         "conversation_id": session.get("conversation_id", ""),
+        "session_type": session_type,
+        "workflow_name": session.get("workflow_name") or session.get("workflowName") or "",
         "session_storage_key": session_storage_key,
         "ui_language": ui_language,
         "conversation_status": session_status.replace("_", " ").title(),

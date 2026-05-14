@@ -1004,6 +1004,9 @@ def _session_summary_to_dict(summary) -> dict[str, object]:
         "status": summary.status,
         "message_count": summary.message_count,
         "preview": summary.preview,
+        "session_type": getattr(summary, "session_type", "chat"),
+        "workflow_id": str(summary.workflow_id) if getattr(summary, "workflow_id", None) else None,
+        "workflow_name": getattr(summary, "workflow_name", ""),
     }
 
 
@@ -1135,6 +1138,9 @@ def _session_to_dict(session: PortalSessionState) -> dict:
         "status": session.status,
         "started_at": session.started_at.isoformat(),
         "expires_at": session.expires_at.isoformat() if session.expires_at else None,
+        "session_type": getattr(session, "session_type", "chat"),
+        "workflow_id": str(session.workflow_id) if getattr(session, "workflow_id", None) else None,
+        "workflow_name": getattr(session, "workflow_name", ""),
     }
 
 

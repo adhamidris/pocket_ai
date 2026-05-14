@@ -78,6 +78,7 @@ urlpatterns = [
     path("memory/<uuid:memory_id>/approve/", agent_runs.memory_approve, name="memory-approve"),
     path("memory/<uuid:memory_id>/reject/", agent_runs.memory_reject, name="memory-reject"),
     path("memory/<uuid:memory_id>/archive/", agent_runs.memory_archive, name="memory-archive"),
+    path("memory/<uuid:memory_id>/delete/", agent_runs.memory_delete, name="memory-delete"),
     path("webhooks/workflows/<uuid:workflow_id>/<slug:token>/", agent_runs.workflow_webhook_trigger, name="workflow-webhook-trigger"),
     path("register/sessions/", views.start_registration, name="register-start"),
     path(

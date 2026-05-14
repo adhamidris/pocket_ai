@@ -9,7 +9,17 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.models import AgentDepartment, AgentProfile, BusinessProfile, RegistrationSession
-from apps.conversations.models import AgentRun, AgentRunStatus, AgentWorkflow, AgentWorkflowStatus, MemoryItem, MemoryStatus
+from apps.conversations.models import (
+    AgentRun,
+    AgentRunStatus,
+    AgentWorkflow,
+    AgentWorkflowStatus,
+    MemoryItem,
+    MemoryKind,
+    MemoryScope,
+    MemoryStatus,
+    MemoryVisibility,
+)
 from apps.conversations.workflow_processing import AgentWorkflowProcessingService
 from apps.integrations.models import EmailAccount, EmailAccountProvider, EmailAccountStatus
 
@@ -109,6 +119,11 @@ class AgentRunsApiTests(TestCase):
         self.assertEqual(run_res.status_code, 201)
         self.assertEqual(run_res.json()["run"]["workflowId"], workflow_id)
         self.assertEqual(run_res.json()["run"]["status"], AgentRunStatus.QUEUED)
+
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        listed = next(item for item in response.json()["workflows"] if item["id"] == workflow_id)
+        self.assertEqual(listed["latestRun"]["id"], run_res.json()["run"]["id"])
 
     def test_pausing_workflow_cancels_open_runs_by_default(self) -> None:
         workflow = AgentWorkflow.objects.create(
@@ -286,7 +301,7 @@ class AgentRunsApiTests(TestCase):
         self.assertEqual(payload["operations"]["queuedRuns"], 1)
         self.assertEqual(len(payload["emailAccounts"]), 1)
 
-    def test_memory_create_and_review(self) -> None:
+    def test_memory_api_is_agentic_create_human_manage(self) -> None:
         create_res = self.client.post(
             reverse("api:memory-list"),
             data=json.dumps(
@@ -300,10 +315,78 @@ class AgentRunsApiTests(TestCase):
             ),
             content_type="application/json",
         )
-        self.assertEqual(create_res.status_code, 201)
-        memory_id = create_res.json()["memory"]["id"]
-        self.assertEqual(create_res.json()["memory"]["status"], MemoryStatus.PENDING_REVIEW)
+        self.assertEqual(create_res.status_code, 405)
 
-        approve_res = self.client.post(reverse("api:memory-approve", args=[memory_id]), data="{}", content_type="application/json")
+        memory = MemoryItem.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            scope=MemoryScope.AGENT,
+            kind=MemoryKind.INSTRUCTION,
+            key="payment_disputes",
+            content="Always escalate payment disputes.",
+            status=MemoryStatus.PENDING_REVIEW,
+            visibility=MemoryVisibility.SHARED,
+        )
+        approve_res = self.client.post(reverse("api:memory-approve", args=[memory.id]), data="{}", content_type="application/json")
         self.assertEqual(approve_res.status_code, 200)
         self.assertEqual(approve_res.json()["memory"]["status"], MemoryStatus.ACTIVE)
+
+        delete_res = self.client.post(reverse("api:memory-delete", args=[memory.id]), data="{}", content_type="application/json")
+        self.assertEqual(delete_res.status_code, 200)
+        self.assertEqual(delete_res.json()["memory"]["status"], MemoryStatus.DELETED)
+
+    def test_memory_list_defaults_to_curated_records(self) -> None:
+        workflow = AgentWorkflow.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            created_by=self.user,
+            name="Email Checker",
+        )
+        run = AgentRun.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            workflow=workflow,
+            created_by=self.user,
+            title="Email run",
+        )
+        curated = MemoryItem.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            scope=MemoryScope.AGENT,
+            kind=MemoryKind.PREFERENCE,
+            key="report_style",
+            content="Keep reports brief.",
+            visibility=MemoryVisibility.SHARED,
+        )
+        MemoryItem.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            workflow=workflow,
+            run=run,
+            scope=MemoryScope.WORKFLOW,
+            kind=MemoryKind.STATE_NOTE,
+            key=f"run_report_{run.id}",
+            content='{"status": "no_change", "findings": ["No inbox connected."]}',
+            payload={"source": "run_report"},
+            visibility=MemoryVisibility.SHARED,
+        )
+        MemoryItem.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            run=run,
+            scope=MemoryScope.RUN,
+            kind=MemoryKind.EXTRACTED_DATA,
+            key="search_knowledge_arg_query",
+            content="email subscriptions",
+            visibility=MemoryVisibility.PRIVATE,
+        )
+
+        saved = self.client.get(reverse("api:memory-list"), {"agentId": self.agent.id})
+        self.assertEqual(saved.status_code, 200)
+        payload = saved.json()
+        self.assertEqual(payload["view"], "saved")
+        self.assertNotIn("summary", payload)
+        self.assertEqual([item["id"] for item in payload["memory"]], [str(curated.id)])
+
+        invalid_view = self.client.get(reverse("api:memory-list"), {"agentId": self.agent.id, "view": "workflow_state"})
+        self.assertEqual(invalid_view.status_code, 400)

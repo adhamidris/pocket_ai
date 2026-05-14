@@ -38,10 +38,8 @@ from apps.conversations.models import (
     ConversationSender,
     ConversationStatus,
     MemoryItem,
-    MemoryKind,
     MemoryScope,
     MemoryStatus,
-    MemoryVisibility,
 )
 from apps.rag.rag_logging import structured_log
 
@@ -1030,7 +1028,6 @@ class AgentRunProcessingService:
                 duplicate=duplicate,
                 now=now,
             )
-            self._persist_workflow_memory_from_report(workflow=workflow, run=run, report=report, duplicate=duplicate)
 
         routed: dict[str, object] = {"dedupe_key": dedupe_key, "duplicate": duplicate, "notification_id": None, "delivered": False}
         if notification_payload:
@@ -1097,29 +1094,6 @@ class AgentRunProcessingService:
         state["notification_history"] = notification_history[:50]
         AgentWorkflow.objects.filter(id=workflow.id).update(state=state, updated_at=now)
         workflow.state = state
-
-    def _persist_workflow_memory_from_report(self, *, workflow: AgentWorkflow, run: AgentRun, report: Mapping[str, object], duplicate: bool) -> None:
-        content = _clip_text(json.dumps(_json_safe(report), ensure_ascii=False, sort_keys=True), 6000)
-        if not content:
-            return
-        key = f"run_report_{run.id}"
-        if MemoryItem.objects.filter(workflow=workflow, scope=MemoryScope.WORKFLOW, key=key).exists():
-            return
-        MemoryItem.objects.create(
-            business_profile=workflow.business_profile,
-            scope=MemoryScope.WORKFLOW,
-            agent_profile=workflow.agent_profile,
-            workflow=workflow,
-            run=run,
-            conversation=workflow.conversation,
-            kind=MemoryKind.STATE_NOTE,
-            key=key,
-            content=content,
-            payload={"run_id": str(run.id), "duplicate": duplicate, "source": "run_report"},
-            visibility=MemoryVisibility.SHARED,
-            status=MemoryStatus.ACTIVE,
-            created_by=run.created_by,
-        )
 
     def _route_notification_candidate(
         self,

@@ -3,6 +3,7 @@
 import django.core.validators
 import django.db.models.deletion
 import django.utils.timezone
+import pgvector.django
 import pgvector.django.vector
 import uuid
 from django.conf import settings
@@ -21,6 +22,7 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        pgvector.django.VectorExtension(),
         migrations.CreateModel(
             name='Conversation',
             fields=[

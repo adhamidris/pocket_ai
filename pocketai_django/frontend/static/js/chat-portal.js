@@ -155,6 +155,8 @@ class ChatPortalClient {
     this.sessionLoadId = 0;
     this.sessionLoadInProgress = false;
     this.sessionSummaries = [];
+    this.currentSessionType = (container.getAttribute("data-session-type") || "chat").toString().trim().toLowerCase() || "chat";
+    this.currentWorkflowName = container.getAttribute("data-workflow-name") || "";
     this.pendingSessionTitles = {};
     // Streaming UX helpers
     this.scrollToBottomRaf = null;
@@ -903,7 +905,11 @@ class ChatPortalClient {
 	    // otherwise assume server-side rendering is correct.
 	    const container = this.elements.messagesInner || this.elements.messages;
 	    if (container && (container.children.length === 0 || shouldForceRender)) {
-	      this.renderTranscript(messages);
+        if (effectiveMessages.length > 0) {
+	        this.renderTranscript(messages);
+        } else {
+          this.renderEmptyConversationState();
+        }
 	    }
 
     const sessionStatus = data && data.session ? data.session.status : null;
@@ -11670,6 +11676,10 @@ class ChatPortalClient {
       this.conversationId = conversationId;
       this.container.setAttribute("data-conversation-id", conversationId);
     }
+    this.currentSessionType = this.getSessionSummaryType(session);
+    this.currentWorkflowName = (session.workflow_name || session.workflowName || session.title || "").toString().trim();
+    this.container.setAttribute("data-session-type", this.currentSessionType);
+    this.container.setAttribute("data-workflow-name", this.currentWorkflowName);
     this.currentSessionKey = this.getSessionSummaryKey(session);
     if (this.shouldUseConversationApi() && conversationId) {
       try {
@@ -12210,13 +12220,43 @@ class ChatPortalClient {
     const itemsContainer = this.elements.sessionsList.querySelector('[data-sessions-items]') || this.elements.sessionsList;
     itemsContainer.innerHTML = "";
 
-    for (const session of sessions) {
-      const isActive = this.getSessionSummaryKey(session) === this.getCurrentSessionKey();
-      const item = this.buildSessionItem(session, isActive);
-      itemsContainer.appendChild(item);
-    }
+    const taskSessions = sessions.filter((session) => this.getSessionSummaryType(session) === "task");
+    const chatSessions = sessions.filter((session) => this.getSessionSummaryType(session) !== "task");
+    const renderGroup = (label, groupSessions) => {
+      if (!groupSessions.length) return;
+      const heading = document.createElement("div");
+      heading.className = "px-2 pt-3 pb-1 text-[11px] font-semibold uppercase text-muted-foreground";
+      heading.textContent = label;
+      itemsContainer.appendChild(heading);
+      for (const session of groupSessions) {
+        const isActive = this.getSessionSummaryKey(session) === this.getCurrentSessionKey();
+        const item = this.buildSessionItem(session, isActive);
+        itemsContainer.appendChild(item);
+      }
+    };
+
+    renderGroup("Tasks", taskSessions);
+    renderGroup("Chats", chatSessions);
 
     this.applyPendingSessionTitles();
+  }
+
+  getSessionSummaryType(session) {
+    if (!session || typeof session !== "object") return "chat";
+    const explicitType = (session.session_type || session.sessionType || "").toString().trim().toLowerCase();
+    if (explicitType) return explicitType;
+    if (session.workflow_id || session.workflowId) return "task";
+    return "chat";
+  }
+
+  getCurrentSessionType() {
+    const currentSummary = this.getSessionSummaryByKey(this.getCurrentSessionKey());
+    if (currentSummary) return this.getSessionSummaryType(currentSummary);
+    return this.currentSessionType || "chat";
+  }
+
+  isCurrentTaskSession() {
+    return this.getCurrentSessionType() === "task";
   }
 
   buildSessionItem(session, isActive) {
@@ -12236,6 +12276,7 @@ class ChatPortalClient {
       div.dataset.conversationId = conversationId;
     }
     div.dataset.sessionKey = sessionKey;
+    div.dataset.sessionType = this.getSessionSummaryType(session);
     if (typeof session.message_count === "number") {
       div.dataset.messageCount = String(session.message_count);
     }
@@ -12343,11 +12384,15 @@ class ChatPortalClient {
 
   findEmptySessionKey() {
     if (Array.isArray(this.sessionSummaries) && this.sessionSummaries.length) {
-      const emptySummary = this.sessionSummaries.find((session) => session && session.message_count === 0);
+      const emptySummary = this.sessionSummaries.find((session) => (
+        session &&
+        session.message_count === 0 &&
+        this.getSessionSummaryType(session) !== "task"
+      ));
       return emptySummary ? this.getSessionSummaryKey(emptySummary) : null;
     }
     if (this.elements.sessionsList) {
-      const emptyItem = this.elements.sessionsList.querySelector('[data-message-count="0"]');
+      const emptyItem = this.elements.sessionsList.querySelector('[data-message-count="0"]:not([data-session-type="task"])');
       return emptyItem ? emptyItem.dataset.sessionKey || emptyItem.dataset.conversationId || emptyItem.dataset.sessionToken : null;
     }
     return null;
@@ -12386,6 +12431,7 @@ class ChatPortalClient {
     if (!inputArea) return;
     const welcome = this.elements.welcome;
     const messages = this.elements.messages;
+    const taskThread = this.isCurrentTaskSession();
     const emptyClasses = ["inset-0", "flex", "flex-col", "justify-center", "bg-background"];
     const activeClasses = [
       "bottom-0",
@@ -12398,7 +12444,7 @@ class ChatPortalClient {
       "to-transparent",
     ];
 
-    if (hasMessages) {
+    if (hasMessages || taskThread) {
       inputArea.classList.remove(...emptyClasses);
       inputArea.classList.add(...activeClasses);
       if (welcome) {
@@ -12436,7 +12482,7 @@ class ChatPortalClient {
       return;
     }
     // Check if current session is empty
-    if (this.isCurrentSessionEmpty()) {
+    if (this.isCurrentSessionEmpty() && !this.isCurrentTaskSession()) {
       this.showToast(
         "Start chatting first", 
         "Please send a message in this chat before creating a new one.",
@@ -12557,7 +12603,11 @@ class ChatPortalClient {
           this.currentSessionHasMessages = messages.length > 0;
           this.setSessionMessageCount(this.getCurrentSessionKey(), messages.length);
           this.setConversationLayout(messages.length > 0);
-          this.renderTranscript(messages);
+          if (messages.length > 0) {
+            this.renderTranscript(messages);
+          } else {
+            this.renderEmptyConversationState();
+          }
           this.updateStatus(data.session.status);
           this.updateCsatVisibility(data.session.status);
         }
@@ -12625,6 +12675,27 @@ class ChatPortalClient {
     if (container) {
       container.innerHTML = "";
       container.removeAttribute("data-session-skeleton");
+      if (this.isCurrentTaskSession()) {
+        const workflowName = this.currentWorkflowName || "Task thread";
+        container.innerHTML = `
+          <div class="min-h-[55vh] flex items-center justify-center px-4 py-12">
+            <div class="w-full max-w-xl rounded-lg border border-border/70 bg-card/40 px-5 py-4 text-left shadow-sm">
+              <div class="flex items-start gap-3">
+                <div class="mt-0.5 flex h-8 w-8 items-center justify-center rounded-md bg-primary/10 text-primary">
+                  <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M9 11l3 3L22 4"></path>
+                    <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+                  </svg>
+                </div>
+                <div class="min-w-0">
+                  <p class="text-sm font-semibold text-foreground">${this.escapeHtml(workflowName)}</p>
+                  <p class="mt-1 text-sm leading-6 text-muted-foreground">Waiting for task activity. Updates, approvals, and run summaries will appear here.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+      }
     }
     this.setConversationLayout(false);
   }
@@ -12665,7 +12736,7 @@ class ChatPortalClient {
     
     if (!btn) return;
     
-    if (isEmpty) {
+    if (isEmpty && !this.isCurrentTaskSession()) {
       btn.classList.add('opacity-50', 'cursor-not-allowed');
       btn.setAttribute("aria-disabled", "true");
     } else {

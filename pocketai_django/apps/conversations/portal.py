@@ -20,6 +20,7 @@ from apps.accounts.models import (
 from apps.knowledge.models import KnowledgeFeedbackCase
 from apps.conversations.content_blocks import ensure_assistant_text_blocks
 from apps.conversations.models import (
+    AgentWorkflow,
     Conversation,
     ConversationChannel,
     ConversationExtraction,
@@ -76,6 +77,9 @@ class PortalSessionState:
     status: str
     started_at: datetime
     expires_at: datetime | None
+    session_type: str = "chat"
+    workflow_id: uuid.UUID | None = None
+    workflow_name: str = ""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -100,6 +104,9 @@ class PortalSessionSummary:
     status: str
     message_count: int
     preview: str
+    session_type: str = "chat"
+    workflow_id: uuid.UUID | None = None
+    workflow_name: str = ""
 
 
 class ChatPortalService:
@@ -400,9 +407,17 @@ class ChatPortalService:
             "agent_profile": agent,
         }
         if not getattr(owner_user, "is_staff", False):
-            filters["owner_user"] = owner_user
+            business_profiles = getattr(owner_user, "business_profiles", None)
+            has_business_access = bool(
+                getattr(owner_user, "id", None) == getattr(business, "user_id", None)
+                or (business_profiles is not None and business_profiles.filter(id=business.id).exists())
+            )
+            if not has_business_access:
+                filters["owner_user"] = owner_user
         conversations = (
             Conversation.objects.filter(**filters)
+            .exclude(metadata__has_key="anchor_conversation_id")
+            .exclude(metadata__has_key="anchorConversationId")
             .annotate(message_count=Count("messages"))
             .prefetch_related(
                 Prefetch(
@@ -411,7 +426,12 @@ class ChatPortalService:
                         sender=ConversationSender.CUSTOMER
                     ).order_by("sent_at", "created_at")[:1],
                     to_attr="first_customer_messages",
-                )
+                ),
+                Prefetch(
+                    "agent_workflows",
+                    queryset=AgentWorkflow.objects.only("id", "name", "conversation_id"),
+                    to_attr="linked_workflows",
+                ),
             )
             .order_by("-last_activity_at", "-started_at")[:limit]
         )
@@ -484,15 +504,43 @@ class ChatPortalService:
         
         return truncated.rstrip(".,!?;:") + "..."
 
+    def _classify_conversation_session(self, conversation: Conversation) -> tuple[str, uuid.UUID | None, str]:
+        metadata = conversation.metadata if isinstance(getattr(conversation, "metadata", None), dict) else {}
+        has_prefetched_workflows = hasattr(conversation, "linked_workflows")
+        linked_workflows = list(getattr(conversation, "linked_workflows", []) or [])
+        linked_workflow = linked_workflows[0] if linked_workflows else None
+        if linked_workflow is None and not has_prefetched_workflows:
+            linked_workflow = conversation.agent_workflows.only("id", "name", "conversation_id").first()
+        meta_type = str(metadata.get("type") or metadata.get("purpose") or metadata.get("source") or "").strip().lower()
+        workflow_id = getattr(linked_workflow, "id", None)
+        workflow_name = (
+            (getattr(linked_workflow, "name", "") or "")
+            or str(metadata.get("workflow_name") or metadata.get("workflowName") or "").strip()
+        )
+        is_task_thread = bool(
+            linked_workflow
+            or meta_type == "workflow_thread"
+            or str(metadata.get("workflow_id") or "").strip()
+        )
+        return ("task" if is_task_thread else "chat", workflow_id, workflow_name)
+
     def _build_session_summaries(self, conversations: Iterable[Conversation]) -> tuple[PortalSessionSummary, ...]:
         summaries: list[PortalSessionSummary] = []
         for conv in conversations:
             first_messages = getattr(conv, "first_customer_messages", [])
             first_msg = first_messages[0] if first_messages else None
+            session_type, workflow_id, workflow_name = self._classify_conversation_session(conv)
+            is_task_thread = session_type == "task"
 
             if first_msg:
                 title = self._generate_session_title(first_msg.body)
                 preview = (first_msg.body or "")[:100]
+            elif is_task_thread and workflow_name:
+                title = workflow_name
+                preview = "Task thread"
+            elif is_task_thread:
+                title = "Task thread"
+                preview = ""
             else:
                 title = "New conversation"
                 preview = ""
@@ -507,6 +555,9 @@ class ChatPortalService:
                     status=conv.status,
                     message_count=getattr(conv, "message_count", 0),
                     preview=preview.strip(),
+                    session_type=session_type,
+                    workflow_id=workflow_id,
+                    workflow_name=workflow_name,
                 )
             )
         return tuple(summaries)
@@ -745,12 +796,16 @@ class ChatPortalService:
         )
 
     def _serialize_session(self, conversation: Conversation) -> PortalSessionState:
+        session_type, workflow_id, workflow_name = self._classify_conversation_session(conversation)
         return PortalSessionState(
             conversation_id=conversation.id,
             session_token=conversation.session_token,
             status=conversation.status,
             started_at=conversation.started_at,
             expires_at=conversation.expires_at,
+            session_type=session_type,
+            workflow_id=workflow_id,
+            workflow_name=workflow_name,
         )
 
     def _serialize_message(self, message: ConversationMessage) -> PortalMessage:

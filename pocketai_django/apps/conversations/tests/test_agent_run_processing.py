@@ -17,8 +17,6 @@ from apps.conversations.models import (
     AgentWorkflow,
     AgentWorkflowStatus,
     Conversation,
-    MemoryItem,
-    MemoryScope,
 )
 
 
@@ -117,7 +115,7 @@ class AgentRunProcessingTests(TestCase):
         self.assertEqual(run.conversation_id, anchor.id)
         self.assertEqual(str(run.execution_conversation_id or ""), str(getattr(called_conversation, "id", "")))
 
-    def test_workflow_run_persists_report_memory_and_notification(self) -> None:
+    def test_workflow_run_persists_report_state_and_notification(self) -> None:
         workflow = AgentWorkflow.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
@@ -169,5 +167,4 @@ class AgentRunProcessingTests(TestCase):
         self.assertIn("run_report", run.result)
         workflow.refresh_from_db()
         self.assertIn("last_run_report", workflow.state)
-        self.assertTrue(MemoryItem.objects.filter(workflow=workflow, scope=MemoryScope.WORKFLOW, key=f"run_report_{run.id}").exists())
         self.assertTrue(AgentRunNotification.objects.filter(run=run, status="delivered").exists())
