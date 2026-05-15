@@ -7269,9 +7269,7 @@ class ChatPortalClient {
     const checkpoint = workflow && workflow.openCheckpoint && typeof workflow.openCheckpoint === "object" ? workflow.openCheckpoint : null;
     const status = checkpoint ? "waiting_approval" : (latestRun && latestRun.status ? latestRun.status : (workflow.status || "draft"));
     const triggerLabel = this.getWorkflowTriggerLabel(workflow && workflow.triggerType);
-    const ownerLabel = workflow && workflow.departmentName
-      ? String(workflow.departmentName)
-      : (workflow && workflow.agentName ? String(workflow.agentName) : "");
+    const ownerLabel = workflow && workflow.agentName ? String(workflow.agentName) : "";
     const subtitleParts = [ownerLabel, triggerLabel];
     if (workflow && workflow.nextTriggerAt) subtitleParts.push(`${this.t("Next")} ${this.formatDueTime(workflow.nextTriggerAt)}`);
     else if (workflow && workflow.lastTriggeredAt) subtitleParts.push(`${this.t("Last")} ${this.formatDueTime(workflow.lastTriggeredAt)}`);
@@ -12387,11 +12385,6 @@ class ChatPortalClient {
     return (session.workflow_name || session.workflowName || "").toString().trim();
   }
 
-  getSessionWorkflowDepartmentName(session) {
-    if (!session || typeof session !== "object") return "";
-    return (session.workflow_department_name || session.workflowDepartmentName || "").toString().trim();
-  }
-
   getSessionWorkflowAgentName(session) {
     if (!session || typeof session !== "object") return "";
     return (session.workflow_agent_name || session.workflowAgentName || "").toString().trim();
@@ -12402,7 +12395,6 @@ class ChatPortalClient {
     for (const session of this.sortSessionSummaries(sessions)) {
       const workflowId = this.getSessionWorkflowId(session);
       const workflowName = this.getSessionWorkflowName(session) || this.t("Workflow Agent");
-      const departmentName = this.getSessionWorkflowDepartmentName(session);
       const agentName = this.getSessionWorkflowAgentName(session);
       const fallbackKey = workflowId || `workflow-name:${workflowName.toLowerCase()}`;
       if (!groups.has(fallbackKey)) {
@@ -12410,14 +12402,12 @@ class ChatPortalClient {
           key: fallbackKey,
           workflowId,
           name: workflowName,
-          departmentName,
           agentName,
           sessions: [],
           latestActivity: 0,
         });
       }
       const group = groups.get(fallbackKey);
-      if (!group.departmentName && departmentName) group.departmentName = departmentName;
       if (!group.agentName && agentName) group.agentName = agentName;
       group.sessions.push(session);
       group.latestActivity = Math.max(
@@ -13059,7 +13049,7 @@ class ChatPortalClient {
             const groupHasActiveSession = group.sessions.some((session) => this.getSessionSummaryKey(session) === currentSessionKey);
             const workflowNode = this.buildSessionTreeBranch({
               key: `workflow:${group.key}`,
-              label: group.departmentName ? `${group.name} · ${group.departmentName}` : group.name,
+              label: group.name,
               level: 1,
               count: group.sessions.length,
               forceOpen: groupHasActiveSession,

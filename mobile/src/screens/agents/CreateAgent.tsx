@@ -109,7 +109,6 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
       id: Date.now().toString(),
       name: formData.name,
       persona: (formData.tone || 'professional').toLowerCase(),
-      department: 'support',
       role: formData.roles[0] || '',
       roles: formData.roles,
       tone: formData.tone,

@@ -30,7 +30,6 @@ ROLE_LABELS = {
 
 AGENT_TYPE_LABELS = {
     AgentProfile.AgentTypeChoices.MAIN: "Main Agent",
-    AgentProfile.AgentTypeChoices.DEPARTMENT_LEAD: "Department Lead",
     AgentProfile.AgentTypeChoices.SPECIALIST: "Specialist",
     AgentProfile.AgentTypeChoices.BACKGROUND: "Background Agent",
 }
@@ -62,11 +61,8 @@ class AgentListItem:
     status: str
     role: str
     agent_type: str
-    department_id: uuid.UUID | None
-    department_name: str
     manager_agent_id: uuid.UUID | None
     can_manage_tasks: bool
-    can_manage_departments: bool
     tone: str | None
     public_slug: str
     created_at: datetime
@@ -196,13 +192,9 @@ def list_agents(
     if order not in {"asc", "desc"}:
         raise AgentListValidationError("order must be 'asc' or 'desc'", field="order")
 
-    user_facing_types = {
-        AgentProfile.AgentTypeChoices.MAIN,
-        AgentProfile.AgentTypeChoices.DEPARTMENT_LEAD,
-    }
     base_qs = (
-        AgentProfile.objects.select_related("department", "manager_agent")
-        .filter(business_profile=business_profile, agent_type__in=user_facing_types)
+        AgentProfile.objects.select_related("manager_agent")
+        .filter(business_profile=business_profile, agent_type=AgentProfile.AgentTypeChoices.MAIN)
     )
     if q_name:
         base_qs = base_qs.filter(name__icontains=q_name.strip())
@@ -257,11 +249,8 @@ def list_agents(
             status=getattr(row, "status", "active"),
             role=row.role or "",
             agent_type=getattr(row, "agent_type", AgentProfile.AgentTypeChoices.SPECIALIST),
-            department_id=getattr(row, "department_id", None),
-            department_name=getattr(getattr(row, "department", None), "name", "") or "",
             manager_agent_id=getattr(row, "manager_agent_id", None),
             can_manage_tasks=bool(getattr(row, "can_manage_tasks", False)),
-            can_manage_departments=bool(getattr(row, "can_manage_departments", False)),
             tone=row.tone or None,
             public_slug=row.slug or "",
             created_at=row.created_at,
@@ -291,7 +280,7 @@ def get_agent_detail(
     duration_expr = ExpressionWrapper(F("conversations__closed_at") - F("conversations__started_at"), output_field=DjangoDurationField())
     agent = (
         AgentProfile.objects.filter(business_profile=business_profile, id=agent_id)
-        .select_related("business_profile", "department", "manager_agent")
+        .select_related("business_profile", "manager_agent")
         .prefetch_related(
             Prefetch(
                 "allowed_documents",
@@ -348,11 +337,8 @@ def get_agent_detail(
         status=getattr(agent, "status", "active"),
         role=agent.role or "",
         agent_type=getattr(agent, "agent_type", AgentProfile.AgentTypeChoices.SPECIALIST),
-        department_id=getattr(agent, "department_id", None),
-        department_name=getattr(getattr(agent, "department", None), "name", "") or "",
         manager_agent_id=getattr(agent, "manager_agent_id", None),
         can_manage_tasks=bool(getattr(agent, "can_manage_tasks", False)),
-        can_manage_departments=bool(getattr(agent, "can_manage_departments", False)),
         tone=agent.tone or None,
         public_slug=agent.slug or "",
         created_at=agent.created_at,

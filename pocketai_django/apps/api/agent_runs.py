@@ -74,7 +74,7 @@ def _parse_uuid(value: object, *, field: str) -> tuple[uuid.UUID | None, JsonRes
 def _resolve_agent_for_request(request: HttpRequest, agent_id: uuid.UUID) -> tuple[AgentProfile | None, JsonResponse | None]:
     if not request.user.is_authenticated:
         return None, JsonResponse({"error": "UNAUTHORIZED", "message": "Login required."}, status=HTTPStatus.UNAUTHORIZED)
-    qs = AgentProfile.objects.select_related("business_profile", "department")
+    qs = AgentProfile.objects.select_related("business_profile")
     if not request.user.is_staff:
         qs = qs.filter(Q(user=request.user) | Q(business_profile__user=request.user))
     agent = qs.filter(id=agent_id).first()
@@ -198,8 +198,6 @@ def _serialize_workflow(workflow: AgentWorkflow, latest_run: AgentRun | None = N
         "agentId": str(workflow.agent_profile_id),
         "agentName": getattr(getattr(workflow, "agent_profile", None), "name", "") or "",
         "businessId": str(workflow.business_profile_id),
-        "departmentId": str(workflow.department_id) if workflow.department_id else None,
-        "departmentName": getattr(getattr(workflow, "department", None), "name", "") or "",
         "conversationId": str(workflow.conversation_id) if workflow.conversation_id else None,
         "emailAccountId": str(workflow.email_account_id) if workflow.email_account_id else None,
         "name": workflow.name,
@@ -444,7 +442,6 @@ def _create_workflow_session(workflow: AgentWorkflow, *, created_by=None, title:
         "workflow_id": str(workflow.id),
         "workflow_name": workflow.name,
         "workflow_agent_name": workflow.agent_profile.name,
-        "workflow_department_name": workflow.department.name if workflow.department_id else "",
     }
     if source_conversation is not None:
         metadata["source_conversation_id"] = str(source_conversation.id)
@@ -576,7 +573,7 @@ def agent_workflows_collection(request: HttpRequest, agent_id: uuid.UUID) -> Jso
         if request.method == "GET":
             status = str(request.GET.get("status") or "").strip().lower()
             qs = (
-                AgentWorkflow.objects.select_related("agent_profile", "department")
+                AgentWorkflow.objects.select_related("agent_profile")
                 .filter(agent_profile=agent)
                 .annotate(session_count=Count("sessions"))
                 .order_by("-created_at")
@@ -677,7 +674,6 @@ def agent_workflows_collection(request: HttpRequest, agent_id: uuid.UUID) -> Jso
         workflow = AgentWorkflow.objects.create(
             business_profile=agent.business_profile,
             agent_profile=agent,
-            department=agent.department,
             created_by=request.user,
             email_account=email_account,
             name=name[:160],

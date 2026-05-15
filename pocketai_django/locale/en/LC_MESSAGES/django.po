@@ -5408,9 +5408,6 @@ msgstr "Contains sensitive data"
 msgid "Create new field"
 msgstr "Create new field"
 
-msgid "Save changes"
-msgstr "Save changes"
-
 msgid "Create field"
 msgstr "Create field"
 
@@ -5440,24 +5437,6 @@ msgstr "%(count)s schema properties"
 
 msgid "Core typed field"
 msgstr "Core typed field"
-
-msgid "Department Agents"
-msgstr "Department Agents"
-
-msgid "Manage each department's main agent, Workflow Agents, knowledge, permissions, and runs."
-msgstr "Manage each department's main agent, Workflow Agents, knowledge, permissions, and runs."
-
-msgid "Search department agents..."
-msgstr "Search department agents..."
-
-msgid "No department agents yet. Create a department to get its main agent automatically."
-msgstr "No department agents yet. Create a department to get its main agent automatically."
-
-msgid "No department agent selected"
-msgstr "No department agent selected"
-
-msgid "Choose a department agent from the cards to preview configuration, Workflow Agents, memory, and permissions."
-msgstr "Choose a department agent from the cards to preview configuration, Workflow Agents, memory, and permissions."
 
 msgid "Name must be at least 2 characters."
 msgstr "Name must be at least 2 characters."

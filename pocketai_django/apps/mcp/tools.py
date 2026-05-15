@@ -11105,13 +11105,9 @@ def _list_agents_handler(
 
     include_paused = bool(arguments.get("include_paused"))
     qs = (
-        AgentProfile.objects.select_related("department")
-        .filter(
+        AgentProfile.objects.filter(
             business_profile_id=conversation.business_profile_id,
-            agent_type__in=[
-                AgentProfile.AgentTypeChoices.MAIN,
-                AgentProfile.AgentTypeChoices.DEPARTMENT_LEAD,
-            ],
+            agent_type=AgentProfile.AgentTypeChoices.MAIN,
         )
         .order_by("name")
     )
@@ -11127,10 +11123,7 @@ def _list_agents_handler(
                 "status": agent.status,
                 "role": agent.role or "",
                 "agent_type": getattr(agent, "agent_type", "specialist"),
-                "department_id": str(agent.department_id) if agent.department_id else None,
-                "department": getattr(agent.department, "name", "") if agent.department_id else "",
                 "can_manage_tasks": bool(getattr(agent, "can_manage_tasks", False)),
-                "can_manage_departments": bool(getattr(agent, "can_manage_departments", False)),
                 "responsibilities": list(agent.responsibilities or []),
                 "tone": agent.tone or "",
             }
@@ -11185,7 +11178,6 @@ def _workflow_payload(workflow) -> dict[str, object]:
     return {
         "id": str(workflow.id),
         "agent_id": str(workflow.agent_profile_id),
-        "department_id": str(workflow.department_id) if workflow.department_id else None,
         "name": workflow.name,
         "description": workflow.description or "",
         "status": workflow.status,
@@ -11336,7 +11328,7 @@ def _resolve_task_agent(conversation: Conversation, raw_agent_id: object = None)
             agent_id = uuid.UUID(str(raw_agent_id))
         except (TypeError, ValueError):
             return None, {"status": "error", "error_code": "validation_failed", "error": "agent_id must be a UUID."}
-        agent = AgentProfile.objects.select_related("department").filter(id=agent_id, business_profile_id=conversation.business_profile_id).first()
+        agent = AgentProfile.objects.filter(id=agent_id, business_profile_id=conversation.business_profile_id).first()
         if agent is None:
             return None, {"status": "error", "error_code": "agent_not_found", "error": "Agent not found."}
         return agent, None
@@ -11355,7 +11347,7 @@ def _list_tasks_handler(
     del context
     from apps.conversations.models import AgentWorkflow
 
-    qs = AgentWorkflow.objects.select_related("agent_profile", "department").filter(business_profile_id=conversation.business_profile_id)
+    qs = AgentWorkflow.objects.select_related("agent_profile").filter(business_profile_id=conversation.business_profile_id)
     agent_id_raw = arguments.get("agent_id") or arguments.get("agentId")
     if agent_id_raw:
         try:
@@ -11394,7 +11386,6 @@ def _draft_task_handler(
     workflow = AgentWorkflow.objects.create(
         business_profile_id=conversation.business_profile_id,
         agent_profile=agent,
-        department=getattr(agent, "department", None),
         created_by=getattr(conversation, "owner_user", None) or getattr(agent, "user", None),
         name=name[:160],
         description=str(arguments.get("description") or "")[:4000],

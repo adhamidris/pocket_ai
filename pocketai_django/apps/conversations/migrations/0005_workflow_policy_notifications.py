@@ -9,7 +9,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ("accounts", "0004_agentprofile_agent_type_and_more"),
-        ("conversations", "0005_agentworkflow_department_and_more"),
+        ("conversations", "0004_existing_db_drop_old_run_snapshot_requirement"),
     ]
 
     operations = [
@@ -60,7 +60,6 @@ class Migration(migrations.Migration):
                 ("agent_profile", models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name="agent_run_notifications", to="accounts.agentprofile")),
                 ("business_profile", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="agent_run_notifications", to="accounts.businessprofile")),
                 ("owner_agent_profile", models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name="owned_run_notifications", to="accounts.agentprofile")),
-                ("owner_department", models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name="agent_run_notifications", to="accounts.agentdepartment")),
                 ("run", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="notifications", to="conversations.agentrun")),
                 ("target_conversation", models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name="agent_run_notifications", to="conversations.conversation")),
                 ("workflow", models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name="notifications", to="conversations.agentworkflow")),

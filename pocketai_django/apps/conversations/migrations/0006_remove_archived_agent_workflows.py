@@ -49,7 +49,7 @@ def delete_archived_agent_workflows(apps, schema_editor):
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("conversations", "0006_workflow_policy_notifications"),
+        ("conversations", "0005_workflow_policy_notifications"),
     ]
 
     operations = [

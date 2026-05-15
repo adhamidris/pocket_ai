@@ -177,54 +177,6 @@ def resolve_active_workflow(conversation: object):
         return None
 
 
-def resolve_prompt_department(conversation: object, workflow: object | None = None):
-    """
-    Resolve the department whose instructions should apply to a conversation.
-
-    Workflow sessions inherit the owning Workflow Agent's department. Normal
-    chat sessions use the active department agent's department.
-    """
-
-    active_workflow = workflow if workflow is not None else resolve_active_workflow(conversation)
-    department = getattr(active_workflow, "department", None) if active_workflow is not None else None
-    if department is not None:
-        return department
-
-    agent = getattr(conversation, "agent_profile", None)
-    department = getattr(agent, "department", None) if agent is not None else None
-    if department is not None:
-        return department
-
-    return None
-
-
-def build_department_instruction_note(conversation: object, *, max_chars: int = 3000) -> str | None:
-    workflow = resolve_active_workflow(conversation)
-    department = resolve_prompt_department(conversation, workflow=workflow)
-    if department is None:
-        return None
-
-    name = _clip_text(getattr(department, "name", "") or "Department", 160)
-    instructions = _clip_text(getattr(department, "instructions", "") or "", 2200)
-    description = _clip_text(getattr(department, "description", "") or "", 600)
-    if not instructions and not description:
-        return None
-
-    lines = [
-        "Department workspace instructions.",
-        "These instructions apply to this department's main agent and its Workflow Agents unless they conflict with platform safety, tenant privacy, tool approval, or higher-priority rules.",
-        f"Department: {name}",
-    ]
-    if description:
-        lines.append("Department description:")
-        lines.append(description)
-    if instructions:
-        lines.append("Department instructions:")
-        lines.append(instructions)
-    note = "\n".join(lines).strip()
-    return _clip_text(note, max_chars) if note else None
-
-
 def active_workflow_agent_name(conversation: object) -> str | None:
     workflow = resolve_active_workflow(conversation)
     if workflow is None:

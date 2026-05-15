@@ -1013,7 +1013,6 @@ def _session_summary_to_dict(summary) -> dict[str, object]:
         "workflow_id": str(summary.workflow_id) if getattr(summary, "workflow_id", None) else None,
         "workflow_name": getattr(summary, "workflow_name", ""),
         "workflow_agent_name": getattr(summary, "workflow_agent_name", ""),
-        "workflow_department_name": getattr(summary, "workflow_department_name", ""),
     }
 
 
@@ -1442,8 +1441,6 @@ def _serialize_workflow_agent_for_portal(
         "id": str(workflow.id),
         "agentId": str(workflow.agent_profile_id),
         "agentName": getattr(getattr(workflow, "agent_profile", None), "name", "") or "",
-        "departmentId": str(workflow.department_id) if workflow.department_id else None,
-        "departmentName": getattr(getattr(workflow, "department", None), "name", "") or "",
         "name": workflow.name,
         "description": workflow.description or "",
         "status": workflow.status,
@@ -1512,7 +1509,7 @@ def _build_portal_agent_runs_snapshot(
         if agent_profile_id:
             workflows = list(
                 AgentWorkflow.objects.filter(business_profile_id=business_id)
-                .select_related("agent_profile", "department")
+                .select_related("agent_profile")
                 .annotate(session_count=Count("sessions"))
                 .order_by("-updated_at", "-created_at")[:100]
             )

@@ -11,7 +11,6 @@ from apps.accounts.models import AgentProfile
 from apps.conversations.models import Conversation, ConversationMessage
 from apps.conversations.workflow_contracts import (
     active_workflow_agent_name,
-    build_department_instruction_note,
     build_workflow_agent_instruction_note,
 )
 
@@ -202,9 +201,6 @@ class PromptBuilder:
                 {self.CUSTOMER_RULES}
                 """
             ).strip()
-            department_note = build_department_instruction_note(conversation)
-            if department_note:
-                system_prompt = f"{system_prompt}\n\n{department_note.strip()}"
             workflow_agent_note = build_workflow_agent_instruction_note(conversation)
             if workflow_agent_note:
                 system_prompt = f"{system_prompt}\n\n{workflow_agent_note.strip()}"

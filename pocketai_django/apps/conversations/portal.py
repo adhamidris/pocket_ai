@@ -35,7 +35,6 @@ from apps.conversations.models import (
 INTERNAL_AGENT_NOTIFICATION_PURPOSE = "agent_notification_surface"
 INTERNAL_CANONICAL_CONVERSATION_TYPES = {
     "canonical_main_primary",
-    "canonical_department_primary",
 }
 
 
@@ -123,7 +122,6 @@ class PortalSessionSummary:
     workflow_id: uuid.UUID | None = None
     workflow_name: str = ""
     workflow_agent_name: str = ""
-    workflow_department_name: str = ""
 
 
 class ChatPortalService:
@@ -442,7 +440,7 @@ class ChatPortalService:
             queryset
             .exclude(metadata__has_key="anchor_conversation_id")
             .exclude(metadata__has_key="anchorConversationId")
-            .select_related("workflow", "workflow__agent_profile", "workflow__department")
+            .select_related("workflow", "workflow__agent_profile")
             .annotate(message_count=Count("messages", distinct=True))
             .prefetch_related(
                 Prefetch(
@@ -454,12 +452,11 @@ class ChatPortalService:
                 ),
                 Prefetch(
                     "agent_workflows",
-                    queryset=AgentWorkflow.objects.select_related("agent_profile", "department").only(
+                    queryset=AgentWorkflow.objects.select_related("agent_profile").only(
                         "id",
                         "name",
                         "conversation_id",
                         "agent_profile__name",
-                        "department__name",
                     ),
                     to_attr="linked_workflows",
                 ),
@@ -530,7 +527,7 @@ class ChatPortalService:
 
         workflow = (
             AgentWorkflow.objects.filter(id=workflow_uuid, business_profile=business)
-            .select_related("agent_profile", "business_profile", "department")
+            .select_related("agent_profile", "business_profile")
             .first()
         )
         if workflow is None:
@@ -545,7 +542,6 @@ class ChatPortalService:
                 "workflow_id": str(workflow.id),
                 "workflow_name": workflow.name,
                 "workflow_agent_name": workflow.agent_profile.name,
-                "workflow_department_name": workflow.department.name if workflow.department_id else "",
             }
         )
         owner = owner_user if getattr(owner_user, "id", None) else workflow.created_by or business.user
@@ -590,7 +586,7 @@ class ChatPortalService:
         
         return truncated.rstrip(".,!?;:") + "..."
 
-    def _classify_conversation_session(self, conversation: Conversation) -> tuple[str, uuid.UUID | None, str, str, str]:
+    def _classify_conversation_session(self, conversation: Conversation) -> tuple[str, uuid.UUID | None, str, str]:
         metadata = conversation.metadata if isinstance(getattr(conversation, "metadata", None), dict) else {}
         has_prefetched_workflows = hasattr(conversation, "linked_workflows")
         linked_workflows = list(getattr(conversation, "linked_workflows", []) or [])
@@ -607,14 +603,9 @@ class ChatPortalService:
             or str(metadata.get("workflow_name") or metadata.get("workflowName") or "").strip()
         )
         workflow_agent = getattr(linked_workflow, "agent_profile", None) if linked_workflow is not None else None
-        workflow_department = getattr(linked_workflow, "department", None) if linked_workflow is not None else None
         workflow_agent_name = (
             (getattr(workflow_agent, "name", "") or "")
             or str(metadata.get("workflow_agent_name") or metadata.get("workflowAgentName") or "").strip()
-        )
-        workflow_department_name = (
-            (getattr(workflow_department, "name", "") or "")
-            or str(metadata.get("workflow_department_name") or metadata.get("workflowDepartmentName") or "").strip()
         )
         is_task_thread = bool(
             linked_workflow
@@ -623,7 +614,7 @@ class ChatPortalService:
             or meta_type == "workflow_agent_session"
             or str(metadata.get("workflow_id") or "").strip()
         )
-        return ("task" if is_task_thread else "chat", workflow_id, workflow_name, workflow_agent_name, workflow_department_name)
+        return ("task" if is_task_thread else "chat", workflow_id, workflow_name, workflow_agent_name)
 
     def _build_session_summaries(
         self,
@@ -637,7 +628,7 @@ class ChatPortalService:
                 continue
             first_messages = getattr(conv, "first_customer_messages", [])
             first_msg = first_messages[0] if first_messages else None
-            session_type, workflow_id, workflow_name, workflow_agent_name, workflow_department_name = self._classify_conversation_session(conv)
+            session_type, workflow_id, workflow_name, workflow_agent_name = self._classify_conversation_session(conv)
             is_task_thread = session_type == "task"
 
             if first_msg:
@@ -664,7 +655,6 @@ class ChatPortalService:
                     workflow_id=workflow_id,
                     workflow_name=workflow_name,
                     workflow_agent_name=workflow_agent_name,
-                    workflow_department_name=workflow_department_name,
                 )
             )
             if limit is not None and len(summaries) >= limit:
@@ -906,7 +896,7 @@ class ChatPortalService:
         )
 
     def _serialize_session(self, conversation: Conversation) -> PortalSessionState:
-        session_type, workflow_id, workflow_name, _workflow_agent_name, _workflow_department_name = self._classify_conversation_session(conversation)
+        session_type, workflow_id, workflow_name, _workflow_agent_name = self._classify_conversation_session(conversation)
         return PortalSessionState(
             conversation_id=conversation.id,
             session_token=conversation.session_token,

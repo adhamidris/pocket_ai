@@ -8,7 +8,6 @@ from django.contrib.auth.models import AnonymousUser
 from django.utils.html import format_html
 
 from .models import (
-    AgentDepartment,
     AgentProfile,
     BusinessProfile,
     IntegrationSyncFrequency,
@@ -534,17 +533,9 @@ class BusinessProfileAdmin(admin.ModelAdmin):
         super().save_formset(request, form, formset, change)
 
 
-@admin.register(AgentDepartment)
-class AgentDepartmentAdmin(admin.ModelAdmin):
-    list_display = ("id", "name", "business_profile", "status", "lead_agent", "updated_at")
-    list_filter = ("status",)
-    search_fields = ("name", "business_profile__name")
-    ordering = ("name",)
-
-
 @admin.register(AgentProfile)
 class AgentProfileAdmin(admin.ModelAdmin):
-    list_display = ("id", "name", "business_profile", "agent_type", "department", "status", "updated_at")
+    list_display = ("id", "name", "business_profile", "agent_type", "status", "updated_at")
     list_filter = ("agent_type", "status")
     search_fields = ("name", "business_profile__name", "user__email")
     ordering = ("-updated_at",)

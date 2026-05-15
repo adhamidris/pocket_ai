@@ -245,7 +245,6 @@ def configure_agent_profile(
             "escalation_rule": (escalation_rule or "").strip(),
             "agent_type": AgentProfile.AgentTypeChoices.MAIN,
             "can_manage_tasks": True,
-            "can_manage_departments": True,
         }
 
         profile = (
@@ -264,7 +263,6 @@ def configure_agent_profile(
             profile.traits = sanitized_traits
             profile.escalation_rule = defaults["escalation_rule"]
             profile.can_manage_tasks = True
-            profile.can_manage_departments = True
             profile.save()
 
     return AgentProfileResult(profile=profile, session=session)

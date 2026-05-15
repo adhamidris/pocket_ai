@@ -16,7 +16,6 @@ interface Agent {
   description: string
   status: 'active' | 'inactive'
   persona: string
-  department: string
   conversations: number
   responseTime: string
   tools: string[]

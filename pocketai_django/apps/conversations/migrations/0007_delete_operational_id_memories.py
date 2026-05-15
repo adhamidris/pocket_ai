@@ -34,7 +34,7 @@ def delete_operational_id_memories(apps, schema_editor):
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("conversations", "0007_remove_archived_agent_workflows"),
+        ("conversations", "0006_remove_archived_agent_workflows"),
     ]
 
     operations = [

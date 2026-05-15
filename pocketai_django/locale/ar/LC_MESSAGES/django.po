@@ -1068,16 +1068,6 @@ msgstr ""
 "تعليمات إضافية إلى تشغيل مكتمل أو بانتظار الإجراء بدلًا من إنشاء تشغيل جديد. "
 "سيستأنف الوكيل الفرعي مع كامل سجل محادثته."
 
-#: apps/api/mcp_connections.py:2125
-msgid ""
-"Send a structured request from Agent A to Agent B (agent-to-agent inbox). "
-"Use this when you need another agent/department to answer something. Provide "
-"references (ids/links) instead of raw dumps."
-msgstr ""
-"أرسل طلبًا منظمًا من الوكيل A إلى الوكيل B (صندوق وارد وكيل إلى وكيل). "
-"استخدمه عندما تحتاج أن يجيب وكيل/قسم آخر على أمر ما. قدّم مراجع "
-"(معرّفات/روابط) بدلًا من نسخ نصوص خام."
-
 #: apps/api/mcp_connections.py:2130
 msgid ""
 "Create a background AgentRun (sub-agent) anchored to this conversation. Use "
@@ -5412,24 +5402,6 @@ msgstr "%(count)s خصائص في البنية"
 
 msgid "Core typed field"
 msgstr "حقل أساسي مضبوط النوع"
-
-msgid "Department Agents"
-msgstr "وكلاء الأقسام"
-
-msgid "Manage each department's main agent, Workflow Agents, knowledge, permissions, and runs."
-msgstr "أدر الوكيل الرئيسي لكل قسم، ووكلاء سير العمل، والمعرفة، والصلاحيات، والتشغيلات."
-
-msgid "Search department agents..."
-msgstr "ابحث في وكلاء الأقسام..."
-
-msgid "No department agents yet. Create a department to get its main agent automatically."
-msgstr "لا توجد وكلاء أقسام بعد. أنشئ قسماً ليتم إنشاء وكيله الرئيسي تلقائياً."
-
-msgid "No department agent selected"
-msgstr "لم يتم اختيار وكيل قسم"
-
-msgid "Choose a department agent from the cards to preview configuration, Workflow Agents, memory, and permissions."
-msgstr "اختر وكيل قسم من البطاقات لمعاينة الإعدادات ووكلاء سير العمل والذاكرة والصلاحيات."
 
 msgid "Name must be at least 2 characters."
 msgstr "يجب أن يتكون الاسم من حرفين على الأقل."

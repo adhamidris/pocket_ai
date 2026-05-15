@@ -9,7 +9,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
-from apps.accounts.models import AgentDepartment, AgentProfile, BusinessProfile, RegistrationSession
+from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
 from apps.conversations.models import (
     AgentWorkflow,
     Conversation,
@@ -121,32 +121,16 @@ class AuthenticatedConversationApiTests(TestCase):
         self.assertEqual(messages_response.status_code, 200)
         self.assertEqual(messages_response.json()["session"]["session_type"], "task")
 
-    def test_conversations_collection_includes_workspace_workflow_agent_sessions(self) -> None:
-        other_agent = AgentProfile.objects.create(
-            business_profile=self.business,
-            user=self.owner,
-            name="Reports Agent",
-            slug="reports-agent",
-        )
-        department = AgentDepartment.objects.create(
-            business_profile=self.business,
-            created_by=self.owner,
-            name="Finance",
-            lead_agent=other_agent,
-        )
-        other_agent.department = department
-        other_agent.agent_type = AgentProfile.AgentTypeChoices.DEPARTMENT_LEAD
-        other_agent.save(update_fields=["department", "agent_type", "updated_at"])
+    def test_conversations_collection_includes_workflow_agent_sessions(self) -> None:
         workflow = AgentWorkflow.objects.create(
             business_profile=self.business,
-            agent_profile=other_agent,
-            department=department,
+            agent_profile=self.agent,
             created_by=self.owner,
             name="Daily sales reviewer",
         )
         workflow_session = Conversation.objects.create(
             business_profile=self.business,
-            agent_profile=other_agent,
+            agent_profile=self.agent,
             workflow=workflow,
             owner_user=self.owner,
             session_token="reports-workflow-session",
@@ -161,12 +145,6 @@ class AuthenticatedConversationApiTests(TestCase):
             sender=ConversationSender.CUSTOMER,
             body="This should not replace the Workflow Agent name.",
         )
-        other_agent_chat = Conversation.objects.create(
-            business_profile=self.business,
-            agent_profile=other_agent,
-            owner_user=self.owner,
-            session_token="other-agent-plain-chat",
-        )
         self.client.force_login(self.owner)
 
         response = self.client.get(
@@ -178,13 +156,12 @@ class AuthenticatedConversationApiTests(TestCase):
         conversations = response.json()["conversations"]
         ids = {item["conversation_id"] for item in conversations}
         self.assertIn(str(workflow_session.id), ids)
-        self.assertNotIn(str(other_agent_chat.id), ids)
         task = next(item for item in conversations if item["conversation_id"] == str(workflow_session.id))
         self.assertEqual(task["session_type"], "task")
         self.assertEqual(task["workflow_id"], str(workflow.id))
         self.assertEqual(task["workflow_name"], "Daily sales reviewer")
-        self.assertEqual(task["workflow_department_name"], "Finance")
-        self.assertEqual(task["workflow_agent_name"], "Reports Agent")
+        self.assertFalse(any(key.startswith("workflow_dept") for key in task))
+        self.assertEqual(task["workflow_agent_name"], "Sarah")
         self.assertEqual(task["title"], "This should not replace the Workflow Agent name.")
 
     def test_conversations_collection_hides_internal_agent_notification_surfaces(self) -> None:

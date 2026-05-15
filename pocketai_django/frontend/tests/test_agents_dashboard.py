@@ -35,8 +35,10 @@ class AgentsDashboardTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         content = response.content.decode("utf-8")
-        self.assertIn("Create department", content)
-        self.assertIn("Department Agents", content)
+        self.assertIn("Workflow Agents", content)
+        self.assertIn("Manage the main agent", content)
+        self.assertNotIn("Create workspace group", content)
+        self.assertNotIn("Workspace group agents", content)
         self.assertNotIn("Create agent", content)
         self.assertIn('data-agent-tab="tasks"', content)
         self.assertIn('data-agent-tab="runs"', content)

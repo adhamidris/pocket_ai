@@ -8,7 +8,7 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from apps.accounts.models import AgentDepartment, AgentProfile, BusinessProfile, RegistrationSession
+from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
 from apps.conversations.models import (
     AgentRun,
     AgentRunCheckpoint,
@@ -46,42 +46,6 @@ class AgentRunsApiTests(TestCase):
         )
         self.agent = AgentProfile.objects.create(business_profile=self.business, user=self.user, name="Ops Agent")
         self.client.force_login(self.user)
-
-    def test_department_create_auto_creates_single_department_agent(self) -> None:
-        dept_res = self.client.post(
-            reverse("api:departments-list") + f"?business_id={self.business.id}",
-            data=json.dumps({"name": "Finance", "description": "Money work", "instructions": "Follow finance policy."}),
-            content_type="application/json",
-        )
-        self.assertEqual(dept_res.status_code, 201)
-        department_id = dept_res.json()["department"]["id"]
-        lead_agent_id = dept_res.json()["department"]["leadAgentId"]
-        self.assertTrue(lead_agent_id)
-        lead_agent = AgentProfile.objects.get(id=uuid.UUID(lead_agent_id))
-        self.assertEqual(lead_agent.department_id, uuid.UUID(department_id))
-        self.assertEqual(lead_agent.agent_type, AgentProfile.AgentTypeChoices.DEPARTMENT_LEAD)
-        self.assertTrue(lead_agent.can_manage_tasks)
-
-        duplicate_lead_res = self.client.post(
-            reverse("api:agents-list") + f"?business_id={self.business.id}",
-            data=json.dumps({"name": "Finance Lead 2", "agentType": "department_lead", "departmentId": department_id}),
-            content_type="application/json",
-        )
-        self.assertEqual(duplicate_lead_res.status_code, 400)
-
-        specialist_res = self.client.post(
-            reverse("api:agents-list") + f"?business_id={self.business.id}",
-            data=json.dumps(
-                {
-                    "name": "Invoice Checker",
-                    "agentType": "background",
-                    "departmentId": department_id,
-                    "managerAgentId": lead_agent_id,
-                }
-            ),
-            content_type="application/json",
-        )
-        self.assertEqual(specialist_res.status_code, 400)
 
     def test_api_rejects_second_active_main_agent(self) -> None:
         main_res = self.client.post(

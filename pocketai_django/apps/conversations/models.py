@@ -701,13 +701,6 @@ class AgentWorkflow(models.Model):
         related_name="workflows",
         on_delete=models.CASCADE,
     )
-    department = models.ForeignKey(
-        "accounts.AgentDepartment",
-        related_name="workflows",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-    )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         related_name="created_agent_workflows",
@@ -785,7 +778,6 @@ class AgentWorkflow(models.Model):
         indexes = [
             models.Index(fields=["business_profile", "status"], name="workflow_biz_status_idx"),
             models.Index(fields=["agent_profile", "status"], name="workflow_agent_status_idx"),
-            models.Index(fields=["department", "status"], name="workflow_dept_status_idx"),
             models.Index(fields=["status", "trigger_type", "next_trigger_at"], name="workflow_due_idx"),
             models.Index(fields=["status", "lease_expires_at"], name="workflow_lease_idx"),
             models.Index(fields=["business_profile", "created_at"], name="workflow_biz_created_idx"),
@@ -797,8 +789,6 @@ class AgentWorkflow(models.Model):
     def save(self, *args, **kwargs):
         if self.agent_profile_id and not self.business_profile_id and getattr(self, "agent_profile", None):
             self.business_profile = self.agent_profile.business_profile
-        if self.agent_profile_id and not self.department_id and getattr(self, "agent_profile", None):
-            self.department = self.agent_profile.department
         if self.conversation_id and not self.business_profile_id and getattr(self, "conversation", None):
             self.business_profile = self.conversation.business_profile
         if self.email_account_id and not self.business_profile_id and getattr(self, "email_account", None):
@@ -1244,13 +1234,6 @@ class AgentRunNotification(models.Model):
     owner_agent_profile = models.ForeignKey(
         "accounts.AgentProfile",
         related_name="owned_run_notifications",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-    )
-    owner_department = models.ForeignKey(
-        "accounts.AgentDepartment",
-        related_name="agent_run_notifications",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,

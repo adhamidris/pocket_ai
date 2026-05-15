@@ -31,7 +31,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
-        ("conversations", "0008_delete_operational_id_memories"),
+        ("conversations", "0007_delete_operational_id_memories"),
     ]
 
     operations = [

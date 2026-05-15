@@ -10,7 +10,6 @@ interface Agent {
   description: string
   status: 'active' | 'inactive'
   persona: string
-  department: string
   conversations: number
   responseTime: string
   tools: string[]
@@ -55,9 +54,6 @@ export const AgentCard: React.FC<AgentCardProps> = ({
       default: return '👔'
     }
   }
-
-  // Department color no longer used after removing department/tools row
-
   const withAlpha = (c: string, a: number) =>
     c.startsWith('hsl(')
       ? c.replace('hsl(', 'hsla(').replace(')', `,${a})`)

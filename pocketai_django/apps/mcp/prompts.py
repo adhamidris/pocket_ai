@@ -34,7 +34,6 @@ from apps.conversations.models import (
 )
 from apps.conversations.workflow_contracts import (
     active_workflow_agent_name,
-    build_department_instruction_note,
     build_workflow_agent_instruction_note,
 )
 from apps.llm.ai_prompt_builder import PromptBuilder
@@ -100,7 +99,7 @@ AGENT_WORKFORCE_BACKGROUND_RUN_INSTRUCTIONS = textwrap.dedent(
     **Saved tasks/workflows:**
     - If the visitor asks to create a recurring, scheduled, webhook, or email-monitoring task, create a draft first.
     - Do not activate a persistent task silently. Summarize the owner agent, trigger, goal, and approval impact, then ask for explicit approval.
-    - If the task belongs to another department or agent role, use `list_agents` to identify the right owner; if unclear, ask before drafting.
+    - If the task belongs to a different Workflow Agent or agent role, use `list_agents` to identify the right owner; if unclear, ask before drafting.
 
     **Example flow:**
     1. Visitor: "Research competitor pricing" → `start_agent_run(goal="Research...")`
@@ -884,10 +883,6 @@ def build_messages(
             )
         else:
             system_sections.append("You are a helpful assistant.".strip())
-
-        department_note = build_department_instruction_note(conversation)
-        if department_note:
-            system_sections.append(department_note.strip())
 
         workflow_agent_note = build_workflow_agent_instruction_note(conversation)
         if workflow_agent_note:

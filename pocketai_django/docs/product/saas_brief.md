@@ -23,8 +23,8 @@ PocketAI gives each tenant a configurable AI agent that:
 - Initial geographic focus: MENA (e.g., Egypt, UAE, KSA, Jordan, Kuwait, Qatar).
 
 ## Core User Journey (Tenant)
-1. Sign up and create one or more agents (each agent can represent a brand, department, or use case).
-2. Create collections (knowledge libraries) and assign collections to agents for tighter relevance and control.
+1. Sign up and configure the tenant's main AI agent.
+2. Create Workflow Agents for specialized repeatable tasks when deeper customization is needed.
 3. Upload knowledge (PDF, DOCX, TXT/MD, scanned images/PDFs, CSV/XLSX, JSON).
 4. (Optional) Connect business email (Gmail/Outlook) for search + draft workflows.
 5. Publish the agent via a hosted portal link (and later: embedded widget / additional channels).
@@ -52,4 +52,4 @@ PocketAI gives each tenant a configurable AI agent that:
 - Plans can scale by usage (e.g., conversations), number of agents, enabled channels, and verification features.
 
 ## Positioning
-PocketAI is the “fastest path to a business-ready AI agent”: self‑serve setup, multi‑agent/collection control, privacy by default, and a focus on high-quality answers grounded in real business documents.
+PocketAI is the “fastest path to a business-ready AI agent”: self‑serve setup, Workflow Agent customization, privacy by default, and a focus on high-quality answers grounded in real business documents.

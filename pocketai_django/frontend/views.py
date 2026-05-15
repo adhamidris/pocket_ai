@@ -34,7 +34,6 @@ from django.views.decorators.http import require_http_methods
 from pocketai.language import normalize_language_code
 
 from apps.accounts.models import (
-    AgentDepartment,
     AgentProfile,
     BusinessProfile,
     IntegrationSyncFrequency,
@@ -2260,7 +2259,6 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
     has_error = False
     business = request.user.business_profiles.order_by("-created_at").first() if request.user.is_authenticated else None
     agent_ids: list[uuid.UUID] = []
-    departments: list[dict[str, str]] = []
 
     def _format_duration(seconds: float | None) -> str | None:
         if not seconds:
@@ -2275,15 +2273,6 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
         return f"{hours}h {minutes:02d}m"
 
     if business:
-        departments = [
-            {
-                "id": str(department.id),
-                "name": department.name,
-                "status": department.status,
-                "lead_agent_id": str(department.lead_agent_id) if department.lead_agent_id else "",
-            }
-            for department in AgentDepartment.objects.filter(business_profile=business).order_by("name")
-        ]
         try:
             result = list_agents(
                 business_profile=business,
@@ -2316,11 +2305,8 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
                         "role_code": item.role or "",
                         "agent_type": item.agent_type,
                         "agent_type_label": display_agent_type_label(item.agent_type),
-                        "department_id": str(item.department_id) if item.department_id else "",
-                        "department_name": item.department_name,
                         "manager_agent_id": str(item.manager_agent_id) if item.manager_agent_id else "",
                         "can_manage_tasks": item.can_manage_tasks,
-                        "can_manage_departments": item.can_manage_departments,
                         "tone_label": tone_label,
                         "tone_code": item.tone or "",
                         "satisfaction": None,
@@ -2413,14 +2399,13 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
         "agents_error_message": _("Unable to load agents right now.") if has_error else None,
         "skeleton_rows": range(6),
         "agents": agents,
-        "departments": departments,
-        "agents_empty_message": _("No department agents yet. Create a department to get its main agent automatically."),
+        "agents_empty_message": _("No main agent yet. Complete onboarding to create your default agent."),
         "agents_showing_count": len(agents),
         "agents_total": total_agents or len(agents),
         "agents_has_prev": False,
         "agents_has_next": bool(total_agents and total_agents > len(agents)),
-        "agents_panel_empty_title": _("No department agent selected"),
-        "agents_panel_empty_message": _("Choose a department agent from the cards to preview configuration, Workflow Agents, memory, and permissions."),
+        "agents_panel_empty_title": _("No agent selected"),
+        "agents_panel_empty_message": _("Choose your main agent to preview configuration, Workflow Agents, memory, and permissions."),
     }
     return render(request, "frontend/agents.html", context)
 

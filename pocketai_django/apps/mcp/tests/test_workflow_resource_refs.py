@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from django.test import TestCase
 
-from apps.accounts.models import AgentDepartment, AgentProfile, BusinessProfile, RegistrationSession, User
+from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession, User
 from apps.conversations.models import AgentWorkflow, Conversation
 from apps.mcp.prompts import build_messages
 from apps.mcp.tools import _draft_task_handler, _request_task_activation_handler, _update_task_handler
@@ -113,41 +113,6 @@ class WorkflowResourceRefsTests(TestCase):
         self.assertIn('"approval_required_above": 500', system_text)
         self.assertIn("concise operations summary", system_text)
         self.assertIn("strict refund operations specialist", system_text)
-
-    def test_department_instructions_apply_before_workflow_contract(self) -> None:
-        department = AgentDepartment.objects.create(
-            business_profile=self.business,
-            created_by=self.user,
-            name="Finance",
-            instructions="All finance work must preserve audit trails.",
-        )
-        self.agent.department = department
-        self.agent.agent_type = AgentProfile.AgentTypeChoices.DEPARTMENT_LEAD
-        self.agent.save(update_fields=["department", "agent_type", "updated_at"])
-        workflow = AgentWorkflow.objects.create(
-            business_profile=self.business,
-            agent_profile=self.agent,
-            department=department,
-            created_by=self.user,
-            name="Treasury Reviewer",
-            instructions={"goal": "Review cash movement requests."},
-        )
-        self.conversation.workflow = workflow
-        self.conversation.save(update_fields=["workflow", "last_activity_at"])
-
-        messages = build_messages(
-            conversation=self.conversation,
-            user_message="Who are you?",
-            model_id="deepseek-chat",
-        )
-
-        system_text = str(messages[0]["content"])
-        department_index = system_text.index("Department workspace instructions.")
-        workflow_index = system_text.index("Workflow Agent session override")
-        self.assertLess(department_index, workflow_index)
-        self.assertIn("Department: Finance", system_text)
-        self.assertIn("All finance work must preserve audit trails.", system_text)
-        self.assertIn("Active Workflow Agent name/role: Treasury Reviewer", system_text)
 
     def test_draft_task_persists_rich_instruction_contract(self) -> None:
         result = _draft_task_handler(

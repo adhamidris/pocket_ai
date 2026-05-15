@@ -4,7 +4,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("conversations", "0009_workflow_agent_sessions_and_checkpoints"),
+        ("conversations", "0008_workflow_agent_sessions_and_checkpoints"),
     ]
 
     operations = [
