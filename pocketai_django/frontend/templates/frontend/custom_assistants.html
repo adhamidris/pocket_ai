@@ -1,0 +1,275 @@
+{% extends "frontend/base_app.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Custom Assistants" %} | Pocket AI{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-background flex">
+  {% include "frontend/components/dashboard/sidebar.html" with active="custom-assistants" user_name=user_name %}
+  <main class="flex-1 overflow-auto">
+    <div class="w-full px-4 md:px-6 lg:px-8 py-6 space-y-6" data-custom-assistants-page data-agent-id="{{ default_agent_id }}" data-chat-url="{{ dashboard_chat_url }}">
+      <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div class="space-y-1.5">
+          <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">{% trans "Custom Assistants" %}</h1>
+          <p class="text-sm text-muted-foreground">{% trans "Create reusable GPT-style assistants for focused business workflows." %}</p>
+        </div>
+        <button type="button" class="inline-flex h-10 items-center justify-center rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground disabled:opacity-50" data-assistant-new {% if not default_agent_id %}disabled{% endif %}>
+          {% trans "New assistant" %}
+        </button>
+      </header>
+
+      {% if assistant_notice %}
+        <section class="rounded-lg border border-border/70 bg-card/80 p-4 text-sm text-muted-foreground">{{ assistant_notice }}</section>
+      {% endif %}
+
+      <section class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div class="space-y-3">
+          <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{% trans "Assistants" %}</div>
+            <button type="button" class="rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent" data-assistant-refresh {% if not default_agent_id %}disabled{% endif %}>{% trans "Refresh" %}</button>
+          </div>
+          <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" data-assistant-list>
+            <div class="rounded-lg border border-dashed border-border/70 p-6 text-sm text-muted-foreground">{% trans "Loading assistants..." %}</div>
+          </div>
+        </div>
+
+        <aside class="rounded-lg border border-border/70 bg-card/80 p-4">
+          <form class="space-y-4" data-assistant-form>
+            <input type="hidden" data-assistant-input="id">
+            <div>
+              <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground" data-form-title>{% trans "Assistant setup" %}</div>
+              <p class="mt-1 text-xs text-muted-foreground">{% trans "These assistants appear as selectable specialists in the Portal." %}</p>
+            </div>
+            <label class="block text-xs font-semibold text-muted-foreground">
+              <span class="mb-1.5 block">{% trans "Name" %}</span>
+              <input class="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground" data-assistant-input="name" autocomplete="off">
+            </label>
+            <label class="block text-xs font-semibold text-muted-foreground">
+              <span class="mb-1.5 block">{% trans "Description" %}</span>
+              <input class="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground" data-assistant-input="description" autocomplete="off">
+            </label>
+            <label class="block text-xs font-semibold text-muted-foreground">
+              <span class="mb-1.5 block">{% trans "Instructions" %}</span>
+              <textarea class="min-h-40 w-full rounded-md border border-border bg-background px-3 py-2 text-sm leading-6 text-foreground" data-assistant-input="instructions"></textarea>
+            </label>
+            <label class="block text-xs font-semibold text-muted-foreground">
+              <span class="mb-1.5 block">{% trans "Status" %}</span>
+              <select class="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground" data-assistant-input="status">
+                <option value="active">{% trans "Enabled" %}</option>
+                <option value="draft">{% trans "Draft" %}</option>
+                <option value="paused">{% trans "Disabled" %}</option>
+              </select>
+            </label>
+            <p class="hidden text-xs text-destructive" data-assistant-error></p>
+            <div class="flex justify-end gap-2">
+              <button type="button" class="rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent" data-assistant-reset>{% trans "Clear" %}</button>
+              <button type="submit" class="rounded-md bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50" {% if not default_agent_id %}disabled{% endif %}>{% trans "Save assistant" %}</button>
+            </div>
+          </form>
+        </aside>
+      </section>
+    </div>
+  </main>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    var root = document.querySelector("[data-custom-assistants-page]");
+    if (!root) return;
+    var agentId = root.getAttribute("data-agent-id") || "";
+    var chatUrl = root.getAttribute("data-chat-url") || "/dashboard/chat/";
+    var list = root.querySelector("[data-assistant-list]");
+    var form = root.querySelector("[data-assistant-form]");
+    var errorEl = root.querySelector("[data-assistant-error]");
+    var refreshButton = root.querySelector("[data-assistant-refresh]");
+    var newButton = root.querySelector("[data-assistant-new]");
+    var items = [];
+
+    function csrf() {
+      var match = document.cookie ? document.cookie.match(/csrftoken=([^;]+)/) : null;
+      return match ? decodeURIComponent(match[1]) : "";
+    }
+
+    function api(url, options) {
+      options = options || {};
+      var headers = { Accept: "application/json" };
+      if (options.body) headers["Content-Type"] = "application/json";
+      if (options.method && options.method !== "GET") {
+        headers["X-CSRFToken"] = csrf();
+        headers["X-Requested-With"] = "XMLHttpRequest";
+      }
+      return fetch(url, { method: options.method || "GET", headers: headers, credentials: "same-origin", body: options.body })
+        .then(function (response) {
+          if (response.status === 204) return {};
+          return response.json().catch(function () { return {}; }).then(function (payload) {
+            if (!response.ok) throw new Error(payload.message || payload.error || "Request failed");
+            return payload;
+          });
+        });
+    }
+
+    function field(name) {
+      return form.querySelector('[data-assistant-input="' + name + '"]');
+    }
+
+    function setError(message) {
+      if (!errorEl) return;
+      errorEl.textContent = message || "";
+      errorEl.classList.toggle("hidden", !message);
+    }
+
+    function resetForm() {
+      setError("");
+      ["id", "name", "description", "instructions"].forEach(function (name) {
+        var input = field(name);
+        if (input) input.value = "";
+      });
+      if (field("status")) field("status").value = "active";
+    }
+
+    function editAssistant(item) {
+      if (!item) return;
+      field("id").value = item.id || "";
+      field("name").value = item.name || "";
+      field("description").value = item.description || "";
+      field("instructions").value = item.instructions && (item.instructions.goal || item.instructions.instructions || item.instructions.task) || "";
+      field("status").value = item.status || "active";
+      form.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    function cardHtml(item) {
+      var status = (item.status || "draft").replace(/_/g, " ");
+      var description = item.description || (item.instructions && (item.instructions.goal || item.instructions.instructions)) || "{% trans 'No instructions yet.' %}";
+      return '' +
+        '<article class="rounded-lg border border-border/70 bg-card/80 p-4 shadow-sm" data-assistant-id="' + item.id + '">' +
+          '<div class="flex items-start justify-between gap-3">' +
+            '<div class="min-w-0">' +
+              '<h2 class="truncate text-base font-semibold text-foreground">' + escapeHtml(item.name || "{% trans 'Untitled assistant' %}") + '</h2>' +
+              '<p class="mt-1 line-clamp-3 text-sm leading-6 text-muted-foreground">' + escapeHtml(description) + '</p>' +
+            '</div>' +
+            '<span class="rounded-full border border-border px-2 py-1 text-[11px] capitalize text-muted-foreground">' + escapeHtml(status) + '</span>' +
+          '</div>' +
+          '<div class="mt-4 flex flex-wrap justify-end gap-2">' +
+            '<button type="button" class="rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent" data-action="chat">{% trans "Open in Portal" %}</button>' +
+            '<button type="button" class="rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent" data-action="edit">{% trans "Edit" %}</button>' +
+            '<button type="button" class="rounded-md border border-destructive/40 bg-background px-3 py-2 text-xs font-medium text-destructive hover:bg-destructive/10" data-action="delete">{% trans "Delete" %}</button>' +
+          '</div>' +
+        '</article>';
+    }
+
+    function escapeHtml(value) {
+      var div = document.createElement("div");
+      div.textContent = value == null ? "" : String(value);
+      return div.innerHTML;
+    }
+
+    function render() {
+      if (!list) return;
+      if (!agentId) {
+        list.innerHTML = '<div class="rounded-lg border border-dashed border-border/70 p-6 text-sm text-muted-foreground">{% trans "No default Business Assistant is available yet." %}</div>';
+        return;
+      }
+      if (!items.length) {
+        list.innerHTML = '<div class="rounded-lg border border-dashed border-border/70 p-6 text-sm text-muted-foreground">{% trans "No custom assistants yet." %}</div>';
+        return;
+      }
+      list.innerHTML = items.map(cardHtml).join("");
+    }
+
+    function load() {
+      if (!agentId) {
+        render();
+        return Promise.resolve();
+      }
+      list.innerHTML = '<div class="rounded-lg border border-dashed border-border/70 p-6 text-sm text-muted-foreground">{% trans "Loading assistants..." %}</div>';
+      return api("/api/agents/" + encodeURIComponent(agentId) + "/custom-assistants/")
+        .then(function (payload) {
+          items = payload.workflows || [];
+          render();
+        })
+        .catch(function (error) {
+          list.innerHTML = '<div class="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">' + escapeHtml(error.message || "Failed to load assistants") + '</div>';
+        });
+    }
+
+    function save(event) {
+      event.preventDefault();
+      if (!agentId) return;
+      setError("");
+      var id = field("id").value.trim();
+      var name = field("name").value.trim();
+      if (!name) {
+        setError("{% trans 'Name is required.' %}");
+        return;
+      }
+      var body = {
+        kind: "custom_assistant",
+        name: name,
+        description: field("description").value.trim(),
+        status: field("status").value || "active",
+        triggerType: "manual",
+        autonomyMode: "draft_for_approval",
+        reviewMode: "on_risk",
+        createSession: true,
+        instructions: { goal: field("instructions").value.trim() }
+      };
+      var url = "/api/agents/" + encodeURIComponent(agentId) + "/custom-assistants/";
+      var method = "POST";
+      if (id) {
+        url += encodeURIComponent(id) + "/";
+        method = "PATCH";
+      }
+      api(url, { method: method, body: JSON.stringify(body) })
+        .then(function () {
+          resetForm();
+          return load();
+        })
+        .catch(function (error) {
+          setError(error.message || "{% trans 'Failed to save assistant.' %}");
+        });
+    }
+
+    function openChat(id) {
+      if (!id || !agentId) return;
+      api("/api/agents/" + encodeURIComponent(agentId) + "/custom-assistants/" + encodeURIComponent(id) + "/sessions/", {
+        method: "POST",
+        body: JSON.stringify({})
+      }).then(function (payload) {
+        var session = payload.session || {};
+        var conversationId = session.conversationId || session.conversation_id || "";
+        window.location.href = conversationId ? chatUrl + "?conversation=" + encodeURIComponent(conversationId) : chatUrl;
+      }).catch(function () {
+        window.location.href = chatUrl;
+      });
+    }
+
+    function remove(id) {
+      if (!id || !agentId) return;
+      if (!window.confirm("{% trans 'Delete this custom assistant?' %}")) return;
+      api("/api/agents/" + encodeURIComponent(agentId) + "/custom-assistants/" + encodeURIComponent(id) + "/", { method: "DELETE" })
+        .then(load);
+    }
+
+    if (form) form.addEventListener("submit", save);
+    if (refreshButton) refreshButton.addEventListener("click", load);
+    if (newButton) newButton.addEventListener("click", resetForm);
+    var resetButton = root.querySelector("[data-assistant-reset]");
+    if (resetButton) resetButton.addEventListener("click", resetForm);
+    if (list) {
+      list.addEventListener("click", function (event) {
+        var button = event.target && event.target.closest ? event.target.closest("[data-action]") : null;
+        if (!button) return;
+        var card = button.closest("[data-assistant-id]");
+        var id = card ? card.getAttribute("data-assistant-id") : "";
+        var item = items.find(function (candidate) { return candidate && candidate.id === id; });
+        if (button.getAttribute("data-action") === "edit") editAssistant(item);
+        if (button.getAttribute("data-action") === "delete") remove(id);
+        if (button.getAttribute("data-action") === "chat") openChat(id);
+      });
+    }
+    load();
+  });
+</script>
+{% endblock %}

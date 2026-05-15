@@ -20,7 +20,7 @@ from apps.accounts.models import (
 from apps.knowledge.models import KnowledgeFeedbackCase
 from apps.conversations.content_blocks import ensure_assistant_text_blocks
 from apps.conversations.models import (
-    AgentWorkflow,
+    AssistantWorkflow,
     Conversation,
     ConversationChannel,
     ConversationExtraction,
@@ -421,7 +421,7 @@ class ChatPortalService:
         queryset = Conversation.objects.filter(business_profile=business).filter(
             Q(agent_profile=agent)
             | Q(workflow__business_profile=business)
-            | Q(agent_workflows__business_profile=business)
+            | Q(assistant_workflows__business_profile=business)
         )
         if not getattr(owner_user, "is_staff", False):
             business_profiles = getattr(owner_user, "business_profiles", None)
@@ -433,7 +433,7 @@ class ChatPortalService:
                 queryset = queryset.filter(
                     Q(owner_user=owner_user)
                     | Q(workflow__created_by=owner_user)
-                    | Q(agent_workflows__created_by=owner_user)
+                    | Q(assistant_workflows__created_by=owner_user)
                 )
         candidate_limit = max(limit, min(max(limit * 3, limit + 25), 300))
         conversations = (
@@ -451,8 +451,8 @@ class ChatPortalService:
                     to_attr="first_customer_messages",
                 ),
                 Prefetch(
-                    "agent_workflows",
-                    queryset=AgentWorkflow.objects.select_related("agent_profile").only(
+                    "assistant_workflows",
+                    queryset=AssistantWorkflow.objects.select_related("agent_profile").only(
                         "id",
                         "name",
                         "conversation_id",
@@ -526,12 +526,12 @@ class ChatPortalService:
             raise PortalValidationError("workflow_id must be a valid UUID.")
 
         workflow = (
-            AgentWorkflow.objects.filter(id=workflow_uuid, business_profile=business)
+            AssistantWorkflow.objects.filter(id=workflow_uuid, business_profile=business)
             .select_related("agent_profile", "business_profile")
             .first()
         )
         if workflow is None:
-            raise PortalNotFoundError("Workflow Agent not found.")
+            raise PortalNotFoundError("Custom Assistant not found.")
 
         payload = dict(metadata or {})
         if getattr(owner_user, "id", None) and "actor_user_id" not in payload and "actorUserId" not in payload:
@@ -595,7 +595,7 @@ class ChatPortalService:
         if linked_workflow is None and direct_workflow is not None:
             linked_workflow = direct_workflow
         if linked_workflow is None and not has_prefetched_workflows:
-            linked_workflow = conversation.agent_workflows.only("id", "name", "conversation_id").first()
+            linked_workflow = conversation.assistant_workflows.only("id", "name", "conversation_id").first()
         meta_type = str(metadata.get("type") or metadata.get("purpose") or metadata.get("source") or "").strip().lower()
         workflow_id = getattr(linked_workflow, "id", None)
         workflow_name = (
@@ -636,7 +636,7 @@ class ChatPortalService:
                 preview = (first_msg.body or "")[:100]
             elif is_task_thread:
                 title = "New session"
-                preview = workflow_name or "Workflow Agent"
+                preview = workflow_name or "Custom Assistant"
             else:
                 title = "New conversation"
                 preview = ""

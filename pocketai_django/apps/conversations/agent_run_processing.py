@@ -27,12 +27,14 @@ from apps.conversations.models import (
     AgentRunEvent,
     AgentRunEventStream,
     AgentRunEventType,
+    AgentRunNotification,
+    AgentRunNotificationStatus,
     AgentRunSource,
     AgentRunStatus,
-    AgentWorkflow,
-    AgentWorkflowAutonomyMode,
-    AgentWorkflowReviewMode,
-    AgentWorkflowDedupeKey,
+    AssistantWorkflow,
+    AssistantWorkflowAutonomyMode,
+    AssistantWorkflowReviewMode,
+    AssistantWorkflowDedupeKey,
     Conversation,
     ConversationMessage,
     ConversationSender,
@@ -968,7 +970,7 @@ class AgentRunProcessingService:
             ]
         return report
 
-    def _workflow_dedupe_key(self, *, workflow: AgentWorkflow | None, report: Mapping[str, object]) -> str:
+    def _workflow_dedupe_key(self, *, workflow: AssistantWorkflow | None, report: Mapping[str, object]) -> str:
         entities = report.get("changed_entities")
         candidate = entities if isinstance(entities, list) and entities else report.get("notification_candidate") or report
         return f"workflow_state:{_stable_digest(candidate)}"
@@ -999,11 +1001,54 @@ class AgentRunProcessingService:
 
         return {"dedupe_key": dedupe_key, "duplicate": duplicate}
 
-    def _record_workflow_dedupe_key(self, workflow: AgentWorkflow, dedupe_key: str) -> bool:
+    def _persist_run_notification(
+        self,
+        *,
+        run: AgentRun,
+        report: Mapping[str, object],
+        dedupe_key: str,
+        duplicate: bool,
+        now,
+    ) -> None:
+        candidate = report.get("notification_candidate")
+        if not isinstance(candidate, Mapping):
+            return
+        workflow = getattr(run, "workflow", None)
+        target_conversation = getattr(workflow, "conversation", None) if workflow is not None else None
+        if target_conversation is None:
+            target_conversation = getattr(run, "conversation", None)
+        status = (
+            AgentRunNotificationStatus.SUPPRESSED
+            if duplicate
+            else AgentRunNotificationStatus.DELIVERED
+            if target_conversation is not None
+            else AgentRunNotificationStatus.CANDIDATE
+        )
+        defaults = {
+            "business_profile": run.business_profile,
+            "agent_profile": run.agent_profile,
+            "owner_agent_profile": getattr(workflow, "agent_profile", None) if workflow is not None else run.agent_profile,
+            "workflow": workflow,
+            "target_conversation": target_conversation,
+            "status": status,
+            "kind": str(candidate.get("kind") or "run_result")[:48],
+            "priority": str(candidate.get("priority") or "normal")[:24],
+            "title": str(candidate.get("title") or run.title or "Run update")[:240],
+            "body": _clip_text(candidate.get("body") or "", 8000),
+            "payload": dict(candidate.get("payload") or {}) if isinstance(candidate.get("payload"), Mapping) else {},
+            "delivered_at": now if status == AgentRunNotificationStatus.DELIVERED else None,
+        }
+        AgentRunNotification.objects.update_or_create(
+            run=run,
+            dedupe_key=(dedupe_key or "")[:255],
+            defaults=defaults,
+        )
+
+    def _record_workflow_dedupe_key(self, workflow: AssistantWorkflow, dedupe_key: str) -> bool:
         if not dedupe_key:
             return True
         try:
-            AgentWorkflowDedupeKey.objects.create(
+            AssistantWorkflowDedupeKey.objects.create(
                 business_profile=workflow.business_profile,
                 workflow=workflow,
                 dedupe_key=dedupe_key[:255],
@@ -1015,7 +1060,7 @@ class AgentRunProcessingService:
     def _update_workflow_state_from_report(
         self,
         *,
-        workflow: AgentWorkflow,
+        workflow: AssistantWorkflow,
         run: AgentRun,
         report: Mapping[str, object],
         dedupe_key: str,
@@ -1045,7 +1090,7 @@ class AgentRunProcessingService:
             notification_history = []
         notification_history.insert(0, {"run_id": str(run.id), "at": now.isoformat(), "dedupe_key": dedupe_key, "duplicate": duplicate})
         state["notification_history"] = notification_history[:50]
-        AgentWorkflow.objects.filter(id=workflow.id).update(state=state, updated_at=now)
+        AssistantWorkflow.objects.filter(id=workflow.id).update(state=state, updated_at=now)
         workflow.state = state
 
     def _upsert_open_checkpoint(
@@ -2046,7 +2091,7 @@ class AgentRunProcessingService:
                 report_dedupe_key = self._workflow_dedupe_key(workflow=run.workflow, report=run_report)
                 if report_dedupe_key:
                     next_metadata["run_report_dedupe_key"] = report_dedupe_key
-                    prior_duplicate = AgentWorkflowDedupeKey.objects.filter(
+                    prior_duplicate = AssistantWorkflowDedupeKey.objects.filter(
                         workflow_id=run.workflow_id,
                         dedupe_key=report_dedupe_key[:255],
                     ).exists()
@@ -2133,6 +2178,13 @@ class AgentRunProcessingService:
                     next_metadata = dict(next_metadata)
                     next_metadata["run_report_state"] = report_state
                     AgentRun.objects.filter(id=run.id).update(metadata=next_metadata, result={**base_result, "run_report_state": report_state}, updated_at=now)
+                self._persist_run_notification(
+                    run=run,
+                    report=run_report,
+                    dedupe_key=str(report_state.get("dedupe_key") or ""),
+                    duplicate=bool(report_state.get("duplicate")),
+                    now=now,
+                )
 
             if next_status == AgentRunStatus.COMPLETED:
                 self._append_event(
@@ -2153,7 +2205,7 @@ class AgentRunProcessingService:
                     response_text = str(turn.response_text or "").strip()
                     if response_text:
                         # V1: Post a cheap handoff message into chat so the user doesn't need
-                        # to keep the Tasks panel open. Supervisor mode is reserved for later.
+                        # to keep the Activity panel open. Supervisor mode is reserved for later.
                         preview = response_text
                         if len(preview) > 6000:
                             preview = preview[:5999].rstrip() + "…"
@@ -2223,7 +2275,7 @@ class AgentRunProcessingService:
                             prompt_text = (
                                 "This task needs your approval to continue."
                                 + (f" Tool: {tool_label}." if tool_label else "")
-                                + " Please approve/deny from the Tasks panel."
+                                + " Please approve/deny from the Activity panel."
                             )
                     else:
                         questions = []
@@ -2236,10 +2288,10 @@ class AgentRunProcessingService:
                             prompt_text = (
                                 "I need a bit more info to continue:\n"
                                 f"{bullets}\n\n"
-                                "Please reply from the Tasks panel."
+                                "Please reply from the Activity panel."
                             )
                         else:
-                            prompt_text = "I need a bit more info to continue. Please reply from the Tasks panel."
+                            prompt_text = "I need a bit more info to continue. Please reply from the Activity panel."
 
                 checkpoint_kind = (
                     AgentRunCheckpointKind.APPROVAL

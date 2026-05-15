@@ -2167,7 +2167,7 @@ def _controls_tool_description(tool_name: str, description: str, *, source_type:
         "start_agent_run": _(
             "Create a background AgentRun (background agent) anchored to this conversation. "
             "Use this when the visitor asks for a long-running or multi-step task so the chat can continue "
-            "while the work happens in the Tasks panel."
+            "while the work happens in the Activity panel."
         ),
         "get_agent_run": _(
             "Get detailed status and result of a specific background run. "

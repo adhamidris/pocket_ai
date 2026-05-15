@@ -11,7 +11,7 @@ from django.utils import timezone
 from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
 from apps.conversations.models import (
-    AgentWorkflow,
+    AssistantWorkflow,
     Conversation,
     ConversationMessage,
     ConversationSender,
@@ -96,7 +96,7 @@ class AuthenticatedConversationApiTests(TestCase):
             session_token="workflow-thread",
             metadata={"type": "workflow_thread"},
         )
-        workflow = AgentWorkflow.objects.create(
+        workflow = AssistantWorkflow.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.owner,
@@ -122,7 +122,7 @@ class AuthenticatedConversationApiTests(TestCase):
         self.assertEqual(messages_response.json()["session"]["session_type"], "task")
 
     def test_conversations_collection_includes_workflow_agent_sessions(self) -> None:
-        workflow = AgentWorkflow.objects.create(
+        workflow = AssistantWorkflow.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.owner,
@@ -143,7 +143,7 @@ class AuthenticatedConversationApiTests(TestCase):
         ConversationMessage.objects.create(
             conversation=workflow_session,
             sender=ConversationSender.CUSTOMER,
-            body="This should not replace the Workflow Agent name.",
+            body="This should not replace the Custom Assistant name.",
         )
         self.client.force_login(self.owner)
 
@@ -162,7 +162,7 @@ class AuthenticatedConversationApiTests(TestCase):
         self.assertEqual(task["workflow_name"], "Daily sales reviewer")
         self.assertFalse(any(key.startswith("workflow_dept") for key in task))
         self.assertEqual(task["workflow_agent_name"], "Sarah")
-        self.assertEqual(task["title"], "This should not replace the Workflow Agent name.")
+        self.assertEqual(task["title"], "This should not replace the Custom Assistant name.")
 
     def test_conversations_collection_hides_internal_agent_notification_surfaces(self) -> None:
         Conversation.objects.create(
@@ -252,7 +252,7 @@ class AuthenticatedConversationApiTests(TestCase):
         self.assertIn("turn", turn_response.json())
 
     def test_conversation_create_can_start_workflow_agent_session(self) -> None:
-        workflow = AgentWorkflow.objects.create(
+        workflow = AssistantWorkflow.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.owner,

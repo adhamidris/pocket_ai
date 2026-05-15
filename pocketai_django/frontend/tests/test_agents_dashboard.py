@@ -5,6 +5,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
+from apps.conversations.models import AssistantWorkflow, AssistantWorkflowKind, AssistantWorkflowTriggerType
 
 
 User = get_user_model()
@@ -29,25 +30,68 @@ class AgentsDashboardTests(TestCase):
             agent_type=AgentProfile.AgentTypeChoices.MAIN,
         )
 
-    def test_agents_dashboard_renders_workforce_tabs(self) -> None:
+    def test_agents_dashboard_redirects_to_custom_assistants(self) -> None:
         self.client.force_login(self.user)
         response = self.client.get(reverse("frontend:dashboard-agents"))
 
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], reverse("frontend:dashboard-custom-assistants"))
+
+    def test_custom_assistants_dashboard_replaces_agent_card(self) -> None:
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("frontend:dashboard-custom-assistants"))
+
         self.assertEqual(response.status_code, 200)
         content = response.content.decode("utf-8")
-        self.assertIn("Workflow Agents", content)
-        self.assertIn("Manage the main agent", content)
-        self.assertNotIn("Create workspace group", content)
-        self.assertNotIn("Workspace group agents", content)
-        self.assertNotIn("Create agent", content)
-        self.assertIn('data-agent-tab="tasks"', content)
-        self.assertIn('data-agent-tab="runs"', content)
-        self.assertIn('data-agent-tab="memory"', content)
-        self.assertIn('data-agent-tab="permissions"', content)
-        self.assertIn("Task processing is not active", content)
-        self.assertNotIn("Escalation on", content)
-        self.assertNotIn("No KPIs selected", content)
-        self.assertNotIn("data-subagents-enabled", content)
+        self.assertIn("Custom Assistants", content)
+        self.assertIn("New assistant", content)
+        self.assertIn('data-custom-assistants-page', content)
+        self.assertNotIn("data-agent-panel", content)
+        self.assertNotIn('data-agent-tab="tasks"', content)
+        self.assertNotIn("Manage the main agent", content)
+
+    def test_automations_dashboard_is_separate_from_custom_assistants(self) -> None:
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("frontend:dashboard-automations"))
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+        self.assertIn("Automations", content)
+        self.assertIn("New automation", content)
+        self.assertIn("Run history", content)
+        self.assertIn('data-automations-page', content)
+        self.assertNotIn("data-agent-panel", content)
+
+    def test_product_api_filters_custom_assistants_and_automations(self) -> None:
+        manual = AssistantWorkflow.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            created_by=self.user,
+            name="Proposal Assistant",
+            trigger_type=AssistantWorkflowTriggerType.MANUAL,
+        )
+        automation = AssistantWorkflow.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            created_by=self.user,
+            name="Daily Digest",
+            trigger_type=AssistantWorkflowTriggerType.SCHEDULE,
+        )
+        self.client.force_login(self.user)
+
+        assistants = self.client.get(
+            reverse("api:custom-assistants", args=[self.agent.id]),
+        ).json()["workflows"]
+        automations = self.client.get(
+            reverse("api:automations", args=[self.agent.id]),
+        ).json()["workflows"]
+
+        manual.refresh_from_db()
+        automation.refresh_from_db()
+        self.assertEqual(manual.kind, AssistantWorkflowKind.CUSTOM_ASSISTANT)
+        self.assertEqual(automation.kind, AssistantWorkflowKind.AUTOMATION)
+        self.assertEqual([item["id"] for item in assistants], [str(manual.id)])
+        self.assertEqual([item["id"] for item in automations], [str(automation.id)])
 
     def test_connectors_dashboard_unifies_native_and_mcp_surfaces(self) -> None:
         self.client.force_login(self.user)

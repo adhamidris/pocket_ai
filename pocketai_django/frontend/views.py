@@ -18,7 +18,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator
-from django.db.models import Count, Prefetch, Q
+from django.db.models import Count, Q
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.middleware.csrf import get_token
 from django.shortcuts import redirect, render
@@ -52,15 +52,7 @@ from apps.knowledge.models import (
 )
 from apps.integrations.models import KnowledgeIntegration
 from apps.rag.query_analytics import build_query_analytics_report
-from apps.accounts.agents import (
-    AgentListValidationError,
-    agent_identifier,
-    display_agent_type_label,
-    display_role_label,
-    display_tone_label,
-    initials_from_name,
-    list_agents,
-)
+from apps.accounts.agents import initials_from_name
 from apps.accounts.registration import KnowledgeUploadError
 from apps.knowledge.documents import DocumentListValidationError, list_documents
 from apps.knowledge.knowledge_ingestion import queue_ingestion_job
@@ -910,12 +902,12 @@ def landing(request: HttpRequest) -> HttpResponse:
                 ],
             },
             {
-                "key": "agents",
-                "label": _("Multiple Agents"),
+                "key": "custom_assistants",
+                "label": _("Custom Assistants"),
                 "icon": "users",
-                "title": _("Scale with specialized, brand-aligned agents"),
+                "title": _("Scale with specialized, brand-aligned assistants"),
                 "promo": _(
-                    "Spin up dedicated agents for sales, support, onboarding, and more. Each agent carries your tone and executes actions confidently."
+                    "Create focused assistants for sales, support, onboarding, and more. Each assistant carries your tone and executes actions confidently."
                 ),
                 "bullets": [
                     {"icon": "check-circle-2", "label": _("Customizable personas and tone")},
@@ -928,9 +920,9 @@ def landing(request: HttpRequest) -> HttpResponse:
                 "key": "kb",
                 "label": _("Knowledge Base"),
                 "icon": "book-open",
-                "title": _("Instant business intelligence for your agents"),
+                "title": _("Instant business intelligence for your assistants"),
                 "promo": _(
-                    "Upload SOPs and docs, sync help centers and sites. Retrieval-augmented generation gives agents precise, grounded answers from your materials."
+                    "Upload SOPs and docs, sync help centers and sites. Retrieval-augmented generation gives assistants precise, grounded answers from your materials."
                 ),
                 "bullets": [
                     {"icon": "link", "label": _("One-click uploads & syncs")},
@@ -1102,11 +1094,11 @@ def landing(request: HttpRequest) -> HttpResponse:
             {
                 "tier": _("Pro"),
                 "badge": _("Users' Choice"),
-                "description": _("For SMBs — multiple agents and advanced workflows."),
+                "description": _("For SMBs — custom assistants and advanced automations."),
                 "monthly": 89,
                 "yearly": 69,
                 "features": [
-                    _("Up to 3 agents"),
+                    _("Default assistant + custom workflow assistants"),
                     _("Advanced knowledge base + citations"),
                     _("Workflows and tools (actions)"),
                     _("CRM profiles + segments"),
@@ -2253,161 +2245,38 @@ def dashboard_rag_analytics(request: HttpRequest) -> HttpResponse:
 
 @login_required
 def dashboard_agents(request: HttpRequest) -> HttpResponse:
+    return redirect("frontend:dashboard-custom-assistants")
+
+
+@login_required
+def dashboard_custom_assistants(request: HttpRequest) -> HttpResponse:
     user_name = _current_user_name(request)
-    agents: list[dict[str, object]] = []
-    total_agents = 0
-    has_error = False
-    business = request.user.business_profiles.order_by("-created_at").first() if request.user.is_authenticated else None
-    agent_ids: list[uuid.UUID] = []
-
-    def _format_duration(seconds: float | None) -> str | None:
-        if not seconds:
-            return None
-        seconds = int(seconds)
-        if seconds < 60:
-            return f"{seconds}s"
-        minutes, remainder = divmod(seconds, 60)
-        if minutes < 60:
-            return f"{minutes}m {remainder:02d}s"
-        hours, minutes = divmod(minutes, 60)
-        return f"{hours}h {minutes:02d}m"
-
-    if business:
-        try:
-            result = list_agents(
-                business_profile=business,
-                limit=25,
-                offset=0,
-                sort_by="updated_at",
-                order="desc",
-            )
-            total_agents = result.total
-            business_slug = slugify(business.name)
-            for item in result.items:
-                agent_ids.append(item.id)
-                initials = initials_from_name(item.name)
-                identifier = agent_identifier(item.id)
-                role_label = display_role_label(item.role)
-                tone_label = display_tone_label(item.tone) or _("—")
-                updated_at = item.updated_at
-                updated_label = updated_at.strftime("%b %d, %Y %H:%M") if updated_at else _("—")
-                shareable_path = ""
-                if item.public_slug:
-                    shareable_path = f"/{business_slug}/{item.public_slug}".replace("//", "/")
-                agents.append(
-                    {
-                        "uuid": str(item.id),
-                        "name": item.name or _("Agent"),
-                        "initials": initials,
-                        "identifier": identifier,
-                        "roles": [role_label],
-                        "primary_role": role_label,
-                        "role_code": item.role or "",
-                        "agent_type": item.agent_type,
-                        "agent_type_label": display_agent_type_label(item.agent_type),
-                        "manager_agent_id": str(item.manager_agent_id) if item.manager_agent_id else "",
-                        "can_manage_tasks": item.can_manage_tasks,
-                        "tone_label": tone_label,
-                        "tone_code": item.tone or "",
-                        "satisfaction": None,
-                        "updated": updated_label,
-                        "updated_iso": updated_at.isoformat() if updated_at else "",
-                        "last_active_iso": item.last_active_at.isoformat() if item.last_active_at else "",
-                        "public_slug": item.public_slug,
-                        "shareable_path": shareable_path,
-                    }
-                )
-        except AgentListValidationError:
-            has_error = True
-        except Exception:
-            has_error = True
-
-        if agent_ids:
-            profile_lookup = {
-                str(profile.id): profile
-                for profile in AgentProfile.objects.filter(business_profile=business, id__in=agent_ids)
-                .select_related("business_profile")
-                .prefetch_related(
-                    Prefetch(
-                        "allowed_documents",
-                        queryset=KnowledgeUpload.objects.filter(business_profile=business).only("id", "status", "is_active"),
-                    ),
-                )
-                .only("id", "business_profile__name", "business_profile__slug")
-            }
-            active_knowledge_qs = (
-                KnowledgeUpload.objects.filter(business_profile=business, is_active=True)
-                .exclude(status=KnowledgeStatus.ARCHIVED)
-            )
-            knowledge_total = active_knowledge_qs.count()
-            knowledge_status_counts = {
-                row["status"]: row["count"]
-                for row in active_knowledge_qs.values("status").annotate(count=Count("id"))
-            }
-            knowledge_processing_total = knowledge_status_counts.get(KnowledgeStatus.PENDING, 0) + knowledge_status_counts.get(
-                KnowledgeStatus.PROCESSING,
-                0,
-            )
-            knowledge_failed_total = knowledge_status_counts.get(KnowledgeStatus.FAILED, 0)
-
-            for agent in agents:
-                profile = profile_lookup.get(str(agent.get("uuid") or ""))
-                if not profile:
-                    continue
-
-                allowed_docs = list(getattr(profile, "allowed_documents", []).all())
-                has_restrictions = bool(allowed_docs)
-
-                if knowledge_total == 0:
-                    agent["knowledge_mode"] = "missing"
-                    agent["knowledge_total"] = 0
-                    agent["knowledge_processing"] = 0
-                    agent["knowledge_failed"] = 0
-                elif has_restrictions:
-                    allowed_doc_ids = [doc.id for doc in allowed_docs]
-                    scoped_qs = active_knowledge_qs.filter(id__in=allowed_doc_ids).distinct()
-                    scoped = scoped_qs.aggregate(
-                        total=Count("id", distinct=True),
-                        processing=Count(
-                            "id",
-                            filter=Q(status__in=[KnowledgeStatus.PENDING, KnowledgeStatus.PROCESSING]),
-                            distinct=True,
-                        ),
-                        failed=Count("id", filter=Q(status=KnowledgeStatus.FAILED), distinct=True),
-                    )
-                    agent["knowledge_mode"] = "select"
-                    agent["knowledge_total"] = int(scoped.get("total") or 0)
-                    agent["knowledge_processing"] = int(scoped.get("processing") or 0)
-                    agent["knowledge_failed"] = int(scoped.get("failed") or 0)
-                else:
-                    agent["knowledge_mode"] = "all"
-                    agent["knowledge_total"] = knowledge_total
-                    agent["knowledge_processing"] = knowledge_processing_total
-                    agent["knowledge_failed"] = knowledge_failed_total
-
+    business, agent = _default_business_assistant_for_user(request.user)
+    get_token(request)
     context = {
         "user_name": user_name,
-        "business_id": str(getattr(business, "id", "")) if business else "",
-        "agents_can_create": bool(business),
-        "agents_filters": {
-            "search_placeholder": _("Search name, ID, role…"),
-            "limit": 25,
-        },
-        "agents_backend_notice": None if business else _("Link a business profile to create agents."),
-        "agents_auth_notice": None,
-        "agents_loading": False,
-        "agents_error_message": _("Unable to load agents right now.") if has_error else None,
-        "skeleton_rows": range(6),
-        "agents": agents,
-        "agents_empty_message": _("No main agent yet. Complete onboarding to create your default agent."),
-        "agents_showing_count": len(agents),
-        "agents_total": total_agents or len(agents),
-        "agents_has_prev": False,
-        "agents_has_next": bool(total_agents and total_agents > len(agents)),
-        "agents_panel_empty_title": _("No agent selected"),
-        "agents_panel_empty_message": _("Choose your main agent to preview configuration, Workflow Agents, memory, and permissions."),
+        "business_id": str(business.id) if business else "",
+        "default_agent_id": str(agent.id) if agent else "",
+        "default_agent_name": agent.name if agent else "",
+        "dashboard_chat_url": reverse("frontend:dashboard-chat"),
+        "assistant_notice": None if agent else _("Complete onboarding to create the default Business Assistant first."),
     }
-    return render(request, "frontend/agents.html", context)
+    return render(request, "frontend/custom_assistants.html", context)
+
+
+@login_required
+def dashboard_automations(request: HttpRequest) -> HttpResponse:
+    user_name = _current_user_name(request)
+    business, agent = _default_business_assistant_for_user(request.user)
+    get_token(request)
+    context = {
+        "user_name": user_name,
+        "business_id": str(business.id) if business else "",
+        "default_agent_id": str(agent.id) if agent else "",
+        "default_agent_name": agent.name if agent else "",
+        "assistant_notice": None if agent else _("Complete onboarding to create the default Business Assistant first."),
+    }
+    return render(request, "frontend/automations.html", context)
 
 @login_required
 def dashboard_connectors(request: HttpRequest) -> HttpResponse:
@@ -2638,6 +2507,23 @@ def _primary_business_for_user(user) -> BusinessProfile | None:
     if not getattr(user, "is_authenticated", False):
         return None
     return user.business_profiles.order_by("-created_at").first()
+
+
+def _default_business_assistant_for_user(user) -> tuple[BusinessProfile | None, AgentProfile | None]:
+    business = _primary_business_for_user(user)
+    if business is None:
+        return None, None
+    agent = (
+        AgentProfile.objects.filter(
+            business_profile=business,
+            agent_type=AgentProfile.AgentTypeChoices.MAIN,
+        )
+        .order_by("-updated_at")
+        .first()
+    )
+    if agent is None:
+        agent = AgentProfile.objects.filter(business_profile=business).order_by("-updated_at").first()
+    return business, agent
 
 
 def _knowledge_storage_root() -> Path:

@@ -65,7 +65,7 @@ class ChatPortalClient {
       newSessionBtn: container.querySelector("[data-new-session-btn]"),
       fileInput: container.querySelector("[data-chat-file-input]"),
       uploadButton: container.querySelector("[data-chat-upload-button]"),
-      // Tasks panel (agent runs)
+      // Activity panel (agent runs)
       tasksPanel: container.querySelector("[data-tasks-panel]"),
       tasksList: container.querySelector("[data-tasks-list]"),
       tasksEmpty: container.querySelector("[data-tasks-empty]"),
@@ -184,7 +184,7 @@ class ChatPortalClient {
       this.streamTraceEnabled = false;
     }
 
-	    // Agent runs/tasks panel state
+	    // Agent runs/activity panel state
 	    this.agentRuns = new Map(); // runId -> { run, events, expanded, seenKeys, lastEventLabel }
     this.workflowAgents = new Map(); // workflowId -> { workflow, expanded }
     this.tasksRenderRaf = null;
@@ -6414,7 +6414,7 @@ class ChatPortalClient {
       state.transcripts = state.transcripts.slice(-50);
     }
 
-    // Voice calling runs in the background; surface transcript updates in the Tasks panel.
+    // Voice calling runs in the background; surface transcript updates in the Activity panel.
     if (!this.tasksPanelUserHidden) {
       this.setInboxPanelVisible(false);
       this.setTasksPanelVisible(true);
@@ -12394,7 +12394,7 @@ class ChatPortalClient {
     const groups = new Map();
     for (const session of this.sortSessionSummaries(sessions)) {
       const workflowId = this.getSessionWorkflowId(session);
-      const workflowName = this.getSessionWorkflowName(session) || this.t("Workflow Agent");
+      const workflowName = this.getSessionWorkflowName(session) || this.t("Custom Assistant");
       const agentName = this.getSessionWorkflowAgentName(session);
       const fallbackKey = workflowId || `workflow-name:${workflowName.toLowerCase()}`;
       if (!groups.has(fallbackKey)) {
@@ -12426,8 +12426,8 @@ class ChatPortalClient {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "ml-1 inline-flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors";
-    button.title = this.t("Start new Workflow Agent session");
-    button.setAttribute("aria-label", this.t("Start new Workflow Agent session"));
+    button.title = this.t("Start new Custom Assistant session");
+    button.setAttribute("aria-label", this.t("Start new Custom Assistant session"));
     button.innerHTML = `
       <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <line x1="12" y1="5" x2="12" y2="19"></line>
@@ -13039,8 +13039,8 @@ class ChatPortalClient {
     if (taskSessions.length) {
       const workflowGroups = this.groupWorkflowSessions(taskSessions);
       const workflowBranch = this.buildSessionTreeBranch({
-        key: "section:workflow-agents",
-        label: this.t("Workflow Agents"),
+        key: "section:custom-assistants",
+        label: this.t("Custom Assistants"),
         level: 0,
         count: workflowGroups.length,
         forceOpen: taskSessions.some((session) => this.getSessionSummaryKey(session) === currentSessionKey),
@@ -13416,15 +13416,15 @@ class ChatPortalClient {
         }),
       });
       if (!response.ok) {
-        throw new Error("Failed to create Workflow Agent session");
+        throw new Error("Failed to create Custom Assistant session");
       }
       const data = await response.json();
       const session = data && data.session ? data.session : null;
       const newKey = this.getSessionSummaryKey(session || {});
       if (!session || !newKey) {
-        throw new Error("No Workflow Agent session returned");
+        throw new Error("No Custom Assistant session returned");
       }
-      this.setSessionTreeCollapsed("section:workflow-agents", false);
+      this.setSessionTreeCollapsed("section:custom-assistants", false);
       this.setSessionTreeCollapsed(`workflow:${normalizedWorkflowId}`, false);
       this.upsertSessionSummary({
         ...session,
@@ -13437,8 +13437,8 @@ class ChatPortalClient {
       await this.switchToSession(this.getSessionSummaryByKey(newKey) || session);
     } catch (error) {
       this.showToast(
-        this.t("New Workflow Agent session failed"),
-        error.message || this.t("Could not create a new Workflow Agent session."),
+        this.t("New Custom Assistant session failed"),
+        error.message || this.t("Could not create a new Custom Assistant session."),
         true
       );
     } finally {
@@ -13577,7 +13577,7 @@ class ChatPortalClient {
       container.innerHTML = "";
       container.removeAttribute("data-session-skeleton");
       if (this.isCurrentTaskSession()) {
-        const workflowName = this.currentWorkflowName || this.t("Workflow Agent");
+        const workflowName = this.currentWorkflowName || this.t("Custom Assistant");
         container.innerHTML = `
           <div class="min-h-[55vh] flex items-center justify-center px-4 py-12">
             <div class="w-full max-w-xl rounded-lg border border-border/70 bg-card/40 px-5 py-4 text-left shadow-sm">
@@ -13590,7 +13590,7 @@ class ChatPortalClient {
                 </div>
                 <div class="min-w-0">
                   <p class="text-sm font-semibold text-foreground">${this.escapeHtml(workflowName)}</p>
-                  <p class="mt-1 text-sm leading-6 text-muted-foreground">${this.escapeHtml(this.t("Waiting for Workflow Agent activity. Updates, approvals, and run summaries will appear here."))}</p>
+                  <p class="mt-1 text-sm leading-6 text-muted-foreground">${this.escapeHtml(this.t("Waiting for Custom Assistant activity. Updates, approvals, and run summaries will appear here."))}</p>
                 </div>
               </div>
             </div>

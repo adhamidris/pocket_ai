@@ -14,8 +14,8 @@ from apps.conversations.models import (
     AgentRunNotification,
     AgentRunSource,
     AgentRunStatus,
-    AgentWorkflow,
-    AgentWorkflowStatus,
+    AssistantWorkflow,
+    AssistantWorkflowStatus,
     Conversation,
 )
 
@@ -116,12 +116,12 @@ class AgentRunProcessingTests(TestCase):
         self.assertEqual(str(run.execution_conversation_id or ""), str(getattr(called_conversation, "id", "")))
 
     def test_workflow_run_persists_report_state_and_notification(self) -> None:
-        workflow = AgentWorkflow.objects.create(
+        workflow = AssistantWorkflow.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
             name="Subscription checker",
-            status=AgentWorkflowStatus.ACTIVE,
+            status=AssistantWorkflowStatus.ACTIVE,
             trigger_type="schedule",
             trigger_config={"cron": "* * * * *"},
             instructions={"goal": "Check subscriptions"},

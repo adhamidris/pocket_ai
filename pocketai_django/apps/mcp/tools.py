@@ -1220,7 +1220,7 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
         description=(
             "Create a background AgentRun (background agent) anchored to this conversation. "
             "Use this when the visitor asks for a long-running or multi-step task so the chat can continue "
-            "while the work happens in the Tasks panel."
+            "while the work happens in the Activity panel."
         ),
         properties={
             "goal": {
@@ -1229,7 +1229,7 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
             },
             "title": {
                 "type": "string",
-                "description": "Optional short title shown in the Tasks panel.",
+                "description": "Optional short title shown in the Activity panel.",
             },
             "followup_mode": {
                 "type": "string",
@@ -1266,7 +1266,7 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
             },
             "plan": {
                 "type": "object",
-                "description": "Optional planner output to display in the Tasks panel.",
+                "description": "Optional planner output to display in the Activity panel.",
                 "additionalProperties": True,
             },
             "metadata": {
@@ -1369,7 +1369,7 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
     ),
     _function_schema(
         name="list_tasks",
-        description="List saved agent tasks/workflows for the current business, optionally filtered by agent or status.",
+        description="List saved custom assistants and automations for the current business, optionally filtered by assistant or status.",
         properties={
             "agent_id": {"type": "string", "description": "Optional agent UUID."},
             "status": {"type": "string", "enum": ["draft", "active", "paused", "all"]},
@@ -1390,7 +1390,7 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
             "description": {"type": "string"},
             "success_criteria": {
                 "type": "array",
-                "description": "Optional success criteria the Workflow Agent should satisfy.",
+                "description": "Optional success criteria the Custom Assistant should satisfy.",
                 "items": {"type": "string"},
             },
             "constraints": {
@@ -1415,11 +1415,11 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
             },
             "custom_instructions": {
                 "type": "string",
-                "description": "Additional role/custom instructions for the Workflow Agent.",
+                "description": "Additional role/custom instructions for the Custom Assistant.",
             },
             "instructions": {
                 "type": "object",
-                "description": "Optional full Workflow Agent instruction contract. Explicit fields override matching keys.",
+                "description": "Optional full Custom Assistant instruction contract. Explicit fields override matching keys.",
                 "additionalProperties": True,
             },
             "trigger_type": {"type": "string", "enum": ["manual", "schedule", "webhook", "email_inbox"]},
@@ -10611,7 +10611,7 @@ def _start_agent_run_handler(
                     "source": existing_run.source,
                     "visibility": existing_run.visibility,
                 },
-                "hint": "Background run already queued for this message. Watch the Tasks panel for progress.",
+                "hint": "Background run already queued for this message. Watch the Activity panel for progress.",
             }
 
         run = AgentRun.objects.create(
@@ -10714,7 +10714,7 @@ def _start_agent_run_handler(
             "source": run.source,
             "visibility": run.visibility,
         },
-        "hint": "Delegated run queued; the parent run will resume when it finishes." if run.parent_run_id else "Background run queued. Watch the Tasks panel for progress.",
+        "hint": "Delegated run queued; the parent run will resume when it finishes." if run.parent_run_id else "Background run queued. Watch the Activity panel for progress.",
     }
 
 
@@ -11345,9 +11345,9 @@ def _list_tasks_handler(
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
     del context
-    from apps.conversations.models import AgentWorkflow
+    from apps.conversations.models import AssistantWorkflow
 
-    qs = AgentWorkflow.objects.select_related("agent_profile").filter(business_profile_id=conversation.business_profile_id)
+    qs = AssistantWorkflow.objects.select_related("agent_profile").filter(business_profile_id=conversation.business_profile_id)
     agent_id_raw = arguments.get("agent_id") or arguments.get("agentId")
     if agent_id_raw:
         try:
@@ -11368,7 +11368,7 @@ def _draft_task_handler(
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
     del context
-    from apps.conversations.models import AgentRunVisibility, AgentWorkflow, AgentWorkflowStatus, AgentWorkflowTriggerType
+    from apps.conversations.models import AgentRunVisibility, AssistantWorkflow, AssistantWorkflowStatus, AssistantWorkflowTriggerType
 
     agent, error = _resolve_task_agent(conversation, arguments.get("agent_id") or arguments.get("agentId"))
     if error:
@@ -11377,19 +11377,19 @@ def _draft_task_handler(
     goal = str(arguments.get("goal") or "").strip()
     if not name or not goal:
         return {"tool": "draft_task", "status": "error", "error_code": "validation_failed", "error": "name and goal are required."}
-    trigger_type = str(arguments.get("trigger_type") or arguments.get("triggerType") or AgentWorkflowTriggerType.MANUAL).strip().lower()
-    if trigger_type not in {choice for choice, _ in AgentWorkflowTriggerType.choices}:
+    trigger_type = str(arguments.get("trigger_type") or arguments.get("triggerType") or AssistantWorkflowTriggerType.MANUAL).strip().lower()
+    if trigger_type not in {choice for choice, _ in AssistantWorkflowTriggerType.choices}:
         return {"tool": "draft_task", "status": "error", "error_code": "validation_failed", "error": "Invalid trigger_type."}
     visibility = str(arguments.get("visibility") or AgentRunVisibility.INITIATOR).strip().lower()
     if visibility not in {choice for choice, _ in AgentRunVisibility.choices}:
         visibility = AgentRunVisibility.INITIATOR
-    workflow = AgentWorkflow.objects.create(
+    workflow = AssistantWorkflow.objects.create(
         business_profile_id=conversation.business_profile_id,
         agent_profile=agent,
         created_by=getattr(conversation, "owner_user", None) or getattr(agent, "user", None),
         name=name[:160],
         description=str(arguments.get("description") or "")[:4000],
-        status=AgentWorkflowStatus.DRAFT,
+        status=AssistantWorkflowStatus.DRAFT,
         visibility=visibility,
         trigger_type=trigger_type,
         trigger_config=dict(arguments.get("trigger_config") or arguments.get("triggerConfig") or {}),
@@ -11419,13 +11419,13 @@ def _update_task_handler(
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
     del context
-    from apps.conversations.models import AgentRunVisibility, AgentWorkflow, AgentWorkflowTriggerType
+    from apps.conversations.models import AgentRunVisibility, AssistantWorkflow, AssistantWorkflowTriggerType
 
     try:
         task_id = uuid.UUID(str(arguments.get("task_id") or arguments.get("taskId") or ""))
     except (TypeError, ValueError):
         return {"tool": "update_task", "status": "error", "error_code": "validation_failed", "error": "task_id must be a UUID."}
-    workflow = AgentWorkflow.objects.filter(id=task_id, business_profile_id=conversation.business_profile_id).first()
+    workflow = AssistantWorkflow.objects.filter(id=task_id, business_profile_id=conversation.business_profile_id).first()
     if workflow is None:
         return {"tool": "update_task", "status": "error", "error_code": "not_found", "error": "Task not found."}
     updates: list[str] = []
@@ -11439,7 +11439,7 @@ def _update_task_handler(
         updates.append("instructions")
     if "trigger_type" in arguments or "triggerType" in arguments:
         trigger_type = str(arguments.get("trigger_type") or arguments.get("triggerType") or "").strip().lower()
-        if trigger_type not in {choice for choice, _ in AgentWorkflowTriggerType.choices}:
+        if trigger_type not in {choice for choice, _ in AssistantWorkflowTriggerType.choices}:
             return {"tool": "update_task", "status": "error", "error_code": "validation_failed", "error": "Invalid trigger_type."}
         workflow.trigger_type = trigger_type
         updates.append("trigger_type")
@@ -11473,14 +11473,14 @@ def _request_task_activation_handler(
 ) -> Mapping[str, object]:
     del context
     from django.utils import timezone as django_timezone
-    from apps.conversations.models import AgentWorkflow, AgentWorkflowStatus, AgentWorkflowTriggerType
+    from apps.conversations.models import AssistantWorkflow, AssistantWorkflowStatus, AssistantWorkflowTriggerType
     from apps.conversations.workflow_scheduling import CronScheduleError, compute_next_workflow_schedule_at
 
     try:
         task_id = uuid.UUID(str(arguments.get("task_id") or arguments.get("taskId") or ""))
     except (TypeError, ValueError):
         return {"tool": "request_task_activation", "status": "error", "error_code": "validation_failed", "error": "task_id must be a UUID."}
-    workflow = AgentWorkflow.objects.filter(id=task_id, business_profile_id=conversation.business_profile_id).first()
+    workflow = AssistantWorkflow.objects.filter(id=task_id, business_profile_id=conversation.business_profile_id).first()
     if workflow is None:
         return {"tool": "request_task_activation", "status": "error", "error_code": "not_found", "error": "Task not found."}
     if not bool(arguments.get("approved")):
@@ -11491,12 +11491,12 @@ def _request_task_activation_handler(
             "prompt": "Please approve activating this persistent task before it starts running.",
         }
     next_trigger_at = None
-    if workflow.trigger_type == AgentWorkflowTriggerType.SCHEDULE:
+    if workflow.trigger_type == AssistantWorkflowTriggerType.SCHEDULE:
         try:
             next_trigger_at = compute_next_workflow_schedule_at("cron", dict(workflow.trigger_config or {}), after=django_timezone.now())
         except CronScheduleError as exc:
             return {"tool": "request_task_activation", "status": "error", "error_code": "validation_failed", "error": str(exc)}
-    workflow.status = AgentWorkflowStatus.ACTIVE
+    workflow.status = AssistantWorkflowStatus.ACTIVE
     workflow.next_trigger_at = next_trigger_at
     workflow.save(update_fields=["status", "next_trigger_at", "updated_at"])
     _remember_workflow_resource_ref(
@@ -11515,19 +11515,19 @@ def _pause_task_handler(
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
     del context
-    from apps.conversations.models import AgentWorkflow, AgentWorkflowStatus
+    from apps.conversations.models import AssistantWorkflow, AssistantWorkflowStatus
 
     try:
         task_id = uuid.UUID(str(arguments.get("task_id") or arguments.get("taskId") or ""))
     except (TypeError, ValueError):
         return {"tool": "pause_task", "status": "error", "error_code": "validation_failed", "error": "task_id must be a UUID."}
-    workflow = AgentWorkflow.objects.filter(id=task_id, business_profile_id=conversation.business_profile_id).first()
+    workflow = AssistantWorkflow.objects.filter(id=task_id, business_profile_id=conversation.business_profile_id).first()
     if workflow is None:
         return {"tool": "pause_task", "status": "error", "error_code": "not_found", "error": "Task not found."}
     metadata = dict(workflow.metadata or {}) if isinstance(workflow.metadata, dict) else {}
     if arguments.get("reason"):
         metadata["last_pause_reason"] = str(arguments.get("reason"))[:500]
-    workflow.status = AgentWorkflowStatus.PAUSED
+    workflow.status = AssistantWorkflowStatus.PAUSED
     workflow.next_trigger_at = None
     workflow.metadata = metadata
     workflow.save(update_fields=["status", "next_trigger_at", "metadata", "updated_at"])

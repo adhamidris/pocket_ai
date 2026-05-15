@@ -142,5 +142,5 @@ class VoicePhase1TwilioAndToolingTests(TestCase):
 
         self.assertTrue(
             AgentRunEvent.objects.filter(run_id=run.id).exists(),
-            msg="Expected at least one AgentRunEvent so the Tasks panel can render the run.",
+            msg="Expected at least one AgentRunEvent so the Activity panel can render the run.",
         )

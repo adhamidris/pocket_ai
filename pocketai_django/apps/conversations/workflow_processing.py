@@ -18,10 +18,11 @@ from apps.conversations.models import (
     AgentRunEventType,
     AgentRunSource,
     AgentRunStatus,
-    AgentWorkflow,
-    AgentWorkflowDedupeKey,
-    AgentWorkflowStatus,
-    AgentWorkflowTriggerType,
+    AssistantWorkflow,
+    AssistantWorkflowDedupeKey,
+    AssistantWorkflowKind,
+    AssistantWorkflowStatus,
+    AssistantWorkflowTriggerType,
     Conversation,
     ConversationChannel,
     ConversationStatus,
@@ -35,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class AgentWorkflowProcessResult:
+class AssistantWorkflowProcessResult:
     workflow_id: str
     action: str
     run_id: str | None = None
@@ -44,14 +45,14 @@ class AgentWorkflowProcessResult:
 
 
 def compute_next_workflow_trigger_at(trigger_type: str, trigger_config: object, *, after=None):
-    if trigger_type != AgentWorkflowTriggerType.SCHEDULE:
+    if trigger_type != AssistantWorkflowTriggerType.SCHEDULE:
         return None
     config = dict(trigger_config or {}) if isinstance(trigger_config, Mapping) else {}
     config.setdefault("type", "cron")
     return compute_next_workflow_schedule_at("cron", config, after=after or timezone.now())
 
 
-def workflow_snapshot(workflow: AgentWorkflow) -> dict[str, Any]:
+def workflow_snapshot(workflow: AssistantWorkflow) -> dict[str, Any]:
     instructions = workflow.instructions if isinstance(workflow.instructions, dict) else {}
     return normalize_workflow_instructions(
         {
@@ -69,7 +70,7 @@ def workflow_snapshot(workflow: AgentWorkflow) -> dict[str, Any]:
     )
 
 
-def create_workflow_session(workflow: AgentWorkflow) -> Conversation:
+def create_workflow_session(workflow: AssistantWorkflow) -> Conversation:
     conversation = Conversation.objects.create(
         business_profile=workflow.business_profile,
         agent_profile=workflow.agent_profile,
@@ -96,13 +97,14 @@ def append_run_event(run: AgentRun, *, label: str, payload: dict[str, object] | 
         )
 
 
-class AgentWorkflowProcessingService:
-    def process_next_due_workflow(self) -> AgentWorkflowProcessResult | None:
+class AssistantWorkflowProcessingService:
+    def process_next_due_workflow(self) -> AssistantWorkflowProcessResult | None:
         now = timezone.now()
         qs = (
-            AgentWorkflow.objects.select_related("business_profile", "agent_profile", "conversation", "email_account")
-            .filter(status=AgentWorkflowStatus.ACTIVE)
-            .filter(trigger_type__in=[AgentWorkflowTriggerType.SCHEDULE, AgentWorkflowTriggerType.EMAIL_INBOX])
+            AssistantWorkflow.objects.select_related("business_profile", "agent_profile", "conversation", "email_account")
+            .filter(status=AssistantWorkflowStatus.ACTIVE)
+            .filter(kind=AssistantWorkflowKind.AUTOMATION)
+            .filter(trigger_type__in=[AssistantWorkflowTriggerType.SCHEDULE, AssistantWorkflowTriggerType.EMAIL_INBOX])
             .filter(next_trigger_at__lte=now)
             .order_by("next_trigger_at", "created_at")
         )
@@ -115,16 +117,16 @@ class AgentWorkflowProcessingService:
             workflow = qs.select_for_update(**for_update_kwargs).first()
             if workflow is None:
                 return None
-            if workflow.trigger_type == AgentWorkflowTriggerType.SCHEDULE:
+            if workflow.trigger_type == AssistantWorkflowTriggerType.SCHEDULE:
                 return self._trigger_scheduled(workflow, now=now)
             return self._poll_email_inbox(workflow, now=now)
 
-    def _trigger_scheduled(self, workflow: AgentWorkflow, *, now) -> AgentWorkflowProcessResult:
+    def _trigger_scheduled(self, workflow: AssistantWorkflow, *, now) -> AssistantWorkflowProcessResult:
         try:
             next_at = compute_next_workflow_trigger_at(workflow.trigger_type, workflow.trigger_config, after=now)
         except CronScheduleError as exc:
-            AgentWorkflow.objects.filter(id=workflow.id).update(status=AgentWorkflowStatus.PAUSED, last_error=str(exc)[:1000], updated_at=now)
-            return AgentWorkflowProcessResult(workflow_id=str(workflow.id), action="paused", error=str(exc)[:400])
+            AssistantWorkflow.objects.filter(id=workflow.id).update(status=AssistantWorkflowStatus.PAUSED, last_error=str(exc)[:1000], updated_at=now)
+            return AssistantWorkflowProcessResult(workflow_id=str(workflow.id), action="paused", error=str(exc)[:400])
         run = AgentRun.objects.create(
             business_profile=workflow.business_profile,
             agent_profile=workflow.agent_profile,
@@ -142,18 +144,18 @@ class AgentWorkflowProcessingService:
             },
             run_after=now,
         )
-        append_run_event(run, label="Queued (workflow schedule)", payload={"workflow_id": str(workflow.id), "trigger": "schedule"})
-        AgentWorkflow.objects.filter(id=workflow.id).update(last_triggered_at=now, next_trigger_at=next_at, updated_at=now)
-        return AgentWorkflowProcessResult(workflow_id=str(workflow.id), action="triggered", run_id=str(run.id))
+        append_run_event(run, label="Queued (automation schedule)", payload={"workflow_id": str(workflow.id), "trigger": "schedule"})
+        AssistantWorkflow.objects.filter(id=workflow.id).update(last_triggered_at=now, next_trigger_at=next_at, updated_at=now)
+        return AssistantWorkflowProcessResult(workflow_id=str(workflow.id), action="triggered", run_id=str(run.id))
 
-    def _poll_email_inbox(self, workflow: AgentWorkflow, *, now) -> AgentWorkflowProcessResult:
+    def _poll_email_inbox(self, workflow: AssistantWorkflow, *, now) -> AssistantWorkflowProcessResult:
         account = workflow.email_account
         if account is None:
-            AgentWorkflow.objects.filter(id=workflow.id).update(status=AgentWorkflowStatus.PAUSED, last_error="email account is required", updated_at=now)
-            return AgentWorkflowProcessResult(workflow_id=str(workflow.id), action="paused", error="email account is required")
+            AssistantWorkflow.objects.filter(id=workflow.id).update(status=AssistantWorkflowStatus.PAUSED, last_error="email account is required", updated_at=now)
+            return AssistantWorkflowProcessResult(workflow_id=str(workflow.id), action="paused", error="email account is required")
         if account.status != EmailAccountStatus.CONNECTED:
-            AgentWorkflow.objects.filter(id=workflow.id).update(status=AgentWorkflowStatus.PAUSED, last_error="email account is not connected", updated_at=now)
-            return AgentWorkflowProcessResult(workflow_id=str(workflow.id), action="paused", error="email account is not connected")
+            AssistantWorkflow.objects.filter(id=workflow.id).update(status=AssistantWorkflowStatus.PAUSED, last_error="email account is not connected", updated_at=now)
+            return AssistantWorkflowProcessResult(workflow_id=str(workflow.id), action="paused", error="email account is not connected")
         config = workflow.source_config if isinstance(workflow.source_config, Mapping) else {}
         metadata = workflow.state if isinstance(workflow.state, Mapping) else {}
         query = str(config.get("query") or "newer_than:1d").strip()
@@ -173,13 +175,13 @@ class AgentWorkflowProcessingService:
             )
         except (GmailApiError, GraphApiError, ValueError) as exc:
             next_at = now + timedelta(seconds=max(60, int(workflow.poll_interval_seconds or 300)))
-            AgentWorkflow.objects.filter(id=workflow.id).update(
+            AssistantWorkflow.objects.filter(id=workflow.id).update(
                 error_count=int(workflow.error_count or 0) + 1,
                 last_error=str(exc)[:1000],
                 next_trigger_at=next_at,
                 updated_at=now,
             )
-            return AgentWorkflowProcessResult(workflow_id=str(workflow.id), action="backoff", error=str(exc)[:240])
+            return AssistantWorkflowProcessResult(workflow_id=str(workflow.id), action="backoff", error=str(exc)[:240])
         triggered: list[str] = []
         for message in messages or []:
             if len(triggered) >= max_events:
@@ -208,10 +210,10 @@ class AgentWorkflowProcessingService:
                 },
                 run_after=now,
             )
-            append_run_event(run, label="Queued (email inbox workflow)", payload={"workflow_id": str(workflow.id), "message_id": message_id})
+            append_run_event(run, label="Queued (email inbox automation)", payload={"workflow_id": str(workflow.id), "message_id": message_id})
             triggered.append(str(run.id))
         next_at = now + timedelta(seconds=max(60, int(workflow.poll_interval_seconds or 300)))
-        AgentWorkflow.objects.filter(id=workflow.id).update(
+        AssistantWorkflow.objects.filter(id=workflow.id).update(
             last_polled_at=now,
             last_triggered_at=now if triggered else workflow.last_triggered_at,
             next_trigger_at=next_at,
@@ -220,7 +222,7 @@ class AgentWorkflowProcessingService:
             state={**dict(metadata), "last_email_poll": {"at": now.isoformat(), "triggered": len(triggered)}},
             updated_at=now,
         )
-        return AgentWorkflowProcessResult(workflow_id=str(workflow.id), action="polled", triggered_run_ids=tuple(triggered))
+        return AssistantWorkflowProcessResult(workflow_id=str(workflow.id), action="polled", triggered_run_ids=tuple(triggered))
 
     @staticmethod
     def _email_dedupe_key(provider: str, account_id: object, message_id: str) -> str:
@@ -259,9 +261,9 @@ class AgentWorkflowProcessingService:
         raise GraphApiError("Email provider is not supported for workflows yet.")
 
     @staticmethod
-    def _record_dedupe_key(workflow: AgentWorkflow, dedupe_key: str) -> bool:
+    def _record_dedupe_key(workflow: AssistantWorkflow, dedupe_key: str) -> bool:
         try:
-            AgentWorkflowDedupeKey.objects.create(workflow=workflow, business_profile_id=workflow.business_profile_id, dedupe_key=dedupe_key[:255])
+            AssistantWorkflowDedupeKey.objects.create(workflow=workflow, business_profile_id=workflow.business_profile_id, dedupe_key=dedupe_key[:255])
             return True
         except IntegrityError:
             return False

@@ -1,0 +1,447 @@
+{% extends "frontend/base_app.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Automations" %} | Pocket AI{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-background flex">
+  {% include "frontend/components/dashboard/sidebar.html" with active="automations" user_name=user_name %}
+  <main class="flex-1 overflow-auto">
+    <div class="w-full px-4 md:px-6 lg:px-8 py-6 space-y-6" data-automations-page data-agent-id="{{ default_agent_id }}">
+      <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div class="space-y-1.5">
+          <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">{% trans "Automations" %}</h1>
+          <p class="text-sm text-muted-foreground">{% trans "Schedule or trigger background work for the Business Assistant." %}</p>
+        </div>
+        <button type="button" class="inline-flex h-10 items-center justify-center rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground disabled:opacity-50" data-automation-new {% if not default_agent_id %}disabled{% endif %}>
+          {% trans "New automation" %}
+        </button>
+      </header>
+
+      {% if assistant_notice %}
+        <section class="rounded-lg border border-border/70 bg-card/80 p-4 text-sm text-muted-foreground">{{ assistant_notice }}</section>
+      {% endif %}
+
+      <section class="hidden rounded-lg border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm text-amber-900" data-automation-worker-warning>
+        {% trans "Automation processing is not active. Start process_agent_automations and process_agent_runs for scheduled and background execution." %}
+      </section>
+
+      <section class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
+        <div class="space-y-6">
+          <div class="space-y-3">
+            <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{% trans "Background jobs" %}</div>
+              <button type="button" class="rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent" data-automation-refresh {% if not default_agent_id %}disabled{% endif %}>{% trans "Refresh" %}</button>
+            </div>
+            <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" data-automation-list>
+              <div class="rounded-lg border border-dashed border-border/70 p-6 text-sm text-muted-foreground">{% trans "Loading automations..." %}</div>
+            </div>
+          </div>
+
+          <div class="space-y-3">
+            <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{% trans "Run history" %}</div>
+            <div class="space-y-3" data-automation-runs>
+              <div class="rounded-lg border border-dashed border-border/70 p-6 text-sm text-muted-foreground">{% trans "No runs loaded yet." %}</div>
+            </div>
+          </div>
+        </div>
+
+        <aside class="rounded-lg border border-border/70 bg-card/80 p-4">
+          <form class="space-y-4" data-automation-form>
+            <input type="hidden" data-automation-input="id">
+            <div>
+              <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{% trans "Automation setup" %}</div>
+              <p class="mt-1 text-xs text-muted-foreground">{% trans "Define the trigger, goal, approval level, and input source." %}</p>
+            </div>
+            <label class="block text-xs font-semibold text-muted-foreground">
+              <span class="mb-1.5 block">{% trans "Name" %}</span>
+              <input class="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground" data-automation-input="name" autocomplete="off">
+            </label>
+            <label class="block text-xs font-semibold text-muted-foreground">
+              <span class="mb-1.5 block">{% trans "Trigger" %}</span>
+              <select class="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground" data-automation-input="triggerType">
+                <option value="schedule">{% trans "Schedule" %}</option>
+                <option value="webhook">{% trans "Webhook" %}</option>
+                <option value="email_inbox">{% trans "Email inbox" %}</option>
+              </select>
+            </label>
+            <div class="grid gap-3 sm:grid-cols-2" data-trigger-panel="schedule">
+              <label class="block text-xs font-semibold text-muted-foreground">
+                <span class="mb-1.5 block">{% trans "Preset" %}</span>
+                <select class="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground" data-automation-input="schedulePreset">
+                  <option value="hourly">{% trans "Every hour" %}</option>
+                  <option value="daily">{% trans "Daily" %}</option>
+                  <option value="weekdays">{% trans "Weekdays" %}</option>
+                  <option value="advanced">{% trans "Cron" %}</option>
+                </select>
+              </label>
+              <label class="block text-xs font-semibold text-muted-foreground">
+                <span class="mb-1.5 block">{% trans "Time" %}</span>
+                <input type="time" value="09:00" class="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground" data-automation-input="scheduleTime">
+              </label>
+              <label class="block text-xs font-semibold text-muted-foreground sm:col-span-2">
+                <span class="mb-1.5 block">{% trans "Cron" %}</span>
+                <input placeholder="0 9 * * *" class="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground" data-automation-input="scheduleCron">
+              </label>
+            </div>
+            <div class="hidden space-y-2" data-trigger-panel="webhook">
+              <div class="rounded-md border border-border/70 bg-background px-3 py-2 text-xs font-mono break-all" data-webhook-preview>{% trans "Save to generate a webhook URL." %}</div>
+            </div>
+            <div class="hidden grid gap-3 sm:grid-cols-2" data-trigger-panel="email_inbox">
+              <label class="block text-xs font-semibold text-muted-foreground sm:col-span-2">
+                <span class="mb-1.5 block">{% trans "Email account" %}</span>
+                <select class="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground" data-automation-input="emailAccountId"></select>
+              </label>
+              <label class="block text-xs font-semibold text-muted-foreground">
+                <span class="mb-1.5 block">{% trans "Poll seconds" %}</span>
+                <input type="number" min="60" value="300" class="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground" data-automation-input="pollIntervalSeconds">
+              </label>
+              <label class="block text-xs font-semibold text-muted-foreground">
+                <span class="mb-1.5 block">{% trans "Max events" %}</span>
+                <input type="number" min="1" max="25" value="5" class="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground" data-automation-input="maxEventsPerPoll">
+              </label>
+              <label class="block text-xs font-semibold text-muted-foreground sm:col-span-2">
+                <span class="mb-1.5 block">{% trans "Query" %}</span>
+                <input value="newer_than:1d" class="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground" data-automation-input="emailQuery">
+              </label>
+            </div>
+            <label class="block text-xs font-semibold text-muted-foreground">
+              <span class="mb-1.5 block">{% trans "Goal" %}</span>
+              <textarea class="min-h-32 w-full rounded-md border border-border bg-background px-3 py-2 text-sm leading-6 text-foreground" data-automation-input="goal"></textarea>
+            </label>
+            <label class="block text-xs font-semibold text-muted-foreground">
+              <span class="mb-1.5 block">{% trans "Approval" %}</span>
+              <select class="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground" data-automation-input="autonomyMode">
+                <option value="draft_for_approval">{% trans "Prepare drafts for approval" %}</option>
+                <option value="suggest_only">{% trans "Suggest only" %}</option>
+                <option value="autonomous_with_policy">{% trans "Act within policy" %}</option>
+                <option value="full_autonomy_explicit">{% trans "Full autonomy" %}</option>
+              </select>
+            </label>
+            <label class="block text-xs font-semibold text-muted-foreground">
+              <span class="mb-1.5 block">{% trans "Status" %}</span>
+              <select class="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground" data-automation-input="status">
+                <option value="active">{% trans "Enabled" %}</option>
+                <option value="draft">{% trans "Draft" %}</option>
+                <option value="paused">{% trans "Paused" %}</option>
+              </select>
+            </label>
+            <p class="hidden text-xs text-destructive" data-automation-error></p>
+            <div class="flex justify-end gap-2">
+              <button type="button" class="rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent" data-automation-reset>{% trans "Clear" %}</button>
+              <button type="submit" class="rounded-md bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50" {% if not default_agent_id %}disabled{% endif %}>{% trans "Save automation" %}</button>
+            </div>
+          </form>
+        </aside>
+      </section>
+    </div>
+  </main>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    var root = document.querySelector("[data-automations-page]");
+    if (!root) return;
+    var agentId = root.getAttribute("data-agent-id") || "";
+    var list = root.querySelector("[data-automation-list]");
+    var runsEl = root.querySelector("[data-automation-runs]");
+    var form = root.querySelector("[data-automation-form]");
+    var warning = root.querySelector("[data-automation-worker-warning]");
+    var errorEl = root.querySelector("[data-automation-error]");
+    var webhookPreview = root.querySelector("[data-webhook-preview]");
+    var automations = [];
+    var runs = [];
+    var emailAccounts = [];
+
+    function csrf() {
+      var match = document.cookie ? document.cookie.match(/csrftoken=([^;]+)/) : null;
+      return match ? decodeURIComponent(match[1]) : "";
+    }
+    function escapeHtml(value) {
+      var div = document.createElement("div");
+      div.textContent = value == null ? "" : String(value);
+      return div.innerHTML;
+    }
+    function api(url, options) {
+      options = options || {};
+      var headers = { Accept: "application/json" };
+      if (options.body) headers["Content-Type"] = "application/json";
+      if (options.method && options.method !== "GET") {
+        headers["X-CSRFToken"] = csrf();
+        headers["X-Requested-With"] = "XMLHttpRequest";
+      }
+      return fetch(url, { method: options.method || "GET", headers: headers, credentials: "same-origin", body: options.body })
+        .then(function (response) {
+          if (response.status === 204) return {};
+          return response.json().catch(function () { return {}; }).then(function (payload) {
+            if (!response.ok) throw new Error(payload.message || payload.error || "Request failed");
+            return payload;
+          });
+        });
+    }
+    function field(name) {
+      return form.querySelector('[data-automation-input="' + name + '"]');
+    }
+    function setError(message) {
+      if (!errorEl) return;
+      errorEl.textContent = message || "";
+      errorEl.classList.toggle("hidden", !message);
+    }
+    function formatDate(value) {
+      if (!value) return "";
+      var date = new Date(value);
+      if (Number.isNaN(date.getTime())) return "";
+      return date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    }
+    function status(value) {
+      return String(value || "").replace(/_/g, " ");
+    }
+    function buildCron() {
+      var preset = field("schedulePreset").value || "hourly";
+      var time = field("scheduleTime").value || "09:00";
+      var parts = time.split(":");
+      var hour = Math.max(0, Math.min(Number(parts[0] || 9), 23));
+      var minute = Math.max(0, Math.min(Number(parts[1] || 0), 59));
+      if (preset === "daily") return minute + " " + hour + " * * *";
+      if (preset === "weekdays") return minute + " " + hour + " * * 1-5";
+      if (preset === "advanced") return field("scheduleCron").value.trim() || "0 9 * * *";
+      return "0 * * * *";
+    }
+    function webhookUrl(item) {
+      var secret = item && item.triggerConfig ? item.triggerConfig.secret : "";
+      return item && item.id && secret ? window.location.origin.replace(/\/$/, "") + "/api/webhooks/automations/" + item.id + "/" + secret + "/" : "";
+    }
+    function showTriggerPanel() {
+      var trigger = field("triggerType").value || "schedule";
+      root.querySelectorAll("[data-trigger-panel]").forEach(function (panel) {
+        panel.classList.toggle("hidden", panel.getAttribute("data-trigger-panel") !== trigger);
+      });
+    }
+    function populateEmailAccounts(selectedId) {
+      var select = field("emailAccountId");
+      if (!select) return;
+      select.innerHTML = "";
+      if (!emailAccounts.length) {
+        select.innerHTML = '<option value="">{% trans "No connected email accounts" %}</option>';
+        return;
+      }
+      emailAccounts.forEach(function (account) {
+        var option = document.createElement("option");
+        option.value = account.id || "";
+        option.textContent = (account.displayName || account.email || "Email") + " · " + (account.provider || "");
+        option.selected = selectedId && selectedId === account.id;
+        select.appendChild(option);
+      });
+    }
+    function resetForm() {
+      setError("");
+      ["id", "name", "goal", "scheduleCron"].forEach(function (name) {
+        var input = field(name);
+        if (input) input.value = "";
+      });
+      field("triggerType").value = "schedule";
+      field("status").value = "active";
+      field("autonomyMode").value = "draft_for_approval";
+      field("pollIntervalSeconds").value = "300";
+      field("maxEventsPerPoll").value = "5";
+      field("emailQuery").value = "newer_than:1d";
+      showTriggerPanel();
+      if (webhookPreview) webhookPreview.textContent = "{% trans 'Save to generate a webhook URL.' %}";
+    }
+    function edit(item) {
+      if (!item) return;
+      field("id").value = item.id || "";
+      field("name").value = item.name || "";
+      field("triggerType").value = item.triggerType || "schedule";
+      field("status").value = item.status || "active";
+      field("autonomyMode").value = item.autonomyMode || "draft_for_approval";
+      field("goal").value = item.instructions && (item.instructions.goal || item.instructions.instructions || item.instructions.task) || "";
+      field("scheduleCron").value = item.triggerConfig && item.triggerConfig.cron || "";
+      field("pollIntervalSeconds").value = item.pollIntervalSeconds || 300;
+      field("maxEventsPerPoll").value = item.maxEventsPerPoll || 5;
+      field("emailQuery").value = item.sourceConfig && item.sourceConfig.query || "newer_than:1d";
+      populateEmailAccounts(item.emailAccountId);
+      showTriggerPanel();
+      if (webhookPreview) webhookPreview.textContent = webhookUrl(item) || "{% trans 'Save to generate a webhook URL.' %}";
+      form.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    function triggerSummary(item) {
+      if (!item) return "";
+      if (item.triggerType === "schedule") return item.nextTriggerAt ? "{% trans 'Next' %} " + formatDate(item.nextTriggerAt) : "{% trans 'Schedule' %}";
+      if (item.triggerType === "email_inbox") return "{% trans 'Email inbox' %}";
+      if (item.triggerType === "webhook") return "{% trans 'Webhook' %}";
+      return status(item.triggerType);
+    }
+    function renderAutomations() {
+      if (!list) return;
+      if (!agentId) {
+        list.innerHTML = '<div class="rounded-lg border border-dashed border-border/70 p-6 text-sm text-muted-foreground">{% trans "No default Business Assistant is available yet." %}</div>';
+        return;
+      }
+      if (!automations.length) {
+        list.innerHTML = '<div class="rounded-lg border border-dashed border-border/70 p-6 text-sm text-muted-foreground">{% trans "No automations yet." %}</div>';
+        return;
+      }
+      list.innerHTML = automations.map(function (item) {
+        return '' +
+          '<article class="rounded-lg border border-border/70 bg-card/80 p-4 shadow-sm" data-automation-id="' + item.id + '">' +
+            '<div class="flex items-start justify-between gap-3">' +
+              '<div class="min-w-0">' +
+                '<h2 class="truncate text-base font-semibold text-foreground">' + escapeHtml(item.name || "{% trans 'Untitled automation' %}") + '</h2>' +
+                '<p class="mt-1 text-sm text-muted-foreground">' + escapeHtml(triggerSummary(item)) + '</p>' +
+              '</div>' +
+              '<span class="rounded-full border border-border px-2 py-1 text-[11px] capitalize text-muted-foreground">' + escapeHtml(status(item.status)) + '</span>' +
+            '</div>' +
+            '<p class="mt-3 line-clamp-3 text-sm leading-6 text-muted-foreground">' + escapeHtml(item.instructions && (item.instructions.goal || item.instructions.instructions) || "{% trans 'No goal configured.' %}") + '</p>' +
+            '<div class="mt-4 flex flex-wrap justify-end gap-2">' +
+              '<button type="button" class="rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent" data-action="run">{% trans "Run now" %}</button>' +
+              '<button type="button" class="rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent" data-action="history">{% trans "History" %}</button>' +
+              '<button type="button" class="rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent" data-action="edit">{% trans "Edit" %}</button>' +
+              '<button type="button" class="rounded-md border border-destructive/40 bg-background px-3 py-2 text-xs font-medium text-destructive hover:bg-destructive/10" data-action="delete">{% trans "Delete" %}</button>' +
+            '</div>' +
+          '</article>';
+      }).join("");
+    }
+    function renderRuns(focusId) {
+      if (!runsEl) return;
+      var visible = focusId ? runs.filter(function (run) { return run.workflowId === focusId; }) : runs;
+      if (!visible.length) {
+        runsEl.innerHTML = '<div class="rounded-lg border border-dashed border-border/70 p-6 text-sm text-muted-foreground">{% trans "No automation runs yet." %}</div>';
+        return;
+      }
+      runsEl.innerHTML = visible.slice(0, 60).map(function (run) {
+        return '' +
+          '<article class="rounded-lg border border-border/70 bg-card/80 p-4">' +
+            '<div class="flex items-start justify-between gap-3">' +
+              '<div class="min-w-0">' +
+                '<div class="truncate text-sm font-semibold text-foreground">' + escapeHtml(run.workflowName || run.title || "{% trans 'Automation run' %}") + '</div>' +
+                '<div class="mt-1 text-xs text-muted-foreground">' + escapeHtml(formatDate(run.createdAt) || "") + '</div>' +
+              '</div>' +
+              '<span class="rounded-full border border-border px-2 py-1 text-[11px] capitalize text-muted-foreground">' + escapeHtml(status(run.status)) + '</span>' +
+            '</div>' +
+            (run.errorDetail ? '<pre class="mt-3 whitespace-pre-wrap rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">' + escapeHtml(run.errorDetail) + '</pre>' : '') +
+          '</article>';
+      }).join("");
+    }
+    function loadOperations() {
+      if (!agentId) return Promise.resolve();
+      return api("/api/agents/" + encodeURIComponent(agentId) + "/operations/")
+        .then(function (payload) {
+          var ops = payload.operations || {};
+          emailAccounts = payload.emailAccounts || [];
+          populateEmailAccounts();
+          if (warning) warning.classList.toggle("hidden", Boolean(ops.taskProcessingActive));
+        })
+        .catch(function () {
+          if (warning) warning.classList.remove("hidden");
+        });
+    }
+    function load() {
+      if (!agentId) {
+        renderAutomations();
+        renderRuns();
+        return Promise.resolve();
+      }
+      list.innerHTML = '<div class="rounded-lg border border-dashed border-border/70 p-6 text-sm text-muted-foreground">{% trans "Loading automations..." %}</div>';
+      return Promise.all([
+        api("/api/agents/" + encodeURIComponent(agentId) + "/automations/"),
+        api("/api/agents/" + encodeURIComponent(agentId) + "/runs/?kind=automation&limit=200"),
+        loadOperations()
+      ]).then(function (payloads) {
+        automations = payloads[0].workflows || [];
+        runs = payloads[1].runs || [];
+        renderAutomations();
+        renderRuns();
+      }).catch(function (error) {
+        list.innerHTML = '<div class="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">' + escapeHtml(error.message || "Failed to load automations") + '</div>';
+      });
+    }
+    function payloadFromForm() {
+      var triggerType = field("triggerType").value || "schedule";
+      var autonomyMode = field("autonomyMode").value || "draft_for_approval";
+      var body = {
+        kind: "automation",
+        name: field("name").value.trim(),
+        status: field("status").value || "active",
+        triggerType: triggerType,
+        autonomyMode: autonomyMode,
+        reviewMode: autonomyMode === "full_autonomy_explicit" ? "none" : (autonomyMode === "draft_for_approval" ? "always" : "on_risk"),
+        createSession: false,
+        instructions: { goal: field("goal").value.trim() },
+        triggerConfig: {},
+        sourceConfig: {}
+      };
+      if (!body.name) throw new Error("{% trans 'Name is required.' %}");
+      if (triggerType === "schedule") body.triggerConfig = { type: "cron", cron: buildCron(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC" };
+      if (triggerType === "email_inbox") {
+        body.emailAccountId = field("emailAccountId").value || "";
+        body.pollIntervalSeconds = Number(field("pollIntervalSeconds").value || 300);
+        body.maxEventsPerPoll = Number(field("maxEventsPerPoll").value || 5);
+        body.sourceConfig = { query: field("emailQuery").value.trim() || "newer_than:1d", unreadOnly: true };
+      }
+      return body;
+    }
+    function save(event) {
+      event.preventDefault();
+      if (!agentId) return;
+      setError("");
+      var body;
+      try {
+        body = payloadFromForm();
+      } catch (error) {
+        setError(error.message);
+        return;
+      }
+      var id = field("id").value.trim();
+      var url = "/api/agents/" + encodeURIComponent(agentId) + "/automations/";
+      var method = "POST";
+      if (id) {
+        url += encodeURIComponent(id) + "/";
+        method = "PATCH";
+      }
+      api(url, { method: method, body: JSON.stringify(body) })
+        .then(function () {
+          resetForm();
+          return load();
+        })
+        .catch(function (error) {
+          setError(error.message || "{% trans 'Failed to save automation.' %}");
+        });
+    }
+    function runNow(id) {
+      if (!agentId || !id) return;
+      api("/api/agents/" + encodeURIComponent(agentId) + "/automations/" + encodeURIComponent(id) + "/runs/", { method: "POST", body: JSON.stringify({}) })
+        .then(load);
+    }
+    function remove(id) {
+      if (!agentId || !id) return;
+      if (!window.confirm("{% trans 'Delete this automation?' %}")) return;
+      api("/api/agents/" + encodeURIComponent(agentId) + "/automations/" + encodeURIComponent(id) + "/", { method: "DELETE" })
+        .then(load);
+    }
+    if (form) form.addEventListener("submit", save);
+    root.querySelector("[data-automation-refresh]").addEventListener("click", load);
+    root.querySelector("[data-automation-new]").addEventListener("click", resetForm);
+    root.querySelector("[data-automation-reset]").addEventListener("click", resetForm);
+    field("triggerType").addEventListener("change", showTriggerPanel);
+    if (list) {
+      list.addEventListener("click", function (event) {
+        var button = event.target && event.target.closest ? event.target.closest("[data-action]") : null;
+        if (!button) return;
+        var card = button.closest("[data-automation-id]");
+        var id = card ? card.getAttribute("data-automation-id") : "";
+        var item = automations.find(function (candidate) { return candidate && candidate.id === id; });
+        var action = button.getAttribute("data-action");
+        if (action === "edit") edit(item);
+        if (action === "delete") remove(id);
+        if (action === "run") runNow(id);
+        if (action === "history") renderRuns(id);
+      });
+    }
+    showTriggerPanel();
+    load();
+  });
+</script>
+{% endblock %}

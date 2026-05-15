@@ -5,7 +5,7 @@ from django.test import TestCase
 
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
 from apps.conversations.memory_extraction import MemoryExtractionService
-from apps.conversations.models import AgentRun, AgentWorkflow, MemoryItem
+from apps.conversations.models import AgentRun, AssistantWorkflow, MemoryItem
 
 
 User = get_user_model()
@@ -23,7 +23,7 @@ class MemoryExtractionServiceTests(TestCase):
             status="active",
         )
         self.agent = AgentProfile.objects.create(business_profile=self.business, user=self.user, name="Ops Agent")
-        self.workflow = AgentWorkflow.objects.create(
+        self.workflow = AssistantWorkflow.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,

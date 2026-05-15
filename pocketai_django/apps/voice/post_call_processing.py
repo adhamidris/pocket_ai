@@ -396,7 +396,7 @@ def process_post_call(session: CallSession) -> PostCallProcessingResult:
             session.save(update_fields=["post_processing_error", "updated_at"])
 
         post_summary_to_initiator = True
-        # Bridge the completed call into the Tasks panel (AgentRun) when the call
+        # Bridge the completed call into the Activity panel (AgentRun) when the call
         # was initiated via a sub-agent task.
         try:
             from apps.voice.models import CallStatus

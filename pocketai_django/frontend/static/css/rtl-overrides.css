@@ -155,7 +155,6 @@ html[dir="rtl"] [data-document-panel][aria-hidden="true"] {
 html[dir="rtl"] [data-customer-panel] [data-customer-close],
 html[dir="rtl"] [data-case-panel] [data-case-close],
 html[dir="rtl"] [data-document-panel] [data-document-close],
-html[dir="rtl"] [data-agent-panel] [data-agent-close],
 html[dir="rtl"] [data-voice-modal-content] [data-voice-modal-close] {
   right: auto !important;
   left: 1rem !important;

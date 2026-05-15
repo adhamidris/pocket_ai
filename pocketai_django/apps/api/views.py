@@ -990,7 +990,7 @@ def agents_collection(request: HttpRequest) -> JsonResponse:
             return JsonResponse(
                 {
                     "error": "VALIDATION_ERROR",
-                    "message": "This workspace already has a main agent. Create Workflow Agents inside the current agent for specialization.",
+                    "message": "This workspace already has a Business Assistant. Create Custom Assistants from the Custom Assistants page for specialization.",
                 },
                 status=HTTPStatus.BAD_REQUEST,
             )
@@ -1000,7 +1000,7 @@ def agents_collection(request: HttpRequest) -> JsonResponse:
             return JsonResponse(
                 {
                     "error": "VALIDATION_ERROR",
-                    "message": "Specialized user-facing agents are now Workflow Agents. Create Workflow Agents inside the main agent instead.",
+                    "message": "Specialized user-facing agents are now Custom Assistants. Create them from the Custom Assistants page instead.",
                 },
                 status=HTTPStatus.BAD_REQUEST,
             )
@@ -1019,7 +1019,7 @@ def agents_collection(request: HttpRequest) -> JsonResponse:
             )
         if agent_type != AgentProfile.AgentTypeChoices.MAIN:
             return JsonResponse(
-                {"error": "VALIDATION_ERROR", "message": "Only the main agent can be created here. Use Workflow Agents for specialized work."},
+                {"error": "VALIDATION_ERROR", "message": "Only the default Business Assistant can be created here. Use Custom Assistants for specialized work."},
                 status=HTTPStatus.BAD_REQUEST,
             )
         manager_id, err = _parse_uuid_value((payload or {}).get("managerAgentId") or (payload or {}).get("manager_agent_id"), field="managerAgentId")
@@ -1208,13 +1208,13 @@ def agent_detail_view(request: HttpRequest, agent_id: uuid.UUID) -> JsonResponse
             return JsonResponse(
                 {
                     "error": "VALIDATION_ERROR",
-                    "message": "Use Workflow Agents for specialization instead of creating additional user-facing agents.",
+                    "message": "Use Custom Assistants for specialization instead of creating additional user-facing agents.",
                 },
                 status=HTTPStatus.BAD_REQUEST,
             )
         if next_agent_type != AgentProfile.AgentTypeChoices.MAIN:
             return JsonResponse(
-                {"error": "VALIDATION_ERROR", "message": "Only the main agent can be managed here. Use Workflow Agents for specialized work."},
+                {"error": "VALIDATION_ERROR", "message": "Only the default Business Assistant can be managed here. Use Custom Assistants for specialized work."},
                 status=HTTPStatus.BAD_REQUEST,
             )
         if "managerAgentId" in payload or "manager_agent_id" in payload:

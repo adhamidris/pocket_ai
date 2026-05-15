@@ -53,7 +53,29 @@ urlpatterns = [
         name="agents-knowledge-access",
     ),
     path("agents/directory/", views.agents_directory, name="agents-directory"),
-    path("agents/<uuid:agent_id>/workflows/", agent_runs.agent_workflows_collection, name="agent-workflows"),
+    path("agents/<uuid:agent_id>/custom-assistants/", agent_runs.custom_assistants_collection, name="custom-assistants"),
+    path(
+        "agents/<uuid:agent_id>/custom-assistants/<uuid:workflow_id>/",
+        agent_runs.agent_workflow_detail,
+        name="custom-assistant-detail",
+    ),
+    path(
+        "agents/<uuid:agent_id>/custom-assistants/<uuid:workflow_id>/sessions/",
+        agent_runs.agent_workflow_sessions,
+        name="custom-assistant-sessions",
+    ),
+    path("agents/<uuid:agent_id>/automations/", agent_runs.automations_collection, name="automations"),
+    path(
+        "agents/<uuid:agent_id>/automations/<uuid:workflow_id>/",
+        agent_runs.agent_workflow_detail,
+        name="automation-detail",
+    ),
+    path(
+        "agents/<uuid:agent_id>/automations/<uuid:workflow_id>/runs/",
+        agent_runs.agent_workflow_run,
+        name="automation-runs",
+    ),
+    path("agents/<uuid:agent_id>/workflows/", agent_runs.assistant_workflows_collection, name="agent-workflows"),
     path(
         "agents/<uuid:agent_id>/workflows/<uuid:workflow_id>/",
         agent_runs.agent_workflow_detail,
@@ -88,6 +110,7 @@ urlpatterns = [
     path("memory/<uuid:memory_id>/reject/", agent_runs.memory_reject, name="memory-reject"),
     path("memory/<uuid:memory_id>/archive/", agent_runs.memory_archive, name="memory-archive"),
     path("memory/<uuid:memory_id>/delete/", agent_runs.memory_delete, name="memory-delete"),
+    path("webhooks/automations/<uuid:workflow_id>/<slug:token>/", agent_runs.workflow_webhook_trigger, name="automation-webhook-trigger"),
     path("webhooks/workflows/<uuid:workflow_id>/<slug:token>/", agent_runs.workflow_webhook_trigger, name="workflow-webhook-trigger"),
     path("register/sessions/", views.start_registration, name="register-start"),
     path(

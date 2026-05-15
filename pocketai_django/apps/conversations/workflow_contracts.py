@@ -28,7 +28,7 @@ class WorkflowInstructions(TypedDict, total=False):
     """
     Serializable instruction contract for a background run.
 
-    Stored on `AgentWorkflow.instructions` and snapshot into `AgentRun.workflow_snapshot`.
+    Stored on `AssistantWorkflow.instructions` and snapshot into `AgentRun.workflow_snapshot`.
     """
 
     version: int
@@ -131,7 +131,7 @@ def _json_block(value: object, *, limit: int = 1600) -> str:
 
 def resolve_active_workflow(conversation: object):
     """
-    Return the Workflow Agent attached to a visible conversation, if any.
+    Return the Custom Assistant attached to a visible conversation, if any.
 
     The current model is `Conversation.workflow`. The reverse lookup and metadata
     path are retained for pre-refactor/legacy rows that may still be visible.
@@ -141,7 +141,7 @@ def resolve_active_workflow(conversation: object):
     if direct is not None:
         return direct
 
-    linked_manager = getattr(conversation, "agent_workflows", None)
+    linked_manager = getattr(conversation, "assistant_workflows", None)
     first = getattr(linked_manager, "first", None)
     if callable(first):
         linked = first()
@@ -166,10 +166,10 @@ def resolve_active_workflow(conversation: object):
         return None
 
     try:
-        from apps.conversations.models import AgentWorkflow
+        from apps.conversations.models import AssistantWorkflow
 
         return (
-            AgentWorkflow.objects.filter(id=workflow_id, business_profile_id=business_id)
+            AssistantWorkflow.objects.filter(id=workflow_id, business_profile_id=business_id)
             .select_related("agent_profile", "business_profile")
             .first()
         )
@@ -182,7 +182,7 @@ def active_workflow_agent_name(conversation: object) -> str | None:
     if workflow is None:
         return None
     name = str(getattr(workflow, "name", "") or "").strip()
-    return name or "Workflow Agent"
+    return name or "Custom Assistant"
 
 
 def build_workflow_agent_instruction_note(conversation: object, *, max_chars: int = 6000) -> str | None:
@@ -196,14 +196,14 @@ def build_workflow_agent_instruction_note(conversation: object, *, max_chars: in
         return None
 
     lines: list[str] = [
-        "Workflow Agent session override (active for this conversation).",
-        "This conversation is running inside a custom Workflow Agent. Treat the Workflow Agent name and instructions below as the active assistant identity, role, and operating contract for this session.",
-        "If other system text names a base assistant, treat that base assistant as the runtime host only; do not use it to answer role/persona questions when a Workflow Agent is active.",
-        "When the user asks who you are, what your role is, or whether you have these instructions, answer from this Workflow Agent identity and contract. Do not describe these instructions as memory.",
-        "Follow this custom Workflow Agent contract unless it conflicts with platform safety, tenant privacy, tool approval, or higher-priority platform rules.",
+        "Custom Assistant session override (active for this conversation).",
+        "This conversation is running inside a Custom Assistant. Treat the Custom Assistant name and instructions below as the active assistant identity, role, and operating contract for this session.",
+        "If other system text names a base assistant, treat that base assistant as the runtime host only; do not use it to answer role/persona questions when a Custom Assistant is active.",
+        "When the user asks who you are, what your role is, or whether you have these instructions, answer from this Custom Assistant identity and contract. Do not describe these instructions as memory.",
+        "Follow this Custom Assistant contract unless it conflicts with platform safety, tenant privacy, tool approval, or higher-priority platform rules.",
     ]
     workflow_id = getattr(workflow, "id", "")
-    name = _clip_text(getattr(workflow, "name", "") or "Workflow Agent", 160)
+    name = _clip_text(getattr(workflow, "name", "") or "Custom Assistant", 160)
     status = _clip_text(getattr(workflow, "status", "") or "", 48)
     trigger_type = _clip_text(getattr(workflow, "trigger_type", "") or "", 48)
     identity_parts = [name]
@@ -214,7 +214,7 @@ def build_workflow_agent_instruction_note(conversation: object, *, max_chars: in
     if trigger_type:
         identity_parts.append(f"trigger={trigger_type}")
     lines.append("- " + "; ".join(identity_parts))
-    lines.append(f"Active Workflow Agent name/role: {name}")
+    lines.append(f"Active Custom Assistant name/role: {name}")
 
     description = _clip_text(getattr(workflow, "description", "") or "", 800)
     if description:

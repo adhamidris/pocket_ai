@@ -31,11 +31,12 @@ from apps.conversations.models import (
     AgentRunSource,
     AgentRunStatus,
     AgentRunVisibility,
-    AgentWorkflow,
-    AgentWorkflowAutonomyMode,
-    AgentWorkflowReviewMode,
-    AgentWorkflowStatus,
-    AgentWorkflowTriggerType,
+    AssistantWorkflow,
+    AssistantWorkflowAutonomyMode,
+    AssistantWorkflowKind,
+    AssistantWorkflowReviewMode,
+    AssistantWorkflowStatus,
+    AssistantWorkflowTriggerType,
     Conversation,
     ConversationChannel,
     ConversationSender,
@@ -96,7 +97,7 @@ def _run_visibility_filter(request: HttpRequest, *, agent: AgentProfile) -> Q:
     return base
 
 
-def _workflow_snapshot(workflow: AgentWorkflow | None, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+def _workflow_snapshot(workflow: AssistantWorkflow | None, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     if workflow is not None:
         instructions = workflow.instructions if isinstance(workflow.instructions, dict) else {}
         return normalize_workflow_instructions(
@@ -190,11 +191,17 @@ def _serialize_workflow_session(conversation: Conversation) -> dict[str, object]
     }
 
 
-def _serialize_workflow(workflow: AgentWorkflow, latest_run: AgentRun | None = None) -> dict[str, object]:
+def _serialize_workflow(workflow: AssistantWorkflow, latest_run: AgentRun | None = None) -> dict[str, object]:
     open_checkpoint = getattr(workflow, "open_checkpoint", None)
     session_count = getattr(workflow, "session_count", None)
+    product_kind = workflow.kind or (
+        AssistantWorkflowKind.CUSTOM_ASSISTANT
+        if workflow.trigger_type == AssistantWorkflowTriggerType.MANUAL
+        else AssistantWorkflowKind.AUTOMATION
+    )
     return {
         "id": str(workflow.id),
+        "kind": product_kind,
         "agentId": str(workflow.agent_profile_id),
         "agentName": getattr(getattr(workflow, "agent_profile", None), "name", "") or "",
         "businessId": str(workflow.business_profile_id),
@@ -381,7 +388,7 @@ def _create_run(
     *,
     agent: AgentProfile,
     created_by,
-    workflow: AgentWorkflow | None,
+    workflow: AssistantWorkflow | None,
     conversation: Conversation | None,
     title: str,
     source: str,
@@ -436,7 +443,7 @@ def _ensure_run_mutable(run: AgentRun) -> JsonResponse | None:
     return None
 
 
-def _create_workflow_session(workflow: AgentWorkflow, *, created_by=None, title: str = "", source_conversation: Conversation | None = None) -> Conversation:
+def _create_workflow_session(workflow: AssistantWorkflow, *, created_by=None, title: str = "", source_conversation: Conversation | None = None) -> Conversation:
     metadata: dict[str, object] = {
         "type": "workflow_agent_session",
         "workflow_id": str(workflow.id),
@@ -459,7 +466,7 @@ def _create_workflow_session(workflow: AgentWorkflow, *, created_by=None, title:
     return conversation
 
 
-def _latest_workflow_session(workflow: AgentWorkflow) -> Conversation | None:
+def _latest_workflow_session(workflow: AssistantWorkflow) -> Conversation | None:
     return (
         Conversation.objects.filter(workflow=workflow, business_profile=workflow.business_profile)
         .order_by("-last_activity_at", "-started_at")
@@ -467,7 +474,7 @@ def _latest_workflow_session(workflow: AgentWorkflow) -> Conversation | None:
     )
 
 
-def _resolve_or_create_workflow_session(workflow: AgentWorkflow, *, created_by=None, conversation_id: uuid.UUID | None = None) -> Conversation:
+def _resolve_or_create_workflow_session(workflow: AssistantWorkflow, *, created_by=None, conversation_id: uuid.UUID | None = None) -> Conversation:
     if conversation_id:
         conversation = Conversation.objects.filter(
             id=conversation_id,
@@ -506,7 +513,7 @@ def _source_conversation_brief(conversation: Conversation | None) -> dict[str, o
     }
 
 
-def _cancel_open_workflow_runs(workflow: AgentWorkflow, *, reason: str, action: str = "pause") -> int:
+def _cancel_open_workflow_runs(workflow: AssistantWorkflow, *, reason: str, action: str = "pause") -> int:
     open_statuses = [
         AgentRunStatus.QUEUED,
         AgentRunStatus.RUNNING,
@@ -547,14 +554,14 @@ def _cancel_open_workflow_runs(workflow: AgentWorkflow, *, reason: str, action: 
 
 
 def _normalize_trigger_type(value: object) -> str:
-    raw = str(value or AgentWorkflowTriggerType.MANUAL).strip().lower()
+    raw = str(value or AssistantWorkflowTriggerType.MANUAL).strip().lower()
     if raw == "cron":
-        return AgentWorkflowTriggerType.SCHEDULE
+        return AssistantWorkflowTriggerType.SCHEDULE
     return raw
 
 
 def _compute_next_trigger(trigger_type: str, trigger_config: dict[str, Any], *, after=None):
-    if trigger_type != AgentWorkflowTriggerType.SCHEDULE:
+    if trigger_type != AssistantWorkflowTriggerType.SCHEDULE:
         return None
     cron_config = dict(trigger_config)
     cron_config.setdefault("type", "cron")
@@ -563,7 +570,7 @@ def _compute_next_trigger(trigger_type: str, trigger_config: dict[str, Any], *, 
 
 @csrf_protect
 @require_http_methods(["GET", "POST"])
-def agent_workflows_collection(request: HttpRequest, agent_id: uuid.UUID) -> JsonResponse:
+def assistant_workflows_collection(request: HttpRequest, agent_id: uuid.UUID, forced_kind: str | None = None) -> JsonResponse:
     agent, error = _resolve_agent_for_request(request, agent_id)
     if error:
         return error
@@ -572,14 +579,23 @@ def agent_workflows_collection(request: HttpRequest, agent_id: uuid.UUID) -> Jso
     with tenant_context(agent.business_profile_id):
         if request.method == "GET":
             status = str(request.GET.get("status") or "").strip().lower()
+            kind = str(forced_kind or request.GET.get("kind") or request.GET.get("type") or "").strip().lower()
+            raw_trigger_type_filter = request.GET.get("triggerType") or request.GET.get("trigger_type") or ""
+            trigger_type_filter = _normalize_trigger_type(raw_trigger_type_filter) if str(raw_trigger_type_filter).strip() else ""
             qs = (
-                AgentWorkflow.objects.select_related("agent_profile")
+                AssistantWorkflow.objects.select_related("agent_profile")
                 .filter(agent_profile=agent)
                 .annotate(session_count=Count("sessions"))
                 .order_by("-created_at")
             )
             if status and status != "all":
                 qs = qs.filter(status=status)
+            if kind in {"custom_assistant", "custom_assistants", "assistant", "assistants", "manual"}:
+                qs = qs.filter(kind=AssistantWorkflowKind.CUSTOM_ASSISTANT)
+            elif kind in {"automation", "automations", "scheduled_task", "scheduled_tasks", "background"}:
+                qs = qs.filter(kind=AssistantWorkflowKind.AUTOMATION)
+            elif trigger_type_filter and trigger_type_filter in {choice for choice, _ in AssistantWorkflowTriggerType.choices}:
+                qs = qs.filter(trigger_type=trigger_type_filter)
             workflows = list(qs[:200])
             workflow_ids = [item.id for item in workflows]
             latest_runs: dict[uuid.UUID, AgentRun] = {}
@@ -616,26 +632,36 @@ def agent_workflows_collection(request: HttpRequest, agent_id: uuid.UUID) -> Jso
         name = str((payload or {}).get("name") or "").strip()
         if not name:
             return JsonResponse({"error": "VALIDATION_ERROR", "message": "name is required."}, status=HTTPStatus.BAD_REQUEST)
-        status = str((payload or {}).get("status") or AgentWorkflowStatus.DRAFT).strip().lower()
-        if status not in {choice for choice, _ in AgentWorkflowStatus.choices}:
+        status = str((payload or {}).get("status") or AssistantWorkflowStatus.DRAFT).strip().lower()
+        if status not in {choice for choice, _ in AssistantWorkflowStatus.choices}:
             return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid status."}, status=HTTPStatus.BAD_REQUEST)
         visibility = str((payload or {}).get("visibility") or AgentRunVisibility.INITIATOR).strip().lower()
         if visibility not in {choice for choice, _ in AgentRunVisibility.choices}:
             return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid visibility."}, status=HTTPStatus.BAD_REQUEST)
-        review_mode = str((payload or {}).get("reviewMode") or (payload or {}).get("review_mode") or AgentWorkflowReviewMode.ON_RISK).strip().lower()
-        if review_mode not in {choice for choice, _ in AgentWorkflowReviewMode.choices}:
+        review_mode = str((payload or {}).get("reviewMode") or (payload or {}).get("review_mode") or AssistantWorkflowReviewMode.ON_RISK).strip().lower()
+        if review_mode not in {choice for choice, _ in AssistantWorkflowReviewMode.choices}:
             return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid reviewMode."}, status=HTTPStatus.BAD_REQUEST)
-        autonomy_mode = str((payload or {}).get("autonomyMode") or (payload or {}).get("autonomy_mode") or AgentWorkflowAutonomyMode.DRAFT_FOR_APPROVAL).strip().lower()
-        if autonomy_mode not in {choice for choice, _ in AgentWorkflowAutonomyMode.choices}:
+        autonomy_mode = str((payload or {}).get("autonomyMode") or (payload or {}).get("autonomy_mode") or AssistantWorkflowAutonomyMode.DRAFT_FOR_APPROVAL).strip().lower()
+        if autonomy_mode not in {choice for choice, _ in AssistantWorkflowAutonomyMode.choices}:
             return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid autonomyMode."}, status=HTTPStatus.BAD_REQUEST)
+        requested_kind = str(forced_kind or (payload or {}).get("kind") or (payload or {}).get("type") or "").strip().lower()
         trigger_type = _normalize_trigger_type((payload or {}).get("triggerType") or (payload or {}).get("trigger_type"))
-        if trigger_type not in {choice for choice, _ in AgentWorkflowTriggerType.choices}:
+        if requested_kind in {"custom_assistant", "custom_assistants", "assistant", "assistants"}:
+            trigger_type = AssistantWorkflowTriggerType.MANUAL
+        if trigger_type not in {choice for choice, _ in AssistantWorkflowTriggerType.choices}:
             return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid triggerType."}, status=HTTPStatus.BAD_REQUEST)
+        if requested_kind in {"automation", "automations", "scheduled_task", "scheduled_tasks", "background"} and trigger_type == AssistantWorkflowTriggerType.MANUAL:
+            return JsonResponse({"error": "VALIDATION_ERROR", "message": "Automations require schedule, webhook, or email inbox triggers."}, status=HTTPStatus.BAD_REQUEST)
+        workflow_kind = (
+            AssistantWorkflowKind.CUSTOM_ASSISTANT
+            if trigger_type == AssistantWorkflowTriggerType.MANUAL
+            else AssistantWorkflowKind.AUTOMATION
+        )
         trigger_config = dict((payload or {}).get("triggerConfig") or (payload or {}).get("trigger_config") or {})
-        if trigger_type == AgentWorkflowTriggerType.WEBHOOK and not str(trigger_config.get("secret") or "").strip():
+        if trigger_type == AssistantWorkflowTriggerType.WEBHOOK and not str(trigger_config.get("secret") or "").strip():
             trigger_config["secret"] = secrets.token_urlsafe(24)
         next_trigger_at = None
-        if status == AgentWorkflowStatus.ACTIVE:
+        if status == AssistantWorkflowStatus.ACTIVE:
             try:
                 next_trigger_at = _compute_next_trigger(trigger_type, trigger_config, after=timezone.now())
             except CronScheduleError as exc:
@@ -645,9 +671,9 @@ def agent_workflows_collection(request: HttpRequest, agent_id: uuid.UUID) -> Jso
         email_account_id, err = _parse_uuid((payload or {}).get("emailAccountId") or (payload or {}).get("email_account_id"), field="emailAccountId")
         if err:
             return err
-        if trigger_type == AgentWorkflowTriggerType.EMAIL_INBOX:
+        if trigger_type == AssistantWorkflowTriggerType.EMAIL_INBOX:
             if not email_account_id:
-                return JsonResponse({"error": "VALIDATION_ERROR", "message": "emailAccountId is required for email inbox workflows."}, status=HTTPStatus.BAD_REQUEST)
+                return JsonResponse({"error": "VALIDATION_ERROR", "message": "emailAccountId is required for email inbox automations."}, status=HTTPStatus.BAD_REQUEST)
             account_qs = EmailAccount.objects.filter(id=email_account_id, business_profile=agent.business_profile)
             if not request.user.is_staff:
                 account_qs = account_qs.filter(user=request.user)
@@ -655,7 +681,7 @@ def agent_workflows_collection(request: HttpRequest, agent_id: uuid.UUID) -> Jso
             if email_account is None:
                 return JsonResponse({"error": "EMAIL_ACCOUNT_NOT_FOUND", "message": "Email account not found."}, status=HTTPStatus.NOT_FOUND)
             if email_account.status != EmailAccountStatus.CONNECTED:
-                return JsonResponse({"error": "VALIDATION_ERROR", "message": "Email account must be connected before enabling an email inbox workflow."}, status=HTTPStatus.BAD_REQUEST)
+                return JsonResponse({"error": "VALIDATION_ERROR", "message": "Email account must be connected before enabling an email inbox automation."}, status=HTTPStatus.BAD_REQUEST)
 
         source_conversation_id, err = _parse_uuid((payload or {}).get("sourceConversationId") or (payload or {}).get("source_conversation_id"), field="sourceConversationId")
         if err:
@@ -671,7 +697,7 @@ def agent_workflows_collection(request: HttpRequest, agent_id: uuid.UUID) -> Jso
         if creation_brief:
             metadata_payload["creation_brief"] = creation_brief
 
-        workflow = AgentWorkflow.objects.create(
+        workflow = AssistantWorkflow.objects.create(
             business_profile=agent.business_profile,
             agent_profile=agent,
             created_by=request.user,
@@ -680,6 +706,7 @@ def agent_workflows_collection(request: HttpRequest, agent_id: uuid.UUID) -> Jso
             description=str((payload or {}).get("description") or "")[:4000],
             status=status,
             visibility=visibility,
+            kind=workflow_kind,
             trigger_type=trigger_type,
             trigger_config=trigger_config,
             source_config=dict((payload or {}).get("sourceConfig") or (payload or {}).get("source_config") or {}),
@@ -704,6 +731,14 @@ def agent_workflows_collection(request: HttpRequest, agent_id: uuid.UUID) -> Jso
         return JsonResponse({"workflow": _serialize_workflow(workflow)}, status=HTTPStatus.CREATED)
 
 
+def custom_assistants_collection(request: HttpRequest, agent_id: uuid.UUID) -> JsonResponse:
+    return assistant_workflows_collection(request, agent_id, forced_kind=AssistantWorkflowKind.CUSTOM_ASSISTANT)
+
+
+def automations_collection(request: HttpRequest, agent_id: uuid.UUID) -> JsonResponse:
+    return assistant_workflows_collection(request, agent_id, forced_kind=AssistantWorkflowKind.AUTOMATION)
+
+
 @csrf_protect
 @require_http_methods(["GET", "PATCH", "PUT", "DELETE"])
 def agent_workflow_detail(request: HttpRequest, agent_id: uuid.UUID, workflow_id: uuid.UUID) -> JsonResponse:
@@ -713,7 +748,7 @@ def agent_workflow_detail(request: HttpRequest, agent_id: uuid.UUID, workflow_id
     assert agent is not None
 
     with tenant_context(agent.business_profile_id):
-        workflow = AgentWorkflow.objects.filter(id=workflow_id, agent_profile=agent).first()
+        workflow = AssistantWorkflow.objects.filter(id=workflow_id, agent_profile=agent).first()
         if workflow is None:
             return JsonResponse({"error": "WORKFLOW_NOT_FOUND", "message": "Workflow not found."}, status=HTTPStatus.NOT_FOUND)
         if request.method == "GET":
@@ -727,7 +762,7 @@ def agent_workflow_detail(request: HttpRequest, agent_id: uuid.UUID, workflow_id
         if request.method == "DELETE":
             with transaction.atomic():
                 workflow = (
-                    AgentWorkflow.objects.select_for_update()
+                    AssistantWorkflow.objects.select_for_update()
                     .get(id=workflow.id)
                 )
                 legacy_conversation = workflow.conversation
@@ -752,7 +787,7 @@ def agent_workflow_detail(request: HttpRequest, agent_id: uuid.UUID, workflow_id
                 updates.append(field)
         if "status" in payload:
             status = str(payload.get("status") or "").strip().lower()
-            if status not in {choice for choice, _ in AgentWorkflowStatus.choices}:
+            if status not in {choice for choice, _ in AssistantWorkflowStatus.choices}:
                 return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid status."}, status=HTTPStatus.BAD_REQUEST)
             workflow.status = status
             updates.append("status")
@@ -764,22 +799,27 @@ def agent_workflow_detail(request: HttpRequest, agent_id: uuid.UUID, workflow_id
             updates.append("visibility")
         if "reviewMode" in payload or "review_mode" in payload:
             review_mode = str(payload.get("reviewMode") or payload.get("review_mode") or "").strip().lower()
-            if review_mode not in {choice for choice, _ in AgentWorkflowReviewMode.choices}:
+            if review_mode not in {choice for choice, _ in AssistantWorkflowReviewMode.choices}:
                 return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid reviewMode."}, status=HTTPStatus.BAD_REQUEST)
             workflow.review_mode = review_mode
             updates.append("review_mode")
         if "autonomyMode" in payload or "autonomy_mode" in payload:
             autonomy_mode = str(payload.get("autonomyMode") or payload.get("autonomy_mode") or "").strip().lower()
-            if autonomy_mode not in {choice for choice, _ in AgentWorkflowAutonomyMode.choices}:
+            if autonomy_mode not in {choice for choice, _ in AssistantWorkflowAutonomyMode.choices}:
                 return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid autonomyMode."}, status=HTTPStatus.BAD_REQUEST)
             workflow.autonomy_mode = autonomy_mode
             updates.append("autonomy_mode")
         if "triggerType" in payload or "trigger_type" in payload:
             trigger_type = _normalize_trigger_type(payload.get("triggerType") or payload.get("trigger_type"))
-            if trigger_type not in {choice for choice, _ in AgentWorkflowTriggerType.choices}:
+            if trigger_type not in {choice for choice, _ in AssistantWorkflowTriggerType.choices}:
                 return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid triggerType."}, status=HTTPStatus.BAD_REQUEST)
             workflow.trigger_type = trigger_type
-            updates.append("trigger_type")
+            workflow.kind = (
+                AssistantWorkflowKind.CUSTOM_ASSISTANT
+                if trigger_type == AssistantWorkflowTriggerType.MANUAL
+                else AssistantWorkflowKind.AUTOMATION
+            )
+            updates.extend(["trigger_type", "kind"])
         for public, field in (("triggerConfig", "trigger_config"), ("sourceConfig", "source_config"), ("destinationConfig", "destination_config"), ("notificationConfig", "notification_config"), ("instructions", "instructions"), ("state", "state"), ("metadata", "metadata")):
             if public in payload or field in payload:
                 value = payload.get(public) if public in payload else payload.get(field)
@@ -805,7 +845,7 @@ def agent_workflow_detail(request: HttpRequest, agent_id: uuid.UUID, workflow_id
                     return JsonResponse({"error": "EMAIL_ACCOUNT_NOT_FOUND", "message": "Email account not found."}, status=HTTPStatus.NOT_FOUND)
             workflow.email_account = email_account
             updates.append("email_account")
-        if workflow.trigger_type == AgentWorkflowTriggerType.WEBHOOK:
+        if workflow.trigger_type == AssistantWorkflowTriggerType.WEBHOOK:
             cfg = dict(workflow.trigger_config or {})
             if not str(cfg.get("secret") or "").strip():
                 cfg["secret"] = secrets.token_urlsafe(24)
@@ -813,20 +853,20 @@ def agent_workflow_detail(request: HttpRequest, agent_id: uuid.UUID, workflow_id
                 updates.append("trigger_config")
         if {"status", "trigger_type", "trigger_config"} & set(updates):
             try:
-                workflow.next_trigger_at = _compute_next_trigger(workflow.trigger_type, workflow.trigger_config, after=timezone.now()) if workflow.status == AgentWorkflowStatus.ACTIVE else None
+                workflow.next_trigger_at = _compute_next_trigger(workflow.trigger_type, workflow.trigger_config, after=timezone.now()) if workflow.status == AssistantWorkflowStatus.ACTIVE else None
             except CronScheduleError as exc:
                 return JsonResponse({"error": "VALIDATION_ERROR", "message": str(exc)}, status=HTTPStatus.BAD_REQUEST)
             updates.append("next_trigger_at")
         if not updates:
             return JsonResponse({"workflow": _serialize_workflow(workflow)}, status=HTTPStatus.OK)
         workflow.save(update_fields=sorted(set([*updates, "updated_at"])))
-        if "status" in updates and workflow.status == AgentWorkflowStatus.PAUSED:
+        if "status" in updates and workflow.status == AssistantWorkflowStatus.PAUSED:
             cancel_existing = bool((payload or {}).get("cancelOpenRuns", True))
             if cancel_existing:
                 cancelled = _cancel_open_workflow_runs(workflow, reason="Workflow paused")
                 workflow_meta = dict(workflow.metadata or {}) if isinstance(workflow.metadata, dict) else {}
                 workflow_meta["last_pause_cancelled_runs"] = cancelled
-                AgentWorkflow.objects.filter(id=workflow.id).update(metadata=workflow_meta, updated_at=timezone.now())
+                AssistantWorkflow.objects.filter(id=workflow.id).update(metadata=workflow_meta, updated_at=timezone.now())
                 workflow.metadata = workflow_meta
         return JsonResponse({"workflow": _serialize_workflow(workflow)}, status=HTTPStatus.OK)
 
@@ -841,7 +881,7 @@ def agent_operations_status(request: HttpRequest, agent_id: uuid.UUID) -> JsonRe
 
     now = timezone.now()
     stale_before = now - timedelta(seconds=90)
-    workflow_heartbeat = cache.get("agent_workflow_processor_heartbeat")
+    workflow_heartbeat = cache.get("assistant_workflow_processor_heartbeat")
     run_heartbeat = cache.get("agent_run_processor_heartbeat")
 
     def _heartbeat_payload(value: object) -> dict[str, object]:
@@ -861,7 +901,7 @@ def agent_operations_status(request: HttpRequest, agent_id: uuid.UUID) -> JsonRe
 
     with tenant_context(agent.business_profile_id):
         runs = AgentRun.objects.filter(agent_profile=agent)
-        workflows = AgentWorkflow.objects.filter(agent_profile=agent)
+        workflows = AssistantWorkflow.objects.filter(agent_profile=agent)
         email_accounts = EmailAccount.objects.filter(business_profile=agent.business_profile)
         if not request.user.is_staff:
             email_accounts = email_accounts.filter(user=request.user)
@@ -871,8 +911,9 @@ def agent_operations_status(request: HttpRequest, agent_id: uuid.UUID) -> JsonRe
                 "workflowProcessor": _heartbeat_payload(workflow_heartbeat),
                 "runProcessor": _heartbeat_payload(run_heartbeat),
                 "dueWorkflows": workflows.filter(
-                    status=AgentWorkflowStatus.ACTIVE,
-                    trigger_type__in=[AgentWorkflowTriggerType.SCHEDULE, AgentWorkflowTriggerType.EMAIL_INBOX],
+                    status=AssistantWorkflowStatus.ACTIVE,
+                    kind=AssistantWorkflowKind.AUTOMATION,
+                    trigger_type__in=[AssistantWorkflowTriggerType.SCHEDULE, AssistantWorkflowTriggerType.EMAIL_INBOX],
                     next_trigger_at__lte=now,
                 ).count(),
                 "queuedRuns": runs.filter(status=AgentRunStatus.QUEUED).count(),
@@ -901,7 +942,7 @@ def agent_workflow_run(request: HttpRequest, agent_id: uuid.UUID, workflow_id: u
         return error
     assert agent is not None
     with tenant_context(agent.business_profile_id):
-        workflow = AgentWorkflow.objects.filter(id=workflow_id, agent_profile=agent).first()
+        workflow = AssistantWorkflow.objects.filter(id=workflow_id, agent_profile=agent).first()
         if workflow is None:
             return JsonResponse({"error": "WORKFLOW_NOT_FOUND", "message": "Workflow not found."}, status=HTTPStatus.NOT_FOUND)
         payload, error = _parse_json_body(request)
@@ -925,7 +966,7 @@ def agent_workflow_run(request: HttpRequest, agent_id: uuid.UUID, workflow_id: u
             snapshot=_workflow_snapshot(workflow),
             metadata={"workflow_id": str(workflow.id), "trigger": "manual"},
         )
-        AgentWorkflow.objects.filter(id=workflow.id).update(last_triggered_at=timezone.now(), updated_at=timezone.now())
+        AssistantWorkflow.objects.filter(id=workflow.id).update(last_triggered_at=timezone.now(), updated_at=timezone.now())
         return JsonResponse({"run": _serialize_run(run)}, status=HTTPStatus.CREATED)
 
 
@@ -937,7 +978,7 @@ def agent_workflow_sessions(request: HttpRequest, agent_id: uuid.UUID, workflow_
         return error
     assert agent is not None
     with tenant_context(agent.business_profile_id):
-        workflow = AgentWorkflow.objects.filter(id=workflow_id, agent_profile=agent).first()
+        workflow = AssistantWorkflow.objects.filter(id=workflow_id, agent_profile=agent).first()
         if workflow is None:
             return JsonResponse({"error": "WORKFLOW_NOT_FOUND", "message": "Workflow not found."}, status=HTTPStatus.NOT_FOUND)
         if request.method == "GET":
@@ -1089,8 +1130,8 @@ def workflow_webhook_trigger(request: HttpRequest, workflow_id: uuid.UUID, token
         return JsonResponse({"error": "NOT_FOUND", "message": "Workflow not found."}, status=HTTPStatus.NOT_FOUND)
     with tenant_bypass():
         workflow = (
-            AgentWorkflow.objects.select_related("agent_profile", "business_profile", "conversation")
-            .filter(id=workflow_id, trigger_type=AgentWorkflowTriggerType.WEBHOOK, status=AgentWorkflowStatus.ACTIVE)
+            AssistantWorkflow.objects.select_related("agent_profile", "business_profile", "conversation")
+            .filter(id=workflow_id, trigger_type=AssistantWorkflowTriggerType.WEBHOOK, status=AssistantWorkflowStatus.ACTIVE)
             .first()
         )
         if workflow is None:
@@ -1109,7 +1150,7 @@ def workflow_webhook_trigger(request: HttpRequest, workflow_id: uuid.UUID, token
             snapshot=_workflow_snapshot(workflow),
             metadata={"workflow_id": str(workflow.id), "trigger": "webhook"},
         )
-        AgentWorkflow.objects.filter(id=workflow.id).update(last_triggered_at=timezone.now(), updated_at=timezone.now())
+        AssistantWorkflow.objects.filter(id=workflow.id).update(last_triggered_at=timezone.now(), updated_at=timezone.now())
         return JsonResponse({"runId": str(run.id)}, status=HTTPStatus.CREATED)
 
 
@@ -1129,6 +1170,11 @@ def agent_runs_collection(request: HttpRequest, agent_id: uuid.UUID) -> JsonResp
                 .filter(_run_visibility_filter(request, agent=agent))
                 .order_by("-created_at")
             )
+            kind = str(request.GET.get("kind") or request.GET.get("type") or "").strip().lower()
+            if kind in {"custom_assistant", "custom_assistants", "assistant", "assistants", "manual"}:
+                qs = qs.filter(workflow__kind=AssistantWorkflowKind.CUSTOM_ASSISTANT)
+            elif kind in {"automation", "automations", "scheduled_task", "scheduled_tasks", "background"}:
+                qs = qs.filter(workflow__kind=AssistantWorkflowKind.AUTOMATION)
             status = str(request.GET.get("status") or "").strip().lower()
             if status:
                 qs = qs.filter(status=status)
@@ -1149,7 +1195,7 @@ def agent_runs_collection(request: HttpRequest, agent_id: uuid.UUID) -> JsonResp
             return err
         workflow = None
         if workflow_id:
-            workflow = AgentWorkflow.objects.filter(id=workflow_id, agent_profile=agent).first()
+            workflow = AssistantWorkflow.objects.filter(id=workflow_id, agent_profile=agent).first()
             if workflow is None:
                 return JsonResponse({"error": "WORKFLOW_NOT_FOUND", "message": "Workflow not found."}, status=HTTPStatus.NOT_FOUND)
         conversation_id, err = _parse_uuid((payload or {}).get("conversationId") or (payload or {}).get("conversation_id"), field="conversationId")

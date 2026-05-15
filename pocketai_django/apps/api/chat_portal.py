@@ -53,7 +53,8 @@ from apps.conversations.models import (
     AgentRunEventStream,
     AgentRunEventType,
     AgentRunStatus,
-    AgentWorkflow,
+    AssistantWorkflow,
+    AssistantWorkflowKind,
     Conversation,
     ConversationMessage,
     ConversationSender,
@@ -1431,7 +1432,7 @@ def _serialize_agent_run_checkpoint_for_portal(checkpoint: AgentRunCheckpoint | 
 
 
 def _serialize_workflow_agent_for_portal(
-    workflow: AgentWorkflow,
+    workflow: AssistantWorkflow,
     *,
     latest_run: AgentRun | None = None,
     open_checkpoint: AgentRunCheckpoint | None = None,
@@ -1508,7 +1509,8 @@ def _build_portal_agent_runs_snapshot(
         workflow_agents: list[dict[str, object]] = []
         if agent_profile_id:
             workflows = list(
-                AgentWorkflow.objects.filter(business_profile_id=business_id)
+                AssistantWorkflow.objects.filter(business_profile_id=business_id)
+                .filter(kind=AssistantWorkflowKind.CUSTOM_ASSISTANT)
                 .select_related("agent_profile")
                 .annotate(session_count=Count("sessions"))
                 .order_by("-updated_at", "-created_at")[:100]
@@ -2105,7 +2107,7 @@ def portal_tool_approval(request: HttpRequest) -> JsonResponse:
             except Exception:  # pragma: no cover - best effort only
                 logger.exception("portal_tool_preference_save_failed approval=%s", approval.id)
 
-    # If this approval unblocks a background AgentRun (Tasks panel), resume/cancel it.
+    # If this approval unblocks a background AgentRun (Activity panel), resume/cancel it.
     if approval:
         actor_user = request.user if getattr(request, "user", None) and request.user.is_authenticated else None
         if actor_user:

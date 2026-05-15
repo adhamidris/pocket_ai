@@ -3,7 +3,7 @@ from __future__ import annotations
 from django.test import TestCase
 
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession, User
-from apps.conversations.models import AgentWorkflow, Conversation
+from apps.conversations.models import AssistantWorkflow, Conversation
 from apps.mcp.prompts import build_messages
 from apps.mcp.tools import _draft_task_handler, _request_task_activation_handler, _update_task_handler
 from apps.mcp.types import ToolExecutionContext
@@ -71,7 +71,7 @@ class WorkflowResourceRefsTests(TestCase):
         self.assertIn("pending_activation=true", system_text)
 
     def test_workflow_agent_session_injects_custom_instruction_contract(self) -> None:
-        workflow = AgentWorkflow.objects.create(
+        workflow = AssistantWorkflow.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
@@ -102,11 +102,11 @@ class WorkflowResourceRefsTests(TestCase):
 
         system_text = str(messages[0]["content"])
         self.assertIn("You are Refund Policy Reviewer for Workflow Ref Bank.", system_text)
-        self.assertIn("Workflow Agent session override (active for this conversation).", system_text)
+        self.assertIn("Custom Assistant session override (active for this conversation).", system_text)
         self.assertIn("active assistant identity, role, and operating contract", system_text)
         self.assertIn("base assistant as the runtime host only", system_text)
         self.assertIn("Do not describe these instructions as memory.", system_text)
-        self.assertIn("Active Workflow Agent name/role: Refund Policy Reviewer", system_text)
+        self.assertIn("Active Custom Assistant name/role: Refund Policy Reviewer", system_text)
         self.assertIn("Refund Policy Reviewer", system_text)
         self.assertIn("Review refund requests and flag policy exceptions", system_text)
         self.assertIn("Identify whether the request is within policy.", system_text)

@@ -70,7 +70,7 @@ AGENT_WORKFORCE_BACKGROUND_RUN_INSTRUCTIONS = textwrap.dedent(
     - Prefer spawning at most ONE background run per user turn, unless the visitor explicitly asks for multiple.
     - Do not delegate simple Q&A or small single-step tasks.
     - If key details are missing, ask the visitor first instead of starting the run.
-    - After creating the run, tell the visitor what you started and that progress/results will appear in the Tasks panel.
+    - After creating the run, tell the visitor what you started and that progress/results will appear in the Activity panel.
 
     **Checking run status:**
     - Use `list_agent_runs(status_filter="all"|"active"|"waiting"|"completed")` to see runs for this conversation.
@@ -99,7 +99,7 @@ AGENT_WORKFORCE_BACKGROUND_RUN_INSTRUCTIONS = textwrap.dedent(
     **Saved tasks/workflows:**
     - If the visitor asks to create a recurring, scheduled, webhook, or email-monitoring task, create a draft first.
     - Do not activate a persistent task silently. Summarize the owner agent, trigger, goal, and approval impact, then ask for explicit approval.
-    - If the task belongs to a different Workflow Agent or agent role, use `list_agents` to identify the right owner; if unclear, ask before drafting.
+    - If the task belongs to a different Custom Assistant or assistant role, use `list_agents` to identify the right owner; if unclear, ask before drafting.
 
     **Example flow:**
     1. Visitor: "Research competitor pricing" → `start_agent_run(goal="Research...")`

@@ -11,7 +11,7 @@
       <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div class="space-y-1.5">
           <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">{% trans "Connectors" %}</h1>
-          <p class="text-sm text-muted-foreground">{% trans "Connect native integrations and MCP servers, then control which agents can use them." %}</p>
+          <p class="text-sm text-muted-foreground">{% trans "Connect native integrations and MCP servers, then control assistant access." %}</p>
         </div>
         <div class="flex flex-wrap items-center justify-start md:justify-end gap-2">
           <button
@@ -367,8 +367,8 @@
   <div class="fixed inset-x-4 top-10 z-50 mx-auto max-w-lg rounded-xl border border-border/60 bg-card p-5 shadow-lg opacity-0 transition-opacity duration-150" role="dialog" aria-modal="true" data-mcp-agents-content tabindex="-1">
     <div class="flex items-start justify-between gap-3">
       <div class="space-y-0.5">
-        <div class="text-sm font-semibold text-foreground">{% trans "Agent access" %}</div>
-        <div class="text-xs text-muted-foreground">{% trans "Opt out specific agents while keeping others enabled." %}</div>
+        <div class="text-sm font-semibold text-foreground">{% trans "Assistant access" %}</div>
+        <div class="text-xs text-muted-foreground">{% trans "Control which assistants can use this connector." %}</div>
       </div>
       <button type="button" class="h-8 w-8 inline-flex items-center justify-center rounded-md border border-border/60 hover:bg-accent/50" data-mcp-agents-close aria-label="{% trans 'Close' %}">
         <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
@@ -1610,13 +1610,13 @@
 	              '<div class="flex items-center gap-2">' +
 	                '<button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none" data-mcp-test="' + escapeHtml(conn.id) + '">Test</button>' +
 	                '<button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-tools="' + escapeHtml(conn.id) + '">Tools</button>' +
-	                '<button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-agents="' + escapeHtml(conn.id) + '">Agents</button>' +
+	                '<button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-agents="' + escapeHtml(conn.id) + '">Access</button>' +
 	                '<button type="button" class="inline-flex items-center gap-2 rounded-md bg-primary/10 text-primary px-3 py-2 text-xs font-semibold hover:bg-primary/15" data-mcp-edit="' + escapeHtml(conn.id) + '">Edit</button>' +
 	                '<button type="button" class="inline-flex items-center gap-2 rounded-md border border-rose-500/50 bg-rose-500/10 text-rose-400 px-3 py-2 text-xs font-medium hover:bg-rose-500/20 hover:border-rose-500" data-mcp-delete="' + escapeHtml(conn.id) + '" title="Delete connection">' +
 	                  '<svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>' +
 	                '</button>' +
 	              "</div>" +
-	              '<div class="text-[11px] text-muted-foreground">Assigned ' + escapeHtml(String((conn.agents && conn.agents.assigned) || 0)) + "/" + escapeHtml(String((conn.agents && conn.agents.total) || 0)) + "</div>" +
+	              '<div class="text-[11px] text-muted-foreground">Assistant access ' + escapeHtml(String((conn.agents && conn.agents.assigned) || 0)) + "/" + escapeHtml(String((conn.agents && conn.agents.total) || 0)) + "</div>" +
 	            "</div>" +
 	          "</div>";
 
@@ -1858,12 +1858,12 @@
     function openAgents(connectionId, connectionName) {
       activeAgentsConnection = connectionId;
       agentsSubtitle.textContent = connectionName ? ("Connection: " + connectionName) : "—";
-      agentsList.innerHTML = '<div class="rounded-lg border border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground">Loading agents…</div>';
+      agentsList.innerHTML = '<div class="rounded-lg border border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground">Loading assistants...</div>';
       showAgentsModal(true);
       apiFetch("/api/mcp/connections/" + encodeURIComponent(connectionId) + "/agents/", { method: "GET" }).then(function (data) {
         var agents = data.agents || [];
         if (!agents.length) {
-          agentsList.innerHTML = '<div class="rounded-lg border border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground">No agents found.</div>';
+          agentsList.innerHTML = '<div class="rounded-lg border border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground">No assistants found.</div>';
           return;
         }
         agentsList.innerHTML = "";
@@ -1872,7 +1872,7 @@
           row.className = "flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-background/60 px-3 py-2";
           row.innerHTML =
             '<div class="min-w-0">' +
-              '<div class="text-sm font-medium text-foreground truncate">' + escapeHtml(agent.name || "Agent") + "</div>" +
+              '<div class="text-sm font-medium text-foreground truncate">' + escapeHtml(agent.name || "Business Assistant") + "</div>" +
             "</div>" +
             '<label class="inline-flex items-center gap-2 text-xs text-muted-foreground">' +
               '<input type="checkbox" class="h-4 w-4 rounded border-border/60" data-mcp-agent-toggle="' + escapeHtml(agent.id) + '"' + (agent.enabled ? " checked" : "") + " />" +
@@ -1881,7 +1881,7 @@
           agentsList.appendChild(row);
         });
       }).catch(function (err) {
-        agentsList.innerHTML = '<div class="rounded-lg border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300">Failed to load agents: ' + escapeHtml(err.message || "Error") + "</div>";
+        agentsList.innerHTML = '<div class="rounded-lg border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300">Failed to load assistant access: ' + escapeHtml(err.message || "Error") + "</div>";
       });
     }
 

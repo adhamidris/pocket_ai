@@ -15,8 +15,8 @@ from apps.conversations.models import (
     AgentRunCheckpointKind,
     AgentRunCheckpointStatus,
     AgentRunStatus,
-    AgentWorkflow,
-    AgentWorkflowStatus,
+    AssistantWorkflow,
+    AssistantWorkflowStatus,
     Conversation,
     ConversationChannel,
     ConversationStatus,
@@ -26,7 +26,7 @@ from apps.conversations.models import (
     MemoryStatus,
     MemoryVisibility,
 )
-from apps.conversations.workflow_processing import AgentWorkflowProcessingService
+from apps.conversations.workflow_processing import AssistantWorkflowProcessingService
 from apps.integrations.models import EmailAccount, EmailAccountProvider, EmailAccountStatus
 
 
@@ -91,7 +91,7 @@ class AgentRunsApiTests(TestCase):
         self.assertEqual(response.json()["workflow"]["reviewMode"], "on_risk")
         self.assertEqual(response.json()["workflow"]["autonomyMode"], "draft_for_approval")
         self.assertEqual(response.json()["workflow"]["sessionCount"], 1)
-        workflow = AgentWorkflow.objects.get(id=uuid.UUID(workflow_id))
+        workflow = AssistantWorkflow.objects.get(id=uuid.UUID(workflow_id))
         session = Conversation.objects.get(workflow=workflow)
         self.assertEqual(session.metadata["source_conversation_id"], str(source_chat.id))
         self.assertIn("creation_brief", workflow.metadata)
@@ -134,12 +134,12 @@ class AgentRunsApiTests(TestCase):
         self.assertEqual(display["actionsTaken"][0]["label"], "email_search")
 
     def test_pausing_workflow_cancels_open_runs_by_default(self) -> None:
-        workflow = AgentWorkflow.objects.create(
+        workflow = AssistantWorkflow.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
             name="Recurring task",
-            status=AgentWorkflowStatus.ACTIVE,
+            status=AssistantWorkflowStatus.ACTIVE,
             trigger_type="schedule",
             trigger_config={"cron": "* * * * *"},
             instructions={"goal": "Check things"},
@@ -185,13 +185,13 @@ class AgentRunsApiTests(TestCase):
             status=ConversationStatus.LIVE,
             metadata={"type": "workflow_thread"},
         )
-        workflow = AgentWorkflow.objects.create(
+        workflow = AssistantWorkflow.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
             conversation=thread,
             name="Delete me",
-            status=AgentWorkflowStatus.ACTIVE,
+            status=AssistantWorkflowStatus.ACTIVE,
             trigger_type="schedule",
             trigger_config={"cron": "* * * * *"},
             instructions={"goal": "Check things"},
@@ -222,7 +222,7 @@ class AgentRunsApiTests(TestCase):
         response = self.client.delete(reverse("api:agent-workflow-detail", args=[self.agent.id, workflow.id]))
 
         self.assertEqual(response.status_code, 204)
-        self.assertFalse(AgentWorkflow.objects.filter(id=workflow.id).exists())
+        self.assertFalse(AssistantWorkflow.objects.filter(id=workflow.id).exists())
         self.assertFalse(Conversation.objects.filter(id=thread.id).exists())
         queued.refresh_from_db()
         completed.refresh_from_db()
@@ -267,18 +267,18 @@ class AgentRunsApiTests(TestCase):
         self.assertGreaterEqual(len(events_res.json()["events"]), 1)
 
     def test_scheduled_workflow_worker_triggers_due_workflow(self) -> None:
-        workflow = AgentWorkflow.objects.create(
+        workflow = AssistantWorkflow.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
             name="Due schedule",
-            status=AgentWorkflowStatus.ACTIVE,
+            status=AssistantWorkflowStatus.ACTIVE,
             trigger_type="schedule",
             trigger_config={"cron": "* * * * *"},
             instructions={"goal": "Auto"},
             next_trigger_at=timezone.now(),
         )
-        result = AgentWorkflowProcessingService().process_next_due_workflow()
+        result = AssistantWorkflowProcessingService().process_next_due_workflow()
         self.assertIsNotNone(result)
         self.assertEqual(result.action, "triggered")
         run = AgentRun.objects.get(id=uuid.UUID(result.run_id))
@@ -287,7 +287,7 @@ class AgentRunsApiTests(TestCase):
         self.assertIsNone(run.conversation_id)
 
     def test_checkpoint_resolve_queues_run_and_closes_checkpoint(self) -> None:
-        workflow = AgentWorkflow.objects.create(
+        workflow = AssistantWorkflow.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
@@ -441,7 +441,7 @@ class AgentRunsApiTests(TestCase):
         self.assertEqual(delete_res.json()["memory"]["status"], MemoryStatus.DELETED)
 
     def test_memory_list_defaults_to_curated_records(self) -> None:
-        workflow = AgentWorkflow.objects.create(
+        workflow = AssistantWorkflow.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
