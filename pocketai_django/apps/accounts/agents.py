@@ -196,7 +196,14 @@ def list_agents(
     if order not in {"asc", "desc"}:
         raise AgentListValidationError("order must be 'asc' or 'desc'", field="order")
 
-    base_qs = AgentProfile.objects.select_related("department", "manager_agent").filter(business_profile=business_profile)
+    user_facing_types = {
+        AgentProfile.AgentTypeChoices.MAIN,
+        AgentProfile.AgentTypeChoices.DEPARTMENT_LEAD,
+    }
+    base_qs = (
+        AgentProfile.objects.select_related("department", "manager_agent")
+        .filter(business_profile=business_profile, agent_type__in=user_facing_types)
+    )
     if q_name:
         base_qs = base_qs.filter(name__icontains=q_name.strip())
     if role:

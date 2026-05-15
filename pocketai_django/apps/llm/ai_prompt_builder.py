@@ -9,6 +9,11 @@ from core.otel import otel_trace
 
 from apps.accounts.models import AgentProfile
 from apps.conversations.models import Conversation, ConversationMessage
+from apps.conversations.workflow_contracts import (
+    active_workflow_agent_name,
+    build_department_instruction_note,
+    build_workflow_agent_instruction_note,
+)
 
 TRACER = otel_trace.get_tracer(__name__)
 
@@ -170,7 +175,7 @@ class PromptBuilder:
                 "role": self.agent.role or "AI Customer Specialist",
                 "tone": self.agent.tone or "friendly",
                 "business_name": business.name,
-                "agent_name": self.agent.name,
+                "agent_name": active_workflow_agent_name(conversation) or self.agent.name,
                 "business_industry": industry,
             }
 
@@ -178,7 +183,7 @@ class PromptBuilder:
 
             system_prompt = textwrap.dedent(
                 f"""
-                You are {self.agent.name}, the {agent_traits['role']} for {business.name}, a company in the {industry} industry. Maintain a {agent_traits['tone']} tone, stay factual, and never hallucinate policy or pricing.
+                You are {agent_traits['agent_name']}, the {agent_traits['role']} for {business.name}, a company in the {industry} industry. Maintain a {agent_traits['tone']} tone, stay factual, and never hallucinate policy or pricing.
 
                 {self.CASE_MANDATE}
 
@@ -197,6 +202,12 @@ class PromptBuilder:
                 {self.CUSTOMER_RULES}
                 """
             ).strip()
+            department_note = build_department_instruction_note(conversation)
+            if department_note:
+                system_prompt = f"{system_prompt}\n\n{department_note.strip()}"
+            workflow_agent_note = build_workflow_agent_instruction_note(conversation)
+            if workflow_agent_note:
+                system_prompt = f"{system_prompt}\n\n{workflow_agent_note.strip()}"
 
             user_prompt = self._compose_user_prompt(
                 case_context=case_context,

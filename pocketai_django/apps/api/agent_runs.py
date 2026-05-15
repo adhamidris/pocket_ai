@@ -196,8 +196,10 @@ def _serialize_workflow(workflow: AgentWorkflow, latest_run: AgentRun | None = N
     return {
         "id": str(workflow.id),
         "agentId": str(workflow.agent_profile_id),
+        "agentName": getattr(getattr(workflow, "agent_profile", None), "name", "") or "",
         "businessId": str(workflow.business_profile_id),
         "departmentId": str(workflow.department_id) if workflow.department_id else None,
+        "departmentName": getattr(getattr(workflow, "department", None), "name", "") or "",
         "conversationId": str(workflow.conversation_id) if workflow.conversation_id else None,
         "emailAccountId": str(workflow.email_account_id) if workflow.email_account_id else None,
         "name": workflow.name,
@@ -441,6 +443,8 @@ def _create_workflow_session(workflow: AgentWorkflow, *, created_by=None, title:
         "type": "workflow_agent_session",
         "workflow_id": str(workflow.id),
         "workflow_name": workflow.name,
+        "workflow_agent_name": workflow.agent_profile.name,
+        "workflow_department_name": workflow.department.name if workflow.department_id else "",
     }
     if source_conversation is not None:
         metadata["source_conversation_id"] = str(source_conversation.id)
@@ -571,7 +575,12 @@ def agent_workflows_collection(request: HttpRequest, agent_id: uuid.UUID) -> Jso
     with tenant_context(agent.business_profile_id):
         if request.method == "GET":
             status = str(request.GET.get("status") or "").strip().lower()
-            qs = AgentWorkflow.objects.filter(agent_profile=agent).annotate(session_count=Count("sessions")).order_by("-created_at")
+            qs = (
+                AgentWorkflow.objects.select_related("agent_profile", "department")
+                .filter(agent_profile=agent)
+                .annotate(session_count=Count("sessions"))
+                .order_by("-created_at")
+            )
             if status and status != "all":
                 qs = qs.filter(status=status)
             workflows = list(qs[:200])

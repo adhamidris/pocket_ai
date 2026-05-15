@@ -748,8 +748,8 @@
     <div class="w-full px-4 md:px-6 lg:px-8 py-6 space-y-6">
       <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div class="space-y-1.5">
-          <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">{% trans "Agents" %}</h1>
-          <p class="text-sm text-muted-foreground">{% trans "Create, configure, and monitor conversational agents for every channel." %}</p>
+          <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">{% trans "Department Agents" %}</h1>
+          <p class="text-sm text-muted-foreground">{% trans "Manage each department's main agent, Workflow Agents, knowledge, permissions, and runs." %}</p>
         </div>
         {% if agents_can_create %}
         <div class="flex flex-wrap items-center justify-start md:justify-end gap-2">
@@ -759,16 +759,6 @@
             data-dialog-target="create-department"
           >
             {% trans "Create department" %}
-          </button>
-          <button
-            type="button"
-            class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm hover:shadow-md h-10 px-4 py-2"
-            data-dialog-target="create-agent"
-          >
-            <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-            {% trans "Create agent" %}
           </button>
         </div>
         {% endif %}
@@ -784,7 +774,7 @@
               type="search"
               name="agent-search"
               class="rtl-search-input pl-9 w-full h-10 rounded-md border border-border/60 bg-muted/70 text-sm focus-visible:ring-0 focus-visible:border-border transition-colors"
-              placeholder="{% trans 'Search agents...' %}"
+              placeholder="{% trans 'Search department agents...' %}"
               autocomplete="off"
               data-search-ready="true"
             />
@@ -1377,72 +1367,6 @@
 </div>
 
 {% if agents_can_create %}
-<div class="fixed inset-0 z-50 hidden items-center justify-center bg-background/80 backdrop-blur-sm" data-dialog="create-agent" role="dialog" aria-modal="true">
-  <div class="w-full max-w-lg rounded-2xl border border-border/70 bg-card shadow-lg shadow-black/10">
-    <div class="px-6 py-4 border-b border-border/70 flex items-start justify-between">
-      <div>
-        <div class="text-base font-semibold text-foreground">{% if LANGUAGE_BIDI %}إنشاء وكيل{% else %}Create agent{% endif %}</div>
-        <p class="text-xs text-muted-foreground mt-1">{% if LANGUAGE_BIDI %}أنشئ موظف ذكاء اصطناعي وحدد نوعه وقسمه وصلاحياته.{% else %}Create an AI employee and assign its type, department, and permissions.{% endif %}</p>
-      </div>
-      <button type="button" class="inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-muted/70 transition-colors" data-dialog-close aria-label="{% if LANGUAGE_BIDI %}إغلاق نافذة إنشاء الوكيل{% else %}Close create agent dialog{% endif %}">
-        <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
-        </svg>
-      </button>
-    </div>
-    <div class="px-6 py-5 space-y-4 text-sm text-muted-foreground">
-      <div class="space-y-2">
-        <label class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">{% if LANGUAGE_BIDI %}اسم الوكيل{% else %}Agent name{% endif %}</label>
-        <input
-          type="text"
-          class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-          placeholder="{% if LANGUAGE_BIDI %}مثال: صلاح{% else %}e.g. Salah{% endif %}"
-          data-create-agent-input="name"
-          autocomplete="off"
-        >
-        <p class="hidden text-xs text-destructive" data-create-agent-error="name"></p>
-      </div>
-      <div class="space-y-2">
-        <label class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">{% if LANGUAGE_BIDI %}نوع الوكيل{% else %}Agent type{% endif %}</label>
-        <div class="grid grid-cols-2 gap-2">
-          {% for option in agents_modal_types %}
-            <button
-              type="button"
-              class="rounded-lg border border-border/60 bg-muted/40 px-3 py-2 text-start text-sm hover:border-primary/60 hover:text-primary transition-colors"
-              data-create-agent-role="{{ option.value }}"
-            >
-              {{ option.label }}
-            </button>
-          {% endfor %}
-        </div>
-      </div>
-      <div class="space-y-2">
-        <label class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">{% if LANGUAGE_BIDI %}القسم{% else %}Department{% endif %}</label>
-        <select class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" data-create-agent-input="department">
-          <option value="">{% if LANGUAGE_BIDI %}بدون قسم{% else %}No department{% endif %}</option>
-          {% for department in departments %}
-            <option value="{{ department.id }}">{{ department.name }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <p class="hidden text-xs text-destructive" data-create-agent-error="request"></p>
-    </div>
-    <div class="px-6 py-4 border-t border-border/70 flex items-center justify-end gap-2">
-      <button type="button" class="inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-muted-foreground" data-dialog-close>{% if LANGUAGE_BIDI %}إلغاء{% else %}Cancel{% endif %}</button>
-      <button
-        type="button"
-        class="inline-flex items-center justify-center rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-medium opacity-60 cursor-not-allowed"
-        data-create-agent-submit
-        disabled
-      >
-        {% if LANGUAGE_BIDI %}إنشاء وكيل{% else %}Create agent{% endif %}
-      </button>
-    </div>
-  </div>
-</div>
-{% endif %}
-
-{% if agents_can_create %}
 <div class="fixed inset-0 z-50 hidden items-center justify-center bg-background/80 backdrop-blur-sm" data-dialog="create-department" role="dialog" aria-modal="true">
   <div class="w-full max-w-lg rounded-2xl border border-border/70 bg-card shadow-lg shadow-black/10">
     <div class="px-6 py-4 border-b border-border/70 flex items-start justify-between">
@@ -1478,7 +1402,6 @@
 <script>
   document.addEventListener("DOMContentLoaded", function () {
     var businessId = "{{ business_id|default:''|escapejs }}";
-    var hasActiveMainAgent = {% if agents_has_active_main %}true{% else %}false{% endif %};
     var grid = document.querySelector("[data-agents-grid]");
     var panel = document.querySelector("[data-agent-panel]");
     var overlay = document.querySelector("[data-agent-overlay]");
@@ -1571,12 +1494,10 @@
 	    var tabActiveClasses = [];
 	    var tabInactiveClasses = [];
 	    var I18N = {
-	      createNameMin: "{% if LANGUAGE_BIDI %}يجب أن يتكون اسم الوكيل من حرفين على الأقل.{% else %}Agent name must be at least 2 characters.{% endif %}",
+	      createNameMin: "{% if LANGUAGE_BIDI %}يجب أن يتكون الاسم من حرفين على الأقل.{% else %}Name must be at least 2 characters.{% endif %}",
 	      noBusinessSelected: "{% if LANGUAGE_BIDI %}لا يوجد نشاط محدد. حدّث الصفحة ثم حاول مرة أخرى.{% else %}No business selected. Refresh the page and try again.{% endif %}",
-	      creatingAgent: "{% if LANGUAGE_BIDI %}جارٍ الإنشاء…{% else %}Creating…{% endif %}",
-	      createAgent: "{% if LANGUAGE_BIDI %}إنشاء وكيل{% else %}Create agent{% endif %}",
-	      createAgentSaveFailed: "{% if LANGUAGE_BIDI %}تعذّر حفظ الوكيل. حاول مرة أخرى.{% else %}We couldn't save your agent. Try again.{% endif %}",
-	      createAgentUnavailable: "{% if LANGUAGE_BIDI %}يتعذّر إنشاء الوكيل حالياً.{% else %}Unable to create agent right now.{% endif %}",
+	      createSaveFailed: "{% if LANGUAGE_BIDI %}تعذّر الحفظ. حاول مرة أخرى.{% else %}We couldn't save it. Try again.{% endif %}",
+	      createUnavailable: "{% if LANGUAGE_BIDI %}يتعذّر الإنشاء حالياً.{% else %}Unable to create it right now.{% endif %}",
 	      agent: "{% if LANGUAGE_BIDI %}وكيل{% else %}Agent{% endif %}",
 		      supportAgent: "{% if LANGUAGE_BIDI %}وكيل{% else %}Agent{% endif %}",
 	      selectAgent: "{% if LANGUAGE_BIDI %}اختر وكيلاً{% else %}Select an agent{% endif %}",
@@ -1672,204 +1593,6 @@
 	    };
 
       // ------------------------------------------------------------
-      // Minimal dialog wiring (create agent)
-      // ------------------------------------------------------------
-
-      var dialogRoot = document.querySelector('[data-dialog="create-agent"]');
-      var dialogTrigger = document.querySelector('[data-dialog-target="create-agent"]');
-      var dialogCloseButtons = dialogRoot
-        ? Array.prototype.slice.call(dialogRoot.querySelectorAll("[data-dialog-close]") || [])
-        : [];
-
-      var createNameInput = dialogRoot ? dialogRoot.querySelector('[data-create-agent-input="name"]') : null;
-      var createDepartmentInput = dialogRoot ? dialogRoot.querySelector('[data-create-agent-input="department"]') : null;
-      var createRoleButtons = dialogRoot
-        ? Array.prototype.slice.call(dialogRoot.querySelectorAll("[data-create-agent-role]") || [])
-        : [];
-      var createSubmitButton = dialogRoot ? dialogRoot.querySelector("[data-create-agent-submit]") : null;
-      var createNameError = dialogRoot ? dialogRoot.querySelector('[data-create-agent-error="name"]') : null;
-      var createRequestError = dialogRoot ? dialogRoot.querySelector('[data-create-agent-error="request"]') : null;
-
-      var createSelectedRole = "";
-      var createRoleSelectedClasses = ["ring-1", "ring-primary/60", "bg-primary/5", "border-primary/60", "text-primary"];
-
-      function setCreateError(key, message) {
-        if (key === "name" && createNameError) {
-          createNameError.textContent = message || "";
-          createNameError.classList.toggle("hidden", !message);
-        }
-        if (key === "request" && createRequestError) {
-          createRequestError.textContent = message || "";
-          createRequestError.classList.toggle("hidden", !message);
-        }
-      }
-
-      function clearCreateErrors() {
-        setCreateError("name", "");
-        setCreateError("request", "");
-      }
-
-      function openDialog() {
-        if (!dialogRoot) return;
-        dialogRoot.classList.remove("hidden");
-        dialogRoot.classList.add("flex");
-        if (body) body.classList.add("overflow-hidden");
-        try {
-          if (createNameInput) createNameInput.focus({ preventScroll: true });
-        } catch (_err) {
-          if (createNameInput) createNameInput.focus();
-        }
-      }
-
-      function closeDialog() {
-        if (!dialogRoot) return;
-        dialogRoot.classList.add("hidden");
-        dialogRoot.classList.remove("flex");
-        if (body) body.classList.remove("overflow-hidden");
-        clearCreateErrors();
-      }
-
-      if (dialogTrigger && dialogRoot) {
-        dialogTrigger.addEventListener("click", function () {
-          openDialog();
-        });
-      }
-
-      dialogCloseButtons.forEach(function (button) {
-        button.addEventListener("click", function () {
-          closeDialog();
-        });
-      });
-
-      if (dialogRoot) {
-        dialogRoot.addEventListener("click", function (event) {
-          if (event.target === dialogRoot) {
-            closeDialog();
-          }
-        });
-      }
-
-      function validateCreateForm() {
-        var nameValue = createNameInput ? (createNameInput.value || "").trim() : "";
-        if (nameValue.length < 2) {
-          setCreateError("name", I18N.createNameMin);
-          return false;
-        }
-        setCreateError("name", "");
-        return true;
-      }
-
-      function updateCreateSubmitState() {
-        if (!createSubmitButton) return;
-        var valid = validateCreateForm();
-        createSubmitButton.disabled = !valid;
-        createSubmitButton.classList.toggle("opacity-60", !valid);
-        createSubmitButton.classList.toggle("cursor-not-allowed", !valid);
-      }
-
-      if (createNameInput) {
-        createNameInput.addEventListener("input", function () {
-          updateCreateSubmitState();
-        });
-      }
-
-      createRoleButtons.forEach(function (button) {
-        button.addEventListener("click", function () {
-          var role = (button.getAttribute("data-create-agent-role") || "").trim();
-          createSelectedRole = role;
-          createRoleButtons.forEach(function (btn) {
-            createRoleSelectedClasses.forEach(function (cls) {
-              btn.classList.remove(cls);
-            });
-          });
-          createRoleSelectedClasses.forEach(function (cls) {
-            button.classList.add(cls);
-          });
-        });
-      });
-
-      function submitCreateAgent() {
-        if (!businessId) {
-          setCreateError("request", I18N.noBusinessSelected);
-          return;
-        }
-        if (!createSubmitButton || !createNameInput) {
-          return;
-        }
-        clearCreateErrors();
-        if (!validateCreateForm()) {
-          return;
-        }
-
-        createSubmitButton.disabled = true;
-        createSubmitButton.classList.add("opacity-60", "cursor-not-allowed");
-        createSubmitButton.textContent = I18N.creatingAgent;
-
-	        fetch("/api/agents/?business_id=" + encodeURIComponent(businessId), {
-	          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Requested-With": "XMLHttpRequest",
-            "X-CSRFToken": getCsrfToken(),
-          },
-          credentials: "same-origin",
-	          body: JSON.stringify({
-	            name: (createNameInput.value || "").trim(),
-	            agentType: createSelectedRole || (hasActiveMainAgent ? "specialist" : "main"),
-	            departmentId: createDepartmentInput ? createDepartmentInput.value || "" : "",
-	            role: "",
-	            tone: "",
-	            traits: [],
-	          }),
-	        })
-          .then(function (response) {
-            if (response.ok) {
-              return response.json();
-            }
-            return response
-              .json()
-              .catch(function () {
-                return null;
-              })
-              .then(function (data) {
-                var message = (data && data.message) || I18N.createAgentSaveFailed;
-                throw new Error(message);
-              });
-          })
-          .then(function () {
-            window.location.reload();
-          })
-          .catch(function (error) {
-            setCreateError("request", (error && error.message) || I18N.createAgentUnavailable);
-          })
-          .finally(function () {
-            createSubmitButton.disabled = false;
-            updateCreateSubmitState();
-            createSubmitButton.textContent = I18N.createAgent;
-          });
-      }
-
-      if (createSubmitButton) {
-        createSubmitButton.addEventListener("click", function () {
-          submitCreateAgent();
-        });
-      }
-
-      if (dialogRoot) {
-        dialogRoot.addEventListener("keydown", function (event) {
-          if (event.key === "Escape") {
-            closeDialog();
-          }
-          if (event.key === "Enter" && event.target === createNameInput) {
-            event.preventDefault();
-            submitCreateAgent();
-          }
-        });
-      }
-
-	      updateCreateSubmitState();
-
-      // ------------------------------------------------------------
       // Minimal dialog wiring (create department)
       // ------------------------------------------------------------
 
@@ -1951,14 +1674,14 @@
                 return null;
               })
               .then(function (data) {
-                throw new Error((data && data.message) || I18N.createAgentSaveFailed);
+                throw new Error((data && data.message) || I18N.createSaveFailed);
               });
           })
           .then(function () {
             window.location.reload();
           })
           .catch(function (error) {
-            setDepartmentError((error && error.message) || I18N.createAgentUnavailable);
+            setDepartmentError((error && error.message) || I18N.createUnavailable);
           })
           .finally(function () {
             if (createDepartmentSubmitButton) {

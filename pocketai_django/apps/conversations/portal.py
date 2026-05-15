@@ -7,7 +7,7 @@ from typing import Iterable, Sequence
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
-from django.db.models import Count, Prefetch
+from django.db.models import Count, Prefetch, Q
 from django.utils import timezone
 from django.utils.text import slugify
 
@@ -122,6 +122,8 @@ class PortalSessionSummary:
     session_type: str = "chat"
     workflow_id: uuid.UUID | None = None
     workflow_name: str = ""
+    workflow_agent_name: str = ""
+    workflow_department_name: str = ""
 
 
 class ChatPortalService:
@@ -418,10 +420,11 @@ class ChatPortalService:
         limit: int = 50,
     ) -> Sequence[PortalSessionSummary]:
         business, agent = self.resolve_handle(business_slug, agent_slug)
-        filters: dict[str, object] = {
-            "business_profile": business,
-            "agent_profile": agent,
-        }
+        queryset = Conversation.objects.filter(business_profile=business).filter(
+            Q(agent_profile=agent)
+            | Q(workflow__business_profile=business)
+            | Q(agent_workflows__business_profile=business)
+        )
         if not getattr(owner_user, "is_staff", False):
             business_profiles = getattr(owner_user, "business_profiles", None)
             has_business_access = bool(
@@ -429,14 +432,18 @@ class ChatPortalService:
                 or (business_profiles is not None and business_profiles.filter(id=business.id).exists())
             )
             if not has_business_access:
-                filters["owner_user"] = owner_user
+                queryset = queryset.filter(
+                    Q(owner_user=owner_user)
+                    | Q(workflow__created_by=owner_user)
+                    | Q(agent_workflows__created_by=owner_user)
+                )
         candidate_limit = max(limit, min(max(limit * 3, limit + 25), 300))
         conversations = (
-            Conversation.objects.filter(**filters)
+            queryset
             .exclude(metadata__has_key="anchor_conversation_id")
             .exclude(metadata__has_key="anchorConversationId")
-            .select_related("workflow")
-            .annotate(message_count=Count("messages"))
+            .select_related("workflow", "workflow__agent_profile", "workflow__department")
+            .annotate(message_count=Count("messages", distinct=True))
             .prefetch_related(
                 Prefetch(
                     "messages",
@@ -447,10 +454,17 @@ class ChatPortalService:
                 ),
                 Prefetch(
                     "agent_workflows",
-                    queryset=AgentWorkflow.objects.only("id", "name", "conversation_id"),
+                    queryset=AgentWorkflow.objects.select_related("agent_profile", "department").only(
+                        "id",
+                        "name",
+                        "conversation_id",
+                        "agent_profile__name",
+                        "department__name",
+                    ),
                     to_attr="linked_workflows",
                 ),
             )
+            .distinct()
             .order_by("-last_activity_at", "-started_at")[:candidate_limit]
         )
         return self._build_session_summaries(conversations, limit=limit)
@@ -498,6 +512,60 @@ class ChatPortalService:
             metadata=payload,
         )
 
+    def create_owned_workflow_session(
+        self,
+        *,
+        owner_user: object,
+        business_slug: str,
+        agent_slug: str,
+        workflow_id: uuid.UUID | str,
+        metadata: dict | None = None,
+        title: str = "",
+    ) -> PortalSessionBootstrap:
+        business, _agent = self.resolve_handle(business_slug, agent_slug)
+        try:
+            workflow_uuid = workflow_id if isinstance(workflow_id, uuid.UUID) else uuid.UUID(str(workflow_id))
+        except (TypeError, ValueError):
+            raise PortalValidationError("workflow_id must be a valid UUID.")
+
+        workflow = (
+            AgentWorkflow.objects.filter(id=workflow_uuid, business_profile=business)
+            .select_related("agent_profile", "business_profile", "department")
+            .first()
+        )
+        if workflow is None:
+            raise PortalNotFoundError("Workflow Agent not found.")
+
+        payload = dict(metadata or {})
+        if getattr(owner_user, "id", None) and "actor_user_id" not in payload and "actorUserId" not in payload:
+            payload["actor_user_id"] = str(owner_user.id)
+        payload.update(
+            {
+                "type": "workflow_agent_session",
+                "workflow_id": str(workflow.id),
+                "workflow_name": workflow.name,
+                "workflow_agent_name": workflow.agent_profile.name,
+                "workflow_department_name": workflow.department.name if workflow.department_id else "",
+            }
+        )
+        owner = owner_user if getattr(owner_user, "id", None) else workflow.created_by or business.user
+        conversation = Conversation.objects.create(
+            business_profile=business,
+            agent_profile=workflow.agent_profile,
+            workflow=workflow,
+            owner_user=owner,
+            channel=ConversationChannel.API,
+            status=ConversationStatus.LIVE,
+            metadata=payload,
+            summary=(title or "New session").strip()[:255],
+        )
+        return PortalSessionBootstrap(
+            business=self._serialize_business(business),
+            agent=self._serialize_agent(workflow.agent_profile),
+            session=self._serialize_session(conversation),
+            messages=(),
+        )
+
     def _generate_session_title(self, first_message: str, max_length: int = 50) -> str:
         """
         Generate a meaningful session title from the first customer message.
@@ -522,7 +590,7 @@ class ChatPortalService:
         
         return truncated.rstrip(".,!?;:") + "..."
 
-    def _classify_conversation_session(self, conversation: Conversation) -> tuple[str, uuid.UUID | None, str]:
+    def _classify_conversation_session(self, conversation: Conversation) -> tuple[str, uuid.UUID | None, str, str, str]:
         metadata = conversation.metadata if isinstance(getattr(conversation, "metadata", None), dict) else {}
         has_prefetched_workflows = hasattr(conversation, "linked_workflows")
         linked_workflows = list(getattr(conversation, "linked_workflows", []) or [])
@@ -538,6 +606,16 @@ class ChatPortalService:
             (getattr(linked_workflow, "name", "") or "")
             or str(metadata.get("workflow_name") or metadata.get("workflowName") or "").strip()
         )
+        workflow_agent = getattr(linked_workflow, "agent_profile", None) if linked_workflow is not None else None
+        workflow_department = getattr(linked_workflow, "department", None) if linked_workflow is not None else None
+        workflow_agent_name = (
+            (getattr(workflow_agent, "name", "") or "")
+            or str(metadata.get("workflow_agent_name") or metadata.get("workflowAgentName") or "").strip()
+        )
+        workflow_department_name = (
+            (getattr(workflow_department, "name", "") or "")
+            or str(metadata.get("workflow_department_name") or metadata.get("workflowDepartmentName") or "").strip()
+        )
         is_task_thread = bool(
             linked_workflow
             or getattr(conversation, "workflow_id", None)
@@ -545,7 +623,7 @@ class ChatPortalService:
             or meta_type == "workflow_agent_session"
             or str(metadata.get("workflow_id") or "").strip()
         )
-        return ("task" if is_task_thread else "chat", workflow_id, workflow_name)
+        return ("task" if is_task_thread else "chat", workflow_id, workflow_name, workflow_agent_name, workflow_department_name)
 
     def _build_session_summaries(
         self,
@@ -559,18 +637,15 @@ class ChatPortalService:
                 continue
             first_messages = getattr(conv, "first_customer_messages", [])
             first_msg = first_messages[0] if first_messages else None
-            session_type, workflow_id, workflow_name = self._classify_conversation_session(conv)
+            session_type, workflow_id, workflow_name, workflow_agent_name, workflow_department_name = self._classify_conversation_session(conv)
             is_task_thread = session_type == "task"
 
             if first_msg:
                 title = self._generate_session_title(first_msg.body)
                 preview = (first_msg.body or "")[:100]
-            elif is_task_thread and workflow_name:
-                title = workflow_name
-                preview = "Task thread"
             elif is_task_thread:
-                title = "Task thread"
-                preview = ""
+                title = "New session"
+                preview = workflow_name or "Workflow Agent"
             else:
                 title = "New conversation"
                 preview = ""
@@ -588,6 +663,8 @@ class ChatPortalService:
                     session_type=session_type,
                     workflow_id=workflow_id,
                     workflow_name=workflow_name,
+                    workflow_agent_name=workflow_agent_name,
+                    workflow_department_name=workflow_department_name,
                 )
             )
             if limit is not None and len(summaries) >= limit:
@@ -724,7 +801,7 @@ class ChatPortalService:
             return conversation
 
         updated_metadata = {**(conversation.metadata or {}), **incoming_metadata}
-        update_fields: list[str] = ["last_activity_at"]
+        update_fields: list[str] = []
         if conversation.owner_user_id is None and owner_user is not None:
             conversation.owner_user = owner_user
             update_fields.append("owner_user")
@@ -739,7 +816,8 @@ class ChatPortalService:
         elif conversation.expires_at is not None:
             conversation.expires_at = None
             update_fields.append("expires_at")
-        conversation.save(update_fields=update_fields)
+        if update_fields:
+            conversation.save(update_fields=list(dict.fromkeys(update_fields)))
         return conversation
 
     def _resolve_owner_user(self, *, business: BusinessProfile, metadata: dict) -> object:
@@ -828,7 +906,7 @@ class ChatPortalService:
         )
 
     def _serialize_session(self, conversation: Conversation) -> PortalSessionState:
-        session_type, workflow_id, workflow_name = self._classify_conversation_session(conversation)
+        session_type, workflow_id, workflow_name, _workflow_agent_name, _workflow_department_name = self._classify_conversation_session(conversation)
         return PortalSessionState(
             conversation_id=conversation.id,
             session_token=conversation.session_token,

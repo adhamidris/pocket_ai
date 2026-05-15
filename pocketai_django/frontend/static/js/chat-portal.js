@@ -7269,7 +7269,10 @@ class ChatPortalClient {
     const checkpoint = workflow && workflow.openCheckpoint && typeof workflow.openCheckpoint === "object" ? workflow.openCheckpoint : null;
     const status = checkpoint ? "waiting_approval" : (latestRun && latestRun.status ? latestRun.status : (workflow.status || "draft"));
     const triggerLabel = this.getWorkflowTriggerLabel(workflow && workflow.triggerType);
-    const subtitleParts = [triggerLabel];
+    const ownerLabel = workflow && workflow.departmentName
+      ? String(workflow.departmentName)
+      : (workflow && workflow.agentName ? String(workflow.agentName) : "");
+    const subtitleParts = [ownerLabel, triggerLabel];
     if (workflow && workflow.nextTriggerAt) subtitleParts.push(`${this.t("Next")} ${this.formatDueTime(workflow.nextTriggerAt)}`);
     else if (workflow && workflow.lastTriggeredAt) subtitleParts.push(`${this.t("Last")} ${this.formatDueTime(workflow.lastTriggeredAt)}`);
     const subtitle = subtitleParts.filter(Boolean).join(" · ") || this.formatRunStatusLabel(status);
@@ -12212,6 +12215,243 @@ class ChatPortalClient {
     return this.getSessionSummaryToken(session) || conversationId;
   }
 
+  getSessionSummaryTimestamp(session, fieldNames) {
+    if (!session || typeof session !== "object") return 0;
+    for (const fieldName of fieldNames) {
+      const value = session[fieldName];
+      if (!value) continue;
+      const timestamp = Date.parse(value);
+      if (Number.isFinite(timestamp)) return timestamp;
+    }
+    return 0;
+  }
+
+  compareSessionSummaries(left, right) {
+    const leftActivity = this.getSessionSummaryTimestamp(left, [
+      "last_activity_at",
+      "lastActivityAt",
+      "started_at",
+      "startedAt",
+      "created_at",
+      "createdAt",
+    ]);
+    const rightActivity = this.getSessionSummaryTimestamp(right, [
+      "last_activity_at",
+      "lastActivityAt",
+      "started_at",
+      "startedAt",
+      "created_at",
+      "createdAt",
+    ]);
+    if (leftActivity !== rightActivity) return rightActivity - leftActivity;
+
+    const leftStarted = this.getSessionSummaryTimestamp(left, ["started_at", "startedAt", "created_at", "createdAt"]);
+    const rightStarted = this.getSessionSummaryTimestamp(right, ["started_at", "startedAt", "created_at", "createdAt"]);
+    if (leftStarted !== rightStarted) return rightStarted - leftStarted;
+
+    const leftTitle = ((left && left.title) || "").toString();
+    const rightTitle = ((right && right.title) || "").toString();
+    const titleCompare = leftTitle.localeCompare(rightTitle);
+    if (titleCompare !== 0) return titleCompare;
+
+    return this.getSessionSummaryKey(left).localeCompare(this.getSessionSummaryKey(right));
+  }
+
+  sortSessionSummaries(sessions) {
+    if (!Array.isArray(sessions)) return [];
+    return sessions
+      .filter((session) => session && typeof session === "object" && this.getSessionSummaryKey(session))
+      .slice()
+      .sort((left, right) => this.compareSessionSummaries(left, right));
+  }
+
+  getSessionTreeStorageKey() {
+    return `portal_session_tree_collapsed_${this.businessSlug}_${this.agentSlug}`;
+  }
+
+  readSessionTreeCollapseState() {
+    try {
+      if (!window.localStorage) return {};
+      const raw = window.localStorage.getItem(this.getSessionTreeStorageKey());
+      const parsed = raw ? JSON.parse(raw) : {};
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    } catch (_error) {
+      return {};
+    }
+  }
+
+  writeSessionTreeCollapseState(state) {
+    try {
+      if (window.localStorage) {
+        window.localStorage.setItem(this.getSessionTreeStorageKey(), JSON.stringify(state || {}));
+      }
+    } catch (_error) {
+      // ignore storage failures
+    }
+  }
+
+  isSessionTreeCollapsed(key, defaultCollapsed = false) {
+    if (!key) return Boolean(defaultCollapsed);
+    const state = this.readSessionTreeCollapseState();
+    if (Object.prototype.hasOwnProperty.call(state, key)) {
+      return Boolean(state[key]);
+    }
+    return Boolean(defaultCollapsed);
+  }
+
+  setSessionTreeCollapsed(key, collapsed) {
+    if (!key) return;
+    const state = this.readSessionTreeCollapseState();
+    state[key] = Boolean(collapsed);
+    this.writeSessionTreeCollapseState(state);
+  }
+
+  applySessionTreeCollapsedState(button, content, chevron, collapsed) {
+    if (content) content.classList.toggle("hidden", Boolean(collapsed));
+    if (button) button.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    if (chevron) chevron.style.transform = collapsed ? "rotate(-90deg)" : "";
+  }
+
+  buildSessionTreeChevron() {
+    const chevron = document.createElement("span");
+    chevron.className = "inline-flex h-3 w-3 items-center justify-center transition-transform duration-200 text-muted-foreground";
+    chevron.setAttribute("aria-hidden", "true");
+    chevron.innerHTML = `
+      <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="6 9 12 15 18 9"></polyline>
+      </svg>
+    `;
+    return chevron;
+  }
+
+  buildSessionTreeBranch({ key, label, level = 0, count = 0, defaultCollapsed = false, forceOpen = false, renderChildren, actions }) {
+    const wrapper = document.createElement("div");
+    wrapper.className = level === 0 ? "space-y-0.5" : "space-y-0.5";
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = level === 0
+      ? "w-full flex items-center gap-1.5 px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80 hover:text-muted-foreground transition-colors rounded-md"
+      : "w-full flex items-center gap-2 px-2 py-1.5 text-sm font-medium text-foreground/85 hover:bg-muted/50 rounded-lg transition-colors";
+
+    const chevron = this.buildSessionTreeChevron();
+    const text = document.createElement("span");
+    text.className = "min-w-0 flex-1 truncate text-left";
+    text.textContent = label || "";
+    button.appendChild(chevron);
+    button.appendChild(text);
+
+    if (count > 0) {
+      const badge = document.createElement("span");
+      badge.className = "text-[11px] font-medium text-muted-foreground/70";
+      badge.textContent = String(count);
+      button.appendChild(badge);
+    }
+    if (typeof actions === "function") {
+      const actionNodes = actions({ button, content: null }) || [];
+      for (const node of actionNodes) {
+        if (node) button.appendChild(node);
+      }
+    }
+
+    const content = document.createElement("div");
+    content.className = level === 0
+      ? "space-y-0.5"
+      : "ml-4 space-y-0.5 border-l border-border/60 pl-2";
+
+    const collapsed = forceOpen ? false : this.isSessionTreeCollapsed(key, defaultCollapsed);
+    this.applySessionTreeCollapsedState(button, content, chevron, collapsed);
+
+    button.addEventListener("click", () => {
+      const nextCollapsed = !content.classList.contains("hidden");
+      this.applySessionTreeCollapsedState(button, content, chevron, nextCollapsed);
+      this.setSessionTreeCollapsed(key, nextCollapsed);
+    });
+
+    if (typeof renderChildren === "function") {
+      renderChildren(content);
+    }
+
+    wrapper.appendChild(button);
+    wrapper.appendChild(content);
+    return wrapper;
+  }
+
+  getSessionWorkflowId(session) {
+    if (!session || typeof session !== "object") return "";
+    return (session.workflow_id || session.workflowId || "").toString().trim();
+  }
+
+  getSessionWorkflowName(session) {
+    if (!session || typeof session !== "object") return "";
+    return (session.workflow_name || session.workflowName || "").toString().trim();
+  }
+
+  getSessionWorkflowDepartmentName(session) {
+    if (!session || typeof session !== "object") return "";
+    return (session.workflow_department_name || session.workflowDepartmentName || "").toString().trim();
+  }
+
+  getSessionWorkflowAgentName(session) {
+    if (!session || typeof session !== "object") return "";
+    return (session.workflow_agent_name || session.workflowAgentName || "").toString().trim();
+  }
+
+  groupWorkflowSessions(sessions) {
+    const groups = new Map();
+    for (const session of this.sortSessionSummaries(sessions)) {
+      const workflowId = this.getSessionWorkflowId(session);
+      const workflowName = this.getSessionWorkflowName(session) || this.t("Workflow Agent");
+      const departmentName = this.getSessionWorkflowDepartmentName(session);
+      const agentName = this.getSessionWorkflowAgentName(session);
+      const fallbackKey = workflowId || `workflow-name:${workflowName.toLowerCase()}`;
+      if (!groups.has(fallbackKey)) {
+        groups.set(fallbackKey, {
+          key: fallbackKey,
+          workflowId,
+          name: workflowName,
+          departmentName,
+          agentName,
+          sessions: [],
+          latestActivity: 0,
+        });
+      }
+      const group = groups.get(fallbackKey);
+      if (!group.departmentName && departmentName) group.departmentName = departmentName;
+      if (!group.agentName && agentName) group.agentName = agentName;
+      group.sessions.push(session);
+      group.latestActivity = Math.max(
+        group.latestActivity,
+        this.getSessionSummaryTimestamp(session, ["last_activity_at", "lastActivityAt", "started_at", "startedAt"])
+      );
+    }
+    return Array.from(groups.values()).sort((left, right) => {
+      if (left.latestActivity !== right.latestActivity) return right.latestActivity - left.latestActivity;
+      return left.name.localeCompare(right.name);
+    });
+  }
+
+  buildWorkflowSessionCreateButton(workflowId, workflowName) {
+    if (!workflowId || !this.shouldUseConversationApi()) return null;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "ml-1 inline-flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors";
+    button.title = this.t("Start new Workflow Agent session");
+    button.setAttribute("aria-label", this.t("Start new Workflow Agent session"));
+    button.innerHTML = `
+      <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <line x1="12" y1="5" x2="12" y2="19"></line>
+        <line x1="5" y1="12" x2="19" y2="12"></line>
+      </svg>
+    `;
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.createWorkflowAgentSession(workflowId, workflowName);
+    });
+    return button;
+  }
+
   getCurrentSessionKey() {
     if (this.shouldUseConversationApi() && this.conversationId) {
       return this.conversationId;
@@ -12311,7 +12551,7 @@ class ChatPortalClient {
     if (!key) return;
     const existing = Array.isArray(this.sessionSummaries) ? this.sessionSummaries : [];
     const filtered = existing.filter((session) => this.getSessionSummaryKey(session) !== key);
-    this.sessionSummaries = [sessionSummary, ...filtered];
+    this.sessionSummaries = this.sortSessionSummaries([sessionSummary, ...filtered]);
   }
 
   getTurnStateKey() {
@@ -12748,12 +12988,13 @@ class ChatPortalClient {
 
       const data = await response.json();
       const sessions = this.shouldUseConversationApi() ? data.conversations || [] : data.sessions || [];
+      const sortedSessions = this.sortSessionSummaries(Array.isArray(sessions) ? sessions : []);
 
-      this.sessionSummaries = Array.isArray(sessions) ? sessions : [];
-      if (sessions.length === 0) {
+      this.sessionSummaries = sortedSessions;
+      if (sortedSessions.length === 0) {
         this.showSessionsEmpty();
       } else {
-        this.renderSessionList(sessions);
+        this.renderSessionList(sortedSessions);
       }
     } catch (error) {
       console.warn("Failed to load session history", error);
@@ -12800,23 +13041,59 @@ class ChatPortalClient {
     const itemsContainer = this.elements.sessionsList.querySelector('[data-sessions-items]') || this.elements.sessionsList;
     itemsContainer.innerHTML = "";
 
-    const taskSessions = sessions.filter((session) => this.getSessionSummaryType(session) === "task");
-    const chatSessions = sessions.filter((session) => this.getSessionSummaryType(session) !== "task");
-    const renderGroup = (label, groupSessions) => {
-      if (!groupSessions.length) return;
-      const heading = document.createElement("div");
-      heading.className = "px-2 pt-3 pb-1 text-[11px] font-semibold uppercase text-muted-foreground";
-      heading.textContent = label;
-      itemsContainer.appendChild(heading);
-      for (const session of groupSessions) {
-        const isActive = this.getSessionSummaryKey(session) === this.getCurrentSessionKey();
-        const item = this.buildSessionItem(session, isActive);
-        itemsContainer.appendChild(item);
-      }
-    };
+    const sortedSessions = this.sortSessionSummaries(Array.isArray(sessions) ? sessions : []);
+    const taskSessions = sortedSessions.filter((session) => this.getSessionSummaryType(session) === "task");
+    const chatSessions = sortedSessions.filter((session) => this.getSessionSummaryType(session) !== "task");
+    const currentSessionKey = this.getCurrentSessionKey();
 
-    renderGroup("Tasks", taskSessions);
-    renderGroup("Chats", chatSessions);
+    if (taskSessions.length) {
+      const workflowGroups = this.groupWorkflowSessions(taskSessions);
+      const workflowBranch = this.buildSessionTreeBranch({
+        key: "section:workflow-agents",
+        label: this.t("Workflow Agents"),
+        level: 0,
+        count: workflowGroups.length,
+        forceOpen: taskSessions.some((session) => this.getSessionSummaryKey(session) === currentSessionKey),
+        renderChildren: (sectionContent) => {
+          for (const group of workflowGroups) {
+            const groupHasActiveSession = group.sessions.some((session) => this.getSessionSummaryKey(session) === currentSessionKey);
+            const workflowNode = this.buildSessionTreeBranch({
+              key: `workflow:${group.key}`,
+              label: group.departmentName ? `${group.name} · ${group.departmentName}` : group.name,
+              level: 1,
+              count: group.sessions.length,
+              forceOpen: groupHasActiveSession,
+              actions: () => [this.buildWorkflowSessionCreateButton(group.workflowId, group.name)],
+              renderChildren: (workflowContent) => {
+                for (const session of group.sessions) {
+                  const isActive = this.getSessionSummaryKey(session) === currentSessionKey;
+                  workflowContent.appendChild(this.buildSessionItem(session, isActive, { nested: true }));
+                }
+              },
+            });
+            sectionContent.appendChild(workflowNode);
+          }
+        },
+      });
+      itemsContainer.appendChild(workflowBranch);
+    }
+
+    if (chatSessions.length) {
+      const chatsBranch = this.buildSessionTreeBranch({
+        key: "section:chats",
+        label: this.t("Chats"),
+        level: 0,
+        count: chatSessions.length,
+        forceOpen: chatSessions.some((session) => this.getSessionSummaryKey(session) === currentSessionKey),
+        renderChildren: (sectionContent) => {
+          for (const session of chatSessions) {
+            const isActive = this.getSessionSummaryKey(session) === currentSessionKey;
+            sectionContent.appendChild(this.buildSessionItem(session, isActive, { nested: true }));
+          }
+        },
+      });
+      itemsContainer.appendChild(chatsBranch);
+    }
 
     this.applyPendingSessionTitles();
   }
@@ -12839,9 +13116,10 @@ class ChatPortalClient {
     return this.getCurrentSessionType() === "task";
   }
 
-  buildSessionItem(session, isActive) {
+  buildSessionItem(session, isActive, options = {}) {
     const div = document.createElement("div");
-    div.className = `flex items-center gap-2 px-2 h-10 rounded-lg cursor-pointer transition-colors text-sm font-medium ${
+    const nested = Boolean(options.nested);
+    div.className = `flex items-center gap-2 px-2 ${nested ? "h-9 text-[13px]" : "h-10 text-sm"} rounded-lg cursor-pointer transition-colors font-medium ${
       isActive
         ? "bg-primary/10 text-primary"
         : "text-foreground/80 hover:bg-muted/50"
@@ -12861,7 +13139,6 @@ class ChatPortalClient {
       div.dataset.messageCount = String(session.message_count);
     }
 
-    // Compact title-only layout
     div.innerHTML = `
       <span class="flex-1 truncate" data-session-title>${this.escapeHtml(session.title)}</span>
     `;
@@ -13113,6 +13390,11 @@ class ChatPortalClient {
       });
       this.renderSessionList(this.sessionSummaries);
       await this.switchToSession(this.getSessionSummaryByKey(newKey) || session);
+      this.sessionCreationInProgress = false;
+      if (this.elements.newSessionBtn) {
+        this.elements.newSessionBtn.disabled = false;
+        this.elements.newSessionBtn.classList.remove("opacity-50");
+      }
     } catch (error) {
       this.showToast("New chat failed", error.message || "Could not create new conversation.", true);
       this.sessionCreationInProgress = false;
@@ -13122,6 +13404,55 @@ class ChatPortalClient {
         this.elements.newSessionBtn.disabled = false;
         this.elements.newSessionBtn.classList.remove("opacity-50");
       }
+    }
+  }
+
+  async createWorkflowAgentSession(workflowId, workflowName = "") {
+    const normalizedWorkflowId = (workflowId || "").toString().trim();
+    if (!normalizedWorkflowId || !this.shouldUseConversationApi()) return;
+    if (this.sessionCreationInProgress) return;
+
+    this.sessionCreationInProgress = true;
+    try {
+      const response = await fetch(this.conversationsEndpoint, {
+        method: "POST",
+        headers: this.jsonHeaders(),
+        body: JSON.stringify({
+          business_slug: this.businessSlug,
+          agent_slug: this.agentSlug,
+          workflow_id: normalizedWorkflowId,
+          title: this.t("New session"),
+          metadata: this.buildVisitorMetadata(),
+        }),
+      });
+      if (!response.ok) {
+        throw new Error("Failed to create Workflow Agent session");
+      }
+      const data = await response.json();
+      const session = data && data.session ? data.session : null;
+      const newKey = this.getSessionSummaryKey(session || {});
+      if (!session || !newKey) {
+        throw new Error("No Workflow Agent session returned");
+      }
+      this.setSessionTreeCollapsed("section:workflow-agents", false);
+      this.setSessionTreeCollapsed(`workflow:${normalizedWorkflowId}`, false);
+      this.upsertSessionSummary({
+        ...session,
+        workflow_id: session.workflow_id || session.workflowId || normalizedWorkflowId,
+        workflow_name: session.workflow_name || session.workflowName || workflowName,
+        title: session.title || this.t("New session"),
+        message_count: 0,
+      });
+      this.renderSessionList(this.sessionSummaries);
+      await this.switchToSession(this.getSessionSummaryByKey(newKey) || session);
+    } catch (error) {
+      this.showToast(
+        this.t("New Workflow Agent session failed"),
+        error.message || this.t("Could not create a new Workflow Agent session."),
+        true
+      );
+    } finally {
+      this.sessionCreationInProgress = false;
     }
   }
 
@@ -13256,7 +13587,7 @@ class ChatPortalClient {
       container.innerHTML = "";
       container.removeAttribute("data-session-skeleton");
       if (this.isCurrentTaskSession()) {
-        const workflowName = this.currentWorkflowName || "Task thread";
+        const workflowName = this.currentWorkflowName || this.t("Workflow Agent");
         container.innerHTML = `
           <div class="min-h-[55vh] flex items-center justify-center px-4 py-12">
             <div class="w-full max-w-xl rounded-lg border border-border/70 bg-card/40 px-5 py-4 text-left shadow-sm">
@@ -13269,7 +13600,7 @@ class ChatPortalClient {
                 </div>
                 <div class="min-w-0">
                   <p class="text-sm font-semibold text-foreground">${this.escapeHtml(workflowName)}</p>
-                  <p class="mt-1 text-sm leading-6 text-muted-foreground">Waiting for task activity. Updates, approvals, and run summaries will appear here.</p>
+                  <p class="mt-1 text-sm leading-6 text-muted-foreground">${this.escapeHtml(this.t("Waiting for Workflow Agent activity. Updates, approvals, and run summaries will appear here."))}</p>
                 </div>
               </div>
             </div>

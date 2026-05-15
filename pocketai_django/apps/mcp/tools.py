@@ -1388,6 +1388,40 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
             "name": {"type": "string", "description": "Short task name."},
             "goal": {"type": "string", "description": "What the task should accomplish."},
             "description": {"type": "string"},
+            "success_criteria": {
+                "type": "array",
+                "description": "Optional success criteria the Workflow Agent should satisfy.",
+                "items": {"type": "string"},
+            },
+            "constraints": {
+                "type": "object",
+                "description": "Optional execution constraints, such as limits, boundaries, or timeout hints.",
+                "additionalProperties": True,
+            },
+            "output_schema": {
+                "type": "object",
+                "description": "Optional JSON-schema-like expected output contract.",
+                "additionalProperties": True,
+            },
+            "output_preferences": {
+                "type": "object",
+                "description": "Optional user-facing response style, format, or delivery preferences.",
+                "additionalProperties": True,
+            },
+            "approval": {
+                "type": "object",
+                "description": "Optional human approval policy for risky or irreversible actions.",
+                "additionalProperties": True,
+            },
+            "custom_instructions": {
+                "type": "string",
+                "description": "Additional role/custom instructions for the Workflow Agent.",
+            },
+            "instructions": {
+                "type": "object",
+                "description": "Optional full Workflow Agent instruction contract. Explicit fields override matching keys.",
+                "additionalProperties": True,
+            },
             "trigger_type": {"type": "string", "enum": ["manual", "schedule", "webhook", "email_inbox"]},
             "trigger_config": {"type": "object", "additionalProperties": True},
             "source_config": {"type": "object", "additionalProperties": True},
@@ -1403,6 +1437,13 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
             "name": {"type": "string"},
             "goal": {"type": "string"},
             "description": {"type": "string"},
+            "success_criteria": {"type": "array", "items": {"type": "string"}},
+            "constraints": {"type": "object", "additionalProperties": True},
+            "output_schema": {"type": "object", "additionalProperties": True},
+            "output_preferences": {"type": "object", "additionalProperties": True},
+            "approval": {"type": "object", "additionalProperties": True},
+            "custom_instructions": {"type": "string"},
+            "instructions": {"type": "object", "additionalProperties": True},
             "trigger_type": {"type": "string", "enum": ["manual", "schedule", "webhook", "email_inbox"]},
             "trigger_config": {"type": "object", "additionalProperties": True},
             "source_config": {"type": "object", "additionalProperties": True},
@@ -11063,7 +11104,17 @@ def _list_agents_handler(
     from apps.accounts.models import AgentProfile
 
     include_paused = bool(arguments.get("include_paused"))
-    qs = AgentProfile.objects.select_related("department").filter(business_profile_id=conversation.business_profile_id).order_by("name")
+    qs = (
+        AgentProfile.objects.select_related("department")
+        .filter(
+            business_profile_id=conversation.business_profile_id,
+            agent_type__in=[
+                AgentProfile.AgentTypeChoices.MAIN,
+                AgentProfile.AgentTypeChoices.DEPARTMENT_LEAD,
+            ],
+        )
+        .order_by("name")
+    )
     if not include_paused:
         qs = qs.filter(status="active")
     return {
@@ -11147,6 +11198,89 @@ def _workflow_payload(workflow) -> dict[str, object]:
         "last_triggered_at": workflow.last_triggered_at.isoformat() if workflow.last_triggered_at else None,
         "last_error": workflow.last_error or "",
     }
+
+
+def _first_present(arguments: Mapping[str, object], *keys: str) -> tuple[bool, object]:
+    for key in keys:
+        if key in arguments:
+            return True, arguments.get(key)
+    return False, None
+
+
+def _task_instruction_spec_from_args(
+    arguments: Mapping[str, object],
+    *,
+    current: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    from apps.conversations.workflow_contracts import normalize_workflow_instructions
+
+    spec: dict[str, object] = dict(current or {})
+    raw_contract = arguments.get("instructions") or arguments.get("instruction_contract") or arguments.get("instructionContract")
+    if isinstance(raw_contract, Mapping):
+        spec.update(dict(raw_contract))
+
+    present, value = _first_present(arguments, "goal")
+    if present:
+        spec["goal"] = str(value or "").strip()[:6000]
+
+    present, value = _first_present(arguments, "success_criteria", "successCriteria")
+    if present:
+        if isinstance(value, (list, tuple)):
+            spec["success_criteria"] = [str(item).strip()[:600] for item in value if str(item or "").strip()][:20]
+        elif value is None:
+            spec["success_criteria"] = []
+        else:
+            text = str(value or "").strip()
+            spec["success_criteria"] = [text[:600]] if text else []
+
+    for public_key, camel_key in (
+        ("constraints", "constraints"),
+        ("output_schema", "outputSchema"),
+        ("approval", "approval"),
+        ("output_preferences", "outputPreferences"),
+    ):
+        present, value = _first_present(arguments, public_key, camel_key)
+        if not present:
+            continue
+        if isinstance(value, Mapping):
+            spec[public_key] = dict(value)
+        elif value is None:
+            spec[public_key] = {}
+        else:
+            text = str(value or "").strip()
+            spec[public_key] = {"instructions": text[:1200]} if text else {}
+
+    present, value = _first_present(arguments, "custom_instructions", "customInstructions", "role_instructions", "roleInstructions")
+    if present:
+        text = str(value or "").strip()
+        if text:
+            spec["custom_instructions"] = text[:4000]
+        else:
+            spec.pop("custom_instructions", None)
+
+    return normalize_workflow_instructions(spec)
+
+
+def _has_task_instruction_updates(arguments: Mapping[str, object]) -> bool:
+    keys = {
+        "instructions",
+        "instruction_contract",
+        "instructionContract",
+        "goal",
+        "success_criteria",
+        "successCriteria",
+        "constraints",
+        "output_schema",
+        "outputSchema",
+        "approval",
+        "output_preferences",
+        "outputPreferences",
+        "custom_instructions",
+        "customInstructions",
+        "role_instructions",
+        "roleInstructions",
+    }
+    return any(key in arguments for key in keys)
 
 
 def _remember_workflow_resource_ref(
@@ -11243,7 +11377,6 @@ def _draft_task_handler(
 ) -> Mapping[str, object]:
     del context
     from apps.conversations.models import AgentRunVisibility, AgentWorkflow, AgentWorkflowStatus, AgentWorkflowTriggerType
-    from apps.conversations.workflow_contracts import normalize_workflow_instructions
 
     agent, error = _resolve_task_agent(conversation, arguments.get("agent_id") or arguments.get("agentId"))
     if error:
@@ -11270,7 +11403,7 @@ def _draft_task_handler(
         trigger_type=trigger_type,
         trigger_config=dict(arguments.get("trigger_config") or arguments.get("triggerConfig") or {}),
         source_config=dict(arguments.get("source_config") or arguments.get("sourceConfig") or {}),
-        instructions=normalize_workflow_instructions({"goal": goal[:6000]}),
+        instructions=_task_instruction_spec_from_args(arguments),
         metadata={"source": "chat_task_draft", "activation_requires_user_approval": True},
     )
     _remember_workflow_resource_ref(
@@ -11296,7 +11429,6 @@ def _update_task_handler(
 ) -> Mapping[str, object]:
     del context
     from apps.conversations.models import AgentRunVisibility, AgentWorkflow, AgentWorkflowTriggerType
-    from apps.conversations.workflow_contracts import normalize_workflow_instructions
 
     try:
         task_id = uuid.UUID(str(arguments.get("task_id") or arguments.get("taskId") or ""))
@@ -11310,10 +11442,9 @@ def _update_task_handler(
         if key in arguments:
             setattr(workflow, field, str(arguments.get(key) or "").strip()[:limit])
             updates.append(field)
-    if "goal" in arguments:
+    if _has_task_instruction_updates(arguments):
         current = dict(workflow.instructions or {}) if isinstance(workflow.instructions, dict) else {}
-        current["goal"] = str(arguments.get("goal") or "").strip()[:6000]
-        workflow.instructions = normalize_workflow_instructions(current)
+        workflow.instructions = _task_instruction_spec_from_args(arguments, current=current)
         updates.append("instructions")
     if "trigger_type" in arguments or "triggerType" in arguments:
         trigger_type = str(arguments.get("trigger_type") or arguments.get("triggerType") or "").strip().lower()

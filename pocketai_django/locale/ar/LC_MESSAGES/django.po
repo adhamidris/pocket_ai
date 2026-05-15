@@ -80,6 +80,30 @@ msgstr "تسجيل الدخول"
 msgid "Register"
 msgstr "إنشاء حساب"
 
+msgid "Workflow Agents"
+msgstr "وكلاء سير العمل"
+
+msgid "Workflow Agent"
+msgstr "وكيل سير العمل"
+
+msgid "New session"
+msgstr "جلسة جديدة"
+
+msgid "Start new Workflow Agent session"
+msgstr "ابدأ جلسة جديدة لوكيل سير العمل"
+
+msgid "New Workflow Agent session failed"
+msgstr "فشل إنشاء جلسة وكيل سير عمل جديدة"
+
+msgid "Could not create a new Workflow Agent session."
+msgstr "تعذر إنشاء جلسة جديدة لوكيل سير العمل."
+
+msgid "Waiting for Workflow Agent activity. Updates, approvals, and run summaries will appear here."
+msgstr "في انتظار نشاط وكيل سير العمل. ستظهر التحديثات والموافقات وملخصات التشغيل هنا."
+
+msgid "Chats"
+msgstr "الدردشات"
+
 #: frontend/context_processors.py:82
 msgid "Get Started"
 msgstr "ابدأ الآن"
@@ -5388,3 +5412,30 @@ msgstr "%(count)s خصائص في البنية"
 
 msgid "Core typed field"
 msgstr "حقل أساسي مضبوط النوع"
+
+msgid "Department Agents"
+msgstr "وكلاء الأقسام"
+
+msgid "Manage each department's main agent, Workflow Agents, knowledge, permissions, and runs."
+msgstr "أدر الوكيل الرئيسي لكل قسم، ووكلاء سير العمل، والمعرفة، والصلاحيات، والتشغيلات."
+
+msgid "Search department agents..."
+msgstr "ابحث في وكلاء الأقسام..."
+
+msgid "No department agents yet. Create a department to get its main agent automatically."
+msgstr "لا توجد وكلاء أقسام بعد. أنشئ قسماً ليتم إنشاء وكيله الرئيسي تلقائياً."
+
+msgid "No department agent selected"
+msgstr "لم يتم اختيار وكيل قسم"
+
+msgid "Choose a department agent from the cards to preview configuration, Workflow Agents, memory, and permissions."
+msgstr "اختر وكيل قسم من البطاقات لمعاينة الإعدادات ووكلاء سير العمل والذاكرة والصلاحيات."
+
+msgid "Name must be at least 2 characters."
+msgstr "يجب أن يتكون الاسم من حرفين على الأقل."
+
+msgid "We couldn't save it. Try again."
+msgstr "تعذر الحفظ. حاول مرة أخرى."
+
+msgid "Unable to create it right now."
+msgstr "يتعذر الإنشاء حالياً."

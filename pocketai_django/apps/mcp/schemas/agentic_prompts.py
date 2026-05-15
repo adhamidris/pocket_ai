@@ -347,6 +347,7 @@ def build_model_specific_prompt(
     model_id: str | None = None,
     business_name: str | None = None,
     additional_rules: str = "",
+    agent_name_override: str | None = None,
 ) -> str:
     """
     Build a model-aware agentic system prompt.
@@ -368,9 +369,10 @@ def build_model_specific_prompt(
         f"(agent: {agent.name})"
     )
 
+    active_agent_name = (agent_name_override or "").strip() or agent.name
     for_business = f" for {business_name}" if business_name else ""
     fmt_kwargs = {
-        "agent_name": agent.name,
+        "agent_name": active_agent_name,
         "for_business": for_business,
         "search_query_variants_hint": _search_query_variants_hint(),
         "search_query_variants_subquestions_hint": _search_query_variants_hint(

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.utils import timezone
 
 from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
@@ -85,6 +87,41 @@ class PortalOwnershipAndAuthTests(TestCase):
 
         conversation = Conversation.objects.get(id=result.session.conversation_id)
         self.assertEqual(conversation.owner_user_id, self.business.user_id)
+
+    def test_bootstrap_existing_session_does_not_reorder_by_touching_activity(self) -> None:
+        older = Conversation.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            owner_user=self.owner,
+            session_token="older-bootstrap-session",
+        )
+        newer = Conversation.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            owner_user=self.owner,
+            session_token="newer-bootstrap-session",
+        )
+        old_activity = timezone.now() - timedelta(days=2)
+        new_activity = timezone.now() - timedelta(hours=1)
+        Conversation.objects.filter(id=older.id).update(last_activity_at=old_activity)
+        Conversation.objects.filter(id=newer.id).update(last_activity_at=new_activity)
+
+        self.service.bootstrap_session(
+            business_slug=self.business.slug,
+            agent_slug=self.agent.slug,
+            existing_session_token=older.session_token,
+            metadata={"ui_language": "en"},
+        )
+
+        older.refresh_from_db()
+        self.assertEqual(older.last_activity_at, old_activity)
+        sessions = self.service.list_owned_sessions(
+            owner_user=self.owner,
+            business_slug=self.business.slug,
+            agent_slug=self.agent.slug,
+        )
+        session_ids = [session.conversation_id for session in sessions]
+        self.assertLess(session_ids.index(newer.id), session_ids.index(older.id))
 
     def test_resolve_scope_for_user_requires_authorized_user(self) -> None:
         scope = resolve_scope_for_user(

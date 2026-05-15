@@ -1012,6 +1012,8 @@ def _session_summary_to_dict(summary) -> dict[str, object]:
         "session_type": getattr(summary, "session_type", "chat"),
         "workflow_id": str(summary.workflow_id) if getattr(summary, "workflow_id", None) else None,
         "workflow_name": getattr(summary, "workflow_name", ""),
+        "workflow_agent_name": getattr(summary, "workflow_agent_name", ""),
+        "workflow_department_name": getattr(summary, "workflow_department_name", ""),
     }
 
 
@@ -1439,6 +1441,9 @@ def _serialize_workflow_agent_for_portal(
     return {
         "id": str(workflow.id),
         "agentId": str(workflow.agent_profile_id),
+        "agentName": getattr(getattr(workflow, "agent_profile", None), "name", "") or "",
+        "departmentId": str(workflow.department_id) if workflow.department_id else None,
+        "departmentName": getattr(getattr(workflow, "department", None), "name", "") or "",
         "name": workflow.name,
         "description": workflow.description or "",
         "status": workflow.status,
@@ -1506,7 +1511,8 @@ def _build_portal_agent_runs_snapshot(
         workflow_agents: list[dict[str, object]] = []
         if agent_profile_id:
             workflows = list(
-                AgentWorkflow.objects.filter(business_profile_id=business_id, agent_profile_id=agent_profile_id)
+                AgentWorkflow.objects.filter(business_profile_id=business_id)
+                .select_related("agent_profile", "department")
                 .annotate(session_count=Count("sessions"))
                 .order_by("-updated_at", "-created_at")[:100]
             )
@@ -3614,6 +3620,7 @@ def conversations_collection(request: HttpRequest) -> JsonResponse:
     business_slug = (payload.get("business_slug") or payload.get("businessSlug") or "").strip()
     agent_slug = (payload.get("agent_slug") or payload.get("agentSlug") or "").strip()
     metadata = _with_ui_language(request, _normalize_portal_metadata(payload.get("metadata") or {}))
+    workflow_id = str(payload.get("workflow_id") or payload.get("workflowId") or "").strip()
     if not business_slug or not agent_slug:
         return _json_error("validation_error", "business_slug and agent_slug are required.")
 
@@ -3631,12 +3638,24 @@ def conversations_collection(request: HttpRequest) -> JsonResponse:
             business_slug=business_slug,
             agent_slug=agent_slug,
         )
-        result = service.create_owned_session(
-            owner_user=user,
-            business_slug=business_slug,
-            agent_slug=agent_slug,
-            metadata=metadata,
-        )
+        if workflow_id:
+            result = service.create_owned_workflow_session(
+                owner_user=user,
+                business_slug=business_slug,
+                agent_slug=agent_slug,
+                workflow_id=workflow_id,
+                metadata=metadata,
+                title=str(payload.get("title") or "").strip(),
+            )
+        else:
+            result = service.create_owned_session(
+                owner_user=user,
+                business_slug=business_slug,
+                agent_slug=agent_slug,
+                metadata=metadata,
+            )
+    except PortalValidationError as exc:
+        return _json_error("validation_error", str(exc))
     except (PortalNotFoundError, PortalAuthorizationError) as exc:
         status = 403 if isinstance(exc, PortalAuthorizationError) else 404
         code = "forbidden" if status == 403 else "not_found"

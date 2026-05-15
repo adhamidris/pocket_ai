@@ -26,6 +26,7 @@ class AgentsDashboardTests(TestCase):
             user=self.user,
             name="Mona",
             role="Operations",
+            agent_type=AgentProfile.AgentTypeChoices.MAIN,
         )
 
     def test_agents_dashboard_renders_workforce_tabs(self) -> None:
@@ -35,7 +36,8 @@ class AgentsDashboardTests(TestCase):
         self.assertEqual(response.status_code, 200)
         content = response.content.decode("utf-8")
         self.assertIn("Create department", content)
-        self.assertIn("Create agent", content)
+        self.assertIn("Department Agents", content)
+        self.assertNotIn("Create agent", content)
         self.assertIn('data-agent-tab="tasks"', content)
         self.assertIn('data-agent-tab="runs"', content)
         self.assertIn('data-agent-tab="memory"', content)

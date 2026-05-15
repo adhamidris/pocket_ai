@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 from django.conf import settings
 from django.contrib.auth import login as auth_login
 from django.core.exceptions import ImproperlyConfigured
+from django.db import transaction
 from django.http import FileResponse, HttpRequest, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.urls import reverse
 from django.utils import timezone
@@ -981,6 +982,30 @@ def _serialize_agent_summary(agent: AgentProfile) -> dict[str, object]:
     }
 
 
+def _create_department_lead_agent(
+    *,
+    business: BusinessProfile,
+    department: AgentDepartment,
+    user,
+    name: str | None = None,
+    role: str = "",
+    instructions: str = "",
+) -> AgentProfile:
+    agent_name = (name or f"{department.name} Agent").strip()[:120]
+    return AgentProfile.objects.create(
+        business_profile=business,
+        user=user,
+        name=agent_name,
+        status=AgentProfile.StatusChoices.ACTIVE,
+        role=(role or "Department Agent")[:120],
+        agent_type=AgentProfile.AgentTypeChoices.DEPARTMENT_LEAD,
+        department=department,
+        can_manage_tasks=True,
+        can_manage_departments=False,
+        instructions=(instructions or "")[:12000],
+    )
+
+
 @require_http_methods(["GET", "POST"])
 def departments_collection(request: HttpRequest) -> JsonResponse:
     business_id = request.GET.get("business_id")
@@ -1013,16 +1038,33 @@ def departments_collection(request: HttpRequest) -> JsonResponse:
         lead_agent = AgentProfile.objects.filter(id=lead_agent_id, business_profile=business).first()
         if lead_agent is None:
             return JsonResponse({"error": "AGENT_NOT_FOUND", "message": "Lead agent not found."}, status=HTTPStatus.NOT_FOUND)
-    department = AgentDepartment.objects.create(
-        business_profile=business,
-        created_by=request.user,
-        lead_agent=lead_agent,
-        name=name[:120],
-        description=str((payload or {}).get("description") or "")[:4000],
-        status=status,
-        instructions=str((payload or {}).get("instructions") or "")[:12000],
-        metadata=dict((payload or {}).get("metadata") or {}),
-    )
+    with transaction.atomic():
+        department = AgentDepartment.objects.create(
+            business_profile=business,
+            created_by=request.user,
+            lead_agent=lead_agent,
+            name=name[:120],
+            description=str((payload or {}).get("description") or "")[:4000],
+            status=status,
+            instructions=str((payload or {}).get("instructions") or "")[:12000],
+            metadata=dict((payload or {}).get("metadata") or {}),
+        )
+        if lead_agent is not None:
+            lead_agent.department = department
+            lead_agent.agent_type = AgentProfile.AgentTypeChoices.DEPARTMENT_LEAD
+            lead_agent.can_manage_tasks = True
+            lead_agent.can_manage_departments = False
+            lead_agent.save(update_fields=["department", "agent_type", "can_manage_tasks", "can_manage_departments", "updated_at"])
+        elif status == AgentDepartment.StatusChoices.ACTIVE:
+            lead_agent = _create_department_lead_agent(
+                business=business,
+                department=department,
+                user=request.user,
+                name=str((payload or {}).get("agentName") or (payload or {}).get("agent_name") or "").strip() or None,
+                instructions=department.instructions,
+            )
+            department.lead_agent = lead_agent
+            department.save(update_fields=["lead_agent", "updated_at"])
     return JsonResponse({"department": _serialize_department(department)}, status=HTTPStatus.CREATED)
 
 
@@ -1061,9 +1103,26 @@ def department_detail(request: HttpRequest, department_id: uuid.UUID) -> JsonRes
         lead_agent_id, err = _parse_uuid_value(payload.get("leadAgentId") or payload.get("lead_agent_id"), field="leadAgentId")
         if err:
             return err
-        department.lead_agent = AgentProfile.objects.filter(id=lead_agent_id, business_profile=business).first() if lead_agent_id else None
-        if lead_agent_id and department.lead_agent is None:
+        lead_agent = AgentProfile.objects.filter(id=lead_agent_id, business_profile=business).first() if lead_agent_id else None
+        if lead_agent_id and lead_agent is None:
             return JsonResponse({"error": "AGENT_NOT_FOUND", "message": "Lead agent not found."}, status=HTTPStatus.NOT_FOUND)
+        if lead_agent is not None:
+            if AgentProfile.objects.filter(
+                business_profile=business,
+                department=department,
+                agent_type=AgentProfile.AgentTypeChoices.DEPARTMENT_LEAD,
+                status=AgentProfile.StatusChoices.ACTIVE,
+            ).exclude(id=lead_agent.id).exists():
+                return JsonResponse(
+                    {"error": "VALIDATION_ERROR", "message": "This department already has an active agent."},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
+            lead_agent.department = department
+            lead_agent.agent_type = AgentProfile.AgentTypeChoices.DEPARTMENT_LEAD
+            lead_agent.can_manage_tasks = True
+            lead_agent.can_manage_departments = False
+            lead_agent.save(update_fields=["department", "agent_type", "can_manage_tasks", "can_manage_departments", "updated_at"])
+        department.lead_agent = lead_agent
         updates.append("lead_agent")
     if "metadata" in payload:
         department.metadata = dict(payload.get("metadata") or {})
@@ -1098,9 +1157,25 @@ def agents_collection(request: HttpRequest) -> JsonResponse:
                 agent_type=AgentProfile.AgentTypeChoices.MAIN,
                 status=AgentProfile.StatusChoices.ACTIVE,
             ).exists()
-            agent_type = AgentProfile.AgentTypeChoices.SPECIALIST if has_main else AgentProfile.AgentTypeChoices.MAIN
+            agent_type = AgentProfile.AgentTypeChoices.MAIN if not has_main else ""
+        if not agent_type:
+            return JsonResponse(
+                {
+                    "error": "VALIDATION_ERROR",
+                    "message": "This workspace already has a main agent. Create a department for another workspace, or create Workflow Agents inside the current agent.",
+                },
+                status=HTTPStatus.BAD_REQUEST,
+            )
         if agent_type not in {choice for choice, _ in AgentProfile.AgentTypeChoices.choices}:
             return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid agentType."}, status=HTTPStatus.BAD_REQUEST)
+        if agent_type in {AgentProfile.AgentTypeChoices.SPECIALIST, AgentProfile.AgentTypeChoices.BACKGROUND}:
+            return JsonResponse(
+                {
+                    "error": "VALIDATION_ERROR",
+                    "message": "Specialized user-facing agents are now Workflow Agents. Use departments for isolated workspaces and workflows for specialization.",
+                },
+                status=HTTPStatus.BAD_REQUEST,
+            )
         if (
             agent_type == AgentProfile.AgentTypeChoices.MAIN
             and status == AgentProfile.StatusChoices.ACTIVE
@@ -1122,6 +1197,26 @@ def agents_collection(request: HttpRequest) -> JsonResponse:
             department = AgentDepartment.objects.filter(id=department_id, business_profile=business).first()
             if department is None:
                 return JsonResponse({"error": "DEPARTMENT_NOT_FOUND", "message": "Department not found."}, status=HTTPStatus.NOT_FOUND)
+            if agent_type != AgentProfile.AgentTypeChoices.DEPARTMENT_LEAD:
+                return JsonResponse(
+                    {"error": "VALIDATION_ERROR", "message": "Department agents must be department leads."},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
+            if AgentProfile.objects.filter(
+                business_profile=business,
+                department=department,
+                agent_type=AgentProfile.AgentTypeChoices.DEPARTMENT_LEAD,
+                status=AgentProfile.StatusChoices.ACTIVE,
+            ).exists():
+                return JsonResponse(
+                    {"error": "VALIDATION_ERROR", "message": "This department already has an active agent."},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
+        elif agent_type == AgentProfile.AgentTypeChoices.DEPARTMENT_LEAD:
+            return JsonResponse(
+                {"error": "VALIDATION_ERROR", "message": "departmentId is required for department agents."},
+                status=HTTPStatus.BAD_REQUEST,
+            )
         manager_id, err = _parse_uuid_value((payload or {}).get("managerAgentId") or (payload or {}).get("manager_agent_id"), field="managerAgentId")
         if err:
             return err
@@ -1150,6 +1245,9 @@ def agents_collection(request: HttpRequest) -> JsonResponse:
             traits=list((payload or {}).get("traits") or []),
             escalation_rule=str((payload or {}).get("escalationRule") or (payload or {}).get("escalation_rule") or "")[:60],
         )
+        if department is not None and agent_type == AgentProfile.AgentTypeChoices.DEPARTMENT_LEAD and department.lead_agent_id is None:
+            department.lead_agent = agent
+            department.save(update_fields=["lead_agent", "updated_at"])
         return JsonResponse({"agent": _serialize_agent_summary(agent)}, status=HTTPStatus.CREATED)
 
     q_name = request.GET.get("q_name") or request.GET.get("qName")
@@ -1225,7 +1323,17 @@ def agents_directory(request: HttpRequest) -> JsonResponse:
     if error:
         return error
     assert business is not None
-    agents = AgentProfile.objects.select_related("department").filter(business_profile=business).order_by("name")
+    agents = (
+        AgentProfile.objects.select_related("department")
+        .filter(
+            business_profile=business,
+            agent_type__in=[
+                AgentProfile.AgentTypeChoices.MAIN,
+                AgentProfile.AgentTypeChoices.DEPARTMENT_LEAD,
+            ],
+        )
+        .order_by("name")
+    )
     return JsonResponse(
         {
             "agents": [
@@ -1309,6 +1417,30 @@ def agent_detail_view(request: HttpRequest, agent_id: uuid.UUID) -> JsonResponse
                 {"error": "VALIDATION_ERROR", "message": "This workspace already has an active main agent."},
                 status=HTTPStatus.BAD_REQUEST,
             )
+        if next_agent_type in {AgentProfile.AgentTypeChoices.SPECIALIST, AgentProfile.AgentTypeChoices.BACKGROUND}:
+            return JsonResponse(
+                {
+                    "error": "VALIDATION_ERROR",
+                    "message": "Use Workflow Agents for specialization instead of creating additional user-facing agents.",
+                },
+                status=HTTPStatus.BAD_REQUEST,
+            )
+        if next_agent_type == AgentProfile.AgentTypeChoices.DEPARTMENT_LEAD and agent_obj.department_id:
+            duplicate_lead = (
+                AgentProfile.objects.filter(
+                    business_profile=business,
+                    department_id=agent_obj.department_id,
+                    agent_type=AgentProfile.AgentTypeChoices.DEPARTMENT_LEAD,
+                    status=AgentProfile.StatusChoices.ACTIVE,
+                )
+                .exclude(id=agent_obj.id)
+                .exists()
+            )
+            if duplicate_lead:
+                return JsonResponse(
+                    {"error": "VALIDATION_ERROR", "message": "This department already has an active agent."},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
         if "departmentId" in payload or "department_id" in payload:
             department_id, err = _parse_uuid_value(payload.get("departmentId") or payload.get("department_id"), field="departmentId")
             if err:
@@ -1318,6 +1450,27 @@ def agent_detail_view(request: HttpRequest, agent_id: uuid.UUID) -> JsonResponse
                 return JsonResponse({"error": "DEPARTMENT_NOT_FOUND", "message": "Department not found."}, status=HTTPStatus.NOT_FOUND)
             agent_obj.department = department
             updates.append("department")
+        if next_agent_type == AgentProfile.AgentTypeChoices.DEPARTMENT_LEAD:
+            if not agent_obj.department_id:
+                return JsonResponse(
+                    {"error": "VALIDATION_ERROR", "message": "departmentId is required for department agents."},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
+            duplicate_lead = (
+                AgentProfile.objects.filter(
+                    business_profile=business,
+                    department_id=agent_obj.department_id,
+                    agent_type=AgentProfile.AgentTypeChoices.DEPARTMENT_LEAD,
+                    status=AgentProfile.StatusChoices.ACTIVE,
+                )
+                .exclude(id=agent_obj.id)
+                .exists()
+            )
+            if duplicate_lead:
+                return JsonResponse(
+                    {"error": "VALIDATION_ERROR", "message": "This department already has an active agent."},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
         if "managerAgentId" in payload or "manager_agent_id" in payload:
             manager_id, err = _parse_uuid_value(payload.get("managerAgentId") or payload.get("manager_agent_id"), field="managerAgentId")
             if err:

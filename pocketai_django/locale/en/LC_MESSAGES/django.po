@@ -79,6 +79,30 @@ msgstr "Sign In"
 msgid "Register"
 msgstr "Register"
 
+msgid "Workflow Agents"
+msgstr "Workflow Agents"
+
+msgid "Workflow Agent"
+msgstr "Workflow Agent"
+
+msgid "New session"
+msgstr "New session"
+
+msgid "Start new Workflow Agent session"
+msgstr "Start new Workflow Agent session"
+
+msgid "New Workflow Agent session failed"
+msgstr "New Workflow Agent session failed"
+
+msgid "Could not create a new Workflow Agent session."
+msgstr "Could not create a new Workflow Agent session."
+
+msgid "Waiting for Workflow Agent activity. Updates, approvals, and run summaries will appear here."
+msgstr "Waiting for Workflow Agent activity. Updates, approvals, and run summaries will appear here."
+
+msgid "Chats"
+msgstr "Chats"
+
 #: frontend/context_processors.py:82
 msgid "Get Started"
 msgstr "Get Started"
@@ -5416,3 +5440,30 @@ msgstr "%(count)s schema properties"
 
 msgid "Core typed field"
 msgstr "Core typed field"
+
+msgid "Department Agents"
+msgstr "Department Agents"
+
+msgid "Manage each department's main agent, Workflow Agents, knowledge, permissions, and runs."
+msgstr "Manage each department's main agent, Workflow Agents, knowledge, permissions, and runs."
+
+msgid "Search department agents..."
+msgstr "Search department agents..."
+
+msgid "No department agents yet. Create a department to get its main agent automatically."
+msgstr "No department agents yet. Create a department to get its main agent automatically."
+
+msgid "No department agent selected"
+msgstr "No department agent selected"
+
+msgid "Choose a department agent from the cards to preview configuration, Workflow Agents, memory, and permissions."
+msgstr "Choose a department agent from the cards to preview configuration, Workflow Agents, memory, and permissions."
+
+msgid "Name must be at least 2 characters."
+msgstr "Name must be at least 2 characters."
+
+msgid "We couldn't save it. Try again."
+msgstr "We couldn't save it. Try again."
+
+msgid "Unable to create it right now."
+msgstr "Unable to create it right now."

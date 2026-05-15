@@ -32,6 +32,11 @@ from apps.conversations.models import (
     ConversationFileStatus,
     ConversationSender,
 )
+from apps.conversations.workflow_contracts import (
+    active_workflow_agent_name,
+    build_department_instruction_note,
+    build_workflow_agent_instruction_note,
+)
 from apps.llm.ai_prompt_builder import PromptBuilder
 from apps.mcp.sanitizer import sanitize_text
 from apps.accounts.feature_flags import FeatureFlagService
@@ -246,6 +251,7 @@ def build_system_message(
     business_profile=None,  # Optional: for agentic mode feature flag check
     model_id: str | None = None,
     has_mcp_connections: bool = False,
+    agent_name_override: str | None = None,
 ) -> str:
     """
     Construct the active MCP system prompt.
@@ -287,6 +293,7 @@ def build_system_message(
         model_id=model_id,
         business_name=resolved_business_name,
         additional_rules=additional_rules_str,
+        agent_name_override=agent_name_override,
     )
 
 
@@ -858,6 +865,7 @@ def build_messages(
 
         agent = conversation.agent_profile
         business_profile = conversation.business_profile
+        active_workflow_name = active_workflow_agent_name(conversation)
         if agent:
             business_name = business_profile.name if business_profile else "your business"
             business_industry = (
@@ -871,10 +879,19 @@ def build_messages(
                     business_profile=business_profile,
                     model_id=model_id,
                     has_mcp_connections=has_mcp_connections,
+                    agent_name_override=active_workflow_name,
                 ).strip()
             )
         else:
             system_sections.append("You are a helpful assistant.".strip())
+
+        department_note = build_department_instruction_note(conversation)
+        if department_note:
+            system_sections.append(department_note.strip())
+
+        workflow_agent_note = build_workflow_agent_instruction_note(conversation)
+        if workflow_agent_note:
+            system_sections.append(workflow_agent_note.strip())
 
         memory_note = _conversation_memory_note(conversation)
         if memory_note:

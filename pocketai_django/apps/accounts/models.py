@@ -621,6 +621,11 @@ class AgentProfile(models.Model):
                 condition=models.Q(agent_type="main", status="active"),
                 name="agent_unique_active_main",
             ),
+            models.UniqueConstraint(
+                fields=["department", "agent_type"],
+                condition=models.Q(agent_type="department_lead", department__isnull=False, status="active"),
+                name="agent_unique_active_dept_lead",
+            ),
         ]
 
     def __str__(self) -> str:

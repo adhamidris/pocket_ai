@@ -9,7 +9,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
-from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
+from apps.accounts.models import AgentDepartment, AgentProfile, BusinessProfile, RegistrationSession
 from apps.conversations.models import (
     AgentWorkflow,
     Conversation,
@@ -114,11 +114,78 @@ class AuthenticatedConversationApiTests(TestCase):
         task = next(item for item in response.json()["conversations"] if item["conversation_id"] == str(workflow_thread.id))
         self.assertEqual(task["session_type"], "task")
         self.assertEqual(task["workflow_id"], str(workflow.id))
-        self.assertEqual(task["title"], "Daily report")
+        self.assertEqual(task["workflow_name"], "Daily report")
+        self.assertEqual(task["title"], "New session")
 
         messages_response = self.client.get(reverse("api:chat-conversation-messages", args=[workflow_thread.id]))
         self.assertEqual(messages_response.status_code, 200)
         self.assertEqual(messages_response.json()["session"]["session_type"], "task")
+
+    def test_conversations_collection_includes_workspace_workflow_agent_sessions(self) -> None:
+        other_agent = AgentProfile.objects.create(
+            business_profile=self.business,
+            user=self.owner,
+            name="Reports Agent",
+            slug="reports-agent",
+        )
+        department = AgentDepartment.objects.create(
+            business_profile=self.business,
+            created_by=self.owner,
+            name="Finance",
+            lead_agent=other_agent,
+        )
+        other_agent.department = department
+        other_agent.agent_type = AgentProfile.AgentTypeChoices.DEPARTMENT_LEAD
+        other_agent.save(update_fields=["department", "agent_type", "updated_at"])
+        workflow = AgentWorkflow.objects.create(
+            business_profile=self.business,
+            agent_profile=other_agent,
+            department=department,
+            created_by=self.owner,
+            name="Daily sales reviewer",
+        )
+        workflow_session = Conversation.objects.create(
+            business_profile=self.business,
+            agent_profile=other_agent,
+            workflow=workflow,
+            owner_user=self.owner,
+            session_token="reports-workflow-session",
+            metadata={
+                "type": "workflow_agent_session",
+                "workflow_id": str(workflow.id),
+                "workflow_name": workflow.name,
+            },
+        )
+        ConversationMessage.objects.create(
+            conversation=workflow_session,
+            sender=ConversationSender.CUSTOMER,
+            body="This should not replace the Workflow Agent name.",
+        )
+        other_agent_chat = Conversation.objects.create(
+            business_profile=self.business,
+            agent_profile=other_agent,
+            owner_user=self.owner,
+            session_token="other-agent-plain-chat",
+        )
+        self.client.force_login(self.owner)
+
+        response = self.client.get(
+            reverse("api:chat-conversations"),
+            {"business_slug": self.business.slug, "agent_slug": self.agent.slug},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        conversations = response.json()["conversations"]
+        ids = {item["conversation_id"] for item in conversations}
+        self.assertIn(str(workflow_session.id), ids)
+        self.assertNotIn(str(other_agent_chat.id), ids)
+        task = next(item for item in conversations if item["conversation_id"] == str(workflow_session.id))
+        self.assertEqual(task["session_type"], "task")
+        self.assertEqual(task["workflow_id"], str(workflow.id))
+        self.assertEqual(task["workflow_name"], "Daily sales reviewer")
+        self.assertEqual(task["workflow_department_name"], "Finance")
+        self.assertEqual(task["workflow_agent_name"], "Reports Agent")
+        self.assertEqual(task["title"], "This should not replace the Workflow Agent name.")
 
     def test_conversations_collection_hides_internal_agent_notification_surfaces(self) -> None:
         Conversation.objects.create(
@@ -206,6 +273,41 @@ class AuthenticatedConversationApiTests(TestCase):
         )
         self.assertEqual(turn_response.status_code, 201)
         self.assertIn("turn", turn_response.json())
+
+    def test_conversation_create_can_start_workflow_agent_session(self) -> None:
+        workflow = AgentWorkflow.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            created_by=self.owner,
+            name="Software Engineer",
+            trigger_type="manual",
+            instructions={"goal": "You are an expert designer in stack HTML and CSS."},
+        )
+        self.client.force_login(self.owner)
+
+        create_response = self.client.post(
+            reverse("api:chat-conversations"),
+            data=json.dumps(
+                {
+                    "business_slug": self.business.slug,
+                    "agent_slug": self.agent.slug,
+                    "workflow_id": str(workflow.id),
+                    "title": "New session",
+                    "metadata": {"source": "dashboard"},
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(create_response.status_code, 201)
+        payload = create_response.json()
+        self.assertEqual(payload["session"]["session_type"], "task")
+        self.assertEqual(payload["session"]["workflow_id"], str(workflow.id))
+        self.assertEqual(payload["session"]["workflow_name"], "Software Engineer")
+        conversation = Conversation.objects.get(id=payload["session"]["conversation_id"])
+        self.assertEqual(conversation.workflow_id, workflow.id)
+        self.assertEqual(conversation.agent_profile_id, self.agent.id)
+        self.assertEqual(conversation.metadata["type"], "workflow_agent_session")
 
     def test_messages_and_turns_forbid_outsider_on_owned_conversation(self) -> None:
         owner_client = self.client

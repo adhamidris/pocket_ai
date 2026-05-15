@@ -2261,7 +2261,6 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
     business = request.user.business_profiles.order_by("-created_at").first() if request.user.is_authenticated else None
     agent_ids: list[uuid.UUID] = []
     departments: list[dict[str, str]] = []
-    has_active_main_agent = False
 
     def _format_duration(seconds: float | None) -> str | None:
         if not seconds:
@@ -2297,8 +2296,6 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
             business_slug = slugify(business.name)
             for item in result.items:
                 agent_ids.append(item.id)
-                if item.agent_type == AgentProfile.AgentTypeChoices.MAIN and item.status == AgentProfile.StatusChoices.ACTIVE:
-                    has_active_main_agent = True
                 initials = initials_from_name(item.name)
                 identifier = agent_identifier(item.id)
                 role_label = display_role_label(item.role)
@@ -2417,24 +2414,13 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
         "skeleton_rows": range(6),
         "agents": agents,
         "departments": departments,
-        "agents_empty_message": _("No agents created yet. Launch your first AI teammate to get started."),
+        "agents_empty_message": _("No department agents yet. Create a department to get its main agent automatically."),
         "agents_showing_count": len(agents),
         "agents_total": total_agents or len(agents),
-        "agents_has_active_main": has_active_main_agent,
         "agents_has_prev": False,
         "agents_has_next": bool(total_agents and total_agents > len(agents)),
-        "agents_panel_empty_title": _("No agent selected"),
-        "agents_panel_empty_message": _("Choose an agent from the cards to preview configuration, tasks, memory, and permissions."),
-        "agents_modal_types": (
-            [{"value": "main", "label": _("Main Agent")}]
-            if not has_active_main_agent
-            else []
-        )
-        + [
-            {"value": "specialist", "label": _("Specialist")},
-            {"value": "department_lead", "label": _("Department Lead")},
-            {"value": "background", "label": _("Background Agent")},
-        ],
+        "agents_panel_empty_title": _("No department agent selected"),
+        "agents_panel_empty_message": _("Choose a department agent from the cards to preview configuration, Workflow Agents, memory, and permissions."),
     }
     return render(request, "frontend/agents.html", context)
 

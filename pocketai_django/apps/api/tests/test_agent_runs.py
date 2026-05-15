@@ -47,23 +47,27 @@ class AgentRunsApiTests(TestCase):
         self.agent = AgentProfile.objects.create(business_profile=self.business, user=self.user, name="Ops Agent")
         self.client.force_login(self.user)
 
-    def test_departments_and_agent_hierarchy_create_via_api(self) -> None:
+    def test_department_create_auto_creates_single_department_agent(self) -> None:
         dept_res = self.client.post(
             reverse("api:departments-list") + f"?business_id={self.business.id}",
-            data=json.dumps({"name": "Finance", "description": "Money work"}),
+            data=json.dumps({"name": "Finance", "description": "Money work", "instructions": "Follow finance policy."}),
             content_type="application/json",
         )
         self.assertEqual(dept_res.status_code, 201)
         department_id = dept_res.json()["department"]["id"]
+        lead_agent_id = dept_res.json()["department"]["leadAgentId"]
+        self.assertTrue(lead_agent_id)
+        lead_agent = AgentProfile.objects.get(id=uuid.UUID(lead_agent_id))
+        self.assertEqual(lead_agent.department_id, uuid.UUID(department_id))
+        self.assertEqual(lead_agent.agent_type, AgentProfile.AgentTypeChoices.DEPARTMENT_LEAD)
+        self.assertTrue(lead_agent.can_manage_tasks)
 
-        lead_res = self.client.post(
+        duplicate_lead_res = self.client.post(
             reverse("api:agents-list") + f"?business_id={self.business.id}",
-            data=json.dumps({"name": "Finance Lead", "agentType": "department_lead", "departmentId": department_id}),
+            data=json.dumps({"name": "Finance Lead 2", "agentType": "department_lead", "departmentId": department_id}),
             content_type="application/json",
         )
-        self.assertEqual(lead_res.status_code, 201)
-        self.assertEqual(lead_res.json()["agent"]["departmentId"], department_id)
-        self.assertTrue(lead_res.json()["agent"]["canManageTasks"])
+        self.assertEqual(duplicate_lead_res.status_code, 400)
 
         specialist_res = self.client.post(
             reverse("api:agents-list") + f"?business_id={self.business.id}",
@@ -72,14 +76,12 @@ class AgentRunsApiTests(TestCase):
                     "name": "Invoice Checker",
                     "agentType": "background",
                     "departmentId": department_id,
-                    "managerAgentId": lead_res.json()["agent"]["id"],
+                    "managerAgentId": lead_agent_id,
                 }
             ),
             content_type="application/json",
         )
-        self.assertEqual(specialist_res.status_code, 201)
-        self.assertEqual(specialist_res.json()["agent"]["managerAgentId"], lead_res.json()["agent"]["id"])
-        self.assertTrue(AgentDepartment.objects.filter(id=uuid.UUID(department_id), agents__name="Invoice Checker").exists())
+        self.assertEqual(specialist_res.status_code, 400)
 
     def test_api_rejects_second_active_main_agent(self) -> None:
         main_res = self.client.post(
