@@ -9,8 +9,6 @@ from typing import Any, Mapping
 from django.db import IntegrityError, connection as db_connection, transaction
 from django.utils import timezone
 
-from core.tenancy import tenant_context
-
 from apps.accounts.models import EmailAccountProvider, EmailAccountStatus
 from apps.conversations.workflow_scheduling import CronScheduleError, compute_next_workflow_schedule_at
 from apps.conversations.models import (
@@ -26,8 +24,6 @@ from apps.conversations.models import (
     AgentWorkflowTriggerType,
     Conversation,
     ConversationChannel,
-    ConversationMessage,
-    ConversationSender,
     ConversationStatus,
 )
 from apps.conversations.workflow_contracts import normalize_workflow_instructions
@@ -73,31 +69,16 @@ def workflow_snapshot(workflow: AgentWorkflow) -> dict[str, Any]:
     )
 
 
-def ensure_workflow_thread(workflow: AgentWorkflow) -> Conversation:
-    if workflow.conversation_id and getattr(workflow, "conversation", None):
-        return workflow.conversation
-    if workflow.conversation_id:
-        existing = Conversation.objects.filter(id=workflow.conversation_id, business_profile=workflow.business_profile).first()
-        if existing:
-            workflow.conversation = existing
-            return existing
+def create_workflow_session(workflow: AgentWorkflow) -> Conversation:
     conversation = Conversation.objects.create(
         business_profile=workflow.business_profile,
         agent_profile=workflow.agent_profile,
+        workflow=workflow,
         owner_user=workflow.created_by or workflow.agent_profile.user,
         channel=ConversationChannel.API,
         status=ConversationStatus.LIVE,
-        metadata={"type": "workflow_thread", "workflow_id": str(workflow.id), "workflow_name": workflow.name},
+        metadata={"type": "workflow_agent_session", "workflow_id": str(workflow.id), "workflow_name": workflow.name},
     )
-    ConversationMessage.objects.create(
-        conversation=conversation,
-        sender=ConversationSender.SYSTEM,
-        body=f"Task thread created for {workflow.name}.",
-        metadata={"type": "workflow_thread_intro", "workflow_id": str(workflow.id)},
-    )
-    AgentWorkflow.objects.filter(id=workflow.id).update(conversation_id=conversation.id, updated_at=timezone.now())
-    workflow.conversation = conversation
-    workflow.conversation_id = conversation.id
     return conversation
 
 
@@ -144,13 +125,11 @@ class AgentWorkflowProcessingService:
         except CronScheduleError as exc:
             AgentWorkflow.objects.filter(id=workflow.id).update(status=AgentWorkflowStatus.PAUSED, last_error=str(exc)[:1000], updated_at=now)
             return AgentWorkflowProcessResult(workflow_id=str(workflow.id), action="paused", error=str(exc)[:400])
-        with tenant_context(workflow.business_profile_id):
-            conversation = ensure_workflow_thread(workflow)
         run = AgentRun.objects.create(
             business_profile=workflow.business_profile,
             agent_profile=workflow.agent_profile,
             workflow=workflow,
-            conversation=conversation,
+            conversation=None,
             created_by=workflow.created_by,
             workflow_snapshot=workflow_snapshot(workflow),
             title=(workflow.name or "Scheduled task")[:200],
@@ -160,7 +139,6 @@ class AgentWorkflowProcessingService:
             metadata={
                 "workflow_id": str(workflow.id),
                 "trigger": "schedule",
-                "responsible_context": self._responsible_context_snapshot(workflow),
             },
             run_after=now,
         )
@@ -216,7 +194,7 @@ class AgentWorkflowProcessingService:
                 business_profile=workflow.business_profile,
                 agent_profile=workflow.agent_profile,
                 workflow=workflow,
-                conversation=ensure_workflow_thread(workflow),
+                conversation=None,
                 created_by=workflow.created_by,
                 workflow_snapshot=workflow_snapshot(workflow),
                 title=(f"{workflow.name}: {(message or {}).get('subject') or 'New email'}")[:200],
@@ -227,7 +205,6 @@ class AgentWorkflowProcessingService:
                     "workflow_id": str(workflow.id),
                     "trigger": "email_inbox",
                     "message": message,
-                    "responsible_context": self._responsible_context_snapshot(workflow),
                 },
                 run_after=now,
             )
@@ -244,15 +221,6 @@ class AgentWorkflowProcessingService:
             updated_at=now,
         )
         return AgentWorkflowProcessResult(workflow_id=str(workflow.id), action="polled", triggered_run_ids=tuple(triggered))
-
-    @staticmethod
-    def _responsible_context_snapshot(workflow: AgentWorkflow) -> dict[str, object]:
-        department_id = getattr(workflow, "department_id", None)
-        return {
-            "mode": "department" if department_id else "main_agent",
-            "agent_id": str(workflow.agent_profile_id) if workflow.agent_profile_id else None,
-            "department_id": str(department_id) if department_id else None,
-        }
 
     @staticmethod
     def _email_dedupe_key(provider: str, account_id: object, message_id: str) -> str:

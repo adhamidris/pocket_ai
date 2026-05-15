@@ -10357,14 +10357,7 @@ def _start_agent_run_handler(
 
     convo_meta = conversation.metadata if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
     convo_source = str(convo_meta.get("source") or "").strip().lower()
-    if convo_source == "agent_run" or convo_meta.get("agent_run_id") or convo_meta.get("agentRunId"):
-        return {
-            "tool": "start_agent_run",
-            "status": "error",
-            "error_code": "nested_runs_forbidden",
-            "error": "nested_runs_forbidden",
-            "hint": "Creating background runs from inside another run is not supported in v1.",
-        }
+    parent_run_id_raw = str(convo_meta.get("agent_run_id") or convo_meta.get("agentRunId") or "").strip()
 
     agent_profile = getattr(conversation, "agent_profile", None)
     if not agent_profile:
@@ -10481,10 +10474,14 @@ def _start_agent_run_handler(
         visibility = "initiator"
 
     from django.db import transaction
+    from django.db.models import Max
     from django.utils import timezone as django_timezone
 
     from apps.conversations.models import (
         AgentRun,
+        AgentRunCheckpoint,
+        AgentRunCheckpointKind,
+        AgentRunCheckpointStatus,
         AgentRunEvent,
         AgentRunEventStream,
         AgentRunEventType,
@@ -10513,8 +10510,20 @@ def _start_agent_run_handler(
 
     now = django_timezone.now()
     with transaction.atomic():
+        parent_run = None
+        if convo_source == "agent_run" and parent_run_id_raw:
+            try:
+                parent_run_uuid = uuid.UUID(parent_run_id_raw)
+            except (TypeError, ValueError):
+                parent_run_uuid = None
+            if parent_run_uuid:
+                parent_run = AgentRun.objects.select_for_update().filter(
+                    id=parent_run_uuid,
+                    business_profile_id=conversation.business_profile_id,
+                ).first()
+
         existing_run = None
-        if trigger_message_id:
+        if trigger_message_id and parent_run is None:
             # Dedup by trigger_message_id AND title to allow multiple distinct runs
             # from the same user message while preventing true duplicates.
             existing_run = (
@@ -10567,11 +10576,14 @@ def _start_agent_run_handler(
         run = AgentRun.objects.create(
             business_profile_id=conversation.business_profile_id,
             agent_profile_id=agent_profile.id,
-            conversation_id=conversation.id,
+            conversation_id=parent_run.conversation_id if parent_run is not None else conversation.id,
             created_by_id=actor_id,
+            workflow=parent_run.workflow if parent_run is not None else None,
+            parent_run=parent_run,
+            delegated_by_agent_id=agent_profile.id if parent_run is not None else None,
             workflow_snapshot=workflow_snapshot,
             title=title[:200],
-            source=AgentRunSource.CHAT,
+            source=AgentRunSource.DELEGATION if parent_run is not None else AgentRunSource.CHAT,
             status=AgentRunStatus.QUEUED,
             visibility=visibility,
             plan=plan_payload,
@@ -10588,8 +10600,12 @@ def _start_agent_run_handler(
         exec_metadata: dict[str, object] = {
             "source": "agent_run",
             "agent_run_id": str(run.id),
-            "anchor_conversation_id": str(conversation.id),
         }
+        if parent_run is None:
+            exec_metadata["anchor_conversation_id"] = str(conversation.id)
+        elif parent_run.conversation_id:
+            exec_metadata["anchor_conversation_id"] = str(parent_run.conversation_id)
+            exec_metadata["parent_run_id"] = str(parent_run.id)
         if actor_id:
             exec_metadata["actor_user_id"] = str(actor_id)
         execution_conversation = Conversation.objects.create(
@@ -10612,6 +10628,39 @@ def _start_agent_run_handler(
             label="Queued",
             payload={"status": AgentRunStatus.QUEUED},
         )
+        if parent_run is not None:
+            checkpoint = AgentRunCheckpoint.objects.create(
+                business_profile=parent_run.business_profile,
+                workflow=parent_run.workflow,
+                run=parent_run,
+                conversation=parent_run.conversation,
+                child_run=run,
+                kind=AgentRunCheckpointKind.CHILD_RUN,
+                status=AgentRunCheckpointStatus.OPEN,
+                title="Waiting for delegated run",
+                prompt=f"Waiting for delegated run: {run.title}",
+                payload={"child_run_id": str(run.id), "title": run.title},
+                expires_at=now + timedelta(hours=24),
+            )
+            parent_meta = dict(parent_run.metadata or {}) if isinstance(getattr(parent_run, "metadata", None), dict) else {}
+            parent_meta["pending_child_run_id"] = str(run.id)
+            parent_meta["pending_checkpoint_id"] = str(checkpoint.id)
+            AgentRun.objects.filter(id=parent_run.id).update(
+                status=AgentRunStatus.WAITING_CHILD,
+                lease_expires_at=None,
+                run_after=None,
+                metadata=parent_meta,
+                updated_at=now,
+            )
+            next_index = (AgentRunEvent.objects.filter(run=parent_run).aggregate(Max("sequence_index")).get("sequence_index__max") or 0) + 1
+            AgentRunEvent.objects.create(
+                run=parent_run,
+                sequence_index=next_index,
+                stream=AgentRunEventStream.SYSTEM,
+                event_type=AgentRunEventType.NEEDS_CHILD,
+                label="Waiting for delegated run",
+                payload={"child_run_id": str(run.id), "checkpoint_id": str(checkpoint.id)},
+            )
 
     return {
         "tool": "start_agent_run",
@@ -10624,7 +10673,7 @@ def _start_agent_run_handler(
             "source": run.source,
             "visibility": run.visibility,
         },
-        "hint": "Background run queued. Watch the Tasks panel for progress.",
+        "hint": "Delegated run queued; the parent run will resume when it finishes." if run.parent_run_id else "Background run queued. Watch the Tasks panel for progress.",
     }
 
 
@@ -11100,6 +11149,51 @@ def _workflow_payload(workflow) -> dict[str, object]:
     }
 
 
+def _remember_workflow_resource_ref(
+    conversation: Conversation,
+    workflow,
+    *,
+    purpose: str,
+    pending_activation: bool = False,
+) -> None:
+    metadata = dict(conversation.metadata) if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
+    refs_raw = metadata.get("resource_refs")
+    refs = [dict(item) for item in refs_raw if isinstance(item, Mapping)] if isinstance(refs_raw, list) else []
+    workflow_id = str(getattr(workflow, "id", "") or "").strip()
+    if not workflow_id:
+        return
+
+    refs = [
+        ref
+        for ref in refs
+        if not (
+            str(ref.get("type") or "").strip().lower() in {"workflow", "task"}
+            and str(ref.get("id") or "").strip() == workflow_id
+        )
+    ]
+    refs.insert(
+        0,
+        {
+            "type": "workflow",
+            "id": workflow_id,
+            "name": str(getattr(workflow, "name", "") or "")[:160],
+            "status": str(getattr(workflow, "status", "") or ""),
+            "purpose": str(purpose or "reference")[:80],
+            "agent_id": str(getattr(workflow, "agent_profile_id", "") or ""),
+            "trigger_type": str(getattr(workflow, "trigger_type", "") or ""),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    metadata["resource_refs"] = refs[:12]
+    if pending_activation:
+        metadata["pending_workflow_activation_id"] = workflow_id
+    elif str(metadata.get("pending_workflow_activation_id") or "") == workflow_id:
+        metadata.pop("pending_workflow_activation_id", None)
+
+    conversation.metadata = metadata
+    conversation.save(update_fields=["metadata", "last_activity_at"])
+
+
 def _resolve_task_agent(conversation: Conversation, raw_agent_id: object = None):
     from apps.accounts.models import AgentProfile
 
@@ -11179,6 +11273,12 @@ def _draft_task_handler(
         instructions=normalize_workflow_instructions({"goal": goal[:6000]}),
         metadata={"source": "chat_task_draft", "activation_requires_user_approval": True},
     )
+    _remember_workflow_resource_ref(
+        conversation,
+        workflow,
+        purpose="pending activation",
+        pending_activation=True,
+    )
     return {
         "tool": "draft_task",
         "status": "ok",
@@ -11233,6 +11333,13 @@ def _update_task_handler(
         updates.append("visibility")
     if updates:
         workflow.save(update_fields=sorted(set([*updates, "updated_at"])))
+        purpose = "pending activation" if workflow.status == "draft" else "updated"
+        _remember_workflow_resource_ref(
+            conversation,
+            workflow,
+            purpose=purpose,
+            pending_activation=workflow.status == "draft",
+        )
     return {"tool": "update_task", "status": "ok", "task": _workflow_payload(workflow)}
 
 
@@ -11270,6 +11377,12 @@ def _request_task_activation_handler(
     workflow.status = AgentWorkflowStatus.ACTIVE
     workflow.next_trigger_at = next_trigger_at
     workflow.save(update_fields=["status", "next_trigger_at", "updated_at"])
+    _remember_workflow_resource_ref(
+        conversation,
+        workflow,
+        purpose="active",
+        pending_activation=False,
+    )
     return {"tool": "request_task_activation", "status": "ok", "task": _workflow_payload(workflow), "activated": True}
 
 
@@ -11296,6 +11409,12 @@ def _pause_task_handler(
     workflow.next_trigger_at = None
     workflow.metadata = metadata
     workflow.save(update_fields=["status", "next_trigger_at", "metadata", "updated_at"])
+    _remember_workflow_resource_ref(
+        conversation,
+        workflow,
+        purpose="paused",
+        pending_activation=False,
+    )
     return {"tool": "pause_task", "status": "ok", "task": _workflow_payload(workflow)}
 
 

@@ -510,6 +510,88 @@
     display: grid;
     gap: 0.75rem;
   }
+  [data-agent-panel] .agent-approval-card {
+    align-items: center;
+    background: hsl(var(--card) / 0.96);
+    border: 1px solid hsl(var(--border) / 0.7);
+    border-radius: 12px;
+    box-shadow: 0 1px 2px hsl(var(--foreground) / 0.04);
+    display: grid;
+    gap: 14px;
+    grid-template-columns: minmax(0, 1fr) minmax(220px, 260px);
+    padding: 16px;
+  }
+  [data-agent-panel] .agent-approval-card[hidden] {
+    display: none;
+  }
+  [data-agent-panel] .agent-approval-card__copy {
+    min-width: 0;
+  }
+  [data-agent-panel] .agent-approval-card__title {
+    color: hsl(var(--muted-foreground));
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    line-height: 1.35;
+    text-transform: uppercase;
+  }
+  [data-agent-panel] .agent-approval-card__summary {
+    color: hsl(var(--muted-foreground) / 0.84);
+    font-size: 12px;
+    line-height: 1.45;
+    margin-top: 4px;
+  }
+  [data-agent-panel] .agent-approval-card__control {
+    align-items: center;
+    display: flex;
+    gap: 8px;
+    justify-self: end;
+    min-width: 0;
+    width: 100%;
+  }
+  [data-agent-panel] .agent-approval-card__status {
+    border: 1px solid hsl(var(--border) / 0.7);
+    border-radius: 999px;
+    color: hsl(var(--muted-foreground));
+    flex: 0 0 auto;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    line-height: 1;
+    padding: 5px 7px;
+    text-transform: uppercase;
+  }
+  [data-agent-panel] .agent-approval-card__status[hidden] {
+    display: none;
+  }
+  [data-agent-panel] .agent-approval-card__select {
+    appearance: auto;
+    background: hsl(var(--background));
+    border: 1px solid hsl(var(--border) / 0.75);
+    border-radius: 7px;
+    color: hsl(var(--foreground));
+    cursor: pointer;
+    flex: 1 1 auto;
+    font-size: 14px;
+    height: 40px;
+    max-width: 240px;
+    min-width: 0;
+    outline: 0;
+    padding: 0 34px 0 12px;
+    transition: border-color 150ms ease, box-shadow 150ms ease;
+    width: 100%;
+  }
+  [data-agent-panel] .agent-approval-card__select:focus-visible {
+    border-color: hsl(var(--primary) / 0.7);
+    box-shadow: 0 0 0 2px hsl(var(--primary) / 0.2);
+  }
+  html[dir="rtl"] [data-agent-panel] .agent-approval-card__control {
+    justify-self: start;
+  }
+  html[dir="rtl"] [data-agent-panel] .agent-approval-card__select {
+    padding-left: 34px;
+    padding-right: 12px;
+  }
   [data-agent-panel] .agent-connector-card {
     border: 1px solid hsl(var(--border) / 0.74);
     border-radius: 12px;
@@ -638,6 +720,15 @@
     margin-top: 0.25rem;
   }
   @media (max-width: 640px) {
+    [data-agent-panel] .agent-approval-card {
+      grid-template-columns: 1fr;
+    }
+    [data-agent-panel] .agent-approval-card__control {
+      justify-self: stretch;
+    }
+    [data-agent-panel] .agent-approval-card__select {
+      max-width: none;
+    }
     [data-agent-panel] .agent-detail-header {
       padding: 26px 58px 20px 18px;
     }
@@ -1140,7 +1231,6 @@
 	                  <label class="agent-task-field"><span>{% if LANGUAGE_BIDI %}اسم المهمة{% else %}Task name{% endif %}</span><input data-task-input="name"></label>
 	                  <label class="agent-task-field"><span>{% if LANGUAGE_BIDI %}متى تعمل؟{% else %}When should it run?{% endif %}</span><select data-task-input="triggerType"><option value="manual">Manual</option><option value="schedule">Schedule</option><option value="webhook">Webhook</option><option value="email_inbox">Email inbox</option></select></label>
 	                  <label class="agent-task-field"><span>{% if LANGUAGE_BIDI %}ما الذي يمكنها فعله؟{% else %}What can it do?{% endif %}</span><select data-task-input="autonomyMode"><option value="draft_for_approval">Prepare drafts for approval</option><option value="suggest_only">Suggest only</option><option value="autonomous_with_policy">Act within policy</option><option value="full_autonomy_explicit">Full autonomy</option></select></label>
-	                  <label class="agent-task-field"><span>{% if LANGUAGE_BIDI %}أين ترسل التحديثات؟{% else %}Where should updates go?{% endif %}</span><select data-task-input="notificationRoute"><option value="workflow_thread">Task thread</option><option value="responsible_primary">Responsible agent</option><option value="none">Activity only</option></select></label>
 	                  <label class="agent-task-field agent-task-field--wide"><span>{% if LANGUAGE_BIDI %}ما الذي يجب أن يفعله الوكيل؟{% else %}What should the agent do?{% endif %}</span><textarea data-task-input="goal" placeholder="{% if LANGUAGE_BIDI %}اشرح ما يجب مراقبته، وما الإجراء المتوقع، ومتى يجب إرسال تحديث.{% else %}Describe what to watch, what action to take, and what kind of update you expect.{% endif %}"></textarea></label>
 	                </div>
 	                <div class="space-y-3" data-trigger-config-panels>
@@ -1235,17 +1325,20 @@
 	            data-agent-tab-panel="permissions"
 	            hidden
 	          >
-	            <div class="rounded-xl border border-border/60 bg-card/95 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm" data-agent-approval-card>
-	              <div class="flex items-center gap-3">
-	                <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{% if LANGUAGE_BIDI %}سياسة الموافقة الافتراضية{% else %}Default approval policy{% endif %}</div>
-	                <span class="text-[10px] text-muted-foreground/80 hidden sm:inline-block" data-agent-capability-flash>{% if LANGUAGE_BIDI %}جاهز{% else %}Ready{% endif %}</span>
+	            <div class="agent-approval-card" data-agent-approval-card>
+	              <div class="agent-approval-card__copy">
+	                <div class="agent-approval-card__title" id="agent-approval-policy-label">{% if LANGUAGE_BIDI %}سياسة الموافقة الافتراضية{% else %}Default approval policy{% endif %}</div>
+	                <p class="agent-approval-card__summary" data-agent-approval-summary></p>
 	              </div>
-	              <select class="h-9 w-full sm:w-auto min-w-[150px] rounded-md border border-border/60 bg-background px-3 py-1 text-sm cursor-pointer focus-visible:ring-0 focus-visible:border-border transition-colors" data-agent-approval-select>
-	                <option value="inherit">{% if LANGUAGE_BIDI %}موروث{% else %}Inherited{% endif %}</option>
-	                <option value="auto">{% if LANGUAGE_BIDI %}تلقائي{% else %}Auto approve{% endif %}</option>
-	                <option value="approve_writes">{% if LANGUAGE_BIDI %}موافقة على الكتابة{% else %}Approve writes{% endif %}</option>
-	                <option value="approve_all">{% if LANGUAGE_BIDI %}موافقة على الكل{% else %}Approve all{% endif %}</option>
-	              </select>
+	              <div class="agent-approval-card__control">
+	                <span class="agent-approval-card__status" aria-live="polite" data-agent-capability-flash hidden></span>
+	                <select class="agent-approval-card__select" aria-labelledby="agent-approval-policy-label" data-agent-approval-select>
+	                  <option value="inherit">{% if LANGUAGE_BIDI %}موروث{% else %}Inherited{% endif %}</option>
+	                  <option value="auto">{% if LANGUAGE_BIDI %}تلقائي{% else %}Auto approve{% endif %}</option>
+	                  <option value="approve_writes">{% if LANGUAGE_BIDI %}موافقة على الكتابة{% else %}Approve writes{% endif %}</option>
+	                  <option value="approve_all">{% if LANGUAGE_BIDI %}موافقة على الكل{% else %}Approve all{% endif %}</option>
+	                </select>
+	              </div>
 	            </div>
 
 	            <div class="rounded-xl border border-border/60 bg-card/95 p-4 space-y-4 shadow-sm">
@@ -2286,7 +2379,10 @@
 
     function setCapabilityFlash(message, isError) {
       if (!capabilityFlash) return;
-      capabilityFlash.textContent = message || I18N.capabilityReady;
+      var nextMessage = message || "";
+      var shouldShow = !!isError || (nextMessage && nextMessage !== I18N.capabilityReady);
+      capabilityFlash.hidden = !shouldShow;
+      capabilityFlash.textContent = shouldShow ? nextMessage : "";
       capabilityFlash.classList.toggle("text-destructive", !!isError);
       capabilityFlash.classList.toggle("text-muted-foreground", !isError);
     }
@@ -2653,7 +2749,6 @@
       if (taskInput("goal")) taskInput("goal").value = (workflow && workflow.instructions && (workflow.instructions.goal || workflow.instructions.task || workflow.instructions.instructions)) || "";
       if (taskInput("triggerType")) taskInput("triggerType").value = (workflow && workflow.triggerType) || "manual";
       if (taskInput("autonomyMode")) taskInput("autonomyMode").value = (workflow && workflow.autonomyMode) || "draft_for_approval";
-      if (taskInput("notificationRoute")) taskInput("notificationRoute").value = (workflow && workflow.notificationConfig && workflow.notificationConfig.default_route) || "workflow_thread";
       if (taskInput("timezone")) taskInput("timezone").value = (workflow && workflow.triggerConfig && workflow.triggerConfig.timezone) || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
       if (taskInput("scheduleCron")) taskInput("scheduleCron").value = (workflow && workflow.triggerConfig && workflow.triggerConfig.cron) || "";
       if (taskInput("emailQuery")) taskInput("emailQuery").value = (workflow && workflow.sourceConfig && workflow.sourceConfig.query) || "newer_than:1d";
@@ -2687,9 +2782,6 @@
         visibility: existing ? existing.visibility : "initiator",
         reviewMode: reviewMode,
         autonomyMode: autonomyMode,
-        notificationConfig: {
-          default_route: taskInput("notificationRoute") ? taskInput("notificationRoute").value : "workflow_thread",
-        },
         triggerType: triggerType,
         instructions: { goal: taskInput("goal") ? taskInput("goal").value.trim() : "" },
       };
@@ -3439,11 +3531,11 @@
       if (fieldMetricScope) fieldMetricScope.textContent = formatKnowledgeScopeLabel(dataset.agentKnowledgeMode);
       if (fieldMetricDocuments) fieldMetricDocuments.textContent = formatNumber(dataset.agentKnowledgeTotal);
       if (fieldMetricConnections) fieldMetricConnections.textContent = "—";
-      if (fieldMetricApproval) fieldMetricApproval.textContent = "—";
+      if (fieldMetricApproval) fieldMetricApproval.textContent = I18N.approvalInherited;
       if (fieldMetricRestrictions) fieldMetricRestrictions.textContent = "—";
-      if (capabilityApprovalSummary) capabilityApprovalSummary.textContent = I18N.approvalSummaryFormat.replace("{mode}", "—");
+      if (capabilityApprovalSummary) capabilityApprovalSummary.textContent = I18N.approvalSummaryFormat.replace("{mode}", I18N.approvalInherited);
       if (capabilityApprovalSelect) capabilityApprovalSelect.value = "inherit";
-      if (capabilityApprovalCard) capabilityApprovalCard.hidden = true;
+      if (capabilityApprovalCard) capabilityApprovalCard.hidden = false;
       renderCapabilityConnections(null, dataset.agentUuid || "", null);
       setCapabilityFlash(I18N.capabilityReady, false);
       updateShareable(dataset.agentShareable || "");
@@ -3481,7 +3573,7 @@
         fieldMetricConnections.textContent = formatNumber(totalConnections, allConnections);
       }
       if (fieldMetricApproval) {
-        fieldMetricApproval.textContent = hasAnyConnectedCapabilities(agent) ? resolveEffectiveApprovalSummary(agent) : "—";
+        fieldMetricApproval.textContent = resolveEffectiveApprovalSummary(agent);
       }
       if (fieldMetricRestrictions) {
         fieldMetricRestrictions.textContent = formatNumber(capabilitySummary.restrictionsTotal);
@@ -3496,7 +3588,7 @@
         capabilityApprovalSelect.value = capabilitySummary.defaultApprovalMode || "inherit";
       }
       if (capabilityApprovalCard) {
-        capabilityApprovalCard.hidden = !hasAnyConnectedCapabilities(agent);
+        capabilityApprovalCard.hidden = false;
       }
       populateChips(fieldTraits, agent.traits, I18N.noTraits);
       if (fieldKnowledgeMode) {

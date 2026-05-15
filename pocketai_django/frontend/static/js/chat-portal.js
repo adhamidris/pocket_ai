@@ -13,6 +13,7 @@ class ChatPortalClient {
 	      toolHistory: container.getAttribute("data-endpoint-tool-history"),
       runApproval: container.getAttribute("data-endpoint-run-approval"),
       runUserInput: container.getAttribute("data-endpoint-run-user-input"),
+      runCheckpoint: container.getAttribute("data-endpoint-run-checkpoint"),
       agentRequestUpdate: container.getAttribute("data-endpoint-agent-request-update"),
       emailSendDraft: container.getAttribute("data-endpoint-email-send-draft"),
       emailDiscardDraft: container.getAttribute("data-endpoint-email-discard-draft"),
@@ -185,6 +186,7 @@ class ChatPortalClient {
 
 	    // Agent runs/tasks panel state
 	    this.agentRuns = new Map(); // runId -> { run, events, expanded, seenKeys, lastEventLabel }
+    this.workflowAgents = new Map(); // workflowId -> { workflow, expanded }
     this.tasksRenderRaf = null;
     this.tasksPanelUserHidden = false;
 
@@ -5526,6 +5528,22 @@ class ChatPortalClient {
       const target = event && event.target ? event.target : null;
       if (!target) return;
 
+      const checkpointBtn = target.closest("[data-checkpoint-action]");
+      if (checkpointBtn) {
+        const action = (checkpointBtn.getAttribute("data-checkpoint-action") || "").trim();
+        const checkpointId = (checkpointBtn.getAttribute("data-checkpoint-id") || "").trim();
+        const card = checkpointBtn.closest(".portal-task");
+        const textarea = card ? card.querySelector("[data-checkpoint-input-text]") : null;
+        const message = textarea && typeof textarea.value === "string" ? textarea.value.trim() : "";
+        if (!checkpointId || !action) return;
+        if (action === "reply" && !message) {
+          this.showToast("Missing input", "Please enter your answer first.", true);
+          return;
+        }
+        this.submitRunCheckpoint(checkpointId, action, message, card, textarea, checkpointBtn);
+        return;
+      }
+
       const approvalBtn = target.closest("[data-run-approval-action]");
       if (approvalBtn) {
         const decision = (approvalBtn.getAttribute("data-run-approval-action") || "").trim();
@@ -5567,6 +5585,21 @@ class ChatPortalClient {
         if (sessionId) {
           this.toggleVoiceCallExpanded(sessionId);
         }
+        return;
+      }
+
+      const workflowRunToggleEl = target.closest("[data-workflow-run-toggle]");
+      if (workflowRunToggleEl) {
+        const workflowId = (workflowRunToggleEl.getAttribute("data-workflow-id") || "").trim();
+        const runId = (workflowRunToggleEl.getAttribute("data-run-id") || "").trim();
+        if (workflowId && runId) this.toggleWorkflowRunExpanded(workflowId, runId);
+        return;
+      }
+
+      const workflowToggleEl = target.closest("[data-workflow-toggle]");
+      if (workflowToggleEl) {
+        const workflowId = (workflowToggleEl.getAttribute("data-workflow-toggle") || "").trim();
+        if (workflowId) this.toggleWorkflowExpanded(workflowId);
         return;
       }
 
@@ -5828,6 +5861,69 @@ class ChatPortalClient {
       if (textareaEl) {
         textareaEl.disabled = false;
       }
+    }
+  }
+
+  async submitRunCheckpoint(checkpointId, action, message, cardEl, textareaEl, buttonEl) {
+    if (!checkpointId || !action) return;
+    if (!this.endpoints.runCheckpoint) {
+      this.showToast("Unavailable", "Checkpoint endpoint is not configured.", true);
+      return;
+    }
+    if (buttonEl && buttonEl.dataset.runCheckpointBusy === "true") return;
+    if (buttonEl) {
+      buttonEl.dataset.runCheckpointBusy = "true";
+      buttonEl.disabled = true;
+    }
+    const buttons = cardEl ? cardEl.querySelectorAll("[data-checkpoint-action]") : [];
+    buttons.forEach((btn) => {
+      btn.disabled = true;
+    });
+    if (textareaEl) textareaEl.disabled = true;
+    try {
+      const response = await fetch(this.endpoints.runCheckpoint, {
+        method: "POST",
+        headers: this.jsonHeaders(),
+        body: JSON.stringify(
+          this.getCurrentReferencePayload({
+            checkpoint_id: checkpointId,
+            action,
+            message,
+          }),
+        ),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const messageOut = payload && payload.error && payload.error.message ? payload.error.message : "Checkpoint update failed.";
+        throw new Error(messageOut);
+      }
+      if (textareaEl) textareaEl.value = "";
+      const run = payload && payload.run && typeof payload.run === "object" ? payload.run : null;
+      if (run) this.upsertAgentRun(run);
+      const checkpoint = payload && payload.checkpoint && typeof payload.checkpoint === "object" ? payload.checkpoint : null;
+      if (checkpoint && checkpoint.id) {
+        this.workflowAgents.forEach((state) => {
+          const workflow = state && state.workflow ? state.workflow : null;
+          const open = workflow && workflow.openCheckpoint && typeof workflow.openCheckpoint === "object" ? workflow.openCheckpoint : null;
+          if (open && open.id === checkpoint.id) {
+            state.workflow = Object.assign({}, workflow, { openCheckpoint: null });
+          }
+        });
+      }
+      this.showToast("Saved", "Workflow updated.", false);
+      this.scheduleTasksRender();
+    } catch (error) {
+      console.warn("Run checkpoint failed", error);
+      this.showToast("Update failed", error.message || "Please try again.", true);
+    } finally {
+      if (buttonEl) {
+        buttonEl.dataset.runCheckpointBusy = "false";
+        buttonEl.disabled = false;
+      }
+      buttons.forEach((btn) => {
+        btn.disabled = false;
+      });
+      if (textareaEl) textareaEl.disabled = false;
     }
   }
 
@@ -6127,6 +6223,18 @@ class ChatPortalClient {
 
   getActiveRunCount() {
     let count = 0;
+    this.workflowAgents.forEach((state) => {
+      const workflow = state && state.workflow ? state.workflow : {};
+      if (workflow.openCheckpoint) {
+        count += 1;
+        return;
+      }
+      const latest = workflow.latestRun && typeof workflow.latestRun === "object" ? workflow.latestRun : null;
+      const status = latest && latest.status ? latest.status.toString().toLowerCase() : "";
+      if (["running", "queued", "waiting_user", "waiting_approval", "waiting_child", "waiting_external", "paused"].includes(status)) {
+        count += 1;
+      }
+    });
     this.agentRuns.forEach((state) => {
       const status = state && state.run ? (state.run.status || "").toString().toLowerCase() : "";
       if (!status) return;
@@ -6156,6 +6264,27 @@ class ChatPortalClient {
     this.scheduleTasksRender();
   }
 
+  toggleWorkflowExpanded(workflowId) {
+    const state = this.workflowAgents.get(workflowId);
+    if (!state) return;
+    state.expanded = !state.expanded;
+    this.scheduleTasksRender();
+  }
+
+  toggleWorkflowRunExpanded(workflowId, runId) {
+    const state = this.workflowAgents.get(workflowId);
+    if (!state || !runId) return;
+    if (!(state.expandedRuns instanceof Set)) {
+      state.expandedRuns = new Set();
+    }
+    if (state.expandedRuns.has(runId)) {
+      state.expandedRuns.delete(runId);
+    } else {
+      state.expandedRuns.add(runId);
+    }
+    this.scheduleTasksRender();
+  }
+
   toggleRequestExpanded(requestId) {
     const state = this.agentRequests.get(requestId);
     if (!state) return;
@@ -6166,8 +6295,17 @@ class ChatPortalClient {
   handleAgentRunsSnapshot(payload) {
     if (!payload || typeof payload !== "object") return;
     const runs = Array.isArray(payload.runs) ? payload.runs : [];
+    const workflows = Array.isArray(payload.workflows) ? payload.workflows : [];
     const eventsByRun =
       payload.eventsByRun && typeof payload.eventsByRun === "object" ? payload.eventsByRun : {};
+
+    workflows.forEach((workflow) => {
+      this.upsertWorkflowAgent(workflow);
+      const latest = workflow && workflow.latestRun && typeof workflow.latestRun === "object" ? workflow.latestRun : null;
+      if (latest) this.upsertAgentRun(latest);
+      const recent = workflow && Array.isArray(workflow.recentRuns) ? workflow.recentRuns : [];
+      recent.forEach((run) => this.upsertAgentRun(run));
+    });
 
     runs.forEach((run) => {
       this.upsertAgentRun(run);
@@ -6211,6 +6349,20 @@ class ChatPortalClient {
 
     if (run) {
       this.upsertAgentRun(run);
+      const workflowId = (run.workflowId || run.workflow_id || "").toString().trim();
+      if (workflowId) {
+        const workflowState = this.workflowAgents.get(workflowId) || this.upsertWorkflowAgent({ id: workflowId, name: run.workflowName || "" });
+        if (workflowState && workflowState.workflow) {
+          const recent = Array.isArray(workflowState.workflow.recentRuns) ? workflowState.workflow.recentRuns.slice() : [];
+          const withoutCurrent = recent.filter((item) => item && item.id !== run.id);
+          const openCheckpoint = run.openCheckpoint && typeof run.openCheckpoint === "object" ? run.openCheckpoint : workflowState.workflow.openCheckpoint || null;
+          workflowState.workflow = Object.assign({}, workflowState.workflow, {
+            latestRun: Object.assign({}, workflowState.workflow.latestRun || {}, run),
+            openCheckpoint,
+            recentRuns: [run, ...withoutCurrent].slice(0, 5),
+          });
+        }
+      }
     } else {
       this.upsertAgentRun({ id: runId });
     }
@@ -6291,6 +6443,25 @@ class ChatPortalClient {
     return state;
   }
 
+  upsertWorkflowAgent(workflow) {
+    if (!workflow || typeof workflow !== "object") return null;
+    const workflowId = typeof workflow.id === "string" ? workflow.id.trim() : "";
+    if (!workflowId) return null;
+    const existing = this.workflowAgents.get(workflowId);
+    if (existing) {
+      existing.workflow = Object.assign({}, existing.workflow || {}, workflow);
+      if (!(existing.expandedRuns instanceof Set)) existing.expandedRuns = new Set();
+      return existing;
+    }
+    const state = {
+      workflow: Object.assign({}, workflow),
+      expanded: false,
+      expandedRuns: new Set(),
+    };
+    this.workflowAgents.set(workflowId, state);
+    return state;
+  }
+
   upsertAgentRequest(req) {
     if (!req || typeof req !== "object") return null;
     const requestId = typeof req.id === "string" ? req.id.trim() : "";
@@ -6361,7 +6532,18 @@ class ChatPortalClient {
     if (!this.elements.tasksCards) return;
     const list = this.elements.tasksCards;
 
-    const runs = Array.from(this.agentRuns.entries()).map(([id, state]) => ({
+    const workflows = Array.from(this.workflowAgents.entries()).map(([id, state]) => ({
+      id,
+      state,
+      workflow: state && state.workflow ? state.workflow : {},
+    }));
+
+    const runs = Array.from(this.agentRuns.entries())
+      .filter(([, state]) => {
+        const run = state && state.run ? state.run : {};
+        return !(run && (run.workflowId || run.workflow_id));
+      })
+      .map(([id, state]) => ({
       id,
       state,
       run: state && state.run ? state.run : {},
@@ -6372,7 +6554,7 @@ class ChatPortalClient {
       state,
     }));
 
-    if (!runs.length && !voiceCalls.length) {
+    if (!workflows.length && !runs.length && !voiceCalls.length) {
       if (this.elements.tasksEmpty) {
         this.elements.tasksEmpty.removeAttribute("hidden");
       }
@@ -6385,7 +6567,16 @@ class ChatPortalClient {
       this.elements.tasksEmpty.setAttribute("hidden", "");
     }
 
-    // Order tasks chronologically (first initiated at the top).
+    workflows.sort((a, b) => {
+      const aNeeds = a.workflow && a.workflow.openCheckpoint ? 0 : 1;
+      const bNeeds = b.workflow && b.workflow.openCheckpoint ? 0 : 1;
+      if (aNeeds !== bNeeds) return aNeeds - bNeeds;
+      const aTime = Date.parse(a.workflow.updatedAt || a.workflow.createdAt || "") || 0;
+      const bTime = Date.parse(b.workflow.updatedAt || b.workflow.createdAt || "") || 0;
+      return bTime - aTime;
+    });
+
+    // Order ad-hoc background work chronologically (first initiated at the top).
     runs.sort((a, b) => {
       const aTime = Date.parse(a.run.createdAt || a.run.updatedAt || "") || 0;
       const bTime = Date.parse(b.run.createdAt || b.run.updatedAt || "") || 0;
@@ -6394,6 +6585,10 @@ class ChatPortalClient {
       const bId = (b.id || "").toString();
       return aId.localeCompare(bId);
     });
+
+    const workflowCardsHtml = workflows
+      .map(({ id, state, workflow }) => this.renderWorkflowAgentCardHtml(id, state, workflow))
+      .join("");
 
     const voiceSessionsInRuns = new Set();
     const runCardsHtml = runs
@@ -6412,7 +6607,8 @@ class ChatPortalClient {
       .map(({ id, state }) => this.renderVoiceCallTranscriptCardHtml(id, state))
       .join("");
 
-    list.innerHTML = runCardsHtml + extraVoiceCardsHtml;
+    const adHocHeading = runs.length || extraVoiceCardsHtml ? `<div class="portal-task__group-title">${this.escapeHtml(this.t("Ad-hoc runs"))}</div>` : "";
+    list.innerHTML = workflowCardsHtml + adHocHeading + runCardsHtml + extraVoiceCardsHtml;
     this.updateTasksOpenButton();
   }
 
@@ -6752,6 +6948,390 @@ class ChatPortalClient {
           ${logHtml}
           ${detailsHtml}
           ${transcriptHtml}
+        </div>
+      </div>
+    `;
+  }
+
+  getWorkflowTriggerLabel(triggerType) {
+    const norm = (triggerType || "").toString().trim().toLowerCase();
+    if (norm === "schedule") return this.t("Scheduled");
+    if (norm === "manual") return this.t("Manual");
+    if (norm === "webhook") return this.t("Webhook");
+    if (norm === "email_inbox") return this.t("Email inbox");
+    return norm ? this.formatStatus(norm) : this.t("Workflow");
+  }
+
+  formatTaskDateTime(raw) {
+    if (!raw) return "";
+    const date = new Date(raw);
+    if (Number.isNaN(date.getTime())) return "";
+    try {
+      return date.toLocaleString(this.getLocale(), {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch (_err) {
+      return date.toLocaleString();
+    }
+  }
+
+  formatDueTime(raw) {
+    if (!raw) return "";
+    const date = new Date(raw);
+    const timestamp = date.getTime();
+    if (Number.isNaN(timestamp)) return "";
+    const diffMs = timestamp - Date.now();
+    if (diffMs > 0) {
+      const mins = Math.max(1, Math.round(diffMs / 60000));
+      if (mins < 60) return `${this.t("in")} ${mins}m`;
+      const hours = Math.round(mins / 60);
+      if (hours < 24) return `${this.t("in")} ${hours}h`;
+    }
+    return this.formatRelativeTime(date);
+  }
+
+  getRunDisplay(run) {
+    const display = run && run.display && typeof run.display === "object" ? run.display : null;
+    if (display) {
+      return {
+        summary: typeof display.summary === "string" ? display.summary.trim() : "",
+        agentMessage: typeof display.agentMessage === "string" ? display.agentMessage.trim() : "",
+        findings: Array.isArray(display.findings) ? display.findings.filter(Boolean).map((item) => String(item).trim()).filter(Boolean) : [],
+        actionsTaken: Array.isArray(display.actionsTaken) ? display.actionsTaken : [],
+        recommendedNextStep: typeof display.recommendedNextStep === "string" ? display.recommendedNextStep.trim() : "",
+        statusTone: typeof display.statusTone === "string" ? display.statusTone.trim() : "neutral",
+        rawAvailable: Boolean(display.rawAvailable),
+        rawDebug: display.rawDebug && typeof display.rawDebug === "object" ? display.rawDebug : null,
+      };
+    }
+    const report = this.getRunReport(run);
+    const findings = report && Array.isArray(report.findings) ? report.findings.map((item) => String(item || "").trim()).filter(Boolean) : [];
+    const actionsTaken = this.getRunActionsTaken(run).map((label) => ({ label, status: "" }));
+    const summary = this.getRunSummaryText(run, run && run.status ? run.status : "");
+    const responseText = this.plainTextFromRunResponse(run);
+    return {
+      summary,
+      agentMessage: responseText || summary,
+      findings,
+      actionsTaken,
+      recommendedNextStep: report && report.recommendedNextStep ? String(report.recommendedNextStep).trim() : "",
+      statusTone: "neutral",
+      rawAvailable: Boolean(run && run.result),
+      rawDebug: run && run.result && typeof run.result === "object" ? run.result : null,
+    };
+  }
+
+  getRunReport(run) {
+    const result = run && run.result && typeof run.result === "object" ? run.result : null;
+    const report = result && result.runReport && typeof result.runReport === "object" ? result.runReport : null;
+    if (report) return report;
+    const responseText = result && typeof result.responseText === "string" ? result.responseText.trim() : "";
+    if (!responseText || responseText[0] !== "{") return null;
+    try {
+      const parsed = JSON.parse(responseText);
+      const candidate = parsed && parsed.run_report && typeof parsed.run_report === "object" ? parsed.run_report : parsed;
+      if (candidate && typeof candidate === "object") {
+        return {
+          objective: candidate.objective || "",
+          status: candidate.status || "",
+          findings: Array.isArray(candidate.findings) ? candidate.findings : [],
+          actionsTaken: Array.isArray(candidate.actions_taken || candidate.actionsTaken) ? (candidate.actions_taken || candidate.actionsTaken) : [],
+          recommendedNextStep: candidate.recommended_next_step || candidate.recommendedNextStep || "",
+          notification: candidate.notification_candidate || candidate.notification || {},
+        };
+      }
+    } catch (_err) {
+      return null;
+    }
+    return null;
+  }
+
+  plainTextFromRunResponse(run) {
+    const result = run && run.result && typeof run.result === "object" ? run.result : null;
+    const responseText = result && typeof result.responseText === "string" ? result.responseText.trim() : "";
+    if (!responseText) return "";
+    if (responseText[0] === "{") {
+      const report = this.getRunReport(run);
+      if (report) {
+        const findings = Array.isArray(report.findings) ? report.findings : [];
+        const firstFinding = findings.find((item) => typeof item === "string" && item.trim());
+        if (firstFinding) return firstFinding.trim();
+        const notification = report.notification && typeof report.notification === "object" ? report.notification : {};
+        if (notification.body) return String(notification.body).trim();
+      }
+      return "";
+    }
+    return responseText.split(/\n{2,}/)[0].trim();
+  }
+
+  getRunSummaryText(run, fallbackStatus = "") {
+    const display = run && run.display && typeof run.display === "object" ? run.display : null;
+    if (display && typeof display.summary === "string" && display.summary.trim()) {
+      return display.summary.trim();
+    }
+    const status = (run && run.status ? run.status : fallbackStatus || "").toString().trim().toLowerCase();
+    if (["failed", "error"].includes(status) && run && typeof run.errorDetail === "string" && run.errorDetail.trim()) {
+      return run.errorDetail.trim();
+    }
+    const report = this.getRunReport(run);
+    if (report) {
+      const notification = report.notification && typeof report.notification === "object" ? report.notification : {};
+      if (notification.body) return String(notification.body).trim();
+      const findings = Array.isArray(report.findings) ? report.findings : [];
+      const firstFinding = findings.find((item) => typeof item === "string" && item.trim());
+      if (firstFinding) return firstFinding.trim();
+      if (report.recommendedNextStep) return String(report.recommendedNextStep).trim();
+    }
+    const responseText = this.plainTextFromRunResponse(run);
+    if (responseText) return responseText;
+    if (status === "completed") return this.t("Completed. No detailed report was recorded.");
+    if (status === "running") return this.t("Running now.");
+    if (status === "queued") return this.t("Queued.");
+    return status ? this.formatRunStatusLabel(status) : this.t("No update yet.");
+  }
+
+  getRunFindings(run) {
+    const display = run && run.display && typeof run.display === "object" ? run.display : null;
+    if (display && Array.isArray(display.findings)) {
+      return display.findings.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 6);
+    }
+    const report = this.getRunReport(run);
+    const findings = report && Array.isArray(report.findings) ? report.findings : [];
+    return findings
+      .map((item) => {
+        if (typeof item === "string") return item.trim();
+        if (item && typeof item === "object") return Object.values(item).filter(Boolean).join(" · ").trim();
+        return String(item || "").trim();
+      })
+      .filter(Boolean)
+      .slice(0, 6);
+  }
+
+  getRunActionsTaken(run) {
+    const display = run && run.display && typeof run.display === "object" ? run.display : null;
+    if (display && Array.isArray(display.actionsTaken)) {
+      return display.actionsTaken
+        .map((item) => {
+          if (typeof item === "string") return item.trim();
+          if (item && typeof item === "object") {
+            return [item.label || item.tool || item.name || "", item.status || ""]
+              .filter(Boolean)
+              .map((value) => this.formatStatus(String(value)))
+              .join(" · ");
+          }
+          return "";
+        })
+        .filter(Boolean)
+        .slice(0, 5);
+    }
+    const report = this.getRunReport(run);
+    const actions = report && Array.isArray(report.actionsTaken) ? report.actionsTaken : [];
+    return actions
+      .map((item) => {
+        if (typeof item === "string") return item.trim();
+        if (item && typeof item === "object") {
+          const tool = item.tool || item.tool_name || item.name || "";
+          const status = item.status || "";
+          return [tool ? this.formatStatus(String(tool)) : "", status ? this.formatStatus(String(status)) : ""].filter(Boolean).join(" · ");
+        }
+        return "";
+      })
+      .filter(Boolean)
+      .slice(0, 5);
+  }
+
+  formatWorkflowRunMeta(run) {
+    if (!run || typeof run !== "object") return "";
+    const whenRaw = run.finishedAt || run.startedAt || run.createdAt || run.updatedAt || "";
+    const when = whenRaw ? this.formatDueTime(whenRaw) : "";
+    const duration = Number.isFinite(Number(run.durationMs)) && Number(run.durationMs) > 0 ? this.formatDurationMs(Number(run.durationMs)) : "";
+    return [when, duration].filter(Boolean).join(" · ");
+  }
+
+  renderWorkflowRunDetailHtml(run) {
+    const display = this.getRunDisplay(run);
+    const agentMessage = display.agentMessage || display.summary || "";
+    const findings = Array.isArray(display.findings) ? display.findings : [];
+    const actions = Array.isArray(display.actionsTaken) ? display.actionsTaken : [];
+    const rawDebug = display.rawDebug && typeof display.rawDebug === "object" ? display.rawDebug : null;
+    const status = run && run.status ? String(run.status) : "";
+    const errorDetail = run && typeof run.errorDetail === "string" ? run.errorDetail.trim() : "";
+    const findingsHtml = findings.length
+      ? `
+        <div class="portal-task__run-detail-section">
+          <div class="portal-task__run-detail-title">${this.escapeHtml(this.t("Findings"))}</div>
+          <div class="portal-task__insight-list">
+            ${findings.map((line) => `<div class="portal-task__insight">${this.escapeHtml(line)}</div>`).join("")}
+          </div>
+        </div>
+      `
+      : "";
+    const actionsHtml = actions.length
+      ? `
+        <div class="portal-task__run-detail-section">
+          <div class="portal-task__run-detail-title">${this.escapeHtml(this.t("Actions"))}</div>
+          <div class="portal-task__mini-list">
+            ${actions
+              .map((item) => {
+                if (typeof item === "string") return `<span>${this.escapeHtml(item)}</span>`;
+                const label = item && typeof item === "object" ? String(item.label || item.tool || item.name || this.t("Action")) : this.t("Action");
+                const actionStatus = item && typeof item === "object" && item.status ? ` · ${this.formatStatus(String(item.status))}` : "";
+                return `<span>${this.escapeHtml(label + actionStatus)}</span>`;
+              })
+              .join("")}
+          </div>
+        </div>
+      `
+      : "";
+    const errorHtml = ["failed", "error"].includes(status.toLowerCase()) && errorDetail
+      ? `
+        <div class="portal-task__run-detail-section">
+          <div class="portal-task__run-detail-title">${this.escapeHtml(this.t("Error"))}</div>
+          <div class="portal-task__run-message portal-task__run-message--error">${this.escapeHtml(errorDetail)}</div>
+        </div>
+      `
+      : "";
+    const rawHtml = rawDebug
+      ? `
+        <details class="portal-task__raw">
+          <summary>${this.escapeHtml(this.t("Developer details"))}</summary>
+          <pre><code>${this.escapeHtml(this.safeJsonStringify(rawDebug))}</code></pre>
+        </details>
+      `
+      : "";
+    return `
+      <div class="portal-task__run-detail">
+        ${agentMessage ? `
+          <div class="portal-task__run-detail-section">
+            <div class="portal-task__run-detail-title">${this.escapeHtml(this.t("Agent note"))}</div>
+            <div class="portal-task__run-message">${this.renderMarkdown(agentMessage)}</div>
+          </div>
+        ` : ""}
+        ${findingsHtml}
+        ${actionsHtml}
+        ${errorHtml}
+        ${rawHtml}
+      </div>
+    `;
+  }
+
+  renderWorkflowRunRowHtml(workflowId, run, { expanded = false, latest = false } = {}) {
+    const runId = run && run.id ? String(run.id) : "";
+    const status = run && run.status ? String(run.status) : "";
+    const display = this.getRunDisplay(run);
+    const summary = display.summary || this.getRunSummaryText(run, status);
+    const meta = this.formatWorkflowRunMeta(run);
+    const tone = display.statusTone || "neutral";
+    return `
+      <div class="portal-task__run-row" data-status="${this.escapeHtml(status.toLowerCase())}" data-tone="${this.escapeHtml(tone)}" data-expanded="${expanded ? "true" : "false"}">
+        <button type="button" class="portal-task__run-row-button" data-workflow-run-toggle="true" data-workflow-id="${this.escapeHtml(workflowId)}" data-run-id="${this.escapeHtml(runId)}">
+          <span class="portal-task__run-dot" aria-hidden="true"></span>
+          <span class="portal-task__run-row-main">
+            <span class="portal-task__run-row-top">
+              <span>${this.escapeHtml(latest ? this.t("Latest run") : (meta || this.t("Run")))}</span>
+              <span>${this.escapeHtml(this.formatRunStatusLabel(status))}</span>
+            </span>
+            <span class="portal-task__run-row-summary">${this.escapeHtml(summary)}</span>
+            ${latest && meta ? `<span class="portal-task__run-row-meta">${this.escapeHtml(meta)}</span>` : ""}
+          </span>
+          <span class="portal-task__run-chevron" aria-hidden="true">${expanded ? "⌃" : "⌄"}</span>
+        </button>
+        ${expanded ? this.renderWorkflowRunDetailHtml(run) : ""}
+      </div>
+    `;
+  }
+
+  renderWorkflowRecentRunsHtml(workflowId, state, recentRuns) {
+    const runs = Array.isArray(recentRuns) ? recentRuns.filter(Boolean).slice(0, 8) : [];
+    if (!runs.length) return "";
+    return `
+      <div class="portal-task__section">
+        <div class="portal-task__section-title">${this.escapeHtml(this.t("Runs"))}</div>
+        <div class="portal-task__run-list">
+          ${runs
+            .map((run, index) => this.renderWorkflowRunRowHtml(workflowId, run, {
+              expanded: Boolean(state && state.expandedRuns instanceof Set && state.expandedRuns.has(String(run.id || ""))),
+              latest: index === 0,
+            }))
+            .join("")}
+        </div>
+      </div>
+    `;
+  }
+
+  renderWorkflowAgentCardHtml(workflowId, state, workflow) {
+    const expanded = Boolean(state && state.expanded);
+    const name = workflow && workflow.name ? String(workflow.name) : this.t("Workflow");
+    const latestRun = workflow && workflow.latestRun && typeof workflow.latestRun === "object" ? workflow.latestRun : null;
+    const checkpoint = workflow && workflow.openCheckpoint && typeof workflow.openCheckpoint === "object" ? workflow.openCheckpoint : null;
+    const status = checkpoint ? "waiting_approval" : (latestRun && latestRun.status ? latestRun.status : (workflow.status || "draft"));
+    const triggerLabel = this.getWorkflowTriggerLabel(workflow && workflow.triggerType);
+    const subtitleParts = [triggerLabel];
+    if (workflow && workflow.nextTriggerAt) subtitleParts.push(`${this.t("Next")} ${this.formatDueTime(workflow.nextTriggerAt)}`);
+    else if (workflow && workflow.lastTriggeredAt) subtitleParts.push(`${this.t("Last")} ${this.formatDueTime(workflow.lastTriggeredAt)}`);
+    const subtitle = subtitleParts.filter(Boolean).join(" · ") || this.formatRunStatusLabel(status);
+    const latestSummary = checkpoint
+      ? (checkpoint.prompt || checkpoint.title || this.t("Needs attention"))
+      : (latestRun ? this.getRunSummaryText(latestRun, status) : (workflow.description || this.t("No runs recorded yet.")));
+    const rawRecentRuns = workflow && Array.isArray(workflow.recentRuns) ? workflow.recentRuns : [];
+    const latestRunId = latestRun && latestRun.id ? String(latestRun.id) : "";
+    const recentRuns = latestRunId
+      ? rawRecentRuns.filter((run) => !run || String(run.id || "") !== latestRunId)
+      : rawRecentRuns;
+    const checkpointHtml = checkpoint ? this.renderWorkflowCheckpointHtml(checkpoint) : "";
+    const allRuns = latestRun ? [latestRun, ...recentRuns] : recentRuns;
+    const recentHtml = this.renderWorkflowRecentRunsHtml(workflowId, state, allRuns);
+    return `
+      <div class="portal-task" data-workflow-id="${this.escapeHtml(workflowId)}" data-expanded="${expanded ? "true" : "false"}" data-attention="${checkpoint ? "true" : "false"}">
+        <button type="button" class="portal-task__header" data-workflow-toggle="${this.escapeHtml(workflowId)}">
+          <div class="portal-task__meta">
+            <div class="portal-task__title-row">
+              <div class="portal-task__title">${this.escapeHtml(name)}</div>
+              ${this.renderRunStatusPill(status)}
+            </div>
+            <div class="portal-task__subtitle">${this.escapeHtml(subtitle)}</div>
+            <div class="portal-task__summary-preview">${this.escapeHtml(latestSummary)}</div>
+          </div>
+        </button>
+        <div class="portal-task__body">
+          ${checkpointHtml}
+          ${recentHtml || `<div class="portal-task__empty-note">${this.escapeHtml(this.t("No runs recorded yet."))}</div>`}
+        </div>
+      </div>
+    `;
+  }
+
+  renderWorkflowCheckpointHtml(checkpoint) {
+    const checkpointId = checkpoint && checkpoint.id ? String(checkpoint.id).trim() : "";
+    const kind = checkpoint && checkpoint.kind ? String(checkpoint.kind).trim().toLowerCase() : "";
+    const prompt = checkpoint && checkpoint.prompt ? String(checkpoint.prompt).trim() : "";
+    const payload = checkpoint && checkpoint.payload && typeof checkpoint.payload === "object" ? checkpoint.payload : {};
+    const preview = payload.approval_preview && typeof payload.approval_preview === "object" ? payload.approval_preview : null;
+    const previewHtml = preview ? this.renderAgentRunApprovalPreview(preview) : "";
+    const needsText = prompt || (kind === "approval" ? this.t("This workflow needs approval to continue.") : this.t("This workflow needs more information to continue."));
+    if (kind === "approval") {
+      return `
+        <div class="portal-task__section">
+          <div class="portal-task__section-title">${this.escapeHtml(this.t("Needs attention"))}</div>
+          <div class="portal-task__subtitle">${this.escapeHtml(needsText)}</div>
+          ${previewHtml}
+          <div class="portal-task__actions">
+            <button type="button" class="portal-task__btn portal-task__btn--approve" data-checkpoint-action="approve" data-checkpoint-id="${this.escapeHtml(checkpointId)}">${this.escapeHtml(this.t("Approve"))}</button>
+            <button type="button" class="portal-task__btn portal-task__btn--deny" data-checkpoint-action="deny" data-checkpoint-id="${this.escapeHtml(checkpointId)}">${this.escapeHtml(this.t("Deny"))}</button>
+          </div>
+        </div>
+      `;
+    }
+    return `
+      <div class="portal-task__section">
+        <div class="portal-task__section-title">${this.escapeHtml(this.t("Needs attention"))}</div>
+        <div class="portal-task__subtitle">${this.escapeHtml(needsText)}</div>
+        <textarea class="portal-task__input" data-checkpoint-input-text rows="3" placeholder="${this.escapeHtml(this.t("Type your answer…"))}"></textarea>
+        <div class="portal-task__actions">
+          <button type="button" class="portal-task__btn" data-checkpoint-action="reply" data-checkpoint-id="${this.escapeHtml(checkpointId)}">${this.escapeHtml(this.t("Send"))}</button>
         </div>
       </div>
     `;

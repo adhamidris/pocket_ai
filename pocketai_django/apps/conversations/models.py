@@ -74,6 +74,14 @@ class Conversation(models.Model):
         null=True,
         blank=True,
     )
+    workflow = models.ForeignKey(
+        "conversations.AgentWorkflow",
+        related_name="sessions",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Optional Workflow Agent this chat session belongs to.",
+    )
     owner_user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         related_name="owned_conversations",
@@ -116,6 +124,7 @@ class Conversation(models.Model):
                 fields=["owner_user", "business_profile", "last_activity_at"],
                 name="conv_owner_biz_activity_idx",
             ),
+            models.Index(fields=["workflow", "last_activity_at"], name="conv_workflow_activity_idx"),
         ]
 
     def __str__(self) -> str:
@@ -847,6 +856,7 @@ class AgentRunStatus(models.TextChoices):
     RUNNING = "running", "Running"
     WAITING_USER = "waiting_user", "Waiting for user"
     WAITING_APPROVAL = "waiting_approval", "Waiting for approval"
+    WAITING_CHILD = "waiting_child", "Waiting for child run"
     WAITING_EXTERNAL = "waiting_external", "Waiting for external"
     PAUSED = "paused", "Paused"
     COMPLETED = "completed", "Completed"
@@ -994,6 +1004,7 @@ class AgentRunEventType(models.TextChoices):
     PROGRESS = "progress", "Progress"
     NEEDS_USER = "needs_user", "Needs user"
     NEEDS_APPROVAL = "needs_approval", "Needs approval"
+    NEEDS_CHILD = "needs_child", "Needs child run"
     RESULT = "result", "Result"
     ERROR = "error", "Error"
     PAUSED = "paused", "Paused"
@@ -1041,6 +1052,114 @@ class AgentRunEvent(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"{self.run_id}:{self.stream}:{self.event_type}:{self.sequence_index}"
+
+
+class AgentRunCheckpointKind(models.TextChoices):
+    APPROVAL = "approval", "Approval"
+    USER_INPUT = "user_input", "User input"
+    CHILD_RUN = "child_run", "Child run"
+    EXTERNAL = "external", "External"
+
+
+class AgentRunCheckpointStatus(models.TextChoices):
+    OPEN = "open", "Open"
+    RESOLVED = "resolved", "Resolved"
+    EXPIRED = "expired", "Expired"
+    CANCELLED = "cancelled", "Cancelled"
+
+
+class AgentRunCheckpoint(models.Model):
+    """
+    Structured pause/resume point for Workflow Agent runs.
+
+    Checkpoints are the portal-facing source of truth for approvals, user input,
+    child-run waits, and external waits. The private execution conversation keeps
+    the scratchpad; this row keeps the operational state queryable.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        "accounts.BusinessProfile",
+        related_name="agent_run_checkpoints",
+        on_delete=models.CASCADE,
+    )
+    workflow = models.ForeignKey(
+        AgentWorkflow,
+        related_name="checkpoints",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    run = models.ForeignKey(
+        AgentRun,
+        related_name="checkpoints",
+        on_delete=models.CASCADE,
+    )
+    conversation = models.ForeignKey(
+        Conversation,
+        related_name="agent_run_checkpoints",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    child_run = models.ForeignKey(
+        AgentRun,
+        related_name="parent_checkpoints",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    kind = models.CharField(max_length=24, choices=AgentRunCheckpointKind.choices, db_index=True)
+    status = models.CharField(
+        max_length=24,
+        choices=AgentRunCheckpointStatus.choices,
+        default=AgentRunCheckpointStatus.OPEN,
+        db_index=True,
+    )
+    title = models.CharField(max_length=240, blank=True, default="")
+    prompt = models.TextField(blank=True, default="")
+    payload = models.JSONField(default=dict, blank=True)
+    resolution = models.JSONField(default=dict, blank=True)
+    expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="created_agent_run_checkpoints",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="resolved_agent_run_checkpoints",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "conversations_agent_run_checkpoint"
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["business_profile", "status", "updated_at"], name="checkpoint_biz_status_idx"),
+            models.Index(fields=["workflow", "status", "updated_at"], name="checkpoint_wf_status_idx"),
+            models.Index(fields=["run", "status", "created_at"], name="checkpoint_run_status_idx"),
+            models.Index(fields=["status", "expires_at"], name="checkpoint_expiry_idx"),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.run_id and not self.business_profile_id and getattr(self, "run", None):
+            self.business_profile = self.run.business_profile
+        if self.run_id and not self.workflow_id and getattr(self, "run", None):
+            self.workflow = self.run.workflow
+        if self.run_id and not self.conversation_id and getattr(self, "run", None):
+            self.conversation = self.run.conversation
+        super().save(*args, **kwargs)
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.run_id}:{self.kind}:{self.status}"
 
 
 class AgentRunArtifactKind(models.TextChoices):

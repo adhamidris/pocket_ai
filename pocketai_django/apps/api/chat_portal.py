@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 from django.conf import settings
 from django.core.cache import cache
 from django.db import IntegrityError, close_old_connections, transaction
-from django.db.models import Max, Q
+from django.db.models import Count, Max, Q
 from django.http import HttpRequest, HttpResponse, JsonResponse, StreamingHttpResponse
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
@@ -46,10 +46,14 @@ from apps.conversations.models import (
     AgentRequest,
     AgentRequestStatus,
     AgentRun,
+    AgentRunCheckpoint,
+    AgentRunCheckpointKind,
+    AgentRunCheckpointStatus,
     AgentRunEvent,
     AgentRunEventStream,
     AgentRunEventType,
     AgentRunStatus,
+    AgentWorkflow,
     Conversation,
     ConversationMessage,
     ConversationSender,
@@ -95,6 +99,7 @@ from apps.conversations.portal_turn_runner import run_turn_background
 from apps.conversations.content_blocks import (
     extract_text_from_content_blocks,
 )
+from apps.conversations.run_display import build_agent_run_display
 from core.tenancy import tenant_context
 
 logger = logging.getLogger(__name__)
@@ -1368,13 +1373,19 @@ def _clip_portal_text(value: str, limit: int) -> str:
 
 def _serialize_agent_run_for_portal(run: AgentRun) -> dict[str, object]:
     plan_payload = run.plan if isinstance(getattr(run, "plan", None), dict) else {}
-    result_payload = run.result if isinstance(getattr(run, "result", None), dict) else {}
-    response_text = ""
-    if isinstance(result_payload, dict):
-        response_text = str(result_payload.get("response_text") or result_payload.get("responseText") or "").strip()
     error_detail = str(getattr(run, "error_detail", "") or "").strip()
+    open_checkpoint = None
+    try:
+        open_checkpoint = (
+            AgentRunCheckpoint.objects.filter(run=run, status=AgentRunCheckpointStatus.OPEN)
+            .order_by("-updated_at", "-created_at")
+            .first()
+        )
+    except Exception:
+        open_checkpoint = None
     return {
         "id": str(run.id),
+        "workflowId": str(run.workflow_id) if run.workflow_id else None,
         "title": run.title or "",
         "source": run.source,
         "status": run.status,
@@ -1388,7 +1399,59 @@ def _serialize_agent_run_for_portal(run: AgentRun) -> dict[str, object]:
         "updatedAt": run.updated_at.isoformat() if run.updated_at else None,
         "errorDetail": _clip_portal_text(error_detail, 800) if error_detail else "",
         "plan": plan_payload,
-        "result": {"responseText": _clip_portal_text(response_text, 6000)} if response_text else {},
+        "durationMs": int((run.finished_at - run.started_at).total_seconds() * 1000)
+        if run.started_at and run.finished_at
+        else None,
+        "display": build_agent_run_display(run),
+        "metadata": run.metadata if isinstance(getattr(run, "metadata", None), dict) else {},
+        "openCheckpoint": _serialize_agent_run_checkpoint_for_portal(open_checkpoint),
+    }
+
+
+def _serialize_agent_run_checkpoint_for_portal(checkpoint: AgentRunCheckpoint | None) -> dict[str, object] | None:
+    if checkpoint is None:
+        return None
+    return {
+        "id": str(checkpoint.id),
+        "workflowId": str(checkpoint.workflow_id) if checkpoint.workflow_id else None,
+        "runId": str(checkpoint.run_id),
+        "childRunId": str(checkpoint.child_run_id) if checkpoint.child_run_id else None,
+        "kind": checkpoint.kind,
+        "status": checkpoint.status,
+        "title": checkpoint.title or "",
+        "prompt": _clip_portal_text(checkpoint.prompt or "", 4000),
+        "payload": checkpoint.payload if isinstance(getattr(checkpoint, "payload", None), dict) else {},
+        "resolution": checkpoint.resolution if isinstance(getattr(checkpoint, "resolution", None), dict) else {},
+        "expiresAt": checkpoint.expires_at.isoformat() if checkpoint.expires_at else None,
+        "resolvedAt": checkpoint.resolved_at.isoformat() if checkpoint.resolved_at else None,
+        "createdAt": checkpoint.created_at.isoformat() if checkpoint.created_at else None,
+        "updatedAt": checkpoint.updated_at.isoformat() if checkpoint.updated_at else None,
+    }
+
+
+def _serialize_workflow_agent_for_portal(
+    workflow: AgentWorkflow,
+    *,
+    latest_run: AgentRun | None = None,
+    open_checkpoint: AgentRunCheckpoint | None = None,
+    recent_runs: list[AgentRun] | None = None,
+) -> dict[str, object]:
+    return {
+        "id": str(workflow.id),
+        "agentId": str(workflow.agent_profile_id),
+        "name": workflow.name,
+        "description": workflow.description or "",
+        "status": workflow.status,
+        "triggerType": workflow.trigger_type,
+        "nextTriggerAt": workflow.next_trigger_at.isoformat() if workflow.next_trigger_at else None,
+        "lastTriggeredAt": workflow.last_triggered_at.isoformat() if workflow.last_triggered_at else None,
+        "latestRun": _serialize_agent_run_for_portal(latest_run) if latest_run else None,
+        "openCheckpoint": _serialize_agent_run_checkpoint_for_portal(open_checkpoint),
+        "recentRuns": [_serialize_agent_run_for_portal(item) for item in (recent_runs or [])[:5]],
+        "sessionCount": int(getattr(workflow, "session_count", 0) or 0),
+        "attentionState": "needs_attention" if open_checkpoint else ("active" if latest_run and latest_run.status in {AgentRunStatus.QUEUED, AgentRunStatus.RUNNING, AgentRunStatus.WAITING_CHILD, AgentRunStatus.WAITING_EXTERNAL} else workflow.status),
+        "createdAt": workflow.created_at.isoformat() if workflow.created_at else None,
+        "updatedAt": workflow.updated_at.isoformat() if workflow.updated_at else None,
     }
 
 
@@ -1432,6 +1495,7 @@ def _build_portal_agent_runs_snapshot(
     *,
     conversation_id: uuid.UUID,
     business_id: uuid.UUID | None,
+    agent_profile_id: uuid.UUID | None = None,
     runs_limit: int = 15,
     events_limit_per_run: int = 20,
 ) -> dict[str, object]:
@@ -1439,11 +1503,56 @@ def _build_portal_agent_runs_snapshot(
     events_limit_per_run = max(0, min(int(events_limit_per_run), 50))
 
     with tenant_context(business_id):
+        workflow_agents: list[dict[str, object]] = []
+        if agent_profile_id:
+            workflows = list(
+                AgentWorkflow.objects.filter(business_profile_id=business_id, agent_profile_id=agent_profile_id)
+                .annotate(session_count=Count("sessions"))
+                .order_by("-updated_at", "-created_at")[:100]
+            )
+            workflow_ids = [workflow.id for workflow in workflows]
+            latest_runs: dict[uuid.UUID, AgentRun] = {}
+            recent_runs_by_workflow: dict[uuid.UUID, list[AgentRun]] = {}
+            open_checkpoints: dict[uuid.UUID, AgentRunCheckpoint] = {}
+            if workflow_ids:
+                for run in (
+                    AgentRun.objects.filter(workflow_id__in=workflow_ids)
+                    .order_by("-created_at")[:500]
+                ):
+                    if run.workflow_id:
+                        recent_runs_by_workflow.setdefault(run.workflow_id, []).append(run)
+                        latest_runs.setdefault(run.workflow_id, run)
+                for checkpoint in (
+                    AgentRunCheckpoint.objects.filter(
+                        workflow_id__in=workflow_ids,
+                        status=AgentRunCheckpointStatus.OPEN,
+                    )
+                    .order_by("-updated_at", "-created_at")[:300]
+                ):
+                    if checkpoint.workflow_id and checkpoint.workflow_id not in open_checkpoints:
+                        open_checkpoints[checkpoint.workflow_id] = checkpoint
+            workflow_agents = [
+                _serialize_workflow_agent_for_portal(
+                    workflow,
+                    latest_run=latest_runs.get(workflow.id),
+                    open_checkpoint=open_checkpoints.get(workflow.id),
+                    recent_runs=recent_runs_by_workflow.get(workflow.id, []),
+                )
+                for workflow in workflows
+            ]
+
         runs = list(
-            AgentRun.objects.filter(conversation_id=conversation_id)
+            AgentRun.objects.filter(conversation_id=conversation_id, workflow_id__isnull=True)
             .order_by("-created_at")[:runs_limit]
         )
         run_ids = [run.id for run in runs]
+        for workflow in workflow_agents:
+            for item in [workflow.get("latestRun"), *(workflow.get("recentRuns") or [])]:
+                if isinstance(item, dict) and item.get("id"):
+                    try:
+                        run_ids.append(uuid.UUID(str(item.get("id"))))
+                    except (TypeError, ValueError):
+                        pass
 
         events_by_run: dict[str, list[dict[str, object]]] = {}
         max_created_at: datetime | None = None
@@ -1473,6 +1582,7 @@ def _build_portal_agent_runs_snapshot(
         return {
             "conversationId": str(conversation_id),
             "runs": [_serialize_agent_run_for_portal(run) for run in runs],
+            "workflows": workflow_agents,
             "eventsByRun": events_by_run,
             "cursor": {"since": cursor_value},
         }
@@ -2309,6 +2419,146 @@ def portal_agent_run_user_input(request: HttpRequest) -> JsonResponse:
 
 
 @require_POST
+def portal_agent_run_checkpoint_resolve(request: HttpRequest) -> JsonResponse:
+    service = _service()
+    try:
+        payload = _parse_json_body(request)
+    except PortalValidationError as exc:
+        return _json_error("invalid_json", str(exc))
+
+    checkpoint_id_raw = str(payload.get("checkpoint_id") or payload.get("checkpointId") or "").strip()
+    action = str(payload.get("action") or payload.get("decision") or "resolve").strip().lower()
+    message = str(payload.get("message") or payload.get("note") or "").strip()
+    extra_payload = dict(payload.get("payload") or {}) if isinstance(payload.get("payload"), dict) else {}
+    if not checkpoint_id_raw:
+        return _json_error("validation_error", "checkpoint_id is required.")
+    if action not in {"approve", "deny", "reply", "resolve", "cancel", "expire"}:
+        return _json_error("validation_error", "Invalid checkpoint action.")
+    try:
+        checkpoint_uuid = uuid.UUID(checkpoint_id_raw)
+    except (TypeError, ValueError):
+        return _json_error("validation_error", "checkpoint_id is invalid.")
+
+    try:
+        conversation, session = _resolve_request_conversation(
+            service=service,
+            request=request,
+            payload=payload,
+            include_messages=False,
+        )
+    except PortalNotFoundError as exc:
+        return _json_error("not_found", str(exc), status=404)
+    except PortalAuthorizationError as exc:
+        status = 401 if str(exc) == "Authentication is required." else 403
+        code = "auth_required" if status == 401 else "forbidden"
+        return _json_error(code, str(exc), status=status)
+    except PortalValidationError as exc:
+        return _json_error("validation_error", str(exc))
+
+    actor_user = request.user if getattr(request, "user", None) and request.user.is_authenticated else None
+    business_id = getattr(conversation, "business_profile_id", None)
+    with tenant_context(business_id):
+        checkpoint = (
+            AgentRunCheckpoint.objects.select_related("run", "workflow")
+            .filter(id=checkpoint_uuid, business_profile_id=business_id)
+            .filter(Q(run__agent_profile_id=conversation.agent_profile_id) | Q(workflow__agent_profile_id=conversation.agent_profile_id))
+            .first()
+        )
+        if checkpoint is None:
+            return _json_error("not_found", "Checkpoint not found.", status=404)
+        if checkpoint.status != AgentRunCheckpointStatus.OPEN:
+            return _json_error("checkpoint_closed", "Checkpoint is already resolved.", status=409)
+        run = checkpoint.run
+        now = timezone.now()
+        resolution = {"action": action, "message": message, "payload": extra_payload}
+        checkpoint.status = AgentRunCheckpointStatus.EXPIRED if action == "expire" else (
+            AgentRunCheckpointStatus.CANCELLED if action == "cancel" else AgentRunCheckpointStatus.RESOLVED
+        )
+        checkpoint.resolution = resolution
+        checkpoint.resolved_at = now
+        checkpoint.resolved_by = actor_user
+        checkpoint.save(update_fields=["status", "resolution", "resolved_at", "resolved_by", "updated_at"])
+
+        _append_agent_run_event(
+            run,
+            stream=AgentRunEventStream.EXECUTED,
+            event_type=AgentRunEventType.CANCELLED if action in {"deny", "cancel"} else AgentRunEventType.PROGRESS,
+            label="Checkpoint resolved",
+            payload={"checkpoint_id": str(checkpoint.id), **resolution},
+        )
+        MemoryItem.objects.create(
+            business_profile=run.business_profile,
+            scope=MemoryScope.RUN,
+            agent_profile=run.agent_profile,
+            workflow=run.workflow,
+            run=run,
+            conversation=run.conversation,
+            kind=MemoryKind.DECISION if checkpoint.kind == AgentRunCheckpointKind.APPROVAL else MemoryKind.STATE_NOTE,
+            key=f"checkpoint_{checkpoint.kind}",
+            content=message[:4000] or action,
+            payload={"checkpoint_id": str(checkpoint.id), **resolution},
+            visibility=MemoryVisibility.PRIVATE,
+            created_by=actor_user,
+        )
+        next_meta = dict(run.metadata or {}) if isinstance(getattr(run, "metadata", None), dict) else {}
+        next_meta.pop("pending_checkpoint_id", None)
+        next_meta.pop("pending_approval_id", None)
+        next_meta.pop("pending_user_input", None)
+        next_meta.pop("pending_child_run_id", None)
+        if action in {"deny", "cancel"}:
+            AgentRun.objects.filter(id=run.id).update(
+                status=AgentRunStatus.CANCELLED,
+                finished_at=now,
+                lease_expires_at=None,
+                run_after=None,
+                error_detail=message or action,
+                metadata=next_meta,
+                updated_at=now,
+            )
+        elif action == "expire":
+            AgentRun.objects.filter(id=run.id).update(
+                status=AgentRunStatus.PAUSED,
+                lease_expires_at=None,
+                run_after=None,
+                error_detail=message or "checkpoint expired",
+                metadata=next_meta,
+                updated_at=now,
+            )
+        else:
+            execution_conversation = None
+            if run.execution_conversation_id:
+                execution_conversation = Conversation.objects.filter(id=run.execution_conversation_id, business_profile_id=business_id).first()
+            if execution_conversation and (message or extra_payload):
+                ConversationMessage.objects.create(
+                    conversation=execution_conversation,
+                    sender=ConversationSender.CUSTOMER,
+                    body=message or "Checkpoint response:\n" + json.dumps(extra_payload, ensure_ascii=False),
+                    metadata={"source": "agent_run_checkpoint", "agent_run_id": str(run.id), "checkpoint_id": str(checkpoint.id)},
+                )
+                Conversation.objects.filter(id=execution_conversation.id).update(last_activity_at=now)
+            AgentRun.objects.filter(id=run.id).update(
+                status=AgentRunStatus.QUEUED,
+                run_after=now,
+                lease_expires_at=None,
+                finished_at=None,
+                error_detail="",
+                metadata=next_meta,
+                updated_at=now,
+            )
+        run.refresh_from_db()
+        checkpoint.refresh_from_db()
+
+    return JsonResponse(
+        {
+            "session": _session_to_dict(session),
+            "checkpoint": _serialize_agent_run_checkpoint_for_portal(checkpoint),
+            "run": _serialize_agent_run_for_portal(run),
+        },
+        status=200,
+    )
+
+
+@require_POST
 def portal_agent_run_approval(request: HttpRequest) -> JsonResponse:
     service = _service()
     try:
@@ -2973,6 +3223,7 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
                 snapshot = _build_portal_agent_runs_snapshot(
                     conversation_id=conversation_id,
                     business_id=business_id,
+                    agent_profile_id=agent_profile_id,
                 )
                 yield "event: agentRunsSnapshot\n"
                 yield f"data: {json.dumps(snapshot)}\n\n"
@@ -3149,9 +3400,16 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
 
                 if conversation_id and agent_workforce_enabled:
                     with tenant_context(business_id):
+                        event_filter = Q(run__conversation_id=conversation_id)
+                        if agent_profile_id:
+                            event_filter |= Q(
+                                run__business_profile_id=business_id,
+                                run__agent_profile_id=agent_profile_id,
+                                run__workflow_id__isnull=False,
+                            )
                         events_batch = list(
                             AgentRunEvent.objects.select_related("run")
-                            .filter(run__conversation_id=conversation_id)
+                            .filter(event_filter)
                             .filter(created_at__gte=run_since)
                             .order_by("created_at", "run_id", "sequence_index")[:250]
                         )

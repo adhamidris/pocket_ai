@@ -120,6 +120,31 @@ class AuthenticatedConversationApiTests(TestCase):
         self.assertEqual(messages_response.status_code, 200)
         self.assertEqual(messages_response.json()["session"]["session_type"], "task")
 
+    def test_conversations_collection_hides_internal_agent_notification_surfaces(self) -> None:
+        Conversation.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            owner_user=self.owner,
+            session_token="agent-notification-surface",
+            metadata={
+                "type": "canonical_main_primary",
+                "purpose": "agent_notification_surface",
+            },
+            summary="Primary communication thread for Sarah.",
+            last_activity_at=timezone.now() + timedelta(minutes=5),
+        )
+        self.client.force_login(self.owner)
+
+        response = self.client.get(
+            reverse("api:chat-conversations"),
+            {"business_slug": self.business.slug, "agent_slug": self.agent.slug},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        conversations = response.json()["conversations"]
+        self.assertEqual(len(conversations), 1)
+        self.assertEqual(conversations[0]["conversation_id"], str(self.conversation.id))
+
     def test_conversations_collection_orders_by_recent_activity(self) -> None:
         older = Conversation.objects.create(
             business_profile=self.business,

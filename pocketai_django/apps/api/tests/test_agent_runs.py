@@ -11,6 +11,9 @@ from django.utils import timezone
 from apps.accounts.models import AgentDepartment, AgentProfile, BusinessProfile, RegistrationSession
 from apps.conversations.models import (
     AgentRun,
+    AgentRunCheckpoint,
+    AgentRunCheckpointKind,
+    AgentRunCheckpointStatus,
     AgentRunStatus,
     AgentWorkflow,
     AgentWorkflowStatus,
@@ -94,6 +97,14 @@ class AgentRunsApiTests(TestCase):
         self.assertEqual(duplicate_res.status_code, 400)
 
     def test_workflow_create_list_and_manual_run(self) -> None:
+        source_chat = Conversation.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            owner_user=self.user,
+            channel=ConversationChannel.API,
+            status=ConversationStatus.LIVE,
+        )
+        source_chat.messages.create(sender="customer", body="Train this workflow from current context.")
         url = reverse("api:agent-workflows", args=[self.agent.id])
         response = self.client.post(
             url,
@@ -103,6 +114,7 @@ class AgentRunsApiTests(TestCase):
                     "status": "active",
                     "visibility": "initiator",
                     "triggerType": "manual",
+                    "sourceConversationId": str(source_chat.id),
                     "instructions": {"version": 1, "goal": "Summarize sales"},
                 }
             ),
@@ -112,6 +124,11 @@ class AgentRunsApiTests(TestCase):
         workflow_id = response.json()["workflow"]["id"]
         self.assertEqual(response.json()["workflow"]["reviewMode"], "on_risk")
         self.assertEqual(response.json()["workflow"]["autonomyMode"], "draft_for_approval")
+        self.assertEqual(response.json()["workflow"]["sessionCount"], 1)
+        workflow = AgentWorkflow.objects.get(id=uuid.UUID(workflow_id))
+        session = Conversation.objects.get(workflow=workflow)
+        self.assertEqual(session.metadata["source_conversation_id"], str(source_chat.id))
+        self.assertIn("creation_brief", workflow.metadata)
 
         response = self.client.get(url)
         self.assertEqual(response.status_code, 200)
@@ -122,11 +139,33 @@ class AgentRunsApiTests(TestCase):
         self.assertEqual(run_res.status_code, 201)
         self.assertEqual(run_res.json()["run"]["workflowId"], workflow_id)
         self.assertEqual(run_res.json()["run"]["status"], AgentRunStatus.QUEUED)
+        self.assertEqual(AgentRun.objects.get(id=uuid.UUID(run_res.json()["run"]["id"])).conversation.workflow_id, workflow.id)
 
         response = self.client.get(url)
         self.assertEqual(response.status_code, 200)
         listed = next(item for item in response.json()["workflows"] if item["id"] == workflow_id)
         self.assertEqual(listed["latestRun"]["id"], run_res.json()["run"]["id"])
+
+        run = AgentRun.objects.get(id=uuid.UUID(run_res.json()["run"]["id"]))
+        run.status = AgentRunStatus.COMPLETED
+        run.started_at = timezone.now()
+        run.finished_at = timezone.now()
+        run.result = {
+            "response_text": "Done.",
+            "run_report": {
+                "status": "no_change",
+                "findings": ["Checked the latest records and found no changes."],
+                "actions_taken": [{"tool": "email_search", "status": "ok"}],
+                "recommended_next_step": "Keep monitoring.",
+            },
+        }
+        run.save(update_fields=["status", "started_at", "finished_at", "result", "updated_at"])
+        response = self.client.get(url)
+        listed = next(item for item in response.json()["workflows"] if item["id"] == workflow_id)
+        display = listed["latestRun"]["display"]
+        self.assertEqual(display["summary"], "Checked the latest records and found no changes.")
+        self.assertEqual(display["findings"][0], "Checked the latest records and found no changes.")
+        self.assertEqual(display["actionsTaken"][0]["label"], "email_search")
 
     def test_pausing_workflow_cancels_open_runs_by_default(self) -> None:
         workflow = AgentWorkflow.objects.create(
@@ -279,6 +318,45 @@ class AgentRunsApiTests(TestCase):
         run = AgentRun.objects.get(id=uuid.UUID(result.run_id))
         self.assertEqual(run.workflow, workflow)
         self.assertEqual(run.source, "schedule")
+        self.assertIsNone(run.conversation_id)
+
+    def test_checkpoint_resolve_queues_run_and_closes_checkpoint(self) -> None:
+        workflow = AgentWorkflow.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            created_by=self.user,
+            name="Approvals",
+            instructions={"goal": "Ask first"},
+        )
+        run = AgentRun.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            workflow=workflow,
+            created_by=self.user,
+            title="Needs approval",
+            status=AgentRunStatus.WAITING_APPROVAL,
+            metadata={"pending_checkpoint_id": "placeholder"},
+        )
+        checkpoint = AgentRunCheckpoint.objects.create(
+            business_profile=self.business,
+            workflow=workflow,
+            run=run,
+            kind=AgentRunCheckpointKind.APPROVAL,
+            status=AgentRunCheckpointStatus.OPEN,
+            title="Approval needed",
+            prompt="Approve?",
+        )
+        response = self.client.post(
+            reverse("api:agent-run-checkpoint-resolve", args=[self.agent.id, checkpoint.id]),
+            data=json.dumps({"action": "approve", "message": "Approved"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        run.refresh_from_db()
+        checkpoint.refresh_from_db()
+        self.assertEqual(run.status, AgentRunStatus.QUEUED)
+        self.assertEqual(checkpoint.status, AgentRunCheckpointStatus.RESOLVED)
+        self.assertTrue(MemoryItem.objects.filter(run=run, key="checkpoint_approval").exists())
 
     def test_schedule_webhook_and_email_workflows_create_via_api(self) -> None:
         url = reverse("api:agent-workflows", args=[self.agent.id])

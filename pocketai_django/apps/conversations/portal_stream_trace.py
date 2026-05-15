@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 import uuid
@@ -8,6 +9,9 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from django.conf import settings
+
+
+logger = logging.getLogger(__name__)
 
 
 def _truthy(value: object) -> bool:
@@ -102,12 +106,15 @@ class PortalStreamTrace:
         if not self.enabled or not self._buffer:
             return
         path = self._path()
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "a", encoding="utf-8") as handle:
-            handle.write("\n".join(self._buffer))
-            handle.write("\n")
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "a", encoding="utf-8") as handle:
+                handle.write("\n".join(self._buffer))
+                handle.write("\n")
+        except OSError as exc:
+            logger.warning("Disabling portal stream trace; cannot write %s: %s", path, exc)
+            self.enabled = False
         self._buffer.clear()
 
     def close(self) -> None:
         self.flush()
-

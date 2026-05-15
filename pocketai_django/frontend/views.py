@@ -269,6 +269,7 @@ def _build_portal_context(
             "tool_history": reverse("api:chat-portal-tools-history"),
             "run_approval": reverse("api:chat-portal-runs-approval"),
             "run_user_input": reverse("api:chat-portal-runs-user-input"),
+            "run_checkpoint": reverse("api:chat-portal-runs-checkpoint"),
             "agent_request_update": reverse("api:chat-portal-agent-requests-update"),
             "email_send_draft": reverse("api:chat-portal-email-send-draft"),
             "email_discard_draft": reverse("api:chat-portal-email-discard-draft"),

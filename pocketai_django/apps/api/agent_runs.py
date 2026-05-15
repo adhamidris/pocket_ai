@@ -9,7 +9,7 @@ from typing import Any
 
 from django.core.cache import cache
 from django.db import transaction
-from django.db.models import Max, Q
+from django.db.models import Count, Max, Q
 from django.http import HttpRequest, JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt, csrf_protect
@@ -19,15 +19,18 @@ from core.tenancy import tenant_bypass, tenant_context
 
 from apps.accounts.models import AgentProfile, EmailAccountStatus
 from apps.conversations.workflow_scheduling import CronScheduleError, compute_next_workflow_schedule_at
+from apps.conversations.run_display import build_agent_run_display
 from apps.conversations.models import (
     AgentRun,
+    AgentRunCheckpoint,
+    AgentRunCheckpointKind,
+    AgentRunCheckpointStatus,
     AgentRunEvent,
     AgentRunEventStream,
     AgentRunEventType,
     AgentRunSource,
     AgentRunStatus,
     AgentRunVisibility,
-    AgentRunNotification,
     AgentWorkflow,
     AgentWorkflowAutonomyMode,
     AgentWorkflowReviewMode,
@@ -35,6 +38,7 @@ from apps.conversations.models import (
     AgentWorkflowTriggerType,
     Conversation,
     ConversationChannel,
+    ConversationSender,
     ConversationStatus,
     MemoryAuditAction,
     MemoryAuditEvent,
@@ -138,13 +142,57 @@ def _serialize_run_summary(run: AgentRun) -> dict[str, object]:
         "status": run.status,
         "startedAt": run.started_at.isoformat() if run.started_at else None,
         "finishedAt": run.finished_at.isoformat() if run.finished_at else None,
+        "durationMs": int((run.finished_at - run.started_at).total_seconds() * 1000)
+        if run.started_at and run.finished_at
+        else None,
         "errorDetail": run.error_detail or "",
+        "display": build_agent_run_display(run),
         "createdAt": run.created_at.isoformat() if run.created_at else None,
         "updatedAt": run.updated_at.isoformat() if run.updated_at else None,
     }
 
 
+def _serialize_checkpoint(checkpoint: AgentRunCheckpoint | None) -> dict[str, object] | None:
+    if checkpoint is None:
+        return None
+    return {
+        "id": str(checkpoint.id),
+        "workflowId": str(checkpoint.workflow_id) if checkpoint.workflow_id else None,
+        "runId": str(checkpoint.run_id),
+        "childRunId": str(checkpoint.child_run_id) if checkpoint.child_run_id else None,
+        "conversationId": str(checkpoint.conversation_id) if checkpoint.conversation_id else None,
+        "kind": checkpoint.kind,
+        "status": checkpoint.status,
+        "title": checkpoint.title or "",
+        "prompt": checkpoint.prompt or "",
+        "payload": checkpoint.payload if isinstance(checkpoint.payload, dict) else {},
+        "resolution": checkpoint.resolution if isinstance(checkpoint.resolution, dict) else {},
+        "expiresAt": checkpoint.expires_at.isoformat() if checkpoint.expires_at else None,
+        "resolvedAt": checkpoint.resolved_at.isoformat() if checkpoint.resolved_at else None,
+        "createdAt": checkpoint.created_at.isoformat() if checkpoint.created_at else None,
+        "updatedAt": checkpoint.updated_at.isoformat() if checkpoint.updated_at else None,
+    }
+
+
+def _serialize_workflow_session(conversation: Conversation) -> dict[str, object]:
+    metadata = conversation.metadata if isinstance(getattr(conversation, "metadata", None), dict) else {}
+    return {
+        "id": str(conversation.id),
+        "conversationId": str(conversation.id),
+        "sessionToken": conversation.session_token,
+        "workflowId": str(conversation.workflow_id) if conversation.workflow_id else None,
+        "title": conversation.summary or str(metadata.get("title") or metadata.get("workflow_name") or metadata.get("workflowName") or "").strip() or "New workflow session",
+        "status": conversation.status,
+        "messageCount": getattr(conversation, "message_count", None),
+        "startedAt": conversation.started_at.isoformat() if conversation.started_at else None,
+        "lastActivityAt": conversation.last_activity_at.isoformat() if conversation.last_activity_at else None,
+        "metadata": metadata,
+    }
+
+
 def _serialize_workflow(workflow: AgentWorkflow, latest_run: AgentRun | None = None) -> dict[str, object]:
+    open_checkpoint = getattr(workflow, "open_checkpoint", None)
+    session_count = getattr(workflow, "session_count", None)
     return {
         "id": str(workflow.id),
         "agentId": str(workflow.agent_profile_id),
@@ -174,6 +222,9 @@ def _serialize_workflow(workflow: AgentWorkflow, latest_run: AgentRun | None = N
         "errorCount": int(workflow.error_count or 0),
         "lastError": workflow.last_error or "",
         "latestRun": _serialize_run_summary(latest_run) if latest_run is not None else None,
+        "openCheckpoint": _serialize_checkpoint(open_checkpoint) if isinstance(open_checkpoint, AgentRunCheckpoint) else None,
+        "sessionCount": int(session_count or 0),
+        "attentionState": "needs_attention" if isinstance(open_checkpoint, AgentRunCheckpoint) else ("active" if latest_run and latest_run.status in {AgentRunStatus.QUEUED, AgentRunStatus.RUNNING, AgentRunStatus.WAITING_CHILD, AgentRunStatus.WAITING_EXTERNAL} else workflow.status),
         "metadata": workflow.metadata if isinstance(workflow.metadata, dict) else {},
         "createdBy": str(workflow.created_by_id) if workflow.created_by_id else None,
         "createdAt": workflow.created_at.isoformat() if workflow.created_at else None,
@@ -222,22 +273,6 @@ def _serialize_run(run: AgentRun) -> dict[str, object]:
         "result": run.result if isinstance(run.result, dict) else {},
         "artifacts": artifacts,
         "metadata": run.metadata if isinstance(run.metadata, dict) else {},
-        "notifications": [
-            {
-                "id": str(item.id),
-                "status": item.status,
-                "kind": item.kind,
-                "priority": item.priority,
-                "title": item.title or "",
-                "body": item.body or "",
-                "targetConversationId": str(item.target_conversation_id) if item.target_conversation_id else None,
-                "dedupeKey": item.dedupe_key or "",
-                "payload": item.payload if isinstance(item.payload, dict) else {},
-                "deliveredAt": item.delivered_at.isoformat() if item.delivered_at else None,
-                "createdAt": item.created_at.isoformat() if item.created_at else None,
-            }
-            for item in AgentRunNotification.objects.filter(run=run).order_by("-created_at")[:20]
-        ],
         "createdBy": str(run.created_by_id) if run.created_by_id else None,
         "createdAt": run.created_at.isoformat() if run.created_at else None,
         "updatedAt": run.updated_at.isoformat() if run.updated_at else None,
@@ -401,20 +436,73 @@ def _ensure_run_mutable(run: AgentRun) -> JsonResponse | None:
     return None
 
 
-def _ensure_workflow_conversation(workflow: AgentWorkflow) -> Conversation:
-    if workflow.conversation_id:
-        return workflow.conversation
+def _create_workflow_session(workflow: AgentWorkflow, *, created_by=None, title: str = "", source_conversation: Conversation | None = None) -> Conversation:
+    metadata: dict[str, object] = {
+        "type": "workflow_agent_session",
+        "workflow_id": str(workflow.id),
+        "workflow_name": workflow.name,
+    }
+    if source_conversation is not None:
+        metadata["source_conversation_id"] = str(source_conversation.id)
+    summary = (title or workflow.name or "Workflow session").strip()
     conversation = Conversation.objects.create(
         business_profile=workflow.business_profile,
         agent_profile=workflow.agent_profile,
+        workflow=workflow,
         owner_user=workflow.created_by or workflow.agent_profile.user,
         channel=ConversationChannel.API,
         status=ConversationStatus.LIVE,
-        metadata={"type": "workflow_thread", "workflow_id": str(workflow.id), "workflow_name": workflow.name},
+        metadata=metadata,
+        summary=summary,
     )
-    AgentWorkflow.objects.filter(id=workflow.id).update(conversation=conversation, updated_at=timezone.now())
-    workflow.conversation = conversation
     return conversation
+
+
+def _latest_workflow_session(workflow: AgentWorkflow) -> Conversation | None:
+    return (
+        Conversation.objects.filter(workflow=workflow, business_profile=workflow.business_profile)
+        .order_by("-last_activity_at", "-started_at")
+        .first()
+    )
+
+
+def _resolve_or_create_workflow_session(workflow: AgentWorkflow, *, created_by=None, conversation_id: uuid.UUID | None = None) -> Conversation:
+    if conversation_id:
+        conversation = Conversation.objects.filter(
+            id=conversation_id,
+            business_profile=workflow.business_profile,
+            workflow=workflow,
+        ).first()
+        if conversation is None:
+            raise ValueError("Workflow session not found.")
+        return conversation
+    return _latest_workflow_session(workflow) or _create_workflow_session(workflow, created_by=created_by)
+
+
+def _source_conversation_brief(conversation: Conversation | None) -> dict[str, object]:
+    if conversation is None:
+        return {}
+    messages = list(
+        conversation.messages.order_by("-sent_at", "-created_at")
+        .only("sender", "body", "sent_at")[:12]
+    )
+    lines = []
+    for message in reversed(messages):
+        body = str(message.body or "").strip()
+        if not body:
+            continue
+        lines.append(
+            {
+                "sender": message.sender,
+                "body": body[:600],
+                "sentAt": message.sent_at.isoformat() if message.sent_at else None,
+            }
+        )
+    return {
+        "sourceConversationId": str(conversation.id),
+        "sourceSessionToken": conversation.session_token,
+        "messages": lines,
+    }
 
 
 def _cancel_open_workflow_runs(workflow: AgentWorkflow, *, reason: str, action: str = "pause") -> int:
@@ -457,17 +545,6 @@ def _cancel_open_workflow_runs(workflow: AgentWorkflow, *, reason: str, action: 
     return cancelled
 
 
-def _is_dedicated_workflow_thread(workflow: AgentWorkflow, conversation: Conversation | None) -> bool:
-    if conversation is None or conversation.business_profile_id != workflow.business_profile_id:
-        return False
-    if conversation.agent_workflows.exclude(id=workflow.id).exists():
-        return False
-    metadata = conversation.metadata if isinstance(conversation.metadata, dict) else {}
-    metadata_workflow_id = str(metadata.get("workflow_id") or metadata.get("workflowId") or "").strip()
-    metadata_type = str(metadata.get("type") or metadata.get("purpose") or "").strip().lower()
-    return metadata_workflow_id == str(workflow.id) or metadata_type == "workflow_thread"
-
-
 def _normalize_trigger_type(value: object) -> str:
     raw = str(value or AgentWorkflowTriggerType.MANUAL).strip().lower()
     if raw == "cron":
@@ -494,12 +571,13 @@ def agent_workflows_collection(request: HttpRequest, agent_id: uuid.UUID) -> Jso
     with tenant_context(agent.business_profile_id):
         if request.method == "GET":
             status = str(request.GET.get("status") or "").strip().lower()
-            qs = AgentWorkflow.objects.filter(agent_profile=agent).order_by("-created_at")
+            qs = AgentWorkflow.objects.filter(agent_profile=agent).annotate(session_count=Count("sessions")).order_by("-created_at")
             if status and status != "all":
                 qs = qs.filter(status=status)
             workflows = list(qs[:200])
             workflow_ids = [item.id for item in workflows]
             latest_runs: dict[uuid.UUID, AgentRun] = {}
+            open_checkpoints: dict[uuid.UUID, AgentRunCheckpoint] = {}
             if workflow_ids:
                 run_qs = (
                     AgentRun.objects.select_related("workflow")
@@ -512,6 +590,18 @@ def agent_workflows_collection(request: HttpRequest, agent_id: uuid.UUID) -> Jso
                         latest_runs[run.workflow_id] = run
                     if len(latest_runs) == len(workflow_ids):
                         break
+                checkpoint_qs = (
+                    AgentRunCheckpoint.objects.filter(
+                        workflow_id__in=workflow_ids,
+                        status=AgentRunCheckpointStatus.OPEN,
+                    )
+                    .order_by("-updated_at", "-created_at")[:500]
+                )
+                for checkpoint in checkpoint_qs:
+                    if checkpoint.workflow_id and checkpoint.workflow_id not in open_checkpoints:
+                        open_checkpoints[checkpoint.workflow_id] = checkpoint
+            for workflow in workflows:
+                workflow.open_checkpoint = open_checkpoints.get(workflow.id)
             return JsonResponse({"workflows": [_serialize_workflow(item, latest_runs.get(item.id)) for item in workflows]}, status=HTTPStatus.OK)
 
         payload, error = _parse_json_body(request)
@@ -561,6 +651,20 @@ def agent_workflows_collection(request: HttpRequest, agent_id: uuid.UUID) -> Jso
             if email_account.status != EmailAccountStatus.CONNECTED:
                 return JsonResponse({"error": "VALIDATION_ERROR", "message": "Email account must be connected before enabling an email inbox workflow."}, status=HTTPStatus.BAD_REQUEST)
 
+        source_conversation_id, err = _parse_uuid((payload or {}).get("sourceConversationId") or (payload or {}).get("source_conversation_id"), field="sourceConversationId")
+        if err:
+            return err
+        source_conversation = None
+        if source_conversation_id:
+            source_conversation = Conversation.objects.filter(id=source_conversation_id, business_profile=agent.business_profile).first()
+            if source_conversation is None:
+                return JsonResponse({"error": "CONVERSATION_NOT_FOUND", "message": "Source conversation not found."}, status=HTTPStatus.NOT_FOUND)
+
+        metadata_payload = dict((payload or {}).get("metadata") or {})
+        creation_brief = _source_conversation_brief(source_conversation)
+        if creation_brief:
+            metadata_payload["creation_brief"] = creation_brief
+
         workflow = AgentWorkflow.objects.create(
             business_profile=agent.business_profile,
             agent_profile=agent,
@@ -583,9 +687,15 @@ def agent_workflows_collection(request: HttpRequest, agent_id: uuid.UUID) -> Jso
             poll_interval_seconds=max(60, min(int((payload or {}).get("pollIntervalSeconds") or (payload or {}).get("poll_interval_seconds") or 300), 86400)),
             max_events_per_poll=max(1, min(int((payload or {}).get("maxEventsPerPoll") or (payload or {}).get("max_events_per_poll") or 5), 25)),
             next_trigger_at=next_trigger_at,
-            metadata=dict((payload or {}).get("metadata") or {}),
+            metadata=metadata_payload,
         )
-        _ensure_workflow_conversation(workflow)
+        if bool((payload or {}).get("createSession", (payload or {}).get("create_session", True))):
+            session = _create_workflow_session(workflow, created_by=request.user, source_conversation=source_conversation)
+            session_meta = dict(session.metadata or {})
+            if creation_brief:
+                session_meta["creation_brief"] = creation_brief
+                Conversation.objects.filter(id=session.id).update(metadata=session_meta, last_activity_at=timezone.now())
+        workflow.session_count = Conversation.objects.filter(workflow=workflow).count()
         return JsonResponse({"workflow": _serialize_workflow(workflow)}, status=HTTPStatus.CREATED)
 
 
@@ -602,6 +712,12 @@ def agent_workflow_detail(request: HttpRequest, agent_id: uuid.UUID, workflow_id
         if workflow is None:
             return JsonResponse({"error": "WORKFLOW_NOT_FOUND", "message": "Workflow not found."}, status=HTTPStatus.NOT_FOUND)
         if request.method == "GET":
+            workflow.session_count = Conversation.objects.filter(workflow=workflow).count()
+            workflow.open_checkpoint = (
+                AgentRunCheckpoint.objects.filter(workflow=workflow, status=AgentRunCheckpointStatus.OPEN)
+                .order_by("-updated_at", "-created_at")
+                .first()
+            )
             return JsonResponse({"workflow": _serialize_workflow(workflow)}, status=HTTPStatus.OK)
         if request.method == "DELETE":
             with transaction.atomic():
@@ -609,12 +725,16 @@ def agent_workflow_detail(request: HttpRequest, agent_id: uuid.UUID, workflow_id
                     AgentWorkflow.objects.select_for_update()
                     .get(id=workflow.id)
                 )
-                conversation = workflow.conversation
-                delete_thread = _is_dedicated_workflow_thread(workflow, conversation)
+                legacy_conversation = workflow.conversation
                 _cancel_open_workflow_runs(workflow, reason="Workflow deleted", action="delete")
+                Conversation.objects.filter(workflow=workflow).delete()
                 workflow.delete()
-                if delete_thread and conversation is not None:
-                    conversation.delete()
+                if legacy_conversation is not None:
+                    legacy_meta = legacy_conversation.metadata if isinstance(getattr(legacy_conversation, "metadata", None), dict) else {}
+                    legacy_type = str(legacy_meta.get("type") or legacy_meta.get("purpose") or "").strip().lower()
+                    legacy_workflow_id = str(legacy_meta.get("workflow_id") or legacy_meta.get("workflowId") or "").strip()
+                    if legacy_type == "workflow_thread" or legacy_workflow_id == str(workflow.id):
+                        legacy_conversation.delete()
             return JsonResponse({}, status=HTTPStatus.NO_CONTENT)
 
         payload, error = _parse_json_body(request)
@@ -703,8 +823,6 @@ def agent_workflow_detail(request: HttpRequest, agent_id: uuid.UUID, workflow_id
                 workflow_meta["last_pause_cancelled_runs"] = cancelled
                 AgentWorkflow.objects.filter(id=workflow.id).update(metadata=workflow_meta, updated_at=timezone.now())
                 workflow.metadata = workflow_meta
-        if workflow.conversation_id is None:
-            _ensure_workflow_conversation(workflow)
         return JsonResponse({"workflow": _serialize_workflow(workflow)}, status=HTTPStatus.OK)
 
 
@@ -781,7 +899,16 @@ def agent_workflow_run(request: HttpRequest, agent_id: uuid.UUID, workflow_id: u
         workflow = AgentWorkflow.objects.filter(id=workflow_id, agent_profile=agent).first()
         if workflow is None:
             return JsonResponse({"error": "WORKFLOW_NOT_FOUND", "message": "Workflow not found."}, status=HTTPStatus.NOT_FOUND)
-        conversation = _ensure_workflow_conversation(workflow)
+        payload, error = _parse_json_body(request)
+        if error:
+            return error
+        conversation_id, err = _parse_uuid((payload or {}).get("conversationId") or (payload or {}).get("conversation_id"), field="conversationId")
+        if err:
+            return err
+        try:
+            conversation = _resolve_or_create_workflow_session(workflow, created_by=request.user, conversation_id=conversation_id)
+        except ValueError:
+            return JsonResponse({"error": "CONVERSATION_NOT_FOUND", "message": "Workflow session not found."}, status=HTTPStatus.NOT_FOUND)
         run = _create_run(
             agent=agent,
             created_by=request.user,
@@ -795,6 +922,158 @@ def agent_workflow_run(request: HttpRequest, agent_id: uuid.UUID, workflow_id: u
         )
         AgentWorkflow.objects.filter(id=workflow.id).update(last_triggered_at=timezone.now(), updated_at=timezone.now())
         return JsonResponse({"run": _serialize_run(run)}, status=HTTPStatus.CREATED)
+
+
+@csrf_protect
+@require_http_methods(["GET", "POST"])
+def agent_workflow_sessions(request: HttpRequest, agent_id: uuid.UUID, workflow_id: uuid.UUID) -> JsonResponse:
+    agent, error = _resolve_agent_for_request(request, agent_id)
+    if error:
+        return error
+    assert agent is not None
+    with tenant_context(agent.business_profile_id):
+        workflow = AgentWorkflow.objects.filter(id=workflow_id, agent_profile=agent).first()
+        if workflow is None:
+            return JsonResponse({"error": "WORKFLOW_NOT_FOUND", "message": "Workflow not found."}, status=HTTPStatus.NOT_FOUND)
+        if request.method == "GET":
+            sessions = (
+                Conversation.objects.filter(workflow=workflow, business_profile=agent.business_profile)
+                .annotate(message_count=Count("messages"))
+                .order_by("-last_activity_at", "-started_at")[:100]
+            )
+            return JsonResponse({"sessions": [_serialize_workflow_session(item) for item in sessions]}, status=HTTPStatus.OK)
+
+        payload, error = _parse_json_body(request)
+        if error:
+            return error
+        source_id, err = _parse_uuid((payload or {}).get("sourceConversationId") or (payload or {}).get("source_conversation_id"), field="sourceConversationId")
+        if err:
+            return err
+        source_conversation = None
+        if source_id:
+            source_conversation = Conversation.objects.filter(id=source_id, business_profile=agent.business_profile).first()
+            if source_conversation is None:
+                return JsonResponse({"error": "CONVERSATION_NOT_FOUND", "message": "Source conversation not found."}, status=HTTPStatus.NOT_FOUND)
+        title = str((payload or {}).get("title") or "").strip()
+        session = _create_workflow_session(workflow, created_by=request.user, title=title, source_conversation=source_conversation)
+        brief = _source_conversation_brief(source_conversation)
+        if brief:
+            meta = dict(session.metadata or {})
+            meta["creation_brief"] = brief
+            Conversation.objects.filter(id=session.id).update(metadata=meta, last_activity_at=timezone.now())
+            session.metadata = meta
+        return JsonResponse({"session": _serialize_workflow_session(session)}, status=HTTPStatus.CREATED)
+
+
+@csrf_protect
+@require_http_methods(["POST"])
+def agent_run_checkpoint_resolve(request: HttpRequest, agent_id: uuid.UUID, checkpoint_id: uuid.UUID) -> JsonResponse:
+    agent, error = _resolve_agent_for_request(request, agent_id)
+    if error:
+        return error
+    assert agent is not None
+    payload, error = _parse_json_body(request)
+    if error:
+        return error
+    action = str((payload or {}).get("action") or (payload or {}).get("decision") or "resolve").strip().lower()
+    message = str((payload or {}).get("message") or (payload or {}).get("note") or "").strip()
+    extra = dict((payload or {}).get("payload") or {})
+    if action not in {"approve", "deny", "reply", "resolve", "cancel", "expire"}:
+        return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid checkpoint action."}, status=HTTPStatus.BAD_REQUEST)
+
+    with tenant_context(agent.business_profile_id):
+        checkpoint = (
+            AgentRunCheckpoint.objects.select_related("run", "workflow", "conversation")
+            .filter(id=checkpoint_id, business_profile=agent.business_profile)
+            .filter(Q(workflow__agent_profile=agent) | Q(run__agent_profile=agent))
+            .first()
+        )
+        if checkpoint is None:
+            return JsonResponse({"error": "CHECKPOINT_NOT_FOUND", "message": "Checkpoint not found."}, status=HTTPStatus.NOT_FOUND)
+        if checkpoint.status != AgentRunCheckpointStatus.OPEN:
+            return JsonResponse({"error": "CHECKPOINT_CLOSED", "message": "Checkpoint is already resolved."}, status=HTTPStatus.CONFLICT)
+        run = checkpoint.run
+        now = timezone.now()
+        resolution = {"action": action, "message": message, "payload": extra}
+        checkpoint.status = AgentRunCheckpointStatus.EXPIRED if action == "expire" else (
+            AgentRunCheckpointStatus.CANCELLED if action == "cancel" else AgentRunCheckpointStatus.RESOLVED
+        )
+        checkpoint.resolution = resolution
+        checkpoint.resolved_at = now
+        checkpoint.resolved_by = request.user if request.user.is_authenticated else None
+        checkpoint.save(update_fields=["status", "resolution", "resolved_at", "resolved_by", "updated_at"])
+
+        event_type = AgentRunEventType.CANCELLED if action in {"deny", "cancel"} else AgentRunEventType.PROGRESS
+        _append_run_event(
+            run.id,
+            stream=AgentRunEventStream.EXECUTED,
+            event_type=event_type,
+            label="Checkpoint resolved",
+            payload={"checkpoint_id": str(checkpoint.id), **resolution},
+        )
+        MemoryItem.objects.create(
+            business_profile=run.business_profile,
+            scope=MemoryScope.RUN,
+            agent_profile=run.agent_profile,
+            workflow=run.workflow,
+            run=run,
+            conversation=run.conversation,
+            kind=MemoryKind.DECISION if checkpoint.kind == AgentRunCheckpointKind.APPROVAL else MemoryKind.STATE_NOTE,
+            key=f"checkpoint_{checkpoint.kind}",
+            content=message[:4000] or action,
+            payload={"checkpoint_id": str(checkpoint.id), **resolution},
+            visibility=MemoryVisibility.PRIVATE,
+            status=MemoryStatus.ACTIVE,
+            created_by=request.user if request.user.is_authenticated else None,
+        )
+
+        next_meta = dict(run.metadata or {}) if isinstance(getattr(run, "metadata", None), dict) else {}
+        next_meta.pop("pending_checkpoint_id", None)
+        if checkpoint.kind == AgentRunCheckpointKind.APPROVAL:
+            next_meta.pop("pending_approval_id", None)
+        elif checkpoint.kind == AgentRunCheckpointKind.USER_INPUT:
+            next_meta.pop("pending_user_input", None)
+        elif checkpoint.kind == AgentRunCheckpointKind.CHILD_RUN:
+            next_meta.pop("pending_child_run_id", None)
+        elif checkpoint.kind == AgentRunCheckpointKind.EXTERNAL:
+            next_meta.pop("pending_agent_request_id", None)
+            next_meta.pop("pending_call_session_id", None)
+
+        if action in {"deny", "cancel"}:
+            _set_run_status(run.id, status=AgentRunStatus.CANCELLED, error_detail=message or action, finished=True)
+        elif action == "expire":
+            AgentRun.objects.filter(id=run.id).update(
+                status=AgentRunStatus.PAUSED,
+                lease_expires_at=None,
+                run_after=None,
+                metadata=next_meta,
+                error_detail=message or "checkpoint expired",
+                updated_at=now,
+            )
+        else:
+            execution_conversation = None
+            if run.execution_conversation_id:
+                execution_conversation = Conversation.objects.filter(id=run.execution_conversation_id, business_profile=agent.business_profile).first()
+            if execution_conversation and (message or extra):
+                body = message or "Checkpoint response:\n" + json.dumps(extra, ensure_ascii=False)
+                Conversation.objects.filter(id=execution_conversation.id).update(last_activity_at=now)
+                execution_conversation.messages.create(
+                    sender=ConversationSender.CUSTOMER,
+                    body=body,
+                    metadata={"source": "agent_run_checkpoint", "agent_run_id": str(run.id), "checkpoint_id": str(checkpoint.id)},
+                )
+            AgentRun.objects.filter(id=run.id).update(
+                status=AgentRunStatus.QUEUED,
+                run_after=now,
+                lease_expires_at=None,
+                finished_at=None,
+                error_detail="",
+                metadata=next_meta,
+                updated_at=now,
+            )
+        run.refresh_from_db()
+        checkpoint.refresh_from_db()
+    return JsonResponse({"checkpoint": _serialize_checkpoint(checkpoint), "run": _serialize_run(run)}, status=HTTPStatus.OK)
 
 
 @csrf_exempt
@@ -814,12 +1093,11 @@ def workflow_webhook_trigger(request: HttpRequest, workflow_id: uuid.UUID, token
         secret_value = str((workflow.trigger_config or {}).get("secret") or "").strip()
         if not secret_value or not secrets.compare_digest(secret_value, token_value):
             return JsonResponse({"error": "NOT_FOUND", "message": "Workflow not found."}, status=HTTPStatus.NOT_FOUND)
-        conversation = _ensure_workflow_conversation(workflow)
         run = _create_run(
             agent=workflow.agent_profile,
             created_by=None,
             workflow=workflow,
-            conversation=conversation,
+            conversation=None,
             title=workflow.name,
             source=AgentRunSource.WEBHOOK,
             visibility=workflow.visibility,
@@ -878,7 +1156,7 @@ def agent_runs_collection(request: HttpRequest, agent_id: uuid.UUID) -> JsonResp
             if conversation is None:
                 return JsonResponse({"error": "CONVERSATION_NOT_FOUND", "message": "Conversation not found."}, status=HTTPStatus.NOT_FOUND)
         elif workflow:
-            conversation = _ensure_workflow_conversation(workflow)
+            conversation = _latest_workflow_session(workflow)
         visibility = str((payload or {}).get("visibility") or (workflow.visibility if workflow else AgentRunVisibility.INITIATOR)).strip().lower()
         if visibility not in {choice for choice, _ in AgentRunVisibility.choices}:
             return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid visibility."}, status=HTTPStatus.BAD_REQUEST)

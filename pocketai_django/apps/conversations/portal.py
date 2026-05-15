@@ -32,6 +32,21 @@ from apps.conversations.models import (
 )
 
 
+INTERNAL_AGENT_NOTIFICATION_PURPOSE = "agent_notification_surface"
+INTERNAL_CANONICAL_CONVERSATION_TYPES = {
+    "canonical_main_primary",
+    "canonical_department_primary",
+}
+
+
+def _is_internal_agent_notification_surface(conversation: Conversation) -> bool:
+    metadata = conversation.metadata if isinstance(getattr(conversation, "metadata", None), dict) else {}
+    purpose = str(metadata.get("purpose") or "").strip().lower()
+    meta_type = str(metadata.get("type") or "").strip().lower()
+    source = str(metadata.get("source") or "").strip().lower()
+    return purpose == INTERNAL_AGENT_NOTIFICATION_PURPOSE or meta_type in INTERNAL_CANONICAL_CONVERSATION_TYPES or source == "agent_run"
+
+
 class PortalNotFoundError(Exception):
     """Raised when portal business/agent/session cannot be found."""
 
@@ -378,6 +393,7 @@ class ChatPortalService:
                 business_profile=business,
                 agent_profile=agent,
             )
+            .select_related("workflow")
             .annotate(message_count=Count("messages"))
             .prefetch_related(
                 Prefetch(
@@ -414,10 +430,12 @@ class ChatPortalService:
             )
             if not has_business_access:
                 filters["owner_user"] = owner_user
+        candidate_limit = max(limit, min(max(limit * 3, limit + 25), 300))
         conversations = (
             Conversation.objects.filter(**filters)
             .exclude(metadata__has_key="anchor_conversation_id")
             .exclude(metadata__has_key="anchorConversationId")
+            .select_related("workflow")
             .annotate(message_count=Count("messages"))
             .prefetch_related(
                 Prefetch(
@@ -433,9 +451,9 @@ class ChatPortalService:
                     to_attr="linked_workflows",
                 ),
             )
-            .order_by("-last_activity_at", "-started_at")[:limit]
+            .order_by("-last_activity_at", "-started_at")[:candidate_limit]
         )
-        return self._build_session_summaries(conversations)
+        return self._build_session_summaries(conversations, limit=limit)
 
     def create_new_session(
         self,
@@ -509,6 +527,9 @@ class ChatPortalService:
         has_prefetched_workflows = hasattr(conversation, "linked_workflows")
         linked_workflows = list(getattr(conversation, "linked_workflows", []) or [])
         linked_workflow = linked_workflows[0] if linked_workflows else None
+        direct_workflow = getattr(conversation, "workflow", None)
+        if linked_workflow is None and direct_workflow is not None:
+            linked_workflow = direct_workflow
         if linked_workflow is None and not has_prefetched_workflows:
             linked_workflow = conversation.agent_workflows.only("id", "name", "conversation_id").first()
         meta_type = str(metadata.get("type") or metadata.get("purpose") or metadata.get("source") or "").strip().lower()
@@ -519,14 +540,23 @@ class ChatPortalService:
         )
         is_task_thread = bool(
             linked_workflow
+            or getattr(conversation, "workflow_id", None)
             or meta_type == "workflow_thread"
+            or meta_type == "workflow_agent_session"
             or str(metadata.get("workflow_id") or "").strip()
         )
         return ("task" if is_task_thread else "chat", workflow_id, workflow_name)
 
-    def _build_session_summaries(self, conversations: Iterable[Conversation]) -> tuple[PortalSessionSummary, ...]:
+    def _build_session_summaries(
+        self,
+        conversations: Iterable[Conversation],
+        *,
+        limit: int | None = None,
+    ) -> tuple[PortalSessionSummary, ...]:
         summaries: list[PortalSessionSummary] = []
         for conv in conversations:
+            if _is_internal_agent_notification_surface(conv):
+                continue
             first_messages = getattr(conv, "first_customer_messages", [])
             first_msg = first_messages[0] if first_messages else None
             session_type, workflow_id, workflow_name = self._classify_conversation_session(conv)
@@ -560,6 +590,8 @@ class ChatPortalService:
                     workflow_name=workflow_name,
                 )
             )
+            if limit is not None and len(summaries) >= limit:
+                break
         return tuple(summaries)
 
     # ------------------------------------------------------------------

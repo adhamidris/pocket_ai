@@ -765,6 +765,76 @@ def _recent_search_refs_note(conversation: Conversation, *, limit: int = 6) -> s
     return "\n".join(lines).strip()
 
 
+def _workflow_resource_refs_note(conversation: Conversation, *, limit: int = 8) -> str | None:
+    metadata = conversation.metadata if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
+    refs_raw = metadata.get("resource_refs")
+    if not isinstance(refs_raw, list):
+        refs_raw = []
+
+    pending_id = str(metadata.get("pending_workflow_activation_id") or "").strip()
+    workflow_refs: list[Mapping[str, object]] = []
+    seen: set[str] = set()
+
+    def _add_ref(ref: Mapping[str, object]) -> None:
+        ref_id = str(ref.get("id") or "").strip()
+        if not ref_id or ref_id in seen:
+            return
+        ref_type = str(ref.get("type") or "").strip().lower()
+        if ref_type not in {"workflow", "task"}:
+            return
+        seen.add(ref_id)
+        workflow_refs.append(ref)
+
+    for item in refs_raw:
+        if isinstance(item, Mapping):
+            _add_ref(item)
+
+    if pending_id and pending_id not in seen:
+        workflow_refs.insert(
+            0,
+            {
+                "type": "workflow",
+                "id": pending_id,
+                "name": "",
+                "status": "draft",
+                "purpose": "pending activation",
+            },
+        )
+        seen.add(pending_id)
+
+    if not workflow_refs:
+        return None
+
+    pending_refs = [ref for ref in workflow_refs if str(ref.get("id") or "").strip() == pending_id]
+    other_refs = [ref for ref in workflow_refs if str(ref.get("id") or "").strip() != pending_id]
+    ordered_refs = [*pending_refs, *other_refs][: max(1, int(limit))]
+
+    lines = [
+        "Known workflow/task references for this conversation.",
+        "Use these exact ids when calling task/workflow tools; never invent or approximate UUIDs.",
+    ]
+    for ref in ordered_refs:
+        ref_id = str(ref.get("id") or "").strip()
+        if not ref_id:
+            continue
+        name = str(ref.get("name") or "Untitled workflow").strip()[:160]
+        status = str(ref.get("status") or "").strip()
+        purpose = str(ref.get("purpose") or "").strip()
+        trigger_type = str(ref.get("trigger_type") or ref.get("triggerType") or "").strip()
+        label_parts = [name, f"id={ref_id}"]
+        if status:
+            label_parts.append(f"status={status}")
+        if purpose:
+            label_parts.append(f"purpose={purpose}")
+        if trigger_type:
+            label_parts.append(f"trigger={trigger_type}")
+        if ref_id == pending_id:
+            label_parts.append("pending_activation=true")
+        lines.append("- " + "; ".join(label_parts))
+
+    return "\n".join(lines).strip()
+
+
 def build_messages(
     *,
     conversation: Conversation,
@@ -834,6 +904,10 @@ def build_messages(
         recent_search_refs_note = _recent_search_refs_note(conversation)
         if recent_search_refs_note:
             system_sections.append(recent_search_refs_note.strip())
+
+        workflow_resource_refs_note = _workflow_resource_refs_note(conversation)
+        if workflow_resource_refs_note:
+            system_sections.append(workflow_resource_refs_note.strip())
 
         files_note = _conversation_files_note(conversation)
         if files_note:
