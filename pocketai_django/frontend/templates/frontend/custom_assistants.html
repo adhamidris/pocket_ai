@@ -3,71 +3,154 @@
 
 {% block title %}{% trans "Custom Assistants" %} | Pocket AI{% endblock %}
 
+{% block extra_head %}
+<style>
+  .pa-workspace { --pa-border: hsl(var(--border)); --pa-muted: hsl(var(--muted-foreground)); --pa-card: hsl(var(--card)); --pa-bg: hsl(var(--background)); --pa-primary: hsl(var(--primary)); --pa-primary-fg: hsl(var(--primary-foreground)); min-height: 100vh; background: var(--pa-bg); }
+  .pa-shell { width: 100%; max-width: none; margin: 0; padding: 24px 32px; }
+  .pa-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 26px; }
+  .pa-kicker { margin: 0 0 8px; font-size: 11px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: var(--pa-muted); }
+  .pa-title { margin: 0; font-size: 24px; line-height: 1.25; font-weight: 700; letter-spacing: 0; color: var(--pa-primary); }
+  .pa-subtitle { max-width: 650px; margin: 6px 0 0; color: var(--pa-muted); font-size: 14px; line-height: 1.55; }
+  .pa-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
+  .pa-button { appearance: none; border: 1px solid var(--pa-border); background: var(--pa-bg); color: hsl(var(--foreground)); height: 40px; padding: 0 14px; border-radius: 8px; font-size: 14px; font-weight: 650; cursor: pointer; }
+  .pa-button:hover { background: hsl(var(--muted) / .55); }
+  .pa-button:disabled { cursor: not-allowed; opacity: .5; }
+  .pa-button-primary { border-color: var(--pa-primary); background: var(--pa-primary); color: var(--pa-primary-fg); }
+  .pa-button-primary:hover { border-color: var(--pa-primary); background: var(--pa-primary); color: var(--pa-primary-fg); filter: brightness(.96); }
+  .pa-button-danger { color: hsl(var(--destructive)); border-color: hsl(var(--destructive) / .35); }
+  .pa-button-danger:hover { color: hsl(var(--destructive)); border-color: hsl(var(--destructive) / .45); background: hsl(var(--destructive) / .08); }
+  .pa-row-button { appearance: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; min-width: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--pa-muted); padding: 0 8px; font-size: 13px; font-weight: 650; cursor: pointer; transition: background-color .14s ease, color .14s ease; }
+  .pa-row-button svg { width: 16px; height: 16px; flex: 0 0 auto; }
+  .pa-row-button:hover { background: hsl(var(--muted) / .52); color: hsl(var(--foreground)); }
+  .pa-row-button-primary { min-width: auto; padding: 0 12px; background: hsl(var(--foreground) / .08); color: hsl(var(--foreground)); }
+  .pa-row-button-primary:hover { background: hsl(var(--foreground) / .12); color: hsl(var(--foreground)); }
+  .pa-row-button-danger { color: hsl(var(--destructive) / .82); }
+  .pa-row-button-danger:hover { background: hsl(var(--destructive) / .10); color: hsl(var(--destructive)); }
+  .pa-notice { margin-bottom: 18px; border: 1px solid var(--pa-border); border-radius: 8px; background: hsl(var(--card) / .8); padding: 14px 16px; color: var(--pa-muted); font-size: 14px; }
+  .pa-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; align-items: start; }
+  .pa-section { position: relative; border: 1px solid hsl(var(--border) / .62); border-radius: 12px; background: var(--pa-card); box-shadow: 0 16px 34px rgb(0 0 0 / .05); overflow: hidden; }
+  .pa-section::before { content: ""; position: absolute; inset: 0 0 auto; height: 1px; background: hsl(var(--primary) / .34); pointer-events: none; }
+  .pa-section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 18px; border-bottom: 1px solid hsl(var(--border) / .58); background: transparent; }
+  .pa-section-title { margin: 0; font-size: 15px; font-weight: 700; color: hsl(var(--foreground)); }
+  .pa-section-note { margin: 4px 0 0; font-size: 13px; color: var(--pa-muted); }
+  .pa-list { display: grid; gap: 0; }
+  .pa-row { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 16px 18px; border-bottom: 1px solid hsl(var(--border) / .55); }
+  .pa-row:last-child { border-bottom: 0; }
+  .pa-row:hover { background: hsl(var(--muted) / .28); }
+  .pa-avatar { display: inline-flex; width: 42px; height: 42px; border-radius: 10px; align-items: center; justify-content: center; border: 1px solid hsl(var(--primary) / .22); background: hsl(var(--primary) / .10); color: var(--pa-primary); font-weight: 800; }
+  .pa-row-title { margin: 0; font-size: 15px; font-weight: 700; color: hsl(var(--foreground)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pa-row-text { margin: 5px 0 0; font-size: 13px; line-height: 1.55; color: var(--pa-muted); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+  .pa-pill { display: inline-flex; align-items: center; height: 24px; border: 1px solid hsl(var(--primary) / .22); border-radius: 999px; padding: 0 9px; color: hsl(var(--primary)); background: hsl(var(--primary) / .055); font-size: 12px; text-transform: capitalize; white-space: nowrap; }
+  .pa-row-actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
+  .pa-empty { margin: 18px; padding: 34px; text-align: center; border: 2px dashed hsl(var(--primary) / .30); border-radius: 16px; background: hsl(var(--primary) / .05); }
+  .pa-empty-title { margin: 0; font-size: 22px; font-weight: 750; color: hsl(var(--foreground)); }
+  .pa-empty-text { max-width: 560px; margin: 10px auto 22px; color: var(--pa-muted); line-height: 1.65; font-size: 14px; }
+  .pa-template-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .pa-template { min-height: 92px; text-align: left; border: 1px solid hsl(var(--border) / .75); border-radius: 10px; padding: 14px 16px; background: var(--pa-bg); cursor: pointer; }
+  .pa-template:hover { border-color: hsl(var(--primary) / .45); background: hsl(var(--primary) / .05); }
+  .pa-template strong { display: block; font-size: 14px; color: hsl(var(--foreground)); }
+  .pa-template span { display: block; margin-top: 5px; font-size: 12px; color: var(--pa-muted); line-height: 1.5; }
+  .pa-side { padding: 18px; }
+  .pa-side-title { margin: 0; font-size: 14px; font-weight: 750; color: hsl(var(--foreground)); }
+  .pa-side-text { margin: 8px 0 18px; color: var(--pa-muted); font-size: 13px; line-height: 1.6; }
+  .pa-mini-list { display: grid; gap: 10px; }
+  .pa-mini-item { border: 1px solid hsl(var(--border) / .62); border-radius: 10px; padding: 12px; background: hsl(var(--background) / .72); }
+  .pa-mini-item strong { display: block; font-size: 13px; color: hsl(var(--foreground)); }
+  .pa-mini-item span { display: block; margin-top: 4px; color: var(--pa-muted); font-size: 12px; line-height: 1.5; }
+  .pa-drawer { position: fixed; inset: 0; z-index: 60; display: none; }
+  .pa-drawer[data-open="true"] { display: block; }
+  .pa-drawer-backdrop { position: absolute; inset: 0; background: rgb(0 0 0 / .58); }
+  .pa-drawer-panel { position: absolute; inset-block: 0; right: 0; width: min(560px, 100vw); background: var(--pa-bg); border-left: 1px solid var(--pa-border); box-shadow: none; display: flex; flex-direction: column; }
+  [dir="rtl"] .pa-drawer-panel { right: auto; left: 0; border-left: 0; border-right: 1px solid var(--pa-border); }
+  .pa-drawer-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; padding: 24px; border-bottom: 1px solid hsl(var(--border) / .65); }
+  .pa-drawer-title { margin: 0; font-size: 22px; font-weight: 760; color: hsl(var(--foreground)); }
+  .pa-drawer-body { padding: 22px 24px; overflow: auto; }
+  .pa-form { display: grid; gap: 16px; }
+  .pa-field { display: grid; gap: 7px; font-size: 13px; font-weight: 650; color: hsl(var(--foreground)); }
+  .pa-input, .pa-textarea, .pa-select { width: 100%; border: 1px solid hsl(var(--border) / .9); background: hsl(var(--background)); color: hsl(var(--foreground)); border-radius: 8px; padding: 10px 12px; font-size: 14px; outline: none; }
+  .pa-input, .pa-select { height: 42px; }
+  .pa-textarea { min-height: 150px; resize: vertical; line-height: 1.55; }
+  .pa-input:focus, .pa-textarea:focus, .pa-select:focus { border-color: hsl(var(--primary) / .65); box-shadow: 0 0 0 3px hsl(var(--primary) / .12); }
+  .pa-error { display: none; color: hsl(var(--destructive)); font-size: 13px; }
+  .pa-error[data-visible="true"] { display: block; }
+  .pa-drawer-foot { margin-top: 8px; display: flex; justify-content: flex-end; gap: 10px; }
+  @media (max-width: 980px) { .pa-shell { padding: 22px 16px; } .pa-header { flex-direction: column; } .pa-actions { justify-content: flex-start; } .pa-layout { grid-template-columns: 1fr; } .pa-template-grid { grid-template-columns: 1fr; } .pa-row { grid-template-columns: 38px minmax(0, 1fr); } .pa-row-actions { grid-column: 1 / -1; justify-content: flex-start; } }
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="min-h-screen bg-background flex">
+<div class="min-h-screen flex">
   {% include "frontend/components/dashboard/sidebar.html" with active="custom-assistants" user_name=user_name %}
-  <main class="flex-1 overflow-auto">
-    <div class="w-full px-4 md:px-6 lg:px-8 py-6 space-y-6" data-custom-assistants-page data-agent-id="{{ default_agent_id }}" data-chat-url="{{ dashboard_chat_url }}">
-      <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div class="space-y-1.5">
-          <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">{% trans "Custom Assistants" %}</h1>
-          <p class="text-sm text-muted-foreground">{% trans "Create reusable GPT-style assistants for focused business workflows." %}</p>
+  <main class="flex-1 overflow-auto pa-workspace">
+    <div class="pa-shell" data-custom-assistants-page data-agent-id="{{ default_agent_id }}" data-chat-url="{{ dashboard_chat_url }}">
+      <header class="pa-header">
+        <div>
+          <p class="pa-kicker">{% trans "Specialists" %}</p>
+          <h1 class="pa-title">{% trans "Custom Assistants" %}</h1>
+          <p class="pa-subtitle">{% trans "Create focused assistants for repeatable work. They appear above Chats in the Portal, so your team can jump into the right specialist without hunting through settings." %}</p>
         </div>
-        <button type="button" class="inline-flex h-10 items-center justify-center rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground disabled:opacity-50" data-assistant-new {% if not default_agent_id %}disabled{% endif %}>
-          {% trans "New assistant" %}
-        </button>
+        <div class="pa-actions">
+          <button type="button" class="pa-button" data-assistant-refresh {% if not default_agent_id %}disabled{% endif %}>{% trans "Refresh" %}</button>
+          <button type="button" class="pa-button pa-button-primary" data-assistant-new {% if not default_agent_id %}disabled{% endif %}>{% trans "Create assistant" %}</button>
+        </div>
       </header>
 
       {% if assistant_notice %}
-        <section class="rounded-lg border border-border/70 bg-card/80 p-4 text-sm text-muted-foreground">{{ assistant_notice }}</section>
+        <section class="pa-notice">{{ assistant_notice }}</section>
       {% endif %}
 
-      <section class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <div class="space-y-3">
-          <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{% trans "Assistants" %}</div>
-            <button type="button" class="rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent" data-assistant-refresh {% if not default_agent_id %}disabled{% endif %}>{% trans "Refresh" %}</button>
+      <section class="pa-layout">
+        <div class="pa-section">
+          <div class="pa-section-head">
+            <div>
+              <h2 class="pa-section-title">{% trans "Your assistants" %}</h2>
+              <p class="pa-section-note">{% trans "Chat with them from Portal, or tune their instructions here." %}</p>
+            </div>
+            <span class="pa-pill" data-assistant-count>0</span>
           </div>
-          <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" data-assistant-list>
-            <div class="rounded-lg border border-dashed border-border/70 p-6 text-sm text-muted-foreground">{% trans "Loading assistants..." %}</div>
+          <div class="pa-list" data-assistant-list>
+            <div class="pa-empty"><p class="pa-empty-text">{% trans "Loading assistants..." %}</p></div>
           </div>
         </div>
 
-        <aside class="rounded-lg border border-border/70 bg-card/80 p-4">
-          <form class="space-y-4" data-assistant-form>
-            <input type="hidden" data-assistant-input="id">
-            <div>
-              <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground" data-form-title>{% trans "Assistant setup" %}</div>
-              <p class="mt-1 text-xs text-muted-foreground">{% trans "These assistants appear as selectable specialists in the Portal." %}</p>
-            </div>
-            <label class="block text-xs font-semibold text-muted-foreground">
-              <span class="mb-1.5 block">{% trans "Name" %}</span>
-              <input class="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground" data-assistant-input="name" autocomplete="off">
-            </label>
-            <label class="block text-xs font-semibold text-muted-foreground">
-              <span class="mb-1.5 block">{% trans "Description" %}</span>
-              <input class="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground" data-assistant-input="description" autocomplete="off">
-            </label>
-            <label class="block text-xs font-semibold text-muted-foreground">
-              <span class="mb-1.5 block">{% trans "Instructions" %}</span>
-              <textarea class="min-h-40 w-full rounded-md border border-border bg-background px-3 py-2 text-sm leading-6 text-foreground" data-assistant-input="instructions"></textarea>
-            </label>
-            <label class="block text-xs font-semibold text-muted-foreground">
-              <span class="mb-1.5 block">{% trans "Status" %}</span>
-              <select class="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground" data-assistant-input="status">
-                <option value="active">{% trans "Enabled" %}</option>
-                <option value="draft">{% trans "Draft" %}</option>
-                <option value="paused">{% trans "Disabled" %}</option>
-              </select>
-            </label>
-            <p class="hidden text-xs text-destructive" data-assistant-error></p>
-            <div class="flex justify-end gap-2">
-              <button type="button" class="rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent" data-assistant-reset>{% trans "Clear" %}</button>
-              <button type="submit" class="rounded-md bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50" {% if not default_agent_id %}disabled{% endif %}>{% trans "Save assistant" %}</button>
-            </div>
-          </form>
+        <aside class="pa-section pa-side">
+          <h2 class="pa-side-title">{% trans "How this behaves in Portal" %}</h2>
+          <p class="pa-side-text">{% trans "Custom Assistants are selectable chat specialists. Normal assistant conversations stay under Chats; these specialists sit above them like GPTs." %}</p>
+          <div class="pa-mini-list">
+            <div class="pa-mini-item"><strong>{% trans "Focused instructions" %}</strong><span>{% trans "Give each assistant a specific job, tone, and success criteria." %}</span></div>
+            <div class="pa-mini-item"><strong>{% trans "Separate chat threads" %}</strong><span>{% trans "Each specialist keeps its own sessions so work stays easy to scan." %}</span></div>
+            <div class="pa-mini-item"><strong>{% trans "No background triggers" %}</strong><span>{% trans "Scheduled or webhook work belongs in Automations, not here." %}</span></div>
+          </div>
         </aside>
       </section>
+
+      <div class="pa-drawer" data-assistant-drawer aria-hidden="true">
+        <div class="pa-drawer-backdrop" data-assistant-close></div>
+        <aside class="pa-drawer-panel" role="dialog" aria-modal="true" aria-labelledby="assistant-drawer-title">
+          <div class="pa-drawer-head">
+            <div>
+              <p class="pa-kicker">{% trans "Builder" %}</p>
+              <h2 class="pa-drawer-title" id="assistant-drawer-title" data-form-title>{% trans "Create assistant" %}</h2>
+              <p class="pa-section-note">{% trans "Shape this like a GPT: purpose first, then instructions." %}</p>
+            </div>
+            <button type="button" class="pa-button" data-assistant-close>{% trans "Close" %}</button>
+          </div>
+          <div class="pa-drawer-body">
+            <form class="pa-form" data-assistant-form>
+              <input type="hidden" data-assistant-input="id">
+              <label class="pa-field">{% trans "Name" %}<input class="pa-input" data-assistant-input="name" autocomplete="off" placeholder="{% trans 'Proposal Assistant' %}"></label>
+              <label class="pa-field">{% trans "What should it help with?" %}<input class="pa-input" data-assistant-input="description" autocomplete="off" placeholder="{% trans 'Turns discovery notes into client-ready proposals.' %}"></label>
+              <label class="pa-field">{% trans "Instructions" %}<textarea class="pa-textarea" data-assistant-input="instructions" placeholder="{% trans 'Describe how this assistant should think, write, and decide.' %}"></textarea></label>
+              <label class="pa-field">{% trans "Status" %}<select class="pa-select" data-assistant-input="status"><option value="active">{% trans "Enabled" %}</option><option value="draft">{% trans "Draft" %}</option><option value="paused">{% trans "Disabled" %}</option></select></label>
+              <p class="pa-error" data-assistant-error></p>
+              <div class="pa-drawer-foot">
+                <button type="button" class="pa-button" data-assistant-close>{% trans "Cancel" %}</button>
+                <button type="submit" class="pa-button pa-button-primary" {% if not default_agent_id %}disabled{% endif %}>{% trans "Save assistant" %}</button>
+              </div>
+            </form>
+          </div>
+        </aside>
+      </div>
     </div>
   </main>
 </div>
@@ -81,54 +164,49 @@
     var agentId = root.getAttribute("data-agent-id") || "";
     var chatUrl = root.getAttribute("data-chat-url") || "/dashboard/chat/";
     var list = root.querySelector("[data-assistant-list]");
+    var countEl = root.querySelector("[data-assistant-count]");
     var form = root.querySelector("[data-assistant-form]");
+    var drawer = root.querySelector("[data-assistant-drawer]");
     var errorEl = root.querySelector("[data-assistant-error]");
     var refreshButton = root.querySelector("[data-assistant-refresh]");
     var newButton = root.querySelector("[data-assistant-new]");
     var items = [];
-
-    function csrf() {
-      var match = document.cookie ? document.cookie.match(/csrftoken=([^;]+)/) : null;
-      return match ? decodeURIComponent(match[1]) : "";
-    }
-
+    var templates = [
+      { name: "{% trans 'Sales Proposal Assistant' %}", description: "{% trans 'Turns call notes into clear proposals.' %}", instructions: "{% trans 'Create concise client-ready proposals. Ask for missing scope, flag pricing assumptions, and keep the tone helpful and direct.' %}" },
+      { name: "{% trans 'Support Reply Assistant' %}", description: "{% trans 'Drafts polished replies for customer issues.' %}", instructions: "{% trans 'Write empathetic support replies, summarize the issue, suggest the next action, and avoid promising anything unsupported.' %}" },
+      { name: "{% trans 'Operations Analyst' %}", description: "{% trans 'Finds blockers and next steps in messy updates.' %}", instructions: "{% trans 'Analyze operational notes, extract risks, owners, deadlines, and recommend the next practical step.' %}" },
+      { name: "{% trans 'Contract Review Assistant' %}", description: "{% trans 'Highlights obligations and risky clauses.' %}", instructions: "{% trans 'Review contract excerpts for obligations, dates, renewal terms, and risky language. Summarize in plain business English.' %}" }
+    ];
+    function csrf() { var match = document.cookie ? document.cookie.match(/csrftoken=([^;]+)/) : null; return match ? decodeURIComponent(match[1]) : ""; }
+    function escapeHtml(value) { var div = document.createElement("div"); div.textContent = value == null ? "" : String(value); return div.innerHTML; }
     function api(url, options) {
       options = options || {};
       var headers = { Accept: "application/json" };
       if (options.body) headers["Content-Type"] = "application/json";
-      if (options.method && options.method !== "GET") {
-        headers["X-CSRFToken"] = csrf();
-        headers["X-Requested-With"] = "XMLHttpRequest";
-      }
-      return fetch(url, { method: options.method || "GET", headers: headers, credentials: "same-origin", body: options.body })
-        .then(function (response) {
-          if (response.status === 204) return {};
-          return response.json().catch(function () { return {}; }).then(function (payload) {
-            if (!response.ok) throw new Error(payload.message || payload.error || "Request failed");
-            return payload;
-          });
+      if (options.method && options.method !== "GET") { headers["X-CSRFToken"] = csrf(); headers["X-Requested-With"] = "XMLHttpRequest"; }
+      return fetch(url, { method: options.method || "GET", headers: headers, credentials: "same-origin", body: options.body }).then(function (response) {
+        if (response.status === 204) return {};
+        return response.json().catch(function () { return {}; }).then(function (payload) {
+          if (!response.ok) throw new Error(payload.message || payload.error || "Request failed");
+          return payload;
         });
-    }
-
-    function field(name) {
-      return form.querySelector('[data-assistant-input="' + name + '"]');
-    }
-
-    function setError(message) {
-      if (!errorEl) return;
-      errorEl.textContent = message || "";
-      errorEl.classList.toggle("hidden", !message);
-    }
-
-    function resetForm() {
-      setError("");
-      ["id", "name", "description", "instructions"].forEach(function (name) {
-        var input = field(name);
-        if (input) input.value = "";
       });
-      if (field("status")) field("status").value = "active";
     }
-
+    function field(name) { return form.querySelector('[data-assistant-input="' + name + '"]'); }
+    function setError(message) { if (!errorEl) return; errorEl.textContent = message || ""; errorEl.setAttribute("data-visible", message ? "true" : "false"); }
+    function openDrawer() { if (!drawer) return; drawer.setAttribute("data-open", "true"); drawer.setAttribute("aria-hidden", "false"); setTimeout(function () { var input = field("name"); if (input) input.focus(); }, 30); }
+    function closeDrawer() { if (!drawer) return; drawer.removeAttribute("data-open"); drawer.setAttribute("aria-hidden", "true"); setError(""); }
+    function resetForm(template) {
+      setError("");
+      field("id").value = "";
+      field("name").value = template && template.name || "";
+      field("description").value = template && template.description || "";
+      field("instructions").value = template && template.instructions || "";
+      field("status").value = "active";
+      var title = root.querySelector("[data-form-title]");
+      if (title) title.textContent = "{% trans 'Create assistant' %}";
+      openDrawer();
+    }
     function editAssistant(item) {
       if (!item) return;
       field("id").value = item.id || "";
@@ -136,139 +214,80 @@
       field("description").value = item.description || "";
       field("instructions").value = item.instructions && (item.instructions.goal || item.instructions.instructions || item.instructions.task) || "";
       field("status").value = item.status || "active";
-      form.scrollIntoView({ behavior: "smooth", block: "start" });
+      var title = root.querySelector("[data-form-title]");
+      if (title) title.textContent = "{% trans 'Edit assistant' %}";
+      openDrawer();
     }
-
+    function assistantInitial(name) { return String(name || "A").trim().slice(0, 1).toUpperCase() || "A"; }
+    function templateHtml() {
+      return '<div class="pa-empty"><h2 class="pa-empty-title">{% trans "Create your first specialist" %}</h2><p class="pa-empty-text">{% trans "Start from a focused template, then tune the instructions for your business." %}</p><div class="pa-template-grid">' +
+        templates.map(function (item, index) { return '<button type="button" class="pa-template" data-template-index="' + index + '"><strong>' + escapeHtml(item.name) + '</strong><span>' + escapeHtml(item.description) + '</span></button>'; }).join("") +
+        '</div></div>';
+    }
     function cardHtml(item) {
       var status = (item.status || "draft").replace(/_/g, " ");
       var description = item.description || (item.instructions && (item.instructions.goal || item.instructions.instructions)) || "{% trans 'No instructions yet.' %}";
-      return '' +
-        '<article class="rounded-lg border border-border/70 bg-card/80 p-4 shadow-sm" data-assistant-id="' + item.id + '">' +
-          '<div class="flex items-start justify-between gap-3">' +
-            '<div class="min-w-0">' +
-              '<h2 class="truncate text-base font-semibold text-foreground">' + escapeHtml(item.name || "{% trans 'Untitled assistant' %}") + '</h2>' +
-              '<p class="mt-1 line-clamp-3 text-sm leading-6 text-muted-foreground">' + escapeHtml(description) + '</p>' +
-            '</div>' +
-            '<span class="rounded-full border border-border px-2 py-1 text-[11px] capitalize text-muted-foreground">' + escapeHtml(status) + '</span>' +
-          '</div>' +
-          '<div class="mt-4 flex flex-wrap justify-end gap-2">' +
-            '<button type="button" class="rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent" data-action="chat">{% trans "Open in Portal" %}</button>' +
-            '<button type="button" class="rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent" data-action="edit">{% trans "Edit" %}</button>' +
-            '<button type="button" class="rounded-md border border-destructive/40 bg-background px-3 py-2 text-xs font-medium text-destructive hover:bg-destructive/10" data-action="delete">{% trans "Delete" %}</button>' +
-          '</div>' +
-        '</article>';
+      return '<article class="pa-row" data-assistant-id="' + item.id + '"><div class="pa-avatar">' + escapeHtml(assistantInitial(item.name)) + '</div><div><h2 class="pa-row-title">' + escapeHtml(item.name || "{% trans 'Untitled assistant' %}") + '</h2><p class="pa-row-text">' + escapeHtml(description) + '</p></div><div class="pa-row-actions"><span class="pa-pill">' + escapeHtml(status) + '</span><button type="button" class="pa-row-button pa-row-button-primary" data-action="chat">{% trans "Chat" %}</button><button type="button" class="pa-row-button" data-action="edit" aria-label="{% trans 'Edit' %}" title="{% trans 'Edit' %}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 20h9"/><path d="m16.5 3.5 4 4L8 20l-5 1 1-5 12.5-12.5Z"/></svg></button><button type="button" class="pa-row-button pa-row-button-danger" data-action="delete" aria-label="{% trans 'Delete' %}" title="{% trans 'Delete' %}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/></svg></button></div></article>';
     }
-
-    function escapeHtml(value) {
-      var div = document.createElement("div");
-      div.textContent = value == null ? "" : String(value);
-      return div.innerHTML;
-    }
-
     function render() {
-      if (!list) return;
-      if (!agentId) {
-        list.innerHTML = '<div class="rounded-lg border border-dashed border-border/70 p-6 text-sm text-muted-foreground">{% trans "No default Business Assistant is available yet." %}</div>';
-        return;
-      }
-      if (!items.length) {
-        list.innerHTML = '<div class="rounded-lg border border-dashed border-border/70 p-6 text-sm text-muted-foreground">{% trans "No custom assistants yet." %}</div>';
-        return;
-      }
+      if (countEl) countEl.textContent = String(items.length);
+      if (!agentId) { list.innerHTML = '<div class="pa-empty"><p class="pa-empty-text">{% trans "No Business Assistant is available yet." %}</p></div>'; return; }
+      if (!items.length) { list.innerHTML = templateHtml(); return; }
       list.innerHTML = items.map(cardHtml).join("");
     }
-
     function load() {
-      if (!agentId) {
+      if (!agentId) { render(); return Promise.resolve(); }
+      list.innerHTML = '<div class="pa-empty"><p class="pa-empty-text">{% trans "Loading assistants..." %}</p></div>';
+      return api("/api/agents/" + encodeURIComponent(agentId) + "/custom-assistants/").then(function (payload) {
+        items = payload.workflows || [];
         render();
-        return Promise.resolve();
-      }
-      list.innerHTML = '<div class="rounded-lg border border-dashed border-border/70 p-6 text-sm text-muted-foreground">{% trans "Loading assistants..." %}</div>';
-      return api("/api/agents/" + encodeURIComponent(agentId) + "/custom-assistants/")
-        .then(function (payload) {
-          items = payload.workflows || [];
-          render();
-        })
-        .catch(function (error) {
-          list.innerHTML = '<div class="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">' + escapeHtml(error.message || "Failed to load assistants") + '</div>';
-        });
+      }).catch(function (error) {
+        list.innerHTML = '<div class="pa-empty"><p class="pa-empty-text">' + escapeHtml(error.message || "Failed to load assistants") + '</p></div>';
+      });
     }
-
     function save(event) {
       event.preventDefault();
       if (!agentId) return;
       setError("");
       var id = field("id").value.trim();
       var name = field("name").value.trim();
-      if (!name) {
-        setError("{% trans 'Name is required.' %}");
-        return;
-      }
-      var body = {
-        kind: "custom_assistant",
-        name: name,
-        description: field("description").value.trim(),
-        status: field("status").value || "active",
-        triggerType: "manual",
-        autonomyMode: "draft_for_approval",
-        reviewMode: "on_risk",
-        createSession: true,
-        instructions: { goal: field("instructions").value.trim() }
-      };
+      if (!name) { setError("{% trans 'Name is required.' %}"); return; }
+      var body = { kind: "custom_assistant", name: name, description: field("description").value.trim(), status: field("status").value || "active", triggerType: "manual", autonomyMode: "draft_for_approval", reviewMode: "on_risk", createSession: true, instructions: { goal: field("instructions").value.trim() } };
       var url = "/api/agents/" + encodeURIComponent(agentId) + "/custom-assistants/";
       var method = "POST";
-      if (id) {
-        url += encodeURIComponent(id) + "/";
-        method = "PATCH";
-      }
-      api(url, { method: method, body: JSON.stringify(body) })
-        .then(function () {
-          resetForm();
-          return load();
-        })
-        .catch(function (error) {
-          setError(error.message || "{% trans 'Failed to save assistant.' %}");
-        });
+      if (id) { url += encodeURIComponent(id) + "/"; method = "PATCH"; }
+      api(url, { method: method, body: JSON.stringify(body) }).then(function () { closeDrawer(); return load(); }).catch(function (error) { setError(error.message || "{% trans 'Failed to save assistant.' %}"); });
     }
-
     function openChat(id) {
       if (!id || !agentId) return;
-      api("/api/agents/" + encodeURIComponent(agentId) + "/custom-assistants/" + encodeURIComponent(id) + "/sessions/", {
-        method: "POST",
-        body: JSON.stringify({})
-      }).then(function (payload) {
+      api("/api/agents/" + encodeURIComponent(agentId) + "/custom-assistants/" + encodeURIComponent(id) + "/sessions/", { method: "POST", body: JSON.stringify({}) }).then(function (payload) {
         var session = payload.session || {};
         var conversationId = session.conversationId || session.conversation_id || "";
         window.location.href = conversationId ? chatUrl + "?conversation=" + encodeURIComponent(conversationId) : chatUrl;
-      }).catch(function () {
-        window.location.href = chatUrl;
-      });
+      }).catch(function () { window.location.href = chatUrl; });
     }
-
     function remove(id) {
       if (!id || !agentId) return;
       if (!window.confirm("{% trans 'Delete this custom assistant?' %}")) return;
-      api("/api/agents/" + encodeURIComponent(agentId) + "/custom-assistants/" + encodeURIComponent(id) + "/", { method: "DELETE" })
-        .then(load);
+      api("/api/agents/" + encodeURIComponent(agentId) + "/custom-assistants/" + encodeURIComponent(id) + "/", { method: "DELETE" }).then(load);
     }
-
     if (form) form.addEventListener("submit", save);
     if (refreshButton) refreshButton.addEventListener("click", load);
-    if (newButton) newButton.addEventListener("click", resetForm);
-    var resetButton = root.querySelector("[data-assistant-reset]");
-    if (resetButton) resetButton.addEventListener("click", resetForm);
-    if (list) {
-      list.addEventListener("click", function (event) {
-        var button = event.target && event.target.closest ? event.target.closest("[data-action]") : null;
-        if (!button) return;
-        var card = button.closest("[data-assistant-id]");
-        var id = card ? card.getAttribute("data-assistant-id") : "";
-        var item = items.find(function (candidate) { return candidate && candidate.id === id; });
-        if (button.getAttribute("data-action") === "edit") editAssistant(item);
-        if (button.getAttribute("data-action") === "delete") remove(id);
-        if (button.getAttribute("data-action") === "chat") openChat(id);
-      });
-    }
+    if (newButton) newButton.addEventListener("click", function () { resetForm(null); });
+    root.querySelectorAll("[data-assistant-close]").forEach(function (button) { button.addEventListener("click", closeDrawer); });
+    if (list) list.addEventListener("click", function (event) {
+      var templateButton = event.target && event.target.closest ? event.target.closest("[data-template-index]") : null;
+      if (templateButton) { resetForm(templates[Number(templateButton.getAttribute("data-template-index"))] || null); return; }
+      var button = event.target && event.target.closest ? event.target.closest("[data-action]") : null;
+      if (!button) return;
+      var card = button.closest("[data-assistant-id]");
+      var id = card ? card.getAttribute("data-assistant-id") : "";
+      var item = items.find(function (candidate) { return candidate && candidate.id === id; });
+      if (button.getAttribute("data-action") === "edit") editAssistant(item);
+      if (button.getAttribute("data-action") === "delete") remove(id);
+      if (button.getAttribute("data-action") === "chat") openChat(id);
+    });
+    document.addEventListener("keydown", function (event) { if (event.key === "Escape") closeDrawer(); });
     load();
   });
 </script>

@@ -970,6 +970,17 @@ class AgentRunProcessingService:
             ]
         return report
 
+    def _forced_final_trace(self, tool_trace: list[object]) -> dict[str, object] | None:
+        for entry in reversed(tool_trace or []):
+            if not isinstance(entry, Mapping):
+                continue
+            if str(entry.get("tool") or "").strip() != "__orchestrator__":
+                continue
+            if str(entry.get("status") or "").strip().lower() != "forced_final":
+                continue
+            return dict(entry)
+        return None
+
     def _workflow_dedupe_key(self, *, workflow: AssistantWorkflow | None, report: Mapping[str, object]) -> str:
         entities = report.get("changed_entities")
         candidate = entities if isinstance(entities, list) and entities else report.get("notification_candidate") or report
@@ -2029,13 +2040,26 @@ class AgentRunProcessingService:
                 next_status = AgentRunStatus.WAITING_EXTERNAL
 
             now = timezone.now()
+            tool_trace = list(turn.tool_trace or ())
+            forced_final_trace = self._forced_final_trace(tool_trace)
+            terminal_error_detail = ""
+            if next_status == AgentRunStatus.COMPLETED and forced_final_trace:
+                next_status = AgentRunStatus.FAILED
+                reason = str(forced_final_trace.get("reason") or "tool_loop_forced_final").strip()
+                next_tools = forced_final_trace.get("next_tools")
+                next_tools_list = [str(item) for item in next_tools] if isinstance(next_tools, list) else []
+                terminal_error_detail = (
+                    "Run stopped before completing because the tool loop reached a safety limit."
+                    + (f" Reason: {reason}." if reason else "")
+                    + (f" Pending tools: {', '.join(next_tools_list[:6])}." if next_tools_list else "")
+                )
             base_result = {
                 "response_text": turn.response_text,
                 "response_blocks": list(turn.response_blocks or ()),
                 "planned_actions": [dataclasses.asdict(a) for a in (turn.planned_actions or ())] if turn.planned_actions else [],
                 "extractions": [dataclasses.asdict(e) for e in (turn.extractions or ())] if turn.extractions else [],
                 "llm_usage": dict(turn.llm_usage or {}) if getattr(turn, "llm_usage", None) else None,
-                "tool_trace": list(turn.tool_trace or ()),
+                "tool_trace": tool_trace,
             }
 
             next_metadata = dict(run.metadata or {}) if isinstance(getattr(run, "metadata", None), dict) else {}
@@ -2081,7 +2105,7 @@ class AgentRunProcessingService:
                 run=run,
                 next_status=next_status,
                 response_text=str(turn.response_text or ""),
-                tool_trace=list(turn.tool_trace or ()),
+                tool_trace=tool_trace,
                 pause_payload=pause_payload,
                 approval_preview=approval_preview,
             )
@@ -2127,12 +2151,12 @@ class AgentRunProcessingService:
                 "status": next_status,
                 "lease_expires_at": None,
                 "run_after": None,
-                "error_detail": "",
+                "error_detail": terminal_error_detail,
                 "result": base_result,
                 "metadata": next_metadata,
                 "updated_at": now,
             }
-            if next_status == AgentRunStatus.COMPLETED:
+            if next_status in {AgentRunStatus.COMPLETED, AgentRunStatus.FAILED}:
                 update_fields["finished_at"] = now
 
             updated = AgentRun.objects.filter(id=run.id, status=AgentRunStatus.RUNNING).update(**update_fields)
@@ -2232,6 +2256,14 @@ class AgentRunProcessingService:
                                 content_blocks=ensure_assistant_text_blocks(handoff_text),
                             )
                             Conversation.objects.filter(id=anchor_conversation.id).update(last_activity_at=now)
+            elif next_status == AgentRunStatus.FAILED:
+                self._append_event(
+                    run,
+                    stream=AgentRunEventStream.SYSTEM,
+                    event_type=AgentRunEventType.ERROR,
+                    label="Incomplete",
+                    payload={"error": terminal_error_detail or "Run did not complete."},
+                )
             elif next_status == AgentRunStatus.WAITING_EXTERNAL and external_request_id:
                 checkpoint = self._upsert_open_checkpoint(
                     run=run,

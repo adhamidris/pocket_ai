@@ -6321,6 +6321,9 @@ class ChatPortalClient {
     } else {
       this.updateTasksOpenButton();
     }
+    if (Array.isArray(this.sessionSummaries) && this.elements.sessionsList) {
+      this.renderSessionList(this.sessionSummaries);
+    }
     this.scheduleTasksRender();
     this.refreshAgentRunChips();
   }
@@ -12421,6 +12424,42 @@ class ChatPortalClient {
     });
   }
 
+  getCustomAssistantSidebarGroups(taskSessions) {
+    const groups = new Map();
+    for (const group of this.groupWorkflowSessions(taskSessions)) {
+      groups.set(group.key, group);
+    }
+    if (this.workflowAgents instanceof Map) {
+      this.workflowAgents.forEach((state, workflowId) => {
+        const workflow = state && state.workflow && typeof state.workflow === "object" ? state.workflow : {};
+        const kind = (workflow.kind || workflow.workflowKind || "").toString().trim().toLowerCase();
+        if (kind && kind !== "custom_assistant") return;
+        const id = (workflow.id || workflowId || "").toString().trim();
+        if (!id) return;
+        const key = id || `workflow-name:${(workflow.name || "").toString().toLowerCase()}`;
+        const existing = groups.get(key);
+        if (existing) {
+          existing.workflowId = existing.workflowId || id;
+          existing.name = existing.name || workflow.name || this.t("Custom Assistant");
+          existing.agentName = existing.agentName || workflow.agentName || "";
+          return;
+        }
+        groups.set(key, {
+          key,
+          workflowId: id,
+          name: (workflow.name || this.t("Custom Assistant")).toString(),
+          agentName: (workflow.agentName || "").toString(),
+          sessions: [],
+          latestActivity: this.getSessionSummaryTimestamp(workflow, ["updatedAt", "updated_at", "createdAt", "created_at"]),
+        });
+      });
+    }
+    return Array.from(groups.values()).sort((left, right) => {
+      if (left.latestActivity !== right.latestActivity) return right.latestActivity - left.latestActivity;
+      return left.name.localeCompare(right.name);
+    });
+  }
+
   buildWorkflowSessionCreateButton(workflowId, workflowName) {
     if (!workflowId || !this.shouldUseConversationApi()) return null;
     const button = document.createElement("button");
@@ -13036,8 +13075,12 @@ class ChatPortalClient {
     const chatSessions = sortedSessions.filter((session) => this.getSessionSummaryType(session) !== "task");
     const currentSessionKey = this.getCurrentSessionKey();
 
-    if (taskSessions.length) {
-      const workflowGroups = this.groupWorkflowSessions(taskSessions);
+    const workflowGroups = this.getCustomAssistantSidebarGroups(taskSessions);
+    if (!workflowGroups.length && !chatSessions.length) {
+      this.showSessionsEmpty();
+      return;
+    }
+    if (workflowGroups.length) {
       const workflowBranch = this.buildSessionTreeBranch({
         key: "section:custom-assistants",
         label: this.t("Custom Assistants"),
@@ -13055,6 +13098,12 @@ class ChatPortalClient {
               forceOpen: groupHasActiveSession,
               actions: () => [this.buildWorkflowSessionCreateButton(group.workflowId, group.name)],
               renderChildren: (workflowContent) => {
+                if (!group.sessions.length) {
+                  const empty = document.createElement("div");
+                  empty.className = "px-2 py-1.5 text-xs text-muted-foreground";
+                  empty.textContent = this.t("No chats yet");
+                  workflowContent.appendChild(empty);
+                }
                 for (const session of group.sessions) {
                   const isActive = this.getSessionSummaryKey(session) === currentSessionKey;
                   workflowContent.appendChild(this.buildSessionItem(session, isActive, { nested: true }));

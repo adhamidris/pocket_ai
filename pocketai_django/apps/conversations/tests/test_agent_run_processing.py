@@ -168,3 +168,56 @@ class AgentRunProcessingTests(TestCase):
         workflow.refresh_from_db()
         self.assertIn("last_run_report", workflow.state)
         self.assertTrue(AgentRunNotification.objects.filter(run=run, status="delivered").exists())
+
+    def test_forced_final_tool_loop_marks_run_failed(self) -> None:
+        workflow = AssistantWorkflow.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            created_by=self.user,
+            name="Sales monitor",
+            status=AssistantWorkflowStatus.ACTIVE,
+            trigger_type="schedule",
+            trigger_config={"cron": "* * * * *"},
+            instructions={"goal": "Find sales emails and send a report"},
+        )
+        run = AgentRun.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            workflow=workflow,
+            created_by=self.user,
+            title="Sales monitor",
+            source=AgentRunSource.SCHEDULE,
+            status=AgentRunStatus.RUNNING,
+            started_at=timezone.now(),
+            lease_expires_at=timezone.now(),
+            workflow_snapshot={"goal": "Find sales emails and send a report"},
+            max_attempts=2,
+        )
+
+        service = AgentRunProcessingService(lease_seconds=1.0, max_retries_default=2, max_retry_delay_seconds=1.0)
+        mock_turn = mock.Mock(
+            response_text="I found sales emails and will send the report now.",
+            response_blocks=[],
+            planned_actions=[],
+            extractions=[],
+            llm_usage={},
+            tool_trace=[
+                {"tool": "email_search", "status": "ok"},
+                {
+                    "tool": "__orchestrator__",
+                    "status": "forced_final",
+                    "reason": "iteration_limit",
+                    "next_tools": ["email_send_draft"],
+                },
+            ],
+        )
+        with mock.patch("apps.llm.llm_provider.load_mcp_provider", return_value=mock.Mock()):
+            with mock.patch("apps.mcp.orchestrator.McpOrchestratorService.stream_turn", return_value=mock_turn):
+                result = service._execute_run(run)
+
+        self.assertEqual(result.status, AgentRunStatus.FAILED)
+        run.refresh_from_db()
+        self.assertEqual(run.status, AgentRunStatus.FAILED)
+        self.assertIn("safety limit", run.error_detail)
+        self.assertIn("email_send_draft", run.error_detail)
+        self.assertTrue(run.finished_at)

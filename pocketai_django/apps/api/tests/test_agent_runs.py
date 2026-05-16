@@ -16,6 +16,7 @@ from apps.conversations.models import (
     AgentRunCheckpointStatus,
     AgentRunStatus,
     AssistantWorkflow,
+    AssistantWorkflowKind,
     AssistantWorkflowStatus,
     Conversation,
     ConversationChannel,
@@ -26,6 +27,7 @@ from apps.conversations.models import (
     MemoryStatus,
     MemoryVisibility,
 )
+from apps.api.chat_portal import _build_portal_agent_runs_snapshot
 from apps.conversations.workflow_processing import AssistantWorkflowProcessingService
 from apps.integrations.models import EmailAccount, EmailAccountProvider, EmailAccountStatus
 
@@ -285,6 +287,55 @@ class AgentRunsApiTests(TestCase):
         self.assertEqual(run.workflow, workflow)
         self.assertEqual(run.source, "schedule")
         self.assertIsNone(run.conversation_id)
+
+    def test_portal_activity_snapshot_includes_automation_runs(self) -> None:
+        conversation = Conversation.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            owner_user=self.user,
+            channel=ConversationChannel.API,
+            status=ConversationStatus.LIVE,
+        )
+        workflow = AssistantWorkflow.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            created_by=self.user,
+            name="Sales Email Monitor",
+            kind=AssistantWorkflowKind.AUTOMATION,
+            trigger_type="schedule",
+            trigger_config={"cron": "0 9 * * *"},
+            instructions={"goal": "Report sales email"},
+        )
+        run = AgentRun.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            workflow=workflow,
+            created_by=self.user,
+            title="Sales Email Monitor",
+            status=AgentRunStatus.COMPLETED,
+            result={
+                "response_text": "Found 14 sales-related emails.",
+                "run_report": {
+                    "status": "completed",
+                    "findings": ["Found 14 sales-related emails."],
+                    "actions_taken": [{"tool": "email_search", "status": "ok"}],
+                },
+            },
+            finished_at=timezone.now(),
+        )
+
+        snapshot = _build_portal_agent_runs_snapshot(
+            conversation_id=conversation.id,
+            business_id=self.business.id,
+            agent_profile_id=self.agent.id,
+        )
+
+        self.assertEqual(snapshot["workflows"][0]["id"], str(workflow.id))
+        self.assertEqual(snapshot["workflows"][0]["kind"], AssistantWorkflowKind.AUTOMATION)
+        latest_run = snapshot["workflows"][0]["latestRun"]
+        self.assertEqual(latest_run["id"], str(run.id))
+        self.assertEqual(latest_run["result"]["responseText"], "Found 14 sales-related emails.")
+        self.assertEqual(latest_run["display"]["summary"], "Found 14 sales-related emails.")
 
     def test_checkpoint_resolve_queues_run_and_closes_checkpoint(self) -> None:
         workflow = AssistantWorkflow.objects.create(

@@ -1376,6 +1376,17 @@ def _clip_portal_text(value: str, limit: int) -> str:
 def _serialize_agent_run_for_portal(run: AgentRun) -> dict[str, object]:
     plan_payload = run.plan if isinstance(getattr(run, "plan", None), dict) else {}
     error_detail = str(getattr(run, "error_detail", "") or "").strip()
+    result_payload = run.result if isinstance(getattr(run, "result", None), dict) else {}
+    response_text = str(result_payload.get("response_text") or result_payload.get("responseText") or "").strip()
+    run_report = result_payload.get("run_report") or result_payload.get("runReport")
+    run_report_state = result_payload.get("run_report_state") or result_payload.get("runReportState")
+    portal_result: dict[str, object] = {}
+    if response_text:
+        portal_result["responseText"] = _clip_portal_text(response_text, 12000)
+    if isinstance(run_report, Mapping):
+        portal_result["runReport"] = dict(run_report)
+    if isinstance(run_report_state, Mapping):
+        portal_result["runReportState"] = dict(run_report_state)
     open_checkpoint = None
     try:
         open_checkpoint = (
@@ -1401,6 +1412,7 @@ def _serialize_agent_run_for_portal(run: AgentRun) -> dict[str, object]:
         "updatedAt": run.updated_at.isoformat() if run.updated_at else None,
         "errorDetail": _clip_portal_text(error_detail, 800) if error_detail else "",
         "plan": plan_payload,
+        "result": portal_result,
         "durationMs": int((run.finished_at - run.started_at).total_seconds() * 1000)
         if run.started_at and run.finished_at
         else None,
@@ -1444,6 +1456,7 @@ def _serialize_workflow_agent_for_portal(
         "agentName": getattr(getattr(workflow, "agent_profile", None), "name", "") or "",
         "name": workflow.name,
         "description": workflow.description or "",
+        "kind": workflow.kind,
         "status": workflow.status,
         "triggerType": workflow.trigger_type,
         "nextTriggerAt": workflow.next_trigger_at.isoformat() if workflow.next_trigger_at else None,
@@ -1510,7 +1523,7 @@ def _build_portal_agent_runs_snapshot(
         if agent_profile_id:
             workflows = list(
                 AssistantWorkflow.objects.filter(business_profile_id=business_id)
-                .filter(kind=AssistantWorkflowKind.CUSTOM_ASSISTANT)
+                .filter(kind__in=[AssistantWorkflowKind.CUSTOM_ASSISTANT, AssistantWorkflowKind.AUTOMATION])
                 .select_related("agent_profile")
                 .annotate(session_count=Count("sessions"))
                 .order_by("-updated_at", "-created_at")[:100]

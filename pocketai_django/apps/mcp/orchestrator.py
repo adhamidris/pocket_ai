@@ -2189,12 +2189,18 @@ class McpOrchestratorService:
                             iteration_index >= self.max_tool_iterations - 1
                         )
                         if force_final:
+                            force_final_reason = (
+                                "duplicate_signatures"
+                                if duplicate_loop_streak >= duplicate_loop_threshold
+                                else "iteration_limit"
+                            )
+                            force_final_next_tools = [self._tool_name(c) for c in next_tool_calls]
                             structured_log(
                                 "mcp",
                                 "tool.loop.force_final",
                                 {
-                                    "reason": "duplicate_signatures" if duplicate_loop_streak >= duplicate_loop_threshold else "iteration_limit",
-                                    "next_tools": [self._tool_name(c) for c in next_tool_calls],
+                                    "reason": force_final_reason,
+                                    "next_tools": force_final_next_tools,
                                 },
                                 context={
                                     "conversation": conversation.id,
@@ -2202,6 +2208,14 @@ class McpOrchestratorService:
                                 },
                                 logger_obj=logger,
                                 level=logging.WARNING,
+                            )
+                            tool_context.add_tool_trace(
+                                {
+                                    "tool": "__orchestrator__",
+                                    "status": "forced_final",
+                                    "reason": force_final_reason,
+                                    "next_tools": force_final_next_tools,
+                                }
                             )
                             forced_payload = self._chat_with_context_governor(
                                 conversation=conversation,
