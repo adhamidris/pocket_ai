@@ -85,3 +85,22 @@ def publish_portal_agent_request_event(*, agent_profile_id: uuid.UUID, payload: 
         event_name="agentRequestEvent",
         payload=payload,
     )
+
+
+def portal_session_agent_workflow_runs_stream_key(*, agent_profile_id: uuid.UUID) -> str:
+    """Stream key for workflow run events scoped to an agent profile.
+
+    Workflow runs typically use a dedicated ``execution_conversation_id``
+    that differs from the conversation the portal session is viewing.
+    This agent-scoped stream ensures the SSE consumer receives those
+    events regardless of which conversation is active.
+    """
+    return f"{_prefix()}:agent:{agent_profile_id}:workflow_runs"
+
+
+def publish_portal_agent_workflow_run_event(*, agent_profile_id: uuid.UUID, payload: dict[str, Any]) -> None:
+    publish_portal_session_stream_event(
+        stream_key=portal_session_agent_workflow_runs_stream_key(agent_profile_id=agent_profile_id),
+        event_name="agentRunEvent",
+        payload=payload,
+    )

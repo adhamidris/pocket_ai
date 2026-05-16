@@ -28,7 +28,8 @@ INLINE_RESPONSE_BLOCK_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-DSML_LINE_PATTERN = re.compile(r"^\\s*</?｜DSML｜.*$", re.MULTILINE)
+DSML_TAG_PATTERN = re.compile(r"</?\s*[｜|]{1,2}\s*DSML\s*[｜|]{1,2}[^>\n]*(?:>|\n|$)", re.IGNORECASE)
+DSML_LINE_PATTERN = re.compile(r"^\s*.*</?\s*[｜|]{1,2}\s*DSML\s*[｜|]{1,2}.*$", re.MULTILINE | re.IGNORECASE)
 
 
 def strip_inline_response_blocks(text: str) -> str:
@@ -64,9 +65,18 @@ def strip_dsml_markup(text: str) -> str:
     if not text:
         return ""
     cleaned = DSML_LINE_PATTERN.sub("", text)
+    cleaned = DSML_TAG_PATTERN.sub("", cleaned)
     # Collapse any resulting excessive blank lines.
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned.strip("\n")
+
+
+def has_dsml_markup(text: str | None) -> bool:
+    """Return true when provider/tool-call DSML markup leaked into visible text."""
+
+    if not text:
+        return False
+    return bool(DSML_TAG_PATTERN.search(str(text)))
 
 
 def sanitize_with_diagnostics(
@@ -87,7 +97,8 @@ def sanitize_with_diagnostics(
             span.set_attribute("sanitizer.original_length", len(text or ""))
             span.set_attribute("sanitizer.dropped_count", len(dropped))
     # If everything was dropped as filler, fall back to the original text to avoid empty replies.
-    if not cleaned and text and text.strip():
+    # DSML-only responses are internal tool markup, so never restore the original in that case.
+    if not cleaned and text and text.strip() and not has_dsml_markup(text):
         cleaned = text.strip()
     if dropped:
         business_id = getattr(getattr(conversation, "business_profile", None), "id", None) if conversation else None

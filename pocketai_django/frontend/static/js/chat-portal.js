@@ -36,6 +36,14 @@ class ChatPortalClient {
     this.authenticatedChat = authenticatedChatAttr === "true" || authenticatedChatAttr === "1" || authenticatedChatAttr === "yes";
     const agentRunsAttr = (container.getAttribute("data-agent-runs-enabled") || "").toString().trim().toLowerCase();
     this.agentRunsEnabled = agentRunsAttr === "true" || agentRunsAttr === "1" || agentRunsAttr === "yes";
+    try {
+      this.agentRunDebugEnabled =
+        typeof window !== "undefined" &&
+        window.localStorage &&
+        (window.localStorage.getItem("portalAgentRunDebug") || "") === "1";
+    } catch (_err) {
+      this.agentRunDebugEnabled = false;
+    }
     this.currentStatus = container.getAttribute("data-initial-status") || "new";
     this.eventSource = null;
 	    this.awaitingReply = false;
@@ -186,7 +194,7 @@ class ChatPortalClient {
 
 	    // Agent runs/activity panel state
 	    this.agentRuns = new Map(); // runId -> { run, events, expanded, seenKeys, lastEventLabel }
-    this.workflowAgents = new Map(); // workflowId -> { workflow, expanded }
+    this.workflowAgents = new Map(); // workflowId -> { workflow, expanded, expandedRuns }
     this.tasksRenderRaf = null;
     this.tasksPanelUserHidden = false;
 
@@ -5588,18 +5596,18 @@ class ChatPortalClient {
         return;
       }
 
+      const workflowToggleEl = target.closest("[data-workflow-toggle]");
+      if (workflowToggleEl) {
+        const workflowId = (workflowToggleEl.getAttribute("data-workflow-toggle") || "").trim();
+        if (workflowId) this.toggleWorkflowExpanded(workflowId);
+        return;
+      }
+
       const workflowRunToggleEl = target.closest("[data-workflow-run-toggle]");
       if (workflowRunToggleEl) {
         const workflowId = (workflowRunToggleEl.getAttribute("data-workflow-id") || "").trim();
         const runId = (workflowRunToggleEl.getAttribute("data-run-id") || "").trim();
         if (workflowId && runId) this.toggleWorkflowRunExpanded(workflowId, runId);
-        return;
-      }
-
-      const workflowToggleEl = target.closest("[data-workflow-toggle]");
-      if (workflowToggleEl) {
-        const workflowId = (workflowToggleEl.getAttribute("data-workflow-toggle") || "").trim();
-        if (workflowId) this.toggleWorkflowExpanded(workflowId);
         return;
       }
 
@@ -6378,7 +6386,14 @@ class ChatPortalClient {
     } else {
       this.updateTasksOpenButton();
     }
-    this.scheduleTasksRender();
+
+    // Route workflow events to incremental card patching instead of full re-render.
+    const workflowIdForPatch = run ? (run.workflowId || run.workflow_id || "").toString().trim() : "";
+    if (workflowIdForPatch && this.workflowAgents.has(workflowIdForPatch)) {
+      this.scheduleWorkflowCardPatch(workflowIdForPatch);
+    } else {
+      this.scheduleTasksRender();
+    }
     this.refreshAgentRunChips(runId);
   }
 
@@ -6487,12 +6502,21 @@ class ChatPortalClient {
     const state = this.upsertAgentRun({ id: runId }) || this.agentRuns.get(runId);
     if (!state) return;
     const clean = Array.isArray(events) ? events.filter((e) => e && typeof e === "object") : [];
-    clean.sort((a, b) => {
+    const mergedByKey = new Map();
+    [...(Array.isArray(state.events) ? state.events : []), ...clean].forEach((evt) => {
+      if (!evt || typeof evt !== "object") return;
+      const seq = Number(evt.sequenceIndex || 0);
+      const key = seq ? `seq:${seq}` : `id:${evt.id || ""}`;
+      if (key === "id:") return;
+      mergedByKey.set(key, evt);
+    });
+    const merged = Array.from(mergedByKey.values());
+    merged.sort((a, b) => {
       const ai = Number(a.sequenceIndex || 0);
       const bi = Number(b.sequenceIndex || 0);
       return ai - bi;
     });
-    state.events = clean.slice(-200);
+    state.events = merged.slice(-250);
     state.seenSeq = new Set(state.events.map((e) => Number(e.sequenceIndex || 0)));
     const last = state.events.length ? state.events[state.events.length - 1] : null;
     state.lastEventLabel = last && last.label ? String(last.label) : "";
@@ -6522,6 +6546,171 @@ class ChatPortalClient {
       this.renderTasksPanel();
     });
   }
+
+  /**
+   * Schedule an incremental patch for a single workflow card.
+   * Uses a per-workflow RAF so rapid events for the same workflow coalesce,
+   * and events for different workflows don't block each other.
+   */
+  scheduleWorkflowCardPatch(workflowId) {
+    if (!this._workflowPatchRafs) this._workflowPatchRafs = new Map();
+    if (this._workflowPatchRafs.has(workflowId)) return;
+    this._workflowPatchRafs.set(workflowId, requestAnimationFrame(() => {
+      this._workflowPatchRafs.delete(workflowId);
+      this.patchWorkflowCard(workflowId);
+    }));
+  }
+
+  /**
+   * Incrementally update a single workflow card in-place without
+   * replacing the entire tasks panel innerHTML. Preserves:
+   * - Workflow card expanded/collapsed state
+   * - Run row expanded/collapsed state
+   * - <details> open/close state (scratchpad, tool calls)
+   * - Scroll position within scratchpad
+   * - Any in-progress textarea input
+   */
+  patchWorkflowCard(workflowId) {
+    if (!this.elements.tasksCards) return;
+    const cardEl = this.elements.tasksCards.querySelector(`[data-workflow-id="${workflowId}"]`);
+    if (!cardEl) {
+      // Card doesn't exist in DOM yet — fall back to full re-render.
+      this.scheduleTasksRender();
+      return;
+    }
+
+    const workflowState = this.workflowAgents.get(workflowId);
+    if (!workflowState || !workflowState.workflow) return;
+    const workflow = workflowState.workflow;
+    const expanded = Boolean(workflowState.expanded);
+    const latestRun = workflow.latestRun && typeof workflow.latestRun === "object" ? workflow.latestRun : null;
+    const checkpoint = workflow.openCheckpoint && typeof workflow.openCheckpoint === "object" ? workflow.openCheckpoint : null;
+    const status = checkpoint ? "waiting_approval" : (latestRun && latestRun.status ? latestRun.status : (workflow.status || "draft"));
+
+    // --- Update header in-place ---
+    const pillEl = cardEl.querySelector(".portal-task__status-pill");
+    if (pillEl) {
+      const newPillHtml = this.renderRunStatusPill(status);
+      const pillContainer = pillEl.parentElement;
+      if (pillContainer) {
+        const temp = document.createElement("div");
+        temp.innerHTML = newPillHtml;
+        const newPill = temp.firstElementChild;
+        if (newPill) pillContainer.replaceChild(newPill, pillEl);
+      }
+    }
+
+    const subtitleEl = cardEl.querySelector(".portal-task__subtitle");
+    if (subtitleEl) {
+      const triggerLabel = this.getWorkflowTriggerLabel(workflow.triggerType);
+      const ownerLabel = workflow.agentName ? String(workflow.agentName) : "";
+      const subtitleParts = [ownerLabel, triggerLabel];
+      if (workflow.nextTriggerAt) subtitleParts.push(`${this.t("Next")} ${this.formatDueTime(workflow.nextTriggerAt)}`);
+      else if (workflow.lastTriggeredAt) subtitleParts.push(`${this.t("Last")} ${this.formatDueTime(workflow.lastTriggeredAt)}`);
+      const subtitle = subtitleParts.filter(Boolean).join(" · ") || this.formatRunStatusLabel(status);
+      subtitleEl.textContent = subtitle;
+    }
+
+    const summaryEl = cardEl.querySelector(".portal-task__summary-preview");
+    if (summaryEl) {
+      const latestSummary = checkpoint
+        ? (checkpoint.prompt || checkpoint.title || this.t("Needs attention"))
+        : (latestRun ? this.getRunSummaryText(latestRun, status) : (workflow.description || this.t("No runs recorded yet.")));
+      summaryEl.textContent = latestSummary;
+    }
+
+    // Update attention data attr
+    cardEl.setAttribute("data-attention", checkpoint ? "true" : "false");
+
+    // --- Update body if expanded ---
+    if (!expanded) return;
+
+    const bodyEl = cardEl.querySelector(".portal-task__body");
+    if (!bodyEl) return;
+
+    // Find all expanded run rows and their DOM state BEFORE patching
+    const runRowEls = bodyEl.querySelectorAll(".portal-task__run-row");
+    const expandedRunStates = new Map();
+    runRowEls.forEach((rowEl) => {
+      const btn = rowEl.querySelector("[data-run-id]");
+      const runId = btn ? (btn.getAttribute("data-run-id") || "").trim() : "";
+      if (!runId) return;
+      const isExpanded = rowEl.getAttribute("data-expanded") === "true";
+      if (!isExpanded) return;
+
+      // Snapshot <details> open states and scroll positions
+      const detailStates = [];
+      rowEl.querySelectorAll("details").forEach((det, i) => {
+        detailStates.push({
+          index: i,
+          open: det.open,
+          className: det.className || "",
+        });
+      });
+      const scratchpadEl = rowEl.querySelector(".portal-task__scratchpad");
+      const scrollTop = scratchpadEl ? scratchpadEl.scrollTop : 0;
+      const scrollHeight = scratchpadEl ? scratchpadEl.scrollHeight : 0;
+      const clientHeight = scratchpadEl ? scratchpadEl.clientHeight : 0;
+
+      // Check for textarea content
+      const textarea = rowEl.querySelector("textarea");
+      const textareaValue = textarea ? textarea.value : "";
+
+      expandedRunStates.set(runId, { detailStates, scrollTop, scrollHeight, clientHeight, textareaValue });
+    });
+
+    // Re-render the body content
+    const rawRecentRuns = Array.isArray(workflow.recentRuns) ? workflow.recentRuns : [];
+    const latestRunId = latestRun && latestRun.id ? String(latestRun.id) : "";
+    const recentRuns = latestRunId
+      ? rawRecentRuns.filter((r) => !r || String(r.id || "") !== latestRunId)
+      : rawRecentRuns;
+    const checkpointHtml = checkpoint ? this.renderWorkflowCheckpointHtml(checkpoint) : "";
+    const allRuns = latestRun ? [latestRun, ...recentRuns] : recentRuns;
+    const recentHtml = this.renderWorkflowRecentRunsHtml(workflowId, workflowState, allRuns);
+    bodyEl.innerHTML = checkpointHtml + (recentHtml || `<div class="portal-task__empty-note">${this.escapeHtml(this.t("No runs recorded yet."))}</div>`);
+
+    // Restore DOM state for expanded run rows
+    expandedRunStates.forEach((savedState, runId) => {
+      const newRowEl = bodyEl.querySelector(`[data-run-id="${runId}"]`);
+      if (!newRowEl) return;
+      const rowEl = newRowEl.closest(".portal-task__run-row");
+      if (!rowEl) return;
+
+      // Restore <details> open states
+      const allDetails = rowEl.querySelectorAll("details");
+      savedState.detailStates.forEach((saved) => {
+        if (allDetails[saved.index]) {
+          allDetails[saved.index].open = saved.open;
+        }
+      });
+
+      // Restore scroll position in scratchpad
+      const scratchpadEl = rowEl.querySelector(".portal-task__scratchpad");
+      if (scratchpadEl && savedState.scrollTop > 0) {
+        const wasAtBottom = savedState.scrollTop + savedState.clientHeight >= savedState.scrollHeight - 40;
+        if (wasAtBottom) {
+          // User was following along — scroll to new bottom
+          scratchpadEl.scrollTop = scratchpadEl.scrollHeight;
+        } else {
+          // User had scrolled up — preserve position
+          scratchpadEl.scrollTop = savedState.scrollTop;
+        }
+      } else if (scratchpadEl) {
+        // New content, auto-scroll to bottom
+        scratchpadEl.scrollTop = scratchpadEl.scrollHeight;
+      }
+
+      // Restore textarea value
+      if (savedState.textareaValue) {
+        const textarea = rowEl.querySelector("textarea");
+        if (textarea) textarea.value = savedState.textareaValue;
+      }
+    });
+
+    this.updateTasksOpenButton();
+  }
+
 
   scheduleInboxRender() {
     if (this.inboxRenderRaf) return;
@@ -6611,8 +6800,93 @@ class ChatPortalClient {
       .join("");
 
     const adHocHeading = runs.length || extraVoiceCardsHtml ? `<div class="portal-task__group-title">${this.escapeHtml(this.t("Ad-hoc runs"))}</div>` : "";
+
+    // Snapshot DOM state before innerHTML nuke
+    const savedStates = this._snapshotPanelDomState(list);
+
     list.innerHTML = workflowCardsHtml + adHocHeading + runCardsHtml + extraVoiceCardsHtml;
+
+    // Restore DOM state after innerHTML replacement
+    this._restorePanelDomState(list, savedStates);
     this.updateTasksOpenButton();
+  }
+
+  /**
+   * Snapshot <details> open states, scroll positions, and textarea values
+   * from the current tasks panel DOM before a full innerHTML replacement.
+   */
+  _snapshotPanelDomState(container) {
+    const saved = { details: [], scrolls: [], textareas: [] };
+    if (!container) return saved;
+
+    container.querySelectorAll("details").forEach((det) => {
+      if (!det.open) return;
+      // Build a selector path to relocate this element after re-render
+      const classes = (det.className || "").trim();
+      const parent = det.closest("[data-workflow-id], [data-run-toggle]");
+      const parentId = parent ? (parent.getAttribute("data-workflow-id") || parent.getAttribute("data-run-toggle") || "") : "";
+      const runBtn = det.closest(".portal-task__run-row") ? det.closest(".portal-task__run-row").querySelector("[data-run-id]") : null;
+      const runId = runBtn ? (runBtn.getAttribute("data-run-id") || "") : "";
+      saved.details.push({ parentId, runId, classes, open: true });
+    });
+
+    container.querySelectorAll(".portal-task__scratchpad").forEach((el) => {
+      if (el.scrollTop <= 0) return;
+      const runBtn = el.closest(".portal-task__run-row") ? el.closest(".portal-task__run-row").querySelector("[data-run-id]") : null;
+      const runId = runBtn ? (runBtn.getAttribute("data-run-id") || "") : "";
+      saved.scrolls.push({ runId, scrollTop: el.scrollTop, scrollHeight: el.scrollHeight, clientHeight: el.clientHeight });
+    });
+
+    container.querySelectorAll("textarea").forEach((ta) => {
+      if (!ta.value) return;
+      const card = ta.closest("[data-workflow-id], [data-run-toggle]");
+      const cardId = card ? (card.getAttribute("data-workflow-id") || card.getAttribute("data-run-toggle") || "") : "";
+      saved.textareas.push({ cardId, value: ta.value });
+    });
+
+    return saved;
+  }
+
+  /**
+   * Restore <details> open states, scroll positions, and textarea values
+   * after a full innerHTML replacement.
+   */
+  _restorePanelDomState(container, saved) {
+    if (!container || !saved) return;
+
+    // Restore <details> open states
+    for (const entry of saved.details) {
+      if (!entry.classes) continue;
+      let scope = container;
+      if (entry.runId) {
+        const runBtn = container.querySelector(`[data-run-id="${entry.runId}"]`);
+        if (runBtn) scope = runBtn.closest(".portal-task__run-row") || container;
+      } else if (entry.parentId) {
+        scope = container.querySelector(`[data-workflow-id="${entry.parentId}"]`) || container;
+      }
+      const candidates = scope.querySelectorAll(`details.${entry.classes.split(/\s+/).join(".")}`);
+      candidates.forEach((det) => { det.open = true; });
+    }
+
+    // Restore scroll positions
+    for (const entry of saved.scrolls) {
+      if (!entry.runId) continue;
+      const runBtn = container.querySelector(`[data-run-id="${entry.runId}"]`);
+      const row = runBtn ? runBtn.closest(".portal-task__run-row") : null;
+      const scratchpad = row ? row.querySelector(".portal-task__scratchpad") : null;
+      if (!scratchpad) continue;
+      const wasAtBottom = entry.scrollTop + entry.clientHeight >= entry.scrollHeight - 40;
+      scratchpad.scrollTop = wasAtBottom ? scratchpad.scrollHeight : entry.scrollTop;
+    }
+
+    // Restore textarea values
+    for (const entry of saved.textareas) {
+      if (!entry.cardId || !entry.value) continue;
+      const card = container.querySelector(`[data-workflow-id="${entry.cardId}"], [data-run-toggle="${entry.cardId}"]`);
+      if (!card) continue;
+      const ta = card.querySelector("textarea");
+      if (ta) ta.value = entry.value;
+    }
   }
 
   renderInboxPanel() {
@@ -6931,7 +7205,7 @@ class ChatPortalClient {
     `;
 
     const planHtml = this.renderRunPlanHtml(run);
-    const logHtml = this.renderRunLogHtml(state, run);
+    const workHtml = this.renderRunWorkHtml(state, run);
 
     return `
       <div class="portal-task portal-voice-call" data-run-id="${this.escapeHtml(runId)}" data-voice-session-id="${this.escapeHtml(
@@ -6948,7 +7222,7 @@ class ChatPortalClient {
         </button>
         <div class="portal-task__body">
           ${planHtml}
-          ${logHtml}
+          ${workHtml}
           ${detailsHtml}
           ${transcriptHtml}
         </div>
@@ -6999,12 +7273,15 @@ class ChatPortalClient {
   getRunDisplay(run) {
     const display = run && run.display && typeof run.display === "object" ? run.display : null;
     if (display) {
+      const summary = typeof display.summary === "string" ? display.summary.trim() : "";
+      const agentMessage = typeof display.agentMessage === "string" ? display.agentMessage.trim() : "";
+      const recommendedNextStep = typeof display.recommendedNextStep === "string" ? display.recommendedNextStep.trim() : "";
       return {
-        summary: typeof display.summary === "string" ? display.summary.trim() : "",
-        agentMessage: typeof display.agentMessage === "string" ? display.agentMessage.trim() : "",
+        summary: this.isJsonLikeText(summary) ? "" : summary,
+        agentMessage: this.isJsonLikeText(agentMessage) ? "" : agentMessage,
         findings: Array.isArray(display.findings) ? display.findings.filter(Boolean).map((item) => String(item).trim()).filter(Boolean) : [],
         actionsTaken: Array.isArray(display.actionsTaken) ? display.actionsTaken : [],
-        recommendedNextStep: typeof display.recommendedNextStep === "string" ? display.recommendedNextStep.trim() : "",
+        recommendedNextStep: this.isJsonLikeText(recommendedNextStep) ? "" : recommendedNextStep,
         statusTone: typeof display.statusTone === "string" ? display.statusTone.trim() : "neutral",
         rawAvailable: Boolean(display.rawAvailable),
         rawDebug: display.rawDebug && typeof display.rawDebug === "object" ? display.rawDebug : null,
@@ -7030,33 +7307,94 @@ class ChatPortalClient {
   getRunReport(run) {
     const result = run && run.result && typeof run.result === "object" ? run.result : null;
     const report = result && result.runReport && typeof result.runReport === "object" ? result.runReport : null;
-    if (report) return report;
-    const responseText = result && typeof result.responseText === "string" ? result.responseText.trim() : "";
+    if (report) return this.normalizeRunReport(report);
+    let responseText = result && typeof result.responseText === "string" ? result.responseText.trim() : "";
+    if (!responseText) return null;
+    if (responseText.startsWith("```")) {
+      responseText = responseText
+        .replace(/^```(?:json)?/i, "")
+        .replace(/```$/i, "")
+        .trim();
+    }
     if (!responseText || responseText[0] !== "{") return null;
     try {
       const parsed = JSON.parse(responseText);
       const candidate = parsed && parsed.run_report && typeof parsed.run_report === "object" ? parsed.run_report : parsed;
-      if (candidate && typeof candidate === "object") {
-        return {
-          objective: candidate.objective || "",
-          status: candidate.status || "",
-          findings: Array.isArray(candidate.findings) ? candidate.findings : [],
-          actionsTaken: Array.isArray(candidate.actions_taken || candidate.actionsTaken) ? (candidate.actions_taken || candidate.actionsTaken) : [],
-          recommendedNextStep: candidate.recommended_next_step || candidate.recommendedNextStep || "",
-          notification: candidate.notification_candidate || candidate.notification || {},
-        };
-      }
+      return this.normalizeRunReport(candidate);
     } catch (_err) {
       return null;
     }
-    return null;
+  }
+
+  normalizeRunReport(candidate) {
+    if (!candidate || typeof candidate !== "object") return null;
+    const actionsRaw = candidate.actionsTaken || candidate.actions_taken;
+    const memoryRaw = candidate.memoryUpdate || candidate.memory_update;
+    const notificationRaw = candidate.notification || candidate.notification_candidate;
+    return {
+      ...candidate,
+      objective: candidate.objective || "",
+      status: candidate.status || "",
+      findings: Array.isArray(candidate.findings) ? candidate.findings : [],
+      actionsTaken: Array.isArray(actionsRaw) ? actionsRaw : [],
+      evidenceRefs: Array.isArray(candidate.evidenceRefs || candidate.evidence_refs) ? (candidate.evidenceRefs || candidate.evidence_refs) : [],
+      changedEntities: Array.isArray(candidate.changedEntities || candidate.changed_entities) ? (candidate.changedEntities || candidate.changed_entities) : [],
+      recommendedNextStep: candidate.recommendedNextStep || candidate.recommended_next_step || "",
+      memoryUpdate: memoryRaw && typeof memoryRaw === "object" ? memoryRaw : null,
+      notification: notificationRaw && typeof notificationRaw === "object" ? notificationRaw : {},
+    };
+  }
+
+  isJsonLikeText(text) {
+    const raw = (text || "").toString().trim();
+    if (!raw) return false;
+    if (raw.startsWith("{") || raw.startsWith("[")) return true;
+    const lower = raw.toLowerCase();
+    if (lower.startsWith("```json") || lower.startsWith("```")) {
+      const unwrapped = raw.replace(/^```(?:json)?/i, "").trim();
+      return unwrapped.startsWith("{") || unwrapped.startsWith("[");
+    }
+    return lower.includes('"run_report"') || lower.includes('"runreport"');
+  }
+
+  isMachineRunProgressText(text) {
+    const raw = (text || "").toString().trim();
+    if (!raw) return false;
+    if (this.isJsonLikeText(raw)) return true;
+    const lower = raw.toLowerCase();
+    const contractKeys = [
+      '"run_report"',
+      '"runreport"',
+      '"memory_update"',
+      '"memoryupdate"',
+      '"notification_candidate"',
+      '"notificationcandidate"',
+      '"recommended_next_step"',
+      '"recommendednextstep"',
+      '"actions_taken"',
+      '"actionstaken"',
+      '"sources_covered"',
+      '"sourcescovered"',
+      '"touched_entities"',
+      '"touchedentities"',
+      '"rollback_notes"',
+      '"rollbacknotes"',
+      '"blockers"',
+      '"artifacts"',
+      '"approvals"',
+    ];
+    if (contractKeys.some((key) => lower.includes(key))) return true;
+    if (lower.includes("run report") || lower.includes("run_report")) return true;
+    if (/^[}\]\s,]+/.test(raw) && /"[a-zA-Z_][a-zA-Z0-9_]*"\s*:/.test(raw)) return true;
+    if (/^"[a-zA-Z_][a-zA-Z0-9_]*"\s*:/.test(raw)) return true;
+    return false;
   }
 
   plainTextFromRunResponse(run) {
     const result = run && run.result && typeof run.result === "object" ? run.result : null;
     const responseText = result && typeof result.responseText === "string" ? result.responseText.trim() : "";
     if (!responseText) return "";
-    if (responseText[0] === "{") {
+    if (this.isJsonLikeText(responseText)) {
       const report = this.getRunReport(run);
       if (report) {
         const findings = Array.isArray(report.findings) ? report.findings : [];
@@ -7073,7 +7411,8 @@ class ChatPortalClient {
   getRunSummaryText(run, fallbackStatus = "") {
     const display = run && run.display && typeof run.display === "object" ? run.display : null;
     if (display && typeof display.summary === "string" && display.summary.trim()) {
-      return display.summary.trim();
+      const displaySummary = display.summary.trim();
+      if (!this.isJsonLikeText(displaySummary)) return displaySummary;
     }
     const status = (run && run.status ? run.status : fallbackStatus || "").toString().trim().toLowerCase();
     if (["failed", "error"].includes(status) && run && typeof run.errorDetail === "string" && run.errorDetail.trim()) {
@@ -7089,28 +7428,11 @@ class ChatPortalClient {
       if (report.recommendedNextStep) return String(report.recommendedNextStep).trim();
     }
     const responseText = this.plainTextFromRunResponse(run);
-    if (responseText) return responseText;
+    if (responseText && !this.isJsonLikeText(responseText)) return responseText;
     if (status === "completed") return this.t("Completed. No detailed report was recorded.");
     if (status === "running") return this.t("Running now.");
     if (status === "queued") return this.t("Queued.");
     return status ? this.formatRunStatusLabel(status) : this.t("No update yet.");
-  }
-
-  getRunFindings(run) {
-    const display = run && run.display && typeof run.display === "object" ? run.display : null;
-    if (display && Array.isArray(display.findings)) {
-      return display.findings.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 6);
-    }
-    const report = this.getRunReport(run);
-    const findings = report && Array.isArray(report.findings) ? report.findings : [];
-    return findings
-      .map((item) => {
-        if (typeof item === "string") return item.trim();
-        if (item && typeof item === "object") return Object.values(item).filter(Boolean).join(" · ").trim();
-        return String(item || "").trim();
-      })
-      .filter(Boolean)
-      .slice(0, 6);
   }
 
   getRunActionsTaken(run) {
@@ -7120,7 +7442,9 @@ class ChatPortalClient {
         .map((item) => {
           if (typeof item === "string") return item.trim();
           if (item && typeof item === "object") {
-            return [item.label || item.tool || item.name || "", item.status || ""]
+            const count = Number(item.count);
+            const countLabel = Number.isFinite(count) && count > 0 ? `${count} calls` : "";
+            return [item.label || item.tool || item.name || "", item.status || "", countLabel]
               .filter(Boolean)
               .map((value) => this.formatStatus(String(value)))
               .join(" · ");
@@ -7128,6 +7452,7 @@ class ChatPortalClient {
           return "";
         })
         .filter(Boolean)
+        .filter((item, index, items) => items.indexOf(item) === index)
         .slice(0, 5);
     }
     const report = this.getRunReport(run);
@@ -7138,11 +7463,16 @@ class ChatPortalClient {
         if (item && typeof item === "object") {
           const tool = item.tool || item.tool_name || item.name || "";
           const status = item.status || "";
-          return [tool ? this.formatStatus(String(tool)) : "", status ? this.formatStatus(String(status)) : ""].filter(Boolean).join(" · ");
+          const count = Number(item.count);
+          const countLabel = Number.isFinite(count) && count > 0 ? `${count} calls` : "";
+          return [tool ? this.formatStatus(String(tool)) : "", status ? this.formatStatus(String(status)) : "", countLabel]
+            .filter(Boolean)
+            .join(" · ");
         }
         return "";
       })
       .filter(Boolean)
+      .filter((item, index, items) => items.indexOf(item) === index)
       .slice(0, 5);
   }
 
@@ -7154,69 +7484,30 @@ class ChatPortalClient {
     return [when, duration].filter(Boolean).join(" · ");
   }
 
+  stateForRun(run) {
+    const runId = run && run.id ? String(run.id) : "";
+    const existing = runId ? this.agentRuns.get(runId) : null;
+    if (existing) {
+      existing.run = Object.assign({}, existing.run || {}, run || {});
+      return existing;
+    }
+    return { run: Object.assign({}, run || {}), events: [], expanded: false, seenSeq: new Set(), lastEventLabel: "" };
+  }
+
   renderWorkflowRunDetailHtml(run) {
-    const display = this.getRunDisplay(run);
-    const agentMessage = display.agentMessage || display.summary || "";
-    const findings = Array.isArray(display.findings) ? display.findings : [];
-    const actions = Array.isArray(display.actionsTaken) ? display.actionsTaken : [];
-    const rawDebug = display.rawDebug && typeof display.rawDebug === "object" ? display.rawDebug : null;
-    const status = run && run.status ? String(run.status) : "";
-    const errorDetail = run && typeof run.errorDetail === "string" ? run.errorDetail.trim() : "";
-    const findingsHtml = findings.length
-      ? `
-        <div class="portal-task__run-detail-section">
-          <div class="portal-task__run-detail-title">${this.escapeHtml(this.t("Findings"))}</div>
-          <div class="portal-task__insight-list">
-            ${findings.map((line) => `<div class="portal-task__insight">${this.escapeHtml(line)}</div>`).join("")}
-          </div>
-        </div>
-      `
-      : "";
-    const actionsHtml = actions.length
-      ? `
-        <div class="portal-task__run-detail-section">
-          <div class="portal-task__run-detail-title">${this.escapeHtml(this.t("Actions"))}</div>
-          <div class="portal-task__mini-list">
-            ${actions
-              .map((item) => {
-                if (typeof item === "string") return `<span>${this.escapeHtml(item)}</span>`;
-                const label = item && typeof item === "object" ? String(item.label || item.tool || item.name || this.t("Action")) : this.t("Action");
-                const actionStatus = item && typeof item === "object" && item.status ? ` · ${this.formatStatus(String(item.status))}` : "";
-                return `<span>${this.escapeHtml(label + actionStatus)}</span>`;
-              })
-              .join("")}
-          </div>
-        </div>
-      `
-      : "";
-    const errorHtml = ["failed", "error"].includes(status.toLowerCase()) && errorDetail
-      ? `
-        <div class="portal-task__run-detail-section">
-          <div class="portal-task__run-detail-title">${this.escapeHtml(this.t("Error"))}</div>
-          <div class="portal-task__run-message portal-task__run-message--error">${this.escapeHtml(errorDetail)}</div>
-        </div>
-      `
-      : "";
-    const rawHtml = rawDebug
-      ? `
-        <details class="portal-task__raw">
-          <summary>${this.escapeHtml(this.t("Developer details"))}</summary>
-          <pre><code>${this.escapeHtml(this.safeJsonStringify(rawDebug))}</code></pre>
-        </details>
-      `
+    const state = this.stateForRun(run);
+    const workHtml = this.renderRunWorkHtml(state, run);
+    const resultHtml = this.renderRunResultHtml(run, state);
+    const debugHtml = this.renderRunDeveloperDetailsHtml(run);
+    const emptyHtml = !resultHtml && !workHtml
+      ? `<div class="portal-task__empty-note">${this.escapeHtml(this.t("No activity recorded yet."))}</div>`
       : "";
     return `
       <div class="portal-task__run-detail">
-        ${agentMessage ? `
-          <div class="portal-task__run-detail-section">
-            <div class="portal-task__run-detail-title">${this.escapeHtml(this.t("Agent note"))}</div>
-            <div class="portal-task__run-message">${this.renderMarkdown(agentMessage)}</div>
-          </div>
-        ` : ""}
-        ${findingsHtml}
-        ${actionsHtml}
-        ${errorHtml}
-        ${rawHtml}
+        ${workHtml}
+        ${resultHtml}
+        ${debugHtml}
+        ${emptyHtml}
       </div>
     `;
   }
@@ -7349,12 +7640,13 @@ class ChatPortalClient {
     const expanded = Boolean(state && state.expanded);
 
     const actionsHtml = this.renderRunActionsHtml(runId, state, run);
-    const planHtml = this.renderRunPlanHtml(run);
-    const logHtml = this.renderRunLogHtml(state, run);
-    const resultHtml = this.renderRunResultHtml(run);
+    const workHtml = this.renderRunWorkHtml(state, run);
+    const resultHtml = this.renderRunResultHtml(run, state);
+    const debugHtml = this.renderRunDeveloperDetailsHtml(run);
+    const bodyHtml = `${actionsHtml}${workHtml}${resultHtml}${debugHtml}`;
 
     return `
-      <div class="portal-task" data-run-id="${this.escapeHtml(runId)}" data-expanded="${expanded ? "true" : "false"}">
+      <div class="portal-task portal-task--run-card" data-run-id="${this.escapeHtml(runId)}" data-expanded="${expanded ? "true" : "false"}">
         <button type="button" class="portal-task__header" data-run-toggle="${this.escapeHtml(runId)}">
           <div class="portal-task__meta">
             <div class="portal-task__title-row">
@@ -7365,10 +7657,7 @@ class ChatPortalClient {
           </div>
         </button>
         <div class="portal-task__body">
-          ${actionsHtml}
-          ${planHtml}
-          ${logHtml}
-          ${resultHtml}
+          ${bodyHtml}
         </div>
       </div>
     `;
@@ -7541,206 +7830,230 @@ class ChatPortalClient {
         return `<div class="portal-task__list-item">${this.escapeHtml(String(title || "").trim() || this.t("Step"))}</div>`;
       })
       .join("");
-    const body = items
-      ? `<div class="portal-task__list">${items}</div>`
-      : `<div class="portal-task__subtitle">${this.escapeHtml(this.t("No plan available yet."))}</div>`;
+    if (!items) return "";
     return `
       <div class="portal-task__section">
         <div class="portal-task__section-title">${this.escapeHtml(this.t("Plan"))}</div>
-        ${body}
+        <div class="portal-task__list">${items}</div>
       </div>
     `;
   }
 
-  renderRunLogHtml(state, run) {
-    const statusRaw = (run && run.status ? run.status : "").toString().trim().toLowerCase();
+  isRunTerminalStatus(status) {
+    const normalized = (status || "").toString().trim().toLowerCase();
+    return ["completed", "succeeded", "success", "failed", "error", "cancelled", "canceled"].includes(normalized);
+  }
+
+  getRunDurationMs(run) {
+    const direct = Number(run && run.durationMs);
+    if (Number.isFinite(direct) && direct > 0) return direct;
+    const startedAt = run && run.startedAt ? Date.parse(String(run.startedAt)) : NaN;
+    const finishedAt = run && run.finishedAt ? Date.parse(String(run.finishedAt)) : NaN;
+    if (Number.isFinite(startedAt) && Number.isFinite(finishedAt) && finishedAt > startedAt) {
+      return finishedAt - startedAt;
+    }
+    if (Number.isFinite(startedAt) && !this.isRunTerminalStatus(run && run.status ? run.status : "")) {
+      return Math.max(0, Date.now() - startedAt);
+    }
+    return 0;
+  }
+
+  formatRunWorkLabel(run) {
+    const status = run && run.status ? String(run.status) : "";
+    const durationMs = this.getRunDurationMs(run);
+    const durationLabel = durationMs > 0 ? this.formatDurationMs(durationMs) : "";
+    if (this.isRunTerminalStatus(status)) {
+      return durationLabel ? `${this.t("Worked for")} ${durationLabel}` : this.t("Worked");
+    }
+    return durationLabel ? `${this.t("Working for")} ${durationLabel}` : this.t("Working");
+  }
+
+  formatRunToolLabel(toolName, payload) {
+    const effective = this.getEffectiveToolName(toolName || "", payload || {});
+    const raw = effective || toolName || "";
+    const human = this.humanizeAgentToolName(raw || "tool");
+    return this.formatStatus(human || raw || "Tool");
+  }
+
+  getRunToolEventKey(evt, payload, toolName) {
+    const raw =
+      payload.tool_call_id ||
+      payload.toolCallId ||
+      payload.event_id ||
+      payload.eventId ||
+      payload.call_id ||
+      payload.callId ||
+      "";
+    if (raw) return `tool:${raw}`;
+    const seq = Number(evt && evt.sequenceIndex);
+    return `tool:${toolName || "tool"}:${Number.isFinite(seq) && seq > 0 ? seq : Math.random().toString(36).slice(2)}`;
+  }
+
+  buildRunActivityItems(state) {
     const events = state && Array.isArray(state.events) ? state.events : [];
-    const recent = events.slice(-80);
-    const approvalResolutionById = new Map();
-    recent.forEach((evt) => {
-      if (!evt || typeof evt !== "object") return;
-      const stream = (evt.stream || "").toString().trim().toLowerCase();
-      if (stream !== "executed") return;
-      const payload = evt.payload && typeof evt.payload === "object" ? evt.payload : {};
-      const approvalId = (payload.approval_id || payload.approvalId || payload.approvalID || "")
-        .toString()
-        .trim();
-      if (!approvalId) return;
-
+    const recent = events.slice(-250);
+    const rows = [];
+    const toolIndexByKey = new Map();
+    const appendToolRow = (evt, payload, labelRaw) => {
       const phase = (payload.phase || "").toString().trim().toLowerCase();
-      const status = (payload.status || "").toString().trim().toLowerCase();
-      const decision = (payload.decision || "").toString().trim().toLowerCase();
-
-      if (phase === "approval_resolved" && (status === "approved" || status === "denied")) {
-        approvalResolutionById.set(approvalId, status === "approved" ? "Approved" : "Denied");
-        return;
+      const toolNameRaw = (payload.tool_name || payload.toolName || "").toString().trim();
+      const effectiveToolName = this.getEffectiveToolName(toolNameRaw, payload);
+      const toolName = effectiveToolName || toolNameRaw;
+      const remote = payload.remote && typeof payload.remote === "object" ? payload.remote : null;
+      const connectionName = remote && remote.connection_name ? remote.connection_name.toString().trim() : "";
+      const remoteTool = remote && remote.remote_tool ? remote.remote_tool.toString().trim() : "";
+      if (!toolName && !remoteTool && !labelRaw) return;
+      const output = payload.output && typeof payload.output === "object" ? payload.output : null;
+      const input = payload.input && typeof payload.input === "object" ? payload.input : null;
+      const status =
+        (output && output.status ? String(output.status).trim().toLowerCase() : "") ||
+        (payload.status ? String(payload.status).trim().toLowerCase() : "");
+      let title = this.formatRunToolLabel(toolName || remoteTool || labelRaw || "Tool", payload);
+      if (connectionName) title = `${connectionName} · ${title}`;
+      const key = this.getRunToolEventKey(evt, payload, toolName || remoteTool || labelRaw);
+      const existingIndex = toolIndexByKey.get(key);
+      const nextState =
+        phase === "started" || phase === "starting"
+          ? "running"
+          : phase === "approval_requested"
+            ? "needs approval"
+            : phase === "finished"
+              ? (status || "ok")
+              : (phase ? phase.replace(/_/g, " ") : status || "");
+      const nextItem = {
+        kind: "tool",
+        key,
+        title,
+        status: nextState,
+        input,
+        output,
+        payload,
+      };
+      if (typeof existingIndex === "number" && rows[existingIndex]) {
+        rows[existingIndex] = Object.assign({}, rows[existingIndex], {
+          title,
+          status: nextState || rows[existingIndex].status,
+          input: input || rows[existingIndex].input || null,
+          output: output || rows[existingIndex].output || null,
+          payload: Object.assign({}, rows[existingIndex].payload || {}, payload || {}),
+        });
+      } else {
+        toolIndexByKey.set(key, rows.length);
+        rows.push(nextItem);
       }
-      if (decision === "approve") {
-        approvalResolutionById.set(approvalId, "Approved");
-        return;
-      }
-      if (decision === "deny") {
-        approvalResolutionById.set(approvalId, "Denied");
-      }
-    });
-
-    const normalizeSystemLabel = (raw) => {
-      const textRaw = (raw || "").toString().trim();
-      if (!textRaw) return "";
-      const lower = textRaw.toLowerCase();
-      if (lower === "stream_complete" || lower === "stream.completed" || lower === "answer ready" || lower === "answer_ready") {
-        return "";
-      }
-      if (lower.startsWith("responding")) {
-        return "";
-      }
-      let text = textRaw;
-      if (lower.startsWith("status:")) {
-        text = textRaw.slice("status:".length);
-      }
-      text = text.replace(/_/g, " ").replace(/\s+/g, " ").trim();
-      if (!text) return "";
-      return text.charAt(0).toUpperCase() + text.slice(1);
     };
 
-    const simplified = [];
-    const seenSystem = new Set();
-    const seenTools = new Set();
-    let lastKey = "";
-    for (let idx = recent.length - 1; idx >= 0 && simplified.length < 12; idx -= 1) {
-      const evt = recent[idx];
+    for (const evt of recent) {
       if (!evt || typeof evt !== "object") continue;
       const stream = (evt.stream || "").toString().trim().toLowerCase();
       const type = (evt.type || "").toString().trim().toLowerCase();
       const labelRaw = evt.label ? String(evt.label) : "";
       const payload = evt.payload && typeof evt.payload === "object" ? evt.payload : {};
 
+      if (payload.kind === "assistant_message" && typeof payload.text === "string" && payload.text.trim()) {
+        const assistantText = payload.text.trim();
+        if (this.isMachineRunProgressText(assistantText)) continue;
+        rows.push({ kind: "assistant", text: assistantText });
+        continue;
+      }
+
       if (stream === "executed") {
-        const phase = (payload.phase || "").toString().trim().toLowerCase();
-        if (phase !== "finished") {
-          continue;
-        }
-        const toolNameRaw = (payload.tool_name || payload.toolName || "").toString().trim();
-        const effectiveToolName = this.getEffectiveToolName(toolNameRaw, payload);
-        const toolName = effectiveToolName ? this.formatStatus(effectiveToolName) : toolNameRaw;
-        const remote = payload.remote && typeof payload.remote === "object" ? payload.remote : null;
-        const connectionName = remote && remote.connection_name ? remote.connection_name.toString().trim() : "";
-        const remoteTool = remote && remote.remote_tool ? remote.remote_tool.toString().trim() : "";
-        const output = payload.output && typeof payload.output === "object" ? payload.output : null;
-        const status =
-          (output && output.status ? String(output.status).trim().toLowerCase() : "") ||
-          (payload.status ? String(payload.status).trim().toLowerCase() : "");
-
-        let title = toolName || remoteTool || labelRaw || "Tool";
-        if (connectionName) {
-          title = `${connectionName} · ${title}`;
-        }
-
-        const toolLabel = title ? title.charAt(0).toUpperCase() + title.slice(1) : "Tool";
-        const line = status ? `Tool: ${toolLabel} - ${status}` : `Tool: ${toolLabel}`;
-        const key = `tool:${title}:${status || ""}`;
-        if (key === lastKey) continue;
-        if (effectiveToolName) {
-          seenTools.add(effectiveToolName.toLowerCase());
-        } else if (toolNameRaw) {
-          seenTools.add(toolNameRaw.toLowerCase());
-        }
-        if (remoteTool) {
-          seenTools.add(remoteTool.toLowerCase());
-        }
-        lastKey = key;
-        simplified.push({ line, meta: "" });
+        appendToolRow(evt, payload, labelRaw);
         continue;
       }
 
       if (stream === "system") {
         let line = "";
-        if (type === "needs_approval") {
-          const approvalPayload = payload.approval && typeof payload.approval === "object" ? payload.approval : null;
-          const approvalId = approvalPayload && approvalPayload.id ? approvalPayload.id.toString().trim() : "";
-          line = approvalId && approvalResolutionById.has(approvalId) ? approvalResolutionById.get(approvalId) : "Needs approval";
-        }
+        if (type === "needs_approval") line = "Needs approval";
         else if (type === "needs_user") line = "Needs your input";
-        else if (type === "result") line = "Completed";
         else if (type === "error") line = "Error";
-        else if (labelRaw) line = normalizeSystemLabel(labelRaw);
-        else if (type) line = normalizeSystemLabel(type);
-
         if (!line) continue;
-        const normalizedKey = line
-          .toLowerCase()
-          .replace(/\([^)]*\)/g, "")
-          .replace(/\.{2,}|…/g, "")
-          .replace(/\s+/g, " ")
-          .trim();
-        if (!normalizedKey) continue;
-        const isSearchSystem = normalizedKey.includes("search") && normalizedKey.includes("knowledge");
-        const isReadSystem = normalizedKey.includes("read") && normalizedKey.includes("knowledge");
-        if (isSearchSystem && seenTools.has("search_knowledge")) continue;
-        if (isReadSystem && seenTools.has("read_knowledge")) continue;
-        if (seenSystem.has(normalizedKey)) continue;
-        seenSystem.add(normalizedKey);
-
-        const key = `sys:${normalizedKey}`;
-        if (key === lastKey) continue;
-        lastKey = key;
-        simplified.push({ line, meta: "" });
+        rows.push({ kind: "system", line: line.charAt(0).toUpperCase() + line.slice(1) });
       }
     }
-    simplified.reverse();
+    return rows.slice(-80);
+  }
 
-    const totalSteps = simplified.length;
-    const computeStepStatus = (index) => {
-      if (!totalSteps) return "pending";
-      const lastIndex = totalSteps - 1;
-      if (["failed", "error"].includes(statusRaw)) {
-        return index < lastIndex ? "complete" : "error";
-      }
-      if (["cancelled", "canceled"].includes(statusRaw)) {
-        return index < lastIndex ? "complete" : "cancelled";
-      }
-      if (["completed", "succeeded", "success"].includes(statusRaw)) {
-        return "complete";
-      }
-      if (["waiting_user", "waiting_approval"].includes(statusRaw)) {
-        return index < lastIndex ? "complete" : "attention";
-      }
-      if (["running", "queued", "waiting_external", "paused"].includes(statusRaw)) {
-        return index < lastIndex ? "complete" : "active";
-      }
-      return index < lastIndex ? "complete" : "active";
-    };
-
-    const items = simplified
-      .map((row, idx) => {
-        const meta = row.meta ? `<div class="portal-task__subtitle">${this.escapeHtml(row.meta)}</div>` : "";
-        const stepStatus = computeStepStatus(idx);
-        return `
-          <div class="portal-task__step" data-step-status="${this.escapeHtml(stepStatus)}">
-            <span class="portal-task__step-icon" aria-hidden="true"></span>
-            <div class="portal-task__step-text">
-              <div>${this.escapeHtml(row.line)}</div>
-              ${meta}
-            </div>
-          </div>
-        `;
-      })
-      .join("");
-    const body = items
-      ? `<div class="portal-task__steps">${items}</div>`
-      : `<div class="portal-task__subtitle">No activity yet.</div>`;
+  renderToolDetailsHtml(row) {
+    const requestHtml = row.input
+      ? `
+        <div class="portal-task__tool-detail-block">
+          <div class="portal-task__tool-detail-label">${this.escapeHtml(this.t("Request"))}</div>
+          <pre><code>${this.escapeHtml(this.safeJsonStringify(row.input))}</code></pre>
+        </div>
+      `
+      : "";
+    const outputHtml = row.output
+      ? `
+        <div class="portal-task__tool-detail-block">
+          <div class="portal-task__tool-detail-label">${this.escapeHtml(this.t("Output"))}</div>
+          <pre><code>${this.escapeHtml(this.safeJsonStringify(row.output))}</code></pre>
+        </div>
+      `
+      : "";
+    if (!requestHtml && !outputHtml && !this.agentRunDebugEnabled) return "";
+    const payloadHtml = !requestHtml && !outputHtml && row.payload
+      ? `
+        <div class="portal-task__tool-detail-block">
+          <div class="portal-task__tool-detail-label">${this.escapeHtml(this.t("Event"))}</div>
+          <pre><code>${this.escapeHtml(this.safeJsonStringify(row.payload))}</code></pre>
+        </div>
+      `
+      : "";
     return `
-      <div class="portal-task__section">
-        <div class="portal-task__section-title">Steps</div>
-        ${body}
+      <div class="portal-task__tool-detail">
+        ${requestHtml}
+        ${outputHtml}
+        ${payloadHtml}
       </div>
     `;
   }
 
-  renderRunResultHtml(run) {
+  renderRunWorkHtml(state, run, options = {}) {
+    const terminal = this.isRunTerminalStatus(run && run.status ? run.status : "");
+    const rows = this.buildRunActivityItems(state);
+    if (!rows.length && options.compact) return "";
+    const items = rows
+      .map((row) => {
+        if (row.kind === "assistant") {
+          return `<div class="portal-task__scratchpad-text">${this.renderMarkdown(row.text)}</div>`;
+        }
+        if (row.kind === "tool") {
+          const status = row.status && row.status !== "ok" ? `<span class="portal-task__tool-status">${this.escapeHtml(this.formatStatus(row.status))}</span>` : "";
+          return `
+            <details class="portal-task__tool-call">
+              <summary>
+                <span class="portal-task__tool-name">${this.escapeHtml(row.title)}</span>
+                ${status}
+              </summary>
+              ${this.renderToolDetailsHtml(row)}
+            </details>
+          `;
+        }
+        return `<div class="portal-task__scratchpad-system">${this.escapeHtml(row.line)}</div>`;
+      })
+      .join("");
+    const body = items ? `<div class="portal-task__scratchpad">${items}</div>` : `<div class="portal-task__subtitle">${this.escapeHtml(this.t("No activity yet."))}</div>`;
+    const openAttr = terminal ? "" : " open";
+    return `
+      <details class="portal-task__work"${openAttr}>
+        <summary>
+          <span>${this.escapeHtml(this.formatRunWorkLabel(run))}</span>
+          <span class="portal-task__work-chevron" aria-hidden="true">›</span>
+        </summary>
+        ${body}
+      </details>
+    `;
+  }
+
+  renderRunResultHtml(run, state) {
     const status = (run && run.status ? run.status : "").toString().toLowerCase();
+    if (!this.isRunTerminalStatus(status)) return "";
     const result = run && typeof run.result === "object" ? run.result : null;
     const responseText = result && typeof result.responseText === "string" ? result.responseText : "";
+    const responseLooksStructured = this.isJsonLikeText(responseText);
+    const report = this.getRunReport(run);
+    const display = this.getRunDisplay(run);
     const errorDetail = run && typeof run.errorDetail === "string" ? run.errorDetail : "";
 
     if (status === "failed" && errorDetail) {
@@ -7752,16 +8065,94 @@ class ChatPortalClient {
       `;
     }
 
-    if (responseText) {
+    const runTitle = run && run.title ? String(run.title).trim() : "";
+    const normalizeForCompare = (value) => String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
+    const genericCompleted = normalizeForCompare(this.t("Completed. No detailed report was recorded."));
+
+    // Collect assistant narration text from the scratchpad to suppress duplicates.
+    const scratchpadTexts = [];
+    if (state) {
+      const rows = this.buildRunActivityItems(state);
+      for (const row of rows) {
+        if (row.kind === "assistant" && row.text) {
+          scratchpadTexts.push(normalizeForCompare(row.text));
+        }
+      }
+    }
+
+    // Generic status strings that add no value as a "final response".
+    const genericStatuses = [
+      "running now.", "queued.", "no update yet.", "started.",
+      "thinking…", "thinking...", "processing.",
+    ].map((s) => normalizeForCompare(s));
+
+    const candidates = [];
+    const agentMessage = display && typeof display.agentMessage === "string" ? display.agentMessage.trim() : "";
+    const summary = display && typeof display.summary === "string" ? display.summary.trim() : "";
+    if (agentMessage) candidates.push(agentMessage);
+    if (summary) candidates.push(summary);
+    if (report) {
+      const notification = report.notification && typeof report.notification === "object" ? report.notification : {};
+      if (notification.body) candidates.push(String(notification.body).trim());
+      const findings = Array.isArray(report.findings) ? report.findings : [];
+      findings.forEach((item) => {
+        if (typeof item === "string" && item.trim()) candidates.push(item.trim());
+      });
+      if (report.recommendedNextStep) candidates.push(String(report.recommendedNextStep).trim());
+    }
+    if (responseText && !responseLooksStructured) candidates.push(responseText.trim());
+
+    const resultText = candidates.find((candidate) => {
+      const normalized = normalizeForCompare(candidate);
+      if (!normalized) return false;
+      if (normalized === normalizeForCompare(runTitle)) return false;
+      if (normalized === genericCompleted) return false;
+      if (this.isJsonLikeText(candidate)) return false;
+      // Suppress generic status strings.
+      if (genericStatuses.includes(normalized)) return false;
+      // Suppress text that already appears in the scratchpad.
+      if (scratchpadTexts.length && scratchpadTexts.some((st) => st === normalized || normalized.includes(st) || st.includes(normalized))) return false;
+      return true;
+    }) || "";
+
+    if (resultText) {
       return `
-        <div class="portal-task__section">
-          <div class="portal-task__section-title">Result</div>
-          <div class="portal-task__result">${this.renderMarkdown(responseText)}</div>
+        <div class="portal-task__final-response">
+          ${this.renderMarkdown(resultText)}
         </div>
       `;
     }
 
     return "";
+  }
+
+  renderRunDeveloperDetailsHtml(run) {
+    if (!this.agentRunDebugEnabled) return "";
+    const result = run && typeof run.result === "object" ? run.result : null;
+    const responseText = result && typeof result.responseText === "string" ? result.responseText : "";
+    const report = this.getRunReport(run);
+    const display = run && run.display && typeof run.display === "object" ? run.display : null;
+    const status = (run && run.status ? run.status : "").toString().trim().toLowerCase();
+    const responseLooksStructured = this.isJsonLikeText(responseText);
+    const shouldShowRaw = Boolean(report || responseLooksStructured || (["failed", "error"].includes(status) && result));
+    if (!shouldShowRaw) return "";
+    let raw = display && display.rawDebug && typeof display.rawDebug === "object" ? display.rawDebug : null;
+    if (!raw && result && typeof result === "object") raw = result;
+    if (!raw && report && typeof report === "object") raw = { runReport: report };
+    if (!raw && this.isJsonLikeText(responseText)) {
+      try {
+        raw = JSON.parse(responseText);
+      } catch (_err) {
+        raw = responseText;
+      }
+    }
+    if (!raw) return "";
+    return `
+      <details class="portal-task__raw">
+        <summary>${this.escapeHtml(this.t("Developer details"))}</summary>
+        <pre><code>${this.escapeHtml(this.safeJsonStringify(raw))}</code></pre>
+      </details>
+    `;
   }
 
   formatRequestStatusLabel(status) {

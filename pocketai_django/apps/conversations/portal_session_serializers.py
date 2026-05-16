@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Mapping
 
 from apps.conversations.models import AgentRequest, AgentRun, AgentRunEvent, ConversationMessage
+from apps.conversations.run_display import build_agent_run_display
 
 
 def clip_portal_text(value: str, limit: int) -> str:
@@ -18,9 +19,18 @@ def serialize_agent_run_for_portal(run: AgentRun) -> dict[str, object]:
     plan_payload = run.plan if isinstance(getattr(run, "plan", None), dict) else {}
     result_payload = run.result if isinstance(getattr(run, "result", None), dict) else {}
     response_text = ""
+    run_report = None
     if isinstance(result_payload, dict):
         response_text = str(result_payload.get("response_text") or result_payload.get("responseText") or "").strip()
+        candidate_report = result_payload.get("run_report") or result_payload.get("runReport")
+        if isinstance(candidate_report, dict):
+            run_report = candidate_report
     error_detail = str(getattr(run, "error_detail", "") or "").strip()
+    result = {}
+    if response_text:
+        result["responseText"] = clip_portal_text(response_text, 6000)
+    if run_report:
+        result["runReport"] = run_report
     return {
         "id": str(run.id),
         "title": run.title or "",
@@ -36,7 +46,8 @@ def serialize_agent_run_for_portal(run: AgentRun) -> dict[str, object]:
         "updatedAt": run.updated_at.isoformat() if run.updated_at else None,
         "errorDetail": clip_portal_text(error_detail, 800) if error_detail else "",
         "plan": plan_payload,
-        "result": {"responseText": clip_portal_text(response_text, 6000)} if response_text else {},
+        "result": result,
+        "display": build_agent_run_display(run),
     }
 
 
@@ -97,4 +108,3 @@ def serialize_conversation_message_for_portal(msg: ConversationMessage) -> dict[
         "metadata": dict(metadata) if isinstance(metadata, Mapping) else {},
         "content_blocks": content_blocks,
     }
-

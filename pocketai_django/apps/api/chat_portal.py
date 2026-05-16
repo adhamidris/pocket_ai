@@ -94,6 +94,7 @@ from apps.conversations.portal_turn_events import (
 from apps.conversations.portal_stream_trace import PortalStreamTrace
 from apps.conversations.portal_session_event_bus import (
     portal_session_agent_requests_stream_key,
+    portal_session_agent_workflow_runs_stream_key,
     portal_session_conversation_stream_key,
 )
 from apps.conversations.portal_turn_runner import run_turn_background
@@ -1513,10 +1514,10 @@ def _build_portal_agent_runs_snapshot(
     business_id: uuid.UUID | None,
     agent_profile_id: uuid.UUID | None = None,
     runs_limit: int = 15,
-    events_limit_per_run: int = 20,
+    events_limit_per_run: int = 120,
 ) -> dict[str, object]:
     runs_limit = max(1, min(int(runs_limit), 50))
-    events_limit_per_run = max(0, min(int(events_limit_per_run), 50))
+    events_limit_per_run = max(0, min(int(events_limit_per_run), 250))
 
     with tenant_context(business_id):
         workflow_agents: list[dict[str, object]] = []
@@ -3313,6 +3314,7 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
                 redis_stream_positions[portal_session_conversation_stream_key(conversation_id=conversation_id)] = start_id
                 if agent_workforce_enabled and agent_profile_id:
                     redis_stream_positions[portal_session_agent_requests_stream_key(agent_profile_id=agent_profile_id)] = start_id
+                    redis_stream_positions[portal_session_agent_workflow_runs_stream_key(agent_profile_id=agent_profile_id)] = start_id
             else:
                 redis_conn = None
                 session_bus = "postgres"

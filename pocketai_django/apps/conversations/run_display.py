@@ -111,10 +111,10 @@ def _list_strings(value: object, *, limit: int = 6, chars: int = 700) -> list[st
     return items
 
 
-def _actions(value: object, *, limit: int = 6) -> list[dict[str, str]]:
+def _actions(value: object, *, limit: int = 6) -> list[dict[str, object]]:
     if not isinstance(value, list):
         return []
-    actions: list[dict[str, str]] = []
+    actions: list[dict[str, object]] = []
     for item in value[:limit]:
         if isinstance(item, str):
             label = _clip_text(item, 160)
@@ -125,8 +125,12 @@ def _actions(value: object, *, limit: int = 6) -> list[dict[str, str]]:
             continue
         label = _clip_text(item.get("label") or item.get("tool") or item.get("tool_name") or item.get("name"), 160)
         status = _clip_text(item.get("status"), 80)
+        count = item.get("count")
         if label or status:
-            actions.append({"label": label or "Action", "status": status})
+            action: dict[str, object] = {"label": label or "Action", "status": status}
+            if isinstance(count, int | float) and count > 0:
+                action["count"] = int(count)
+            actions.append(action)
     return actions
 
 
@@ -165,12 +169,12 @@ def build_agent_run_display(run: AgentRun) -> dict[str, object]:
     agent_message = ""
     if notification_body:
         agent_message = _clip_text(notification_body, 1000)
-    elif clean_response_text:
-        agent_message = _clip_text(clean_response_text.split("\n\n", 1)[0], 1000)
     elif findings:
         agent_message = findings[0]
     elif recommended_next_step:
         agent_message = recommended_next_step
+    elif clean_response_text:
+        agent_message = _clip_text(clean_response_text.split("\n\n", 1)[0], 1000)
 
     summary = ""
     if run.status == AgentRunStatus.FAILED and getattr(run, "error_detail", ""):
@@ -190,15 +194,6 @@ def build_agent_run_display(run: AgentRun) -> dict[str, object]:
     else:
         summary = _clip_text(run.status.replace("_", " ").title(), 240)
 
-    raw_debug: dict[str, object] = {}
-    if response_text:
-        raw_debug["responseText"] = _clip_text(response_text, 6000)
-    if report:
-        raw_debug["runReport"] = dict(report)
-    tool_trace = result.get("tool_trace") or result.get("toolTrace")
-    if isinstance(tool_trace, list) and tool_trace:
-        raw_debug["toolTrace"] = tool_trace[:12]
-
     return {
         "summary": _clip_text(summary, 700),
         "agentMessage": _clip_text(agent_message, 1200),
@@ -207,6 +202,5 @@ def build_agent_run_display(run: AgentRun) -> dict[str, object]:
         "recommendedNextStep": recommended_next_step,
         "statusTone": _status_tone(run.status, report_status),
         "reportStatus": report_status,
-        "rawAvailable": bool(raw_debug),
-        "rawDebug": raw_debug,
+        "rawAvailable": bool(response_text or report or result.get("tool_trace") or result.get("toolTrace")),
     }

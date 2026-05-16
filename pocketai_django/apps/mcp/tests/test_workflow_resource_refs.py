@@ -133,12 +133,40 @@ class WorkflowResourceRefsTests(TestCase):
         self.assertEqual(result["status"], "ok")
         instructions = result["task"]["instructions"]
         self.assertEqual(instructions["goal"], "Review refund requests and flag policy exceptions before action.")
+        self.assertIn("wake_up_prompt", instructions)
+        self.assertIn("Every time this workflow runs", instructions["wake_up_prompt"])
+        self.assertIn("workflow_type", instructions)
+        self.assertIn("memory_shape", instructions)
         self.assertEqual(instructions["success_criteria"], ["Classify each refund", "Request approval over the threshold"])
         self.assertEqual(instructions["constraints"]["approval_required_above"], 500)
         self.assertEqual(instructions["output_schema"]["required"], ["decision"])
         self.assertEqual(instructions["output_preferences"]["style"], "concise operations summary")
         self.assertEqual(instructions["approval"]["mode"], "always_for_refunds")
         self.assertEqual(instructions["custom_instructions"], "Act as a strict refund operations specialist.")
+
+    def test_draft_task_persists_reusable_wake_up_prompt_and_memory_shape(self) -> None:
+        result = _draft_task_handler(
+            {
+                "name": "Sales Email Monitor",
+                "goal": "Monitor new unread email for sales intent.",
+                "wake_up_prompt": "Every run, check new unread email for sales intent, avoid already-inspected messages, and notify only on relevant findings.",
+                "memory_instructions": "Remember inspected, ignored, failed, and notified message IDs.",
+                "draft_summary": "Workflow: Sales Email Monitor\nWhen it runs: Every weekday at 9 AM.",
+                "workflow_type": "monitor",
+                "memory_shape": "email_monitor",
+                "clarification_questions": ["Should no-change runs stay silent?"],
+            },
+            conversation=self.conversation,
+            context=ToolExecutionContext(),
+        )
+
+        self.assertEqual(result["status"], "ok")
+        task = result["task"]
+        self.assertEqual(task["workflow_type"], "monitor")
+        self.assertEqual(task["memory_shape"], "email_monitor")
+        self.assertIn("Sales Email Monitor", task["draft_summary"])
+        self.assertEqual(task["clarification_questions"], ["Should no-change runs stay silent?"])
+        self.assertIn("avoid already-inspected messages", task["instructions"]["wake_up_prompt"])
 
     def test_update_task_merges_rich_instruction_contract(self) -> None:
         draft = _draft_task_handler(

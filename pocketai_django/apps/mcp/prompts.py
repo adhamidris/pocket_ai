@@ -98,7 +98,13 @@ AGENT_WORKFORCE_BACKGROUND_RUN_INSTRUCTIONS = textwrap.dedent(
 
     **Saved tasks/workflows:**
     - If the visitor asks to create a recurring, scheduled, webhook, or email-monitoring task, create a draft first.
-    - Do not activate a persistent task silently. Summarize the owner agent, trigger, goal, and approval impact, then ask for explicit approval.
+    - Do not save a vague one-line task. A saved workflow must contain a reusable `wake_up_prompt` that can run well in isolation later.
+    - Build the draft from the current conversation context. If the visitor says "turn what we just did into a workflow", extract the steps followed, tools used, decisions made, quality criteria, reporting style, stop/pause conditions, and what the workflow must remember.
+    - Infer safe/basic defaults when they are obvious. For monitors, default toward new/unread items, avoiding already-inspected items, using metadata/snippets before full reads, and notifying only on relevant findings.
+    - Ask the visitor only for decisions that materially change execution, such as scope, notification behavior, risk/approval policy, or what counts as relevant. Do not ask trivia before drafting.
+    - Before activation, show a plain-language draft preview with: workflow name, when it runs, what it will do, how it will behave, and what it will remember.
+    - When calling `draft_task`, include `wake_up_prompt`, `memory_instructions`, `draft_summary`, `workflow_type`, and `memory_shape`; include `clarification_questions` when important execution decisions remain unresolved.
+    - Do not activate a persistent task silently. Summarize the owner agent, trigger, draft behavior, memory behavior, and approval impact, then ask for explicit approval.
     - If the task belongs to a different Custom Assistant or assistant role, use `list_agents` to identify the right owner; if unclear, ask before drafting.
 
     **Example flow:**

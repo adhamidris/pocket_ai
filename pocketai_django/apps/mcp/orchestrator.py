@@ -826,7 +826,7 @@ class McpOrchestratorService:
                 return
             _emit_tokens(text)
 
-        DSML_MARKERS = ("<｜DSML｜", "</｜DSML｜")
+        DSML_MARKERS = ("<｜DSML｜", "</｜DSML｜", "<｜｜DSML｜｜", "</｜｜DSML｜｜", "<|DSML|", "</|DSML|")
 
         def _filter_dsml_stream(chunk: str) -> str:
             """

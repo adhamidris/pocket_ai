@@ -31,13 +31,26 @@ def _publish_portal_agent_run_event(sender, instance: AgentRunEvent, created: bo
         "event": serialize_agent_run_event_for_portal(instance),
     }
     conversation_id = run.conversation_id
-    transaction.on_commit(
-        lambda: publish_portal_conversation_event(
+
+    # For workflow runs, also publish to the agent-level stream so that
+    # SSE consumers see events regardless of which conversation is active.
+    agent_profile_id = getattr(run, "agent_profile_id", None)
+    workflow_id = getattr(run, "workflow_id", None)
+
+    def _publish():
+        publish_portal_conversation_event(
             conversation_id=conversation_id,
             event_name="agentRunEvent",
             payload=payload,
         )
-    )
+        if workflow_id and agent_profile_id:
+            from apps.conversations.portal_session_event_bus import publish_portal_agent_workflow_run_event
+            publish_portal_agent_workflow_run_event(
+                agent_profile_id=agent_profile_id,
+                payload=payload,
+            )
+
+    transaction.on_commit(_publish)
 
 
 @receiver(post_save, sender=ConversationMessage)

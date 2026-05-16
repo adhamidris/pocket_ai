@@ -1417,6 +1417,34 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
                 "type": "string",
                 "description": "Additional role/custom instructions for the Custom Assistant.",
             },
+            "wake_up_prompt": {
+                "type": "string",
+                "description": (
+                    "Detailed reusable executor prompt injected every time the task runs. "
+                    "Include what to do, how to use memory, when to notify or pause, and what to write back."
+                ),
+            },
+            "memory_instructions": {
+                "type": "string",
+                "description": "How recurring runs should use and update workflow memory.",
+            },
+            "draft_summary": {
+                "type": "string",
+                "description": "Plain-language draft preview shown to the user before activation.",
+            },
+            "clarification_questions": {
+                "type": "array",
+                "description": "Important unresolved execution decisions the user should answer before activation.",
+                "items": {"type": "string"},
+            },
+            "workflow_type": {
+                "type": "string",
+                "description": "Lightweight internal type such as monitor, progressive, report, or action.",
+            },
+            "memory_shape": {
+                "type": "string",
+                "description": "Lightweight memory shape such as email_monitor, progressive_work, report_digest, or action_workflow.",
+            },
             "instructions": {
                 "type": "object",
                 "description": "Optional full Custom Assistant instruction contract. Explicit fields override matching keys.",
@@ -1443,6 +1471,12 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
             "output_preferences": {"type": "object", "additionalProperties": True},
             "approval": {"type": "object", "additionalProperties": True},
             "custom_instructions": {"type": "string"},
+            "wake_up_prompt": {"type": "string"},
+            "memory_instructions": {"type": "string"},
+            "draft_summary": {"type": "string"},
+            "clarification_questions": {"type": "array", "items": {"type": "string"}},
+            "workflow_type": {"type": "string"},
+            "memory_shape": {"type": "string"},
             "instructions": {"type": "object", "additionalProperties": True},
             "trigger_type": {"type": "string", "enum": ["manual", "schedule", "webhook", "email_inbox"]},
             "trigger_config": {"type": "object", "additionalProperties": True},
@@ -11175,6 +11209,8 @@ def _consult_agent_handler(
 
 
 def _workflow_payload(workflow) -> dict[str, object]:
+    instructions = workflow.instructions if isinstance(workflow.instructions, dict) else {}
+    metadata = workflow.metadata if isinstance(workflow.metadata, dict) else {}
     return {
         "id": str(workflow.id),
         "agent_id": str(workflow.agent_profile_id),
@@ -11185,7 +11221,13 @@ def _workflow_payload(workflow) -> dict[str, object]:
         "trigger_type": workflow.trigger_type,
         "trigger_config": workflow.trigger_config if isinstance(workflow.trigger_config, dict) else {},
         "source_config": workflow.source_config if isinstance(workflow.source_config, dict) else {},
-        "instructions": workflow.instructions if isinstance(workflow.instructions, dict) else {},
+        "instructions": instructions,
+        "draft_summary": str(instructions.get("draft_summary") or ""),
+        "clarification_questions": list(instructions.get("clarification_questions") or [])
+        if isinstance(instructions.get("clarification_questions"), list)
+        else [],
+        "workflow_type": str(instructions.get("workflow_type") or metadata.get("workflow_type") or ""),
+        "memory_shape": str(instructions.get("memory_shape") or metadata.get("memory_shape") or ""),
         "next_trigger_at": workflow.next_trigger_at.isoformat() if workflow.next_trigger_at else None,
         "last_triggered_at": workflow.last_triggered_at.isoformat() if workflow.last_triggered_at else None,
         "last_error": workflow.last_error or "",
@@ -11204,7 +11246,7 @@ def _task_instruction_spec_from_args(
     *,
     current: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
-    from apps.conversations.workflow_contracts import normalize_workflow_instructions
+    from apps.conversations.workflow_contracts import infer_workflow_type_and_memory_shape, normalize_workflow_instructions
 
     spec: dict[str, object] = dict(current or {})
     raw_contract = arguments.get("instructions") or arguments.get("instruction_contract") or arguments.get("instructionContract")
@@ -11250,6 +11292,48 @@ def _task_instruction_spec_from_args(
         else:
             spec.pop("custom_instructions", None)
 
+    for public_key, camel_key, limit in (
+        ("wake_up_prompt", "wakeUpPrompt", 12000),
+        ("executor_prompt", "executorPrompt", 12000),
+        ("memory_instructions", "memoryInstructions", 6000),
+        ("draft_summary", "draftSummary", 6000),
+    ):
+        present, value = _first_present(arguments, public_key, camel_key)
+        if not present:
+            continue
+        text = str(value or "").strip()
+        if text:
+            spec[public_key] = text[:limit]
+        else:
+            spec.pop(public_key, None)
+
+    present, value = _first_present(arguments, "clarification_questions", "clarificationQuestions")
+    if present:
+        if isinstance(value, (list, tuple)):
+            spec["clarification_questions"] = [str(item).strip()[:300] for item in value if str(item or "").strip()][:8]
+        else:
+            text = str(value or "").strip()
+            spec["clarification_questions"] = [text[:300]] if text else []
+
+    for key in ("workflow_type", "workflowType", "memory_shape", "memoryShape"):
+        if key not in arguments:
+            continue
+        canonical = "workflow_type" if key in {"workflow_type", "workflowType"} else "memory_shape"
+        text = str(arguments.get(key) or "").strip().lower().replace("-", "_").replace(" ", "_")
+        if text:
+            spec[canonical] = text[:64]
+        else:
+            spec.pop(canonical, None)
+
+    if not spec.get("workflow_type") or not spec.get("memory_shape"):
+        inferred_type, inferred_shape = infer_workflow_type_and_memory_shape(
+            goal=spec.get("goal") or arguments.get("goal"),
+            trigger_type=arguments.get("trigger_type") or arguments.get("triggerType"),
+            source_config=arguments.get("source_config") or arguments.get("sourceConfig"),
+        )
+        spec.setdefault("workflow_type", inferred_type)
+        spec.setdefault("memory_shape", inferred_shape)
+
     return normalize_workflow_instructions(spec)
 
 
@@ -11271,6 +11355,20 @@ def _has_task_instruction_updates(arguments: Mapping[str, object]) -> bool:
         "customInstructions",
         "role_instructions",
         "roleInstructions",
+        "wake_up_prompt",
+        "wakeUpPrompt",
+        "executor_prompt",
+        "executorPrompt",
+        "memory_instructions",
+        "memoryInstructions",
+        "draft_summary",
+        "draftSummary",
+        "clarification_questions",
+        "clarificationQuestions",
+        "workflow_type",
+        "workflowType",
+        "memory_shape",
+        "memoryShape",
     }
     return any(key in arguments for key in keys)
 
@@ -11383,6 +11481,9 @@ def _draft_task_handler(
     visibility = str(arguments.get("visibility") or AgentRunVisibility.INITIATOR).strip().lower()
     if visibility not in {choice for choice, _ in AgentRunVisibility.choices}:
         visibility = AgentRunVisibility.INITIATOR
+    instructions = _task_instruction_spec_from_args(arguments)
+    workflow_type = str(instructions.get("workflow_type") or "general")
+    memory_shape = str(instructions.get("memory_shape") or "general")
     workflow = AssistantWorkflow.objects.create(
         business_profile_id=conversation.business_profile_id,
         agent_profile=agent,
@@ -11394,8 +11495,13 @@ def _draft_task_handler(
         trigger_type=trigger_type,
         trigger_config=dict(arguments.get("trigger_config") or arguments.get("triggerConfig") or {}),
         source_config=dict(arguments.get("source_config") or arguments.get("sourceConfig") or {}),
-        instructions=_task_instruction_spec_from_args(arguments),
-        metadata={"source": "chat_task_draft", "activation_requires_user_approval": True},
+        instructions=instructions,
+        metadata={
+            "source": "chat_task_draft",
+            "activation_requires_user_approval": True,
+            "workflow_type": workflow_type,
+            "memory_shape": memory_shape,
+        },
     )
     _remember_workflow_resource_ref(
         conversation,
@@ -11436,7 +11542,14 @@ def _update_task_handler(
     if _has_task_instruction_updates(arguments):
         current = dict(workflow.instructions or {}) if isinstance(workflow.instructions, dict) else {}
         workflow.instructions = _task_instruction_spec_from_args(arguments, current=current)
+        metadata = dict(workflow.metadata or {}) if isinstance(workflow.metadata, dict) else {}
+        if workflow.instructions.get("workflow_type"):
+            metadata["workflow_type"] = workflow.instructions.get("workflow_type")
+        if workflow.instructions.get("memory_shape"):
+            metadata["memory_shape"] = workflow.instructions.get("memory_shape")
+        workflow.metadata = metadata
         updates.append("instructions")
+        updates.append("metadata")
     if "trigger_type" in arguments or "triggerType" in arguments:
         trigger_type = str(arguments.get("trigger_type") or arguments.get("triggerType") or "").strip().lower()
         if trigger_type not in {choice for choice, _ in AssistantWorkflowTriggerType.choices}:
