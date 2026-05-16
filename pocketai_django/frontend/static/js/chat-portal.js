@@ -6308,11 +6308,12 @@ class ChatPortalClient {
       payload.eventsByRun && typeof payload.eventsByRun === "object" ? payload.eventsByRun : {};
 
     workflows.forEach((workflow) => {
-      this.upsertWorkflowAgent(workflow);
+      const workflowState = this.upsertWorkflowAgent(workflow);
       const latest = workflow && workflow.latestRun && typeof workflow.latestRun === "object" ? workflow.latestRun : null;
       if (latest) this.upsertAgentRun(latest);
       const recent = workflow && Array.isArray(workflow.recentRuns) ? workflow.recentRuns : [];
       recent.forEach((run) => this.upsertAgentRun(run));
+      this.expandWorkflowLiveRun(workflowState, { liveEvent: false });
     });
 
     runs.forEach((run) => {
@@ -6359,19 +6360,28 @@ class ChatPortalClient {
     if (!runId) return;
 
     if (run) {
-      this.upsertAgentRun(run);
+      const runState = this.upsertAgentRun(run);
+      if (runState && (this.isRunActiveStatus(run.status) || this.isRunTerminalStatus(run.status))) {
+        runState.expanded = true;
+      }
       const workflowId = (run.workflowId || run.workflow_id || "").toString().trim();
       if (workflowId) {
         const workflowState = this.workflowAgents.get(workflowId) || this.upsertWorkflowAgent({ id: workflowId, name: run.workflowName || "" });
         if (workflowState && workflowState.workflow) {
           const recent = Array.isArray(workflowState.workflow.recentRuns) ? workflowState.workflow.recentRuns.slice() : [];
           const withoutCurrent = recent.filter((item) => item && item.id !== run.id);
-          const openCheckpoint = run.openCheckpoint && typeof run.openCheckpoint === "object" ? run.openCheckpoint : workflowState.workflow.openCheckpoint || null;
+          const statusNow = (run.status || "").toString().trim().toLowerCase();
+          const terminalNow = this.isRunTerminalStatus(statusNow);
+          const hasOpenCheckpoint = Object.prototype.hasOwnProperty.call(run, "openCheckpoint");
+          const openCheckpoint = hasOpenCheckpoint
+            ? (run.openCheckpoint && typeof run.openCheckpoint === "object" ? run.openCheckpoint : null)
+            : (terminalNow ? null : workflowState.workflow.openCheckpoint || null);
           workflowState.workflow = Object.assign({}, workflowState.workflow, {
             latestRun: Object.assign({}, workflowState.workflow.latestRun || {}, run),
             openCheckpoint,
             recentRuns: [run, ...withoutCurrent].slice(0, 5),
           });
+          this.expandWorkflowLiveRun(workflowState, { liveEvent: true, run });
         }
       }
     } else {
@@ -6453,7 +6463,7 @@ class ChatPortalClient {
     const state = {
       run: Object.assign({}, run),
       events: [],
-      expanded: false,
+      expanded: this.isRunActiveStatus(run.status),
       seenSeq: new Set(),
       lastEventLabel: "",
     };
@@ -6478,6 +6488,23 @@ class ChatPortalClient {
     };
     this.workflowAgents.set(workflowId, state);
     return state;
+  }
+
+  expandWorkflowLiveRun(workflowState, { liveEvent = false, run = null } = {}) {
+    if (!workflowState || !workflowState.workflow) return;
+    if (!(workflowState.expandedRuns instanceof Set)) workflowState.expandedRuns = new Set();
+    const workflow = workflowState.workflow;
+    const latest = run || (workflow.latestRun && typeof workflow.latestRun === "object" ? workflow.latestRun : null);
+    const checkpoint = workflow.openCheckpoint && typeof workflow.openCheckpoint === "object" ? workflow.openCheckpoint : null;
+    const shouldOpen = Boolean(
+      checkpoint ||
+      (latest && this.isRunActiveStatus(latest.status)) ||
+      (liveEvent && latest && this.isRunTerminalStatus(latest.status))
+    );
+    if (!shouldOpen) return;
+    workflowState.expanded = true;
+    const runId = latest && latest.id ? String(latest.id).trim() : "";
+    if (runId) workflowState.expandedRuns.add(runId);
   }
 
   upsertAgentRequest(req) {
@@ -6586,6 +6613,7 @@ class ChatPortalClient {
     const latestRun = workflow.latestRun && typeof workflow.latestRun === "object" ? workflow.latestRun : null;
     const checkpoint = workflow.openCheckpoint && typeof workflow.openCheckpoint === "object" ? workflow.openCheckpoint : null;
     const status = checkpoint ? "waiting_approval" : (latestRun && latestRun.status ? latestRun.status : (workflow.status || "draft"));
+    cardEl.setAttribute("data-expanded", expanded ? "true" : "false");
 
     // --- Update header in-place ---
     const pillEl = cardEl.querySelector(".portal-task__status-pill");
@@ -7491,20 +7519,22 @@ class ChatPortalClient {
       existing.run = Object.assign({}, existing.run || {}, run || {});
       return existing;
     }
-    return { run: Object.assign({}, run || {}), events: [], expanded: false, seenSeq: new Set(), lastEventLabel: "" };
+    return { run: Object.assign({}, run || {}), events: [], expanded: this.isRunActiveStatus(run && run.status), seenSeq: new Set(), lastEventLabel: "" };
   }
 
   renderWorkflowRunDetailHtml(run) {
     const state = this.stateForRun(run);
+    const actionsHtml = this.renderRunActionsHtml(run && run.id ? String(run.id) : "", state, run);
     const workHtml = this.renderRunWorkHtml(state, run);
     const resultHtml = this.renderRunResultHtml(run, state);
     const debugHtml = this.renderRunDeveloperDetailsHtml(run);
-    const emptyHtml = !resultHtml && !workHtml
+    const emptyHtml = !actionsHtml && !resultHtml && !workHtml
       ? `<div class="portal-task__empty-note">${this.escapeHtml(this.t("No activity recorded yet."))}</div>`
       : "";
     return `
       <div class="portal-task__run-detail">
         ${workHtml}
+        ${actionsHtml}
         ${resultHtml}
         ${debugHtml}
         ${emptyHtml}
@@ -7643,7 +7673,7 @@ class ChatPortalClient {
     const workHtml = this.renderRunWorkHtml(state, run);
     const resultHtml = this.renderRunResultHtml(run, state);
     const debugHtml = this.renderRunDeveloperDetailsHtml(run);
-    const bodyHtml = `${actionsHtml}${workHtml}${resultHtml}${debugHtml}`;
+    const bodyHtml = `${workHtml}${actionsHtml}${resultHtml}${debugHtml}`;
 
     return `
       <div class="portal-task portal-task--run-card" data-run-id="${this.escapeHtml(runId)}" data-expanded="${expanded ? "true" : "false"}">
@@ -7842,6 +7872,11 @@ class ChatPortalClient {
   isRunTerminalStatus(status) {
     const normalized = (status || "").toString().trim().toLowerCase();
     return ["completed", "succeeded", "success", "failed", "error", "cancelled", "canceled"].includes(normalized);
+  }
+
+  isRunActiveStatus(status) {
+    const normalized = (status || "").toString().trim().toLowerCase();
+    return ["queued", "running", "waiting_user", "waiting_approval", "waiting_child", "waiting_external", "paused"].includes(normalized);
   }
 
   getRunDurationMs(run) {
@@ -8069,17 +8104,6 @@ class ChatPortalClient {
     const normalizeForCompare = (value) => String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
     const genericCompleted = normalizeForCompare(this.t("Completed. No detailed report was recorded."));
 
-    // Collect assistant narration text from the scratchpad to suppress duplicates.
-    const scratchpadTexts = [];
-    if (state) {
-      const rows = this.buildRunActivityItems(state);
-      for (const row of rows) {
-        if (row.kind === "assistant" && row.text) {
-          scratchpadTexts.push(normalizeForCompare(row.text));
-        }
-      }
-    }
-
     // Generic status strings that add no value as a "final response".
     const genericStatuses = [
       "running now.", "queued.", "no update yet.", "started.",
@@ -8110,8 +8134,6 @@ class ChatPortalClient {
       if (this.isJsonLikeText(candidate)) return false;
       // Suppress generic status strings.
       if (genericStatuses.includes(normalized)) return false;
-      // Suppress text that already appears in the scratchpad.
-      if (scratchpadTexts.length && scratchpadTexts.some((st) => st === normalized || normalized.includes(st) || st.includes(normalized))) return false;
       return true;
     }) || "";
 

@@ -97,11 +97,15 @@ from apps.conversations.portal_session_event_bus import (
     portal_session_agent_workflow_runs_stream_key,
     portal_session_conversation_stream_key,
 )
+from apps.conversations.portal_session_serializers import (
+    serialize_agent_run_checkpoint_for_portal,
+    serialize_agent_run_event_for_portal,
+    serialize_agent_run_for_portal,
+)
 from apps.conversations.portal_turn_runner import run_turn_background
 from apps.conversations.content_blocks import (
     extract_text_from_content_blocks,
 )
-from apps.conversations.run_display import build_agent_run_display
 from core.tenancy import tenant_context
 
 logger = logging.getLogger(__name__)
@@ -1375,73 +1379,11 @@ def _clip_portal_text(value: str, limit: int) -> str:
 
 
 def _serialize_agent_run_for_portal(run: AgentRun) -> dict[str, object]:
-    plan_payload = run.plan if isinstance(getattr(run, "plan", None), dict) else {}
-    error_detail = str(getattr(run, "error_detail", "") or "").strip()
-    result_payload = run.result if isinstance(getattr(run, "result", None), dict) else {}
-    response_text = str(result_payload.get("response_text") or result_payload.get("responseText") or "").strip()
-    run_report = result_payload.get("run_report") or result_payload.get("runReport")
-    run_report_state = result_payload.get("run_report_state") or result_payload.get("runReportState")
-    portal_result: dict[str, object] = {}
-    if response_text:
-        portal_result["responseText"] = _clip_portal_text(response_text, 12000)
-    if isinstance(run_report, Mapping):
-        portal_result["runReport"] = dict(run_report)
-    if isinstance(run_report_state, Mapping):
-        portal_result["runReportState"] = dict(run_report_state)
-    open_checkpoint = None
-    try:
-        open_checkpoint = (
-            AgentRunCheckpoint.objects.filter(run=run, status=AgentRunCheckpointStatus.OPEN)
-            .order_by("-updated_at", "-created_at")
-            .first()
-        )
-    except Exception:
-        open_checkpoint = None
-    return {
-        "id": str(run.id),
-        "workflowId": str(run.workflow_id) if run.workflow_id else None,
-        "title": run.title or "",
-        "source": run.source,
-        "status": run.status,
-        "attemptCount": int(run.attempt_count or 0),
-        "maxAttempts": int(run.max_attempts or 0),
-        "runAfter": run.run_after.isoformat() if run.run_after else None,
-        "leaseExpiresAt": run.lease_expires_at.isoformat() if run.lease_expires_at else None,
-        "startedAt": run.started_at.isoformat() if run.started_at else None,
-        "finishedAt": run.finished_at.isoformat() if run.finished_at else None,
-        "createdAt": run.created_at.isoformat() if run.created_at else None,
-        "updatedAt": run.updated_at.isoformat() if run.updated_at else None,
-        "errorDetail": _clip_portal_text(error_detail, 800) if error_detail else "",
-        "plan": plan_payload,
-        "result": portal_result,
-        "durationMs": int((run.finished_at - run.started_at).total_seconds() * 1000)
-        if run.started_at and run.finished_at
-        else None,
-        "display": build_agent_run_display(run),
-        "metadata": run.metadata if isinstance(getattr(run, "metadata", None), dict) else {},
-        "openCheckpoint": _serialize_agent_run_checkpoint_for_portal(open_checkpoint),
-    }
+    return serialize_agent_run_for_portal(run)
 
 
 def _serialize_agent_run_checkpoint_for_portal(checkpoint: AgentRunCheckpoint | None) -> dict[str, object] | None:
-    if checkpoint is None:
-        return None
-    return {
-        "id": str(checkpoint.id),
-        "workflowId": str(checkpoint.workflow_id) if checkpoint.workflow_id else None,
-        "runId": str(checkpoint.run_id),
-        "childRunId": str(checkpoint.child_run_id) if checkpoint.child_run_id else None,
-        "kind": checkpoint.kind,
-        "status": checkpoint.status,
-        "title": checkpoint.title or "",
-        "prompt": _clip_portal_text(checkpoint.prompt or "", 4000),
-        "payload": checkpoint.payload if isinstance(getattr(checkpoint, "payload", None), dict) else {},
-        "resolution": checkpoint.resolution if isinstance(getattr(checkpoint, "resolution", None), dict) else {},
-        "expiresAt": checkpoint.expires_at.isoformat() if checkpoint.expires_at else None,
-        "resolvedAt": checkpoint.resolved_at.isoformat() if checkpoint.resolved_at else None,
-        "createdAt": checkpoint.created_at.isoformat() if checkpoint.created_at else None,
-        "updatedAt": checkpoint.updated_at.isoformat() if checkpoint.updated_at else None,
-    }
+    return serialize_agent_run_checkpoint_for_portal(checkpoint)
 
 
 def _serialize_workflow_agent_for_portal(
@@ -1473,16 +1415,7 @@ def _serialize_workflow_agent_for_portal(
 
 
 def _serialize_agent_run_event_for_portal(event: AgentRunEvent) -> dict[str, object]:
-    return {
-        "id": str(event.id),
-        "runId": str(event.run_id),
-        "sequenceIndex": int(event.sequence_index),
-        "stream": event.stream,
-        "type": event.event_type,
-        "label": event.label or "",
-        "payload": event.payload if isinstance(getattr(event, "payload", None), dict) else {},
-        "createdAt": event.created_at.isoformat() if event.created_at else None,
-    }
+    return serialize_agent_run_event_for_portal(event)
 
 
 def _append_agent_run_event(
@@ -1514,17 +1447,36 @@ def _build_portal_agent_runs_snapshot(
     business_id: uuid.UUID | None,
     agent_profile_id: uuid.UUID | None = None,
     runs_limit: int = 15,
-    events_limit_per_run: int = 120,
+    events_limit_per_run: int = 80,
 ) -> dict[str, object]:
     runs_limit = max(1, min(int(runs_limit), 50))
-    events_limit_per_run = max(0, min(int(events_limit_per_run), 250))
+    events_limit_per_run = max(0, min(int(events_limit_per_run), 120))
+    snapshot_started_at = timezone.now()
+    live_statuses = {
+        AgentRunStatus.QUEUED,
+        AgentRunStatus.RUNNING,
+        AgentRunStatus.WAITING_USER,
+        AgentRunStatus.WAITING_APPROVAL,
+        AgentRunStatus.WAITING_CHILD,
+        AgentRunStatus.WAITING_EXTERNAL,
+        AgentRunStatus.PAUSED,
+    }
 
     with tenant_context(business_id):
         workflow_agents: list[dict[str, object]] = []
         if agent_profile_id:
+            current_workflow_id = (
+                Conversation.objects.filter(id=conversation_id, business_profile_id=business_id)
+                .values_list("workflow_id", flat=True)
+                .first()
+            )
             workflows = list(
-                AssistantWorkflow.objects.filter(business_profile_id=business_id)
+                AssistantWorkflow.objects.filter(
+                    business_profile_id=business_id,
+                    agent_profile_id=agent_profile_id,
+                )
                 .filter(kind__in=[AssistantWorkflowKind.CUSTOM_ASSISTANT, AssistantWorkflowKind.AUTOMATION])
+                .filter(Q(id=current_workflow_id) if current_workflow_id else Q())
                 .select_related("agent_profile")
                 .annotate(session_count=Count("sessions"))
                 .order_by("-updated_at", "-created_at")[:100]
@@ -1535,7 +1487,12 @@ def _build_portal_agent_runs_snapshot(
             open_checkpoints: dict[uuid.UUID, AgentRunCheckpoint] = {}
             if workflow_ids:
                 for run in (
-                    AgentRun.objects.filter(workflow_id__in=workflow_ids)
+                    AgentRun.objects.select_related("workflow")
+                    .filter(
+                        workflow_id__in=workflow_ids,
+                        business_profile_id=business_id,
+                        agent_profile_id=agent_profile_id,
+                    )
                     .order_by("-created_at")[:500]
                 ):
                     if run.workflow_id:
@@ -1555,21 +1512,37 @@ def _build_portal_agent_runs_snapshot(
                     workflow,
                     latest_run=latest_runs.get(workflow.id),
                     open_checkpoint=open_checkpoints.get(workflow.id),
-                    recent_runs=recent_runs_by_workflow.get(workflow.id, []),
+                    recent_runs=[
+                        run
+                        for run in recent_runs_by_workflow.get(workflow.id, [])
+                        if run.status in live_statuses
+                    ],
                 )
                 for workflow in workflows
             ]
 
         runs = list(
-            AgentRun.objects.filter(conversation_id=conversation_id, workflow_id__isnull=True)
+            AgentRun.objects.select_related("workflow")
+            .filter(conversation_id=conversation_id, workflow_id__isnull=True)
             .order_by("-created_at")[:runs_limit]
         )
-        run_ids = [run.id for run in runs]
+        run_ids = [run.id for run in runs if run.status in live_statuses]
         for workflow in workflow_agents:
+            open_checkpoint = workflow.get("openCheckpoint")
+            checkpoint_run_id = ""
+            if isinstance(open_checkpoint, dict):
+                checkpoint_run_id = str(open_checkpoint.get("runId") or "").strip()
             for item in [workflow.get("latestRun"), *(workflow.get("recentRuns") or [])]:
                 if isinstance(item, dict) and item.get("id"):
+                    run_id_value = str(item.get("id") or "").strip()
+                    status_value = str(item.get("status") or "").strip()
+                    should_include_events = status_value in live_statuses or (
+                        checkpoint_run_id and run_id_value == checkpoint_run_id
+                    )
+                    if not should_include_events:
+                        continue
                     try:
-                        run_ids.append(uuid.UUID(str(item.get("id"))))
+                        run_ids.append(uuid.UUID(run_id_value))
                     except (TypeError, ValueError):
                         pass
 
@@ -1597,7 +1570,7 @@ def _build_portal_agent_runs_snapshot(
                     _serialize_agent_run_event_for_portal(item) for item in reversed(event_list)
                 ]
 
-        cursor_value = (max_created_at or timezone.now()).isoformat()
+        cursor_value = (max_created_at or snapshot_started_at).isoformat()
         return {
             "conversationId": str(conversation_id),
             "runs": [_serialize_agent_run_for_portal(run) for run in runs],

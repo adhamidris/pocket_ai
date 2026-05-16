@@ -1884,6 +1884,8 @@ class AgentRunProcessingService:
                     return True
                 if lowered.startswith(("{", "[", "}", "]")) and re.search(r'"[a-zA-Z_][a-zA-Z0-9_]*"\s*:', lowered[:1200]):
                     return True
+                if re.match(r'^[}\]\s,]*"[a-zA-Z_][a-zA-Z0-9_]*"\s*:', stripped[:1200]):
+                    return True
                 return False
 
             def _flush_visible_assistant_text(*, force: bool = False) -> None:

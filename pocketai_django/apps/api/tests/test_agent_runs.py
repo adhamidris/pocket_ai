@@ -14,6 +14,9 @@ from apps.conversations.models import (
     AgentRunCheckpoint,
     AgentRunCheckpointKind,
     AgentRunCheckpointStatus,
+    AgentRunEvent,
+    AgentRunEventStream,
+    AgentRunEventType,
     AgentRunStatus,
     AssistantWorkflow,
     AssistantWorkflowKind,
@@ -306,6 +309,17 @@ class AgentRunsApiTests(TestCase):
             trigger_config={"cron": "0 9 * * *"},
             instructions={"goal": "Report sales email"},
         )
+        other_agent = AgentProfile.objects.create(business_profile=self.business, user=self.user, name="Other Agent")
+        AssistantWorkflow.objects.create(
+            business_profile=self.business,
+            agent_profile=other_agent,
+            created_by=self.user,
+            name="Other Agent Workflow",
+            kind=AssistantWorkflowKind.AUTOMATION,
+            trigger_type="schedule",
+            trigger_config={"cron": "0 10 * * *"},
+            instructions={"goal": "Do not show in this portal"},
+        )
         run = AgentRun.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
@@ -331,11 +345,110 @@ class AgentRunsApiTests(TestCase):
         )
 
         self.assertEqual(snapshot["workflows"][0]["id"], str(workflow.id))
+        self.assertEqual(len(snapshot["workflows"]), 1)
         self.assertEqual(snapshot["workflows"][0]["kind"], AssistantWorkflowKind.AUTOMATION)
         latest_run = snapshot["workflows"][0]["latestRun"]
         self.assertEqual(latest_run["id"], str(run.id))
         self.assertEqual(latest_run["result"]["responseText"], "Found 14 sales-related emails.")
         self.assertEqual(latest_run["display"]["summary"], "Found 14 sales-related emails.")
+
+    def test_portal_activity_snapshot_only_embeds_events_for_live_runs(self) -> None:
+        conversation = Conversation.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            owner_user=self.user,
+            channel=ConversationChannel.API,
+            status=ConversationStatus.LIVE,
+        )
+        workflow = AssistantWorkflow.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            created_by=self.user,
+            name="Live Monitor",
+            kind=AssistantWorkflowKind.AUTOMATION,
+            trigger_type="schedule",
+            trigger_config={"cron": "0 9 * * *"},
+            instructions={"goal": "Report sales email"},
+        )
+        completed = AgentRun.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            workflow=workflow,
+            created_by=self.user,
+            title="Completed",
+            status=AgentRunStatus.COMPLETED,
+            finished_at=timezone.now(),
+        )
+        running = AgentRun.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            workflow=workflow,
+            created_by=self.user,
+            title="Running",
+            status=AgentRunStatus.RUNNING,
+            started_at=timezone.now(),
+        )
+        AgentRunEvent.objects.create(
+            run=completed,
+            sequence_index=1,
+            stream=AgentRunEventStream.SYSTEM,
+            event_type=AgentRunEventType.RESULT,
+            label="Completed",
+        )
+        AgentRunEvent.objects.create(
+            run=running,
+            sequence_index=1,
+            stream=AgentRunEventStream.SYSTEM,
+            event_type=AgentRunEventType.PROGRESS,
+            label="Started",
+        )
+
+        snapshot = _build_portal_agent_runs_snapshot(
+            conversation_id=conversation.id,
+            business_id=self.business.id,
+            agent_profile_id=self.agent.id,
+        )
+
+        self.assertIn(str(running.id), snapshot["eventsByRun"])
+        self.assertNotIn(str(completed.id), snapshot["eventsByRun"])
+        self.assertEqual(snapshot["workflows"][0]["latestRun"]["id"], str(running.id))
+
+    def test_portal_activity_snapshot_scopes_workflow_sessions_to_current_workflow(self) -> None:
+        workflow = AssistantWorkflow.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            created_by=self.user,
+            name="Current Workflow",
+            kind=AssistantWorkflowKind.AUTOMATION,
+            trigger_type="schedule",
+            trigger_config={"cron": "0 9 * * *"},
+            instructions={"goal": "Current workflow"},
+        )
+        AssistantWorkflow.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            created_by=self.user,
+            name="Same Agent Other Workflow",
+            kind=AssistantWorkflowKind.CUSTOM_ASSISTANT,
+            trigger_type="manual",
+            instructions={"goal": "Should not show in this workflow session"},
+        )
+        conversation = Conversation.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            workflow=workflow,
+            owner_user=self.user,
+            channel=ConversationChannel.API,
+            status=ConversationStatus.LIVE,
+        )
+
+        snapshot = _build_portal_agent_runs_snapshot(
+            conversation_id=conversation.id,
+            business_id=self.business.id,
+            agent_profile_id=self.agent.id,
+        )
+
+        self.assertEqual([item["id"] for item in snapshot["workflows"]], [str(workflow.id)])
 
     def test_checkpoint_resolve_queues_run_and_closes_checkpoint(self) -> None:
         workflow = AssistantWorkflow.objects.create(

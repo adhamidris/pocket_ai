@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from unittest import mock
 
 from django.contrib.auth import get_user_model
@@ -11,6 +12,9 @@ from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSess
 from apps.conversations.agent_run_processing import AgentRunProcessingService
 from apps.conversations.models import (
     AgentRun,
+    AgentRunCheckpoint,
+    AgentRunCheckpointKind,
+    AgentRunCheckpointStatus,
     AgentRunEvent,
     AgentRunNotification,
     AgentRunSource,
@@ -200,6 +204,55 @@ class AgentRunProcessingTests(TestCase):
         self.assertEqual(payload["display"]["agentMessage"], "No sales-related emails found in unread inbox.")
         self.assertTrue(payload["display"]["rawAvailable"])
         self.assertNotIn("rawDebug", payload["display"])
+
+    def test_portal_serializer_exposes_canonical_live_run_fields(self) -> None:
+        workflow = AssistantWorkflow.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            created_by=self.user,
+            name="Sales monitor",
+            status=AssistantWorkflowStatus.ACTIVE,
+            instructions={"goal": "Monitor inbox"},
+        )
+        started = timezone.now()
+        finished = started + timedelta(seconds=12)
+        run = AgentRun.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            created_by=self.user,
+            workflow=workflow,
+            title="Sales monitor",
+            source=AgentRunSource.WORKFLOW,
+            status=AgentRunStatus.WAITING_APPROVAL,
+            started_at=started,
+            finished_at=finished,
+            result={
+                "response_text": "Draft ready.",
+                "run_report": {"findings": ["Drafted a reply."]},
+                "run_report_state": {"dedupe_key": "abc"},
+            },
+            metadata={"trigger": "manual"},
+            workflow_snapshot={"goal": "Monitor inbox"},
+        )
+        checkpoint = AgentRunCheckpoint.objects.create(
+            business_profile=self.business,
+            workflow=workflow,
+            run=run,
+            kind=AgentRunCheckpointKind.APPROVAL,
+            status=AgentRunCheckpointStatus.OPEN,
+            title="Approve draft",
+            prompt="Send this draft?",
+        )
+
+        payload = serialize_agent_run_for_portal(run)
+
+        self.assertEqual(payload["workflowId"], str(workflow.id))
+        self.assertEqual(payload["workflowName"], workflow.name)
+        self.assertEqual(payload["durationMs"], 12000)
+        self.assertEqual(payload["metadata"], {"trigger": "manual"})
+        self.assertEqual(payload["result"]["responseText"], "Draft ready.")
+        self.assertEqual(payload["result"]["runReportState"], {"dedupe_key": "abc"})
+        self.assertEqual(payload["openCheckpoint"]["id"], str(checkpoint.id))
 
     def test_execute_run_persists_visible_llm_stream_between_tool_events(self) -> None:
         run = AgentRun.objects.create(

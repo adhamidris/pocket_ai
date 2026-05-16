@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from typing import Mapping
 
-from apps.conversations.models import AgentRequest, AgentRun, AgentRunEvent, ConversationMessage
+from apps.conversations.models import (
+    AgentRequest,
+    AgentRun,
+    AgentRunCheckpoint,
+    AgentRunCheckpointStatus,
+    AgentRunEvent,
+    ConversationMessage,
+)
 from apps.conversations.run_display import build_agent_run_display
 
 
@@ -15,24 +22,64 @@ def clip_portal_text(value: str, limit: int) -> str:
     return f"{text[: max(0, limit - 1)].rstrip()}…"
 
 
+def serialize_agent_run_checkpoint_for_portal(checkpoint: AgentRunCheckpoint | None) -> dict[str, object] | None:
+    if checkpoint is None:
+        return None
+    return {
+        "id": str(checkpoint.id),
+        "workflowId": str(checkpoint.workflow_id) if checkpoint.workflow_id else None,
+        "runId": str(checkpoint.run_id),
+        "childRunId": str(checkpoint.child_run_id) if checkpoint.child_run_id else None,
+        "kind": checkpoint.kind,
+        "status": checkpoint.status,
+        "title": checkpoint.title or "",
+        "prompt": clip_portal_text(checkpoint.prompt or "", 4000),
+        "payload": checkpoint.payload if isinstance(getattr(checkpoint, "payload", None), dict) else {},
+        "resolution": checkpoint.resolution if isinstance(getattr(checkpoint, "resolution", None), dict) else {},
+        "expiresAt": checkpoint.expires_at.isoformat() if checkpoint.expires_at else None,
+        "resolvedAt": checkpoint.resolved_at.isoformat() if checkpoint.resolved_at else None,
+        "createdAt": checkpoint.created_at.isoformat() if checkpoint.created_at else None,
+        "updatedAt": checkpoint.updated_at.isoformat() if checkpoint.updated_at else None,
+    }
+
+
 def serialize_agent_run_for_portal(run: AgentRun) -> dict[str, object]:
     plan_payload = run.plan if isinstance(getattr(run, "plan", None), dict) else {}
+    error_detail = str(getattr(run, "error_detail", "") or "").strip()
     result_payload = run.result if isinstance(getattr(run, "result", None), dict) else {}
     response_text = ""
     run_report = None
+    run_report_state = None
     if isinstance(result_payload, dict):
         response_text = str(result_payload.get("response_text") or result_payload.get("responseText") or "").strip()
         candidate_report = result_payload.get("run_report") or result_payload.get("runReport")
         if isinstance(candidate_report, dict):
             run_report = candidate_report
-    error_detail = str(getattr(run, "error_detail", "") or "").strip()
+        candidate_report_state = result_payload.get("run_report_state") or result_payload.get("runReportState")
+        if isinstance(candidate_report_state, dict):
+            run_report_state = candidate_report_state
     result = {}
     if response_text:
-        result["responseText"] = clip_portal_text(response_text, 6000)
+        result["responseText"] = clip_portal_text(response_text, 12000)
     if run_report:
         result["runReport"] = run_report
+    if run_report_state:
+        result["runReportState"] = run_report_state
+
+    open_checkpoint = None
+    try:
+        open_checkpoint = (
+            AgentRunCheckpoint.objects.filter(run=run, status=AgentRunCheckpointStatus.OPEN)
+            .order_by("-updated_at", "-created_at")
+            .first()
+        )
+    except Exception:
+        open_checkpoint = None
+
     return {
         "id": str(run.id),
+        "workflowId": str(run.workflow_id) if run.workflow_id else None,
+        "workflowName": str(getattr(getattr(run, "workflow", None), "name", "") or ""),
         "title": run.title or "",
         "source": run.source,
         "status": run.status,
@@ -47,7 +94,12 @@ def serialize_agent_run_for_portal(run: AgentRun) -> dict[str, object]:
         "errorDetail": clip_portal_text(error_detail, 800) if error_detail else "",
         "plan": plan_payload,
         "result": result,
+        "durationMs": int((run.finished_at - run.started_at).total_seconds() * 1000)
+        if run.started_at and run.finished_at
+        else None,
         "display": build_agent_run_display(run),
+        "metadata": run.metadata if isinstance(getattr(run, "metadata", None), dict) else {},
+        "openCheckpoint": serialize_agent_run_checkpoint_for_portal(open_checkpoint),
     }
 
 
