@@ -1845,6 +1845,7 @@ class AgentRunProcessingService:
                         )
 
             visible_stream_buffer: list[str] = []
+            suppress_machine_contract_stream = False
 
             def _looks_like_machine_contract(text: str) -> bool:
                 stripped = str(text or "").strip()
@@ -1877,23 +1878,46 @@ class AgentRunProcessingService:
                     "\"blockers\"",
                     "\"artifacts\"",
                     "\"approvals\"",
+                    "\"workflow_state\"",
+                    "\"workflowstate\"",
+                    "\"response_hash\"",
+                    "\"responsehash\"",
+                    "\"inspected_items\"",
+                    "\"inspecteditems\"",
                 )
                 if any(marker in lowered for marker in contract_markers):
                     return True
                 if "run report" in lowered or "run_report" in lowered:
                     return True
+                if "workflow_state" in lowered or "response_hash" in lowered:
+                    return True
                 if lowered.startswith(("{", "[", "}", "]")) and re.search(r'"[a-zA-Z_][a-zA-Z0-9_]*"\s*:', lowered[:1200]):
                     return True
                 if re.match(r'^[}\]\s,]*"[a-zA-Z_][a-zA-Z0-9_]*"\s*:', stripped[:1200]):
                     return True
+                if re.match(r"""^[}\]\s,:'"]+[{[]""", stripped[:1200]):
+                    return True
+                if re.match(r"^\s*(?:null|true|false|\d+)\s*,", stripped[:400], re.IGNORECASE):
+                    return True
+                if re.match(r'^\s*"[^"]{1,2000}"\s*,\s*(?:"|null|true|false|\d+|[{\[])', stripped[:2200], re.IGNORECASE | re.DOTALL):
+                    return True
+                if re.search(r'^\s*["\'](?:completed|no_change|changed|failed|ok)["\']\s*,', stripped[:400], re.IGNORECASE | re.MULTILINE):
+                    return True
+                if stripped.count("{") + stripped.count("[") + stripped.count('",') >= 4 and re.search(
+                    r'"(?:status|identity|state|tool|findings|actions_taken|notification_candidate)"',
+                    lowered,
+                ):
+                    return True
                 return False
 
             def _flush_visible_assistant_text(*, force: bool = False) -> None:
+                nonlocal suppress_machine_contract_stream
                 if not visible_stream_buffer:
                     return
                 raw = "".join(visible_stream_buffer)
                 if _looks_like_machine_contract(raw):
                     visible_stream_buffer.clear()
+                    suppress_machine_contract_stream = True
                     return
                 if not force and len(raw) < 180 and not re.search(r"[\n.!?]\s*$", raw):
                     return
@@ -1910,8 +1934,11 @@ class AgentRunProcessingService:
                 )
 
             def _on_response_text_delta(chunk: str) -> None:
+                nonlocal suppress_machine_contract_stream
                 text = str(chunk or "")
                 if not text:
+                    return
+                if suppress_machine_contract_stream:
                     return
                 visible_stream_buffer.append(text)
                 _flush_visible_assistant_text(force=False)

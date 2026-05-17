@@ -14,6 +14,7 @@ class ChatPortalClient {
       runApproval: container.getAttribute("data-endpoint-run-approval"),
       runUserInput: container.getAttribute("data-endpoint-run-user-input"),
       runCheckpoint: container.getAttribute("data-endpoint-run-checkpoint"),
+      workflowRun: container.getAttribute("data-endpoint-workflow-run"),
       agentRequestUpdate: container.getAttribute("data-endpoint-agent-request-update"),
       emailSendDraft: container.getAttribute("data-endpoint-email-send-draft"),
       emailDiscardDraft: container.getAttribute("data-endpoint-email-discard-draft"),
@@ -195,6 +196,7 @@ class ChatPortalClient {
 	    // Agent runs/activity panel state
 	    this.agentRuns = new Map(); // runId -> { run, events, expanded, seenKeys, lastEventLabel }
     this.workflowAgents = new Map(); // workflowId -> { workflow, expanded, expandedRuns }
+    this.workflowManualRunBusy = new Set();
     this.tasksRenderRaf = null;
     this.tasksPanelUserHidden = false;
 
@@ -5032,6 +5034,15 @@ class ChatPortalClient {
     `;
   }
 
+  getWorkflowRunIconMarkup() {
+    return `
+      <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+        <path d="M7.25 5.75v8.5l6.5-4.25-6.5-4.25Z" fill="currentColor"></path>
+        <path d="M10 2.75a7.25 7.25 0 1 1 0 14.5 7.25 7.25 0 0 1 0-14.5Z" stroke="currentColor" stroke-width="1.25" opacity="0.34"></path>
+      </svg>
+    `;
+  }
+
   getToolFailureIconMarkup() {
     return `
       <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -5596,6 +5607,14 @@ class ChatPortalClient {
         return;
       }
 
+      const workflowRunBtn = target.closest("[data-workflow-run-now]");
+      if (workflowRunBtn) {
+        const workflowId = (workflowRunBtn.getAttribute("data-workflow-run-now") || "").trim();
+        const card = workflowRunBtn.closest(".portal-task");
+        if (workflowId) this.submitWorkflowManualRun(workflowId, workflowRunBtn, card);
+        return;
+      }
+
       const workflowToggleEl = target.closest("[data-workflow-toggle]");
       if (workflowToggleEl) {
         const workflowId = (workflowToggleEl.getAttribute("data-workflow-toggle") || "").trim();
@@ -5723,6 +5742,79 @@ class ChatPortalClient {
         : "";
     if (metaApprovalId) return metaApprovalId;
     return "";
+  }
+
+  async submitWorkflowManualRun(workflowId, buttonEl, cardEl) {
+    const safeWorkflowId = (workflowId || "").toString().trim();
+    if (!safeWorkflowId) return;
+    if (!this.endpoints.workflowRun) {
+      this.showToast("Run unavailable", "Workflow run endpoint is not configured.", true);
+      return;
+    }
+    if (!this.sessionToken) {
+      this.showToast("Run unavailable", "Session token missing.", true);
+      return;
+    }
+    if (this.workflowManualRunBusy.has(safeWorkflowId)) return;
+    this.workflowManualRunBusy.add(safeWorkflowId);
+    if (buttonEl) {
+      buttonEl.disabled = true;
+      buttonEl.dataset.busy = "true";
+      buttonEl.setAttribute("aria-busy", "true");
+    }
+
+    try {
+      const response = await fetch(this.endpoints.workflowRun, {
+        method: "POST",
+        headers: this.jsonHeaders(),
+        body: JSON.stringify(
+          this.getCurrentReferencePayload({
+            workflow_id: safeWorkflowId,
+          }),
+        ),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const message = payload && payload.error && payload.error.message ? payload.error.message : "Workflow run failed.";
+        throw new Error(message);
+      }
+
+      const workflow = payload && payload.workflow && typeof payload.workflow === "object" ? payload.workflow : null;
+      const run = payload && payload.run && typeof payload.run === "object" ? payload.run : null;
+      const workflowState = workflow ? this.upsertWorkflowAgent(workflow) : this.workflowAgents.get(safeWorkflowId);
+      if (run) {
+        this.upsertAgentRun(run);
+        if (workflowState && workflowState.workflow) {
+          const recent = Array.isArray(workflowState.workflow.recentRuns) ? workflowState.workflow.recentRuns.slice() : [];
+          const withoutCurrent = recent.filter((item) => item && item.id !== run.id);
+          workflowState.workflow = Object.assign({}, workflowState.workflow, {
+            latestRun: Object.assign({}, run),
+            recentRuns: [run, ...withoutCurrent].slice(0, 5),
+            lastTriggeredAt: run.createdAt || workflowState.workflow.lastTriggeredAt || null,
+          });
+        }
+      }
+      if (workflowState) {
+        workflowState.expanded = true;
+        if (!(workflowState.expandedRuns instanceof Set)) workflowState.expandedRuns = new Set();
+        if (run && run.id) workflowState.expandedRuns.add(String(run.id));
+      }
+      if (!this.tasksPanelUserHidden) {
+        this.setTasksPanelVisible(true);
+      }
+      this.showToast("Run queued", "Workflow run started.", false);
+      this.scheduleTasksRender();
+    } catch (error) {
+      console.warn("Workflow manual run failed", error);
+      this.showToast("Run failed", error.message || "Please try again.", true);
+    } finally {
+      this.workflowManualRunBusy.delete(safeWorkflowId);
+      if (buttonEl) {
+        buttonEl.disabled = false;
+        buttonEl.dataset.busy = "false";
+        buttonEl.removeAttribute("aria-busy");
+      }
+    }
   }
 
   async submitRunApproval(runId, approvalId, decision, cardEl) {
@@ -6704,11 +6796,16 @@ class ChatPortalClient {
       if (!newRowEl) return;
       const rowEl = newRowEl.closest(".portal-task__run-row");
       if (!rowEl) return;
+      const runState = this.agentRuns.get(runId);
+      const runForRestore = runState && runState.run ? runState.run : null;
 
       // Restore <details> open states
       const allDetails = rowEl.querySelectorAll("details");
       savedState.detailStates.forEach((saved) => {
         if (allDetails[saved.index]) {
+          if ((saved.className || "").split(/\s+/).includes("portal-task__work") && this.isRunTerminalStatus(runForRestore && runForRestore.status ? runForRestore.status : "")) {
+            return;
+          }
           allDetails[saved.index].open = saved.open;
         }
       });
@@ -6851,18 +6948,28 @@ class ChatPortalClient {
       if (!det.open) return;
       // Build a selector path to relocate this element after re-render
       const classes = (det.className || "").trim();
-      const parent = det.closest("[data-workflow-id], [data-run-toggle]");
-      const parentId = parent ? (parent.getAttribute("data-workflow-id") || parent.getAttribute("data-run-toggle") || "") : "";
+      const parent = det.closest("[data-workflow-id], [data-run-id], [data-run-toggle]");
+      const parentId = parent
+        ? (parent.getAttribute("data-workflow-id") || parent.getAttribute("data-run-id") || parent.getAttribute("data-run-toggle") || "")
+        : "";
       const runBtn = det.closest(".portal-task__run-row") ? det.closest(".portal-task__run-row").querySelector("[data-run-id]") : null;
-      const runId = runBtn ? (runBtn.getAttribute("data-run-id") || "") : "";
+      const cardRun = det.closest("[data-run-id]");
+      const runId = runBtn ? (runBtn.getAttribute("data-run-id") || "") : (cardRun ? (cardRun.getAttribute("data-run-id") || "") : "");
       saved.details.push({ parentId, runId, classes, open: true });
     });
 
     container.querySelectorAll(".portal-task__scratchpad").forEach((el) => {
-      if (el.scrollTop <= 0) return;
       const runBtn = el.closest(".portal-task__run-row") ? el.closest(".portal-task__run-row").querySelector("[data-run-id]") : null;
-      const runId = runBtn ? (runBtn.getAttribute("data-run-id") || "") : "";
-      saved.scrolls.push({ runId, scrollTop: el.scrollTop, scrollHeight: el.scrollHeight, clientHeight: el.clientHeight });
+      const cardRun = el.closest("[data-run-id]");
+      const runId = runBtn ? (runBtn.getAttribute("data-run-id") || "") : (cardRun ? (cardRun.getAttribute("data-run-id") || "") : "");
+      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      saved.scrolls.push({
+        runId,
+        scrollTop: el.scrollTop,
+        scrollHeight: el.scrollHeight,
+        clientHeight: el.clientHeight,
+        wasAtBottom: distanceFromBottom <= 48,
+      });
     });
 
     container.querySelectorAll("textarea").forEach((ta) => {
@@ -6888,12 +6995,19 @@ class ChatPortalClient {
       let scope = container;
       if (entry.runId) {
         const runBtn = container.querySelector(`[data-run-id="${entry.runId}"]`);
-        if (runBtn) scope = runBtn.closest(".portal-task__run-row") || container;
+        if (runBtn) scope = runBtn.closest(".portal-task__run-row") || runBtn.closest(".portal-task") || container;
       } else if (entry.parentId) {
-        scope = container.querySelector(`[data-workflow-id="${entry.parentId}"]`) || container;
+        scope = container.querySelector(`[data-workflow-id="${entry.parentId}"], [data-run-id="${entry.parentId}"]`) || container;
       }
       const candidates = scope.querySelectorAll(`details.${entry.classes.split(/\s+/).join(".")}`);
-      candidates.forEach((det) => { det.open = true; });
+      candidates.forEach((det) => {
+        if ((entry.classes || "").split(/\s+/).includes("portal-task__work") && entry.runId) {
+          const runState = this.agentRuns.get(entry.runId);
+          const run = runState && runState.run ? runState.run : null;
+          if (run && this.isRunTerminalStatus(run.status)) return;
+        }
+        det.open = true;
+      });
     }
 
     // Restore scroll positions
@@ -6901,10 +7015,10 @@ class ChatPortalClient {
       if (!entry.runId) continue;
       const runBtn = container.querySelector(`[data-run-id="${entry.runId}"]`);
       const row = runBtn ? runBtn.closest(".portal-task__run-row") : null;
-      const scratchpad = row ? row.querySelector(".portal-task__scratchpad") : null;
+      const card = runBtn ? runBtn.closest(".portal-task") : null;
+      const scratchpad = row ? row.querySelector(".portal-task__scratchpad") : (card ? card.querySelector(".portal-task__scratchpad") : null);
       if (!scratchpad) continue;
-      const wasAtBottom = entry.scrollTop + entry.clientHeight >= entry.scrollHeight - 40;
-      scratchpad.scrollTop = wasAtBottom ? scratchpad.scrollHeight : entry.scrollTop;
+      scratchpad.scrollTop = entry.wasAtBottom ? scratchpad.scrollHeight : entry.scrollTop;
     }
 
     // Restore textarea values
@@ -7410,12 +7524,59 @@ class ChatPortalClient {
       '"blockers"',
       '"artifacts"',
       '"approvals"',
+      '"workflow_state"',
+      '"workflowstate"',
+      '"response_hash"',
+      '"responsehash"',
+      '"inspected_items"',
+      '"inspecteditems"',
     ];
     if (contractKeys.some((key) => lower.includes(key))) return true;
-    if (lower.includes("run report") || lower.includes("run_report")) return true;
+    if (lower.includes("run report") || lower.includes("run_report") || lower.includes("workflow_state") || lower.includes("response_hash")) return true;
     if (/^[}\]\s,]+/.test(raw) && /"[a-zA-Z_][a-zA-Z0-9_]*"\s*:/.test(raw)) return true;
     if (/^"[a-zA-Z_][a-zA-Z0-9_]*"\s*:/.test(raw)) return true;
+    if (/^[}\]\s,:'"]+[\{\[]/.test(raw)) return true;
+    if (/^\s*(?:null|true|false|\d+)\s*,/i.test(raw)) return true;
+    if (/^\s*"[^"]{1,2000}"\s*,\s*(?:"|null|true|false|\d+|[\{\[])/is.test(raw)) return true;
+    if (/^\s*["'](?:completed|no_change|changed|failed|ok)["']\s*,/i.test(raw)) return true;
+    if ((raw.match(/[{}\[\]]/g) || []).length >= 3 && (raw.match(/",/g) || []).length >= 3) return true;
     return false;
+  }
+
+  machineRunProgressTailIndex(text) {
+    const raw = (text || "").toString();
+    if (!raw.trim()) return -1;
+    const patterns = [
+      /```json/i,
+      /"run_report"\s*:/i,
+      /"runReport"\s*:/,
+      /"notification_candidate"\s*:/i,
+      /"workflow_state"\s*:/i,
+      /"response_hash"\s*:/i,
+      /"inspected_items"\s*:/i,
+      /\n\s*["'}\]],?\s*:\s*[\{\[]/,
+      /\n\s*[\{\[]\s*\n?\s*"(?:objective|status|findings|actions_taken|notification_candidate|workflow_state)"/i,
+    ];
+    let index = -1;
+    for (const pattern of patterns) {
+      const match = raw.match(pattern);
+      if (!match || typeof match.index !== "number") continue;
+      index = index < 0 ? match.index : Math.min(index, match.index);
+    }
+    return index;
+  }
+
+  cleanRunActivityAssistantText(text) {
+    const raw = (text || "").toString().trim();
+    if (!raw) return "";
+    if (this.isMachineRunProgressText(raw)) return "";
+    const tailIndex = this.machineRunProgressTailIndex(raw);
+    const visible = tailIndex >= 0 ? raw.slice(0, tailIndex).trim() : raw;
+    if (!visible || this.isMachineRunProgressText(visible)) return "";
+    return visible
+      .replace(/\n{3,}/g, "\n\n")
+      .replace(/`{1,3}\s*$/g, "")
+      .trim();
   }
 
   plainTextFromRunResponse(run) {
@@ -7507,9 +7668,7 @@ class ChatPortalClient {
   formatWorkflowRunMeta(run) {
     if (!run || typeof run !== "object") return "";
     const whenRaw = run.finishedAt || run.startedAt || run.createdAt || run.updatedAt || "";
-    const when = whenRaw ? this.formatDueTime(whenRaw) : "";
-    const duration = Number.isFinite(Number(run.durationMs)) && Number(run.durationMs) > 0 ? this.formatDurationMs(Number(run.durationMs)) : "";
-    return [when, duration].filter(Boolean).join(" · ");
+    return whenRaw ? this.formatDueTime(whenRaw) : "";
   }
 
   stateForRun(run) {
@@ -7547,19 +7706,27 @@ class ChatPortalClient {
     const status = run && run.status ? String(run.status) : "";
     const display = this.getRunDisplay(run);
     const summary = display.summary || this.getRunSummaryText(run, status);
+    const title = run && run.title ? String(run.title).trim() : summary;
+    const normalizedTitle = title.toLowerCase().replace(/\s+/g, " ").trim();
+    const normalizedSummary = String(summary || "").toLowerCase().replace(/\s+/g, " ").trim();
+    const showPreview = Boolean(summary && normalizedSummary && normalizedSummary !== normalizedTitle && !expanded);
     const meta = this.formatWorkflowRunMeta(run);
     const tone = display.statusTone || "neutral";
+    const statusLabel = this.formatRunStatusLabel(status);
     return `
       <div class="portal-task__run-row" data-status="${this.escapeHtml(status.toLowerCase())}" data-tone="${this.escapeHtml(tone)}" data-expanded="${expanded ? "true" : "false"}">
         <button type="button" class="portal-task__run-row-button" data-workflow-run-toggle="true" data-workflow-id="${this.escapeHtml(workflowId)}" data-run-id="${this.escapeHtml(runId)}">
           <span class="portal-task__run-dot" aria-hidden="true"></span>
           <span class="portal-task__run-row-main">
             <span class="portal-task__run-row-top">
-              <span>${this.escapeHtml(latest ? this.t("Latest run") : (meta || this.t("Run")))}</span>
-              <span>${this.escapeHtml(this.formatRunStatusLabel(status))}</span>
+              <span class="portal-task__run-kicker">${this.escapeHtml(latest ? this.t("Latest run") : this.t("Run"))}</span>
+              <span class="portal-task__run-chips">
+                <span class="portal-task__run-chip portal-task__run-chip--status">${this.escapeHtml(statusLabel)}</span>
+                ${meta ? `<span class="portal-task__run-chip">${this.escapeHtml(meta)}</span>` : ""}
+              </span>
             </span>
-            <span class="portal-task__run-row-summary">${this.escapeHtml(summary)}</span>
-            ${latest && meta ? `<span class="portal-task__run-row-meta">${this.escapeHtml(meta)}</span>` : ""}
+            <span class="portal-task__run-row-title">${this.escapeHtml(title || summary || this.t("Run"))}</span>
+            ${showPreview ? `<span class="portal-task__run-row-summary">${this.escapeHtml(summary)}</span>` : ""}
           </span>
           <span class="portal-task__run-chevron" aria-hidden="true">${expanded ? "⌃" : "⌄"}</span>
         </button>
@@ -7609,18 +7776,24 @@ class ChatPortalClient {
     const checkpointHtml = checkpoint ? this.renderWorkflowCheckpointHtml(checkpoint) : "";
     const allRuns = latestRun ? [latestRun, ...recentRuns] : recentRuns;
     const recentHtml = this.renderWorkflowRecentRunsHtml(workflowId, state, allRuns);
+    const runBusy = this.workflowManualRunBusy && this.workflowManualRunBusy.has(workflowId);
     return `
       <div class="portal-task" data-workflow-id="${this.escapeHtml(workflowId)}" data-expanded="${expanded ? "true" : "false"}" data-attention="${checkpoint ? "true" : "false"}">
-        <button type="button" class="portal-task__header" data-workflow-toggle="${this.escapeHtml(workflowId)}">
-          <div class="portal-task__meta">
-            <div class="portal-task__title-row">
-              <div class="portal-task__title">${this.escapeHtml(name)}</div>
-              ${this.renderRunStatusPill(status)}
+        <div class="portal-task__header-bar">
+          <button type="button" class="portal-task__header" data-workflow-toggle="${this.escapeHtml(workflowId)}">
+            <div class="portal-task__meta">
+              <div class="portal-task__title-row">
+                <div class="portal-task__title">${this.escapeHtml(name)}</div>
+                ${this.renderRunStatusPill(status)}
+              </div>
+              <div class="portal-task__subtitle">${this.escapeHtml(subtitle)}</div>
+              <div class="portal-task__summary-preview">${this.escapeHtml(latestSummary)}</div>
             </div>
-            <div class="portal-task__subtitle">${this.escapeHtml(subtitle)}</div>
-            <div class="portal-task__summary-preview">${this.escapeHtml(latestSummary)}</div>
-          </div>
-        </button>
+          </button>
+          <button type="button" class="portal-task__run-now" data-workflow-run-now="${this.escapeHtml(workflowId)}" data-busy="${runBusy ? "true" : "false"}" ${runBusy ? "disabled" : ""} aria-label="${this.escapeHtml(this.t("Run workflow now"))}" title="${this.escapeHtml(this.t("Run workflow now"))}">
+            ${this.getWorkflowRunIconMarkup()}
+          </button>
+        </div>
         <div class="portal-task__body">
           ${checkpointHtml}
           ${recentHtml || `<div class="portal-task__empty-note">${this.escapeHtml(this.t("No runs recorded yet."))}</div>`}
@@ -7929,6 +8102,17 @@ class ChatPortalClient {
     const recent = events.slice(-250);
     const rows = [];
     const toolIndexByKey = new Map();
+    const appendAssistantRow = (text) => {
+      const clean = this.cleanRunActivityAssistantText(text);
+      if (!clean) return;
+      const last = rows.length ? rows[rows.length - 1] : null;
+      if (last && last.kind === "assistant") {
+        const joined = `${last.text}\n\n${clean}`.trim();
+        last.text = joined.length > 3600 ? joined.slice(Math.max(0, joined.length - 3600)).trim() : joined;
+      } else {
+        rows.push({ kind: "assistant", text: clean });
+      }
+    };
     const appendToolRow = (evt, payload, labelRaw) => {
       const phase = (payload.phase || "").toString().trim().toLowerCase();
       const toolNameRaw = (payload.tool_name || payload.toolName || "").toString().trim();
@@ -7986,9 +8170,7 @@ class ChatPortalClient {
       const payload = evt.payload && typeof evt.payload === "object" ? evt.payload : {};
 
       if (payload.kind === "assistant_message" && typeof payload.text === "string" && payload.text.trim()) {
-        const assistantText = payload.text.trim();
-        if (this.isMachineRunProgressText(assistantText)) continue;
-        rows.push({ kind: "assistant", text: assistantText });
+        appendAssistantRow(payload.text);
         continue;
       }
 
@@ -8058,8 +8240,10 @@ class ChatPortalClient {
           return `
             <details class="portal-task__tool-call">
               <summary>
+                <span class="portal-task__tool-icon" aria-hidden="true"></span>
                 <span class="portal-task__tool-name">${this.escapeHtml(row.title)}</span>
                 ${status}
+                <span class="portal-task__tool-chevron" aria-hidden="true">›</span>
               </summary>
               ${this.renderToolDetailsHtml(row)}
             </details>
@@ -8068,7 +8252,10 @@ class ChatPortalClient {
         return `<div class="portal-task__scratchpad-system">${this.escapeHtml(row.line)}</div>`;
       })
       .join("");
-    const body = items ? `<div class="portal-task__scratchpad">${items}</div>` : `<div class="portal-task__subtitle">${this.escapeHtml(this.t("No activity yet."))}</div>`;
+    const runId = run && run.id ? String(run.id) : "";
+    const body = items
+      ? `<div class="portal-task__scratchpad custom-scrollbar" data-run-scratchpad="${this.escapeHtml(runId)}">${items}</div>`
+      : `<div class="portal-task__subtitle">${this.escapeHtml(this.t("No activity yet."))}</div>`;
     const openAttr = terminal ? "" : " open";
     return `
       <details class="portal-task__work"${openAttr}>

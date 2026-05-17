@@ -52,12 +52,15 @@ from apps.conversations.models import (
     AgentRunEvent,
     AgentRunEventStream,
     AgentRunEventType,
+    AgentRunSource,
     AgentRunStatus,
     AssistantWorkflow,
     AssistantWorkflowKind,
+    ConversationChannel,
     Conversation,
     ConversationMessage,
     ConversationSender,
+    ConversationStatus,
     ConversationToolApproval,
     ConversationToolApprovalStatus,
     MemoryItem,
@@ -106,6 +109,7 @@ from apps.conversations.portal_turn_runner import run_turn_background
 from apps.conversations.content_blocks import (
     extract_text_from_content_blocks,
 )
+from apps.conversations.workflow_contracts import normalize_workflow_instructions
 from core.tenancy import tenant_context
 
 logger = logging.getLogger(__name__)
@@ -1441,6 +1445,101 @@ def _append_agent_run_event(
         )
 
 
+def _workflow_snapshot_for_portal_run(workflow: AssistantWorkflow) -> dict[str, Any]:
+    instructions = workflow.instructions if isinstance(getattr(workflow, "instructions", None), dict) else {}
+    return normalize_workflow_instructions(
+        {
+            **instructions,
+            "name": workflow.name,
+            "description": workflow.description,
+            "trigger_type": workflow.trigger_type,
+            "trigger_config": workflow.trigger_config if isinstance(workflow.trigger_config, dict) else {},
+            "source_config": workflow.source_config if isinstance(workflow.source_config, dict) else {},
+            "destination_config": workflow.destination_config if isinstance(workflow.destination_config, dict) else {},
+            "notification_config": workflow.notification_config if isinstance(workflow.notification_config, dict) else {},
+            "review_mode": workflow.review_mode,
+            "autonomy_mode": workflow.autonomy_mode,
+        }
+    )
+
+
+def _latest_workflow_session_for_portal_run(workflow: AssistantWorkflow) -> Conversation | None:
+    return (
+        Conversation.objects.filter(workflow=workflow, business_profile=workflow.business_profile)
+        .order_by("-last_activity_at", "-started_at")
+        .first()
+    )
+
+
+def _resolve_or_create_workflow_session_for_portal_run(
+    workflow: AssistantWorkflow,
+    *,
+    created_by,
+) -> Conversation:
+    existing = _latest_workflow_session_for_portal_run(workflow)
+    if existing is not None:
+        return existing
+    metadata: dict[str, object] = {
+        "type": "workflow_agent_session",
+        "workflow_id": str(workflow.id),
+        "workflow_name": workflow.name,
+        "workflow_agent_name": workflow.agent_profile.name,
+        "created_from": "portal_task_panel",
+    }
+    return Conversation.objects.create(
+        business_profile=workflow.business_profile,
+        agent_profile=workflow.agent_profile,
+        workflow=workflow,
+        owner_user=workflow.created_by or workflow.agent_profile.user,
+        channel=ConversationChannel.API,
+        status=ConversationStatus.LIVE,
+        metadata=metadata,
+        summary=(workflow.name or "Workflow session")[:255],
+    )
+
+
+def _create_portal_manual_workflow_run(
+    *,
+    workflow: AssistantWorkflow,
+    created_by,
+    portal_conversation: Conversation,
+) -> AgentRun:
+    conversation = _resolve_or_create_workflow_session_for_portal_run(workflow, created_by=created_by)
+    snapshot = _workflow_snapshot_for_portal_run(workflow)
+    run = AgentRun.objects.create(
+        business_profile=workflow.business_profile,
+        agent_profile=workflow.agent_profile,
+        conversation=conversation,
+        created_by=created_by,
+        workflow=workflow,
+        workflow_snapshot=snapshot,
+        title=(workflow.name or snapshot.get("name") or snapshot.get("goal") or "Workflow run")[:200],
+        source=AgentRunSource.WORKFLOW,
+        status=AgentRunStatus.QUEUED,
+        visibility=workflow.visibility,
+        metadata={
+            "workflow_id": str(workflow.id),
+            "trigger": "manual",
+            "trigger_source": "portal_task_panel",
+            "portal_conversation_id": str(portal_conversation.id),
+        },
+        run_after=timezone.now(),
+    )
+    _append_agent_run_event(
+        run,
+        stream=AgentRunEventStream.SYSTEM,
+        event_type=AgentRunEventType.PROGRESS,
+        label="Queued",
+        payload={
+            "status": AgentRunStatus.QUEUED,
+            "workflow_id": str(workflow.id),
+            "trigger": "manual",
+            "trigger_source": "portal_task_panel",
+        },
+    )
+    return run
+
+
 def _build_portal_agent_runs_snapshot(
     *,
     conversation_id: uuid.UUID,
@@ -1526,21 +1625,14 @@ def _build_portal_agent_runs_snapshot(
             .filter(conversation_id=conversation_id, workflow_id__isnull=True)
             .order_by("-created_at")[:runs_limit]
         )
-        run_ids = [run.id for run in runs if run.status in live_statuses]
+        # The activity panel renders all runs in this snapshot. Include the
+        # persisted event log for those visible runs so completed tasks can
+        # still rebuild their "Worked for ..." activity after a refresh.
+        run_ids = [run.id for run in runs]
         for workflow in workflow_agents:
-            open_checkpoint = workflow.get("openCheckpoint")
-            checkpoint_run_id = ""
-            if isinstance(open_checkpoint, dict):
-                checkpoint_run_id = str(open_checkpoint.get("runId") or "").strip()
             for item in [workflow.get("latestRun"), *(workflow.get("recentRuns") or [])]:
                 if isinstance(item, dict) and item.get("id"):
                     run_id_value = str(item.get("id") or "").strip()
-                    status_value = str(item.get("status") or "").strip()
-                    should_include_events = status_value in live_statuses or (
-                        checkpoint_run_id and run_id_value == checkpoint_run_id
-                    )
-                    if not should_include_events:
-                        continue
                     try:
                         run_ids.append(uuid.UUID(run_id_value))
                     except (TypeError, ValueError):
@@ -1570,7 +1662,8 @@ def _build_portal_agent_runs_snapshot(
                     _serialize_agent_run_event_for_portal(item) for item in reversed(event_list)
                 ]
 
-        cursor_value = (max_created_at or snapshot_started_at).isoformat()
+        cursor_at = max_created_at if max_created_at and max_created_at > snapshot_started_at else snapshot_started_at
+        cursor_value = cursor_at.isoformat()
         return {
             "conversationId": str(conversation_id),
             "runs": [_serialize_agent_run_for_portal(run) for run in runs],
@@ -2408,6 +2501,80 @@ def portal_agent_run_user_input(request: HttpRequest) -> JsonResponse:
         logger.exception("portal_agent_run_user_input_execution_message_failed run=%s", run_uuid)
 
     return JsonResponse({"session": _session_to_dict(session), "run": _serialize_agent_run_for_portal(run)}, status=200)
+
+
+@require_POST
+def portal_agent_workflow_manual_run(request: HttpRequest) -> JsonResponse:
+    service = _service()
+    try:
+        payload = _parse_json_body(request)
+    except PortalValidationError as exc:
+        return _json_error("invalid_json", str(exc))
+
+    workflow_id_raw = str(payload.get("workflow_id") or payload.get("workflowId") or "").strip()
+    if not workflow_id_raw:
+        return _json_error("validation_error", "workflow_id is required.")
+    try:
+        workflow_uuid = uuid.UUID(workflow_id_raw)
+    except (TypeError, ValueError):
+        return _json_error("validation_error", "workflow_id is invalid.")
+
+    try:
+        conversation, session = _resolve_request_conversation(
+            service=service,
+            request=request,
+            payload=payload,
+            include_messages=False,
+        )
+    except PortalNotFoundError as exc:
+        return _json_error("not_found", str(exc), status=404)
+    except PortalAuthorizationError as exc:
+        status = 401 if str(exc) == "Authentication is required." else 403
+        code = "auth_required" if status == 401 else "forbidden"
+        return _json_error(code, str(exc), status=status)
+    except PortalValidationError as exc:
+        return _json_error("validation_error", str(exc))
+
+    actor_user = request.user if getattr(request, "user", None) and request.user.is_authenticated else None
+    business_id = getattr(conversation, "business_profile_id", None)
+    agent_profile_id = getattr(conversation, "agent_profile_id", None)
+    if not business_id or not agent_profile_id:
+        return _json_error("validation_error", "The current portal session is not linked to an agent.")
+
+    with tenant_context(business_id):
+        workflow = (
+            AssistantWorkflow.objects.select_related("agent_profile", "business_profile", "created_by")
+            .filter(
+                id=workflow_uuid,
+                business_profile_id=business_id,
+                agent_profile_id=agent_profile_id,
+            )
+            .first()
+        )
+        if workflow is None:
+            return _json_error("not_found", "Workflow not found.", status=404)
+        run = _create_portal_manual_workflow_run(
+            workflow=workflow,
+            created_by=actor_user,
+            portal_conversation=conversation,
+        )
+        AssistantWorkflow.objects.filter(id=workflow.id).update(last_triggered_at=timezone.now(), updated_at=timezone.now())
+        workflow.refresh_from_db()
+        recent_runs = list(
+            AgentRun.objects.select_related("workflow")
+            .filter(workflow=workflow, business_profile_id=business_id, agent_profile_id=agent_profile_id)
+            .exclude(id=run.id)
+            .order_by("-created_at")[:5]
+        )
+
+    return JsonResponse(
+        {
+            "session": _session_to_dict(session),
+            "workflow": _serialize_workflow_agent_for_portal(workflow, latest_run=run, recent_runs=recent_runs),
+            "run": _serialize_agent_run_for_portal(run),
+        },
+        status=201,
+    )
 
 
 @require_POST
