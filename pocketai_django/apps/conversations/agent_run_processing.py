@@ -176,6 +176,71 @@ def _summarize_input_payload(payload: object) -> dict[str, object]:
     }
 
 
+def _sanitize_tool_input(tool_name: str, payload: object) -> dict[str, object]:
+    if not isinstance(payload, Mapping):
+        return _summarize_input_payload(payload)
+
+    normalized = str(tool_name or "").strip().lower()
+
+    if normalized == "email_search":
+        out: dict[str, object] = {}
+        query = str(payload.get("query") or "").strip()
+        if query:
+            out["query"] = _clip_text(query, 240)
+        if "limit" in payload:
+            try:
+                out["limit"] = max(1, min(25, int(payload.get("limit") or 0)))
+            except (TypeError, ValueError):
+                pass
+        return out or _summarize_input_payload(payload)
+
+    safe_id_keys_by_tool = {
+        "email_get_message": ("message_id",),
+        "email_get_thread": ("thread_id",),
+        "email_send_draft": ("draft_id",),
+    }
+    safe_id_keys = safe_id_keys_by_tool.get(normalized)
+    if safe_id_keys:
+        out = {}
+        for key in safe_id_keys:
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                out[key] = _clip_text(value.strip(), 240)
+        return out or _summarize_input_payload(payload)
+
+    if normalized in {"mcp_search_tools", "search_knowledge", "search_conversation_files"}:
+        query = str(payload.get("query") or "").strip()
+        if query:
+            return {"query": _clip_text(query, 280)}
+
+    if normalized == "request_user_input":
+        out = {}
+        prompt = str(payload.get("prompt") or "").strip()
+        if prompt:
+            out["prompt"] = _clip_text(prompt, 280)
+        questions = payload.get("questions")
+        if isinstance(questions, list):
+            clean_questions = [_clip_text(str(q).strip(), 200) for q in questions[:5] if str(q or "").strip()]
+            if clean_questions:
+                out["questions"] = clean_questions
+        return out or _summarize_input_payload(payload)
+
+    if normalized == "list_tasks":
+        out = {}
+        for key in ("agent_id", "agentId", "status"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                out[key] = _clip_text(value.strip(), 120)
+        if "limit" in payload:
+            try:
+                out["limit"] = max(1, min(50, int(payload.get("limit") or 0)))
+            except (TypeError, ValueError):
+                pass
+        return out or _summarize_input_payload(payload)
+
+    return _summarize_input_payload(payload)
+
+
 def _summarize_tool_result(tool_name: str, tool_result: object) -> dict[str, object]:
     """
     Return a compact, privacy-safe summary of a tool result for resume prompts.
@@ -418,6 +483,29 @@ def _sanitize_approval_meta(approval: object) -> dict[str, object] | None:
     return out or None
 
 
+def _sanitize_task_payload(task: object) -> dict[str, object] | None:
+    if not isinstance(task, Mapping):
+        return None
+    out: dict[str, object] = {}
+    for key in ("id", "agent_id", "name", "status", "visibility", "trigger_type", "next_trigger_at", "last_triggered_at"):
+        value = task.get(key)
+        if isinstance(value, str) and value.strip():
+            out[key] = _clip_text(value.strip(), 240)
+    trigger_config = task.get("trigger_config")
+    if isinstance(trigger_config, Mapping):
+        compact_trigger: dict[str, object] = {}
+        for key in ("type", "cron", "timezone"):
+            value = trigger_config.get(key)
+            if isinstance(value, str) and value.strip():
+                compact_trigger[key] = _clip_text(value.strip(), 120)
+        if compact_trigger:
+            out["trigger_config"] = compact_trigger
+    last_error = str(task.get("last_error") or "").strip()
+    if last_error:
+        out["last_error"] = _clip_text(last_error, 240)
+    return out or None
+
+
 def _sanitize_tool_output(tool_name: str, output: object) -> dict[str, object] | None:
     if not isinstance(output, Mapping):
         return None
@@ -480,8 +568,30 @@ def _sanitize_tool_output(tool_name: str, output: object) -> dict[str, object] |
             out["schema_keys"] = sorted({str(k)[:80] for k in schema_payload.keys() if isinstance(k, str) and k.strip()})[:40]
         return out
 
+    if normalized == "list_tasks":
+        tasks = output.get("tasks")
+        if isinstance(tasks, list):
+            compact_tasks = []
+            for task in tasks[:10]:
+                compact = _sanitize_task_payload(task)
+                if compact:
+                    compact_tasks.append(compact)
+            out["tasks"] = compact_tasks
+            out["tasks_count"] = len(tasks)
+            if len(tasks) > len(compact_tasks):
+                out["truncated"] = True
+        return out
+
+    if normalized in {"draft_task", "update_task", "request_task_activation", "pause_task"}:
+        task = _sanitize_task_payload(output.get("task"))
+        if task:
+            out["task"] = task
+        if "activated" in output:
+            out["activated"] = bool(output.get("activated"))
+        return out
+
     # Generic output summary: keep only stable metadata and identifiers, drop any free-text content.
-    for key in ("tool", "tool_id", "artifact_id"):
+    for key in ("tool", "tool_id", "artifact_id", "memory_id"):
         value = output.get(key)
         if isinstance(value, str) and value.strip():
             out[key] = _clip_text(value.strip(), 240)
@@ -490,7 +600,7 @@ def _sanitize_tool_output(tool_name: str, output: object) -> dict[str, object] |
     if remote_meta:
         out["remote"] = remote_meta
 
-    for key in ("is_error", "truncated", "prompt_compact", "body_truncated", "content_truncated"):
+    for key in ("is_error", "truncated", "prompt_compact", "body_truncated", "content_truncated", "review_required"):
         if key in output:
             out[key] = bool(output.get(key))
 
@@ -561,7 +671,7 @@ def sanitize_tool_event_for_audit(event: Mapping[str, object]) -> dict[str, obje
         out["approval"] = approval_meta
 
     if "input" in event:
-        out["input"] = _summarize_input_payload(event.get("input"))
+        out["input"] = _sanitize_tool_input(str(tool_name or ""), event.get("input"))
 
     sanitized_output = _sanitize_tool_output(str(tool_name or ""), event.get("output"))
     if sanitized_output:

@@ -1381,75 +1381,12 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
         name="draft_task",
         description=(
             "Create an inactive task/workflow draft. Use for persistent scheduled, webhook, email inbox, or manual tasks. "
-            "Drafts must be approved by the user before activation."
+            "Drafts must be approved by the user before activation. Only store fields visible in the task UI."
         ),
         properties={
             "agent_id": {"type": "string", "description": "Optional owning agent UUID. Defaults to the current agent."},
             "name": {"type": "string", "description": "Short task name."},
             "goal": {"type": "string", "description": "What the task should accomplish."},
-            "description": {"type": "string"},
-            "success_criteria": {
-                "type": "array",
-                "description": "Optional success criteria the Custom Assistant should satisfy.",
-                "items": {"type": "string"},
-            },
-            "constraints": {
-                "type": "object",
-                "description": "Optional execution constraints, such as limits, boundaries, or timeout hints.",
-                "additionalProperties": True,
-            },
-            "output_schema": {
-                "type": "object",
-                "description": "Optional JSON-schema-like expected output contract.",
-                "additionalProperties": True,
-            },
-            "output_preferences": {
-                "type": "object",
-                "description": "Optional user-facing response style, format, or delivery preferences.",
-                "additionalProperties": True,
-            },
-            "approval": {
-                "type": "object",
-                "description": "Optional human approval policy for risky or irreversible actions.",
-                "additionalProperties": True,
-            },
-            "custom_instructions": {
-                "type": "string",
-                "description": "Additional role/custom instructions for the Custom Assistant.",
-            },
-            "wake_up_prompt": {
-                "type": "string",
-                "description": (
-                    "Detailed reusable executor prompt injected every time the task runs. "
-                    "Include what to do, how to use memory, when to notify or pause, and what to write back."
-                ),
-            },
-            "memory_instructions": {
-                "type": "string",
-                "description": "How recurring runs should use and update workflow memory.",
-            },
-            "draft_summary": {
-                "type": "string",
-                "description": "Plain-language draft preview shown to the user before activation.",
-            },
-            "clarification_questions": {
-                "type": "array",
-                "description": "Important unresolved execution decisions the user should answer before activation.",
-                "items": {"type": "string"},
-            },
-            "workflow_type": {
-                "type": "string",
-                "description": "Lightweight internal type such as monitor, progressive, report, or action.",
-            },
-            "memory_shape": {
-                "type": "string",
-                "description": "Lightweight memory shape such as email_monitor, progressive_work, report_digest, or action_workflow.",
-            },
-            "instructions": {
-                "type": "object",
-                "description": "Optional full Custom Assistant instruction contract. Explicit fields override matching keys.",
-                "additionalProperties": True,
-            },
             "trigger_type": {"type": "string", "enum": ["manual", "schedule", "webhook", "email_inbox"]},
             "trigger_config": {"type": "object", "additionalProperties": True},
             "source_config": {"type": "object", "additionalProperties": True},
@@ -1464,20 +1401,6 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
             "task_id": {"type": "string", "description": "Workflow/task UUID."},
             "name": {"type": "string"},
             "goal": {"type": "string"},
-            "description": {"type": "string"},
-            "success_criteria": {"type": "array", "items": {"type": "string"}},
-            "constraints": {"type": "object", "additionalProperties": True},
-            "output_schema": {"type": "object", "additionalProperties": True},
-            "output_preferences": {"type": "object", "additionalProperties": True},
-            "approval": {"type": "object", "additionalProperties": True},
-            "custom_instructions": {"type": "string"},
-            "wake_up_prompt": {"type": "string"},
-            "memory_instructions": {"type": "string"},
-            "draft_summary": {"type": "string"},
-            "clarification_questions": {"type": "array", "items": {"type": "string"}},
-            "workflow_type": {"type": "string"},
-            "memory_shape": {"type": "string"},
-            "instructions": {"type": "object", "additionalProperties": True},
             "trigger_type": {"type": "string", "enum": ["manual", "schedule", "webhook", "email_inbox"]},
             "trigger_config": {"type": "object", "additionalProperties": True},
             "source_config": {"type": "object", "additionalProperties": True},
@@ -11210,28 +11133,70 @@ def _consult_agent_handler(
 
 def _workflow_payload(workflow) -> dict[str, object]:
     instructions = workflow.instructions if isinstance(workflow.instructions, dict) else {}
-    metadata = workflow.metadata if isinstance(workflow.metadata, dict) else {}
-    return {
+    trigger_config = workflow.trigger_config if isinstance(workflow.trigger_config, dict) else {}
+    source_config = workflow.source_config if isinstance(workflow.source_config, dict) else {}
+    compact_trigger: dict[str, object] = {}
+    for key in ("type", "cron", "timezone"):
+        value = trigger_config.get(key)
+        if isinstance(value, str) and value.strip():
+            compact_trigger[key] = value.strip()[:160]
+    compact_source: dict[str, object] = {}
+    query = source_config.get("query")
+    if isinstance(query, str) and query.strip():
+        compact_source["query"] = query.strip()[:240]
+    if "unreadOnly" in source_config:
+        compact_source["unreadOnly"] = bool(source_config.get("unreadOnly"))
+    if "unread_only" in source_config:
+        compact_source["unread_only"] = bool(source_config.get("unread_only"))
+
+    payload = {
         "id": str(workflow.id),
         "agent_id": str(workflow.agent_profile_id),
         "name": workflow.name,
-        "description": workflow.description or "",
         "status": workflow.status,
         "visibility": workflow.visibility,
         "trigger_type": workflow.trigger_type,
-        "trigger_config": workflow.trigger_config if isinstance(workflow.trigger_config, dict) else {},
-        "source_config": workflow.source_config if isinstance(workflow.source_config, dict) else {},
-        "instructions": instructions,
-        "draft_summary": str(instructions.get("draft_summary") or ""),
-        "clarification_questions": list(instructions.get("clarification_questions") or [])
-        if isinstance(instructions.get("clarification_questions"), list)
-        else [],
-        "workflow_type": str(instructions.get("workflow_type") or metadata.get("workflow_type") or ""),
-        "memory_shape": str(instructions.get("memory_shape") or metadata.get("memory_shape") or ""),
+        "goal": str(instructions.get("goal") or ""),
+        "trigger_config": compact_trigger,
+        "source_config": compact_source,
         "next_trigger_at": workflow.next_trigger_at.isoformat() if workflow.next_trigger_at else None,
         "last_triggered_at": workflow.last_triggered_at.isoformat() if workflow.last_triggered_at else None,
         "last_error": workflow.last_error or "",
     }
+    return payload
+
+
+def _task_trigger_config_from_args(arguments: Mapping[str, object], trigger_type: str, *, current: Mapping[str, object] | None = None) -> dict[str, object]:
+    raw = arguments.get("trigger_config") if "trigger_config" in arguments else arguments.get("triggerConfig")
+    source = raw if isinstance(raw, Mapping) else current if isinstance(current, Mapping) else {}
+    if trigger_type == "schedule":
+        out: dict[str, object] = {"type": "cron"}
+        cron = str(source.get("cron") or "").strip()
+        timezone_value = str(source.get("timezone") or "").strip()
+        if cron:
+            out["cron"] = cron[:120]
+        if timezone_value:
+            out["timezone"] = timezone_value[:120]
+        return out
+    if trigger_type == "webhook":
+        return {"type": "webhook"}
+    if trigger_type == "email_inbox":
+        return {"type": "email_inbox"}
+    return {}
+
+
+def _task_source_config_from_args(arguments: Mapping[str, object], *, current: Mapping[str, object] | None = None) -> dict[str, object]:
+    raw = arguments.get("source_config") if "source_config" in arguments else arguments.get("sourceConfig")
+    source = raw if isinstance(raw, Mapping) else current if isinstance(current, Mapping) else {}
+    out: dict[str, object] = {}
+    query = source.get("query")
+    if isinstance(query, str) and query.strip():
+        out["query"] = query.strip()[:240]
+    if "unreadOnly" in source:
+        out["unreadOnly"] = bool(source.get("unreadOnly"))
+    if "unread_only" in source:
+        out["unread_only"] = bool(source.get("unread_only"))
+    return out
 
 
 def _first_present(arguments: Mapping[str, object], *keys: str) -> tuple[bool, object]:
@@ -11248,82 +11213,11 @@ def _task_instruction_spec_from_args(
 ) -> dict[str, object]:
     from apps.conversations.workflow_contracts import infer_workflow_type_and_memory_shape, normalize_workflow_instructions
 
-    spec: dict[str, object] = dict(current or {})
-    raw_contract = arguments.get("instructions") or arguments.get("instruction_contract") or arguments.get("instructionContract")
-    if isinstance(raw_contract, Mapping):
-        spec.update(dict(raw_contract))
+    spec: dict[str, object] = {"goal": str((current or {}).get("goal") or "").strip()[:6000]} if current else {}
 
     present, value = _first_present(arguments, "goal")
     if present:
         spec["goal"] = str(value or "").strip()[:6000]
-
-    present, value = _first_present(arguments, "success_criteria", "successCriteria")
-    if present:
-        if isinstance(value, (list, tuple)):
-            spec["success_criteria"] = [str(item).strip()[:600] for item in value if str(item or "").strip()][:20]
-        elif value is None:
-            spec["success_criteria"] = []
-        else:
-            text = str(value or "").strip()
-            spec["success_criteria"] = [text[:600]] if text else []
-
-    for public_key, camel_key in (
-        ("constraints", "constraints"),
-        ("output_schema", "outputSchema"),
-        ("approval", "approval"),
-        ("output_preferences", "outputPreferences"),
-    ):
-        present, value = _first_present(arguments, public_key, camel_key)
-        if not present:
-            continue
-        if isinstance(value, Mapping):
-            spec[public_key] = dict(value)
-        elif value is None:
-            spec[public_key] = {}
-        else:
-            text = str(value or "").strip()
-            spec[public_key] = {"instructions": text[:1200]} if text else {}
-
-    present, value = _first_present(arguments, "custom_instructions", "customInstructions", "role_instructions", "roleInstructions")
-    if present:
-        text = str(value or "").strip()
-        if text:
-            spec["custom_instructions"] = text[:4000]
-        else:
-            spec.pop("custom_instructions", None)
-
-    for public_key, camel_key, limit in (
-        ("wake_up_prompt", "wakeUpPrompt", 12000),
-        ("executor_prompt", "executorPrompt", 12000),
-        ("memory_instructions", "memoryInstructions", 6000),
-        ("draft_summary", "draftSummary", 6000),
-    ):
-        present, value = _first_present(arguments, public_key, camel_key)
-        if not present:
-            continue
-        text = str(value or "").strip()
-        if text:
-            spec[public_key] = text[:limit]
-        else:
-            spec.pop(public_key, None)
-
-    present, value = _first_present(arguments, "clarification_questions", "clarificationQuestions")
-    if present:
-        if isinstance(value, (list, tuple)):
-            spec["clarification_questions"] = [str(item).strip()[:300] for item in value if str(item or "").strip()][:8]
-        else:
-            text = str(value or "").strip()
-            spec["clarification_questions"] = [text[:300]] if text else []
-
-    for key in ("workflow_type", "workflowType", "memory_shape", "memoryShape"):
-        if key not in arguments:
-            continue
-        canonical = "workflow_type" if key in {"workflow_type", "workflowType"} else "memory_shape"
-        text = str(arguments.get(key) or "").strip().lower().replace("-", "_").replace(" ", "_")
-        if text:
-            spec[canonical] = text[:64]
-        else:
-            spec.pop(canonical, None)
 
     if not spec.get("workflow_type") or not spec.get("memory_shape"):
         inferred_type, inferred_shape = infer_workflow_type_and_memory_shape(
@@ -11338,39 +11232,7 @@ def _task_instruction_spec_from_args(
 
 
 def _has_task_instruction_updates(arguments: Mapping[str, object]) -> bool:
-    keys = {
-        "instructions",
-        "instruction_contract",
-        "instructionContract",
-        "goal",
-        "success_criteria",
-        "successCriteria",
-        "constraints",
-        "output_schema",
-        "outputSchema",
-        "approval",
-        "output_preferences",
-        "outputPreferences",
-        "custom_instructions",
-        "customInstructions",
-        "role_instructions",
-        "roleInstructions",
-        "wake_up_prompt",
-        "wakeUpPrompt",
-        "executor_prompt",
-        "executorPrompt",
-        "memory_instructions",
-        "memoryInstructions",
-        "draft_summary",
-        "draftSummary",
-        "clarification_questions",
-        "clarificationQuestions",
-        "workflow_type",
-        "workflowType",
-        "memory_shape",
-        "memoryShape",
-    }
-    return any(key in arguments for key in keys)
+    return "goal" in arguments
 
 
 def _remember_workflow_resource_ref(
@@ -11484,17 +11346,18 @@ def _draft_task_handler(
     instructions = _task_instruction_spec_from_args(arguments)
     workflow_type = str(instructions.get("workflow_type") or "general")
     memory_shape = str(instructions.get("memory_shape") or "general")
+    description = str(arguments.get("description") or "").strip()[:4000] if trigger_type == AssistantWorkflowTriggerType.MANUAL else ""
     workflow = AssistantWorkflow.objects.create(
         business_profile_id=conversation.business_profile_id,
         agent_profile=agent,
         created_by=getattr(conversation, "owner_user", None) or getattr(agent, "user", None),
         name=name[:160],
-        description=str(arguments.get("description") or "")[:4000],
+        description=description,
         status=AssistantWorkflowStatus.DRAFT,
         visibility=visibility,
         trigger_type=trigger_type,
-        trigger_config=dict(arguments.get("trigger_config") or arguments.get("triggerConfig") or {}),
-        source_config=dict(arguments.get("source_config") or arguments.get("sourceConfig") or {}),
+        trigger_config=_task_trigger_config_from_args(arguments, trigger_type),
+        source_config=_task_source_config_from_args(arguments),
         instructions=instructions,
         metadata={
             "source": "chat_task_draft",
@@ -11535,10 +11398,12 @@ def _update_task_handler(
     if workflow is None:
         return {"tool": "update_task", "status": "error", "error_code": "not_found", "error": "Task not found."}
     updates: list[str] = []
-    for key, field, limit in (("name", "name", 160), ("description", "description", 4000)):
-        if key in arguments:
-            setattr(workflow, field, str(arguments.get(key) or "").strip()[:limit])
-            updates.append(field)
+    if "name" in arguments:
+        workflow.name = str(arguments.get("name") or "").strip()[:160]
+        updates.append("name")
+    if "description" in arguments and workflow.trigger_type == AssistantWorkflowTriggerType.MANUAL:
+        workflow.description = str(arguments.get("description") or "").strip()[:4000]
+        updates.append("description")
     if _has_task_instruction_updates(arguments):
         current = dict(workflow.instructions or {}) if isinstance(workflow.instructions, dict) else {}
         workflow.instructions = _task_instruction_spec_from_args(arguments, current=current)
@@ -11556,10 +11421,12 @@ def _update_task_handler(
             return {"tool": "update_task", "status": "error", "error_code": "validation_failed", "error": "Invalid trigger_type."}
         workflow.trigger_type = trigger_type
         updates.append("trigger_type")
-    for key, field in (("trigger_config", "trigger_config"), ("triggerConfig", "trigger_config"), ("source_config", "source_config"), ("sourceConfig", "source_config")):
-        if key in arguments:
-            setattr(workflow, field, dict(arguments.get(key) or {}))
-            updates.append(field)
+    if "trigger_config" in arguments or "triggerConfig" in arguments or "trigger_type" in arguments or "triggerType" in arguments:
+        workflow.trigger_config = _task_trigger_config_from_args(arguments, workflow.trigger_type, current=workflow.trigger_config)
+        updates.append("trigger_config")
+    if "source_config" in arguments or "sourceConfig" in arguments:
+        workflow.source_config = _task_source_config_from_args(arguments, current=workflow.source_config)
+        updates.append("source_config")
     if "visibility" in arguments:
         visibility = str(arguments.get("visibility") or "").strip().lower()
         if visibility not in {choice for choice, _ in AgentRunVisibility.choices}:

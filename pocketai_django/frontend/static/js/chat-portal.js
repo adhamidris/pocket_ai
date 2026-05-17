@@ -5021,7 +5021,7 @@ class ChatPortalClient {
   getSuccessCircleIconMarkup() {
     return `
       <svg viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M4.8 8.6l2 2.1 4.4-5" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+        <path d="M4.8 8.6l2 2.1 4.4-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
       </svg>
     `;
   }
@@ -5037,8 +5037,64 @@ class ChatPortalClient {
   getWorkflowRunIconMarkup() {
     return `
       <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
-        <path d="M7.25 5.75v8.5l6.5-4.25-6.5-4.25Z" fill="currentColor"></path>
-        <path d="M10 2.75a7.25 7.25 0 1 1 0 14.5 7.25 7.25 0 0 1 0-14.5Z" stroke="currentColor" stroke-width="1.25" opacity="0.34"></path>
+        <path d="M7.7 5.9v8.2l6.2-4.1-6.2-4.1Z" fill="currentColor"></path>
+        <path d="M10 2.85a7.15 7.15 0 1 1 0 14.3 7.15 7.15 0 0 1 0-14.3Z" stroke="currentColor" stroke-width="1.2" opacity="0.38"></path>
+      </svg>
+    `;
+  }
+
+  getChevronRightIconMarkup() {
+    return `
+      <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M6.25 4.25 9.75 8l-3.5 3.75" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path>
+      </svg>
+    `;
+  }
+
+  getToolCallIconMarkup() {
+    return `
+      <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M5.25 4.5 2.75 8l2.5 3.5M10.75 4.5l2.5 3.5-2.5 3.5" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"></path>
+        <path d="M8.9 3.75 7.1 12.25" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" opacity="0.55"></path>
+      </svg>
+    `;
+  }
+
+  getRunStateIconMarkup(statusRaw, toneRaw) {
+    const status = (statusRaw || "").toString().trim().toLowerCase();
+    const tone = (toneRaw || "").toString().trim().toLowerCase();
+    if (["completed", "resolved", "success", "succeeded"].includes(status) || tone === "success") {
+      return `
+        <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M4.15 8.2 6.65 10.7l5.2-5.4" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"></path>
+        </svg>
+      `;
+    }
+    if (["failed", "error", "cancelled", "canceled"].includes(status) || tone === "danger") {
+      return `
+        <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M5 5l6 6M11 5l-6 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"></path>
+        </svg>
+      `;
+    }
+    if (["waiting_approval", "waiting_user"].includes(status) || tone === "attention") {
+      return `
+        <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M8 4.25v4.25" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"></path>
+          <path d="M8 11.55h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+        </svg>
+      `;
+    }
+    if (["running", "in_progress", "queued", "started"].includes(status) || tone === "active") {
+      return `
+        <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M8 3.5v4.7l3 1.75" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"></path>
+        </svg>
+      `;
+    }
+    return `
+      <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M5 8h6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"></path>
       </svg>
     `;
   }
@@ -7716,7 +7772,7 @@ class ChatPortalClient {
     return `
       <div class="portal-task__run-row" data-status="${this.escapeHtml(status.toLowerCase())}" data-tone="${this.escapeHtml(tone)}" data-expanded="${expanded ? "true" : "false"}">
         <button type="button" class="portal-task__run-row-button" data-workflow-run-toggle="true" data-workflow-id="${this.escapeHtml(workflowId)}" data-run-id="${this.escapeHtml(runId)}">
-          <span class="portal-task__run-dot" aria-hidden="true"></span>
+          <span class="portal-task__run-state" aria-hidden="true">${this.getRunStateIconMarkup(status, tone)}</span>
           <span class="portal-task__run-row-main">
             <span class="portal-task__run-row-top">
               <span class="portal-task__run-kicker">${this.escapeHtml(latest ? this.t("Latest run") : this.t("Run"))}</span>
@@ -7728,7 +7784,7 @@ class ChatPortalClient {
             <span class="portal-task__run-row-title">${this.escapeHtml(title || summary || this.t("Run"))}</span>
             ${showPreview ? `<span class="portal-task__run-row-summary">${this.escapeHtml(summary)}</span>` : ""}
           </span>
-          <span class="portal-task__run-chevron" aria-hidden="true">${expanded ? "⌃" : "⌄"}</span>
+          <span class="portal-task__run-chevron" aria-hidden="true">${this.getChevronRightIconMarkup()}</span>
         </button>
         ${expanded ? this.renderWorkflowRunDetailHtml(run) : ""}
       </div>
@@ -8240,10 +8296,10 @@ class ChatPortalClient {
           return `
             <details class="portal-task__tool-call">
               <summary>
-                <span class="portal-task__tool-icon" aria-hidden="true"></span>
+                <span class="portal-task__tool-icon" aria-hidden="true">${this.getToolCallIconMarkup()}</span>
                 <span class="portal-task__tool-name">${this.escapeHtml(row.title)}</span>
                 ${status}
-                <span class="portal-task__tool-chevron" aria-hidden="true">›</span>
+                <span class="portal-task__tool-chevron" aria-hidden="true">${this.getChevronRightIconMarkup()}</span>
               </summary>
               ${this.renderToolDetailsHtml(row)}
             </details>
@@ -8261,7 +8317,7 @@ class ChatPortalClient {
       <details class="portal-task__work"${openAttr}>
         <summary>
           <span>${this.escapeHtml(this.formatRunWorkLabel(run))}</span>
-          <span class="portal-task__work-chevron" aria-hidden="true">›</span>
+          <span class="portal-task__work-chevron" aria-hidden="true">${this.getChevronRightIconMarkup()}</span>
         </summary>
         ${body}
       </details>
