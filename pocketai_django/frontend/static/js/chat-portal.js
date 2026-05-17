@@ -133,7 +133,7 @@ class ChatPortalClient {
       maxCharsPerTick: 8,
       maxBudgetChars: 20,
       boundaryModeMultiplier: 1.2,
-      finalizeModeMultiplier: 1.1,
+      finalizeModeMultiplier: 1.35,
       dtCapMs: 50,
     };
 	    // Snapshot of content blocks when a tool approval is pending (preserves text before approval card)
@@ -283,6 +283,9 @@ class ChatPortalClient {
 
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) {
+        if (this.finalizingTurn && this.hasStreamingBlockBacklog()) {
+          this.flushStreamingBlockRenders(true);
+        }
         this.pageLifecycleSuspended = true;
         this.closeSessionEventStream();
         this.closeTurnEventStream();
@@ -5196,16 +5199,20 @@ class ChatPortalClient {
         pendingOps: this.streamingPendingBlockOps ? this.streamingPendingBlockOps.size : 0,
         dirtyBlocks: this.streamingDirtyTextBlocks ? this.streamingDirtyTextBlocks.size : 0,
       });
-      if (this.streamingPendingBlockOps && this.streamingPendingBlockOps.size) {
-        this.streamingPendingBlockOps.forEach((_ops, blockId) => {
-          if (blockId) this.streamingDirtyTextBlocks.add(blockId);
-        });
+      // Watchdog triggered: forcefully flush the remaining backlog.
+      if (this.hasStreamingBlockBacklog()) {
+        if (this.streamingPendingBlockOps && this.streamingPendingBlockOps.size) {
+          this.streamingPendingBlockOps.forEach((_ops, blockId) => {
+            if (blockId) this.streamingDirtyTextBlocks.add(blockId);
+          });
+        }
+        this.flushStreamingBlockRenders(true);
       }
-      this.flushStreamingBlockRenders(true);
+      // If the queue callback still didn't fire, forcefully reconcile.
       if (this.finalizingTurn) {
         this._doTurnPersistedReconcile(data);
       }
-    }, 1800);
+    }, 8000); // Generous 8s watchdog instead of 1.8s
   }
 
   handleTurnPersistedEvent(data) {
@@ -5215,7 +5222,11 @@ class ChatPortalClient {
     if (this.container && this.container.dataset) {
       this.container.dataset.finalizing = "true";
     }
+    
+    // 1. Set the generous conditional watchdog
     this._scheduleTurnPersistedFinalizeTimer(data);
+    
+    // 2. The normal path: wait for natural drain
     this._queueAfterBlockDrain(
       () => {
         if (!this.finalizingTurn) return;
