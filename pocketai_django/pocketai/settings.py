@@ -368,6 +368,9 @@ INSTALLED_APPS = [
     # Project apps
     "apps.accounts",
     "apps.crm",
+    "apps.agent_runs.apps.AgentRunsConfig",
+    "apps.assistants.apps.AssistantsConfig",
+    "apps.automations.apps.AutomationsConfig",
     "apps.conversations.apps.ConversationsConfig",
     "apps.integrations.apps.IntegrationsConfig",
     "apps.knowledge.apps.KnowledgeConfig",

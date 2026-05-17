@@ -4,7 +4,7 @@ import json
 import re
 from typing import Mapping
 
-from apps.conversations.models import AgentRun, AgentRunStatus
+from apps.agent_runs.models import AgentRun, AgentRunStatus
 
 
 _JSON_DECODER = json.JSONDecoder()

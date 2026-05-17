@@ -13,7 +13,7 @@ from django.utils import timezone
 
 from core.tenancy import tenant_bypass, tenant_context
 
-from apps.conversations.models import AgentRunEventStream, AgentRunEventType
+from apps.agent_runs.models import AgentRunEventStream, AgentRunEventType
 from apps.voice.agent_run_bridge import append_agent_run_event, get_agent_run_id_from_call_session_metadata
 from apps.voice.models import CallEvent, CallSession, CallStatus, CallType, VoiceConfiguration, VoiceSuppressionEntry
 from apps.voice.policy_engine import audit_policy_decision, evaluate_voice_compliance_policy

@@ -14,7 +14,7 @@ class ChatPortalClient {
       runApproval: container.getAttribute("data-endpoint-run-approval"),
       runUserInput: container.getAttribute("data-endpoint-run-user-input"),
       runCheckpoint: container.getAttribute("data-endpoint-run-checkpoint"),
-      workflowRun: container.getAttribute("data-endpoint-workflow-run"),
+      automationRun: container.getAttribute("data-endpoint-automation-run"),
       agentRequestUpdate: container.getAttribute("data-endpoint-agent-request-update"),
       emailSendDraft: container.getAttribute("data-endpoint-email-send-draft"),
       emailDiscardDraft: container.getAttribute("data-endpoint-email-discard-draft"),
@@ -145,7 +145,7 @@ class ChatPortalClient {
 	    this.pendingMessageId = null;
 	    this.pendingMetadataVersion = 0;
 	    this.usingStateMachine = false;
-	    this.workflowLocked = false;
+	    this.automationLocked = false;
 	    this.streamingActive = false;
     this.streamFinished = false;
     this.isSending = false;
@@ -166,7 +166,7 @@ class ChatPortalClient {
     this.sessionLoadInProgress = false;
     this.sessionSummaries = [];
     this.currentSessionType = (container.getAttribute("data-session-type") || "chat").toString().trim().toLowerCase() || "chat";
-    this.currentWorkflowName = container.getAttribute("data-workflow-name") || "";
+    this.currentCustomAssistantName = container.getAttribute("data-custom-assistant-name") || "";
     this.pendingSessionTitles = {};
     // Streaming UX helpers
     this.scrollToBottomRaf = null;
@@ -195,8 +195,8 @@ class ChatPortalClient {
 
 	    // Agent runs/activity panel state
 	    this.agentRuns = new Map(); // runId -> { run, events, expanded, seenKeys, lastEventLabel }
-    this.workflowAgents = new Map(); // workflowId -> { workflow, expanded, expandedRuns }
-    this.workflowManualRunBusy = new Set();
+    this.automationAgents = new Map(); // automationId -> { automation, expanded, expandedRuns }
+    this.automationManualRunBusy = new Set();
     this.tasksRenderRaf = null;
     this.tasksPanelUserHidden = false;
 
@@ -687,7 +687,7 @@ class ChatPortalClient {
     if (!this.endpoints.fileUpload) return;
 
     button.addEventListener("click", () => {
-      if (this.workflowLocked) return;
+      if (this.automationLocked) return;
       input.click();
     });
 
@@ -943,7 +943,7 @@ class ChatPortalClient {
 		    this.pendingMessageId = null;
 	    this.pendingMetadataVersion = 0;
 	    this.usingStateMachine = false;
-      this.workflowLocked = false;
+      this.automationLocked = false;
 	    this.streamFinished = false;
 	    this.awaitingReply = true;
 	    this.isSending = true;
@@ -1078,7 +1078,7 @@ class ChatPortalClient {
     }
 
     if (eventType === "status") {
-      if (this.workflowLocked) {
+      if (this.automationLocked) {
         return;
       }
       try {
@@ -1110,7 +1110,7 @@ class ChatPortalClient {
       try {
         const payload = data ? JSON.parse(data) : null;
         const label = payload && payload.label ? payload.label : "Follow-up tasks completed.";
-        this.showToast("Workflow update", label);
+        this.showToast("Automation update", label);
       } catch (_err) {
         // ignore
       }
@@ -1120,8 +1120,8 @@ class ChatPortalClient {
     if (eventType === "actionsError") {
       try {
         const payload = data ? JSON.parse(data) : null;
-        const message = payload && payload.error ? payload.error : "Background workflow failed.";
-        this.showToast("Workflow issue", message, true);
+        const message = payload && payload.error ? payload.error : "Background automation failed.";
+        this.showToast("Automation issue", message, true);
       } catch (_err) {
         // ignore
       }
@@ -1194,7 +1194,7 @@ class ChatPortalClient {
 	      }
 	    } catch (error) {
 	      this.stopRequested = false;
-	      this.showToast("Stop failed", error.message || "Could not stop the workflow.", true);
+	      this.showToast("Stop failed", error.message || "Could not stop the automation.", true);
 	    }
 	  }
 
@@ -5034,7 +5034,7 @@ class ChatPortalClient {
     `;
   }
 
-  getWorkflowRunIconMarkup() {
+  getAutomationRunIconMarkup() {
     return `
       <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
         <path d="M7.7 5.9v8.2l6.2-4.1-6.2-4.1Z" fill="currentColor"></path>
@@ -5431,7 +5431,7 @@ class ChatPortalClient {
 	      this.streamFinished = true;
 	      this.isStreaming = false;
         this.awaitingReply = false;
-	      this.workflowLocked = false;
+	      this.automationLocked = false;
 	      this.updateSendButtonState(false);
 	      this.setComposerAvailability(true);
 	      this.updateComposerNotice(false);
@@ -5452,7 +5452,7 @@ class ChatPortalClient {
         this.streamFinished = true;
         this.isStreaming = false;
         this.awaitingReply = false;
-        this.workflowLocked = false;
+        this.automationLocked = false;
         this.updateSendButtonState(false);
         this.setComposerAvailability(true);
         this.updateComposerNotice(false);
@@ -5663,26 +5663,26 @@ class ChatPortalClient {
         return;
       }
 
-      const workflowRunBtn = target.closest("[data-workflow-run-now]");
-      if (workflowRunBtn) {
-        const workflowId = (workflowRunBtn.getAttribute("data-workflow-run-now") || "").trim();
-        const card = workflowRunBtn.closest(".portal-task");
-        if (workflowId) this.submitWorkflowManualRun(workflowId, workflowRunBtn, card);
+      const automationRunBtn = target.closest("[data-automation-run-now]");
+      if (automationRunBtn) {
+        const automationId = (automationRunBtn.getAttribute("data-automation-run-now") || "").trim();
+        const card = automationRunBtn.closest(".portal-task");
+        if (automationId) this.submitAutomationManualRun(automationId, automationRunBtn, card);
         return;
       }
 
-      const workflowToggleEl = target.closest("[data-workflow-toggle]");
-      if (workflowToggleEl) {
-        const workflowId = (workflowToggleEl.getAttribute("data-workflow-toggle") || "").trim();
-        if (workflowId) this.toggleWorkflowExpanded(workflowId);
+      const automationToggleEl = target.closest("[data-automation-toggle]");
+      if (automationToggleEl) {
+        const automationId = (automationToggleEl.getAttribute("data-automation-toggle") || "").trim();
+        if (automationId) this.toggleAutomationExpanded(automationId);
         return;
       }
 
-      const workflowRunToggleEl = target.closest("[data-workflow-run-toggle]");
-      if (workflowRunToggleEl) {
-        const workflowId = (workflowRunToggleEl.getAttribute("data-workflow-id") || "").trim();
-        const runId = (workflowRunToggleEl.getAttribute("data-run-id") || "").trim();
-        if (workflowId && runId) this.toggleWorkflowRunExpanded(workflowId, runId);
+      const automationRunToggleEl = target.closest("[data-automation-run-toggle]");
+      if (automationRunToggleEl) {
+        const automationId = (automationRunToggleEl.getAttribute("data-automation-id") || "").trim();
+        const runId = (automationRunToggleEl.getAttribute("data-run-id") || "").trim();
+        if (automationId && runId) this.toggleAutomationRunExpanded(automationId, runId);
         return;
       }
 
@@ -5800,19 +5800,24 @@ class ChatPortalClient {
     return "";
   }
 
-  async submitWorkflowManualRun(workflowId, buttonEl, cardEl) {
-    const safeWorkflowId = (workflowId || "").toString().trim();
-    if (!safeWorkflowId) return;
-    if (!this.endpoints.workflowRun) {
-      this.showToast("Run unavailable", "Workflow run endpoint is not configured.", true);
+  async submitAutomationManualRun(automationId, buttonEl, cardEl) {
+    const safeAutomationId = (automationId || "").toString().trim();
+    if (!safeAutomationId) return;
+    const knownAutomationState = this.automationAgents.get(safeAutomationId);
+    if (knownAutomationState && this.isCustomAssistantAutomation(knownAutomationState.automation)) {
+      this.showToast(this.t("Custom Assistants open as chat sessions."), this.t("Open the assistant from the sidebar instead."), true);
+      return;
+    }
+    if (!this.endpoints.automationRun) {
+      this.showToast(this.t("Run unavailable"), this.t("Automation run endpoint is not configured."), true);
       return;
     }
     if (!this.sessionToken) {
-      this.showToast("Run unavailable", "Session token missing.", true);
+      this.showToast(this.t("Run unavailable"), this.t("Session token missing."), true);
       return;
     }
-    if (this.workflowManualRunBusy.has(safeWorkflowId)) return;
-    this.workflowManualRunBusy.add(safeWorkflowId);
+    if (this.automationManualRunBusy.has(safeAutomationId)) return;
+    this.automationManualRunBusy.add(safeAutomationId);
     if (buttonEl) {
       buttonEl.disabled = true;
       buttonEl.dataset.busy = "true";
@@ -5820,51 +5825,51 @@ class ChatPortalClient {
     }
 
     try {
-      const response = await fetch(this.endpoints.workflowRun, {
+      const response = await fetch(this.endpoints.automationRun, {
         method: "POST",
         headers: this.jsonHeaders(),
         body: JSON.stringify(
           this.getCurrentReferencePayload({
-            workflow_id: safeWorkflowId,
+            automation_id: safeAutomationId,
           }),
         ),
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
-        const message = payload && payload.error && payload.error.message ? payload.error.message : "Workflow run failed.";
+        const message = payload && payload.error && payload.error.message ? payload.error.message : this.t("Automation run failed.");
         throw new Error(message);
       }
 
-      const workflow = payload && payload.workflow && typeof payload.workflow === "object" ? payload.workflow : null;
+      const automation = payload && payload.automation && typeof payload.automation === "object" ? payload.automation : null;
       const run = payload && payload.run && typeof payload.run === "object" ? payload.run : null;
-      const workflowState = workflow ? this.upsertWorkflowAgent(workflow) : this.workflowAgents.get(safeWorkflowId);
+      const automationState = automation ? this.upsertCustomAssistant(automation) : this.automationAgents.get(safeAutomationId);
       if (run) {
         this.upsertAgentRun(run);
-        if (workflowState && workflowState.workflow) {
-          const recent = Array.isArray(workflowState.workflow.recentRuns) ? workflowState.workflow.recentRuns.slice() : [];
+        if (automationState && automationState.automation) {
+          const recent = Array.isArray(automationState.automation.recentRuns) ? automationState.automation.recentRuns.slice() : [];
           const withoutCurrent = recent.filter((item) => item && item.id !== run.id);
-          workflowState.workflow = Object.assign({}, workflowState.workflow, {
+          automationState.automation = Object.assign({}, automationState.automation, {
             latestRun: Object.assign({}, run),
             recentRuns: [run, ...withoutCurrent].slice(0, 5),
-            lastTriggeredAt: run.createdAt || workflowState.workflow.lastTriggeredAt || null,
+            lastTriggeredAt: run.createdAt || automationState.automation.lastTriggeredAt || null,
           });
         }
       }
-      if (workflowState) {
-        workflowState.expanded = true;
-        if (!(workflowState.expandedRuns instanceof Set)) workflowState.expandedRuns = new Set();
-        if (run && run.id) workflowState.expandedRuns.add(String(run.id));
+      if (automationState) {
+        automationState.expanded = true;
+        if (!(automationState.expandedRuns instanceof Set)) automationState.expandedRuns = new Set();
+        if (run && run.id) automationState.expandedRuns.add(String(run.id));
       }
       if (!this.tasksPanelUserHidden) {
         this.setTasksPanelVisible(true);
       }
-      this.showToast("Run queued", "Workflow run started.", false);
+      this.showToast(this.t("Run queued"), this.t("Automation run started."), false);
       this.scheduleTasksRender();
     } catch (error) {
-      console.warn("Workflow manual run failed", error);
+      console.warn("Automation manual run failed", error);
       this.showToast("Run failed", error.message || "Please try again.", true);
     } finally {
-      this.workflowManualRunBusy.delete(safeWorkflowId);
+      this.automationManualRunBusy.delete(safeAutomationId);
       if (buttonEl) {
         buttonEl.disabled = false;
         buttonEl.dataset.busy = "false";
@@ -6058,15 +6063,15 @@ class ChatPortalClient {
       if (run) this.upsertAgentRun(run);
       const checkpoint = payload && payload.checkpoint && typeof payload.checkpoint === "object" ? payload.checkpoint : null;
       if (checkpoint && checkpoint.id) {
-        this.workflowAgents.forEach((state) => {
-          const workflow = state && state.workflow ? state.workflow : null;
-          const open = workflow && workflow.openCheckpoint && typeof workflow.openCheckpoint === "object" ? workflow.openCheckpoint : null;
+        this.automationAgents.forEach((state) => {
+          const automation = state && state.automation ? state.automation : null;
+          const open = automation && automation.openCheckpoint && typeof automation.openCheckpoint === "object" ? automation.openCheckpoint : null;
           if (open && open.id === checkpoint.id) {
-            state.workflow = Object.assign({}, workflow, { openCheckpoint: null });
+            state.automation = Object.assign({}, automation, { openCheckpoint: null });
           }
         });
       }
-      this.showToast("Saved", "Workflow updated.", false);
+      this.showToast("Saved", "Automation updated.", false);
       this.scheduleTasksRender();
     } catch (error) {
       console.warn("Run checkpoint failed", error);
@@ -6379,13 +6384,13 @@ class ChatPortalClient {
 
   getActiveRunCount() {
     let count = 0;
-    this.workflowAgents.forEach((state) => {
-      const workflow = state && state.workflow ? state.workflow : {};
-      if (workflow.openCheckpoint) {
+    this.automationAgents.forEach((state) => {
+      const automation = state && state.automation ? state.automation : {};
+      if (automation.openCheckpoint) {
         count += 1;
         return;
       }
-      const latest = workflow.latestRun && typeof workflow.latestRun === "object" ? workflow.latestRun : null;
+      const latest = automation.latestRun && typeof automation.latestRun === "object" ? automation.latestRun : null;
       const status = latest && latest.status ? latest.status.toString().toLowerCase() : "";
       if (["running", "queued", "waiting_user", "waiting_approval", "waiting_child", "waiting_external", "paused"].includes(status)) {
         count += 1;
@@ -6420,15 +6425,15 @@ class ChatPortalClient {
     this.scheduleTasksRender();
   }
 
-  toggleWorkflowExpanded(workflowId) {
-    const state = this.workflowAgents.get(workflowId);
+  toggleAutomationExpanded(automationId) {
+    const state = this.automationAgents.get(automationId);
     if (!state) return;
     state.expanded = !state.expanded;
     this.scheduleTasksRender();
   }
 
-  toggleWorkflowRunExpanded(workflowId, runId) {
-    const state = this.workflowAgents.get(workflowId);
+  toggleAutomationRunExpanded(automationId, runId) {
+    const state = this.automationAgents.get(automationId);
     if (!state || !runId) return;
     if (!(state.expandedRuns instanceof Set)) {
       state.expandedRuns = new Set();
@@ -6451,17 +6456,17 @@ class ChatPortalClient {
   handleAgentRunsSnapshot(payload) {
     if (!payload || typeof payload !== "object") return;
     const runs = Array.isArray(payload.runs) ? payload.runs : [];
-    const workflows = Array.isArray(payload.workflows) ? payload.workflows : [];
+    const automations = Array.isArray(payload.automations) ? payload.automations : [];
     const eventsByRun =
       payload.eventsByRun && typeof payload.eventsByRun === "object" ? payload.eventsByRun : {};
 
-    workflows.forEach((workflow) => {
-      const workflowState = this.upsertWorkflowAgent(workflow);
-      const latest = workflow && workflow.latestRun && typeof workflow.latestRun === "object" ? workflow.latestRun : null;
+    automations.forEach((automation) => {
+      const automationState = this.upsertCustomAssistant(automation);
+      const latest = automation && automation.latestRun && typeof automation.latestRun === "object" ? automation.latestRun : null;
       if (latest) this.upsertAgentRun(latest);
-      const recent = workflow && Array.isArray(workflow.recentRuns) ? workflow.recentRuns : [];
+      const recent = automation && Array.isArray(automation.recentRuns) ? automation.recentRuns : [];
       recent.forEach((run) => this.upsertAgentRun(run));
-      this.expandWorkflowLiveRun(workflowState, { liveEvent: false });
+      this.expandAutomationLiveRun(automationState, { liveEvent: false });
     });
 
     runs.forEach((run) => {
@@ -6512,24 +6517,32 @@ class ChatPortalClient {
       if (runState && (this.isRunActiveStatus(run.status) || this.isRunTerminalStatus(run.status))) {
         runState.expanded = true;
       }
-      const workflowId = (run.workflowId || run.workflow_id || "").toString().trim();
-      if (workflowId) {
-        const workflowState = this.workflowAgents.get(workflowId) || this.upsertWorkflowAgent({ id: workflowId, name: run.workflowName || "" });
-        if (workflowState && workflowState.workflow) {
-          const recent = Array.isArray(workflowState.workflow.recentRuns) ? workflowState.workflow.recentRuns.slice() : [];
+      const automationId = (run.automationId || run.automation_id || "").toString().trim();
+      if (automationId) {
+        const runAutomation = {
+          id: automationId,
+          name: run.automationName || "",
+          kind: run.automationKind || run.automation_kind || "",
+        };
+        const existingAutomationState = this.automationAgents.get(automationId);
+        const automationState = this.isAutomationAutomation(existingAutomationState && existingAutomationState.automation ? existingAutomationState.automation : runAutomation)
+          ? (existingAutomationState || this.upsertCustomAssistant(runAutomation))
+          : null;
+        if (automationState && automationState.automation) {
+          const recent = Array.isArray(automationState.automation.recentRuns) ? automationState.automation.recentRuns.slice() : [];
           const withoutCurrent = recent.filter((item) => item && item.id !== run.id);
           const statusNow = (run.status || "").toString().trim().toLowerCase();
           const terminalNow = this.isRunTerminalStatus(statusNow);
           const hasOpenCheckpoint = Object.prototype.hasOwnProperty.call(run, "openCheckpoint");
           const openCheckpoint = hasOpenCheckpoint
             ? (run.openCheckpoint && typeof run.openCheckpoint === "object" ? run.openCheckpoint : null)
-            : (terminalNow ? null : workflowState.workflow.openCheckpoint || null);
-          workflowState.workflow = Object.assign({}, workflowState.workflow, {
-            latestRun: Object.assign({}, workflowState.workflow.latestRun || {}, run),
+            : (terminalNow ? null : automationState.automation.openCheckpoint || null);
+          automationState.automation = Object.assign({}, automationState.automation, {
+            latestRun: Object.assign({}, automationState.automation.latestRun || {}, run),
             openCheckpoint,
             recentRuns: [run, ...withoutCurrent].slice(0, 5),
           });
-          this.expandWorkflowLiveRun(workflowState, { liveEvent: true, run });
+          this.expandAutomationLiveRun(automationState, { liveEvent: true, run });
         }
       }
     } else {
@@ -6545,10 +6558,10 @@ class ChatPortalClient {
       this.updateTasksOpenButton();
     }
 
-    // Route workflow events to incremental card patching instead of full re-render.
-    const workflowIdForPatch = run ? (run.workflowId || run.workflow_id || "").toString().trim() : "";
-    if (workflowIdForPatch && this.workflowAgents.has(workflowIdForPatch)) {
-      this.scheduleWorkflowCardPatch(workflowIdForPatch);
+    // Route automation events to incremental card patching instead of full re-render.
+    const automationIdForPatch = run ? (run.automationId || run.automation_id || "").toString().trim() : "";
+    if (automationIdForPatch && this.automationAgents.has(automationIdForPatch)) {
+      this.scheduleAutomationCardPatch(automationIdForPatch);
     } else {
       this.scheduleTasksRender();
     }
@@ -6619,40 +6632,40 @@ class ChatPortalClient {
     return state;
   }
 
-  upsertWorkflowAgent(workflow) {
-    if (!workflow || typeof workflow !== "object") return null;
-    const workflowId = typeof workflow.id === "string" ? workflow.id.trim() : "";
-    if (!workflowId) return null;
-    const existing = this.workflowAgents.get(workflowId);
+  upsertCustomAssistant(automation) {
+    if (!automation || typeof automation !== "object") return null;
+    const automationId = typeof automation.id === "string" ? automation.id.trim() : "";
+    if (!automationId) return null;
+    const existing = this.automationAgents.get(automationId);
     if (existing) {
-      existing.workflow = Object.assign({}, existing.workflow || {}, workflow);
+      existing.automation = Object.assign({}, existing.automation || {}, automation);
       if (!(existing.expandedRuns instanceof Set)) existing.expandedRuns = new Set();
       return existing;
     }
     const state = {
-      workflow: Object.assign({}, workflow),
+      automation: Object.assign({}, automation),
       expanded: false,
       expandedRuns: new Set(),
     };
-    this.workflowAgents.set(workflowId, state);
+    this.automationAgents.set(automationId, state);
     return state;
   }
 
-  expandWorkflowLiveRun(workflowState, { liveEvent = false, run = null } = {}) {
-    if (!workflowState || !workflowState.workflow) return;
-    if (!(workflowState.expandedRuns instanceof Set)) workflowState.expandedRuns = new Set();
-    const workflow = workflowState.workflow;
-    const latest = run || (workflow.latestRun && typeof workflow.latestRun === "object" ? workflow.latestRun : null);
-    const checkpoint = workflow.openCheckpoint && typeof workflow.openCheckpoint === "object" ? workflow.openCheckpoint : null;
+  expandAutomationLiveRun(automationState, { liveEvent = false, run = null } = {}) {
+    if (!automationState || !automationState.automation) return;
+    if (!(automationState.expandedRuns instanceof Set)) automationState.expandedRuns = new Set();
+    const automation = automationState.automation;
+    const latest = run || (automation.latestRun && typeof automation.latestRun === "object" ? automation.latestRun : null);
+    const checkpoint = automation.openCheckpoint && typeof automation.openCheckpoint === "object" ? automation.openCheckpoint : null;
     const shouldOpen = Boolean(
       checkpoint ||
       (latest && this.isRunActiveStatus(latest.status)) ||
       (liveEvent && latest && this.isRunTerminalStatus(latest.status))
     );
     if (!shouldOpen) return;
-    workflowState.expanded = true;
+    automationState.expanded = true;
     const runId = latest && latest.id ? String(latest.id).trim() : "";
-    if (runId) workflowState.expandedRuns.add(runId);
+    if (runId) automationState.expandedRuns.add(runId);
   }
 
   upsertAgentRequest(req) {
@@ -6723,80 +6736,89 @@ class ChatPortalClient {
   }
 
   /**
-   * Schedule an incremental patch for a single workflow card.
-   * Uses a per-workflow RAF so rapid events for the same workflow coalesce,
-   * and events for different workflows don't block each other.
+   * Schedule an incremental patch for a single automation card.
+   * Uses a per-automation RAF so rapid events for the same automation coalesce,
+   * and events for different automations don't block each other.
    */
-  scheduleWorkflowCardPatch(workflowId) {
-    if (!this._workflowPatchRafs) this._workflowPatchRafs = new Map();
-    if (this._workflowPatchRafs.has(workflowId)) return;
-    this._workflowPatchRafs.set(workflowId, requestAnimationFrame(() => {
-      this._workflowPatchRafs.delete(workflowId);
-      this.patchWorkflowCard(workflowId);
+  scheduleAutomationCardPatch(automationId) {
+    if (!this._automationPatchRafs) this._automationPatchRafs = new Map();
+    if (this._automationPatchRafs.has(automationId)) return;
+    this._automationPatchRafs.set(automationId, requestAnimationFrame(() => {
+      this._automationPatchRafs.delete(automationId);
+      this.patchAutomationCard(automationId);
     }));
   }
 
   /**
-   * Incrementally update a single workflow card in-place without
+   * Incrementally update a single automation card in-place without
    * replacing the entire tasks panel innerHTML. Preserves:
-   * - Workflow card expanded/collapsed state
+   * - Automation card expanded/collapsed state
    * - Run row expanded/collapsed state
    * - <details> open/close state (scratchpad, tool calls)
    * - Scroll position within scratchpad
    * - Any in-progress textarea input
    */
-  patchWorkflowCard(workflowId) {
+  patchAutomationCard(automationId) {
     if (!this.elements.tasksCards) return;
-    const cardEl = this.elements.tasksCards.querySelector(`[data-workflow-id="${workflowId}"]`);
+    const cardEl = this.elements.tasksCards.querySelector(`[data-automation-id="${automationId}"]`);
     if (!cardEl) {
       // Card doesn't exist in DOM yet — fall back to full re-render.
       this.scheduleTasksRender();
       return;
     }
 
-    const workflowState = this.workflowAgents.get(workflowId);
-    if (!workflowState || !workflowState.workflow) return;
-    const workflow = workflowState.workflow;
-    const expanded = Boolean(workflowState.expanded);
-    const latestRun = workflow.latestRun && typeof workflow.latestRun === "object" ? workflow.latestRun : null;
-    const checkpoint = workflow.openCheckpoint && typeof workflow.openCheckpoint === "object" ? workflow.openCheckpoint : null;
-    const status = checkpoint ? "waiting_approval" : (latestRun && latestRun.status ? latestRun.status : (workflow.status || "draft"));
+    const automationState = this.automationAgents.get(automationId);
+    if (!automationState || !automationState.automation) return;
+    const automation = automationState.automation;
+    const expanded = Boolean(automationState.expanded);
+    const latestRun = automation.latestRun && typeof automation.latestRun === "object" ? automation.latestRun : null;
+    const checkpoint = automation.openCheckpoint && typeof automation.openCheckpoint === "object" ? automation.openCheckpoint : null;
+    const checkpointKind = checkpoint && checkpoint.kind ? String(checkpoint.kind).trim().toLowerCase() : "";
+    const checkpointStatus = checkpoint ? (checkpointKind === "user_input" ? "waiting_user" : "waiting_approval") : "";
+    const status = checkpointStatus || (latestRun && latestRun.status ? latestRun.status : (automation.status || "draft"));
+    const attentionStatus = this.getTaskAttentionStatus(status);
+    const needsAttention = Boolean(checkpoint || attentionStatus);
     cardEl.setAttribute("data-expanded", expanded ? "true" : "false");
 
     // --- Update header in-place ---
-    const pillEl = cardEl.querySelector(".portal-task__status-pill");
-    if (pillEl) {
-      const newPillHtml = this.renderRunStatusPill(status);
-      const pillContainer = pillEl.parentElement;
-      if (pillContainer) {
-        const temp = document.createElement("div");
-        temp.innerHTML = newPillHtml;
-        const newPill = temp.firstElementChild;
-        if (newPill) pillContainer.replaceChild(newPill, pillEl);
-      }
+    const titleRowEl = cardEl.querySelector(".portal-task__title-row");
+    if (titleRowEl) {
+      const name = automation && automation.name ? String(automation.name) : this.t("Automation");
+      titleRowEl.innerHTML = `
+        <div class="portal-task__title">${this.escapeHtml(name)}</div>
+        ${this.renderTaskAttentionIndicator(status)}
+        ${this.renderRunStatusPill(status)}
+      `;
     }
 
     const subtitleEl = cardEl.querySelector(".portal-task__subtitle");
     if (subtitleEl) {
-      const triggerLabel = this.getWorkflowTriggerLabel(workflow.triggerType);
-      const ownerLabel = workflow.agentName ? String(workflow.agentName) : "";
+      const triggerLabel = this.getAutomationTriggerLabel(automation.triggerType);
+      const ownerLabel = automation.agentName ? String(automation.agentName) : "";
       const subtitleParts = [ownerLabel, triggerLabel];
-      if (workflow.nextTriggerAt) subtitleParts.push(`${this.t("Next")} ${this.formatDueTime(workflow.nextTriggerAt)}`);
-      else if (workflow.lastTriggeredAt) subtitleParts.push(`${this.t("Last")} ${this.formatDueTime(workflow.lastTriggeredAt)}`);
+      if (automation.nextTriggerAt) subtitleParts.push(`${this.t("Next")} ${this.formatDueTime(automation.nextTriggerAt)}`);
+      else if (automation.lastTriggeredAt) subtitleParts.push(`${this.t("Last")} ${this.formatDueTime(automation.lastTriggeredAt)}`);
       const subtitle = subtitleParts.filter(Boolean).join(" · ") || this.formatRunStatusLabel(status);
       subtitleEl.textContent = subtitle;
     }
 
     const summaryEl = cardEl.querySelector(".portal-task__summary-preview");
     if (summaryEl) {
-      const latestSummary = checkpoint
-        ? (checkpoint.prompt || checkpoint.title || this.t("Needs attention"))
-        : (latestRun ? this.getRunSummaryText(latestRun, status) : (workflow.description || this.t("No runs recorded yet.")));
-      summaryEl.textContent = latestSummary;
+      if (needsAttention) {
+        summaryEl.textContent = "";
+        summaryEl.setAttribute("hidden", "");
+      } else {
+        const latestSummary = checkpoint
+          ? (checkpoint.prompt || checkpoint.title || this.t("Needs attention"))
+          : (latestRun ? this.getRunSummaryText(latestRun, status) : (automation.description || this.t("No runs recorded yet.")));
+        summaryEl.textContent = latestSummary;
+        summaryEl.removeAttribute("hidden");
+      }
     }
 
-    // Update attention data attr
-    cardEl.setAttribute("data-attention", checkpoint ? "true" : "false");
+    // Update attention data attrs
+    cardEl.setAttribute("data-attention", needsAttention ? "true" : "false");
+    cardEl.setAttribute("data-attention-status", attentionStatus || "");
 
     // --- Update body if expanded ---
     if (!expanded) return;
@@ -6836,14 +6858,16 @@ class ChatPortalClient {
     });
 
     // Re-render the body content
-    const rawRecentRuns = Array.isArray(workflow.recentRuns) ? workflow.recentRuns : [];
+    const rawRecentRuns = Array.isArray(automation.recentRuns) ? automation.recentRuns : [];
     const latestRunId = latestRun && latestRun.id ? String(latestRun.id) : "";
     const recentRuns = latestRunId
       ? rawRecentRuns.filter((r) => !r || String(r.id || "") !== latestRunId)
       : rawRecentRuns;
-    const checkpointHtml = checkpoint ? this.renderWorkflowCheckpointHtml(checkpoint) : "";
+    const checkpointHtml = checkpoint ? this.renderAutomationCheckpointHtml(checkpoint) : "";
     const allRuns = latestRun ? [latestRun, ...recentRuns] : recentRuns;
-    const recentHtml = this.renderWorkflowRecentRunsHtml(workflowId, workflowState, allRuns);
+    const checkpointRunId = checkpoint && checkpoint.runId ? String(checkpoint.runId) : "";
+    const suppressActionsForRunIds = checkpointRunId ? new Set([checkpointRunId]) : null;
+    const recentHtml = this.renderAutomationRecentRunsHtml(automationId, automationState, allRuns, { suppressActionsForRunIds });
     bodyEl.innerHTML = checkpointHtml + (recentHtml || `<div class="portal-task__empty-note">${this.escapeHtml(this.t("No runs recorded yet."))}</div>`);
 
     // Restore DOM state for expanded run rows
@@ -6905,16 +6929,16 @@ class ChatPortalClient {
     if (!this.elements.tasksCards) return;
     const list = this.elements.tasksCards;
 
-    const workflows = Array.from(this.workflowAgents.entries()).map(([id, state]) => ({
+    const automations = Array.from(this.automationAgents.entries()).map(([id, state]) => ({
       id,
       state,
-      workflow: state && state.workflow ? state.workflow : {},
-    }));
+      automation: state && state.automation ? state.automation : {},
+    })).filter(({ automation }) => this.isAutomationAutomation(automation));
 
     const runs = Array.from(this.agentRuns.entries())
       .filter(([, state]) => {
         const run = state && state.run ? state.run : {};
-        return !(run && (run.workflowId || run.workflow_id));
+        return !(run && (run.automationId || run.automation_id));
       })
       .map(([id, state]) => ({
       id,
@@ -6927,7 +6951,7 @@ class ChatPortalClient {
       state,
     }));
 
-    if (!workflows.length && !runs.length && !voiceCalls.length) {
+    if (!automations.length && !runs.length && !voiceCalls.length) {
       if (this.elements.tasksEmpty) {
         this.elements.tasksEmpty.removeAttribute("hidden");
       }
@@ -6940,12 +6964,12 @@ class ChatPortalClient {
       this.elements.tasksEmpty.setAttribute("hidden", "");
     }
 
-    workflows.sort((a, b) => {
-      const aNeeds = a.workflow && a.workflow.openCheckpoint ? 0 : 1;
-      const bNeeds = b.workflow && b.workflow.openCheckpoint ? 0 : 1;
+    automations.sort((a, b) => {
+      const aNeeds = a.automation && a.automation.openCheckpoint ? 0 : 1;
+      const bNeeds = b.automation && b.automation.openCheckpoint ? 0 : 1;
       if (aNeeds !== bNeeds) return aNeeds - bNeeds;
-      const aTime = Date.parse(a.workflow.updatedAt || a.workflow.createdAt || "") || 0;
-      const bTime = Date.parse(b.workflow.updatedAt || b.workflow.createdAt || "") || 0;
+      const aTime = Date.parse(a.automation.updatedAt || a.automation.createdAt || "") || 0;
+      const bTime = Date.parse(b.automation.updatedAt || b.automation.createdAt || "") || 0;
       return bTime - aTime;
     });
 
@@ -6959,8 +6983,8 @@ class ChatPortalClient {
       return aId.localeCompare(bId);
     });
 
-    const workflowCardsHtml = workflows
-      .map(({ id, state, workflow }) => this.renderWorkflowAgentCardHtml(id, state, workflow))
+    const automationCardsHtml = automations
+      .map(({ id, state, automation }) => this.renderCustomAssistantCardHtml(id, state, automation))
       .join("");
 
     const voiceSessionsInRuns = new Set();
@@ -6985,7 +7009,7 @@ class ChatPortalClient {
     // Snapshot DOM state before innerHTML nuke
     const savedStates = this._snapshotPanelDomState(list);
 
-    list.innerHTML = workflowCardsHtml + adHocHeading + runCardsHtml + extraVoiceCardsHtml;
+    list.innerHTML = automationCardsHtml + adHocHeading + runCardsHtml + extraVoiceCardsHtml;
 
     // Restore DOM state after innerHTML replacement
     this._restorePanelDomState(list, savedStates);
@@ -7004,9 +7028,9 @@ class ChatPortalClient {
       if (!det.open) return;
       // Build a selector path to relocate this element after re-render
       const classes = (det.className || "").trim();
-      const parent = det.closest("[data-workflow-id], [data-run-id], [data-run-toggle]");
+      const parent = det.closest("[data-automation-id], [data-run-id], [data-run-toggle]");
       const parentId = parent
-        ? (parent.getAttribute("data-workflow-id") || parent.getAttribute("data-run-id") || parent.getAttribute("data-run-toggle") || "")
+        ? (parent.getAttribute("data-automation-id") || parent.getAttribute("data-run-id") || parent.getAttribute("data-run-toggle") || "")
         : "";
       const runBtn = det.closest(".portal-task__run-row") ? det.closest(".portal-task__run-row").querySelector("[data-run-id]") : null;
       const cardRun = det.closest("[data-run-id]");
@@ -7030,8 +7054,8 @@ class ChatPortalClient {
 
     container.querySelectorAll("textarea").forEach((ta) => {
       if (!ta.value) return;
-      const card = ta.closest("[data-workflow-id], [data-run-toggle]");
-      const cardId = card ? (card.getAttribute("data-workflow-id") || card.getAttribute("data-run-toggle") || "") : "";
+      const card = ta.closest("[data-automation-id], [data-run-toggle]");
+      const cardId = card ? (card.getAttribute("data-automation-id") || card.getAttribute("data-run-toggle") || "") : "";
       saved.textareas.push({ cardId, value: ta.value });
     });
 
@@ -7053,7 +7077,7 @@ class ChatPortalClient {
         const runBtn = container.querySelector(`[data-run-id="${entry.runId}"]`);
         if (runBtn) scope = runBtn.closest(".portal-task__run-row") || runBtn.closest(".portal-task") || container;
       } else if (entry.parentId) {
-        scope = container.querySelector(`[data-workflow-id="${entry.parentId}"], [data-run-id="${entry.parentId}"]`) || container;
+        scope = container.querySelector(`[data-automation-id="${entry.parentId}"], [data-run-id="${entry.parentId}"]`) || container;
       }
       const candidates = scope.querySelectorAll(`details.${entry.classes.split(/\s+/).join(".")}`);
       candidates.forEach((det) => {
@@ -7080,7 +7104,7 @@ class ChatPortalClient {
     // Restore textarea values
     for (const entry of saved.textareas) {
       if (!entry.cardId || !entry.value) continue;
-      const card = container.querySelector(`[data-workflow-id="${entry.cardId}"], [data-run-toggle="${entry.cardId}"]`);
+      const card = container.querySelector(`[data-automation-id="${entry.cardId}"], [data-run-toggle="${entry.cardId}"]`);
       if (!card) continue;
       const ta = card.querySelector("textarea");
       if (ta) ta.value = entry.value;
@@ -7428,13 +7452,32 @@ class ChatPortalClient {
     `;
   }
 
-  getWorkflowTriggerLabel(triggerType) {
+  getAutomationTriggerLabel(triggerType) {
     const norm = (triggerType || "").toString().trim().toLowerCase();
     if (norm === "schedule") return this.t("Scheduled");
     if (norm === "manual") return this.t("Manual");
     if (norm === "webhook") return this.t("Webhook");
     if (norm === "email_inbox") return this.t("Email inbox");
-    return norm ? this.formatStatus(norm) : this.t("Workflow");
+    return norm ? this.formatStatus(norm) : this.t("Automation");
+  }
+
+  getAutomationKind(automation) {
+    if (!automation || typeof automation !== "object") return "";
+    return (automation.kind || automation.automationKind || "").toString().trim().toLowerCase();
+  }
+
+  isCustomAssistantAutomation(automation) {
+    const kind = this.getAutomationKind(automation);
+    const triggerType = (automation && (automation.triggerType || automation.trigger_type) ? (automation.triggerType || automation.trigger_type) : "").toString().trim().toLowerCase();
+    return kind === "custom_assistant" || (!kind && triggerType === "manual");
+  }
+
+  isAutomationAutomation(automation) {
+    const kind = this.getAutomationKind(automation);
+    const triggerType = (automation && (automation.triggerType || automation.trigger_type) ? (automation.triggerType || automation.trigger_type) : "").toString().trim().toLowerCase();
+    if (kind === "automation") return true;
+    if (kind === "custom_assistant") return false;
+    return Boolean(triggerType && triggerType !== "manual");
   }
 
   formatTaskDateTime(raw) {
@@ -7580,15 +7623,15 @@ class ChatPortalClient {
       '"blockers"',
       '"artifacts"',
       '"approvals"',
-      '"workflow_state"',
-      '"workflowstate"',
+      '"automation_state"',
+      '"automationstate"',
       '"response_hash"',
       '"responsehash"',
       '"inspected_items"',
       '"inspecteditems"',
     ];
     if (contractKeys.some((key) => lower.includes(key))) return true;
-    if (lower.includes("run report") || lower.includes("run_report") || lower.includes("workflow_state") || lower.includes("response_hash")) return true;
+    if (lower.includes("run report") || lower.includes("run_report") || lower.includes("automation_state") || lower.includes("response_hash")) return true;
     if (/^[}\]\s,]+/.test(raw) && /"[a-zA-Z_][a-zA-Z0-9_]*"\s*:/.test(raw)) return true;
     if (/^"[a-zA-Z_][a-zA-Z0-9_]*"\s*:/.test(raw)) return true;
     if (/^[}\]\s,:'"]+[\{\[]/.test(raw)) return true;
@@ -7607,11 +7650,11 @@ class ChatPortalClient {
       /"run_report"\s*:/i,
       /"runReport"\s*:/,
       /"notification_candidate"\s*:/i,
-      /"workflow_state"\s*:/i,
+      /"automation_state"\s*:/i,
       /"response_hash"\s*:/i,
       /"inspected_items"\s*:/i,
       /\n\s*["'}\]],?\s*:\s*[\{\[]/,
-      /\n\s*[\{\[]\s*\n?\s*"(?:objective|status|findings|actions_taken|notification_candidate|workflow_state)"/i,
+      /\n\s*[\{\[]\s*\n?\s*"(?:objective|status|findings|actions_taken|notification_candidate|automation_state)"/i,
     ];
     let index = -1;
     for (const pattern of patterns) {
@@ -7721,7 +7764,7 @@ class ChatPortalClient {
       .slice(0, 5);
   }
 
-  formatWorkflowRunMeta(run) {
+  formatAutomationRunMeta(run) {
     if (!run || typeof run !== "object") return "";
     const whenRaw = run.finishedAt || run.startedAt || run.createdAt || run.updatedAt || "";
     return whenRaw ? this.formatDueTime(whenRaw) : "";
@@ -7737,9 +7780,9 @@ class ChatPortalClient {
     return { run: Object.assign({}, run || {}), events: [], expanded: this.isRunActiveStatus(run && run.status), seenSeq: new Set(), lastEventLabel: "" };
   }
 
-  renderWorkflowRunDetailHtml(run) {
+  renderAutomationRunDetailHtml(run, { suppressActions = false } = {}) {
     const state = this.stateForRun(run);
-    const actionsHtml = this.renderRunActionsHtml(run && run.id ? String(run.id) : "", state, run);
+    const actionsHtml = suppressActions ? "" : this.renderRunActionsHtml(run && run.id ? String(run.id) : "", state, run);
     const workHtml = this.renderRunWorkHtml(state, run);
     const resultHtml = this.renderRunResultHtml(run, state);
     const debugHtml = this.renderRunDeveloperDetailsHtml(run);
@@ -7757,7 +7800,7 @@ class ChatPortalClient {
     `;
   }
 
-  renderWorkflowRunRowHtml(workflowId, run, { expanded = false, latest = false } = {}) {
+  renderAutomationRunRowHtml(automationId, run, { expanded = false, latest = false, suppressActions = false } = {}) {
     const runId = run && run.id ? String(run.id) : "";
     const status = run && run.status ? String(run.status) : "";
     const display = this.getRunDisplay(run);
@@ -7766,12 +7809,12 @@ class ChatPortalClient {
     const normalizedTitle = title.toLowerCase().replace(/\s+/g, " ").trim();
     const normalizedSummary = String(summary || "").toLowerCase().replace(/\s+/g, " ").trim();
     const showPreview = Boolean(summary && normalizedSummary && normalizedSummary !== normalizedTitle && !expanded);
-    const meta = this.formatWorkflowRunMeta(run);
+    const meta = this.formatAutomationRunMeta(run);
     const tone = display.statusTone || "neutral";
     const statusLabel = this.formatRunStatusLabel(status);
     return `
       <div class="portal-task__run-row" data-status="${this.escapeHtml(status.toLowerCase())}" data-tone="${this.escapeHtml(tone)}" data-expanded="${expanded ? "true" : "false"}">
-        <button type="button" class="portal-task__run-row-button" data-workflow-run-toggle="true" data-workflow-id="${this.escapeHtml(workflowId)}" data-run-id="${this.escapeHtml(runId)}">
+        <button type="button" class="portal-task__run-row-button" data-automation-run-toggle="true" data-automation-id="${this.escapeHtml(automationId)}" data-run-id="${this.escapeHtml(runId)}">
           <span class="portal-task__run-state" aria-hidden="true">${this.getRunStateIconMarkup(status, tone)}</span>
           <span class="portal-task__run-row-main">
             <span class="portal-task__run-row-top">
@@ -7786,12 +7829,12 @@ class ChatPortalClient {
           </span>
           <span class="portal-task__run-chevron" aria-hidden="true">${this.getChevronRightIconMarkup()}</span>
         </button>
-        ${expanded ? this.renderWorkflowRunDetailHtml(run) : ""}
+        ${expanded ? this.renderAutomationRunDetailHtml(run, { suppressActions }) : ""}
       </div>
     `;
   }
 
-  renderWorkflowRecentRunsHtml(workflowId, state, recentRuns) {
+  renderAutomationRecentRunsHtml(automationId, state, recentRuns, { suppressActionsForRunIds = null } = {}) {
     const runs = Array.isArray(recentRuns) ? recentRuns.filter(Boolean).slice(0, 8) : [];
     if (!runs.length) return "";
     return `
@@ -7799,9 +7842,10 @@ class ChatPortalClient {
         <div class="portal-task__section-title">${this.escapeHtml(this.t("Runs"))}</div>
         <div class="portal-task__run-list">
           ${runs
-            .map((run, index) => this.renderWorkflowRunRowHtml(workflowId, run, {
+            .map((run, index) => this.renderAutomationRunRowHtml(automationId, run, {
               expanded: Boolean(state && state.expandedRuns instanceof Set && state.expandedRuns.has(String(run.id || ""))),
               latest: index === 0,
+              suppressActions: Boolean(suppressActionsForRunIds && suppressActionsForRunIds.has(String(run.id || ""))),
             }))
             .join("")}
         </div>
@@ -7809,46 +7853,54 @@ class ChatPortalClient {
     `;
   }
 
-  renderWorkflowAgentCardHtml(workflowId, state, workflow) {
+  renderCustomAssistantCardHtml(automationId, state, automation) {
     const expanded = Boolean(state && state.expanded);
-    const name = workflow && workflow.name ? String(workflow.name) : this.t("Workflow");
-    const latestRun = workflow && workflow.latestRun && typeof workflow.latestRun === "object" ? workflow.latestRun : null;
-    const checkpoint = workflow && workflow.openCheckpoint && typeof workflow.openCheckpoint === "object" ? workflow.openCheckpoint : null;
-    const status = checkpoint ? "waiting_approval" : (latestRun && latestRun.status ? latestRun.status : (workflow.status || "draft"));
-    const triggerLabel = this.getWorkflowTriggerLabel(workflow && workflow.triggerType);
-    const ownerLabel = workflow && workflow.agentName ? String(workflow.agentName) : "";
+    const name = automation && automation.name ? String(automation.name) : this.t("Automation");
+    const latestRun = automation && automation.latestRun && typeof automation.latestRun === "object" ? automation.latestRun : null;
+    const checkpoint = automation && automation.openCheckpoint && typeof automation.openCheckpoint === "object" ? automation.openCheckpoint : null;
+    const checkpointKind = checkpoint && checkpoint.kind ? String(checkpoint.kind).trim().toLowerCase() : "";
+    const checkpointStatus = checkpoint ? (checkpointKind === "user_input" ? "waiting_user" : "waiting_approval") : "";
+    const status = checkpointStatus || (latestRun && latestRun.status ? latestRun.status : (automation.status || "draft"));
+    const attentionStatus = this.getTaskAttentionStatus(status);
+    const needsAttention = Boolean(checkpoint || attentionStatus);
+    const triggerLabel = this.getAutomationTriggerLabel(automation && automation.triggerType);
+    const ownerLabel = automation && automation.agentName ? String(automation.agentName) : "";
     const subtitleParts = [ownerLabel, triggerLabel];
-    if (workflow && workflow.nextTriggerAt) subtitleParts.push(`${this.t("Next")} ${this.formatDueTime(workflow.nextTriggerAt)}`);
-    else if (workflow && workflow.lastTriggeredAt) subtitleParts.push(`${this.t("Last")} ${this.formatDueTime(workflow.lastTriggeredAt)}`);
+    if (automation && automation.nextTriggerAt) subtitleParts.push(`${this.t("Next")} ${this.formatDueTime(automation.nextTriggerAt)}`);
+    else if (automation && automation.lastTriggeredAt) subtitleParts.push(`${this.t("Last")} ${this.formatDueTime(automation.lastTriggeredAt)}`);
     const subtitle = subtitleParts.filter(Boolean).join(" · ") || this.formatRunStatusLabel(status);
     const latestSummary = checkpoint
       ? (checkpoint.prompt || checkpoint.title || this.t("Needs attention"))
-      : (latestRun ? this.getRunSummaryText(latestRun, status) : (workflow.description || this.t("No runs recorded yet.")));
-    const rawRecentRuns = workflow && Array.isArray(workflow.recentRuns) ? workflow.recentRuns : [];
+      : (latestRun ? this.getRunSummaryText(latestRun, status) : (automation.description || this.t("No runs recorded yet.")));
+    const rawRecentRuns = automation && Array.isArray(automation.recentRuns) ? automation.recentRuns : [];
     const latestRunId = latestRun && latestRun.id ? String(latestRun.id) : "";
     const recentRuns = latestRunId
       ? rawRecentRuns.filter((run) => !run || String(run.id || "") !== latestRunId)
       : rawRecentRuns;
-    const checkpointHtml = checkpoint ? this.renderWorkflowCheckpointHtml(checkpoint) : "";
+    const checkpointHtml = checkpoint ? this.renderAutomationCheckpointHtml(checkpoint) : "";
     const allRuns = latestRun ? [latestRun, ...recentRuns] : recentRuns;
-    const recentHtml = this.renderWorkflowRecentRunsHtml(workflowId, state, allRuns);
-    const runBusy = this.workflowManualRunBusy && this.workflowManualRunBusy.has(workflowId);
+    const checkpointRunId = checkpoint && checkpoint.runId ? String(checkpoint.runId) : "";
+    const suppressActionsForRunIds = checkpointRunId ? new Set([checkpointRunId]) : null;
+    const recentHtml = this.renderAutomationRecentRunsHtml(automationId, state, allRuns, { suppressActionsForRunIds });
+    const runBusy = this.automationManualRunBusy && this.automationManualRunBusy.has(automationId);
+    const canRunNow = this.isAutomationAutomation(automation);
     return `
-      <div class="portal-task" data-workflow-id="${this.escapeHtml(workflowId)}" data-expanded="${expanded ? "true" : "false"}" data-attention="${checkpoint ? "true" : "false"}">
+      <div class="portal-task" data-automation-id="${this.escapeHtml(automationId)}" data-expanded="${expanded ? "true" : "false"}" data-attention="${needsAttention ? "true" : "false"}" data-attention-status="${this.escapeHtml(attentionStatus || "")}">
         <div class="portal-task__header-bar">
-          <button type="button" class="portal-task__header" data-workflow-toggle="${this.escapeHtml(workflowId)}">
+          <button type="button" class="portal-task__header" data-automation-toggle="${this.escapeHtml(automationId)}">
             <div class="portal-task__meta">
               <div class="portal-task__title-row">
                 <div class="portal-task__title">${this.escapeHtml(name)}</div>
+                ${this.renderTaskAttentionIndicator(status)}
                 ${this.renderRunStatusPill(status)}
               </div>
               <div class="portal-task__subtitle">${this.escapeHtml(subtitle)}</div>
-              <div class="portal-task__summary-preview">${this.escapeHtml(latestSummary)}</div>
+              <div class="portal-task__summary-preview" ${needsAttention ? "hidden" : ""}>${this.escapeHtml(needsAttention ? "" : latestSummary)}</div>
             </div>
           </button>
-          <button type="button" class="portal-task__run-now" data-workflow-run-now="${this.escapeHtml(workflowId)}" data-busy="${runBusy ? "true" : "false"}" ${runBusy ? "disabled" : ""} aria-label="${this.escapeHtml(this.t("Run workflow now"))}" title="${this.escapeHtml(this.t("Run workflow now"))}">
-            ${this.getWorkflowRunIconMarkup()}
-          </button>
+          ${canRunNow ? `<button type="button" class="portal-task__run-now" data-automation-run-now="${this.escapeHtml(automationId)}" data-busy="${runBusy ? "true" : "false"}" ${runBusy ? "disabled" : ""} aria-label="${this.escapeHtml(this.t("Run automation now"))}" title="${this.escapeHtml(this.t("Run automation now"))}">
+            ${this.getAutomationRunIconMarkup()}
+          </button>` : ""}
         </div>
         <div class="portal-task__body">
           ${checkpointHtml}
@@ -7858,14 +7910,16 @@ class ChatPortalClient {
     `;
   }
 
-  renderWorkflowCheckpointHtml(checkpoint) {
+  renderAutomationCheckpointHtml(checkpoint) {
     const checkpointId = checkpoint && checkpoint.id ? String(checkpoint.id).trim() : "";
     const kind = checkpoint && checkpoint.kind ? String(checkpoint.kind).trim().toLowerCase() : "";
     const prompt = checkpoint && checkpoint.prompt ? String(checkpoint.prompt).trim() : "";
     const payload = checkpoint && checkpoint.payload && typeof checkpoint.payload === "object" ? checkpoint.payload : {};
     const preview = payload.approval_preview && typeof payload.approval_preview === "object" ? payload.approval_preview : null;
     const previewHtml = preview ? this.renderAgentRunApprovalPreview(preview) : "";
-    const needsText = prompt || (kind === "approval" ? this.t("This workflow needs approval to continue.") : this.t("This workflow needs more information to continue."));
+    const payloadPrompt = payload && payload.prompt ? String(payload.prompt).trim() : "";
+    const payloadQuestions = payload && Array.isArray(payload.questions) ? payload.questions : [];
+    const needsText = payloadPrompt || prompt || (kind === "approval" ? this.t("This automation needs approval to continue.") : this.t("This automation needs more information to continue."));
     if (kind === "approval") {
       return `
         <div class="portal-task__section">
@@ -7879,16 +7933,37 @@ class ChatPortalClient {
         </div>
       `;
     }
+    const questionLines = payloadQuestions
+      .filter((question) => typeof question === "string" && question.trim())
+      .slice(0, 6)
+      .map((question) => `<div class="portal-task__list-item">${this.escapeHtml(question.trim())}</div>`)
+      .join("");
+    const questionHtml = questionLines ? `<div class="portal-task__list">${questionLines}</div>` : "";
     return `
       <div class="portal-task__section">
-        <div class="portal-task__section-title">${this.escapeHtml(this.t("Needs attention"))}</div>
-        <div class="portal-task__subtitle">${this.escapeHtml(needsText)}</div>
+        <div class="portal-task__section-title">${this.escapeHtml(this.t("Question"))}</div>
+        <div class="portal-task__prompt">${this.renderMarkdown(needsText)}</div>
+        ${questionHtml}
         <textarea class="portal-task__input" data-checkpoint-input-text rows="3" placeholder="${this.escapeHtml(this.t("Type your answer…"))}"></textarea>
         <div class="portal-task__actions">
           <button type="button" class="portal-task__btn" data-checkpoint-action="reply" data-checkpoint-id="${this.escapeHtml(checkpointId)}">${this.escapeHtml(this.t("Send"))}</button>
         </div>
       </div>
     `;
+  }
+
+  getTaskAttentionStatus(status) {
+    const normalized = (status || "").toString().trim().toLowerCase().replace(/-/g, "_");
+    if (normalized === "waiting_user") return "waiting_user";
+    if (normalized === "waiting_approval") return "waiting_approval";
+    return "";
+  }
+
+  renderTaskAttentionIndicator(status) {
+    const attentionStatus = this.getTaskAttentionStatus(status);
+    if (!attentionStatus) return "";
+    const label = attentionStatus === "waiting_user" ? this.t("Needs your input") : this.t("Needs approval");
+    return `<span class="portal-task__attention-indicator" aria-label="${this.escapeHtml(label)}" title="${this.escapeHtml(label)}"></span>`;
   }
 
   renderRunCardHtml(runId, state, run) {
@@ -8217,6 +8292,20 @@ class ChatPortalClient {
         rows.push(nextItem);
       }
     };
+    const appendCheckpointResolutionRow = (payload, labelRaw) => {
+      const action = (payload.action || "").toString().trim();
+      const message = (payload.message || "").toString().trim();
+      const extraPayload = payload.payload && typeof payload.payload === "object" ? payload.payload : null;
+      const checkpointId = (payload.checkpoint_id || payload.checkpointId || "").toString().trim();
+      rows.push({
+        kind: "checkpoint_resolution",
+        title: labelRaw || this.t("Checkpoint resolved"),
+        action,
+        message,
+        payload: extraPayload,
+        checkpointId,
+      });
+    };
 
     for (const evt of recent) {
       if (!evt || typeof evt !== "object") continue;
@@ -8231,6 +8320,13 @@ class ChatPortalClient {
       }
 
       if (stream === "executed") {
+        const isCheckpointResolution =
+          labelRaw.toLowerCase() === "checkpoint resolved" ||
+          Boolean(payload.checkpoint_id || payload.checkpointId);
+        if (isCheckpointResolution) {
+          appendCheckpointResolutionRow(payload, labelRaw);
+          continue;
+        }
         appendToolRow(evt, payload, labelRaw);
         continue;
       }
@@ -8282,6 +8378,38 @@ class ChatPortalClient {
     `;
   }
 
+  renderCheckpointResolutionDetailsHtml(row) {
+    const action = row && row.action ? this.formatStatus(String(row.action)) : "";
+    const message = row && row.message ? String(row.message).trim() : "";
+    const payload = row && row.payload && typeof row.payload === "object" ? row.payload : null;
+    const checkpointId = row && row.checkpointId ? String(row.checkpointId).trim() : "";
+    const metaItems = [];
+    if (action) metaItems.push(`<div class="portal-task__tool-detail-label">${this.escapeHtml(this.t("Action"))}: ${this.escapeHtml(action)}</div>`);
+    if (checkpointId && this.agentRunDebugEnabled) metaItems.push(`<div class="portal-task__tool-detail-label">${this.escapeHtml(this.t("Checkpoint"))}: ${this.escapeHtml(checkpointId)}</div>`);
+    const messageHtml = message
+      ? `
+        <div class="portal-task__checkpoint-reply">
+          ${this.renderMarkdown(message)}
+        </div>
+      `
+      : `<div class="portal-task__empty-note">${this.escapeHtml(this.t("No reply text was provided."))}</div>`;
+    const payloadHtml = payload && Object.keys(payload).length
+      ? `
+        <div class="portal-task__tool-detail-block">
+          <div class="portal-task__tool-detail-label">${this.escapeHtml(this.t("Payload"))}</div>
+          <pre><code>${this.escapeHtml(this.safeJsonStringify(payload))}</code></pre>
+        </div>
+      `
+      : "";
+    return `
+      <div class="portal-task__tool-detail">
+        ${metaItems.join("")}
+        ${messageHtml}
+        ${payloadHtml}
+      </div>
+    `;
+  }
+
   renderRunWorkHtml(state, run, options = {}) {
     const terminal = this.isRunTerminalStatus(run && run.status ? run.status : "");
     const rows = this.buildRunActivityItems(state);
@@ -8302,6 +8430,20 @@ class ChatPortalClient {
                 <span class="portal-task__tool-chevron" aria-hidden="true">${this.getChevronRightIconMarkup()}</span>
               </summary>
               ${this.renderToolDetailsHtml(row)}
+            </details>
+          `;
+        }
+        if (row.kind === "checkpoint_resolution") {
+          const action = row.action ? `<span class="portal-task__tool-status">${this.escapeHtml(this.formatStatus(String(row.action)))}</span>` : "";
+          return `
+            <details class="portal-task__tool-call">
+              <summary>
+                <span class="portal-task__tool-icon" aria-hidden="true">${this.getToolCallIconMarkup()}</span>
+                <span class="portal-task__tool-name">${this.escapeHtml(row.title || this.t("Checkpoint resolved"))}</span>
+                ${action}
+                <span class="portal-task__tool-chevron" aria-hidden="true">${this.getChevronRightIconMarkup()}</span>
+              </summary>
+              ${this.renderCheckpointResolutionDetailsHtml(row)}
             </details>
           `;
         }
@@ -12180,9 +12322,9 @@ class ChatPortalClient {
     return text.slice(0, lastIndex).replace(/\s+$/, "");
   }
 
-				  resetStreamingState(removeNode = false, lockWorkflow = true) {
-		    if (lockWorkflow) {
-		      this.workflowLocked = true;
+				  resetStreamingState(removeNode = false, lockAutomation = true) {
+		    if (lockAutomation) {
+		      this.automationLocked = true;
 		    }
 		    this.streamingActive = false;
 		    this.isStreaming = false;
@@ -12249,7 +12391,7 @@ class ChatPortalClient {
   }
 
   setStreamingStatus(mode = "working", labelOverride) {
-    if (this.workflowLocked) return;
+    if (this.automationLocked) return;
     const labelMap = {
       working: "Assistant is working…",
       drafting: "Refining answer…",
@@ -12257,7 +12399,7 @@ class ChatPortalClient {
       searching: "Searching…",
       updating: "Refining answer…",
       refining: "Refining answer…",
-      error: "Workflow issue detected.",
+      error: "Automation issue detected.",
     };
     const baseLabel = labelOverride || labelMap[mode] || labelMap.working;
     const isError = mode === "error";
@@ -12337,7 +12479,7 @@ class ChatPortalClient {
   }
 
   setSpinnerText(rawText, { pending = true, isError = false, force = false } = {}) {
-    if (this.workflowLocked && pending) return;
+    if (this.automationLocked && pending) return;
     this.ensureStreamingMessageNode(this.pendingMessageId);
     if (!this.streamingStatusEl || !this.streamingStatusTextEl) return;
     const label = (rawText || "").toString().trim();
@@ -12767,7 +12909,7 @@ class ChatPortalClient {
     this.clearActiveTurnState();
     this.awaitingReply = false;
     this.streamFinished = true;
-    this.workflowLocked = true;
+    this.automationLocked = true;
     this.isStreaming = false;
     this.clearStreamingStatus();
     this.updateSendButtonState(false);
@@ -13034,33 +13176,33 @@ class ChatPortalClient {
     return wrapper;
   }
 
-  getSessionWorkflowId(session) {
+  getSessionCustomAssistantId(session) {
     if (!session || typeof session !== "object") return "";
-    return (session.workflow_id || session.workflowId || "").toString().trim();
+    return (session.custom_assistant_id || session.customAssistantId || "").toString().trim();
   }
 
-  getSessionWorkflowName(session) {
+  getSessionCustomAssistantName(session) {
     if (!session || typeof session !== "object") return "";
-    return (session.workflow_name || session.workflowName || "").toString().trim();
+    return (session.custom_assistant_name || session.customAssistantName || "").toString().trim();
   }
 
-  getSessionWorkflowAgentName(session) {
+  getSessionCustomAssistantAgentName(session) {
     if (!session || typeof session !== "object") return "";
-    return (session.workflow_agent_name || session.workflowAgentName || "").toString().trim();
+    return (session.custom_assistant_agent_name || session.customAssistantAgentName || "").toString().trim();
   }
 
-  groupWorkflowSessions(sessions) {
+  groupCustomAssistantSessions(sessions) {
     const groups = new Map();
     for (const session of this.sortSessionSummaries(sessions)) {
-      const workflowId = this.getSessionWorkflowId(session);
-      const workflowName = this.getSessionWorkflowName(session) || this.t("Custom Assistant");
-      const agentName = this.getSessionWorkflowAgentName(session);
-      const fallbackKey = workflowId || `workflow-name:${workflowName.toLowerCase()}`;
+      const customAssistantId = this.getSessionCustomAssistantId(session);
+      const customAssistantName = this.getSessionCustomAssistantName(session) || this.t("Custom Assistant");
+      const agentName = this.getSessionCustomAssistantAgentName(session);
+      const fallbackKey = customAssistantId || `custom-assistant-name:${customAssistantName.toLowerCase()}`;
       if (!groups.has(fallbackKey)) {
         groups.set(fallbackKey, {
           key: fallbackKey,
-          workflowId,
-          name: workflowName,
+          customAssistantId,
+          name: customAssistantName,
           agentName,
           sessions: [],
           latestActivity: 0,
@@ -13082,33 +13224,8 @@ class ChatPortalClient {
 
   getCustomAssistantSidebarGroups(taskSessions) {
     const groups = new Map();
-    for (const group of this.groupWorkflowSessions(taskSessions)) {
+    for (const group of this.groupCustomAssistantSessions(taskSessions)) {
       groups.set(group.key, group);
-    }
-    if (this.workflowAgents instanceof Map) {
-      this.workflowAgents.forEach((state, workflowId) => {
-        const workflow = state && state.workflow && typeof state.workflow === "object" ? state.workflow : {};
-        const kind = (workflow.kind || workflow.workflowKind || "").toString().trim().toLowerCase();
-        if (kind && kind !== "custom_assistant") return;
-        const id = (workflow.id || workflowId || "").toString().trim();
-        if (!id) return;
-        const key = id || `workflow-name:${(workflow.name || "").toString().toLowerCase()}`;
-        const existing = groups.get(key);
-        if (existing) {
-          existing.workflowId = existing.workflowId || id;
-          existing.name = existing.name || workflow.name || this.t("Custom Assistant");
-          existing.agentName = existing.agentName || workflow.agentName || "";
-          return;
-        }
-        groups.set(key, {
-          key,
-          workflowId: id,
-          name: (workflow.name || this.t("Custom Assistant")).toString(),
-          agentName: (workflow.agentName || "").toString(),
-          sessions: [],
-          latestActivity: this.getSessionSummaryTimestamp(workflow, ["updatedAt", "updated_at", "createdAt", "created_at"]),
-        });
-      });
     }
     return Array.from(groups.values()).sort((left, right) => {
       if (left.latestActivity !== right.latestActivity) return right.latestActivity - left.latestActivity;
@@ -13116,8 +13233,8 @@ class ChatPortalClient {
     });
   }
 
-  buildWorkflowSessionCreateButton(workflowId, workflowName) {
-    if (!workflowId || !this.shouldUseConversationApi()) return null;
+  buildCustomAssistantSessionCreateButton(customAssistantId, customAssistantName) {
+    if (!customAssistantId || !this.shouldUseConversationApi()) return null;
     const button = document.createElement("button");
     button.type = "button";
     button.className = "ml-1 inline-flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors";
@@ -13132,7 +13249,7 @@ class ChatPortalClient {
     button.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      this.createWorkflowAgentSession(workflowId, workflowName);
+      this.createCustomAssistantSession(customAssistantId, customAssistantName);
     });
     return button;
   }
@@ -13182,9 +13299,9 @@ class ChatPortalClient {
       this.container.setAttribute("data-conversation-id", conversationId);
     }
     this.currentSessionType = this.getSessionSummaryType(session);
-    this.currentWorkflowName = (session.workflow_name || session.workflowName || session.title || "").toString().trim();
+    this.currentCustomAssistantName = (session.custom_assistant_name || session.customAssistantName || session.title || "").toString().trim();
     this.container.setAttribute("data-session-type", this.currentSessionType);
-    this.container.setAttribute("data-workflow-name", this.currentWorkflowName);
+    this.container.setAttribute("data-custom-assistant-name", this.currentCustomAssistantName);
     this.currentSessionKey = this.getSessionSummaryKey(session);
     if (this.shouldUseConversationApi() && conversationId) {
       try {
@@ -13731,46 +13848,46 @@ class ChatPortalClient {
     const chatSessions = sortedSessions.filter((session) => this.getSessionSummaryType(session) !== "task");
     const currentSessionKey = this.getCurrentSessionKey();
 
-    const workflowGroups = this.getCustomAssistantSidebarGroups(taskSessions);
-    if (!workflowGroups.length && !chatSessions.length) {
+    const automationGroups = this.getCustomAssistantSidebarGroups(taskSessions);
+    if (!automationGroups.length && !chatSessions.length) {
       this.showSessionsEmpty();
       return;
     }
-    if (workflowGroups.length) {
-      const workflowBranch = this.buildSessionTreeBranch({
+    if (automationGroups.length) {
+      const automationBranch = this.buildSessionTreeBranch({
         key: "section:custom-assistants",
         label: this.t("Custom Assistants"),
         level: 0,
-        count: workflowGroups.length,
+        count: automationGroups.length,
         forceOpen: taskSessions.some((session) => this.getSessionSummaryKey(session) === currentSessionKey),
         renderChildren: (sectionContent) => {
-          for (const group of workflowGroups) {
+          for (const group of automationGroups) {
             const groupHasActiveSession = group.sessions.some((session) => this.getSessionSummaryKey(session) === currentSessionKey);
-            const workflowNode = this.buildSessionTreeBranch({
-              key: `workflow:${group.key}`,
+            const automationNode = this.buildSessionTreeBranch({
+              key: `automation:${group.key}`,
               label: group.name,
               level: 1,
               count: group.sessions.length,
               forceOpen: groupHasActiveSession,
-              actions: () => [this.buildWorkflowSessionCreateButton(group.workflowId, group.name)],
-              renderChildren: (workflowContent) => {
+              actions: () => [this.buildCustomAssistantSessionCreateButton(group.automationId, group.name)],
+              renderChildren: (automationContent) => {
                 if (!group.sessions.length) {
                   const empty = document.createElement("div");
                   empty.className = "px-2 py-1.5 text-xs text-muted-foreground";
                   empty.textContent = this.t("No chats yet");
-                  workflowContent.appendChild(empty);
+                  automationContent.appendChild(empty);
                 }
                 for (const session of group.sessions) {
                   const isActive = this.getSessionSummaryKey(session) === currentSessionKey;
-                  workflowContent.appendChild(this.buildSessionItem(session, isActive, { nested: true }));
+                  automationContent.appendChild(this.buildSessionItem(session, isActive, { nested: true }));
                 }
               },
             });
-            sectionContent.appendChild(workflowNode);
+            sectionContent.appendChild(automationNode);
           }
         },
       });
-      itemsContainer.appendChild(workflowBranch);
+      itemsContainer.appendChild(automationBranch);
     }
 
     if (chatSessions.length) {
@@ -13797,7 +13914,7 @@ class ChatPortalClient {
     if (!session || typeof session !== "object") return "chat";
     const explicitType = (session.session_type || session.sessionType || "").toString().trim().toLowerCase();
     if (explicitType) return explicitType;
-    if (session.workflow_id || session.workflowId) return "task";
+    if (session.automation_id || session.automationId) return "task";
     return "chat";
   }
 
@@ -14102,9 +14219,9 @@ class ChatPortalClient {
     }
   }
 
-  async createWorkflowAgentSession(workflowId, workflowName = "") {
-    const normalizedWorkflowId = (workflowId || "").toString().trim();
-    if (!normalizedWorkflowId || !this.shouldUseConversationApi()) return;
+  async createCustomAssistantSession(customAssistantId, customAssistantName = "") {
+    const normalizedCustomAssistantId = (customAssistantId || "").toString().trim();
+    if (!normalizedCustomAssistantId || !this.shouldUseConversationApi()) return;
     if (this.sessionCreationInProgress) return;
 
     this.sessionCreationInProgress = true;
@@ -14115,7 +14232,7 @@ class ChatPortalClient {
         body: JSON.stringify({
           business_slug: this.businessSlug,
           agent_slug: this.agentSlug,
-          workflow_id: normalizedWorkflowId,
+          custom_assistant_id: normalizedCustomAssistantId,
           title: this.t("New session"),
           metadata: this.buildVisitorMetadata(),
         }),
@@ -14130,11 +14247,11 @@ class ChatPortalClient {
         throw new Error("No Custom Assistant session returned");
       }
       this.setSessionTreeCollapsed("section:custom-assistants", false);
-      this.setSessionTreeCollapsed(`workflow:${normalizedWorkflowId}`, false);
+      this.setSessionTreeCollapsed(`custom-assistant:${normalizedCustomAssistantId}`, false);
       this.upsertSessionSummary({
         ...session,
-        workflow_id: session.workflow_id || session.workflowId || normalizedWorkflowId,
-        workflow_name: session.workflow_name || session.workflowName || workflowName,
+        custom_assistant_id: session.custom_assistant_id || session.customAssistantId || normalizedCustomAssistantId,
+        custom_assistant_name: session.custom_assistant_name || session.customAssistantName || customAssistantName,
         title: session.title || this.t("New session"),
         message_count: 0,
       });
@@ -14282,7 +14399,7 @@ class ChatPortalClient {
       container.innerHTML = "";
       container.removeAttribute("data-session-skeleton");
       if (this.isCurrentTaskSession()) {
-        const workflowName = this.currentWorkflowName || this.t("Custom Assistant");
+        const automationName = this.currentCustomAssistantName || this.t("Custom Assistant");
         container.innerHTML = `
           <div class="min-h-[55vh] flex items-center justify-center px-4 py-12">
             <div class="w-full max-w-xl rounded-lg border border-border/70 bg-card/40 px-5 py-4 text-left shadow-sm">
@@ -14294,7 +14411,7 @@ class ChatPortalClient {
                   </svg>
                 </div>
                 <div class="min-w-0">
-                  <p class="text-sm font-semibold text-foreground">${this.escapeHtml(workflowName)}</p>
+                  <p class="text-sm font-semibold text-foreground">${this.escapeHtml(automationName)}</p>
                   <p class="mt-1 text-sm leading-6 text-muted-foreground">${this.escapeHtml(this.t("Waiting for Custom Assistant activity. Updates, approvals, and run summaries will appear here."))}</p>
                 </div>
               </div>
@@ -14383,7 +14500,7 @@ class ChatPortalClient {
     this.isSending = false;
     this.isStreaming = false;
     this.streamFinished = true;
-    this.workflowLocked = false;
+    this.automationLocked = false;
     this.usingStateMachine = false;
     this.pendingMetadataVersion = 0;
     this.pendingMessageId = null;

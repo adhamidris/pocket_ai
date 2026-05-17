@@ -239,7 +239,7 @@
       if (!agentId) { render(); return Promise.resolve(); }
       list.innerHTML = '<div class="pa-empty"><p class="pa-empty-text">{% trans "Loading assistants..." %}</p></div>';
       return api("/api/agents/" + encodeURIComponent(agentId) + "/custom-assistants/").then(function (payload) {
-        items = payload.workflows || [];
+        items = payload.customAssistants || [];
         render();
       }).catch(function (error) {
         list.innerHTML = '<div class="pa-empty"><p class="pa-empty-text">' + escapeHtml(error.message || "Failed to load assistants") + '</p></div>';
@@ -252,7 +252,7 @@
       var id = field("id").value.trim();
       var name = field("name").value.trim();
       if (!name) { setError("{% trans 'Name is required.' %}"); return; }
-      var body = { kind: "custom_assistant", name: name, description: field("description").value.trim(), status: field("status").value || "active", triggerType: "manual", autonomyMode: "draft_for_approval", reviewMode: "on_risk", createSession: true, instructions: { goal: field("instructions").value.trim() } };
+      var body = { name: name, description: field("description").value.trim(), status: field("status").value || "active", createSession: true, instructions: { goal: field("instructions").value.trim() } };
       var url = "/api/agents/" + encodeURIComponent(agentId) + "/custom-assistants/";
       var method = "POST";
       if (id) { url += encodeURIComponent(id) + "/"; method = "PATCH"; }

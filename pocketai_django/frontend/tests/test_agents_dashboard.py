@@ -5,7 +5,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
-from apps.conversations.models import AssistantWorkflow, AssistantWorkflowKind, AssistantWorkflowTriggerType
+from apps.conversations.models import Automation, AutomationKind, AutomationTriggerType
 
 
 User = get_user_model()
@@ -65,19 +65,19 @@ class AgentsDashboardTests(TestCase):
         self.assertNotIn("data-agent-panel", content)
 
     def test_product_api_filters_custom_assistants_and_automations(self) -> None:
-        manual = AssistantWorkflow.objects.create(
+        manual = Automation.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
             name="Proposal Assistant",
-            trigger_type=AssistantWorkflowTriggerType.MANUAL,
+            trigger_type=AutomationTriggerType.MANUAL,
         )
-        automation = AssistantWorkflow.objects.create(
+        automation = Automation.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
             name="Daily Digest",
-            trigger_type=AssistantWorkflowTriggerType.SCHEDULE,
+            trigger_type=AutomationTriggerType.SCHEDULE,
         )
         self.client.force_login(self.user)
 
@@ -90,8 +90,8 @@ class AgentsDashboardTests(TestCase):
 
         manual.refresh_from_db()
         automation.refresh_from_db()
-        self.assertEqual(manual.kind, AssistantWorkflowKind.CUSTOM_ASSISTANT)
-        self.assertEqual(automation.kind, AssistantWorkflowKind.AUTOMATION)
+        self.assertEqual(manual.kind, AutomationKind.CUSTOM_ASSISTANT)
+        self.assertEqual(automation.kind, AutomationKind.AUTOMATION)
         self.assertEqual([item["id"] for item in assistants], [str(manual.id)])
         self.assertEqual([item["id"] for item in automations], [str(automation.id)])
 

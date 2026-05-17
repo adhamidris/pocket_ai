@@ -2,14 +2,8 @@ from __future__ import annotations
 
 from typing import Mapping
 
-from apps.conversations.models import (
-    AgentRequest,
-    AgentRun,
-    AgentRunCheckpoint,
-    AgentRunCheckpointStatus,
-    AgentRunEvent,
-    ConversationMessage,
-)
+from apps.agent_runs.models import AgentRun, AgentRunCheckpoint, AgentRunCheckpointStatus, AgentRunEvent
+from apps.conversations.models import AgentRequest, ConversationMessage
 from apps.conversations.run_display import build_agent_run_display
 
 
@@ -27,7 +21,7 @@ def serialize_agent_run_checkpoint_for_portal(checkpoint: AgentRunCheckpoint | N
         return None
     return {
         "id": str(checkpoint.id),
-        "workflowId": str(checkpoint.workflow_id) if checkpoint.workflow_id else None,
+        "automationId": str(checkpoint.automation_id) if checkpoint.automation_id else None,
         "runId": str(checkpoint.run_id),
         "childRunId": str(checkpoint.child_run_id) if checkpoint.child_run_id else None,
         "kind": checkpoint.kind,
@@ -78,8 +72,8 @@ def serialize_agent_run_for_portal(run: AgentRun) -> dict[str, object]:
 
     return {
         "id": str(run.id),
-        "workflowId": str(run.workflow_id) if run.workflow_id else None,
-        "workflowName": str(getattr(getattr(run, "workflow", None), "name", "") or ""),
+        "automationId": str(run.automation_id) if run.automation_id else None,
+        "automationName": str(getattr(getattr(run, "automation", None), "name", "") or ""),
         "title": run.title or "",
         "source": run.source,
         "status": run.status,

@@ -4,7 +4,8 @@ from django.db import transaction
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
-from apps.conversations.models import AgentRequest, AgentRun, AgentRunEvent, ConversationMessage
+from apps.agent_runs.models import AgentRun, AgentRunEvent
+from apps.conversations.models import AgentRequest, ConversationMessage
 from apps.conversations.portal_session_event_bus import publish_portal_agent_request_event, publish_portal_conversation_event
 from apps.conversations.portal_session_serializers import (
     serialize_agent_request_for_portal,
@@ -32,10 +33,10 @@ def _publish_portal_agent_run_event(sender, instance: AgentRunEvent, created: bo
     }
     conversation_id = run.conversation_id
 
-    # For workflow runs, also publish to the agent-level stream so that
+    # For automation runs, also publish to the agent-level stream so that
     # SSE consumers see events regardless of which conversation is active.
     agent_profile_id = getattr(run, "agent_profile_id", None)
-    workflow_id = getattr(run, "workflow_id", None)
+    automation_id = getattr(run, "automation_id", None)
 
     def _publish():
         publish_portal_conversation_event(
@@ -43,9 +44,9 @@ def _publish_portal_agent_run_event(sender, instance: AgentRunEvent, created: bo
             event_name="agentRunEvent",
             payload=payload,
         )
-        if workflow_id and agent_profile_id:
-            from apps.conversations.portal_session_event_bus import publish_portal_agent_workflow_run_event
-            publish_portal_agent_workflow_run_event(
+        if automation_id and agent_profile_id:
+            from apps.conversations.portal_session_event_bus import publish_portal_agent_automation_run_event
+            publish_portal_agent_automation_run_event(
                 agent_profile_id=agent_profile_id,
                 payload=payload,
             )
@@ -93,4 +94,3 @@ def _publish_portal_agent_request(sender, instance: AgentRequest, created: bool,
             publish_portal_agent_request_event(agent_profile_id=agent_id, payload=payload)
 
     transaction.on_commit(_publish)
-

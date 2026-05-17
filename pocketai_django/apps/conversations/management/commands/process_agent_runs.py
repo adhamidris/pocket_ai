@@ -8,7 +8,7 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 
 from apps.conversations.agent_run_processing import AgentRunProcessingService
-from apps.conversations.models import AgentRun, AgentRunStatus
+from apps.agent_runs.models import AgentRun, AgentRunStatus
 from core.tenancy import tenant_bypass
 
 

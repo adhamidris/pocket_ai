@@ -12,7 +12,7 @@ from django.utils import timezone as dj_timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
-from apps.conversations.models import AgentRunEventType
+from apps.agent_runs.models import AgentRunEventType
 from apps.voice.models import CallSession, CallStatus, VoiceConfiguration
 from apps.voice.provider_credentials import VOICE_PROVIDER_TELNYX, resolve_telnyx_config
 from apps.voice.views_twilio import (

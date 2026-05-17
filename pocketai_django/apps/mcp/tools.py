@@ -63,10 +63,8 @@ from apps.integrations.models import (
     EmailAccount,
     IntegrationAccount,
 )
+from apps.agent_runs.models import AgentRun, AgentRunEvent, AgentRunStatus
 from apps.conversations.models import (
-    AgentRun,
-    AgentRunEvent,
-    AgentRunStatus,
     Conversation,
     ConversationFile,
     ConversationFileChunk,
@@ -10475,7 +10473,7 @@ def _start_agent_run_handler(
     from django.db.models import Max
     from django.utils import timezone as django_timezone
 
-    from apps.conversations.models import (
+    from apps.agent_runs.models import (
         AgentRun,
         AgentRunCheckpoint,
         AgentRunCheckpointKind,
@@ -10485,12 +10483,14 @@ def _start_agent_run_handler(
         AgentRunEventType,
         AgentRunSource,
         AgentRunStatus,
+    )
+    from apps.conversations.models import (
         Conversation,
         ConversationChannel,
     )
     from apps.conversations.workflow_contracts import normalize_workflow_instructions
 
-    workflow_snapshot = normalize_workflow_instructions(
+    run_snapshot = normalize_workflow_instructions(
         {
             "version": 1,
             "goal": goal[:6000],
@@ -10576,10 +10576,10 @@ def _start_agent_run_handler(
             agent_profile_id=agent_profile.id,
             conversation_id=parent_run.conversation_id if parent_run is not None else conversation.id,
             created_by_id=actor_id,
-            workflow=parent_run.workflow if parent_run is not None else None,
+            automation=parent_run.automation if parent_run is not None else None,
             parent_run=parent_run,
             delegated_by_agent_id=agent_profile.id if parent_run is not None else None,
-            workflow_snapshot=workflow_snapshot,
+            run_snapshot=run_snapshot,
             title=title[:200],
             source=AgentRunSource.DELEGATION if parent_run is not None else AgentRunSource.CHAT,
             status=AgentRunStatus.QUEUED,
@@ -10629,7 +10629,7 @@ def _start_agent_run_handler(
         if parent_run is not None:
             checkpoint = AgentRunCheckpoint.objects.create(
                 business_profile=parent_run.business_profile,
-                workflow=parent_run.workflow,
+                automation=parent_run.automation,
                 run=parent_run,
                 conversation=parent_run.conversation,
                 child_run=run,
@@ -11016,12 +11016,12 @@ def _continue_agent_run_handler(
             "updated_at": now,
         }
         if next_spec_snapshot is not None:
-            update_fields["workflow_snapshot"] = next_spec_snapshot
+            update_fields["run_snapshot"] = next_spec_snapshot
 
         AgentRun.objects.filter(id=run.id).update(**update_fields)
 
         # Log the continuation event
-        from apps.conversations.models import AgentRunEventStream, AgentRunEventType
+        from apps.agent_runs.models import AgentRunEventStream, AgentRunEventType
         from django.db.models import Max
 
         next_index = (
@@ -11245,8 +11245,8 @@ def _remember_workflow_resource_ref(
     metadata = dict(conversation.metadata) if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
     refs_raw = metadata.get("resource_refs")
     refs = [dict(item) for item in refs_raw if isinstance(item, Mapping)] if isinstance(refs_raw, list) else []
-    workflow_id = str(getattr(workflow, "id", "") or "").strip()
-    if not workflow_id:
+    automation_id = str(getattr(workflow, "id", "") or "").strip()
+    if not automation_id:
         return
 
     refs = [
@@ -11254,14 +11254,14 @@ def _remember_workflow_resource_ref(
         for ref in refs
         if not (
             str(ref.get("type") or "").strip().lower() in {"workflow", "task"}
-            and str(ref.get("id") or "").strip() == workflow_id
+            and str(ref.get("id") or "").strip() == automation_id
         )
     ]
     refs.insert(
         0,
         {
             "type": "workflow",
-            "id": workflow_id,
+            "id": automation_id,
             "name": str(getattr(workflow, "name", "") or "")[:160],
             "status": str(getattr(workflow, "status", "") or ""),
             "purpose": str(purpose or "reference")[:80],
@@ -11272,8 +11272,8 @@ def _remember_workflow_resource_ref(
     )
     metadata["resource_refs"] = refs[:12]
     if pending_activation:
-        metadata["pending_workflow_activation_id"] = workflow_id
-    elif str(metadata.get("pending_workflow_activation_id") or "") == workflow_id:
+        metadata["pending_workflow_activation_id"] = automation_id
+    elif str(metadata.get("pending_workflow_activation_id") or "") == automation_id:
         metadata.pop("pending_workflow_activation_id", None)
 
     conversation.metadata = metadata
@@ -11305,9 +11305,9 @@ def _list_tasks_handler(
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
     del context
-    from apps.conversations.models import AssistantWorkflow
+    from apps.automations.models import Automation
 
-    qs = AssistantWorkflow.objects.select_related("agent_profile").filter(business_profile_id=conversation.business_profile_id)
+    qs = Automation.objects.select_related("agent_profile").filter(business_profile_id=conversation.business_profile_id)
     agent_id_raw = arguments.get("agent_id") or arguments.get("agentId")
     if agent_id_raw:
         try:
@@ -11328,7 +11328,8 @@ def _draft_task_handler(
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
     del context
-    from apps.conversations.models import AgentRunVisibility, AssistantWorkflow, AssistantWorkflowStatus, AssistantWorkflowTriggerType
+    from apps.agent_runs.models import AgentRunVisibility
+    from apps.automations.models import Automation, AutomationStatus, AutomationTriggerType
 
     agent, error = _resolve_task_agent(conversation, arguments.get("agent_id") or arguments.get("agentId"))
     if error:
@@ -11337,8 +11338,8 @@ def _draft_task_handler(
     goal = str(arguments.get("goal") or "").strip()
     if not name or not goal:
         return {"tool": "draft_task", "status": "error", "error_code": "validation_failed", "error": "name and goal are required."}
-    trigger_type = str(arguments.get("trigger_type") or arguments.get("triggerType") or AssistantWorkflowTriggerType.MANUAL).strip().lower()
-    if trigger_type not in {choice for choice, _ in AssistantWorkflowTriggerType.choices}:
+    trigger_type = str(arguments.get("trigger_type") or arguments.get("triggerType") or AutomationTriggerType.SCHEDULE).strip().lower()
+    if trigger_type not in {choice for choice, _ in AutomationTriggerType.choices}:
         return {"tool": "draft_task", "status": "error", "error_code": "validation_failed", "error": "Invalid trigger_type."}
     visibility = str(arguments.get("visibility") or AgentRunVisibility.INITIATOR).strip().lower()
     if visibility not in {choice for choice, _ in AgentRunVisibility.choices}:
@@ -11346,14 +11347,14 @@ def _draft_task_handler(
     instructions = _task_instruction_spec_from_args(arguments)
     workflow_type = str(instructions.get("workflow_type") or "general")
     memory_shape = str(instructions.get("memory_shape") or "general")
-    description = str(arguments.get("description") or "").strip()[:4000] if trigger_type == AssistantWorkflowTriggerType.MANUAL else ""
-    workflow = AssistantWorkflow.objects.create(
+    description = str(arguments.get("description") or "").strip()[:4000]
+    workflow = Automation.objects.create(
         business_profile_id=conversation.business_profile_id,
         agent_profile=agent,
         created_by=getattr(conversation, "owner_user", None) or getattr(agent, "user", None),
         name=name[:160],
         description=description,
-        status=AssistantWorkflowStatus.DRAFT,
+        status=AutomationStatus.DRAFT,
         visibility=visibility,
         trigger_type=trigger_type,
         trigger_config=_task_trigger_config_from_args(arguments, trigger_type),
@@ -11388,20 +11389,21 @@ def _update_task_handler(
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
     del context
-    from apps.conversations.models import AgentRunVisibility, AssistantWorkflow, AssistantWorkflowTriggerType
+    from apps.agent_runs.models import AgentRunVisibility
+    from apps.automations.models import Automation, AutomationTriggerType
 
     try:
         task_id = uuid.UUID(str(arguments.get("task_id") or arguments.get("taskId") or ""))
     except (TypeError, ValueError):
         return {"tool": "update_task", "status": "error", "error_code": "validation_failed", "error": "task_id must be a UUID."}
-    workflow = AssistantWorkflow.objects.filter(id=task_id, business_profile_id=conversation.business_profile_id).first()
+    workflow = Automation.objects.filter(id=task_id, business_profile_id=conversation.business_profile_id).first()
     if workflow is None:
         return {"tool": "update_task", "status": "error", "error_code": "not_found", "error": "Task not found."}
     updates: list[str] = []
     if "name" in arguments:
         workflow.name = str(arguments.get("name") or "").strip()[:160]
         updates.append("name")
-    if "description" in arguments and workflow.trigger_type == AssistantWorkflowTriggerType.MANUAL:
+    if "description" in arguments and workflow.trigger_type == AutomationTriggerType.MANUAL:
         workflow.description = str(arguments.get("description") or "").strip()[:4000]
         updates.append("description")
     if _has_task_instruction_updates(arguments):
@@ -11417,7 +11419,7 @@ def _update_task_handler(
         updates.append("metadata")
     if "trigger_type" in arguments or "triggerType" in arguments:
         trigger_type = str(arguments.get("trigger_type") or arguments.get("triggerType") or "").strip().lower()
-        if trigger_type not in {choice for choice, _ in AssistantWorkflowTriggerType.choices}:
+        if trigger_type not in {choice for choice, _ in AutomationTriggerType.choices}:
             return {"tool": "update_task", "status": "error", "error_code": "validation_failed", "error": "Invalid trigger_type."}
         workflow.trigger_type = trigger_type
         updates.append("trigger_type")
@@ -11453,14 +11455,14 @@ def _request_task_activation_handler(
 ) -> Mapping[str, object]:
     del context
     from django.utils import timezone as django_timezone
-    from apps.conversations.models import AssistantWorkflow, AssistantWorkflowStatus, AssistantWorkflowTriggerType
+    from apps.automations.models import Automation, AutomationStatus, AutomationTriggerType
     from apps.conversations.workflow_scheduling import CronScheduleError, compute_next_workflow_schedule_at
 
     try:
         task_id = uuid.UUID(str(arguments.get("task_id") or arguments.get("taskId") or ""))
     except (TypeError, ValueError):
         return {"tool": "request_task_activation", "status": "error", "error_code": "validation_failed", "error": "task_id must be a UUID."}
-    workflow = AssistantWorkflow.objects.filter(id=task_id, business_profile_id=conversation.business_profile_id).first()
+    workflow = Automation.objects.filter(id=task_id, business_profile_id=conversation.business_profile_id).first()
     if workflow is None:
         return {"tool": "request_task_activation", "status": "error", "error_code": "not_found", "error": "Task not found."}
     if not bool(arguments.get("approved")):
@@ -11471,12 +11473,12 @@ def _request_task_activation_handler(
             "prompt": "Please approve activating this persistent task before it starts running.",
         }
     next_trigger_at = None
-    if workflow.trigger_type == AssistantWorkflowTriggerType.SCHEDULE:
+    if workflow.trigger_type == AutomationTriggerType.SCHEDULE:
         try:
             next_trigger_at = compute_next_workflow_schedule_at("cron", dict(workflow.trigger_config or {}), after=django_timezone.now())
         except CronScheduleError as exc:
             return {"tool": "request_task_activation", "status": "error", "error_code": "validation_failed", "error": str(exc)}
-    workflow.status = AssistantWorkflowStatus.ACTIVE
+    workflow.status = AutomationStatus.ACTIVE
     workflow.next_trigger_at = next_trigger_at
     workflow.save(update_fields=["status", "next_trigger_at", "updated_at"])
     _remember_workflow_resource_ref(
@@ -11495,19 +11497,19 @@ def _pause_task_handler(
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
     del context
-    from apps.conversations.models import AssistantWorkflow, AssistantWorkflowStatus
+    from apps.automations.models import Automation, AutomationStatus
 
     try:
         task_id = uuid.UUID(str(arguments.get("task_id") or arguments.get("taskId") or ""))
     except (TypeError, ValueError):
         return {"tool": "pause_task", "status": "error", "error_code": "validation_failed", "error": "task_id must be a UUID."}
-    workflow = AssistantWorkflow.objects.filter(id=task_id, business_profile_id=conversation.business_profile_id).first()
+    workflow = Automation.objects.filter(id=task_id, business_profile_id=conversation.business_profile_id).first()
     if workflow is None:
         return {"tool": "pause_task", "status": "error", "error_code": "not_found", "error": "Task not found."}
     metadata = dict(workflow.metadata or {}) if isinstance(workflow.metadata, dict) else {}
     if arguments.get("reason"):
         metadata["last_pause_reason"] = str(arguments.get("reason"))[:500]
-    workflow.status = AssistantWorkflowStatus.PAUSED
+    workflow.status = AutomationStatus.PAUSED
     workflow.next_trigger_at = None
     workflow.metadata = metadata
     workflow.save(update_fields=["status", "next_trigger_at", "metadata", "updated_at"])

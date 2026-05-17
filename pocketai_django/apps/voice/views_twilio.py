@@ -13,7 +13,7 @@ from django.views.decorators.http import require_http_methods
 
 from core.tenancy import tenant_context
 
-from apps.conversations.models import AgentRun, AgentRunEventStream, AgentRunEventType, AgentRunStatus
+from apps.agent_runs.models import AgentRun, AgentRunEventStream, AgentRunEventType, AgentRunStatus
 from apps.voice.agent_run_bridge import append_agent_run_event, get_agent_run_id_from_call_session_metadata
 from apps.voice.models import CallSession, CallStatus, VoiceConfiguration
 from apps.voice.provider_credentials import VOICE_PROVIDER_TWILIO, resolve_twilio_config

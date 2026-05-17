@@ -28,7 +28,7 @@ class WorkflowInstructions(TypedDict, total=False):
     """
     Serializable instruction contract for a background run.
 
-    Stored on `AssistantWorkflow.instructions` and snapshot into `AgentRun.workflow_snapshot`.
+    Stored on `Automation.instructions` and snapshot into `AgentRun.run_snapshot`.
     """
 
     version: int
@@ -265,28 +265,20 @@ def resolve_active_workflow(conversation: object):
     """
     Return the Custom Assistant attached to a visible conversation, if any.
 
-    The current model is `Conversation.workflow`. The reverse lookup and metadata
-    path are retained for pre-refactor/legacy rows that may still be visible.
+    The current model is `Conversation.custom_assistant`.
     """
 
-    direct = getattr(conversation, "workflow", None)
+    direct = getattr(conversation, "custom_assistant", None)
     if direct is not None:
         return direct
 
-    linked_manager = getattr(conversation, "assistant_workflows", None)
-    first = getattr(linked_manager, "first", None)
-    if callable(first):
-        linked = first()
-        if linked is not None:
-            return linked
-
     metadata = getattr(conversation, "metadata", None)
     metadata_map = metadata if isinstance(metadata, Mapping) else {}
-    raw_id = str(metadata_map.get("workflow_id") or metadata_map.get("workflowId") or "").strip()
+    raw_id = str(metadata_map.get("custom_assistant_id") or metadata_map.get("customAssistantId") or "").strip()
     if not raw_id:
         return None
     try:
-        workflow_id = uuid.UUID(raw_id)
+        custom_assistant_id = uuid.UUID(raw_id)
     except (TypeError, ValueError):
         return None
 
@@ -298,10 +290,10 @@ def resolve_active_workflow(conversation: object):
         return None
 
     try:
-        from apps.conversations.models import AssistantWorkflow
+        from apps.assistants.models import CustomAssistant
 
         return (
-            AssistantWorkflow.objects.filter(id=workflow_id, business_profile_id=business_id)
+            CustomAssistant.objects.filter(id=custom_assistant_id, business_profile_id=business_id)
             .select_related("agent_profile", "business_profile")
             .first()
         )
@@ -337,14 +329,11 @@ def build_workflow_agent_instruction_note(conversation: object, *, max_chars: in
     workflow_id = getattr(workflow, "id", "")
     name = _clip_text(getattr(workflow, "name", "") or "Custom Assistant", 160)
     status = _clip_text(getattr(workflow, "status", "") or "", 48)
-    trigger_type = _clip_text(getattr(workflow, "trigger_type", "") or "", 48)
     identity_parts = [name]
     if workflow_id:
         identity_parts.append(f"id={workflow_id}")
     if status:
         identity_parts.append(f"status={status}")
-    if trigger_type:
-        identity_parts.append(f"trigger={trigger_type}")
     lines.append("- " + "; ".join(identity_parts))
     lines.append(f"Active Custom Assistant name/role: {name}")
 

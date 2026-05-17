@@ -301,7 +301,7 @@ class ChatPortalRunApprovalTests(TestCase):
             created_by=self.user,
             title="Email something",
             status=AgentRunStatus.WAITING_APPROVAL,
-            workflow_snapshot={"goal": "Email something"},
+            run_snapshot={"goal": "Email something"},
             metadata={
                 "pending_approval_id": str(self.approval.id),
             },
@@ -407,7 +407,7 @@ class ChatPortalPendingToolExecutionTests(TestCase):
             created_by=self.user,
             title="Email something with pending tool",
             status=AgentRunStatus.WAITING_APPROVAL,
-            workflow_snapshot={"goal": "Email something"},
+            run_snapshot={"goal": "Email something"},
             metadata={
                 "pending_approval_id": str(self.approval.id),
                 "pending_tool_call": {

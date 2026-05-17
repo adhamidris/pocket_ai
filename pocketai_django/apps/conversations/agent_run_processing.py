@@ -19,7 +19,7 @@ from django.utils import timezone
 
 from core.tenancy import tenant_bypass, tenant_context
 
-from apps.conversations.models import (
+from apps.agent_runs.models import (
     AgentRun,
     AgentRunCheckpoint,
     AgentRunCheckpointKind,
@@ -31,10 +31,9 @@ from apps.conversations.models import (
     AgentRunNotificationStatus,
     AgentRunSource,
     AgentRunStatus,
-    AssistantWorkflow,
-    AssistantWorkflowAutonomyMode,
-    AssistantWorkflowReviewMode,
-    AssistantWorkflowDedupeKey,
+)
+from apps.automations.models import Automation, AutomationAutonomyMode, AutomationDedupeKey, AutomationReviewMode
+from apps.conversations.models import (
     Conversation,
     ConversationMessage,
     ConversationSender,
@@ -991,7 +990,7 @@ class AgentRunProcessingService:
         if not workflow:
             return ""
         instructions = workflow.instructions if isinstance(getattr(workflow, "instructions", None), Mapping) else {}
-        snapshot = run.workflow_snapshot if isinstance(getattr(run, "workflow_snapshot", None), Mapping) else {}
+        snapshot = run.run_snapshot if isinstance(getattr(run, "run_snapshot", None), Mapping) else {}
         instruction_source = dict(snapshot)
         instruction_source.update(dict(instructions))
         wake_up_prompt = str(
@@ -1006,12 +1005,12 @@ class AgentRunProcessingService:
         state = workflow.state if isinstance(getattr(workflow, "state", None), Mapping) else {}
         notification_config = workflow.notification_config if isinstance(getattr(workflow, "notification_config", None), Mapping) else {}
         recent_memories = list(
-            MemoryItem.objects.filter(workflow=workflow, scope=MemoryScope.WORKFLOW, status=MemoryStatus.ACTIVE)
+            MemoryItem.objects.filter(automation=workflow, scope=MemoryScope.AUTOMATION, status=MemoryStatus.ACTIVE)
             .order_by("-updated_at", "-created_at")
             .only("kind", "key", "content", "payload", "updated_at")[:20]
         )
         recent_runs = list(
-            AgentRun.objects.filter(workflow=workflow)
+            AgentRun.objects.filter(automation=workflow)
             .exclude(id=run.id)
             .exclude(status=AgentRunStatus.CANCELLED)
             .order_by("-created_at")
@@ -1019,7 +1018,7 @@ class AgentRunProcessingService:
         )
         pending = list(
             AgentRun.objects.filter(
-                workflow=workflow,
+                automation=workflow,
                 status__in=[AgentRunStatus.WAITING_APPROVAL, AgentRunStatus.WAITING_USER, AgentRunStatus.WAITING_EXTERNAL],
             )
             .exclude(id=run.id)
@@ -1028,7 +1027,7 @@ class AgentRunProcessingService:
         )
         lines: list[str] = [
             "Workflow runtime packet.",
-            f"- workflow_id: {workflow.id}",
+            f"- automation_id: {workflow.id}",
             f"- workflow_name: {workflow.name}",
             "- workflow_agent_scope: main_agent",
             f"- responsible_agent_id: {workflow.agent_profile_id}",
@@ -1054,7 +1053,7 @@ class AgentRunProcessingService:
         if wake_up_prompt:
             lines.append(_clip_text(wake_up_prompt, 12000))
         else:
-            lines.append(_clip_text(str((run.workflow_snapshot or {}).get("goal") or run.title or "Continue this workflow."), 12000))
+            lines.append(_clip_text(str((run.run_snapshot or {}).get("goal") or run.title or "Continue this workflow."), 12000))
         lines.append("")
         lines.append("Always review workflow_memory before using tools. Do not repeat completed work or reprocess tracked items unless there is a clear reason.")
         lines.append("If nothing materially changed from workflow memory/state, complete with status=no_change and notification_candidate=null.")
@@ -1135,7 +1134,7 @@ class AgentRunProcessingService:
         if not isinstance(candidate, Mapping):
             candidate = {}
         report: dict[str, object] = {
-            "objective": str((run.workflow_snapshot or {}).get("goal") or run.title or "").strip(),
+            "objective": str((run.run_snapshot or {}).get("goal") or run.title or "").strip(),
             "status": "completed" if next_status == AgentRunStatus.COMPLETED else next_status,
             "findings": [],
             "actions_taken": [],
@@ -1194,7 +1193,7 @@ class AgentRunProcessingService:
             report["changed_entities"] = [
                 {
                     "type": "run_response",
-                    "identity": str(run.workflow_id or run.id),
+                    "identity": str(run.automation_id or run.id),
                     "state": {"response_hash": _stable_digest(response_text or report)},
                 }
             ]
@@ -1211,7 +1210,7 @@ class AgentRunProcessingService:
             return dict(entry)
         return None
 
-    def _workflow_dedupe_key(self, *, workflow: AssistantWorkflow | None, report: Mapping[str, object]) -> str:
+    def _workflow_dedupe_key(self, *, workflow: Automation | None, report: Mapping[str, object]) -> str:
         entities = report.get("changed_entities")
         candidate = entities if isinstance(entities, list) and entities else report.get("notification_candidate") or report
         return f"workflow_state:{_stable_digest(candidate)}"
@@ -1225,14 +1224,14 @@ class AgentRunProcessingService:
         now,
     ) -> dict[str, object]:
         workflow = getattr(run, "workflow", None)
-        dedupe_key = self._workflow_dedupe_key(workflow=workflow, report=report)
+        dedupe_key = self._workflow_dedupe_key(automation=workflow, report=report)
         duplicate = False
         if workflow is not None and dedupe_key:
             duplicate = not self._record_workflow_dedupe_key(workflow, dedupe_key)
 
         if workflow is not None:
             self._update_workflow_state_from_report(
-                workflow=workflow,
+                automation=workflow,
                 run=run,
                 report=report,
                 dedupe_key=dedupe_key,
@@ -1285,13 +1284,13 @@ class AgentRunProcessingService:
             defaults=defaults,
         )
 
-    def _record_workflow_dedupe_key(self, workflow: AssistantWorkflow, dedupe_key: str) -> bool:
+    def _record_workflow_dedupe_key(self, workflow: Automation, dedupe_key: str) -> bool:
         if not dedupe_key:
             return True
         try:
-            AssistantWorkflowDedupeKey.objects.create(
+            AutomationDedupeKey.objects.create(
                 business_profile=workflow.business_profile,
-                workflow=workflow,
+                automation=workflow,
                 dedupe_key=dedupe_key[:255],
             )
             return True
@@ -1301,7 +1300,7 @@ class AgentRunProcessingService:
     def _update_workflow_state_from_report(
         self,
         *,
-        workflow: AssistantWorkflow,
+        workflow: Automation,
         run: AgentRun,
         report: Mapping[str, object],
         dedupe_key: str,
@@ -1327,7 +1326,7 @@ class AgentRunProcessingService:
         state["last_run_report"] = compact_report
         state["last_changed_entities"] = report.get("changed_entities") if isinstance(report.get("changed_entities"), list) else []
         state["workflow_memory"] = self._merge_workflow_memory(
-            workflow=workflow,
+            automation=workflow,
             run=run,
             previous=state.get("workflow_memory"),
             report=report,
@@ -1338,13 +1337,13 @@ class AgentRunProcessingService:
             notification_history = []
         notification_history.insert(0, {"run_id": str(run.id), "at": now.isoformat(), "dedupe_key": dedupe_key, "duplicate": duplicate})
         state["notification_history"] = notification_history[:50]
-        AssistantWorkflow.objects.filter(id=workflow.id).update(state=state, updated_at=now)
+        Automation.objects.filter(id=workflow.id).update(state=state, updated_at=now)
         workflow.state = state
 
     def _merge_workflow_memory(
         self,
         *,
-        workflow: AssistantWorkflow,
+        workflow: Automation,
         run: AgentRun,
         previous: object,
         report: Mapping[str, object],
@@ -1414,7 +1413,7 @@ class AgentRunProcessingService:
         )
         memory["recent_updates"] = recent_updates[:10]
 
-        self._upsert_workflow_memory_item(workflow=workflow, run=run, memory=memory, now=now)
+        self._upsert_workflow_memory_item(automation=workflow, run=run, memory=memory, now=now)
         return _json_safe(memory, fallback={}) if isinstance(memory, dict) else {}
 
     def _email_memory_from_tool_trace(self, actions_taken: object, run: AgentRun) -> tuple[list[str], list[str]]:
@@ -1446,7 +1445,7 @@ class AgentRunProcessingService:
     def _upsert_workflow_memory_item(
         self,
         *,
-        workflow: AssistantWorkflow,
+        workflow: Automation,
         run: AgentRun,
         memory: Mapping[str, object],
         now,
@@ -1462,8 +1461,8 @@ class AgentRunProcessingService:
         try:
             MemoryItem.objects.update_or_create(
                 business_profile=workflow.business_profile,
-                workflow=workflow,
-                scope=MemoryScope.WORKFLOW,
+                automation=workflow,
+                scope=MemoryScope.AUTOMATION,
                 key="workflow_compact_journal",
                 defaults={
                     "agent_profile": workflow.agent_profile,
@@ -1509,7 +1508,7 @@ class AgentRunProcessingService:
         expires_at = now + timedelta(seconds=timeout_value)
         values = {
             "business_profile": run.business_profile,
-            "workflow": run.workflow,
+            "workflow": run.automation,
             "conversation": run.conversation,
             "child_run": child_run,
             "title": _clip_text(title, 240),
@@ -1808,7 +1807,7 @@ class AgentRunProcessingService:
             raise RuntimeError("MCP provider is not configured.")
 
         started = time.monotonic()
-        spec = dict(run.workflow_snapshot or {}) if isinstance(run.workflow_snapshot, dict) else {}
+        spec = dict(run.run_snapshot or {}) if isinstance(run.run_snapshot, dict) else {}
         goal = str(spec.get("goal") or spec.get("name") or run.title or "").strip()
         if not goal:
             raise RuntimeError("run has no goal/title to execute")
@@ -2421,7 +2420,7 @@ class AgentRunProcessingService:
             raw_response_text_value = str(getattr(turn, "response_text", "") or "").strip()
             response_text_value = raw_response_text_value
             malformed_final_reason = ""
-            if run.source in {AgentRunSource.WORKFLOW, AgentRunSource.SCHEDULE, AgentRunSource.WEBHOOK, AgentRunSource.EMAIL_INBOX}:
+            if run.source in {AgentRunSource.AUTOMATION, AgentRunSource.SCHEDULE, AgentRunSource.WEBHOOK, AgentRunSource.EMAIL_INBOX}:
                 if has_dsml_markup(raw_response_text_value):
                     stripped = strip_dsml_markup(raw_response_text_value).strip()
                     response_text_value = stripped
@@ -2640,12 +2639,12 @@ class AgentRunProcessingService:
             )
             base_result["run_report"] = run_report
             report_dedupe_key = ""
-            if run.workflow_id:
-                report_dedupe_key = self._workflow_dedupe_key(workflow=run.workflow, report=run_report)
+            if run.automation_id:
+                report_dedupe_key = self._workflow_dedupe_key(automation=run.automation, report=run_report)
                 if report_dedupe_key:
                     next_metadata["run_report_dedupe_key"] = report_dedupe_key
-                    prior_duplicate = AssistantWorkflowDedupeKey.objects.filter(
-                        workflow_id=run.workflow_id,
+                    prior_duplicate = AutomationDedupeKey.objects.filter(
+                        automation_id=run.automation_id,
                         dedupe_key=report_dedupe_key[:255],
                     ).exists()
                     if prior_duplicate and next_status == AgentRunStatus.WAITING_APPROVAL:
@@ -2724,7 +2723,7 @@ class AgentRunProcessingService:
                     pass
 
             report_state: dict[str, object] = {}
-            if run.source in {AgentRunSource.WORKFLOW, AgentRunSource.SCHEDULE, AgentRunSource.WEBHOOK, AgentRunSource.EMAIL_INBOX}:
+            if run.source in {AgentRunSource.AUTOMATION, AgentRunSource.SCHEDULE, AgentRunSource.WEBHOOK, AgentRunSource.EMAIL_INBOX}:
                 report_state = self._persist_run_report(
                     run=run,
                     report=run_report,

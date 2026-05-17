@@ -176,7 +176,7 @@ class MemoryExtractionService:
                     business_profile=run.business_profile,
                     scope=MemoryScope.RUN,
                     agent_profile=run.agent_profile,
-                    workflow=run.workflow,
+                    automation=run.automation,
                     run=run,
                     conversation=run.conversation,
                     kind=kind,
@@ -193,12 +193,12 @@ class MemoryExtractionService:
                 )
                 created_items.append(item)
                 rule_based_created += 1
-                if getattr(run, "workflow_id", None) and kind in {MemoryKind.DECISION, MemoryKind.EXTRACTED_DATA, MemoryKind.FACT}:
+                if getattr(run, "automation_id", None) and kind in {MemoryKind.DECISION, MemoryKind.EXTRACTED_DATA, MemoryKind.FACT}:
                     MemoryItem.objects.create(
                         business_profile=run.business_profile,
-                        scope=MemoryScope.WORKFLOW,
+                        scope=MemoryScope.AUTOMATION,
                         agent_profile=run.agent_profile,
-                        workflow=run.workflow,
+                        automation=run.automation,
                         run=run,
                         conversation=run.conversation,
                         kind=kind,
@@ -233,7 +233,7 @@ class MemoryExtractionService:
                         business_profile=run.business_profile,
                         scope=MemoryScope.RUN,
                         agent_profile=run.agent_profile,
-                        workflow=run.workflow,
+                        automation=run.automation,
                         run=run,
                         conversation=run.conversation,
                         kind=kind,
@@ -250,12 +250,12 @@ class MemoryExtractionService:
                     )
                     created_items.append(item)
                     llm_created += 1
-                    if getattr(run, "workflow_id", None):
+                    if getattr(run, "automation_id", None):
                         MemoryItem.objects.create(
                             business_profile=run.business_profile,
-                            scope=MemoryScope.WORKFLOW,
+                            scope=MemoryScope.AUTOMATION,
                             agent_profile=run.agent_profile,
-                            workflow=run.workflow,
+                            automation=run.automation,
                             run=run,
                             conversation=run.conversation,
                             kind=kind,
@@ -566,7 +566,7 @@ def extract_workflow_state(
             business_profile=run.business_profile,
             scope=MemoryScope.RUN,
             agent_profile=run.agent_profile,
-            workflow=run.workflow,
+            automation=run.automation,
             run=run,
             conversation=run.conversation,
             kind=MemoryKind.STATE_NOTE,

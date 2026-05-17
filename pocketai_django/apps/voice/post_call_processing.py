@@ -14,7 +14,7 @@ from django.utils import timezone
 
 from core.tenancy import tenant_context
 
-from apps.conversations.models import AgentRun, AgentRunEventStream, AgentRunEventType, AgentRunStatus
+from apps.agent_runs.models import AgentRun, AgentRunEventStream, AgentRunEventType, AgentRunStatus
 from apps.conversations.models import (
     Conversation,
     ConversationChannel,

@@ -19,9 +19,9 @@ from apps.conversations.models import (
     AgentRunEventType,
     AgentRunSource,
     AgentRunStatus,
-    AssistantWorkflow,
-    AssistantWorkflowKind,
-    AssistantWorkflowStatus,
+    Automation,
+    AutomationKind,
+    AutomationStatus,
     Conversation,
     ConversationChannel,
     ConversationStatus,
@@ -32,7 +32,7 @@ from apps.conversations.models import (
     MemoryVisibility,
 )
 from apps.api.chat_portal import _build_portal_agent_runs_snapshot
-from apps.conversations.workflow_processing import AssistantWorkflowProcessingService
+from apps.conversations.workflow_processing import AutomationProcessingService
 from apps.integrations.models import EmailAccount, EmailAccountProvider, EmailAccountStatus
 
 
@@ -85,7 +85,8 @@ class AgentRunsApiTests(TestCase):
                     "name": "Daily Sales Summary",
                     "status": "active",
                     "visibility": "initiator",
-                    "triggerType": "manual",
+                    "triggerType": "schedule",
+                    "triggerConfig": {"cron": "0 9 * * *"},
                     "sourceConversationId": str(source_chat.id),
                     "instructions": {"version": 1, "goal": "Summarize sales"},
                 }
@@ -94,10 +95,11 @@ class AgentRunsApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 201)
         workflow_id = response.json()["workflow"]["id"]
+        self.assertEqual(response.json()["workflow"]["kind"], AutomationKind.AUTOMATION)
         self.assertEqual(response.json()["workflow"]["reviewMode"], "on_risk")
         self.assertEqual(response.json()["workflow"]["autonomyMode"], "draft_for_approval")
         self.assertEqual(response.json()["workflow"]["sessionCount"], 1)
-        workflow = AssistantWorkflow.objects.get(id=uuid.UUID(workflow_id))
+        workflow = Automation.objects.get(id=uuid.UUID(workflow_id))
         session = Conversation.objects.get(workflow=workflow)
         self.assertEqual(session.metadata["source_conversation_id"], str(source_chat.id))
         self.assertIn("creation_brief", workflow.metadata)
@@ -148,13 +150,13 @@ class AgentRunsApiTests(TestCase):
             status=ConversationStatus.LIVE,
             session_token="portal-manual-run",
         )
-        workflow = AssistantWorkflow.objects.create(
+        workflow = Automation.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
             name="Sales Email Monitor & Report",
-            status=AssistantWorkflowStatus.ACTIVE,
-            kind=AssistantWorkflowKind.AUTOMATION,
+            status=AutomationStatus.ACTIVE,
+            kind=AutomationKind.AUTOMATION,
             trigger_type="email_inbox",
             trigger_config={"query": "in:unread"},
             instructions={"goal": "Monitor sales emails"},
@@ -178,7 +180,7 @@ class AgentRunsApiTests(TestCase):
         self.assertEqual(payload["workflow"]["latestRun"]["id"], payload["run"]["id"])
 
         run = AgentRun.objects.get(id=uuid.UUID(payload["run"]["id"]))
-        self.assertEqual(run.source, AgentRunSource.WORKFLOW)
+        self.assertEqual(run.source, AgentRunSource.AUTOMATION)
         self.assertEqual(run.workflow_id, workflow.id)
         self.assertNotEqual(run.conversation_id, portal_conversation.id)
         self.assertEqual(run.conversation.workflow_id, workflow.id)
@@ -194,13 +196,68 @@ class AgentRunsApiTests(TestCase):
             ).exists()
         )
 
+    def test_portal_workflow_manual_run_rejects_custom_assistant(self) -> None:
+        portal_conversation = Conversation.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            owner_user=self.user,
+            channel=ConversationChannel.API,
+            status=ConversationStatus.LIVE,
+            session_token="portal-custom-assistant-run",
+        )
+        assistant = Automation.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            created_by=self.user,
+            name="Software Engineer",
+            status=AutomationStatus.ACTIVE,
+            kind=AutomationKind.CUSTOM_ASSISTANT,
+            trigger_type="manual",
+            instructions={"goal": "Help with software tasks"},
+        )
+
+        response = self.client.post(
+            reverse("api:chat-portal-workflows-run"),
+            data=json.dumps(
+                {
+                    "session_token": portal_conversation.session_token,
+                    "workflow_id": str(assistant.id),
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(AgentRun.objects.filter(workflow=assistant).exists())
+
+    def test_workflow_run_endpoint_rejects_custom_assistant(self) -> None:
+        assistant = Automation.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            created_by=self.user,
+            name="Software Engineer",
+            status=AutomationStatus.ACTIVE,
+            kind=AutomationKind.CUSTOM_ASSISTANT,
+            trigger_type="manual",
+            instructions={"goal": "Help with software tasks"},
+        )
+
+        response = self.client.post(
+            reverse("api:agent-workflow-runs", args=[self.agent.id, assistant.id]),
+            data="{}",
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(AgentRun.objects.filter(workflow=assistant).exists())
+
     def test_pausing_workflow_cancels_open_runs_by_default(self) -> None:
-        workflow = AssistantWorkflow.objects.create(
+        workflow = Automation.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
             name="Recurring task",
-            status=AssistantWorkflowStatus.ACTIVE,
+            status=AutomationStatus.ACTIVE,
             trigger_type="schedule",
             trigger_config={"cron": "* * * * *"},
             instructions={"goal": "Check things"},
@@ -246,13 +303,13 @@ class AgentRunsApiTests(TestCase):
             status=ConversationStatus.LIVE,
             metadata={"type": "workflow_thread"},
         )
-        workflow = AssistantWorkflow.objects.create(
+        workflow = Automation.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
             conversation=thread,
             name="Delete me",
-            status=AssistantWorkflowStatus.ACTIVE,
+            status=AutomationStatus.ACTIVE,
             trigger_type="schedule",
             trigger_config={"cron": "* * * * *"},
             instructions={"goal": "Check things"},
@@ -277,13 +334,13 @@ class AgentRunsApiTests(TestCase):
             created_by=self.user,
             title="Completed",
             status=AgentRunStatus.COMPLETED,
-            workflow_snapshot={"name": workflow.name, "goal": "Check things"},
+            run_snapshot={"name": workflow.name, "goal": "Check things"},
         )
 
         response = self.client.delete(reverse("api:agent-workflow-detail", args=[self.agent.id, workflow.id]))
 
         self.assertEqual(response.status_code, 204)
-        self.assertFalse(AssistantWorkflow.objects.filter(id=workflow.id).exists())
+        self.assertFalse(Automation.objects.filter(id=workflow.id).exists())
         self.assertFalse(Conversation.objects.filter(id=thread.id).exists())
         queued.refresh_from_db()
         completed.refresh_from_db()
@@ -293,7 +350,7 @@ class AgentRunsApiTests(TestCase):
         self.assertEqual(queued.metadata["cancelled_by_workflow"], "delete")
         self.assertEqual(completed.status, AgentRunStatus.COMPLETED)
         self.assertIsNone(completed.workflow_id)
-        self.assertEqual(completed.workflow_snapshot["name"], "Delete me")
+        self.assertEqual(completed.run_snapshot["name"], "Delete me")
 
     def test_runs_create_cancel_user_input_and_events(self) -> None:
         runs_url = reverse("api:agent-runs", args=[self.agent.id])
@@ -328,18 +385,18 @@ class AgentRunsApiTests(TestCase):
         self.assertGreaterEqual(len(events_res.json()["events"]), 1)
 
     def test_scheduled_workflow_worker_triggers_due_workflow(self) -> None:
-        workflow = AssistantWorkflow.objects.create(
+        workflow = Automation.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
             name="Due schedule",
-            status=AssistantWorkflowStatus.ACTIVE,
+            status=AutomationStatus.ACTIVE,
             trigger_type="schedule",
             trigger_config={"cron": "* * * * *"},
             instructions={"goal": "Auto"},
             next_trigger_at=timezone.now(),
         )
-        result = AssistantWorkflowProcessingService().process_next_due_workflow()
+        result = AutomationProcessingService().process_next_due_workflow()
         self.assertIsNotNone(result)
         self.assertEqual(result.action, "triggered")
         run = AgentRun.objects.get(id=uuid.UUID(result.run_id))
@@ -355,23 +412,23 @@ class AgentRunsApiTests(TestCase):
             channel=ConversationChannel.API,
             status=ConversationStatus.LIVE,
         )
-        workflow = AssistantWorkflow.objects.create(
+        workflow = Automation.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
             name="Sales Email Monitor",
-            kind=AssistantWorkflowKind.AUTOMATION,
+            kind=AutomationKind.AUTOMATION,
             trigger_type="schedule",
             trigger_config={"cron": "0 9 * * *"},
             instructions={"goal": "Report sales email"},
         )
         other_agent = AgentProfile.objects.create(business_profile=self.business, user=self.user, name="Other Agent")
-        AssistantWorkflow.objects.create(
+        Automation.objects.create(
             business_profile=self.business,
             agent_profile=other_agent,
             created_by=self.user,
             name="Other Agent Workflow",
-            kind=AssistantWorkflowKind.AUTOMATION,
+            kind=AutomationKind.AUTOMATION,
             trigger_type="schedule",
             trigger_config={"cron": "0 10 * * *"},
             instructions={"goal": "Do not show in this portal"},
@@ -402,11 +459,49 @@ class AgentRunsApiTests(TestCase):
 
         self.assertEqual(snapshot["workflows"][0]["id"], str(workflow.id))
         self.assertEqual(len(snapshot["workflows"]), 1)
-        self.assertEqual(snapshot["workflows"][0]["kind"], AssistantWorkflowKind.AUTOMATION)
+        self.assertEqual(snapshot["workflows"][0]["kind"], AutomationKind.AUTOMATION)
         latest_run = snapshot["workflows"][0]["latestRun"]
         self.assertEqual(latest_run["id"], str(run.id))
         self.assertEqual(latest_run["result"]["responseText"], "Found 14 sales-related emails.")
         self.assertEqual(latest_run["display"]["summary"], "Found 14 sales-related emails.")
+
+    def test_portal_activity_snapshot_excludes_custom_assistant_sessions(self) -> None:
+        assistant = Automation.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            created_by=self.user,
+            name="Software Engineer",
+            kind=AutomationKind.CUSTOM_ASSISTANT,
+            trigger_type="manual",
+            instructions={"goal": "Help with software tasks"},
+        )
+        conversation = Conversation.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            workflow=assistant,
+            owner_user=self.user,
+            channel=ConversationChannel.API,
+            status=ConversationStatus.LIVE,
+        )
+        AgentRun.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            workflow=assistant,
+            conversation=conversation,
+            created_by=self.user,
+            title="Software Engineer",
+            status=AgentRunStatus.COMPLETED,
+            finished_at=timezone.now(),
+        )
+
+        snapshot = _build_portal_agent_runs_snapshot(
+            conversation_id=conversation.id,
+            business_id=self.business.id,
+            agent_profile_id=self.agent.id,
+        )
+
+        self.assertEqual(snapshot["workflows"], [])
+        self.assertEqual(snapshot["runs"], [])
 
     def test_portal_activity_snapshot_only_embeds_events_for_displayed_workflow_runs(self) -> None:
         conversation = Conversation.objects.create(
@@ -416,12 +511,12 @@ class AgentRunsApiTests(TestCase):
             channel=ConversationChannel.API,
             status=ConversationStatus.LIVE,
         )
-        workflow = AssistantWorkflow.objects.create(
+        workflow = Automation.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
             name="Live Monitor",
-            kind=AssistantWorkflowKind.AUTOMATION,
+            kind=AutomationKind.AUTOMATION,
             trigger_type="schedule",
             trigger_config={"cron": "0 9 * * *"},
             instructions={"goal": "Report sales email"},
@@ -477,12 +572,12 @@ class AgentRunsApiTests(TestCase):
             channel=ConversationChannel.API,
             status=ConversationStatus.LIVE,
         )
-        workflow = AssistantWorkflow.objects.create(
+        workflow = Automation.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
             name="Completed Monitor",
-            kind=AssistantWorkflowKind.AUTOMATION,
+            kind=AutomationKind.AUTOMATION,
             trigger_type="schedule",
             trigger_config={"cron": "0 9 * * *"},
             instructions={"goal": "Report sales email"},
@@ -524,22 +619,22 @@ class AgentRunsApiTests(TestCase):
         self.assertEqual(snapshot["eventsByRun"][str(run.id)][0]["label"], "Searched inbox")
 
     def test_portal_activity_snapshot_scopes_workflow_sessions_to_current_workflow(self) -> None:
-        workflow = AssistantWorkflow.objects.create(
+        workflow = Automation.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
             name="Current Workflow",
-            kind=AssistantWorkflowKind.AUTOMATION,
+            kind=AutomationKind.AUTOMATION,
             trigger_type="schedule",
             trigger_config={"cron": "0 9 * * *"},
             instructions={"goal": "Current workflow"},
         )
-        AssistantWorkflow.objects.create(
+        Automation.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
             name="Same Agent Other Workflow",
-            kind=AssistantWorkflowKind.CUSTOM_ASSISTANT,
+            kind=AutomationKind.CUSTOM_ASSISTANT,
             trigger_type="manual",
             instructions={"goal": "Should not show in this workflow session"},
         )
@@ -561,7 +656,7 @@ class AgentRunsApiTests(TestCase):
         self.assertEqual([item["id"] for item in snapshot["workflows"]], [str(workflow.id)])
 
     def test_checkpoint_resolve_queues_run_and_closes_checkpoint(self) -> None:
-        workflow = AssistantWorkflow.objects.create(
+        workflow = Automation.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
@@ -715,7 +810,7 @@ class AgentRunsApiTests(TestCase):
         self.assertEqual(delete_res.json()["memory"]["status"], MemoryStatus.DELETED)
 
     def test_memory_list_defaults_to_curated_records(self) -> None:
-        workflow = AssistantWorkflow.objects.create(
+        workflow = Automation.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
@@ -742,7 +837,7 @@ class AgentRunsApiTests(TestCase):
             agent_profile=self.agent,
             workflow=workflow,
             run=run,
-            scope=MemoryScope.WORKFLOW,
+            scope=MemoryScope.AUTOMATION,
             kind=MemoryKind.STATE_NOTE,
             key=f"run_report_{run.id}",
             content='{"status": "no_change", "findings": ["No inbox connected."]}',

@@ -56,7 +56,7 @@ class TenantRetentionPurgeTests(TestCase):
             agent_profile=self.agent,
             created_by=self.user,
             title="Test Run",
-            workflow_snapshot={"goal": "Do something"},
+            run_snapshot={"goal": "Do something"},
         )
 
         mem_old = MemoryItem.objects.create(
@@ -217,7 +217,7 @@ class TenantRetentionPurgeTests(TestCase):
             agent_profile=self.agent,
             created_by=self.user,
             title="Test Run",
-            workflow_snapshot={"goal": "Do something"},
+            run_snapshot={"goal": "Do something"},
         )
         mem_old = MemoryItem.objects.create(
             business_profile=self.business,

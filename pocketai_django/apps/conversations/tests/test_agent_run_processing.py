@@ -19,8 +19,8 @@ from apps.conversations.models import (
     AgentRunNotification,
     AgentRunSource,
     AgentRunStatus,
-    AssistantWorkflow,
-    AssistantWorkflowStatus,
+    Automation,
+    AutomationStatus,
     Conversation,
 )
 from apps.conversations.portal_session_serializers import serialize_agent_run_for_portal
@@ -55,7 +55,7 @@ class AgentRunProcessingTests(TestCase):
             title="Test Run",
             status=AgentRunStatus.QUEUED,
             run_after=timezone.now(),
-            workflow_snapshot={"goal": "Do something safely"},
+            run_snapshot={"goal": "Do something safely"},
             max_attempts=2,
         )
 
@@ -89,7 +89,7 @@ class AgentRunProcessingTests(TestCase):
             status=AgentRunStatus.RUNNING,
             started_at=timezone.now(),
             lease_expires_at=timezone.now(),
-            workflow_snapshot={"goal": "Say Hello world"},
+            run_snapshot={"goal": "Say Hello world"},
             max_attempts=2,
         )
 
@@ -122,12 +122,12 @@ class AgentRunProcessingTests(TestCase):
         self.assertEqual(str(run.execution_conversation_id or ""), str(getattr(called_conversation, "id", "")))
 
     def test_workflow_run_persists_report_state_and_notification(self) -> None:
-        workflow = AssistantWorkflow.objects.create(
+        workflow = Automation.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
             name="Subscription checker",
-            status=AssistantWorkflowStatus.ACTIVE,
+            status=AutomationStatus.ACTIVE,
             trigger_type="schedule",
             trigger_config={"cron": "* * * * *"},
             instructions={"goal": "Check subscriptions"},
@@ -151,7 +151,7 @@ class AgentRunProcessingTests(TestCase):
             status=AgentRunStatus.RUNNING,
             started_at=timezone.now(),
             lease_expires_at=timezone.now(),
-            workflow_snapshot={"goal": "Check subscriptions"},
+            run_snapshot={"goal": "Check subscriptions"},
             max_attempts=2,
         )
 
@@ -192,7 +192,7 @@ class AgentRunProcessingTests(TestCase):
             source=AgentRunSource.SCHEDULE,
             status=AgentRunStatus.COMPLETED,
             result={"response_text": '{"run_report": {"objective": "Monitor inbox", "status": "no_change"}}', "run_report": run_report},
-            workflow_snapshot={"goal": "Monitor inbox"},
+            run_snapshot={"goal": "Monitor inbox"},
             max_attempts=1,
         )
 
@@ -206,12 +206,12 @@ class AgentRunProcessingTests(TestCase):
         self.assertNotIn("rawDebug", payload["display"])
 
     def test_portal_serializer_exposes_canonical_live_run_fields(self) -> None:
-        workflow = AssistantWorkflow.objects.create(
+        workflow = Automation.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
             name="Sales monitor",
-            status=AssistantWorkflowStatus.ACTIVE,
+            status=AutomationStatus.ACTIVE,
             instructions={"goal": "Monitor inbox"},
         )
         started = timezone.now()
@@ -222,7 +222,7 @@ class AgentRunProcessingTests(TestCase):
             created_by=self.user,
             workflow=workflow,
             title="Sales monitor",
-            source=AgentRunSource.WORKFLOW,
+            source=AgentRunSource.AUTOMATION,
             status=AgentRunStatus.WAITING_APPROVAL,
             started_at=started,
             finished_at=finished,
@@ -232,7 +232,7 @@ class AgentRunProcessingTests(TestCase):
                 "run_report_state": {"dedupe_key": "abc"},
             },
             metadata={"trigger": "manual"},
-            workflow_snapshot={"goal": "Monitor inbox"},
+            run_snapshot={"goal": "Monitor inbox"},
         )
         checkpoint = AgentRunCheckpoint.objects.create(
             business_profile=self.business,
@@ -264,7 +264,7 @@ class AgentRunProcessingTests(TestCase):
             status=AgentRunStatus.RUNNING,
             started_at=timezone.now(),
             lease_expires_at=timezone.now(),
-            workflow_snapshot={"goal": "Check unread sales emails"},
+            run_snapshot={"goal": "Check unread sales emails"},
             max_attempts=1,
         )
 
@@ -304,7 +304,7 @@ class AgentRunProcessingTests(TestCase):
             status=AgentRunStatus.RUNNING,
             started_at=timezone.now(),
             lease_expires_at=timezone.now(),
-            workflow_snapshot={"goal": "Check unread sales emails"},
+            run_snapshot={"goal": "Check unread sales emails"},
             max_attempts=1,
         )
 
@@ -337,12 +337,12 @@ class AgentRunProcessingTests(TestCase):
         self.assertFalse(any(event.payload.get("kind") == "assistant_message" for event in events))
 
     def test_forced_final_tool_loop_marks_run_failed(self) -> None:
-        workflow = AssistantWorkflow.objects.create(
+        workflow = Automation.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
             name="Sales monitor",
-            status=AssistantWorkflowStatus.ACTIVE,
+            status=AutomationStatus.ACTIVE,
             trigger_type="schedule",
             trigger_config={"cron": "* * * * *"},
             instructions={"goal": "Find sales emails and send a report"},
@@ -357,7 +357,7 @@ class AgentRunProcessingTests(TestCase):
             status=AgentRunStatus.RUNNING,
             started_at=timezone.now(),
             lease_expires_at=timezone.now(),
-            workflow_snapshot={"goal": "Find sales emails and send a report"},
+            run_snapshot={"goal": "Find sales emails and send a report"},
             max_attempts=2,
         )
 
@@ -390,12 +390,12 @@ class AgentRunProcessingTests(TestCase):
         self.assertTrue(run.finished_at)
 
     def test_dsml_final_output_marks_workflow_run_failed_without_notification(self) -> None:
-        workflow = AssistantWorkflow.objects.create(
+        workflow = Automation.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
             name="Sales monitor",
-            status=AssistantWorkflowStatus.ACTIVE,
+            status=AutomationStatus.ACTIVE,
             trigger_type="schedule",
             trigger_config={"cron": "* * * * *"},
             instructions={"goal": "Find sales emails and send a report", "memory_shape": "email_monitor"},
@@ -410,7 +410,7 @@ class AgentRunProcessingTests(TestCase):
             status=AgentRunStatus.RUNNING,
             started_at=timezone.now(),
             lease_expires_at=timezone.now(),
-            workflow_snapshot=workflow.instructions,
+            run_snapshot=workflow.instructions,
             max_attempts=2,
         )
 
@@ -436,12 +436,12 @@ class AgentRunProcessingTests(TestCase):
         self.assertFalse(AgentRunNotification.objects.filter(run=run).exists())
 
     def test_workflow_run_injects_wake_up_prompt_and_compact_memory(self) -> None:
-        workflow = AssistantWorkflow.objects.create(
+        workflow = Automation.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
             name="Sales monitor",
-            status=AssistantWorkflowStatus.ACTIVE,
+            status=AutomationStatus.ACTIVE,
             trigger_type="schedule",
             trigger_config={"cron": "* * * * *"},
             instructions={
@@ -469,7 +469,7 @@ class AgentRunProcessingTests(TestCase):
             status=AgentRunStatus.RUNNING,
             started_at=timezone.now(),
             lease_expires_at=timezone.now(),
-            workflow_snapshot=workflow.instructions,
+            run_snapshot=workflow.instructions,
             max_attempts=2,
         )
 
@@ -494,12 +494,12 @@ class AgentRunProcessingTests(TestCase):
         self.assertIn("msg-1", user_message)
 
     def test_workflow_memory_writeback_merges_report_and_email_trace(self) -> None:
-        workflow = AssistantWorkflow.objects.create(
+        workflow = Automation.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
             name="Sales monitor",
-            status=AssistantWorkflowStatus.ACTIVE,
+            status=AutomationStatus.ACTIVE,
             trigger_type="schedule",
             trigger_config={"cron": "* * * * *"},
             instructions={"goal": "Find sales emails", "workflow_type": "monitor", "memory_shape": "email_monitor"},
@@ -515,7 +515,7 @@ class AgentRunProcessingTests(TestCase):
             status=AgentRunStatus.RUNNING,
             started_at=timezone.now(),
             lease_expires_at=timezone.now(),
-            workflow_snapshot=workflow.instructions,
+            run_snapshot=workflow.instructions,
             max_attempts=2,
         )
 

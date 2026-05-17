@@ -5,7 +5,7 @@ from django.test import TestCase
 
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
 from apps.conversations.memory_extraction import MemoryExtractionService
-from apps.conversations.models import AgentRun, AssistantWorkflow, MemoryItem
+from apps.conversations.models import AgentRun, Automation, MemoryItem
 
 
 User = get_user_model()
@@ -23,7 +23,7 @@ class MemoryExtractionServiceTests(TestCase):
             status="active",
         )
         self.agent = AgentProfile.objects.create(business_profile=self.business, user=self.user, name="Ops Agent")
-        self.workflow = AssistantWorkflow.objects.create(
+        self.workflow = Automation.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
@@ -36,7 +36,7 @@ class MemoryExtractionServiceTests(TestCase):
             workflow=self.workflow,
             created_by=self.user,
             title="Email Checker",
-            workflow_snapshot={"name": self.workflow.name},
+            run_snapshot={"name": self.workflow.name},
         )
 
     def test_email_draft_ids_are_not_saved_as_memory(self) -> None:

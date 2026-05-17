@@ -228,7 +228,7 @@ def _build_portal_context(
         "session_token": session.get("session_token", ""),
         "conversation_id": session.get("conversation_id", ""),
         "session_type": session_type,
-        "workflow_name": session.get("workflow_name") or session.get("workflowName") or "",
+        "custom_assistant_name": session.get("custom_assistant_name") or session.get("customAssistantName") or "",
         "session_storage_key": session_storage_key,
         "ui_language": ui_language,
         "conversation_status": session_status.replace("_", " ").title(),
@@ -261,7 +261,7 @@ def _build_portal_context(
             "run_approval": reverse("api:chat-portal-runs-approval"),
             "run_user_input": reverse("api:chat-portal-runs-user-input"),
             "run_checkpoint": reverse("api:chat-portal-runs-checkpoint"),
-            "workflow_run": reverse("api:chat-portal-workflows-run"),
+            "automation_run": reverse("api:chat-portal-automations-run"),
             "agent_request_update": reverse("api:chat-portal-agent-requests-update"),
             "email_send_draft": reverse("api:chat-portal-email-send-draft"),
             "email_discard_draft": reverse("api:chat-portal-email-discard-draft"),
@@ -912,7 +912,7 @@ def landing(request: HttpRequest) -> HttpResponse:
                 ),
                 "bullets": [
                     {"icon": "check-circle-2", "label": _("Customizable personas and tone")},
-                    {"icon": "zap", "label": _("Actionable workflows and tools")},
+                    {"icon": "zap", "label": _("Actionable automations and tools")},
                     {"icon": "clock", "label": _("24/7 availability across timezones")},
                     {"icon": "shield", "label": _("Modern, fine-tuned LLM models")},
                 ],
@@ -936,7 +936,7 @@ def landing(request: HttpRequest) -> HttpResponse:
                 "key": "crm",
                 "label": _("Flexible CRM"),
                 "icon": "layers",
-                "title": _("Build the CRM your workflows deserve"),
+                "title": _("Build the CRM your automations deserve"),
                 "promo": _(
                     "Compose a flexible CRM—add or remove tabs, define data parameters to collect, track customer profiles, and manage insights your way."
                 ),
@@ -1099,9 +1099,9 @@ def landing(request: HttpRequest) -> HttpResponse:
                 "monthly": 89,
                 "yearly": 69,
                 "features": [
-                    _("Default assistant + custom workflow assistants"),
+                    _("Default assistant + custom automation assistants"),
                     _("Advanced knowledge base + citations"),
-                    _("Workflows and tools (actions)"),
+                    _("Automations and tools (actions)"),
                     _("CRM profiles + segments"),
                     _("Reports & scheduled alerts"),
                 ],
@@ -1188,7 +1188,7 @@ def landing(request: HttpRequest) -> HttpResponse:
             {
                 "question": _("Can I customize tone and behavior?"),
                 "answer": _(
-                    "Yes. Configure personas, guardrails, tools, and workflows per agent, then test in a live sandbox."
+                    "Yes. Configure personas, guardrails, tools, and automations per agent, then test in a live sandbox."
                 ),
             },
             {

@@ -35,7 +35,7 @@ def get_agent_run_id_from_call_session_metadata(session) -> uuid.UUID | None:
 
 
 def resolve_agent_run(*, agent_run_id: uuid.UUID, business_id: object | None):
-    from apps.conversations.models import AgentRun
+    from apps.agent_runs.models import AgentRun
 
     if not agent_run_id:
         return None
@@ -61,7 +61,7 @@ def append_agent_run_event(
     (and set status/result/etc).
     """
 
-    from apps.conversations.models import AgentRun, AgentRunEvent
+    from apps.agent_runs.models import AgentRun, AgentRunEvent
 
     ctx = tenant_context(business_id) if business_id else tenant_bypass()
     with ctx:

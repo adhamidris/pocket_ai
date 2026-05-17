@@ -11,7 +11,7 @@ from django.utils import timezone
 from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
 from apps.conversations.models import (
-    AssistantWorkflow,
+    Automation,
     Conversation,
     ConversationMessage,
     ConversationSender,
@@ -96,7 +96,7 @@ class AuthenticatedConversationApiTests(TestCase):
             session_token="workflow-thread",
             metadata={"type": "workflow_thread"},
         )
-        workflow = AssistantWorkflow.objects.create(
+        workflow = Automation.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.owner,
@@ -122,7 +122,7 @@ class AuthenticatedConversationApiTests(TestCase):
         self.assertEqual(messages_response.json()["session"]["session_type"], "task")
 
     def test_conversations_collection_includes_workflow_agent_sessions(self) -> None:
-        workflow = AssistantWorkflow.objects.create(
+        workflow = Automation.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.owner,
@@ -252,7 +252,7 @@ class AuthenticatedConversationApiTests(TestCase):
         self.assertIn("turn", turn_response.json())
 
     def test_conversation_create_can_start_workflow_agent_session(self) -> None:
-        workflow = AssistantWorkflow.objects.create(
+        workflow = Automation.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.owner,

@@ -23,9 +23,8 @@ from django.utils import timezone
 from pocketai.language import normalize_language_code
 
 from apps.accounts.models import AgentProfile
+from apps.agent_runs.models import AgentRun, AgentRunStatus
 from apps.conversations.models import (
-    AgentRun,
-    AgentRunStatus,
     Conversation,
     ConversationFile,
     ConversationFileKind,
@@ -471,17 +470,17 @@ def _build_run_memory_context(
     try:
         from apps.conversations.models import MemoryItem, MemoryKind, MemoryScope, MemoryStatus
 
-        run = AgentRun.objects.filter(id=run_id).select_related("workflow").first()
+        run = AgentRun.objects.filter(id=run_id).select_related("automation").first()
         run_items = list(
             MemoryItem.objects.filter(run_id=run_id, scope=MemoryScope.RUN, status=MemoryStatus.ACTIVE)
             .order_by("-created_at")
             .only("kind", "key", "content", "created_at")[:max_items]
         )
         workflow_items = []
-        if run is not None and getattr(run, "workflow_id", None):
+        if run is not None and getattr(run, "automation_id", None):
             workflow_cap = max(0, int(getattr(settings, "MCP_RUN_MEMORY_WORKFLOW_SCOPE_MAX_ITEMS", 20) or 20))
             workflow_items = list(
-                MemoryItem.objects.filter(workflow_id=run.workflow_id, scope=MemoryScope.WORKFLOW, status=MemoryStatus.ACTIVE)
+                MemoryItem.objects.filter(automation_id=run.automation_id, scope=MemoryScope.AUTOMATION, status=MemoryStatus.ACTIVE)
                 .order_by("-updated_at", "-created_at")
                 .only("kind", "key", "content", "created_at")[:workflow_cap]
             )
@@ -490,7 +489,7 @@ def _build_run_memory_context(
         return None
 
     workflow_state_note = ""
-    if "run" in locals() and run is not None and getattr(run, "workflow_id", None):
+    if "run" in locals() and run is not None and getattr(run, "automation_id", None):
         workflow = getattr(run, "workflow", None)
         state = getattr(workflow, "state", None) if workflow is not None else None
         if isinstance(state, Mapping) and state:

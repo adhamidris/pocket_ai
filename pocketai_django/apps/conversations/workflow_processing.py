@@ -10,23 +10,9 @@ from django.db import IntegrityError, connection as db_connection, transaction
 from django.utils import timezone
 
 from apps.accounts.models import EmailAccountProvider, EmailAccountStatus
+from apps.agent_runs.models import AgentRun, AgentRunEvent, AgentRunEventStream, AgentRunEventType, AgentRunSource, AgentRunStatus
+from apps.automations.models import Automation, AutomationDedupeKey, AutomationStatus, AutomationTriggerType
 from apps.conversations.workflow_scheduling import CronScheduleError, compute_next_workflow_schedule_at
-from apps.conversations.models import (
-    AgentRun,
-    AgentRunEvent,
-    AgentRunEventStream,
-    AgentRunEventType,
-    AgentRunSource,
-    AgentRunStatus,
-    AssistantWorkflow,
-    AssistantWorkflowDedupeKey,
-    AssistantWorkflowKind,
-    AssistantWorkflowStatus,
-    AssistantWorkflowTriggerType,
-    Conversation,
-    ConversationChannel,
-    ConversationStatus,
-)
 from apps.conversations.workflow_contracts import normalize_workflow_instructions
 from apps.integrations.email_accounts import ensure_fresh_email_credentials
 from apps.integrations.gmail import GmailApiError, gmail_search_messages
@@ -36,8 +22,8 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class AssistantWorkflowProcessResult:
-    workflow_id: str
+class AutomationProcessResult:
+    automation_id: str
     action: str
     run_id: str | None = None
     error: str | None = None
@@ -45,14 +31,14 @@ class AssistantWorkflowProcessResult:
 
 
 def compute_next_workflow_trigger_at(trigger_type: str, trigger_config: object, *, after=None):
-    if trigger_type != AssistantWorkflowTriggerType.SCHEDULE:
+    if trigger_type != AutomationTriggerType.SCHEDULE:
         return None
     config = dict(trigger_config or {}) if isinstance(trigger_config, Mapping) else {}
     config.setdefault("type", "cron")
     return compute_next_workflow_schedule_at("cron", config, after=after or timezone.now())
 
 
-def workflow_snapshot(workflow: AssistantWorkflow) -> dict[str, Any]:
+def run_snapshot(workflow: Automation) -> dict[str, Any]:
     instructions = workflow.instructions if isinstance(workflow.instructions, dict) else {}
     return normalize_workflow_instructions(
         {
@@ -70,19 +56,6 @@ def workflow_snapshot(workflow: AssistantWorkflow) -> dict[str, Any]:
     )
 
 
-def create_workflow_session(workflow: AssistantWorkflow) -> Conversation:
-    conversation = Conversation.objects.create(
-        business_profile=workflow.business_profile,
-        agent_profile=workflow.agent_profile,
-        workflow=workflow,
-        owner_user=workflow.created_by or workflow.agent_profile.user,
-        channel=ConversationChannel.API,
-        status=ConversationStatus.LIVE,
-        metadata={"type": "workflow_agent_session", "workflow_id": str(workflow.id), "workflow_name": workflow.name},
-    )
-    return conversation
-
-
 def append_run_event(run: AgentRun, *, label: str, payload: dict[str, object] | None = None) -> None:
     with transaction.atomic():
         locked = AgentRun.objects.select_for_update().get(id=run.id)
@@ -97,14 +70,13 @@ def append_run_event(run: AgentRun, *, label: str, payload: dict[str, object] | 
         )
 
 
-class AssistantWorkflowProcessingService:
-    def process_next_due_workflow(self) -> AssistantWorkflowProcessResult | None:
+class AutomationProcessingService:
+    def process_next_due_workflow(self) -> AutomationProcessResult | None:
         now = timezone.now()
         qs = (
-            AssistantWorkflow.objects.select_related("business_profile", "agent_profile", "conversation", "email_account")
-            .filter(status=AssistantWorkflowStatus.ACTIVE)
-            .filter(kind=AssistantWorkflowKind.AUTOMATION)
-            .filter(trigger_type__in=[AssistantWorkflowTriggerType.SCHEDULE, AssistantWorkflowTriggerType.EMAIL_INBOX])
+            Automation.objects.select_related("business_profile", "agent_profile", "conversation", "email_account")
+            .filter(status=AutomationStatus.ACTIVE)
+            .filter(trigger_type__in=[AutomationTriggerType.SCHEDULE, AutomationTriggerType.EMAIL_INBOX])
             .filter(next_trigger_at__lte=now)
             .order_by("next_trigger_at", "created_at")
         )
@@ -117,45 +89,45 @@ class AssistantWorkflowProcessingService:
             workflow = qs.select_for_update(**for_update_kwargs).first()
             if workflow is None:
                 return None
-            if workflow.trigger_type == AssistantWorkflowTriggerType.SCHEDULE:
+            if workflow.trigger_type == AutomationTriggerType.SCHEDULE:
                 return self._trigger_scheduled(workflow, now=now)
             return self._poll_email_inbox(workflow, now=now)
 
-    def _trigger_scheduled(self, workflow: AssistantWorkflow, *, now) -> AssistantWorkflowProcessResult:
+    def _trigger_scheduled(self, workflow: Automation, *, now) -> AutomationProcessResult:
         try:
             next_at = compute_next_workflow_trigger_at(workflow.trigger_type, workflow.trigger_config, after=now)
         except CronScheduleError as exc:
-            AssistantWorkflow.objects.filter(id=workflow.id).update(status=AssistantWorkflowStatus.PAUSED, last_error=str(exc)[:1000], updated_at=now)
-            return AssistantWorkflowProcessResult(workflow_id=str(workflow.id), action="paused", error=str(exc)[:400])
+            Automation.objects.filter(id=workflow.id).update(status=AutomationStatus.PAUSED, last_error=str(exc)[:1000], updated_at=now)
+            return AutomationProcessResult(automation_id=str(workflow.id), action="paused", error=str(exc)[:400])
         run = AgentRun.objects.create(
             business_profile=workflow.business_profile,
             agent_profile=workflow.agent_profile,
-            workflow=workflow,
+            automation=workflow,
             conversation=None,
             created_by=workflow.created_by,
-            workflow_snapshot=workflow_snapshot(workflow),
+            run_snapshot=run_snapshot(workflow),
             title=(workflow.name or "Scheduled task")[:200],
             source=AgentRunSource.SCHEDULE,
             status=AgentRunStatus.QUEUED,
             visibility=workflow.visibility,
             metadata={
-                "workflow_id": str(workflow.id),
+                "automation_id": str(workflow.id),
                 "trigger": "schedule",
             },
             run_after=now,
         )
-        append_run_event(run, label="Queued (automation schedule)", payload={"workflow_id": str(workflow.id), "trigger": "schedule"})
-        AssistantWorkflow.objects.filter(id=workflow.id).update(last_triggered_at=now, next_trigger_at=next_at, updated_at=now)
-        return AssistantWorkflowProcessResult(workflow_id=str(workflow.id), action="triggered", run_id=str(run.id))
+        append_run_event(run, label="Queued (automation schedule)", payload={"automation_id": str(workflow.id), "trigger": "schedule"})
+        Automation.objects.filter(id=workflow.id).update(last_triggered_at=now, next_trigger_at=next_at, updated_at=now)
+        return AutomationProcessResult(automation_id=str(workflow.id), action="triggered", run_id=str(run.id))
 
-    def _poll_email_inbox(self, workflow: AssistantWorkflow, *, now) -> AssistantWorkflowProcessResult:
+    def _poll_email_inbox(self, workflow: Automation, *, now) -> AutomationProcessResult:
         account = workflow.email_account
         if account is None:
-            AssistantWorkflow.objects.filter(id=workflow.id).update(status=AssistantWorkflowStatus.PAUSED, last_error="email account is required", updated_at=now)
-            return AssistantWorkflowProcessResult(workflow_id=str(workflow.id), action="paused", error="email account is required")
+            Automation.objects.filter(id=workflow.id).update(status=AutomationStatus.PAUSED, last_error="email account is required", updated_at=now)
+            return AutomationProcessResult(automation_id=str(workflow.id), action="paused", error="email account is required")
         if account.status != EmailAccountStatus.CONNECTED:
-            AssistantWorkflow.objects.filter(id=workflow.id).update(status=AssistantWorkflowStatus.PAUSED, last_error="email account is not connected", updated_at=now)
-            return AssistantWorkflowProcessResult(workflow_id=str(workflow.id), action="paused", error="email account is not connected")
+            Automation.objects.filter(id=workflow.id).update(status=AutomationStatus.PAUSED, last_error="email account is not connected", updated_at=now)
+            return AutomationProcessResult(automation_id=str(workflow.id), action="paused", error="email account is not connected")
         config = workflow.source_config if isinstance(workflow.source_config, Mapping) else {}
         metadata = workflow.state if isinstance(workflow.state, Mapping) else {}
         query = str(config.get("query") or "newer_than:1d").strip()
@@ -175,13 +147,13 @@ class AssistantWorkflowProcessingService:
             )
         except (GmailApiError, GraphApiError, ValueError) as exc:
             next_at = now + timedelta(seconds=max(60, int(workflow.poll_interval_seconds or 300)))
-            AssistantWorkflow.objects.filter(id=workflow.id).update(
+            Automation.objects.filter(id=workflow.id).update(
                 error_count=int(workflow.error_count or 0) + 1,
                 last_error=str(exc)[:1000],
                 next_trigger_at=next_at,
                 updated_at=now,
             )
-            return AssistantWorkflowProcessResult(workflow_id=str(workflow.id), action="backoff", error=str(exc)[:240])
+            return AutomationProcessResult(automation_id=str(workflow.id), action="backoff", error=str(exc)[:240])
         triggered: list[str] = []
         for message in messages or []:
             if len(triggered) >= max_events:
@@ -195,25 +167,25 @@ class AssistantWorkflowProcessingService:
             run = AgentRun.objects.create(
                 business_profile=workflow.business_profile,
                 agent_profile=workflow.agent_profile,
-                workflow=workflow,
+                automation=workflow,
                 conversation=None,
                 created_by=workflow.created_by,
-                workflow_snapshot=workflow_snapshot(workflow),
+                run_snapshot=run_snapshot(workflow),
                 title=(f"{workflow.name}: {(message or {}).get('subject') or 'New email'}")[:200],
                 source=AgentRunSource.EMAIL_INBOX,
                 status=AgentRunStatus.QUEUED,
                 visibility=workflow.visibility,
                 metadata={
-                    "workflow_id": str(workflow.id),
+                    "automation_id": str(workflow.id),
                     "trigger": "email_inbox",
                     "message": message,
                 },
                 run_after=now,
             )
-            append_run_event(run, label="Queued (email inbox automation)", payload={"workflow_id": str(workflow.id), "message_id": message_id})
+            append_run_event(run, label="Queued (email inbox automation)", payload={"automation_id": str(workflow.id), "message_id": message_id})
             triggered.append(str(run.id))
         next_at = now + timedelta(seconds=max(60, int(workflow.poll_interval_seconds or 300)))
-        AssistantWorkflow.objects.filter(id=workflow.id).update(
+        Automation.objects.filter(id=workflow.id).update(
             last_polled_at=now,
             last_triggered_at=now if triggered else workflow.last_triggered_at,
             next_trigger_at=next_at,
@@ -222,7 +194,7 @@ class AssistantWorkflowProcessingService:
             state={**dict(metadata), "last_email_poll": {"at": now.isoformat(), "triggered": len(triggered)}},
             updated_at=now,
         )
-        return AssistantWorkflowProcessResult(workflow_id=str(workflow.id), action="polled", triggered_run_ids=tuple(triggered))
+        return AutomationProcessResult(automation_id=str(workflow.id), action="polled", triggered_run_ids=tuple(triggered))
 
     @staticmethod
     def _email_dedupe_key(provider: str, account_id: object, message_id: str) -> str:
@@ -261,9 +233,9 @@ class AssistantWorkflowProcessingService:
         raise GraphApiError("Email provider is not supported for workflows yet.")
 
     @staticmethod
-    def _record_dedupe_key(workflow: AssistantWorkflow, dedupe_key: str) -> bool:
+    def _record_dedupe_key(workflow: Automation, dedupe_key: str) -> bool:
         try:
-            AssistantWorkflowDedupeKey.objects.create(workflow=workflow, business_profile_id=workflow.business_profile_id, dedupe_key=dedupe_key[:255])
+            AutomationDedupeKey.objects.create(automation=workflow, business_profile_id=workflow.business_profile_id, dedupe_key=dedupe_key[:255])
             return True
         except IntegrityError:
             return False

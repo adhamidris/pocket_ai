@@ -3,7 +3,7 @@ from __future__ import annotations
 from django.test import TestCase
 
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession, User
-from apps.conversations.models import AssistantWorkflow, Conversation
+from apps.conversations.models import Automation, Conversation
 from apps.mcp.prompts import build_messages
 from apps.mcp.tools import _draft_task_handler, _list_tasks_handler, _request_task_activation_handler, _update_task_handler
 from apps.mcp.types import ToolExecutionContext
@@ -71,7 +71,7 @@ class WorkflowResourceRefsTests(TestCase):
         self.assertIn("pending_activation=true", system_text)
 
     def test_workflow_agent_session_injects_custom_instruction_contract(self) -> None:
-        workflow = AssistantWorkflow.objects.create(
+        workflow = Automation.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
@@ -133,7 +133,7 @@ class WorkflowResourceRefsTests(TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["task"]["goal"], "Review refund requests and flag policy exceptions before action.")
         self.assertNotIn("instructions", result["task"])
-        workflow = AssistantWorkflow.objects.get(id=result["task"]["id"])
+        workflow = Automation.objects.get(id=result["task"]["id"])
         instructions = workflow.instructions
         self.assertEqual(instructions["goal"], "Review refund requests and flag policy exceptions before action.")
         self.assertIn("wake_up_prompt", instructions)
@@ -170,7 +170,7 @@ class WorkflowResourceRefsTests(TestCase):
         self.assertNotIn("draft_summary", task)
         self.assertNotIn("clarification_questions", task)
         self.assertNotIn("instructions", task)
-        workflow = AssistantWorkflow.objects.get(id=task["id"])
+        workflow = Automation.objects.get(id=task["id"])
         self.assertEqual(workflow.instructions["workflow_type"], "monitor")
         self.assertEqual(workflow.instructions["memory_shape"], "email_monitor")
         self.assertNotIn("avoid already-inspected messages", workflow.instructions.get("wake_up_prompt", ""))
@@ -232,7 +232,7 @@ class WorkflowResourceRefsTests(TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["task"]["goal"], "Review refund requests and detect policy exceptions.")
         self.assertNotIn("instructions", result["task"])
-        workflow = AssistantWorkflow.objects.get(id=task_id)
+        workflow = Automation.objects.get(id=task_id)
         instructions = workflow.instructions
         self.assertEqual(instructions["goal"], "Review refund requests and detect policy exceptions.")
         self.assertNotIn("success_criteria", instructions)

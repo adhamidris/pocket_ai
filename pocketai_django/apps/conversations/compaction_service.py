@@ -58,7 +58,8 @@ class ContextCompactionService:
         return total_tokens >= max(1, trigger_tokens)
 
     def is_safe_to_compact(self, conversation) -> bool:
-        from apps.conversations.models import AgentRun, AgentRunStatus, ConversationToolApprovalStatus
+        from apps.agent_runs.models import AgentRun, AgentRunStatus
+        from apps.conversations.models import ConversationToolApprovalStatus
 
         # Avoid compaction while tool approvals are pending.
         if conversation.tool_approvals.filter(status=ConversationToolApprovalStatus.PENDING).exists():

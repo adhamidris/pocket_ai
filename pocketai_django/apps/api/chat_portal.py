@@ -42,9 +42,7 @@ from apps.mcp.models import (
     AgentMcpToolSetting,
     McpConnectionAuditEvent,
 )
-from apps.conversations.models import (
-    AgentRequest,
-    AgentRequestStatus,
+from apps.agent_runs.models import (
     AgentRun,
     AgentRunCheckpoint,
     AgentRunCheckpointKind,
@@ -54,8 +52,11 @@ from apps.conversations.models import (
     AgentRunEventType,
     AgentRunSource,
     AgentRunStatus,
-    AssistantWorkflow,
-    AssistantWorkflowKind,
+)
+from apps.automations.models import Automation, AutomationTriggerType
+from apps.conversations.models import (
+    AgentRequest,
+    AgentRequestStatus,
     ConversationChannel,
     Conversation,
     ConversationMessage,
@@ -97,7 +98,7 @@ from apps.conversations.portal_turn_events import (
 from apps.conversations.portal_stream_trace import PortalStreamTrace
 from apps.conversations.portal_session_event_bus import (
     portal_session_agent_requests_stream_key,
-    portal_session_agent_workflow_runs_stream_key,
+    portal_session_agent_automation_runs_stream_key,
     portal_session_conversation_stream_key,
 )
 from apps.conversations.portal_session_serializers import (
@@ -1020,9 +1021,9 @@ def _session_summary_to_dict(summary) -> dict[str, object]:
         "message_count": summary.message_count,
         "preview": summary.preview,
         "session_type": getattr(summary, "session_type", "chat"),
-        "workflow_id": str(summary.workflow_id) if getattr(summary, "workflow_id", None) else None,
-        "workflow_name": getattr(summary, "workflow_name", ""),
-        "workflow_agent_name": getattr(summary, "workflow_agent_name", ""),
+        "custom_assistant_id": str(summary.custom_assistant_id) if getattr(summary, "custom_assistant_id", None) else None,
+        "custom_assistant_name": getattr(summary, "custom_assistant_name", ""),
+        "custom_assistant_agent_name": getattr(summary, "custom_assistant_agent_name", ""),
     }
 
 
@@ -1155,8 +1156,8 @@ def _session_to_dict(session: PortalSessionState) -> dict:
         "started_at": session.started_at.isoformat(),
         "expires_at": session.expires_at.isoformat() if session.expires_at else None,
         "session_type": getattr(session, "session_type", "chat"),
-        "workflow_id": str(session.workflow_id) if getattr(session, "workflow_id", None) else None,
-        "workflow_name": getattr(session, "workflow_name", ""),
+        "custom_assistant_id": str(session.custom_assistant_id) if getattr(session, "custom_assistant_id", None) else None,
+        "custom_assistant_name": getattr(session, "custom_assistant_name", ""),
     }
 
 
@@ -1390,8 +1391,8 @@ def _serialize_agent_run_checkpoint_for_portal(checkpoint: AgentRunCheckpoint | 
     return serialize_agent_run_checkpoint_for_portal(checkpoint)
 
 
-def _serialize_workflow_agent_for_portal(
-    workflow: AssistantWorkflow,
+def _serialize_automation_for_portal(
+    workflow: Automation,
     *,
     latest_run: AgentRun | None = None,
     open_checkpoint: AgentRunCheckpoint | None = None,
@@ -1403,7 +1404,6 @@ def _serialize_workflow_agent_for_portal(
         "agentName": getattr(getattr(workflow, "agent_profile", None), "name", "") or "",
         "name": workflow.name,
         "description": workflow.description or "",
-        "kind": workflow.kind,
         "status": workflow.status,
         "triggerType": workflow.trigger_type,
         "nextTriggerAt": workflow.next_trigger_at.isoformat() if workflow.next_trigger_at else None,
@@ -1411,11 +1411,14 @@ def _serialize_workflow_agent_for_portal(
         "latestRun": _serialize_agent_run_for_portal(latest_run) if latest_run else None,
         "openCheckpoint": _serialize_agent_run_checkpoint_for_portal(open_checkpoint),
         "recentRuns": [_serialize_agent_run_for_portal(item) for item in (recent_runs or [])[:5]],
-        "sessionCount": int(getattr(workflow, "session_count", 0) or 0),
         "attentionState": "needs_attention" if open_checkpoint else ("active" if latest_run and latest_run.status in {AgentRunStatus.QUEUED, AgentRunStatus.RUNNING, AgentRunStatus.WAITING_CHILD, AgentRunStatus.WAITING_EXTERNAL} else workflow.status),
         "createdAt": workflow.created_at.isoformat() if workflow.created_at else None,
         "updatedAt": workflow.updated_at.isoformat() if workflow.updated_at else None,
     }
+
+
+def _is_runnable_automation(workflow: Automation) -> bool:
+    return bool(workflow and workflow.trigger_type in {choice for choice, _ in AutomationTriggerType.choices})
 
 
 def _serialize_agent_run_event_for_portal(event: AgentRunEvent) -> dict[str, object]:
@@ -1445,7 +1448,7 @@ def _append_agent_run_event(
         )
 
 
-def _workflow_snapshot_for_portal_run(workflow: AssistantWorkflow) -> dict[str, Any]:
+def _run_snapshot_for_portal_run(workflow: Automation) -> dict[str, Any]:
     instructions = workflow.instructions if isinstance(getattr(workflow, "instructions", None), dict) else {}
     return normalize_workflow_instructions(
         {
@@ -1463,62 +1466,27 @@ def _workflow_snapshot_for_portal_run(workflow: AssistantWorkflow) -> dict[str, 
     )
 
 
-def _latest_workflow_session_for_portal_run(workflow: AssistantWorkflow) -> Conversation | None:
-    return (
-        Conversation.objects.filter(workflow=workflow, business_profile=workflow.business_profile)
-        .order_by("-last_activity_at", "-started_at")
-        .first()
-    )
-
-
-def _resolve_or_create_workflow_session_for_portal_run(
-    workflow: AssistantWorkflow,
-    *,
-    created_by,
-) -> Conversation:
-    existing = _latest_workflow_session_for_portal_run(workflow)
-    if existing is not None:
-        return existing
-    metadata: dict[str, object] = {
-        "type": "workflow_agent_session",
-        "workflow_id": str(workflow.id),
-        "workflow_name": workflow.name,
-        "workflow_agent_name": workflow.agent_profile.name,
-        "created_from": "portal_task_panel",
-    }
-    return Conversation.objects.create(
-        business_profile=workflow.business_profile,
-        agent_profile=workflow.agent_profile,
-        workflow=workflow,
-        owner_user=workflow.created_by or workflow.agent_profile.user,
-        channel=ConversationChannel.API,
-        status=ConversationStatus.LIVE,
-        metadata=metadata,
-        summary=(workflow.name or "Workflow session")[:255],
-    )
-
-
 def _create_portal_manual_workflow_run(
     *,
-    workflow: AssistantWorkflow,
+    workflow: Automation,
     created_by,
     portal_conversation: Conversation,
 ) -> AgentRun:
-    conversation = _resolve_or_create_workflow_session_for_portal_run(workflow, created_by=created_by)
-    snapshot = _workflow_snapshot_for_portal_run(workflow)
+    conversation = workflow.conversation or portal_conversation
+    snapshot = _run_snapshot_for_portal_run(workflow)
     run = AgentRun.objects.create(
         business_profile=workflow.business_profile,
         agent_profile=workflow.agent_profile,
         conversation=conversation,
         created_by=created_by,
-        workflow=workflow,
-        workflow_snapshot=snapshot,
+        automation=workflow,
+        run_snapshot=snapshot,
         title=(workflow.name or snapshot.get("name") or snapshot.get("goal") or "Workflow run")[:200],
-        source=AgentRunSource.WORKFLOW,
+        source=AgentRunSource.AUTOMATION,
         status=AgentRunStatus.QUEUED,
         visibility=workflow.visibility,
         metadata={
-            "workflow_id": str(workflow.id),
+            "automation_id": str(workflow.id),
             "trigger": "manual",
             "trigger_source": "portal_task_panel",
             "portal_conversation_id": str(portal_conversation.id),
@@ -1532,7 +1500,7 @@ def _create_portal_manual_workflow_run(
         label="Queued",
         payload={
             "status": AgentRunStatus.QUEUED,
-            "workflow_id": str(workflow.id),
+            "automation_id": str(workflow.id),
             "trigger": "manual",
             "trigger_source": "portal_task_panel",
         },
@@ -1562,75 +1530,67 @@ def _build_portal_agent_runs_snapshot(
     }
 
     with tenant_context(business_id):
-        workflow_agents: list[dict[str, object]] = []
+        automation_agents: list[dict[str, object]] = []
         if agent_profile_id:
-            current_workflow_id = (
-                Conversation.objects.filter(id=conversation_id, business_profile_id=business_id)
-                .values_list("workflow_id", flat=True)
-                .first()
-            )
-            workflows = list(
-                AssistantWorkflow.objects.filter(
+            automations = list(
+                Automation.objects.filter(
                     business_profile_id=business_id,
                     agent_profile_id=agent_profile_id,
                 )
-                .filter(kind__in=[AssistantWorkflowKind.CUSTOM_ASSISTANT, AssistantWorkflowKind.AUTOMATION])
-                .filter(Q(id=current_workflow_id) if current_workflow_id else Q())
                 .select_related("agent_profile")
-                .annotate(session_count=Count("sessions"))
                 .order_by("-updated_at", "-created_at")[:100]
             )
-            workflow_ids = [workflow.id for workflow in workflows]
+            automation_ids = [automation.id for automation in automations]
             latest_runs: dict[uuid.UUID, AgentRun] = {}
-            recent_runs_by_workflow: dict[uuid.UUID, list[AgentRun]] = {}
+            recent_runs_by_automation: dict[uuid.UUID, list[AgentRun]] = {}
             open_checkpoints: dict[uuid.UUID, AgentRunCheckpoint] = {}
-            if workflow_ids:
+            if automation_ids:
                 for run in (
-                    AgentRun.objects.select_related("workflow")
+                    AgentRun.objects.select_related("automation")
                     .filter(
-                        workflow_id__in=workflow_ids,
+                        automation_id__in=automation_ids,
                         business_profile_id=business_id,
                         agent_profile_id=agent_profile_id,
                     )
                     .order_by("-created_at")[:500]
                 ):
-                    if run.workflow_id:
-                        recent_runs_by_workflow.setdefault(run.workflow_id, []).append(run)
-                        latest_runs.setdefault(run.workflow_id, run)
+                    if run.automation_id:
+                        recent_runs_by_automation.setdefault(run.automation_id, []).append(run)
+                        latest_runs.setdefault(run.automation_id, run)
                 for checkpoint in (
                     AgentRunCheckpoint.objects.filter(
-                        workflow_id__in=workflow_ids,
+                        automation_id__in=automation_ids,
                         status=AgentRunCheckpointStatus.OPEN,
                     )
                     .order_by("-updated_at", "-created_at")[:300]
                 ):
-                    if checkpoint.workflow_id and checkpoint.workflow_id not in open_checkpoints:
-                        open_checkpoints[checkpoint.workflow_id] = checkpoint
-            workflow_agents = [
-                _serialize_workflow_agent_for_portal(
-                    workflow,
-                    latest_run=latest_runs.get(workflow.id),
-                    open_checkpoint=open_checkpoints.get(workflow.id),
+                    if checkpoint.automation_id and checkpoint.automation_id not in open_checkpoints:
+                        open_checkpoints[checkpoint.automation_id] = checkpoint
+            automation_agents = [
+                _serialize_automation_for_portal(
+                    automation,
+                    latest_run=latest_runs.get(automation.id),
+                    open_checkpoint=open_checkpoints.get(automation.id),
                     recent_runs=[
                         run
-                        for run in recent_runs_by_workflow.get(workflow.id, [])
+                        for run in recent_runs_by_automation.get(automation.id, [])
                         if run.status in live_statuses
                     ],
                 )
-                for workflow in workflows
+                for automation in automations
             ]
 
         runs = list(
-            AgentRun.objects.select_related("workflow")
-            .filter(conversation_id=conversation_id, workflow_id__isnull=True)
+            AgentRun.objects.select_related("automation")
+            .filter(conversation_id=conversation_id, automation_id__isnull=True)
             .order_by("-created_at")[:runs_limit]
         )
         # The activity panel renders all runs in this snapshot. Include the
         # persisted event log for those visible runs so completed tasks can
         # still rebuild their "Worked for ..." activity after a refresh.
         run_ids = [run.id for run in runs]
-        for workflow in workflow_agents:
-            for item in [workflow.get("latestRun"), *(workflow.get("recentRuns") or [])]:
+        for automation in automation_agents:
+            for item in [automation.get("latestRun"), *(automation.get("recentRuns") or [])]:
                 if isinstance(item, dict) and item.get("id"):
                     run_id_value = str(item.get("id") or "").strip()
                     try:
@@ -1667,7 +1627,7 @@ def _build_portal_agent_runs_snapshot(
         return {
             "conversationId": str(conversation_id),
             "runs": [_serialize_agent_run_for_portal(run) for run in runs],
-            "workflows": workflow_agents,
+            "automations": automation_agents,
             "eventsByRun": events_by_run,
             "cursor": {"since": cursor_value},
         }
@@ -2225,7 +2185,7 @@ def portal_tool_approval(request: HttpRequest) -> JsonResponse:
                     business_profile=run.business_profile,
                     scope=MemoryScope.RUN,
                     agent_profile=run.agent_profile,
-                    workflow=run.workflow,
+                    automation=run.automation,
                     run=run,
                     conversation=run.conversation,
                     kind=MemoryKind.DECISION,
@@ -2240,12 +2200,12 @@ def portal_tool_approval(request: HttpRequest) -> JsonResponse:
                     },
                     created_by=actor_user,
                 )
-                if run.workflow_id:
+                if run.automation_id:
                     MemoryItem.objects.create(
                         business_profile=run.business_profile,
-                        scope=MemoryScope.WORKFLOW,
+                        scope=MemoryScope.AUTOMATION,
                         agent_profile=run.agent_profile,
-                        workflow=run.workflow,
+                        automation=run.automation,
                         run=run,
                         conversation=run.conversation,
                         kind=MemoryKind.DECISION,
@@ -2423,7 +2383,7 @@ def portal_agent_run_user_input(request: HttpRequest) -> JsonResponse:
             business_profile=run.business_profile,
             scope=MemoryScope.RUN,
             agent_profile=run.agent_profile,
-            workflow=run.workflow,
+            automation=run.automation,
             run=run,
             conversation=run.conversation,
             kind=MemoryKind.STATE_NOTE,
@@ -2433,12 +2393,12 @@ def portal_agent_run_user_input(request: HttpRequest) -> JsonResponse:
             visibility=MemoryVisibility.PRIVATE,
             created_by=actor_user,
         )
-        if run.workflow_id:
+        if run.automation_id:
             MemoryItem.objects.create(
                 business_profile=run.business_profile,
-                scope=MemoryScope.WORKFLOW,
+                scope=MemoryScope.AUTOMATION,
                 agent_profile=run.agent_profile,
-                workflow=run.workflow,
+                automation=run.automation,
                 run=run,
                 conversation=run.conversation,
                 kind=MemoryKind.STATE_NOTE,
@@ -2504,20 +2464,20 @@ def portal_agent_run_user_input(request: HttpRequest) -> JsonResponse:
 
 
 @require_POST
-def portal_agent_workflow_manual_run(request: HttpRequest) -> JsonResponse:
+def portal_automation_manual_run(request: HttpRequest) -> JsonResponse:
     service = _service()
     try:
         payload = _parse_json_body(request)
     except PortalValidationError as exc:
         return _json_error("invalid_json", str(exc))
 
-    workflow_id_raw = str(payload.get("workflow_id") or payload.get("workflowId") or "").strip()
-    if not workflow_id_raw:
-        return _json_error("validation_error", "workflow_id is required.")
+    automation_id_raw = str(payload.get("automation_id") or payload.get("automationId") or "").strip()
+    if not automation_id_raw:
+        return _json_error("validation_error", "automation_id is required.")
     try:
-        workflow_uuid = uuid.UUID(workflow_id_raw)
+        automation_uuid = uuid.UUID(automation_id_raw)
     except (TypeError, ValueError):
-        return _json_error("validation_error", "workflow_id is invalid.")
+        return _json_error("validation_error", "automation_id is invalid.")
 
     try:
         conversation, session = _resolve_request_conversation(
@@ -2542,27 +2502,29 @@ def portal_agent_workflow_manual_run(request: HttpRequest) -> JsonResponse:
         return _json_error("validation_error", "The current portal session is not linked to an agent.")
 
     with tenant_context(business_id):
-        workflow = (
-            AssistantWorkflow.objects.select_related("agent_profile", "business_profile", "created_by")
+        automation = (
+            Automation.objects.select_related("agent_profile", "business_profile", "created_by")
             .filter(
-                id=workflow_uuid,
+                id=automation_uuid,
                 business_profile_id=business_id,
                 agent_profile_id=agent_profile_id,
             )
             .first()
         )
-        if workflow is None:
-            return _json_error("not_found", "Workflow not found.", status=404)
+        if automation is None:
+            return _json_error("not_found", "Automation not found.", status=404)
+        if not _is_runnable_automation(automation):
+            return _json_error("validation_error", "Automation cannot be run.")
         run = _create_portal_manual_workflow_run(
-            workflow=workflow,
+            workflow=automation,
             created_by=actor_user,
             portal_conversation=conversation,
         )
-        AssistantWorkflow.objects.filter(id=workflow.id).update(last_triggered_at=timezone.now(), updated_at=timezone.now())
-        workflow.refresh_from_db()
+        Automation.objects.filter(id=automation.id).update(last_triggered_at=timezone.now(), updated_at=timezone.now())
+        automation.refresh_from_db()
         recent_runs = list(
-            AgentRun.objects.select_related("workflow")
-            .filter(workflow=workflow, business_profile_id=business_id, agent_profile_id=agent_profile_id)
+            AgentRun.objects.select_related("automation")
+            .filter(automation=automation, business_profile_id=business_id, agent_profile_id=agent_profile_id)
             .exclude(id=run.id)
             .order_by("-created_at")[:5]
         )
@@ -2570,7 +2532,7 @@ def portal_agent_workflow_manual_run(request: HttpRequest) -> JsonResponse:
     return JsonResponse(
         {
             "session": _session_to_dict(session),
-            "workflow": _serialize_workflow_agent_for_portal(workflow, latest_run=run, recent_runs=recent_runs),
+            "automation": _serialize_automation_for_portal(automation, latest_run=run, recent_runs=recent_runs),
             "run": _serialize_agent_run_for_portal(run),
         },
         status=201,
@@ -2618,9 +2580,9 @@ def portal_agent_run_checkpoint_resolve(request: HttpRequest) -> JsonResponse:
     business_id = getattr(conversation, "business_profile_id", None)
     with tenant_context(business_id):
         checkpoint = (
-            AgentRunCheckpoint.objects.select_related("run", "workflow")
+            AgentRunCheckpoint.objects.select_related("run", "automation")
             .filter(id=checkpoint_uuid, business_profile_id=business_id)
-            .filter(Q(run__agent_profile_id=conversation.agent_profile_id) | Q(workflow__agent_profile_id=conversation.agent_profile_id))
+            .filter(Q(run__agent_profile_id=conversation.agent_profile_id) | Q(automation__agent_profile_id=conversation.agent_profile_id))
             .first()
         )
         if checkpoint is None:
@@ -2649,7 +2611,7 @@ def portal_agent_run_checkpoint_resolve(request: HttpRequest) -> JsonResponse:
             business_profile=run.business_profile,
             scope=MemoryScope.RUN,
             agent_profile=run.agent_profile,
-            workflow=run.workflow,
+            automation=run.automation,
             run=run,
             conversation=run.conversation,
             kind=MemoryKind.DECISION if checkpoint.kind == AgentRunCheckpointKind.APPROVAL else MemoryKind.STATE_NOTE,
@@ -2829,7 +2791,7 @@ def portal_agent_run_approval(request: HttpRequest) -> JsonResponse:
                 business_profile=run.business_profile,
                 scope=MemoryScope.RUN,
                 agent_profile=run.agent_profile,
-                workflow=run.workflow,
+                automation=run.automation,
                 run=run,
                 conversation=run.conversation,
                 kind=MemoryKind.DECISION,
@@ -2844,12 +2806,12 @@ def portal_agent_run_approval(request: HttpRequest) -> JsonResponse:
                 },
                 created_by=actor_user,
             )
-            if run.workflow_id:
+            if run.automation_id:
                 MemoryItem.objects.create(
                     business_profile=run.business_profile,
-                    scope=MemoryScope.WORKFLOW,
+                    scope=MemoryScope.AUTOMATION,
                     agent_profile=run.agent_profile,
-                    workflow=run.workflow,
+                    automation=run.automation,
                     run=run,
                     conversation=run.conversation,
                     kind=MemoryKind.DECISION,
@@ -3054,7 +3016,7 @@ def portal_agent_request_update(request: HttpRequest) -> JsonResponse:
                         business_profile=run.business_profile,
                         scope=MemoryScope.RUN,
                         agent_profile=run.agent_profile,
-                        workflow=run.workflow,
+                        automation=run.automation,
                         run=run,
                         conversation=run.conversation,
                         kind=MemoryKind.STATE_NOTE,
@@ -3454,7 +3416,7 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
                 redis_stream_positions[portal_session_conversation_stream_key(conversation_id=conversation_id)] = start_id
                 if agent_workforce_enabled and agent_profile_id:
                     redis_stream_positions[portal_session_agent_requests_stream_key(agent_profile_id=agent_profile_id)] = start_id
-                    redis_stream_positions[portal_session_agent_workflow_runs_stream_key(agent_profile_id=agent_profile_id)] = start_id
+                    redis_stream_positions[portal_session_agent_automation_runs_stream_key(agent_profile_id=agent_profile_id)] = start_id
             else:
                 redis_conn = None
                 session_bus = "postgres"
@@ -3565,7 +3527,7 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
                             event_filter |= Q(
                                 run__business_profile_id=business_id,
                                 run__agent_profile_id=agent_profile_id,
-                                run__workflow_id__isnull=False,
+                                run__automation_id__isnull=False,
                             )
                         events_batch = list(
                             AgentRunEvent.objects.select_related("run")
@@ -3774,7 +3736,7 @@ def conversations_collection(request: HttpRequest) -> JsonResponse:
     business_slug = (payload.get("business_slug") or payload.get("businessSlug") or "").strip()
     agent_slug = (payload.get("agent_slug") or payload.get("agentSlug") or "").strip()
     metadata = _with_ui_language(request, _normalize_portal_metadata(payload.get("metadata") or {}))
-    workflow_id = str(payload.get("workflow_id") or payload.get("workflowId") or "").strip()
+    custom_assistant_id = str(payload.get("custom_assistant_id") or payload.get("customAssistantId") or "").strip()
     if not business_slug or not agent_slug:
         return _json_error("validation_error", "business_slug and agent_slug are required.")
 
@@ -3792,12 +3754,12 @@ def conversations_collection(request: HttpRequest) -> JsonResponse:
             business_slug=business_slug,
             agent_slug=agent_slug,
         )
-        if workflow_id:
-            result = service.create_owned_workflow_session(
+        if custom_assistant_id:
+            result = service.create_owned_custom_assistant_session(
                 owner_user=user,
                 business_slug=business_slug,
                 agent_slug=agent_slug,
-                workflow_id=workflow_id,
+                custom_assistant_id=custom_assistant_id,
                 metadata=metadata,
                 title=str(payload.get("title") or "").strip(),
             )
