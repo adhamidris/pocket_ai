@@ -251,6 +251,7 @@ def build_system_message(
     *,
     business_name: str | None = None,
     business_industry: str | None = None,
+    business_niches: str | None = None,
     provider_name: str | None = None,
     business_profile=None,  # Optional: for agentic mode feature flag check
     model_id: str | None = None,
@@ -265,7 +266,7 @@ def build_system_message(
     guidance). Legacy non-agentic fallback prompts have been removed.
     """
 
-    del business_industry, provider_name
+    del provider_name
 
     if business_profile is None:
         raise RuntimeError("build_system_message requires a business_profile for agentic prompt routing.")
@@ -296,6 +297,8 @@ def build_system_message(
         agent,
         model_id=model_id,
         business_name=resolved_business_name,
+        business_industry=business_industry,
+        business_niches=business_niches,
         additional_rules=additional_rules_str,
         agent_name_override=agent_name_override,
     )
@@ -875,11 +878,25 @@ def build_messages(
             business_industry = (
                 business_profile.industry if business_profile and business_profile.industry else "general services"
             )
+            
+            # Extract niches from line_of_business JSON list
+            niches_list = []
+            if business_profile:
+                raw_lob = getattr(business_profile, "line_of_business", [])
+                if isinstance(raw_lob, list):
+                    niches_list.extend([str(n) for n in raw_lob if n])
+                custom_lob = getattr(business_profile, "line_of_business_custom", [])
+                if isinstance(custom_lob, list):
+                    niches_list.extend([str(n) for n in custom_lob if n])
+            
+            business_niches = ", ".join(niches_list) if niches_list else None
+
             system_sections.append(
                 build_system_message(
                     agent,
                     business_name=business_name,
                     business_industry=business_industry,
+                    business_niches=business_niches,
                     business_profile=business_profile,
                     model_id=model_id,
                     has_mcp_connections=has_mcp_connections,

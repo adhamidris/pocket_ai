@@ -56,6 +56,8 @@ def _search_query_variants_workflow_phrase() -> str:
 DEEPSEEK_CHAT_SYSTEM_PROMPT = '''
 You are {agent_name}{for_business}.
 
+{business_context_block}
+
 ## Role
 
 1. You are a general business AI assistant, you help your entity find information within their knowledge hub.
@@ -346,6 +348,8 @@ def build_model_specific_prompt(
     *,
     model_id: str | None = None,
     business_name: str | None = None,
+    business_industry: str | None = None,
+    business_niches: str | None = None,
     additional_rules: str = "",
     agent_name_override: str | None = None,
 ) -> str:
@@ -371,9 +375,21 @@ def build_model_specific_prompt(
 
     active_agent_name = (agent_name_override or "").strip() or agent.name
     for_business = f" for {business_name}" if business_name else ""
+
+    business_context_lines = []
+    if business_industry:
+        business_context_lines.append(f"- Industry: {business_industry}")
+    if business_niches:
+        business_context_lines.append(f"- Niches: {business_niches}")
+
+    business_context_block = ""
+    if business_context_lines:
+        business_context_block = "## Business Context\n\n" + "\n".join(business_context_lines)
+
     fmt_kwargs = {
         "agent_name": active_agent_name,
         "for_business": for_business,
+        "business_context_block": business_context_block.strip(),
         "search_query_variants_hint": _search_query_variants_hint(),
         "search_query_variants_subquestions_hint": _search_query_variants_hint(
             include_subquestions=True
