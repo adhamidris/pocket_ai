@@ -6,7 +6,7 @@ from django.core.cache import cache
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
-from apps.conversations.workflow_processing import AutomationProcessingService
+from apps.automations.processing import AutomationProcessingService
 
 
 class Command(BaseCommand):
@@ -32,7 +32,7 @@ class Command(BaseCommand):
             cache.set("automation_processor_heartbeat", {"at": timezone.now().isoformat()}, timeout=180)
             processed = 0
             for _ in range(limit):
-                result = service.process_next_due_workflow()
+                result = service.process_next_due_automation()
                 if result is None:
                     break
                 processed += 1

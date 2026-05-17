@@ -5,7 +5,8 @@ from django.test import TestCase
 from django.urls import reverse
 
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
-from apps.conversations.models import Automation, AutomationKind, AutomationTriggerType
+from apps.assistants.models import CustomAssistant
+from apps.automations.models import Automation, AutomationTriggerType
 
 
 User = get_user_model()
@@ -64,13 +65,12 @@ class AgentsDashboardTests(TestCase):
         self.assertIn('data-automations-page', content)
         self.assertNotIn("data-agent-panel", content)
 
-    def test_product_api_filters_custom_assistants_and_automations(self) -> None:
-        manual = Automation.objects.create(
+    def test_product_api_separates_custom_assistants_and_automations(self) -> None:
+        assistant = CustomAssistant.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
             name="Proposal Assistant",
-            trigger_type=AutomationTriggerType.MANUAL,
         )
         automation = Automation.objects.create(
             business_profile=self.business,
@@ -83,16 +83,13 @@ class AgentsDashboardTests(TestCase):
 
         assistants = self.client.get(
             reverse("api:custom-assistants", args=[self.agent.id]),
-        ).json()["workflows"]
+        ).json()["customAssistants"]
         automations = self.client.get(
             reverse("api:automations", args=[self.agent.id]),
-        ).json()["workflows"]
+        ).json()["automations"]
 
-        manual.refresh_from_db()
         automation.refresh_from_db()
-        self.assertEqual(manual.kind, AutomationKind.CUSTOM_ASSISTANT)
-        self.assertEqual(automation.kind, AutomationKind.AUTOMATION)
-        self.assertEqual([item["id"] for item in assistants], [str(manual.id)])
+        self.assertEqual([item["id"] for item in assistants], [str(assistant.id)])
         self.assertEqual([item["id"] for item in automations], [str(automation.id)])
 
     def test_connectors_dashboard_unifies_native_and_mcp_surfaces(self) -> None:

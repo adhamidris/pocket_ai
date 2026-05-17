@@ -4,7 +4,7 @@ import json
 
 from django.test import SimpleTestCase
 
-from apps.conversations.agent_run_processing import sanitize_tool_event_for_audit
+from apps.agent_runs.processing import sanitize_tool_event_for_audit
 
 
 class AgentRunAuditSanitizationTests(SimpleTestCase):

@@ -986,10 +986,10 @@ class AgentRunProcessingService:
             )
 
     def _build_workflow_runtime_context(self, run: AgentRun) -> str:
-        workflow = getattr(run, "workflow", None)
-        if not workflow:
+        automation = getattr(run, "automation", None)
+        if not automation:
             return ""
-        instructions = workflow.instructions if isinstance(getattr(workflow, "instructions", None), Mapping) else {}
+        instructions = automation.instructions if isinstance(getattr(automation, "instructions", None), Mapping) else {}
         snapshot = run.run_snapshot if isinstance(getattr(run, "run_snapshot", None), Mapping) else {}
         instruction_source = dict(snapshot)
         instruction_source.update(dict(instructions))
@@ -1002,15 +1002,15 @@ class AgentRunProcessingService:
             or ""
         ).strip()
         memory_instructions = str(instruction_source.get("memory_instructions") or "").strip()
-        state = workflow.state if isinstance(getattr(workflow, "state", None), Mapping) else {}
-        notification_config = workflow.notification_config if isinstance(getattr(workflow, "notification_config", None), Mapping) else {}
+        state = automation.state if isinstance(getattr(automation, "state", None), Mapping) else {}
+        notification_config = automation.notification_config if isinstance(getattr(automation, "notification_config", None), Mapping) else {}
         recent_memories = list(
-            MemoryItem.objects.filter(automation=workflow, scope=MemoryScope.AUTOMATION, status=MemoryStatus.ACTIVE)
+            MemoryItem.objects.filter(automation=automation, scope=MemoryScope.AUTOMATION, status=MemoryStatus.ACTIVE)
             .order_by("-updated_at", "-created_at")
             .only("kind", "key", "content", "payload", "updated_at")[:20]
         )
         recent_runs = list(
-            AgentRun.objects.filter(automation=workflow)
+            AgentRun.objects.filter(automation=automation)
             .exclude(id=run.id)
             .exclude(status=AgentRunStatus.CANCELLED)
             .order_by("-created_at")
@@ -1018,7 +1018,7 @@ class AgentRunProcessingService:
         )
         pending = list(
             AgentRun.objects.filter(
-                automation=workflow,
+                automation=automation,
                 status__in=[AgentRunStatus.WAITING_APPROVAL, AgentRunStatus.WAITING_USER, AgentRunStatus.WAITING_EXTERNAL],
             )
             .exclude(id=run.id)
@@ -1027,12 +1027,12 @@ class AgentRunProcessingService:
         )
         lines: list[str] = [
             "Workflow runtime packet.",
-            f"- automation_id: {workflow.id}",
-            f"- workflow_name: {workflow.name}",
+            f"- automation_id: {automation.id}",
+            f"- automation_name: {automation.name}",
             "- workflow_agent_scope: main_agent",
-            f"- responsible_agent_id: {workflow.agent_profile_id}",
-            f"- review_mode: {workflow.review_mode}",
-            f"- autonomy_mode: {workflow.autonomy_mode}",
+            f"- responsible_agent_id: {automation.agent_profile_id}",
+            f"- review_mode: {automation.review_mode}",
+            f"- autonomy_mode: {automation.autonomy_mode}",
         ]
         if instruction_source.get("workflow_type") or instruction_source.get("memory_shape"):
             lines.append(
@@ -1210,7 +1210,7 @@ class AgentRunProcessingService:
             return dict(entry)
         return None
 
-    def _workflow_dedupe_key(self, *, workflow: Automation | None, report: Mapping[str, object]) -> str:
+    def _workflow_dedupe_key(self, *, automation: Automation | None, report: Mapping[str, object]) -> str:
         entities = report.get("changed_entities")
         candidate = entities if isinstance(entities, list) and entities else report.get("notification_candidate") or report
         return f"workflow_state:{_stable_digest(candidate)}"
@@ -1223,15 +1223,15 @@ class AgentRunProcessingService:
         next_status: str,
         now,
     ) -> dict[str, object]:
-        workflow = getattr(run, "workflow", None)
-        dedupe_key = self._workflow_dedupe_key(automation=workflow, report=report)
+        automation = getattr(run, "automation", None)
+        dedupe_key = self._workflow_dedupe_key(automation=automation, report=report)
         duplicate = False
-        if workflow is not None and dedupe_key:
-            duplicate = not self._record_workflow_dedupe_key(workflow, dedupe_key)
+        if automation is not None and dedupe_key:
+            duplicate = not self._record_workflow_dedupe_key(automation, dedupe_key)
 
-        if workflow is not None:
+        if automation is not None:
             self._update_workflow_state_from_report(
-                automation=workflow,
+                automation=automation,
                 run=run,
                 report=report,
                 dedupe_key=dedupe_key,
@@ -1253,8 +1253,8 @@ class AgentRunProcessingService:
         candidate = report.get("notification_candidate")
         if not isinstance(candidate, Mapping):
             return
-        workflow = getattr(run, "workflow", None)
-        target_conversation = getattr(workflow, "conversation", None) if workflow is not None else None
+        automation = getattr(run, "automation", None)
+        target_conversation = getattr(automation, "conversation", None) if automation is not None else None
         if target_conversation is None:
             target_conversation = getattr(run, "conversation", None)
         status = (
@@ -1267,8 +1267,8 @@ class AgentRunProcessingService:
         defaults = {
             "business_profile": run.business_profile,
             "agent_profile": run.agent_profile,
-            "owner_agent_profile": getattr(workflow, "agent_profile", None) if workflow is not None else run.agent_profile,
-            "workflow": workflow,
+            "owner_agent_profile": getattr(automation, "agent_profile", None) if automation is not None else run.agent_profile,
+            "automation": automation,
             "target_conversation": target_conversation,
             "status": status,
             "kind": str(candidate.get("kind") or "run_result")[:48],
@@ -1284,13 +1284,13 @@ class AgentRunProcessingService:
             defaults=defaults,
         )
 
-    def _record_workflow_dedupe_key(self, workflow: Automation, dedupe_key: str) -> bool:
+    def _record_workflow_dedupe_key(self, automation: Automation, dedupe_key: str) -> bool:
         if not dedupe_key:
             return True
         try:
             AutomationDedupeKey.objects.create(
-                business_profile=workflow.business_profile,
-                automation=workflow,
+                business_profile=automation.business_profile,
+                automation=automation,
                 dedupe_key=dedupe_key[:255],
             )
             return True
@@ -1300,14 +1300,14 @@ class AgentRunProcessingService:
     def _update_workflow_state_from_report(
         self,
         *,
-        workflow: Automation,
+        automation: Automation,
         run: AgentRun,
         report: Mapping[str, object],
         dedupe_key: str,
         duplicate: bool,
         now,
     ) -> None:
-        state = dict(workflow.state or {}) if isinstance(getattr(workflow, "state", None), Mapping) else {}
+        state = dict(automation.state or {}) if isinstance(getattr(automation, "state", None), Mapping) else {}
         history = state.get("recent_run_reports")
         if not isinstance(history, list):
             history = []
@@ -1326,7 +1326,7 @@ class AgentRunProcessingService:
         state["last_run_report"] = compact_report
         state["last_changed_entities"] = report.get("changed_entities") if isinstance(report.get("changed_entities"), list) else []
         state["workflow_memory"] = self._merge_workflow_memory(
-            automation=workflow,
+            automation=automation,
             run=run,
             previous=state.get("workflow_memory"),
             report=report,
@@ -1337,13 +1337,13 @@ class AgentRunProcessingService:
             notification_history = []
         notification_history.insert(0, {"run_id": str(run.id), "at": now.isoformat(), "dedupe_key": dedupe_key, "duplicate": duplicate})
         state["notification_history"] = notification_history[:50]
-        Automation.objects.filter(id=workflow.id).update(state=state, updated_at=now)
-        workflow.state = state
+        Automation.objects.filter(id=automation.id).update(state=state, updated_at=now)
+        automation.state = state
 
     def _merge_workflow_memory(
         self,
         *,
-        workflow: Automation,
+        automation: Automation,
         run: AgentRun,
         previous: object,
         report: Mapping[str, object],
@@ -1351,8 +1351,8 @@ class AgentRunProcessingService:
     ) -> dict[str, object]:
         memory = dict(previous or {}) if isinstance(previous, Mapping) else {}
         update = report.get("memory_update") if isinstance(report.get("memory_update"), Mapping) else {}
-        instructions = workflow.instructions if isinstance(getattr(workflow, "instructions", None), Mapping) else {}
-        metadata = workflow.metadata if isinstance(getattr(workflow, "metadata", None), Mapping) else {}
+        instructions = automation.instructions if isinstance(getattr(automation, "instructions", None), Mapping) else {}
+        metadata = automation.metadata if isinstance(getattr(automation, "metadata", None), Mapping) else {}
         memory_shape = str(instructions.get("memory_shape") or metadata.get("memory_shape") or "general").strip() or "general"
         memory["memory_shape"] = memory_shape
         memory["last_updated_at"] = now.isoformat()
@@ -1413,7 +1413,7 @@ class AgentRunProcessingService:
         )
         memory["recent_updates"] = recent_updates[:10]
 
-        self._upsert_workflow_memory_item(automation=workflow, run=run, memory=memory, now=now)
+        self._upsert_workflow_memory_item(automation=automation, run=run, memory=memory, now=now)
         return _json_safe(memory, fallback={}) if isinstance(memory, dict) else {}
 
     def _email_memory_from_tool_trace(self, actions_taken: object, run: AgentRun) -> tuple[list[str], list[str]]:
@@ -1445,7 +1445,7 @@ class AgentRunProcessingService:
     def _upsert_workflow_memory_item(
         self,
         *,
-        workflow: Automation,
+        automation: Automation,
         run: AgentRun,
         memory: Mapping[str, object],
         now,
@@ -1460,12 +1460,12 @@ class AgentRunProcessingService:
         content = " | ".join(part for part in content_parts if part)
         try:
             MemoryItem.objects.update_or_create(
-                business_profile=workflow.business_profile,
-                automation=workflow,
+                business_profile=automation.business_profile,
+                automation=automation,
                 scope=MemoryScope.AUTOMATION,
                 key="workflow_compact_journal",
                 defaults={
-                    "agent_profile": workflow.agent_profile,
+                    "agent_profile": automation.agent_profile,
                     "run": run,
                     "kind": MemoryKind.STATE_NOTE,
                     "content": _clip_text(content, 4000),
@@ -1477,7 +1477,7 @@ class AgentRunProcessingService:
                 },
             )
         except Exception:  # pragma: no cover - memory writeback should not break run completion
-            logger.exception("workflow_memory_item_upsert_failed workflow=%s run=%s", workflow.id, run.id)
+            logger.exception("workflow_memory_item_upsert_failed automation=%s run=%s", automation.id, run.id)
 
     def _upsert_open_checkpoint(
         self,
@@ -1496,9 +1496,9 @@ class AgentRunProcessingService:
             .first()
         )
         timeout_seconds = None
-        workflow = getattr(run, "workflow", None)
-        if workflow is not None:
-            config = workflow.metadata if isinstance(getattr(workflow, "metadata", None), Mapping) else {}
+        automation = getattr(run, "automation", None)
+        if automation is not None:
+            config = automation.metadata if isinstance(getattr(automation, "metadata", None), Mapping) else {}
             timeout_seconds = config.get("checkpoint_timeout_seconds") or config.get("checkpointTimeoutSeconds")
         try:
             timeout_value = int(timeout_seconds) if timeout_seconds is not None else 86400
@@ -1508,7 +1508,7 @@ class AgentRunProcessingService:
         expires_at = now + timedelta(seconds=timeout_value)
         values = {
             "business_profile": run.business_profile,
-            "workflow": run.automation,
+            "automation": run.automation,
             "conversation": run.conversation,
             "child_run": child_run,
             "title": _clip_text(title, 240),

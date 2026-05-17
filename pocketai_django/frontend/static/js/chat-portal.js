@@ -5803,11 +5803,6 @@ class ChatPortalClient {
   async submitAutomationManualRun(automationId, buttonEl, cardEl) {
     const safeAutomationId = (automationId || "").toString().trim();
     if (!safeAutomationId) return;
-    const knownAutomationState = this.automationAgents.get(safeAutomationId);
-    if (knownAutomationState && this.isCustomAssistantAutomation(knownAutomationState.automation)) {
-      this.showToast(this.t("Custom Assistants open as chat sessions."), this.t("Open the assistant from the sidebar instead."), true);
-      return;
-    }
     if (!this.endpoints.automationRun) {
       this.showToast(this.t("Run unavailable"), this.t("Automation run endpoint is not configured."), true);
       return;
@@ -5842,7 +5837,7 @@ class ChatPortalClient {
 
       const automation = payload && payload.automation && typeof payload.automation === "object" ? payload.automation : null;
       const run = payload && payload.run && typeof payload.run === "object" ? payload.run : null;
-      const automationState = automation ? this.upsertCustomAssistant(automation) : this.automationAgents.get(safeAutomationId);
+      const automationState = automation ? this.upsertAutomation(automation) : this.automationAgents.get(safeAutomationId);
       if (run) {
         this.upsertAgentRun(run);
         if (automationState && automationState.automation) {
@@ -6461,7 +6456,7 @@ class ChatPortalClient {
       payload.eventsByRun && typeof payload.eventsByRun === "object" ? payload.eventsByRun : {};
 
     automations.forEach((automation) => {
-      const automationState = this.upsertCustomAssistant(automation);
+      const automationState = this.upsertAutomation(automation);
       const latest = automation && automation.latestRun && typeof automation.latestRun === "object" ? automation.latestRun : null;
       if (latest) this.upsertAgentRun(latest);
       const recent = automation && Array.isArray(automation.recentRuns) ? automation.recentRuns : [];
@@ -6525,8 +6520,8 @@ class ChatPortalClient {
           kind: run.automationKind || run.automation_kind || "",
         };
         const existingAutomationState = this.automationAgents.get(automationId);
-        const automationState = this.isAutomationAutomation(existingAutomationState && existingAutomationState.automation ? existingAutomationState.automation : runAutomation)
-          ? (existingAutomationState || this.upsertCustomAssistant(runAutomation))
+        const automationState = this.isRunnableAutomation(existingAutomationState && existingAutomationState.automation ? existingAutomationState.automation : runAutomation)
+          ? (existingAutomationState || this.upsertAutomation(runAutomation))
           : null;
         if (automationState && automationState.automation) {
           const recent = Array.isArray(automationState.automation.recentRuns) ? automationState.automation.recentRuns.slice() : [];
@@ -6632,7 +6627,7 @@ class ChatPortalClient {
     return state;
   }
 
-  upsertCustomAssistant(automation) {
+  upsertAutomation(automation) {
     if (!automation || typeof automation !== "object") return null;
     const automationId = typeof automation.id === "string" ? automation.id.trim() : "";
     if (!automationId) return null;
@@ -6933,7 +6928,7 @@ class ChatPortalClient {
       id,
       state,
       automation: state && state.automation ? state.automation : {},
-    })).filter(({ automation }) => this.isAutomationAutomation(automation));
+    })).filter(({ automation }) => this.isRunnableAutomation(automation));
 
     const runs = Array.from(this.agentRuns.entries())
       .filter(([, state]) => {
@@ -6984,7 +6979,7 @@ class ChatPortalClient {
     });
 
     const automationCardsHtml = automations
-      .map(({ id, state, automation }) => this.renderCustomAssistantCardHtml(id, state, automation))
+      .map(({ id, state, automation }) => this.renderAutomationCardHtml(id, state, automation))
       .join("");
 
     const voiceSessionsInRuns = new Set();
@@ -7461,23 +7456,8 @@ class ChatPortalClient {
     return norm ? this.formatStatus(norm) : this.t("Automation");
   }
 
-  getAutomationKind(automation) {
-    if (!automation || typeof automation !== "object") return "";
-    return (automation.kind || automation.automationKind || "").toString().trim().toLowerCase();
-  }
-
-  isCustomAssistantAutomation(automation) {
-    const kind = this.getAutomationKind(automation);
-    const triggerType = (automation && (automation.triggerType || automation.trigger_type) ? (automation.triggerType || automation.trigger_type) : "").toString().trim().toLowerCase();
-    return kind === "custom_assistant" || (!kind && triggerType === "manual");
-  }
-
-  isAutomationAutomation(automation) {
-    const kind = this.getAutomationKind(automation);
-    const triggerType = (automation && (automation.triggerType || automation.trigger_type) ? (automation.triggerType || automation.trigger_type) : "").toString().trim().toLowerCase();
-    if (kind === "automation") return true;
-    if (kind === "custom_assistant") return false;
-    return Boolean(triggerType && triggerType !== "manual");
+  isRunnableAutomation(automation) {
+    return Boolean(automation && typeof automation === "object" && automation.id);
   }
 
   formatTaskDateTime(raw) {
@@ -7853,7 +7833,7 @@ class ChatPortalClient {
     `;
   }
 
-  renderCustomAssistantCardHtml(automationId, state, automation) {
+  renderAutomationCardHtml(automationId, state, automation) {
     const expanded = Boolean(state && state.expanded);
     const name = automation && automation.name ? String(automation.name) : this.t("Automation");
     const latestRun = automation && automation.latestRun && typeof automation.latestRun === "object" ? automation.latestRun : null;
@@ -7883,7 +7863,7 @@ class ChatPortalClient {
     const suppressActionsForRunIds = checkpointRunId ? new Set([checkpointRunId]) : null;
     const recentHtml = this.renderAutomationRecentRunsHtml(automationId, state, allRuns, { suppressActionsForRunIds });
     const runBusy = this.automationManualRunBusy && this.automationManualRunBusy.has(automationId);
-    const canRunNow = this.isAutomationAutomation(automation);
+    const canRunNow = this.isRunnableAutomation(automation);
     return `
       <div class="portal-task" data-automation-id="${this.escapeHtml(automationId)}" data-expanded="${expanded ? "true" : "false"}" data-attention="${needsAttention ? "true" : "false"}" data-attention-status="${this.escapeHtml(attentionStatus || "")}">
         <div class="portal-task__header-bar">
@@ -13844,50 +13824,50 @@ class ChatPortalClient {
     itemsContainer.innerHTML = "";
 
     const sortedSessions = this.sortSessionSummaries(Array.isArray(sessions) ? sessions : []);
-    const taskSessions = sortedSessions.filter((session) => this.getSessionSummaryType(session) === "task");
-    const chatSessions = sortedSessions.filter((session) => this.getSessionSummaryType(session) !== "task");
+    const customAssistantSessions = sortedSessions.filter((session) => this.getSessionSummaryType(session) === "custom_assistant");
+    const chatSessions = sortedSessions.filter((session) => this.getSessionSummaryType(session) === "chat");
     const currentSessionKey = this.getCurrentSessionKey();
 
-    const automationGroups = this.getCustomAssistantSidebarGroups(taskSessions);
-    if (!automationGroups.length && !chatSessions.length) {
+    const customAssistantGroups = this.getCustomAssistantSidebarGroups(customAssistantSessions);
+    if (!customAssistantGroups.length && !chatSessions.length) {
       this.showSessionsEmpty();
       return;
     }
-    if (automationGroups.length) {
-      const automationBranch = this.buildSessionTreeBranch({
+    if (customAssistantGroups.length) {
+      const customAssistantBranch = this.buildSessionTreeBranch({
         key: "section:custom-assistants",
         label: this.t("Custom Assistants"),
         level: 0,
-        count: automationGroups.length,
-        forceOpen: taskSessions.some((session) => this.getSessionSummaryKey(session) === currentSessionKey),
+        count: customAssistantGroups.length,
+        forceOpen: customAssistantSessions.some((session) => this.getSessionSummaryKey(session) === currentSessionKey),
         renderChildren: (sectionContent) => {
-          for (const group of automationGroups) {
+          for (const group of customAssistantGroups) {
             const groupHasActiveSession = group.sessions.some((session) => this.getSessionSummaryKey(session) === currentSessionKey);
-            const automationNode = this.buildSessionTreeBranch({
-              key: `automation:${group.key}`,
+            const customAssistantNode = this.buildSessionTreeBranch({
+              key: `custom-assistant:${group.key}`,
               label: group.name,
               level: 1,
               count: group.sessions.length,
               forceOpen: groupHasActiveSession,
-              actions: () => [this.buildCustomAssistantSessionCreateButton(group.automationId, group.name)],
-              renderChildren: (automationContent) => {
+              actions: () => [this.buildCustomAssistantSessionCreateButton(group.customAssistantId, group.name)],
+              renderChildren: (customAssistantContent) => {
                 if (!group.sessions.length) {
                   const empty = document.createElement("div");
                   empty.className = "px-2 py-1.5 text-xs text-muted-foreground";
                   empty.textContent = this.t("No chats yet");
-                  automationContent.appendChild(empty);
+                  customAssistantContent.appendChild(empty);
                 }
                 for (const session of group.sessions) {
                   const isActive = this.getSessionSummaryKey(session) === currentSessionKey;
-                  automationContent.appendChild(this.buildSessionItem(session, isActive, { nested: true }));
+                  customAssistantContent.appendChild(this.buildSessionItem(session, isActive, { nested: true }));
                 }
               },
             });
-            sectionContent.appendChild(automationNode);
+            sectionContent.appendChild(customAssistantNode);
           }
         },
       });
-      itemsContainer.appendChild(automationBranch);
+      itemsContainer.appendChild(customAssistantBranch);
     }
 
     if (chatSessions.length) {
@@ -13914,6 +13894,7 @@ class ChatPortalClient {
     if (!session || typeof session !== "object") return "chat";
     const explicitType = (session.session_type || session.sessionType || "").toString().trim().toLowerCase();
     if (explicitType) return explicitType;
+    if (session.custom_assistant_id || session.customAssistantId) return "custom_assistant";
     if (session.automation_id || session.automationId) return "task";
     return "chat";
   }
@@ -14399,7 +14380,7 @@ class ChatPortalClient {
       container.innerHTML = "";
       container.removeAttribute("data-session-skeleton");
       if (this.isCurrentTaskSession()) {
-        const automationName = this.currentCustomAssistantName || this.t("Custom Assistant");
+        const customAssistantName = this.currentCustomAssistantName || this.t("Custom Assistant");
         container.innerHTML = `
           <div class="min-h-[55vh] flex items-center justify-center px-4 py-12">
             <div class="w-full max-w-xl rounded-lg border border-border/70 bg-card/40 px-5 py-4 text-left shadow-sm">
@@ -14411,8 +14392,8 @@ class ChatPortalClient {
                   </svg>
                 </div>
                 <div class="min-w-0">
-                  <p class="text-sm font-semibold text-foreground">${this.escapeHtml(automationName)}</p>
-                  <p class="mt-1 text-sm leading-6 text-muted-foreground">${this.escapeHtml(this.t("Waiting for Custom Assistant activity. Updates, approvals, and run summaries will appear here."))}</p>
+                  <p class="text-sm font-semibold text-foreground">${this.escapeHtml(customAssistantName)}</p>
+                  <p class="mt-1 text-sm leading-6 text-muted-foreground">${this.escapeHtml(this.t("Start a message to chat with this Custom Assistant."))}</p>
                 </div>
               </div>
             </div>

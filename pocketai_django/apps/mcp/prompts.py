@@ -31,9 +31,9 @@ from apps.conversations.models import (
     ConversationFileStatus,
     ConversationSender,
 )
-from apps.conversations.workflow_contracts import (
-    active_workflow_agent_name,
-    build_workflow_agent_instruction_note,
+from apps.conversations.instruction_contracts import (
+    active_custom_assistant_name,
+    build_custom_assistant_instruction_note,
 )
 from apps.llm.ai_prompt_builder import PromptBuilder
 from apps.mcp.sanitizer import sanitize_text
@@ -95,13 +95,13 @@ AGENT_WORKFORCE_BACKGROUND_RUN_INSTRUCTIONS = textwrap.dedent(
     - `list_tasks` / `update_task` / `pause_task` → Manage saved tasks owned by agents
     - Direct tools (email_create_draft, etc.) → Simple one-shot actions you can do yourself
 
-    **Saved tasks/workflows:**
+    **Saved automations:**
     - If the visitor asks to create a recurring, scheduled, webhook, or email-monitoring task, create a draft first.
-    - Do not save a vague one-line task. A saved workflow must contain a reusable `wake_up_prompt` that can run well in isolation later.
-    - Build the draft from the current conversation context. If the visitor says "turn what we just did into a workflow", extract the steps followed, tools used, decisions made, quality criteria, reporting style, stop/pause conditions, and what the workflow must remember.
+    - Do not save a vague one-line task. A saved automation must contain a reusable `wake_up_prompt` that can run well in isolation later.
+    - Build the draft from the current conversation context. If the visitor says "turn what we just did into an automation", extract the steps followed, tools used, decisions made, quality criteria, reporting style, stop/pause conditions, and what the automation must remember.
     - Infer safe/basic defaults when they are obvious. For monitors, default toward new/unread items, avoiding already-inspected items, using metadata/snippets before full reads, and notifying only on relevant findings.
     - Ask the visitor only for decisions that materially change execution, such as scope, notification behavior, risk/approval policy, or what counts as relevant. Do not ask trivia before drafting.
-    - Before activation, show a plain-language draft preview with: workflow name, when it runs, what it will do, how it will behave, and what it will remember.
+    - Before activation, show a plain-language draft preview with: automation name, when it runs, what it will do, how it will behave, and what it will remember.
     - When calling `draft_task`, include `wake_up_prompt`, `memory_instructions`, `draft_summary`, `workflow_type`, and `memory_shape`; include `clarification_questions` when important execution decisions remain unresolved.
     - Do not activate a persistent task silently. Summarize the owner agent, trigger, draft behavior, memory behavior, and approval impact, then ask for explicit approval.
     - If the task belongs to a different Custom Assistant or assistant role, use `list_agents` to identify the right owner; if unclear, ask before drafting.
@@ -490,8 +490,8 @@ def _build_run_memory_context(
 
     workflow_state_note = ""
     if "run" in locals() and run is not None and getattr(run, "automation_id", None):
-        workflow = getattr(run, "workflow", None)
-        state = getattr(workflow, "state", None) if workflow is not None else None
+        automation = getattr(run, "automation", None)
+        state = getattr(automation, "state", None) if automation is not None else None
         if isinstance(state, Mapping) and state:
             try:
                 workflow_state_note = json.dumps(state, ensure_ascii=False, sort_keys=True)[:5000]
@@ -776,14 +776,14 @@ def _recent_search_refs_note(conversation: Conversation, *, limit: int = 6) -> s
     return "\n".join(lines).strip()
 
 
-def _workflow_resource_refs_note(conversation: Conversation, *, limit: int = 8) -> str | None:
+def _automation_resource_refs_note(conversation: Conversation, *, limit: int = 8) -> str | None:
     metadata = conversation.metadata if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
     refs_raw = metadata.get("resource_refs")
     if not isinstance(refs_raw, list):
         refs_raw = []
 
-    pending_id = str(metadata.get("pending_workflow_activation_id") or "").strip()
-    workflow_refs: list[Mapping[str, object]] = []
+    pending_id = str(metadata.get("pending_automation_activation_id") or "").strip()
+    automation_refs: list[Mapping[str, object]] = []
     seen: set[str] = set()
 
     def _add_ref(ref: Mapping[str, object]) -> None:
@@ -791,20 +791,20 @@ def _workflow_resource_refs_note(conversation: Conversation, *, limit: int = 8) 
         if not ref_id or ref_id in seen:
             return
         ref_type = str(ref.get("type") or "").strip().lower()
-        if ref_type not in {"workflow", "task"}:
+        if ref_type not in {"automation", "task"}:
             return
         seen.add(ref_id)
-        workflow_refs.append(ref)
+        automation_refs.append(ref)
 
     for item in refs_raw:
         if isinstance(item, Mapping):
             _add_ref(item)
 
     if pending_id and pending_id not in seen:
-        workflow_refs.insert(
+        automation_refs.insert(
             0,
             {
-                "type": "workflow",
+                "type": "automation",
                 "id": pending_id,
                 "name": "",
                 "status": "draft",
@@ -813,22 +813,22 @@ def _workflow_resource_refs_note(conversation: Conversation, *, limit: int = 8) 
         )
         seen.add(pending_id)
 
-    if not workflow_refs:
+    if not automation_refs:
         return None
 
-    pending_refs = [ref for ref in workflow_refs if str(ref.get("id") or "").strip() == pending_id]
-    other_refs = [ref for ref in workflow_refs if str(ref.get("id") or "").strip() != pending_id]
+    pending_refs = [ref for ref in automation_refs if str(ref.get("id") or "").strip() == pending_id]
+    other_refs = [ref for ref in automation_refs if str(ref.get("id") or "").strip() != pending_id]
     ordered_refs = [*pending_refs, *other_refs][: max(1, int(limit))]
 
     lines = [
-        "Known workflow/task references for this conversation.",
-        "Use these exact ids when calling task/workflow tools; never invent or approximate UUIDs.",
+        "Known automation/task references for this conversation.",
+        "Use these exact ids when calling task/automation tools; never invent or approximate UUIDs.",
     ]
     for ref in ordered_refs:
         ref_id = str(ref.get("id") or "").strip()
         if not ref_id:
             continue
-        name = str(ref.get("name") or "Untitled workflow").strip()[:160]
+        name = str(ref.get("name") or "Untitled automation").strip()[:160]
         status = str(ref.get("status") or "").strip()
         purpose = str(ref.get("purpose") or "").strip()
         trigger_type = str(ref.get("trigger_type") or ref.get("triggerType") or "").strip()
@@ -869,7 +869,7 @@ def build_messages(
 
         agent = conversation.agent_profile
         business_profile = conversation.business_profile
-        active_workflow_name = active_workflow_agent_name(conversation)
+        active_custom_assistant = active_custom_assistant_name(conversation)
         if agent:
             business_name = business_profile.name if business_profile else "your business"
             business_industry = (
@@ -883,15 +883,15 @@ def build_messages(
                     business_profile=business_profile,
                     model_id=model_id,
                     has_mcp_connections=has_mcp_connections,
-                    agent_name_override=active_workflow_name,
+                    agent_name_override=active_custom_assistant,
                 ).strip()
             )
         else:
             system_sections.append("You are a helpful assistant.".strip())
 
-        workflow_agent_note = build_workflow_agent_instruction_note(conversation)
-        if workflow_agent_note:
-            system_sections.append(workflow_agent_note.strip())
+        custom_assistant_note = build_custom_assistant_instruction_note(conversation)
+        if custom_assistant_note:
+            system_sections.append(custom_assistant_note.strip())
 
         memory_note = _conversation_memory_note(conversation)
         if memory_note:
@@ -922,9 +922,9 @@ def build_messages(
         if recent_search_refs_note:
             system_sections.append(recent_search_refs_note.strip())
 
-        workflow_resource_refs_note = _workflow_resource_refs_note(conversation)
-        if workflow_resource_refs_note:
-            system_sections.append(workflow_resource_refs_note.strip())
+        automation_resource_refs_note = _automation_resource_refs_note(conversation)
+        if automation_resource_refs_note:
+            system_sections.append(automation_resource_refs_note.strip())
 
         files_note = _conversation_files_note(conversation)
         if files_note:

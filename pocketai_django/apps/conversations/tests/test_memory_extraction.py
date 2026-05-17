@@ -4,8 +4,10 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
+from apps.agent_runs.models import AgentRun
+from apps.automations.models import Automation
 from apps.conversations.memory_extraction import MemoryExtractionService
-from apps.conversations.models import AgentRun, Automation, MemoryItem
+from apps.conversations.models import MemoryItem
 
 
 User = get_user_model()

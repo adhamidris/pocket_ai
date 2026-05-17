@@ -1367,7 +1367,7 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
     ),
     _function_schema(
         name="list_tasks",
-        description="List saved custom assistants and automations for the current business, optionally filtered by assistant or status.",
+        description="List saved automations for the current business, optionally filtered by owning assistant or status.",
         properties={
             "agent_id": {"type": "string", "description": "Optional agent UUID."},
             "status": {"type": "string", "enum": ["draft", "active", "paused", "all"]},
@@ -1378,14 +1378,14 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
     _function_schema(
         name="draft_task",
         description=(
-            "Create an inactive task/workflow draft. Use for persistent scheduled, webhook, email inbox, or manual tasks. "
+            "Create an inactive automation draft. Use for persistent scheduled, webhook, or email inbox tasks. "
             "Drafts must be approved by the user before activation. Only store fields visible in the task UI."
         ),
         properties={
             "agent_id": {"type": "string", "description": "Optional owning agent UUID. Defaults to the current agent."},
             "name": {"type": "string", "description": "Short task name."},
             "goal": {"type": "string", "description": "What the task should accomplish."},
-            "trigger_type": {"type": "string", "enum": ["manual", "schedule", "webhook", "email_inbox"]},
+            "trigger_type": {"type": "string", "enum": ["schedule", "webhook", "email_inbox"]},
             "trigger_config": {"type": "object", "additionalProperties": True},
             "source_config": {"type": "object", "additionalProperties": True},
             "visibility": {"type": "string", "enum": ["initiator", "managers", "workspace"]},
@@ -1394,12 +1394,12 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
     ),
     _function_schema(
         name="update_task",
-        description="Update an existing saved task/workflow draft or paused task.",
+        description="Update an existing saved automation draft or paused automation.",
         properties={
-            "task_id": {"type": "string", "description": "Workflow/task UUID."},
+            "task_id": {"type": "string", "description": "Automation/task UUID."},
             "name": {"type": "string"},
             "goal": {"type": "string"},
-            "trigger_type": {"type": "string", "enum": ["manual", "schedule", "webhook", "email_inbox"]},
+            "trigger_type": {"type": "string", "enum": ["schedule", "webhook", "email_inbox"]},
             "trigger_config": {"type": "object", "additionalProperties": True},
             "source_config": {"type": "object", "additionalProperties": True},
             "visibility": {"type": "string", "enum": ["initiator", "managers", "workspace"]},
@@ -1413,26 +1413,26 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
             "If approved is false or omitted, returns an approval-needed payload instead of activating."
         ),
         properties={
-            "task_id": {"type": "string", "description": "Workflow/task UUID."},
+            "task_id": {"type": "string", "description": "Automation/task UUID."},
             "approved": {"type": "boolean", "description": "Set true only after the user explicitly approves activation."},
         },
         required=("task_id",),
     ),
     _function_schema(
         name="pause_task",
-        description="Pause an active saved task/workflow.",
+        description="Pause an active saved automation.",
         properties={
-            "task_id": {"type": "string", "description": "Workflow/task UUID."},
+            "task_id": {"type": "string", "description": "Automation/task UUID."},
             "reason": {"type": "string"},
         },
         required=("task_id",),
     ),
     _function_schema(
         name="search_memory",
-        description="Search scoped long-term memory for relevant facts, preferences, decisions, or workflow state.",
+        description="Search scoped long-term memory for relevant facts, preferences, decisions, or automation state.",
         properties={
             "query": {"type": "string", "description": "Search text."},
-            "scope": {"type": "string", "enum": ["workspace", "agent", "workflow", "run", "conversation", "crm_contact", "crm_company"]},
+            "scope": {"type": "string", "enum": ["workspace", "agent", "automation", "run", "conversation", "crm_contact", "crm_company"]},
             "limit": {"type": "integer", "minimum": 1, "maximum": 20},
         },
         required=("query",),
@@ -1443,7 +1443,7 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
         properties={
             "content": {"type": "string", "description": "Memory content."},
             "kind": {"type": "string", "enum": ["fact", "preference", "policy", "decision", "instruction", "relationship", "state_note", "artifact_ref", "extracted_data"]},
-            "scope": {"type": "string", "enum": ["workspace", "agent", "workflow", "run", "conversation"]},
+            "scope": {"type": "string", "enum": ["workspace", "agent", "automation", "run", "conversation"]},
             "key": {"type": "string"},
             "sensitivity": {"type": "string", "enum": ["normal", "sensitive", "secret"]},
             "visibility": {"type": "string", "enum": ["private", "shared"]},
@@ -10488,7 +10488,7 @@ def _start_agent_run_handler(
         Conversation,
         ConversationChannel,
     )
-    from apps.conversations.workflow_contracts import normalize_workflow_instructions
+    from apps.conversations.instruction_contracts import normalize_workflow_instructions
 
     run_snapshot = normalize_workflow_instructions(
         {
@@ -11131,10 +11131,10 @@ def _consult_agent_handler(
     }
 
 
-def _workflow_payload(workflow) -> dict[str, object]:
-    instructions = workflow.instructions if isinstance(workflow.instructions, dict) else {}
-    trigger_config = workflow.trigger_config if isinstance(workflow.trigger_config, dict) else {}
-    source_config = workflow.source_config if isinstance(workflow.source_config, dict) else {}
+def _automation_payload(automation) -> dict[str, object]:
+    instructions = automation.instructions if isinstance(automation.instructions, dict) else {}
+    trigger_config = automation.trigger_config if isinstance(automation.trigger_config, dict) else {}
+    source_config = automation.source_config if isinstance(automation.source_config, dict) else {}
     compact_trigger: dict[str, object] = {}
     for key in ("type", "cron", "timezone"):
         value = trigger_config.get(key)
@@ -11150,18 +11150,18 @@ def _workflow_payload(workflow) -> dict[str, object]:
         compact_source["unread_only"] = bool(source_config.get("unread_only"))
 
     payload = {
-        "id": str(workflow.id),
-        "agent_id": str(workflow.agent_profile_id),
-        "name": workflow.name,
-        "status": workflow.status,
-        "visibility": workflow.visibility,
-        "trigger_type": workflow.trigger_type,
+        "id": str(automation.id),
+        "agent_id": str(automation.agent_profile_id),
+        "name": automation.name,
+        "status": automation.status,
+        "visibility": automation.visibility,
+        "trigger_type": automation.trigger_type,
         "goal": str(instructions.get("goal") or ""),
         "trigger_config": compact_trigger,
         "source_config": compact_source,
-        "next_trigger_at": workflow.next_trigger_at.isoformat() if workflow.next_trigger_at else None,
-        "last_triggered_at": workflow.last_triggered_at.isoformat() if workflow.last_triggered_at else None,
-        "last_error": workflow.last_error or "",
+        "next_trigger_at": automation.next_trigger_at.isoformat() if automation.next_trigger_at else None,
+        "last_triggered_at": automation.last_triggered_at.isoformat() if automation.last_triggered_at else None,
+        "last_error": automation.last_error or "",
     }
     return payload
 
@@ -11211,7 +11211,7 @@ def _task_instruction_spec_from_args(
     *,
     current: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
-    from apps.conversations.workflow_contracts import infer_workflow_type_and_memory_shape, normalize_workflow_instructions
+    from apps.conversations.instruction_contracts import infer_workflow_type_and_memory_shape, normalize_workflow_instructions
 
     spec: dict[str, object] = {"goal": str((current or {}).get("goal") or "").strip()[:6000]} if current else {}
 
@@ -11235,9 +11235,9 @@ def _has_task_instruction_updates(arguments: Mapping[str, object]) -> bool:
     return "goal" in arguments
 
 
-def _remember_workflow_resource_ref(
+def _remember_automation_resource_ref(
     conversation: Conversation,
-    workflow,
+    automation,
     *,
     purpose: str,
     pending_activation: bool = False,
@@ -11245,7 +11245,7 @@ def _remember_workflow_resource_ref(
     metadata = dict(conversation.metadata) if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
     refs_raw = metadata.get("resource_refs")
     refs = [dict(item) for item in refs_raw if isinstance(item, Mapping)] if isinstance(refs_raw, list) else []
-    automation_id = str(getattr(workflow, "id", "") or "").strip()
+    automation_id = str(getattr(automation, "id", "") or "").strip()
     if not automation_id:
         return
 
@@ -11253,28 +11253,28 @@ def _remember_workflow_resource_ref(
         ref
         for ref in refs
         if not (
-            str(ref.get("type") or "").strip().lower() in {"workflow", "task"}
+            str(ref.get("type") or "").strip().lower() in {"automation", "task"}
             and str(ref.get("id") or "").strip() == automation_id
         )
     ]
     refs.insert(
         0,
         {
-            "type": "workflow",
+            "type": "automation",
             "id": automation_id,
-            "name": str(getattr(workflow, "name", "") or "")[:160],
-            "status": str(getattr(workflow, "status", "") or ""),
+            "name": str(getattr(automation, "name", "") or "")[:160],
+            "status": str(getattr(automation, "status", "") or ""),
             "purpose": str(purpose or "reference")[:80],
-            "agent_id": str(getattr(workflow, "agent_profile_id", "") or ""),
-            "trigger_type": str(getattr(workflow, "trigger_type", "") or ""),
+            "agent_id": str(getattr(automation, "agent_profile_id", "") or ""),
+            "trigger_type": str(getattr(automation, "trigger_type", "") or ""),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         },
     )
     metadata["resource_refs"] = refs[:12]
     if pending_activation:
-        metadata["pending_workflow_activation_id"] = automation_id
-    elif str(metadata.get("pending_workflow_activation_id") or "") == automation_id:
-        metadata.pop("pending_workflow_activation_id", None)
+        metadata["pending_automation_activation_id"] = automation_id
+    elif str(metadata.get("pending_automation_activation_id") or "") == automation_id:
+        metadata.pop("pending_automation_activation_id", None)
 
     conversation.metadata = metadata
     conversation.save(update_fields=["metadata", "last_activity_at"])
@@ -11318,7 +11318,7 @@ def _list_tasks_handler(
     if status and status != "all":
         qs = qs.filter(status=status)
     limit = max(1, min(int(arguments.get("limit") or 20), 50))
-    return {"tool": "list_tasks", "status": "ok", "tasks": [_workflow_payload(item) for item in qs.order_by("-updated_at")[:limit]]}
+    return {"tool": "list_tasks", "status": "ok", "tasks": [_automation_payload(item) for item in qs.order_by("-updated_at")[:limit]]}
 
 
 def _draft_task_handler(
@@ -11348,7 +11348,7 @@ def _draft_task_handler(
     workflow_type = str(instructions.get("workflow_type") or "general")
     memory_shape = str(instructions.get("memory_shape") or "general")
     description = str(arguments.get("description") or "").strip()[:4000]
-    workflow = Automation.objects.create(
+    automation = Automation.objects.create(
         business_profile_id=conversation.business_profile_id,
         agent_profile=agent,
         created_by=getattr(conversation, "owner_user", None) or getattr(agent, "user", None),
@@ -11367,16 +11367,16 @@ def _draft_task_handler(
             "memory_shape": memory_shape,
         },
     )
-    _remember_workflow_resource_ref(
+    _remember_automation_resource_ref(
         conversation,
-        workflow,
+        automation,
         purpose="pending activation",
         pending_activation=True,
     )
     return {
         "tool": "draft_task",
         "status": "ok",
-        "task": _workflow_payload(workflow),
+        "task": _automation_payload(automation),
         "activation_required": True,
         "hint": "Task draft saved. Ask the user to approve activation before calling request_task_activation with approved=true.",
     }
@@ -11396,55 +11396,55 @@ def _update_task_handler(
         task_id = uuid.UUID(str(arguments.get("task_id") or arguments.get("taskId") or ""))
     except (TypeError, ValueError):
         return {"tool": "update_task", "status": "error", "error_code": "validation_failed", "error": "task_id must be a UUID."}
-    workflow = Automation.objects.filter(id=task_id, business_profile_id=conversation.business_profile_id).first()
-    if workflow is None:
+    automation = Automation.objects.filter(id=task_id, business_profile_id=conversation.business_profile_id).first()
+    if automation is None:
         return {"tool": "update_task", "status": "error", "error_code": "not_found", "error": "Task not found."}
     updates: list[str] = []
     if "name" in arguments:
-        workflow.name = str(arguments.get("name") or "").strip()[:160]
+        automation.name = str(arguments.get("name") or "").strip()[:160]
         updates.append("name")
-    if "description" in arguments and workflow.trigger_type == AutomationTriggerType.MANUAL:
-        workflow.description = str(arguments.get("description") or "").strip()[:4000]
+    if "description" in arguments:
+        automation.description = str(arguments.get("description") or "").strip()[:4000]
         updates.append("description")
     if _has_task_instruction_updates(arguments):
-        current = dict(workflow.instructions or {}) if isinstance(workflow.instructions, dict) else {}
-        workflow.instructions = _task_instruction_spec_from_args(arguments, current=current)
-        metadata = dict(workflow.metadata or {}) if isinstance(workflow.metadata, dict) else {}
-        if workflow.instructions.get("workflow_type"):
-            metadata["workflow_type"] = workflow.instructions.get("workflow_type")
-        if workflow.instructions.get("memory_shape"):
-            metadata["memory_shape"] = workflow.instructions.get("memory_shape")
-        workflow.metadata = metadata
+        current = dict(automation.instructions or {}) if isinstance(automation.instructions, dict) else {}
+        automation.instructions = _task_instruction_spec_from_args(arguments, current=current)
+        metadata = dict(automation.metadata or {}) if isinstance(automation.metadata, dict) else {}
+        if automation.instructions.get("workflow_type"):
+            metadata["workflow_type"] = automation.instructions.get("workflow_type")
+        if automation.instructions.get("memory_shape"):
+            metadata["memory_shape"] = automation.instructions.get("memory_shape")
+        automation.metadata = metadata
         updates.append("instructions")
         updates.append("metadata")
     if "trigger_type" in arguments or "triggerType" in arguments:
         trigger_type = str(arguments.get("trigger_type") or arguments.get("triggerType") or "").strip().lower()
         if trigger_type not in {choice for choice, _ in AutomationTriggerType.choices}:
             return {"tool": "update_task", "status": "error", "error_code": "validation_failed", "error": "Invalid trigger_type."}
-        workflow.trigger_type = trigger_type
+        automation.trigger_type = trigger_type
         updates.append("trigger_type")
     if "trigger_config" in arguments or "triggerConfig" in arguments or "trigger_type" in arguments or "triggerType" in arguments:
-        workflow.trigger_config = _task_trigger_config_from_args(arguments, workflow.trigger_type, current=workflow.trigger_config)
+        automation.trigger_config = _task_trigger_config_from_args(arguments, automation.trigger_type, current=automation.trigger_config)
         updates.append("trigger_config")
     if "source_config" in arguments or "sourceConfig" in arguments:
-        workflow.source_config = _task_source_config_from_args(arguments, current=workflow.source_config)
+        automation.source_config = _task_source_config_from_args(arguments, current=automation.source_config)
         updates.append("source_config")
     if "visibility" in arguments:
         visibility = str(arguments.get("visibility") or "").strip().lower()
         if visibility not in {choice for choice, _ in AgentRunVisibility.choices}:
             return {"tool": "update_task", "status": "error", "error_code": "validation_failed", "error": "Invalid visibility."}
-        workflow.visibility = visibility
+        automation.visibility = visibility
         updates.append("visibility")
     if updates:
-        workflow.save(update_fields=sorted(set([*updates, "updated_at"])))
-        purpose = "pending activation" if workflow.status == "draft" else "updated"
-        _remember_workflow_resource_ref(
+        automation.save(update_fields=sorted(set([*updates, "updated_at"])))
+        purpose = "pending activation" if automation.status == "draft" else "updated"
+        _remember_automation_resource_ref(
             conversation,
-            workflow,
+            automation,
             purpose=purpose,
-            pending_activation=workflow.status == "draft",
+            pending_activation=automation.status == "draft",
         )
-    return {"tool": "update_task", "status": "ok", "task": _workflow_payload(workflow)}
+    return {"tool": "update_task", "status": "ok", "task": _automation_payload(automation)}
 
 
 def _request_task_activation_handler(
@@ -11456,38 +11456,38 @@ def _request_task_activation_handler(
     del context
     from django.utils import timezone as django_timezone
     from apps.automations.models import Automation, AutomationStatus, AutomationTriggerType
-    from apps.conversations.workflow_scheduling import CronScheduleError, compute_next_workflow_schedule_at
+    from apps.automations.scheduling import CronScheduleError, compute_next_automation_schedule_at
 
     try:
         task_id = uuid.UUID(str(arguments.get("task_id") or arguments.get("taskId") or ""))
     except (TypeError, ValueError):
         return {"tool": "request_task_activation", "status": "error", "error_code": "validation_failed", "error": "task_id must be a UUID."}
-    workflow = Automation.objects.filter(id=task_id, business_profile_id=conversation.business_profile_id).first()
-    if workflow is None:
+    automation = Automation.objects.filter(id=task_id, business_profile_id=conversation.business_profile_id).first()
+    if automation is None:
         return {"tool": "request_task_activation", "status": "error", "error_code": "not_found", "error": "Task not found."}
     if not bool(arguments.get("approved")):
         return {
             "tool": "request_task_activation",
             "status": "needs_user",
-            "task": _workflow_payload(workflow),
+            "task": _automation_payload(automation),
             "prompt": "Please approve activating this persistent task before it starts running.",
         }
     next_trigger_at = None
-    if workflow.trigger_type == AutomationTriggerType.SCHEDULE:
+    if automation.trigger_type == AutomationTriggerType.SCHEDULE:
         try:
-            next_trigger_at = compute_next_workflow_schedule_at("cron", dict(workflow.trigger_config or {}), after=django_timezone.now())
+            next_trigger_at = compute_next_automation_schedule_at("cron", dict(automation.trigger_config or {}), after=django_timezone.now())
         except CronScheduleError as exc:
             return {"tool": "request_task_activation", "status": "error", "error_code": "validation_failed", "error": str(exc)}
-    workflow.status = AutomationStatus.ACTIVE
-    workflow.next_trigger_at = next_trigger_at
-    workflow.save(update_fields=["status", "next_trigger_at", "updated_at"])
-    _remember_workflow_resource_ref(
+    automation.status = AutomationStatus.ACTIVE
+    automation.next_trigger_at = next_trigger_at
+    automation.save(update_fields=["status", "next_trigger_at", "updated_at"])
+    _remember_automation_resource_ref(
         conversation,
-        workflow,
+        automation,
         purpose="active",
         pending_activation=False,
     )
-    return {"tool": "request_task_activation", "status": "ok", "task": _workflow_payload(workflow), "activated": True}
+    return {"tool": "request_task_activation", "status": "ok", "task": _automation_payload(automation), "activated": True}
 
 
 def _pause_task_handler(
@@ -11503,23 +11503,23 @@ def _pause_task_handler(
         task_id = uuid.UUID(str(arguments.get("task_id") or arguments.get("taskId") or ""))
     except (TypeError, ValueError):
         return {"tool": "pause_task", "status": "error", "error_code": "validation_failed", "error": "task_id must be a UUID."}
-    workflow = Automation.objects.filter(id=task_id, business_profile_id=conversation.business_profile_id).first()
-    if workflow is None:
+    automation = Automation.objects.filter(id=task_id, business_profile_id=conversation.business_profile_id).first()
+    if automation is None:
         return {"tool": "pause_task", "status": "error", "error_code": "not_found", "error": "Task not found."}
-    metadata = dict(workflow.metadata or {}) if isinstance(workflow.metadata, dict) else {}
+    metadata = dict(automation.metadata or {}) if isinstance(automation.metadata, dict) else {}
     if arguments.get("reason"):
         metadata["last_pause_reason"] = str(arguments.get("reason"))[:500]
-    workflow.status = AutomationStatus.PAUSED
-    workflow.next_trigger_at = None
-    workflow.metadata = metadata
-    workflow.save(update_fields=["status", "next_trigger_at", "metadata", "updated_at"])
-    _remember_workflow_resource_ref(
+    automation.status = AutomationStatus.PAUSED
+    automation.next_trigger_at = None
+    automation.metadata = metadata
+    automation.save(update_fields=["status", "next_trigger_at", "metadata", "updated_at"])
+    _remember_automation_resource_ref(
         conversation,
-        workflow,
+        automation,
         purpose="paused",
         pending_activation=False,
     )
-    return {"tool": "pause_task", "status": "ok", "task": _workflow_payload(workflow)}
+    return {"tool": "pause_task", "status": "ok", "task": _automation_payload(automation)}
 
 
 def _search_memory_handler(

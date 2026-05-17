@@ -10,7 +10,10 @@ This document maps every active runtime engine, request path, background worker,
 |---|---|
 | `apps/accounts` | Tenants, users, agent profiles, feature flags, credentials, action controls |
 | `apps/api` | HTTP API layer — chat portal, voice calls, agent runs, OAuth, MCP connections |
-| `apps/conversations` | Conversation models, turn processing, portal session, agent runs, automations, memory, compaction |
+| `apps/conversations` | Conversation models, turn processing, portal session, memory, compaction |
+| `apps/assistants` | Custom Assistant definitions for chat-first assistant sessions |
+| `apps/automations` | Runnable Automation definitions, scheduling, email/webhook trigger processing |
+| `apps/agent_runs` | AgentRun execution primitives, events, checkpoints, notifications, worker processing |
 | `apps/knowledge` | Knowledge uploads, ingestion pipeline, chunking, document parsing, dataset cards, privacy |
 | `apps/rag` | RAG search engine — retrieval strategies, embeddings, query classification, Azure search, table retrieval |
 | `apps/mcp` | MCP agent orchestrator, tool definitions, remote MCP connectors, prompts, sanitization |
@@ -88,7 +91,7 @@ HTTP POST /api/agent-runs/...
 
 Background worker:
   management command: process_agent_runs --watch
-  → apps/conversations/agent_run_processing.py   # AgentRunProcessingService.process_next_run()
+  → apps/agent_runs/processing.py                # AgentRunProcessingService.process_next_run()
   → apps/mcp/orchestrator.py                     # Same agent loop as chat
 ```
 
@@ -97,8 +100,8 @@ Background worker:
 ```
 Background worker:
   management command: process_agent_automations --watch
-  → apps/conversations/agent_automation_processing.py  # AgentAutomationProcessingService
-  → apps/conversations/automation_scheduling.py        # CronSchedule — computes next trigger
+  → apps/automations/processing.py                     # AutomationProcessingService
+  → apps/automations/scheduling.py                     # CronSchedule — computes next trigger
   → apps/mcp/orchestrator.py                           # Executes automation as agent turn
 ```
 

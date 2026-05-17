@@ -7,8 +7,8 @@ from django.test import RequestFactory, TestCase, override_settings
 
 from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
+from apps.agent_runs.models import AgentRun, AgentRunEvent, AgentRunStatus
 from apps.conversations.models import Conversation, ConversationChannel
-from apps.conversations.models import AgentRun, AgentRunEvent, AgentRunStatus
 from apps.voice.mcp_tools import initiate_phone_call_tool
 from apps.voice.models import CallSession, CallStatus, VoiceProviderConnection
 from apps.voice.twilio import build_twilio_signature

@@ -9,8 +9,8 @@ from django.utils import timezone
 
 from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
-from apps.conversations.agent_run_processing import AgentRunProcessingService
-from apps.conversations.models import (
+from apps.agent_runs.processing import AgentRunProcessingService
+from apps.agent_runs.models import (
     AgentRun,
     AgentRunCheckpoint,
     AgentRunCheckpointKind,
@@ -19,8 +19,9 @@ from apps.conversations.models import (
     AgentRunNotification,
     AgentRunSource,
     AgentRunStatus,
-    Automation,
-    AutomationStatus,
+)
+from apps.automations.models import Automation, AutomationStatus
+from apps.conversations.models import (
     Conversation,
 )
 from apps.conversations.portal_session_serializers import serialize_agent_run_for_portal
@@ -236,7 +237,7 @@ class AgentRunProcessingTests(TestCase):
         )
         checkpoint = AgentRunCheckpoint.objects.create(
             business_profile=self.business,
-            workflow=workflow,
+            automation=workflow,
             run=run,
             kind=AgentRunCheckpointKind.APPROVAL,
             status=AgentRunCheckpointStatus.OPEN,
@@ -246,8 +247,8 @@ class AgentRunProcessingTests(TestCase):
 
         payload = serialize_agent_run_for_portal(run)
 
-        self.assertEqual(payload["workflowId"], str(workflow.id))
-        self.assertEqual(payload["workflowName"], workflow.name)
+        self.assertEqual(payload["automationId"], str(workflow.id))
+        self.assertEqual(payload["automationName"], workflow.name)
         self.assertEqual(payload["durationMs"], 12000)
         self.assertEqual(payload["metadata"], {"trigger": "manual"})
         self.assertEqual(payload["result"]["responseText"], "Draft ready.")

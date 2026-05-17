@@ -110,7 +110,7 @@ from apps.conversations.portal_turn_runner import run_turn_background
 from apps.conversations.content_blocks import (
     extract_text_from_content_blocks,
 )
-from apps.conversations.workflow_contracts import normalize_workflow_instructions
+from apps.conversations.instruction_contracts import normalize_workflow_instructions
 from core.tenancy import tenant_context
 
 logger = logging.getLogger(__name__)
@@ -1392,33 +1392,33 @@ def _serialize_agent_run_checkpoint_for_portal(checkpoint: AgentRunCheckpoint | 
 
 
 def _serialize_automation_for_portal(
-    workflow: Automation,
+    automation: Automation,
     *,
     latest_run: AgentRun | None = None,
     open_checkpoint: AgentRunCheckpoint | None = None,
     recent_runs: list[AgentRun] | None = None,
 ) -> dict[str, object]:
     return {
-        "id": str(workflow.id),
-        "agentId": str(workflow.agent_profile_id),
-        "agentName": getattr(getattr(workflow, "agent_profile", None), "name", "") or "",
-        "name": workflow.name,
-        "description": workflow.description or "",
-        "status": workflow.status,
-        "triggerType": workflow.trigger_type,
-        "nextTriggerAt": workflow.next_trigger_at.isoformat() if workflow.next_trigger_at else None,
-        "lastTriggeredAt": workflow.last_triggered_at.isoformat() if workflow.last_triggered_at else None,
+        "id": str(automation.id),
+        "agentId": str(automation.agent_profile_id),
+        "agentName": getattr(getattr(automation, "agent_profile", None), "name", "") or "",
+        "name": automation.name,
+        "description": automation.description or "",
+        "status": automation.status,
+        "triggerType": automation.trigger_type,
+        "nextTriggerAt": automation.next_trigger_at.isoformat() if automation.next_trigger_at else None,
+        "lastTriggeredAt": automation.last_triggered_at.isoformat() if automation.last_triggered_at else None,
         "latestRun": _serialize_agent_run_for_portal(latest_run) if latest_run else None,
         "openCheckpoint": _serialize_agent_run_checkpoint_for_portal(open_checkpoint),
         "recentRuns": [_serialize_agent_run_for_portal(item) for item in (recent_runs or [])[:5]],
-        "attentionState": "needs_attention" if open_checkpoint else ("active" if latest_run and latest_run.status in {AgentRunStatus.QUEUED, AgentRunStatus.RUNNING, AgentRunStatus.WAITING_CHILD, AgentRunStatus.WAITING_EXTERNAL} else workflow.status),
-        "createdAt": workflow.created_at.isoformat() if workflow.created_at else None,
-        "updatedAt": workflow.updated_at.isoformat() if workflow.updated_at else None,
+        "attentionState": "needs_attention" if open_checkpoint else ("active" if latest_run and latest_run.status in {AgentRunStatus.QUEUED, AgentRunStatus.RUNNING, AgentRunStatus.WAITING_CHILD, AgentRunStatus.WAITING_EXTERNAL} else automation.status),
+        "createdAt": automation.created_at.isoformat() if automation.created_at else None,
+        "updatedAt": automation.updated_at.isoformat() if automation.updated_at else None,
     }
 
 
-def _is_runnable_automation(workflow: Automation) -> bool:
-    return bool(workflow and workflow.trigger_type in {choice for choice, _ in AutomationTriggerType.choices})
+def _is_runnable_automation(automation: Automation) -> bool:
+    return bool(automation and automation.trigger_type in {choice for choice, _ in AutomationTriggerType.choices})
 
 
 def _serialize_agent_run_event_for_portal(event: AgentRunEvent) -> dict[str, object]:
@@ -1448,45 +1448,45 @@ def _append_agent_run_event(
         )
 
 
-def _run_snapshot_for_portal_run(workflow: Automation) -> dict[str, Any]:
-    instructions = workflow.instructions if isinstance(getattr(workflow, "instructions", None), dict) else {}
+def _run_snapshot_for_portal_run(automation: Automation) -> dict[str, Any]:
+    instructions = automation.instructions if isinstance(getattr(automation, "instructions", None), dict) else {}
     return normalize_workflow_instructions(
         {
             **instructions,
-            "name": workflow.name,
-            "description": workflow.description,
-            "trigger_type": workflow.trigger_type,
-            "trigger_config": workflow.trigger_config if isinstance(workflow.trigger_config, dict) else {},
-            "source_config": workflow.source_config if isinstance(workflow.source_config, dict) else {},
-            "destination_config": workflow.destination_config if isinstance(workflow.destination_config, dict) else {},
-            "notification_config": workflow.notification_config if isinstance(workflow.notification_config, dict) else {},
-            "review_mode": workflow.review_mode,
-            "autonomy_mode": workflow.autonomy_mode,
+            "name": automation.name,
+            "description": automation.description,
+            "trigger_type": automation.trigger_type,
+            "trigger_config": automation.trigger_config if isinstance(automation.trigger_config, dict) else {},
+            "source_config": automation.source_config if isinstance(automation.source_config, dict) else {},
+            "destination_config": automation.destination_config if isinstance(automation.destination_config, dict) else {},
+            "notification_config": automation.notification_config if isinstance(automation.notification_config, dict) else {},
+            "review_mode": automation.review_mode,
+            "autonomy_mode": automation.autonomy_mode,
         }
     )
 
 
-def _create_portal_manual_workflow_run(
+def _create_portal_manual_automation_run(
     *,
-    workflow: Automation,
+    automation: Automation,
     created_by,
     portal_conversation: Conversation,
 ) -> AgentRun:
-    conversation = workflow.conversation or portal_conversation
-    snapshot = _run_snapshot_for_portal_run(workflow)
+    conversation = automation.conversation or portal_conversation
+    snapshot = _run_snapshot_for_portal_run(automation)
     run = AgentRun.objects.create(
-        business_profile=workflow.business_profile,
-        agent_profile=workflow.agent_profile,
+        business_profile=automation.business_profile,
+        agent_profile=automation.agent_profile,
         conversation=conversation,
         created_by=created_by,
-        automation=workflow,
+        automation=automation,
         run_snapshot=snapshot,
-        title=(workflow.name or snapshot.get("name") or snapshot.get("goal") or "Workflow run")[:200],
+        title=(automation.name or snapshot.get("name") or snapshot.get("goal") or "Automation run")[:200],
         source=AgentRunSource.AUTOMATION,
         status=AgentRunStatus.QUEUED,
-        visibility=workflow.visibility,
+        visibility=automation.visibility,
         metadata={
-            "automation_id": str(workflow.id),
+            "automation_id": str(automation.id),
             "trigger": "manual",
             "trigger_source": "portal_task_panel",
             "portal_conversation_id": str(portal_conversation.id),
@@ -1500,7 +1500,7 @@ def _create_portal_manual_workflow_run(
         label="Queued",
         payload={
             "status": AgentRunStatus.QUEUED,
-            "automation_id": str(workflow.id),
+            "automation_id": str(automation.id),
             "trigger": "manual",
             "trigger_source": "portal_task_panel",
         },
@@ -2515,8 +2515,8 @@ def portal_automation_manual_run(request: HttpRequest) -> JsonResponse:
             return _json_error("not_found", "Automation not found.", status=404)
         if not _is_runnable_automation(automation):
             return _json_error("validation_error", "Automation cannot be run.")
-        run = _create_portal_manual_workflow_run(
-            workflow=automation,
+        run = _create_portal_manual_automation_run(
+            automation=automation,
             created_by=actor_user,
             portal_conversation=conversation,
         )

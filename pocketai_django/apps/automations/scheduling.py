@@ -183,7 +183,7 @@ def compute_next_cron_trigger_at(schedule: CronSchedule, *, after: datetime | No
     raise CronScheduleError("Unable to find next cron trigger within 366 days.")
 
 
-def compute_next_workflow_schedule_at(trigger_type: str, trigger_config: object, *, after: datetime | None = None) -> datetime | None:
+def compute_next_automation_schedule_at(trigger_type: str, trigger_config: object, *, after: datetime | None = None) -> datetime | None:
     trigger_type = str(trigger_type or "").strip().lower()
     if trigger_type != "cron":
         return None

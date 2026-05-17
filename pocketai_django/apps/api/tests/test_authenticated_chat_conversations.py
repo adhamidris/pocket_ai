@@ -10,8 +10,8 @@ from django.utils import timezone
 
 from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
+from apps.assistants.models import CustomAssistant
 from apps.conversations.models import (
-    Automation,
     Conversation,
     ConversationMessage,
     ConversationSender,
@@ -88,20 +88,20 @@ class AuthenticatedConversationApiTests(TestCase):
         self.assertEqual(payload["conversations"][0]["conversation_id"], str(self.conversation.id))
         self.assertEqual(payload["conversations"][0]["session_type"], "chat")
 
-    def test_conversations_collection_marks_workflow_threads(self) -> None:
-        workflow_thread = Conversation.objects.create(
-            business_profile=self.business,
-            agent_profile=self.agent,
-            owner_user=self.owner,
-            session_token="workflow-thread",
-            metadata={"type": "workflow_thread"},
-        )
-        workflow = Automation.objects.create(
+    def test_conversations_collection_marks_custom_assistant_sessions(self) -> None:
+        assistant = CustomAssistant.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.owner,
-            conversation=workflow_thread,
             name="Daily report",
+        )
+        assistant_session = Conversation.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            owner_user=self.owner,
+            custom_assistant=assistant,
+            session_token="assistant-thread",
+            metadata={"type": "custom_assistant_session"},
         )
         self.client.force_login(self.owner)
 
@@ -111,37 +111,37 @@ class AuthenticatedConversationApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        task = next(item for item in response.json()["conversations"] if item["conversation_id"] == str(workflow_thread.id))
-        self.assertEqual(task["session_type"], "task")
-        self.assertEqual(task["workflow_id"], str(workflow.id))
-        self.assertEqual(task["workflow_name"], "Daily report")
-        self.assertEqual(task["title"], "New session")
+        session = next(item for item in response.json()["conversations"] if item["conversation_id"] == str(assistant_session.id))
+        self.assertEqual(session["session_type"], "custom_assistant")
+        self.assertEqual(session["custom_assistant_id"], str(assistant.id))
+        self.assertEqual(session["custom_assistant_name"], "Daily report")
+        self.assertEqual(session["title"], "New session")
 
-        messages_response = self.client.get(reverse("api:chat-conversation-messages", args=[workflow_thread.id]))
+        messages_response = self.client.get(reverse("api:chat-conversation-messages", args=[assistant_session.id]))
         self.assertEqual(messages_response.status_code, 200)
-        self.assertEqual(messages_response.json()["session"]["session_type"], "task")
+        self.assertEqual(messages_response.json()["session"]["session_type"], "custom_assistant")
 
-    def test_conversations_collection_includes_workflow_agent_sessions(self) -> None:
-        workflow = Automation.objects.create(
+    def test_conversations_collection_includes_custom_assistant_agent_sessions(self) -> None:
+        assistant = CustomAssistant.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.owner,
             name="Daily sales reviewer",
         )
-        workflow_session = Conversation.objects.create(
+        assistant_session = Conversation.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
-            workflow=workflow,
+            custom_assistant=assistant,
             owner_user=self.owner,
-            session_token="reports-workflow-session",
+            session_token="reports-assistant-session",
             metadata={
-                "type": "workflow_agent_session",
-                "workflow_id": str(workflow.id),
-                "workflow_name": workflow.name,
+                "type": "custom_assistant_session",
+                "custom_assistant_id": str(assistant.id),
+                "custom_assistant_name": assistant.name,
             },
         )
         ConversationMessage.objects.create(
-            conversation=workflow_session,
+            conversation=assistant_session,
             sender=ConversationSender.CUSTOMER,
             body="This should not replace the Custom Assistant name.",
         )
@@ -155,14 +155,13 @@ class AuthenticatedConversationApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         conversations = response.json()["conversations"]
         ids = {item["conversation_id"] for item in conversations}
-        self.assertIn(str(workflow_session.id), ids)
-        task = next(item for item in conversations if item["conversation_id"] == str(workflow_session.id))
-        self.assertEqual(task["session_type"], "task")
-        self.assertEqual(task["workflow_id"], str(workflow.id))
-        self.assertEqual(task["workflow_name"], "Daily sales reviewer")
-        self.assertFalse(any(key.startswith("workflow_dept") for key in task))
-        self.assertEqual(task["workflow_agent_name"], "Sarah")
-        self.assertEqual(task["title"], "This should not replace the Custom Assistant name.")
+        self.assertIn(str(assistant_session.id), ids)
+        session = next(item for item in conversations if item["conversation_id"] == str(assistant_session.id))
+        self.assertEqual(session["session_type"], "custom_assistant")
+        self.assertEqual(session["custom_assistant_id"], str(assistant.id))
+        self.assertEqual(session["custom_assistant_name"], "Daily sales reviewer")
+        self.assertEqual(session["custom_assistant_agent_name"], "Sarah")
+        self.assertEqual(session["title"], "This should not replace the Custom Assistant name.")
 
     def test_conversations_collection_hides_internal_agent_notification_surfaces(self) -> None:
         Conversation.objects.create(
@@ -251,13 +250,12 @@ class AuthenticatedConversationApiTests(TestCase):
         self.assertEqual(turn_response.status_code, 201)
         self.assertIn("turn", turn_response.json())
 
-    def test_conversation_create_can_start_workflow_agent_session(self) -> None:
-        workflow = Automation.objects.create(
+    def test_conversation_create_can_start_custom_assistant_session(self) -> None:
+        assistant = CustomAssistant.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.owner,
             name="Software Engineer",
-            trigger_type="manual",
             instructions={"goal": "You are an expert designer in stack HTML and CSS."},
         )
         self.client.force_login(self.owner)
@@ -268,7 +266,7 @@ class AuthenticatedConversationApiTests(TestCase):
                 {
                     "business_slug": self.business.slug,
                     "agent_slug": self.agent.slug,
-                    "workflow_id": str(workflow.id),
+                    "custom_assistant_id": str(assistant.id),
                     "title": "New session",
                     "metadata": {"source": "dashboard"},
                 }
@@ -278,13 +276,13 @@ class AuthenticatedConversationApiTests(TestCase):
 
         self.assertEqual(create_response.status_code, 201)
         payload = create_response.json()
-        self.assertEqual(payload["session"]["session_type"], "task")
-        self.assertEqual(payload["session"]["workflow_id"], str(workflow.id))
-        self.assertEqual(payload["session"]["workflow_name"], "Software Engineer")
+        self.assertEqual(payload["session"]["session_type"], "custom_assistant")
+        self.assertEqual(payload["session"]["custom_assistant_id"], str(assistant.id))
+        self.assertEqual(payload["session"]["custom_assistant_name"], "Software Engineer")
         conversation = Conversation.objects.get(id=payload["session"]["conversation_id"])
-        self.assertEqual(conversation.workflow_id, workflow.id)
+        self.assertEqual(conversation.custom_assistant_id, assistant.id)
         self.assertEqual(conversation.agent_profile_id, self.agent.id)
-        self.assertEqual(conversation.metadata["type"], "workflow_agent_session")
+        self.assertEqual(conversation.metadata["type"], "custom_assistant_session")
 
     def test_messages_and_turns_forbid_outsider_on_owned_conversation(self) -> None:
         owner_client = self.client

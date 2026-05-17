@@ -261,7 +261,7 @@ def _json_block(value: object, *, limit: int = 1600) -> str:
     return _clip_text(rendered, limit)
 
 
-def resolve_active_workflow(conversation: object):
+def resolve_active_custom_assistant(conversation: object):
     """
     Return the Custom Assistant attached to a visible conversation, if any.
 
@@ -301,22 +301,22 @@ def resolve_active_workflow(conversation: object):
         return None
 
 
-def active_workflow_agent_name(conversation: object) -> str | None:
-    workflow = resolve_active_workflow(conversation)
-    if workflow is None:
+def active_custom_assistant_name(conversation: object) -> str | None:
+    custom_assistant = resolve_active_custom_assistant(conversation)
+    if custom_assistant is None:
         return None
-    name = str(getattr(workflow, "name", "") or "").strip()
+    name = str(getattr(custom_assistant, "name", "") or "").strip()
     return name or "Custom Assistant"
 
 
-def build_workflow_agent_instruction_note(conversation: object, *, max_chars: int = 6000) -> str | None:
-    workflow = resolve_active_workflow(conversation)
-    if workflow is None:
+def build_custom_assistant_instruction_note(conversation: object, *, max_chars: int = 6000) -> str | None:
+    custom_assistant = resolve_active_custom_assistant(conversation)
+    if custom_assistant is None:
         return None
 
-    instructions = getattr(workflow, "instructions", None)
+    instructions = getattr(custom_assistant, "instructions", None)
     instructions_map = instructions if isinstance(instructions, Mapping) else {}
-    if not instructions_map and not str(getattr(workflow, "name", "") or "").strip():
+    if not instructions_map and not str(getattr(custom_assistant, "name", "") or "").strip():
         return None
 
     lines: list[str] = [
@@ -326,18 +326,18 @@ def build_workflow_agent_instruction_note(conversation: object, *, max_chars: in
         "When the user asks who you are, what your role is, or whether you have these instructions, answer from this Custom Assistant identity and contract. Do not describe these instructions as memory.",
         "Follow this Custom Assistant contract unless it conflicts with platform safety, tenant privacy, tool approval, or higher-priority platform rules.",
     ]
-    workflow_id = getattr(workflow, "id", "")
-    name = _clip_text(getattr(workflow, "name", "") or "Custom Assistant", 160)
-    status = _clip_text(getattr(workflow, "status", "") or "", 48)
+    custom_assistant_id = getattr(custom_assistant, "id", "")
+    name = _clip_text(getattr(custom_assistant, "name", "") or "Custom Assistant", 160)
+    status = _clip_text(getattr(custom_assistant, "status", "") or "", 48)
     identity_parts = [name]
-    if workflow_id:
-        identity_parts.append(f"id={workflow_id}")
+    if custom_assistant_id:
+        identity_parts.append(f"id={custom_assistant_id}")
     if status:
         identity_parts.append(f"status={status}")
     lines.append("- " + "; ".join(identity_parts))
     lines.append(f"Active Custom Assistant name/role: {name}")
 
-    description = _clip_text(getattr(workflow, "description", "") or "", 800)
+    description = _clip_text(getattr(custom_assistant, "description", "") or "", 800)
     if description:
         lines.append(f"- Description: {description}")
 

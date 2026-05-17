@@ -9,9 +9,9 @@ from core.otel import otel_trace
 
 from apps.accounts.models import AgentProfile
 from apps.conversations.models import Conversation, ConversationMessage
-from apps.conversations.workflow_contracts import (
-    active_workflow_agent_name,
-    build_workflow_agent_instruction_note,
+from apps.conversations.instruction_contracts import (
+    active_custom_assistant_name,
+    build_custom_assistant_instruction_note,
 )
 
 TRACER = otel_trace.get_tracer(__name__)
@@ -174,7 +174,7 @@ class PromptBuilder:
                 "role": self.agent.role or "AI Customer Specialist",
                 "tone": self.agent.tone or "friendly",
                 "business_name": business.name,
-                "agent_name": active_workflow_agent_name(conversation) or self.agent.name,
+                "agent_name": active_custom_assistant_name(conversation) or self.agent.name,
                 "business_industry": industry,
             }
 
@@ -201,9 +201,9 @@ class PromptBuilder:
                 {self.CUSTOMER_RULES}
                 """
             ).strip()
-            workflow_agent_note = build_workflow_agent_instruction_note(conversation)
-            if workflow_agent_note:
-                system_prompt = f"{system_prompt}\n\n{workflow_agent_note.strip()}"
+            custom_assistant_note = build_custom_assistant_instruction_note(conversation)
+            if custom_assistant_note:
+                system_prompt = f"{system_prompt}\n\n{custom_assistant_note.strip()}"
 
             user_prompt = self._compose_user_prompt(
                 case_context=case_context,

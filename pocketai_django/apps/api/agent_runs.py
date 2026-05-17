@@ -38,7 +38,7 @@ from apps.automations.models import (
     AutomationStatus,
     AutomationTriggerType,
 )
-from apps.conversations.workflow_scheduling import CronScheduleError, compute_next_workflow_schedule_at
+from apps.automations.scheduling import CronScheduleError, compute_next_automation_schedule_at
 from apps.conversations.run_display import build_agent_run_display
 from apps.conversations.models import (
     Conversation,
@@ -53,7 +53,7 @@ from apps.conversations.models import (
     MemoryStatus,
     MemoryVisibility,
 )
-from apps.conversations.workflow_contracts import normalize_workflow_instructions
+from apps.conversations.instruction_contracts import normalize_workflow_instructions
 from apps.integrations.models import EmailAccount
 
 
@@ -581,7 +581,7 @@ def _compute_next_trigger(trigger_type: str, trigger_config: dict[str, Any], *, 
         return None
     cron_config = dict(trigger_config)
     cron_config.setdefault("type", "cron")
-    return compute_next_workflow_schedule_at("cron", cron_config, after=after or timezone.now())
+    return compute_next_automation_schedule_at("cron", cron_config, after=after or timezone.now())
 
 
 @csrf_protect
@@ -636,7 +636,7 @@ def custom_assistants_collection(request: HttpRequest, agent_id: uuid.UUID) -> J
             name=name[:160],
             description=str((payload or {}).get("description") or "")[:4000],
             status=status,
-            instructions=normalize_workflow_instructions((payload or {}).get("instructions") or (payload or {}).get("workflow") or {}),
+            instructions=normalize_workflow_instructions((payload or {}).get("instructions") or {}),
             metadata=metadata_payload,
         )
         if bool((payload or {}).get("createSession", (payload or {}).get("create_session", True))):
@@ -844,7 +844,7 @@ def automations_collection(request: HttpRequest, agent_id: uuid.UUID) -> JsonRes
             notification_config=dict((payload or {}).get("notificationConfig") or (payload or {}).get("notification_config") or {}),
             review_mode=review_mode,
             autonomy_mode=autonomy_mode,
-            instructions=normalize_workflow_instructions((payload or {}).get("instructions") or (payload or {}).get("workflow") or {}),
+            instructions=normalize_workflow_instructions((payload or {}).get("instructions") or {}),
             state=dict((payload or {}).get("state") or {}),
             poll_interval_seconds=max(60, min(int((payload or {}).get("pollIntervalSeconds") or (payload or {}).get("poll_interval_seconds") or 300), 86400)),
             max_events_per_poll=max(1, min(int((payload or {}).get("maxEventsPerPoll") or (payload or {}).get("max_events_per_poll") or 5), 25)),
