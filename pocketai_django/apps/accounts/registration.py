@@ -55,7 +55,7 @@ class BusinessProfileResult:
 
 
 class AgentProfileError(Exception):
-    """Raised when agent configuration validation fails."""
+    """Raised when default assistant configuration validation fails."""
 
 
 @dataclass(slots=True)
@@ -209,17 +209,12 @@ def configure_agent_profile(
     *,
     business_id: str,
     name: str,
-    role: str | None = None,
     tone: str | None = None,
-    traits: Iterable[str] | None = None,
-    escalation_rule: str | None = None,
 ) -> AgentProfileResult:
-    """Create or update the agent profile for a business."""
+    """Create or update the default assistant profile for a business."""
     agent_name = (name or "").strip()
     if len(agent_name) < 2:
-        raise AgentProfileError("Agent name must be at least 2 characters.")
-
-    sanitized_traits = _sanitize_list(traits)[:12]
+        raise AgentProfileError("Assistant name must be at least 2 characters.")
 
     with transaction.atomic():
         try:
@@ -239,17 +234,12 @@ def configure_agent_profile(
         defaults = {
             "user": business.user,
             "name": agent_name,
-            "role": (role or "").strip(),
             "tone": (tone or "").strip(),
-            "traits": sanitized_traits,
-            "escalation_rule": (escalation_rule or "").strip(),
-            "agent_type": AgentProfile.AgentTypeChoices.MAIN,
-            "can_manage_tasks": True,
         }
 
         profile = (
             AgentProfile.objects.select_for_update()
-            .filter(business_profile=business, agent_type=AgentProfile.AgentTypeChoices.MAIN)
+            .filter(business_profile=business)
             .exclude(status=AgentProfile.StatusChoices.ARCHIVED)
             .order_by("created_at", "id")
             .first()
@@ -258,12 +248,8 @@ def configure_agent_profile(
             profile = AgentProfile.objects.create(business_profile=business, **defaults)
         else:
             profile.name = agent_name
-            profile.role = defaults["role"]
             profile.tone = defaults["tone"]
-            profile.traits = sanitized_traits
-            profile.escalation_rule = defaults["escalation_rule"]
-            profile.can_manage_tasks = True
-            profile.save()
+            profile.save(update_fields=["name", "tone", "updated_at"])
 
     return AgentProfileResult(profile=profile, session=session)
 

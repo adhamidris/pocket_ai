@@ -97,7 +97,6 @@ class McpSearchContractTests(TestCase):
             business_profile=self.business,
             user=self.user,
             name="Searcher",
-            role="AI Specialist",
         )
         self.conversation = Conversation.objects.create(
             business_profile=self.business,

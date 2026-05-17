@@ -47,8 +47,6 @@ from apps.accounts.agent_capabilities import (
 from apps.accounts.agents import (
     AgentListValidationError,
     agent_identifier,
-    display_agent_type_label,
-    display_role_label,
     display_tone_label,
     get_agent_detail,
     list_agents,
@@ -313,7 +311,7 @@ def update_business_profile(request: HttpRequest, session_id: str) -> JsonRespon
 @csrf_protect
 @require_http_methods(["PUT"])
 def configure_agent(request: HttpRequest, business_id: str) -> JsonResponse:
-    """Persist the agent configuration for the given business profile."""
+    """Persist the default assistant basics for the given business profile."""
     if not request.user.is_authenticated:
         return JsonResponse(
             {"error": "UNAUTHORIZED", "message": "Login required."},
@@ -348,25 +346,13 @@ def configure_agent(request: HttpRequest, business_id: str) -> JsonResponse:
         )
 
     agent_name = str(payload.get("agentName") or "").strip()
-    agent_role = str(payload.get("agentTitle") or "").strip()
     agent_tone = str(payload.get("agentTone") or "").strip()
-    agent_traits = payload.get("agentTraits") or []
-    agent_escalation = str(payload.get("agentEscalation") or "").strip()
-
-    if agent_traits and not isinstance(agent_traits, list):
-        return JsonResponse(
-            {"error": "VALIDATION_ERROR", "message": "Traits must be a list of strings."},
-            status=HTTPStatus.BAD_REQUEST,
-        )
 
     try:
         result: AgentProfileResult = configure_agent_profile(
             business_id=str(business.id),
             name=agent_name,
-            role=agent_role,
             tone=agent_tone,
-            traits=agent_traits,
-            escalation_rule=agent_escalation,
         )
     except AgentProfileError as exc:
         return JsonResponse(
@@ -374,9 +360,9 @@ def configure_agent(request: HttpRequest, business_id: str) -> JsonResponse:
             status=HTTPStatus.BAD_REQUEST,
         )
     except Exception:  # pragma: no cover - defensive logging
-        logger.exception("Failed to configure agent profile.")
+        logger.exception("Failed to configure default assistant.")
         return JsonResponse(
-            {"error": "SERVER_ERROR", "message": "Unable to save the agent profile right now."},
+            {"error": "SERVER_ERROR", "message": "Unable to save the default assistant right now."},
             status=HTTPStatus.INTERNAL_SERVER_ERROR,
         )
 
@@ -387,10 +373,7 @@ def configure_agent(request: HttpRequest, business_id: str) -> JsonResponse:
         "agent": {
             "id": str(profile.id),
             "name": profile.name,
-            "role": profile.role,
             "tone": profile.tone,
-            "traits": profile.traits,
-            "escalationRule": profile.escalation_rule,
         },
         "session": {
             "id": str(session.id),
@@ -935,25 +918,14 @@ def _parse_uuid_value(value: object, *, field: str) -> tuple[uuid.UUID | None, J
 
 
 def _serialize_agent_summary(agent: AgentProfile) -> dict[str, object]:
-    manager = getattr(agent, "manager_agent", None)
     return {
         "id": str(agent.id),
         "identifier": agent_identifier(agent.id),
         "name": agent.name,
         "status": getattr(agent, "status", "active"),
-        "role": agent.role or "",
-        "roleLabel": display_role_label(agent.role),
-        "agentType": getattr(agent, "agent_type", AgentProfile.AgentTypeChoices.SPECIALIST),
-        "agentTypeLabel": display_agent_type_label(getattr(agent, "agent_type", None)),
-        "managerAgentId": str(agent.manager_agent_id) if agent.manager_agent_id else None,
-        "managerAgentName": getattr(manager, "name", "") or "",
-        "canManageTasks": bool(getattr(agent, "can_manage_tasks", False)),
         "permissionConfig": agent.permission_config if isinstance(agent.permission_config, dict) else {},
-        "responsibilities": list(agent.responsibilities or []),
-        "instructions": agent.instructions or "",
         "tone": agent.tone or None,
         "toneLabel": display_tone_label(agent.tone),
-        "traits": list(agent.traits or []),
         "publicSlug": agent.slug or "",
         "createdAt": _iso(agent.created_at),
         "updatedAt": _iso(agent.updated_at),
@@ -978,15 +950,10 @@ def agents_collection(request: HttpRequest) -> JsonResponse:
         status = str((payload or {}).get("status") or AgentProfile.StatusChoices.ACTIVE).strip().lower()
         if status not in {choice for choice, _ in AgentProfile.StatusChoices.choices}:
             return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid status."}, status=HTTPStatus.BAD_REQUEST)
-        agent_type = str((payload or {}).get("agentType") or (payload or {}).get("agent_type") or "").strip().lower()
-        if not agent_type:
-            has_main = AgentProfile.objects.filter(
-                business_profile=business,
-                agent_type=AgentProfile.AgentTypeChoices.MAIN,
-                status=AgentProfile.StatusChoices.ACTIVE,
-            ).exists()
-            agent_type = AgentProfile.AgentTypeChoices.MAIN if not has_main else ""
-        if not agent_type:
+        if status == AgentProfile.StatusChoices.ACTIVE and AgentProfile.objects.filter(
+            business_profile=business,
+            status=AgentProfile.StatusChoices.ACTIVE,
+        ).exists():
             return JsonResponse(
                 {
                     "error": "VALIDATION_ERROR",
@@ -994,63 +961,17 @@ def agents_collection(request: HttpRequest) -> JsonResponse:
                 },
                 status=HTTPStatus.BAD_REQUEST,
             )
-        if agent_type not in {choice for choice, _ in AgentProfile.AgentTypeChoices.choices}:
-            return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid agentType."}, status=HTTPStatus.BAD_REQUEST)
-        if agent_type in {AgentProfile.AgentTypeChoices.SPECIALIST, AgentProfile.AgentTypeChoices.BACKGROUND}:
-            return JsonResponse(
-                {
-                    "error": "VALIDATION_ERROR",
-                    "message": "Specialized user-facing agents are now Custom Assistants. Create them from the Custom Assistants page instead.",
-                },
-                status=HTTPStatus.BAD_REQUEST,
-            )
-        if (
-            agent_type == AgentProfile.AgentTypeChoices.MAIN
-            and status == AgentProfile.StatusChoices.ACTIVE
-            and AgentProfile.objects.filter(
-                business_profile=business,
-                agent_type=AgentProfile.AgentTypeChoices.MAIN,
-                status=AgentProfile.StatusChoices.ACTIVE,
-            ).exists()
-        ):
-            return JsonResponse(
-                {"error": "VALIDATION_ERROR", "message": "This workspace already has an active main agent."},
-                status=HTTPStatus.BAD_REQUEST,
-            )
-        if agent_type != AgentProfile.AgentTypeChoices.MAIN:
-            return JsonResponse(
-                {"error": "VALIDATION_ERROR", "message": "Only the default Business Assistant can be created here. Use Custom Assistants for specialized work."},
-                status=HTTPStatus.BAD_REQUEST,
-            )
-        manager_id, err = _parse_uuid_value((payload or {}).get("managerAgentId") or (payload or {}).get("manager_agent_id"), field="managerAgentId")
-        if err:
-            return err
-        manager = None
-        if manager_id:
-            manager = AgentProfile.objects.filter(id=manager_id, business_profile=business).first()
-            if manager is None:
-                return JsonResponse({"error": "AGENT_NOT_FOUND", "message": "Manager agent not found."}, status=HTTPStatus.NOT_FOUND)
-        can_manage_tasks = bool((payload or {}).get("canManageTasks") or (payload or {}).get("can_manage_tasks") or agent_type == AgentProfile.AgentTypeChoices.MAIN)
         agent = AgentProfile.objects.create(
             business_profile=business,
             user=request.user,
             name=name[:120],
             status=status,
-            role=str((payload or {}).get("role") or "")[:120],
-            agent_type=agent_type,
-            manager_agent=manager,
-            can_manage_tasks=can_manage_tasks,
             permission_config=dict((payload or {}).get("permissionConfig") or (payload or {}).get("permission_config") or {}),
-            responsibilities=list((payload or {}).get("responsibilities") or []),
-            instructions=str((payload or {}).get("instructions") or "")[:12000],
             tone=str((payload or {}).get("tone") or "")[:60],
-            traits=list((payload or {}).get("traits") or []),
-            escalation_rule=str((payload or {}).get("escalationRule") or (payload or {}).get("escalation_rule") or "")[:60],
         )
         return JsonResponse({"agent": _serialize_agent_summary(agent)}, status=HTTPStatus.CREATED)
 
     q_name = request.GET.get("q_name") or request.GET.get("qName")
-    role = request.GET.get("role")
     limit_param = request.GET.get("limit")
     offset_param = request.GET.get("offset")
     sort_by = request.GET.get("sort_by") or request.GET.get("sortBy") or "created_at"
@@ -1063,7 +984,6 @@ def agents_collection(request: HttpRequest) -> JsonResponse:
         result = list_agents(
             business_profile=business,
             q_name=q_name,
-            role=role,
             limit=limit,
             offset=offset,
             sort_by=sort_by,
@@ -1085,12 +1005,6 @@ def agents_collection(request: HttpRequest) -> JsonResponse:
                 "identifier": agent_identifier(item.id),
                 "name": item.name,
                 "status": item.status,
-                "role": item.role,
-                "roleLabel": display_role_label(item.role),
-                "agentType": item.agent_type,
-                "agentTypeLabel": display_agent_type_label(item.agent_type),
-                "managerAgentId": str(item.manager_agent_id) if item.manager_agent_id else None,
-                "canManageTasks": item.can_manage_tasks,
                 "tone": item.tone,
                 "toneLabel": display_tone_label(item.tone),
                 "publicSlug": item.public_slug,
@@ -1119,10 +1033,7 @@ def agents_directory(request: HttpRequest) -> JsonResponse:
     if error:
         return error
     assert business is not None
-    agents = (
-        AgentProfile.objects.filter(business_profile=business, agent_type=AgentProfile.AgentTypeChoices.MAIN)
-        .order_by("name")
-    )
+    agents = AgentProfile.objects.filter(business_profile=business).order_by("name")
     return JsonResponse(
         {
             "agents": [
@@ -1130,9 +1041,6 @@ def agents_directory(request: HttpRequest) -> JsonResponse:
                     "id": str(agent.id),
                     "name": agent.name,
                     "status": agent.status,
-                    "role": agent.role or "",
-                    "agentType": agent.agent_type,
-                    "responsibilities": list(agent.responsibilities or []),
                     "tone": agent.tone or "",
                 }
                 for agent in agents
@@ -1150,7 +1058,7 @@ def agent_detail_view(request: HttpRequest, agent_id: uuid.UUID) -> JsonResponse
         return error
     assert business is not None
 
-    agent_obj = AgentProfile.objects.select_related("manager_agent").filter(id=agent_id, business_profile=business).first()
+    agent_obj = AgentProfile.objects.filter(id=agent_id, business_profile=business).first()
     if agent_obj is None:
         return JsonResponse(
             {"error": "AGENT_NOT_FOUND", "message": "Agent profile not found."},
@@ -1165,80 +1073,32 @@ def agent_detail_view(request: HttpRequest, agent_id: uuid.UUID) -> JsonResponse
         if error:
             return error
         updates: list[str] = []
-        next_agent_type = agent_obj.agent_type
         next_status = agent_obj.status
         for public, field, limit in (
             ("name", "name", 120),
             ("status", "status", 24),
-            ("role", "role", 120),
-            ("agentType", "agent_type", 32),
-            ("instructions", "instructions", 12000),
             ("tone", "tone", 60),
-            ("escalationRule", "escalation_rule", 60),
         ):
             if public in payload or field in payload:
                 raw = payload.get(public) if public in payload else payload.get(field)
                 value = str(raw or "").strip()[:limit]
                 if field == "status" and value not in {choice for choice, _ in AgentProfile.StatusChoices.choices}:
                     return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid status."}, status=HTTPStatus.BAD_REQUEST)
-                if field == "agent_type" and value not in {choice for choice, _ in AgentProfile.AgentTypeChoices.choices}:
-                    return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid agentType."}, status=HTTPStatus.BAD_REQUEST)
                 if field == "status":
                     next_status = value
-                if field == "agent_type":
-                    next_agent_type = value
                 setattr(agent_obj, field, value)
                 updates.append(field)
-        if (
-            next_agent_type == AgentProfile.AgentTypeChoices.MAIN
-            and next_status == AgentProfile.StatusChoices.ACTIVE
-            and AgentProfile.objects.filter(
-                business_profile=business,
-                agent_type=AgentProfile.AgentTypeChoices.MAIN,
-                status=AgentProfile.StatusChoices.ACTIVE,
-            )
-            .exclude(id=agent_obj.id)
-            .exists()
-        ):
+        if next_status == AgentProfile.StatusChoices.ACTIVE and AgentProfile.objects.filter(
+            business_profile=business,
+            status=AgentProfile.StatusChoices.ACTIVE,
+        ).exclude(id=agent_obj.id).exists():
             return JsonResponse(
-                {"error": "VALIDATION_ERROR", "message": "This workspace already has an active main agent."},
+                {"error": "VALIDATION_ERROR", "message": "This workspace already has an active Business Assistant."},
                 status=HTTPStatus.BAD_REQUEST,
             )
-        if next_agent_type in {AgentProfile.AgentTypeChoices.SPECIALIST, AgentProfile.AgentTypeChoices.BACKGROUND}:
-            return JsonResponse(
-                {
-                    "error": "VALIDATION_ERROR",
-                    "message": "Use Custom Assistants for specialization instead of creating additional user-facing agents.",
-                },
-                status=HTTPStatus.BAD_REQUEST,
-            )
-        if next_agent_type != AgentProfile.AgentTypeChoices.MAIN:
-            return JsonResponse(
-                {"error": "VALIDATION_ERROR", "message": "Only the default Business Assistant can be managed here. Use Custom Assistants for specialized work."},
-                status=HTTPStatus.BAD_REQUEST,
-            )
-        if "managerAgentId" in payload or "manager_agent_id" in payload:
-            manager_id, err = _parse_uuid_value(payload.get("managerAgentId") or payload.get("manager_agent_id"), field="managerAgentId")
-            if err:
-                return err
-            manager = AgentProfile.objects.filter(id=manager_id, business_profile=business).first() if manager_id else None
-            if manager_id and manager is None:
-                return JsonResponse({"error": "AGENT_NOT_FOUND", "message": "Manager agent not found."}, status=HTTPStatus.NOT_FOUND)
-            if manager and manager.id == agent_obj.id:
-                return JsonResponse({"error": "VALIDATION_ERROR", "message": "Agent cannot manage itself."}, status=HTTPStatus.BAD_REQUEST)
-            agent_obj.manager_agent = manager
-            updates.append("manager_agent")
-        for public, field in (("canManageTasks", "can_manage_tasks"),):
-            if public in payload or field in payload:
-                setattr(agent_obj, field, bool(payload.get(public) if public in payload else payload.get(field)))
-                updates.append(field)
         if "permissionConfig" in payload or "permission_config" in payload:
             agent_obj.permission_config = dict(payload.get("permissionConfig") or payload.get("permission_config") or {})
             updates.append("permission_config")
-        for public, field in (("responsibilities", "responsibilities"), ("traits", "traits")):
-            if public in payload and isinstance(payload.get(public), list):
-                setattr(agent_obj, field, list(payload.get(public) or []))
-                updates.append(field)
         if updates:
             agent_obj.save(update_fields=sorted(set([*updates, "updated_at"])))
         return JsonResponse({"agent": _serialize_agent_summary(agent_obj)}, status=HTTPStatus.OK)
@@ -1260,24 +1120,11 @@ def agent_detail_view(request: HttpRequest, agent_id: uuid.UUID) -> JsonResponse
             "identifier": agent_identifier(detail.summary.id),
             "name": detail.summary.name,
             "status": agent_obj.status,
-            "role": detail.summary.role,
-            "roleLabel": display_role_label(detail.summary.role),
-            "agentType": detail.summary.agent_type,
-            "agentTypeLabel": display_agent_type_label(detail.summary.agent_type),
-            "managerAgentId": str(detail.summary.manager_agent_id) if detail.summary.manager_agent_id else None,
-            "canManageTasks": detail.summary.can_manage_tasks,
             "permissionConfig": agent_obj.permission_config if isinstance(agent_obj.permission_config, dict) else {},
-            "responsibilities": list(agent_obj.responsibilities or []),
-            "instructions": agent_obj.instructions or "",
             "tone": detail.summary.tone,
             "toneLabel": display_tone_label(detail.summary.tone),
             "publicSlug": detail.summary.public_slug,
             "shareablePath": detail.shareable_path,
-            "traits": list(detail.traits),
-            "escalationRule": detail.escalation_rule,
-            "kpis": list(detail.selected_kpis),
-            "customKpis": list(detail.custom_kpis),
-            "allowCustomKpiWeighting": detail.allow_custom_kpi_weighting,
             "knowledge": {
                 "mode": detail.knowledge_mode,
                 "documents": [

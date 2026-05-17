@@ -174,7 +174,6 @@ def _extract_topics_and_follow_ups(
         transcript=[],
         knowledge_snippets=[],
         actions_catalog=[],
-        agent_traits={},
     )
     try:
         result = provider.generate(bundle)
@@ -506,4 +505,3 @@ def _clip(text: str, max_chars: int) -> str:
     if max_chars <= 0:
         return text
     return text[:max_chars].rstrip()
-

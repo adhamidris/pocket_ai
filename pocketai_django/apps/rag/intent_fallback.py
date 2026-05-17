@@ -238,5 +238,4 @@ class IntentFallbackService:
             transcript=tuple(),
             knowledge_snippets=tuple(),
             actions_catalog=tuple(),
-            agent_traits={},
         )

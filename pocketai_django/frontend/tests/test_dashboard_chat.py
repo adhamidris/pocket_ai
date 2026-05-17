@@ -28,14 +28,13 @@ class DashboardChatViewTests(TestCase):
             business_profile=self.business,
             user=self.user,
             name="Sarah",
-            role="Customer Support",
         )
         self.url = reverse("frontend:dashboard-chat")
 
     def _bootstrap_payload(self, *, session_token: str = "sess_123", conversation_id: str = "conv_123") -> dict[str, object]:
         return {
             "business": {"name": self.business.name, "slug": self.business.slug},
-            "agent": {"name": self.agent.name, "slug": self.agent.slug, "role": self.agent.role},
+            "agent": {"name": self.agent.name, "slug": self.agent.slug},
             "session": {
                 "conversation_id": conversation_id,
                 "session_token": session_token,

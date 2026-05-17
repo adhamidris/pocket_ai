@@ -19,21 +19,6 @@ from apps.knowledge.models import (
 from apps.conversations.models import ConversationStatus
 
 
-ROLE_LABELS = {
-    "support": "Support Agent",
-    "success": "Customer Success",
-    "sales": "Sales Associate",
-    "marketing": "Growth & Marketing",
-    "research": "Technical Specialist",
-    "billing": "Billing Assistant",
-}
-
-AGENT_TYPE_LABELS = {
-    AgentProfile.AgentTypeChoices.MAIN: "Main Agent",
-    AgentProfile.AgentTypeChoices.SPECIALIST: "Specialist",
-    AgentProfile.AgentTypeChoices.BACKGROUND: "Background Agent",
-}
-
 TONE_LABELS = {
     "friendly": "Friendly",
     "professional": "Professional",
@@ -59,10 +44,6 @@ class AgentListItem:
     id: uuid.UUID
     name: str
     status: str
-    role: str
-    agent_type: str
-    manager_agent_id: uuid.UUID | None
-    can_manage_tasks: bool
     tone: str | None
     public_slug: str
     created_at: datetime
@@ -106,27 +87,9 @@ class AgentKnowledgeItem:
 class AgentDetail:
     summary: AgentListItem
     shareable_path: str
-    traits: Sequence[str]
-    escalation_rule: str | None
-    selected_kpis: Sequence[str]
-    custom_kpis: Sequence[str]
-    allow_custom_kpi_weighting: bool
     knowledge_mode: str
     knowledge_documents: Sequence[AgentKnowledgeItem]
     stats: AgentStats
-
-
-def display_role_label(role: str | None) -> str:
-    raw = (role or "").strip()
-    if not raw:
-        return _("General")
-    label = ROLE_LABELS.get(raw.lower(), raw)
-    return _(label)
-
-
-def display_agent_type_label(agent_type: str | None) -> str:
-    label = AGENT_TYPE_LABELS.get(agent_type or "", "Specialist")
-    return _(label)
 
 
 def display_tone_label(tone: str | None) -> str | None:
@@ -158,7 +121,6 @@ def list_agents(
     *,
     business_profile: BusinessProfile,
     q_name: str | None = None,
-    role: str | None = None,
     limit: int = 50,
     offset: int = 0,
     sort_by: str = "created_at",
@@ -192,14 +154,9 @@ def list_agents(
     if order not in {"asc", "desc"}:
         raise AgentListValidationError("order must be 'asc' or 'desc'", field="order")
 
-    base_qs = (
-        AgentProfile.objects.select_related("manager_agent")
-        .filter(business_profile=business_profile, agent_type=AgentProfile.AgentTypeChoices.MAIN)
-    )
+    base_qs = AgentProfile.objects.filter(business_profile=business_profile)
     if q_name:
         base_qs = base_qs.filter(name__icontains=q_name.strip())
-    if role:
-        base_qs = base_qs.filter(role__iexact=role.strip())
 
     total = base_qs.count()
 
@@ -247,10 +204,6 @@ def list_agents(
             id=row.id,
             name=row.name,
             status=getattr(row, "status", "active"),
-            role=row.role or "",
-            agent_type=getattr(row, "agent_type", AgentProfile.AgentTypeChoices.SPECIALIST),
-            manager_agent_id=getattr(row, "manager_agent_id", None),
-            can_manage_tasks=bool(getattr(row, "can_manage_tasks", False)),
             tone=row.tone or None,
             public_slug=row.slug or "",
             created_at=row.created_at,
@@ -274,13 +227,13 @@ def get_agent_detail(
     agent_id: uuid.UUID,
 ) -> AgentDetail:
     """
-    Load a single agent profile with persona, KPI, and knowledge metadata.
+    Load a single default assistant profile with knowledge metadata.
     """
 
     duration_expr = ExpressionWrapper(F("conversations__closed_at") - F("conversations__started_at"), output_field=DjangoDurationField())
     agent = (
         AgentProfile.objects.filter(business_profile=business_profile, id=agent_id)
-        .select_related("business_profile", "manager_agent")
+        .select_related("business_profile")
         .prefetch_related(
             Prefetch(
                 "allowed_documents",
@@ -335,10 +288,6 @@ def get_agent_detail(
         id=agent.id,
         name=agent.name,
         status=getattr(agent, "status", "active"),
-        role=agent.role or "",
-        agent_type=getattr(agent, "agent_type", AgentProfile.AgentTypeChoices.SPECIALIST),
-        manager_agent_id=getattr(agent, "manager_agent_id", None),
-        can_manage_tasks=bool(getattr(agent, "can_manage_tasks", False)),
         tone=agent.tone or None,
         public_slug=agent.slug or "",
         created_at=agent.created_at,
@@ -374,11 +323,6 @@ def get_agent_detail(
     return AgentDetail(
         summary=summary,
         shareable_path=agent.shareable_path,
-        traits=tuple(agent.traits or []),
-        escalation_rule=agent.escalation_rule or None,
-        selected_kpis=tuple(agent.selected_kpis or []),
-        custom_kpis=tuple(agent.custom_kpis or []),
-        allow_custom_kpi_weighting=bool(agent.allow_custom_kpi_weighting),
         knowledge_mode="select" if documents else "all",
         knowledge_documents=documents,
         stats=stats,

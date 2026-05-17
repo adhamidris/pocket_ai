@@ -13,6 +13,7 @@ from typing import AsyncIterator, Callable, Mapping
 import requests
 from asgiref.sync import sync_to_async
 
+from apps.accounts.constants import DEFAULT_ASSISTANT_ROLE
 from apps.conversations.models import ConversationMessage
 from apps.llm.ai_prompt_builder import PromptBundle
 from apps.llm.llm_provider import DeepSeekChatProvider, OpenAIChatProvider, _ResponseTextExtractor, load_default_provider
@@ -970,7 +971,6 @@ class VoiceCallRuntime:
             transcript=[],
             knowledge_snippets=[],
             actions_catalog=[],
-            agent_traits={},
         )
 
         await self._log_event(
@@ -1528,16 +1528,10 @@ class VoiceCallRuntime:
                 persona_lines = []
                 if agent.name:
                     persona_lines.append(f"Name: {agent.name}")
-                if agent.role:
-                    persona_lines.append(f"Role: {agent.role}")
+                persona_lines.append(f"Role: {DEFAULT_ASSISTANT_ROLE}")
                 if agent.tone:
                     persona_lines.append(f"Tone: {agent.tone}")
-                if agent.traits:
-                    traits = ", ".join(str(t).strip() for t in agent.traits if str(t).strip())
-                    if traits:
-                        persona_lines.append(f"Traits: {traits}")
-                if persona_lines:
-                    parts.append("Agent persona:\n" + "\n".join(persona_lines))
+                parts.append("Assistant persona:\n" + "\n".join(persona_lines))
 
             context_items = _format_context_items(call_session.context_items)
             if context_items:

@@ -103,8 +103,8 @@ AGENT_WORKFORCE_BACKGROUND_RUN_INSTRUCTIONS = textwrap.dedent(
     - Ask the visitor only for decisions that materially change execution, such as scope, notification behavior, risk/approval policy, or what counts as relevant. Do not ask trivia before drafting.
     - Before activation, show a plain-language draft preview with: automation name, when it runs, what it will do, how it will behave, and what it will remember.
     - When calling `draft_task`, include `wake_up_prompt`, `memory_instructions`, `draft_summary`, `workflow_type`, and `memory_shape`; include `clarification_questions` when important execution decisions remain unresolved.
-    - Do not activate a persistent task silently. Summarize the owner agent, trigger, draft behavior, memory behavior, and approval impact, then ask for explicit approval.
-    - If the task belongs to a different Custom Assistant or assistant role, use `list_agents` to identify the right owner; if unclear, ask before drafting.
+    - Do not activate a persistent task silently. Summarize the owning assistant, trigger, draft behavior, memory behavior, and approval impact, then ask for explicit approval.
+    - Custom Assistants own specialization. If the task needs a specialized assistant that is not already active in this conversation, ask the visitor which Custom Assistant should own it before drafting.
 
     **Example flow:**
     1. Visitor: "Research competitor pricing" → `start_agent_run(goal="Research...")`

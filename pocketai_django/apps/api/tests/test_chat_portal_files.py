@@ -63,7 +63,6 @@ class ChatPortalFileUploadTests(TestCase):
             business_profile=self.business,
             user=self.user,
             name="Support AI",
-            role="Support",
             tone="friendly",
         )
         self.conversation = Conversation.objects.create(
@@ -164,7 +163,6 @@ class ChatPortalPdfToolsTests(TestCase):
             business_profile=self.business,
             user=self.user,
             name="Support AI",
-            role="Support",
             tone="friendly",
         )
         self.conversation = Conversation.objects.create(

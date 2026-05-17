@@ -27,8 +27,6 @@ class AgentsDashboardTests(TestCase):
             business_profile=self.business,
             user=self.user,
             name="Mona",
-            role="Operations",
-            agent_type=AgentProfile.AgentTypeChoices.MAIN,
         )
 
     def test_agents_dashboard_redirects_to_custom_assistants(self) -> None:

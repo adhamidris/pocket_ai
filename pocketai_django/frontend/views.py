@@ -53,6 +53,7 @@ from apps.knowledge.models import (
 from apps.integrations.models import KnowledgeIntegration
 from apps.rag.query_analytics import build_query_analytics_report
 from apps.accounts.agents import initials_from_name
+from apps.accounts.constants import DEFAULT_ASSISTANT_ROLE
 from apps.accounts.registration import KnowledgeUploadError
 from apps.knowledge.documents import DocumentListValidationError, list_documents
 from apps.knowledge.knowledge_ingestion import queue_ingestion_job
@@ -220,7 +221,7 @@ def _build_portal_context(
         },
         "agent": {
             "name": agent_name,
-            "role": agent.get("role") or "AI Customer Specialist",
+            "role": DEFAULT_ASSISTANT_ROLE,
             "bio": "Trained on our knowledge base and policies to provide personalised support.",
             "initials": agent_initials,
             "slug": cookie_agent_slug,
@@ -1275,10 +1276,7 @@ def register(request: HttpRequest) -> HttpResponse:
             if agent:
                 prefill_agent = {
                     "name": agent.name or "",
-                    "role": agent.role or "",
                     "tone": agent.tone or "",
-                    "traits": agent.traits or [],
-                    "escalation_rule": agent.escalation_rule or "",
                 }
         else:
             # User is authenticated but has no incomplete session
@@ -1518,16 +1516,6 @@ def register(request: HttpRequest) -> HttpResponse:
         {"value": "Other", "flag": "🌐"},
     ]
 
-    agent_roles = [
-        _("Customer Support Agent"),
-        _("Support Specialist"),
-        _("Customer Success Representative"),
-        _("Sales Support Agent"),
-        _("Front Desk Representative"),
-        _("Account Manager"),
-        _("Helpdesk Agent"),
-    ]
-
     agent_tones = [
         _("Friendly"),
         _("Professional"),
@@ -1535,24 +1523,6 @@ def register(request: HttpRequest) -> HttpResponse:
         _("Formal"),
         _("Empathetic"),
         _("Playful"),
-    ]
-
-    agent_traits = [
-        _("Concise"),
-        _("Detailed"),
-        _("Curious"),
-        _("Patient"),
-        _("Proactive"),
-        _("Direct"),
-        _("Creative"),
-    ]
-
-    agent_escalations = [
-        _("Never"),
-        _("On fallback"),
-        _("On negative sentiment"),
-        _("On high value"),
-        _("Always"),
     ]
 
     catalog_entity = _("Products & Services")
@@ -1690,37 +1660,20 @@ def register(request: HttpRequest) -> HttpResponse:
                 },
             },
             "agent": {
-                "title_prefix": _("Agent"),
-                "title_highlight": _("Setup"),
-                "subtitle": _("Set up your agent basics"),
+                "title_prefix": _("Assistant"),
+                "title_highlight": _("Basics"),
+                "subtitle": _("Set up your default business assistant"),
                 "fields": {
                     "name": {
-                        "label": _("Agent name"),
+                        "label": _("Assistant name"),
                         "placeholder": "e.g., Nancy",
-                        "error_required": _("Please enter an agent name"),
-                    },
-                    "role": {
-                        "label": _("Role"),
-                        "placeholder": _("Select a role"),
-                        "error_required": _("Please select a role"),
-                        "options": agent_roles,
+                        "error_required": _("Please enter an assistant name"),
                     },
                     "tone": {
                         "label": _("Tone"),
                         "placeholder": _("Select tone"),
                         "error_required": _("Please choose a tone"),
                         "options": agent_tones,
-                    },
-                    "traits": {
-                        "label": _("Traits"),
-                        "hint": _("Pick as many as you like"),
-                        "options": agent_traits,
-                    },
-                    "escalation": {
-                        "label": _("Escalation rule"),
-                        "placeholder": _("Choose escalation rule"),
-                        "error_required": _("Please choose when to escalate"),
-                        "options": agent_escalations,
                     },
                 },
                 "buttons": {
@@ -2517,7 +2470,6 @@ def _default_business_assistant_for_user(user) -> tuple[BusinessProfile | None, 
     agent = (
         AgentProfile.objects.filter(
             business_profile=business,
-            agent_type=AgentProfile.AgentTypeChoices.MAIN,
         )
         .order_by("-updated_at")
         .first()

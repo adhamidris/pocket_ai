@@ -85,7 +85,6 @@ class PhoneCallApprovalBehaviorTests(TestCase):
             business_profile=self.business,
             user=self.user,
             name="Phone Agent",
-            role="AI Specialist",
         )
         self.conversation = Conversation.objects.create(
             business_profile=self.business,

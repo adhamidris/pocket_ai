@@ -233,7 +233,6 @@ class McpConnectionsApiTests(TestCase):
             business_profile=self.business,
             user=self.user,
             name="Support Agent",
-            role="support",
             tone="friendly",
         )
 
@@ -673,7 +672,6 @@ class McpConnectionsApiTests(TestCase):
             business_profile=self.business,
             user=self.user,
             name="Support Agent",
-            role="support",
             tone="friendly",
         )
         url = reverse("api:mcp-agent-approval-defaults")
@@ -689,7 +687,6 @@ class McpConnectionsApiTests(TestCase):
             business_profile=self.business,
             user=self.user,
             name="Support Agent",
-            role="support",
             tone="friendly",
         )
         url = reverse("api:mcp-agent-approval-defaults")

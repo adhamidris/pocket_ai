@@ -13,6 +13,7 @@ import textwrap
 from datetime import datetime
 from typing import Mapping, Sequence
 
+from apps.accounts.constants import DEFAULT_ASSISTANT_ROLE
 from apps.accounts.models import AgentProfile
 from apps.conversations.models import Conversation, ConversationMessage
 
@@ -24,7 +25,6 @@ class PromptBundle:
     transcript: Sequence[Mapping[str, str]]
     knowledge_snippets: Sequence[Mapping[str, object]]
     actions_catalog: Sequence[Mapping[str, str]]
-    agent_traits: Mapping[str, str]
 
 
 class PromptBuilder:
@@ -141,8 +141,8 @@ class PromptBuilder:
     ) -> PromptBundle:
         business = conversation.business_profile
         industry = (business.industry or "").strip() or "general services"
-        agent_traits = {
-            "role": self.agent.role or "AI Customer Specialist",
+        assistant_context = {
+            "role": DEFAULT_ASSISTANT_ROLE,
             "tone": self.agent.tone or "friendly",
             "business_name": business.name,
             "agent_name": self.agent.name,
@@ -153,7 +153,7 @@ class PromptBuilder:
 
         system_prompt = textwrap.dedent(
             f"""
-            You are {self.agent.name}, the {agent_traits['role']} for {business.name}, a company in the {industry} industry. Maintain a {agent_traits['tone']} tone, stay factual, and never hallucinate policy or pricing.
+            You are {self.agent.name}, the {assistant_context['role']} for {business.name}, a company in the {industry} industry. Maintain a {assistant_context['tone']} tone, stay factual, and never hallucinate policy or pricing.
 
             {self.CASE_MANDATE}
 
@@ -229,7 +229,6 @@ class PromptBuilder:
             transcript=transcript_payload,
             knowledge_snippets=knowledge_payload,
             actions_catalog=actions_catalog,
-            agent_traits=agent_traits,
         )
 
     def _case_context(self, conversation: Conversation) -> str:

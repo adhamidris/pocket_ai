@@ -185,7 +185,6 @@ class McpConnectionGatingTests(SimpleTestCase):
         agent = mock.Mock()
         agent.name = "TestBot"
         agent.tone = "professional"
-        agent.role = "Assistant"
         business_profile = mock.Mock()
         business_profile.name = "TestBiz"
 
@@ -211,7 +210,6 @@ class McpConnectionGatingTests(SimpleTestCase):
         agent = mock.Mock()
         agent.name = "TestBot"
         agent.tone = "professional"
-        agent.role = "Assistant"
         business_profile = mock.Mock()
         business_profile.name = "TestBiz"
 

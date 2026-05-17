@@ -263,7 +263,6 @@ def generate_summary_and_actions(session: CallSession) -> tuple[str, list[dict[s
         transcript=[],
         knowledge_snippets=[],
         actions_catalog=[],
-        agent_traits={},
     )
     try:
         result = provider.generate(bundle)

@@ -33,7 +33,6 @@ class AgenticReadSectionSpanTests(TestCase):
             business_profile=self.business,
             user=self.user,
             name="Reader",
-            role="Assistant",
         )
         self.conversation = Conversation.objects.create(
             business_profile=self.business,

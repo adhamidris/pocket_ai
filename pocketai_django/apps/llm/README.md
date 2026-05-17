@@ -35,7 +35,6 @@ PromptBuilder returns a PromptBundle containing:
 - transcript (recent messages)
 - knowledge_snippets
 - actions_catalog
-- agent_traits
 
 Configuration Touchpoints
 -------------------------

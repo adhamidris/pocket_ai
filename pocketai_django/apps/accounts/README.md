@@ -45,7 +45,7 @@ Configuration Touchpoints
 -------------------------
 - FEATURE_FLAG_METADATA_KEY (business flags payload)
 - BusinessProfile.metadata (feature flags, privacy policies)
-- AgentProfile.traits, tone, escalation_rule
+- AgentProfile.tone and default assistant tool settings
 - BusinessProfile.table_privacy_policy() (tabular masking rules)
 
 Quick Start (Dev)

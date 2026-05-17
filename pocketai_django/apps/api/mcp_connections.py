@@ -2358,8 +2358,6 @@ def _controls_agentic_operational_tool_names(
         "list_agent_runs",
         "get_agent_run",
         "continue_agent_run",
-        "list_agents",
-        "consult_agent",
         "list_tasks",
         "draft_task",
         "update_task",

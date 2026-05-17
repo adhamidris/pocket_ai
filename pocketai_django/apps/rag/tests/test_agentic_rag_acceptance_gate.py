@@ -55,7 +55,6 @@ class AgenticRagProductionAcceptanceGate(TestCase):
             business_profile=self.business,
             user=self.user,
             name="RAG Acceptance Agent",
-            role="Assistant",
         )
         self.conversation = Conversation.objects.create(
             business_profile=self.business,

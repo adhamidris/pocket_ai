@@ -1343,29 +1343,6 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
         required=("run_id", "message"),
     ),
     _function_schema(
-        name="list_agents",
-        description="List active agents in this business and their responsibilities so work can be routed to the right AI employee.",
-        properties={
-            "include_paused": {"type": "boolean", "description": "Include paused agents (default false)."},
-        },
-        required=(),
-    ),
-    _function_schema(
-        name="consult_agent",
-        description="Create an async request for another agent when their role or responsibilities are better suited to answer.",
-        properties={
-            "agent_id": {"type": "string", "description": "UUID of the agent to consult."},
-            "subject": {"type": "string", "description": "Short subject for the request."},
-            "question": {"type": "string", "description": "The concrete question or task for that agent."},
-            "context_refs": {
-                "type": "array",
-                "description": "Optional structured context references, not raw dumps.",
-                "items": {"type": "object"},
-            },
-        },
-        required=("agent_id", "question"),
-    ),
-    _function_schema(
         name="list_tasks",
         description="List saved automations for the current business, optionally filtered by owning assistant or status.",
         properties={
@@ -11051,86 +11028,6 @@ def _continue_agent_run_handler(
     }
 
 
-def _list_agents_handler(
-    arguments: Mapping[str, object],
-    *,
-    conversation: Conversation,
-    context: ToolExecutionContext,
-) -> Mapping[str, object]:
-    del context
-    from apps.accounts.models import AgentProfile
-
-    include_paused = bool(arguments.get("include_paused"))
-    qs = (
-        AgentProfile.objects.filter(
-            business_profile_id=conversation.business_profile_id,
-            agent_type=AgentProfile.AgentTypeChoices.MAIN,
-        )
-        .order_by("name")
-    )
-    if not include_paused:
-        qs = qs.filter(status="active")
-    return {
-        "tool": "list_agents",
-        "status": "ok",
-        "agents": [
-            {
-                "id": str(agent.id),
-                "name": agent.name,
-                "status": agent.status,
-                "role": agent.role or "",
-                "agent_type": getattr(agent, "agent_type", "specialist"),
-                "can_manage_tasks": bool(getattr(agent, "can_manage_tasks", False)),
-                "responsibilities": list(agent.responsibilities or []),
-                "tone": agent.tone or "",
-            }
-            for agent in qs[:50]
-        ],
-    }
-
-
-def _consult_agent_handler(
-    arguments: Mapping[str, object],
-    *,
-    conversation: Conversation,
-    context: ToolExecutionContext,
-) -> Mapping[str, object]:
-    del context
-    from apps.accounts.models import AgentProfile
-    from apps.conversations.models import AgentRequest, AgentRequestStatus
-
-    try:
-        target_id = uuid.UUID(str(arguments.get("agent_id") or arguments.get("agentId") or ""))
-    except (TypeError, ValueError):
-        return {"tool": "consult_agent", "status": "error", "error_code": "validation_failed", "error": "agent_id must be a UUID."}
-    question = str(arguments.get("question") or "").strip()
-    if not question:
-        return {"tool": "consult_agent", "status": "error", "error_code": "validation_failed", "error": "question is required."}
-    from_agent = getattr(conversation, "agent_profile", None)
-    target = AgentProfile.objects.filter(id=target_id, business_profile_id=conversation.business_profile_id).first()
-    if not from_agent or target is None:
-        return {"tool": "consult_agent", "status": "error", "error_code": "agent_not_found", "error": "Source or target agent not found."}
-    raw_refs = arguments.get("context_refs") or arguments.get("contextRefs") or []
-    agent_request = AgentRequest.objects.create(
-        business_profile_id=conversation.business_profile_id,
-        from_agent_profile=from_agent,
-        to_agent_profile=target,
-        conversation=conversation,
-        created_by=getattr(conversation, "owner_user", None),
-        status=AgentRequestStatus.OPEN,
-        subject=str(arguments.get("subject") or question[:120])[:240],
-        question=question[:8000],
-        context_refs=(raw_refs if isinstance(raw_refs, list) else [])[:20],
-    )
-    return {
-        "tool": "consult_agent",
-        "status": "ok",
-        "request_id": str(agent_request.id),
-        "to_agent": {"id": str(target.id), "name": target.name, "role": target.role or ""},
-        "hint": "Async agent request created. The target agent can answer through its inbox.",
-    }
-
-
 def _automation_payload(automation) -> dict[str, object]:
     instructions = automation.instructions if isinstance(automation.instructions, dict) else {}
     trigger_config = automation.trigger_config if isinstance(automation.trigger_config, dict) else {}
@@ -12830,8 +12727,6 @@ _TOOL_HANDLERS: dict[str, ToolHandler] = {
     "list_agent_runs": _list_agent_runs_handler,
     "get_agent_run": _get_agent_run_handler,
     "continue_agent_run": _continue_agent_run_handler,
-    "list_agents": _list_agents_handler,
-    "consult_agent": _consult_agent_handler,
     "list_tasks": _list_tasks_handler,
     "draft_task": _draft_task_handler,
     "update_task": _update_task_handler,

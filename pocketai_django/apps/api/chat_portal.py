@@ -32,6 +32,7 @@ from core.cache_resilience import (
 
 from pocketai.language import metadata_ui_language, normalize_language_code
 
+from apps.accounts.constants import DEFAULT_ASSISTANT_ROLE
 from apps.accounts.models import (
     BusinessProfile,
     McpConnectionApprovalMode,
@@ -1753,7 +1754,7 @@ def resolve_portal_handle(request: HttpRequest, business_slug: str, agent_slug: 
             "agent": {
                 "id": str(agent.id),
                 "name": agent.name,
-                "role": agent.role or "AI Assistant",
+                "role": DEFAULT_ASSISTANT_ROLE,
                 "slug": agent.slug,
                 "shareable_path": agent.shareable_path,
             },

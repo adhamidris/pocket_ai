@@ -13,6 +13,7 @@ from django.utils.text import slugify
 
 from pocketai.language import metadata_ui_language, normalize_language_code
 
+from apps.accounts.constants import DEFAULT_ASSISTANT_ROLE
 from apps.accounts.models import (
     AgentProfile,
     BusinessProfile,
@@ -863,7 +864,7 @@ class ChatPortalService:
         return PortalAgentSummary(
             id=agent.id,
             name=agent.name,
-            role=agent.role or "AI Assistant",
+            role=DEFAULT_ASSISTANT_ROLE,
             slug=agent.slug,
             shareable_path=agent.shareable_path,
         )

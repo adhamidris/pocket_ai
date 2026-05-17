@@ -223,10 +223,10 @@ curl -s -X PUT http://localhost:8000/api/register/sessions/<session_id>/business
   -H "Content-Type: application/json" \
   -d '{"businessName":"Acme","industry":"Retail","industryKey":"retail","country":"US","website":"https://acme.com"}'
 
-# Configure agent
+# Configure default assistant
 curl -s -X PUT http://localhost:8000/api/register/businesses/<business_id>/agent/ \
   -H "Content-Type: application/json" \
-  -d '{"agentName":"Ava","agentTitle":"Support Lead","agentTone":"friendly","agentTraits":["helpful"]}'
+  -d '{"agentName":"Ava","agentTone":"friendly"}'
 
 # Finalize uploads
 curl -s -X PUT http://localhost:8000/api/register/businesses/<business_id>/uploads/ \

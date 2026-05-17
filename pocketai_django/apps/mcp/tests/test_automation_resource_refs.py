@@ -28,7 +28,6 @@ class AutomationResourceRefsTests(TestCase):
             business_profile=self.business,
             user=self.user,
             name="Sarah",
-            role="Account Manager",
         )
         self.conversation = Conversation.objects.create(
             business_profile=self.business,

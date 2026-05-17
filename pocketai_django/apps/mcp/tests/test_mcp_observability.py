@@ -158,7 +158,6 @@ class McpObservabilityTests(TestCase):
             business_profile=self.business,
             user=self.user,
             name="Observer",
-            role="AI Specialist",
         )
         self.conversation = Conversation.objects.create(
             business_profile=self.business,

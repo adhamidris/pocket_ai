@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Mapping
 
 FEATURE_FLAG_METADATA_KEY = "features"
+DEFAULT_ASSISTANT_ROLE = "General Business Assistant"
+
 FEATURE_FLAG_DEFAULTS: dict[str, bool] = {
     "alias_lookup": True,
     "entity_chunking": True,
@@ -54,6 +56,7 @@ def sanitize_feature_payload(payload: Mapping[str, object] | None) -> dict[str, 
 
 
 __all__ = [
+    "DEFAULT_ASSISTANT_ROLE",
     "FEATURE_FLAG_DEFAULTS",
     "FEATURE_FLAG_METADATA_KEY",
     "coerce_feature_value",

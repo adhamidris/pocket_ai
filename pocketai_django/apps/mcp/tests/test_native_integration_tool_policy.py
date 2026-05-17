@@ -65,7 +65,6 @@ class NativeIntegrationExposureTests(TestCase):
             business_profile=self.business,
             user=self.user,
             name="Native Agent",
-            role="Assistant",
         )
 
     def _build_conversation(self, *, actor_user: User | None) -> Conversation:
@@ -207,7 +206,6 @@ class NativeIntegrationPolicyResolverTests(TestCase):
             business_profile=self.business,
             user=self.user,
             name="Policy Agent",
-            role="Assistant",
         )
         self.conversation = Conversation.objects.create(
             business_profile=self.business,

@@ -416,10 +416,11 @@ class TenantMemoryConfigurationAuditEvent(models.Model):
 
 class AgentProfile(models.Model):
     """
-    Stores one AI employee profile for a business workspace.
+    Stores the default business assistant profile for a workspace.
 
-    A business can own multiple named agents. Each agent has its own role,
-    instructions, permissions, workflows, and scoped memory.
+    Specialization now lives on Custom Assistants; this model keeps the
+    tenant-level assistant identity, tone, portal slug, knowledge access, and
+    tool approval settings.
     """
 
     class KPIChoices(models.TextChoices):
@@ -438,11 +439,6 @@ class AgentProfile(models.Model):
         PAUSED = "paused", "Paused"
         ARCHIVED = "archived", "Archived"
 
-    class AgentTypeChoices(models.TextChoices):
-        MAIN = "main", "Main Agent"
-        SPECIALIST = "specialist", "Specialist"
-        BACKGROUND = "background", "Background Agent"
-
     business_profile = models.ForeignKey(
         BusinessProfile,
         related_name="agent_profiles",
@@ -456,41 +452,8 @@ class AgentProfile(models.Model):
         blank=True,
         help_text="Shareable slug segment used to route requests to this agent (e.g. 'agentnameai').",
     )
-    role = models.CharField(max_length=120, blank=True)
-    agent_type = models.CharField(
-        max_length=32,
-        choices=AgentTypeChoices.choices,
-        default=AgentTypeChoices.SPECIALIST,
-        db_index=True,
-    )
-    manager_agent = models.ForeignKey(
-        "self",
-        related_name="managed_agents",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-    )
-    responsibilities = models.JSONField(default=list, blank=True)
-    instructions = models.TextField(blank=True, default="")
     tone = models.CharField(max_length=60, blank=True)
-    traits = models.JSONField(default=list, blank=True)
-    can_manage_tasks = models.BooleanField(default=False)
     permission_config = models.JSONField(default=dict, blank=True)
-    escalation_rule = models.CharField(max_length=60, blank=True)
-    selected_kpis = models.JSONField(
-        default=list,
-        blank=True,
-        help_text="List of KPI identifiers guiding the agent response strategy.",
-    )
-    custom_kpis = models.JSONField(
-        default=list,
-        blank=True,
-        help_text="Custom KPIs defined by the business to specialize agent performance.",
-    )
-    allow_custom_kpi_weighting = models.BooleanField(
-        default=False,
-        help_text="Allow orchestrator to prioritize custom KPIs ahead of default ones.",
-    )
     mcp_default_approval_mode = models.CharField(
         max_length=24,
         choices=AGENT_MCP_APPROVAL_MODE_CHOICES,
@@ -522,8 +485,7 @@ class AgentProfile(models.Model):
         ordering = ("-created_at",)
         indexes = [
             models.Index(fields=["business_profile", "slug"], name="agent_business_slug_idx"),
-            models.Index(fields=["business_profile", "agent_type"], name="agent_business_type_idx"),
-            models.Index(fields=["manager_agent", "status"], name="agent_manager_status_idx"),
+            models.Index(fields=["business_profile", "status"], name="agent_business_status_idx"),
         ]
         constraints = [
             models.UniqueConstraint(
@@ -532,9 +494,9 @@ class AgentProfile(models.Model):
                 name="agent_unique_business_slug",
             ),
             models.UniqueConstraint(
-                fields=["business_profile", "agent_type"],
-                condition=models.Q(agent_type="main", status="active"),
-                name="agent_unique_active_main",
+                fields=["business_profile"],
+                condition=models.Q(status="active"),
+                name="agent_unique_active_default",
             ),
         ]
 
