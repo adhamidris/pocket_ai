@@ -18,6 +18,28 @@ Directory Map
 - knowledge_search.py
   Active public import surface for knowledge search (`KnowledgeSearchService`,
   `QueryNormalizer`, and search result types).
+- query_normalizer.py
+  Query normalization, alias candidate generation, and identifier-like query
+  detection used by active retrieval.
+- search_cache.py
+  Alias, query-vector, result, and per-session cache helpers mixed into
+  `KnowledgeSearchService`.
+- table_context.py
+  Table-query context construction, table metadata discovery, table intent
+  signals, and table-profile cache integration.
+- ranking_features.py
+  Text quality penalties, lexical/entity/alias scoring features, phrase and
+  proximity boosts, and text evidence span selection.
+- reranking.py
+  Candidate reranking and residual table rescue arbitration.
+- evidence_grouping.py
+  Evidence-group collapse and conflict detection for retrieved snippets.
+- content_serialization.py
+  Structured export serialization, table row samples, public labels, summaries,
+  and content trimming used by search/read snippets.
+- metadata_helpers.py
+  Knowledge metadata flags, topic normalization, and pinned/read hints used by
+  snippet construction.
 - contracts.py
   Shared RAG/MCP dataclasses and constants such as `KnowledgeSnippet`,
   `StreamingTurnContext`, and knowledge read-state values.
@@ -104,10 +126,18 @@ Glossary (Quick)
 Where To Start (Reading Order)
 ------------------------------
 1) `apps/rag/knowledge_search.py` — public active search import surface.
-2) `apps/rag/ai_orchestrator.py` — current retrieval implementation container while the split continues.
-2) `apps/rag/embeddings.py` — embedding providers + warmup.
-3) `apps/mcp/tools.py` — how RAG is invoked in the tool loop.
-4) `apps/rag/evaluation/harness.py` — regression tests + metrics.
+2) `apps/rag/query_normalizer.py` — query normalization and alias candidate generation.
+3) `apps/rag/search_cache.py` — search cache keys, serialization, and invalidation.
+4) `apps/rag/table_context.py` — table query context and table intent signals.
+5) `apps/rag/ranking_features.py` — scoring feature helpers used by reranking.
+6) `apps/rag/reranking.py` — candidate reranking and residual table rescue.
+7) `apps/rag/evidence_grouping.py` — snippet evidence grouping and conflict detection.
+8) `apps/rag/content_serialization.py` — structured snippet payloads and content trimming.
+9) `apps/rag/metadata_helpers.py` — knowledge metadata flags and topic hints.
+10) `apps/rag/ai_orchestrator.py` — current retrieval implementation container while the split continues.
+11) `apps/rag/embeddings.py` — embedding providers + warmup.
+12) `apps/mcp/tools.py` — how RAG is invoked in the tool loop.
+13) `apps/rag/evaluation/harness.py` — regression tests + metrics.
 
 High-Level Architecture
 -----------------------

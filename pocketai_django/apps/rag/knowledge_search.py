@@ -8,7 +8,8 @@ from apps.rag.contracts import (
     KnowledgeSnippet,
     QueryTraits,
 )
-from apps.rag.ai_orchestrator import KnowledgeSearchService, QueryNormalizer
+from apps.rag.ai_orchestrator import KnowledgeSearchService
+from apps.rag.query_normalizer import QueryNormalizer
 
 __all__ = [
     "AliasSearchResult",
