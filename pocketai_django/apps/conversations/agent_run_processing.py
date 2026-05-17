@@ -1941,7 +1941,6 @@ class AgentRunProcessingService:
                 if suppress_machine_contract_stream:
                     return
                 visible_stream_buffer.append(text)
-                _flush_visible_assistant_text(force=False)
 
             def _on_tool_event(event: Mapping[str, object] | None) -> None:
                 nonlocal latest_email_draft_preview
@@ -2303,7 +2302,11 @@ class AgentRunProcessingService:
                 allowed_tools=allowed_tools,
                 wait_for_tool_approval=False,
             )
-            _flush_visible_assistant_text(force=True)
+            # Assistant text is only run progress when a later tool event proves
+            # it was pre-tool/intermediate narration. Any remaining buffered
+            # text at turn end is the final response and is persisted below via
+            # run.result / the assistant transcript message.
+            visible_stream_buffer.clear()
 
             raw_response_text_value = str(getattr(turn, "response_text", "") or "").strip()
             response_text_value = raw_response_text_value

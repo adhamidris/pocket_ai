@@ -294,6 +294,48 @@ class AgentRunProcessingTests(TestCase):
         self.assertLess(assistant_idx, tool_idx)
         self.assertEqual(events[assistant_idx].payload["text"], "I'll check the unread inbox first.")
 
+    def test_execute_run_does_not_persist_final_stream_as_progress(self) -> None:
+        run = AgentRun.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            created_by=self.user,
+            title="Sales monitor",
+            source=AgentRunSource.SCHEDULE,
+            status=AgentRunStatus.RUNNING,
+            started_at=timezone.now(),
+            lease_expires_at=timezone.now(),
+            workflow_snapshot={"goal": "Check unread sales emails"},
+            max_attempts=1,
+        )
+
+        final_text = (
+            "The inspected items list contains 27 IDs. All unread message IDs returned by the search "
+            "are already in the inspected list. No new unread emails have appeared since the last run."
+        )
+        service = AgentRunProcessingService(lease_seconds=1.0, max_retries_default=1, max_retry_delay_seconds=1.0)
+        mock_turn = mock.Mock(
+            response_text=final_text,
+            response_blocks=[],
+            planned_actions=[],
+            extractions=[],
+            llm_usage={},
+            tool_trace=[],
+        )
+
+        def fake_stream_turn(**kwargs):
+            kwargs["on_response_text_delta"](final_text)
+            return mock_turn
+
+        with mock.patch("apps.llm.llm_provider.load_mcp_provider", return_value=mock.Mock()):
+            with mock.patch("apps.mcp.orchestrator.McpOrchestratorService.stream_turn", side_effect=fake_stream_turn):
+                result = service._execute_run(run)
+
+        self.assertEqual(result.status, AgentRunStatus.COMPLETED)
+        run.refresh_from_db()
+        self.assertEqual(run.result["response_text"], final_text)
+        events = list(AgentRunEvent.objects.filter(run=run).order_by("sequence_index"))
+        self.assertFalse(any(event.payload.get("kind") == "assistant_message" for event in events))
+
     def test_forced_final_tool_loop_marks_run_failed(self) -> None:
         workflow = AssistantWorkflow.objects.create(
             business_profile=self.business,

@@ -8300,6 +8300,7 @@ class ChatPortalClient {
     const candidates = [];
     const agentMessage = display && typeof display.agentMessage === "string" ? display.agentMessage.trim() : "";
     const summary = display && typeof display.summary === "string" ? display.summary.trim() : "";
+    if (responseText && !responseLooksStructured) candidates.push(responseText.trim());
     if (agentMessage) candidates.push(agentMessage);
     if (summary) candidates.push(summary);
     if (report) {
@@ -8311,7 +8312,6 @@ class ChatPortalClient {
       });
       if (report.recommendedNextStep) candidates.push(String(report.recommendedNextStep).trim());
     }
-    if (responseText && !responseLooksStructured) candidates.push(responseText.trim());
 
     const resultText = candidates.find((candidate) => {
       const normalized = normalizeForCompare(candidate);
