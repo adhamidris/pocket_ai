@@ -3822,6 +3822,7 @@ def _convert_to_agentic_search_response(
         document = _document_name(snippet, fallback_title=title)
         ref_item: dict[str, object] = {
             "id": ref_id,
+            "label": label,
             "document": document,
             "kind": kind,
             "read_chars": suggested_max_chars,
