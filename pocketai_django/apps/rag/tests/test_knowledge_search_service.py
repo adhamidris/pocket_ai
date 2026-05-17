@@ -23,7 +23,7 @@ from apps.knowledge.models import (
     KnowledgeUploadTableCell,
     KnowledgeUploadTableRow,
 )
-from apps.rag.ai_orchestrator import (
+from apps.rag.knowledge_search import (
     AliasSearchResult,
     ChunkResult,
     KnowledgeSearchService,

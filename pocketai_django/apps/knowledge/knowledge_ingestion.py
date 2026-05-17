@@ -10490,7 +10490,7 @@ class KnowledgeIngestionService:
             finally:
                 duration_ms = int((time.perf_counter() - started) * 1000.0)
                 try:
-                    from apps.rag.ai_orchestrator import KnowledgeSearchService
+                    from apps.rag.knowledge_search import KnowledgeSearchService
 
                     KnowledgeSearchService.invalidate_result_cache(uuid.UUID(str(business_id)))
                 except Exception:
@@ -13602,7 +13602,7 @@ class KnowledgeIngestionService:
 
     def _invalidate_alias_cache(self, business_id: uuid.UUID) -> None:
         try:
-            from apps.rag.ai_orchestrator import KnowledgeSearchService
+            from apps.rag.knowledge_search import KnowledgeSearchService
         except ImportError:  # pragma: no cover - defensive import
             return
         KnowledgeSearchService.invalidate_alias_cache(business_id)

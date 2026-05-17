@@ -5,8 +5,7 @@ Purpose
 -------
 This app runs the tool-based orchestration loop for chat. It decides which
 tools to call, enforces budgets/guardrails, compacts context, and streams the
-final visitor-facing response. MCP is the primary runtime path when
-`RAG_USE_MCP_ORCHESTRATOR=True`.
+final visitor-facing response. MCP is the primary portal runtime path.
 
 **Current status:** agentic mode is the default (`rag_agentic_mode` feature flag),
 with the read v2 contract enabled via `MCP_AGENTIC_READ_V2_ENABLED=true`.

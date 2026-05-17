@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 from django.test import SimpleTestCase
 
-from apps.rag.ai_orchestrator import ChunkResult, KnowledgeSearchService, KnowledgeSnippet
+from apps.rag.knowledge_search import ChunkResult, KnowledgeSearchService, KnowledgeSnippet
 from apps.rag.evaluation.datasets import GOLDEN_SETS
 from apps.rag.query_classifier import QueryClassifier, QueryIntent
 from apps.rag.query_rewriter import ContextAwareQueryRewriter, RewriteContext

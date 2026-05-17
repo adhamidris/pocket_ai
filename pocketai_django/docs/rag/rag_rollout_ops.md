@@ -31,7 +31,7 @@ part of `BusinessProfile.save` keeps it versioned alongside the tenant record.
 ## RAG Warmup & Embedding Cache
 
 - Django now warms RAG embeddings via `apps.rag.apps.RagConfig.ready()`
-  whenever `RAG_USE_MCP_ORCHESTRATOR` is `True`, so workers download or
+  whenever `RAG_WARM_EMBEDDINGS_ON_STARTUP` is `True`, so workers download or
   initialize the embedding backend before serving traffic.
 - Run `python manage.py warm_embeddings` during deploy/build steps to populate
   the FastEmbed cache (or trigger the remote provider) and bake the resulting

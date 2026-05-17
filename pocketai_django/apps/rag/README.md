@@ -7,13 +7,20 @@ This app owns retrieval logic: embedding generation, query analysis, ranking,
 and evaluation for knowledge search. It is the "librarian" layer that selects
 the right evidence; ingestion/storage live in apps/knowledge.
 
-The active chat/runtime path uses MCP (`apps/mcp`). The legacy orchestrator
-in this app is retained only as historical/reference code unless explicitly reintroduced.
+The active chat/runtime path uses MCP (`apps/mcp`). Removed legacy orchestrator
+snapshots/classes should not be treated as runtime code.
 
 Directory Map
 -------------
 - ai_orchestrator.py
-  Legacy ledger-based orchestration + retrieval pipelines.
+  Implementation container for `KnowledgeSearchService` while the file is being
+  split into smaller active RAG modules.
+- knowledge_search.py
+  Active public import surface for knowledge search (`KnowledgeSearchService`,
+  `QueryNormalizer`, and search result types).
+- contracts.py
+  Shared RAG/MCP dataclasses and constants such as `KnowledgeSnippet`,
+  `StreamingTurnContext`, and knowledge read-state values.
 - embeddings.py
   Embedding provider selection (local FastEmbed or OpenAI) + warmup helper.
 - rag_logging.py
@@ -28,8 +35,6 @@ Directory Map
   Column-name normalization + heuristics for total columns.
 - table_lookup.py
   Placeholder interface for future row-on-demand retrieval.
-- legacy_backup/
-  Historical orchestrator snapshots (kept for reference).
 - management/commands/warm_embeddings.py
   Warms embedding backend and FastEmbed cache.
 - tests/
@@ -38,14 +43,10 @@ Directory Map
 Key Flows
 ---------
 1) MCP retrieval (primary path)
-   apps/mcp/tools.py -> KnowledgeSearchService (ai_orchestrator.py)
+   apps/mcp/tools.py -> KnowledgeSearchService (apps/rag/knowledge_search.py)
    -> vector + lexical + alias blending -> refs/previews returned to MCP.
 
-2) Legacy retrieval (historical only)
-   Legacy orchestrator code is kept for reference under `legacy_backup/` and
-   should not be treated as an active runtime path unless explicitly restored.
-
-3) Embedding lifecycle
+2) Embedding lifecycle
    apps/knowledge/knowledge_ingestion.py calls build_embedding_service()
    (embeddings.py) to generate vectors during ingestion.
 
@@ -67,7 +68,7 @@ MCP planner (apps/mcp/orchestrator.py)
    ↓
 search_knowledge tool (apps/mcp/tools.py)
    ↓
-KnowledgeSearchService (apps/rag/ai_orchestrator.py)
+KnowledgeSearchService (apps/rag/knowledge_search.py)
    ↓
 Hybrid ranking (vector + lexical + alias)
    ↓
@@ -102,7 +103,8 @@ Glossary (Quick)
 
 Where To Start (Reading Order)
 ------------------------------
-1) `apps/rag/ai_orchestrator.py` — main retrieval flow and scoring.
+1) `apps/rag/knowledge_search.py` — public active search import surface.
+2) `apps/rag/ai_orchestrator.py` — current retrieval implementation container while the split continues.
 2) `apps/rag/embeddings.py` — embedding providers + warmup.
 3) `apps/mcp/tools.py` — how RAG is invoked in the tool loop.
 4) `apps/rag/evaluation/harness.py` — regression tests + metrics.
@@ -119,7 +121,7 @@ LLM (final answer)
 
 Configuration Touchpoints
 -------------------------
-- RAG_USE_MCP_ORCHESTRATOR controls whether RagConfig warms embeddings.
+- RAG_WARM_EMBEDDINGS_ON_STARTUP controls whether RagConfig warms embeddings.
 - EMBED_PROVIDER / EMBED_MODEL control embedding backend selection.
 - RAG_FTS_ENABLED + lexical thresholds tune hybrid search behavior.
 - RAG_EVAL_* thresholds used by evaluation harness.

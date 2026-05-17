@@ -1,14 +1,20 @@
 # Django
 __pycache__/
 *.py[cod]
+.pytest_cache/
 .env
 venv/
 .venv/
 .env.*
 db.sqlite3
-# var/
 staticfiles/
-# *.log
+*.log
+*.prof
+
+# Runtime/generated artifacts
+var/
+.playwright-mcp/
+.runserver_smoke.log
 
 # Tailwind build artifacts
 frontend/static/css/main.css.map

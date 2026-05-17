@@ -606,7 +606,7 @@ def delete_document(*, business_profile: BusinessProfile, document_id: uuid.UUID
         logger.info("knowledge_document_delete business=%s document=%s", business_profile.id, document_id)
 
     try:
-        from apps.rag.ai_orchestrator import KnowledgeSearchService
+        from apps.rag.knowledge_search import KnowledgeSearchService
 
         KnowledgeSearchService.invalidate_result_cache(business_profile.id)
         

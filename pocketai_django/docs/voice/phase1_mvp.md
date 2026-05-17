@@ -67,7 +67,7 @@ Set:
 In separate terminals:
 
 1) Django server (webhooks + API):
-   - `RAG_USE_MCP_ORCHESTRATOR=false ./venv/bin/python manage.py runserver 0.0.0.0:8000`
+   - `RAG_WARM_EMBEDDINGS_ON_STARTUP=false ./venv/bin/python manage.py runserver 0.0.0.0:8000`
 
 2) Media Streams WebSocket server:
    - `./venv/bin/python manage.py voice_ws_server --host 0.0.0.0 --port 8081`

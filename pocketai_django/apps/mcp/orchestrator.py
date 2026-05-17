@@ -1,10 +1,8 @@
 """
-MCP-style orchestrator skeleton.
+Active MCP portal orchestrator.
 
-The goal is to keep this implementation self-contained so we can experiment
-with standard tool-calling workflows without disturbing the legacy
-AiOrchestratorService. Later phases will flesh out the orchestration loop,
-tool dispatch, and plan construction logic.
+This module owns the portal tool-calling runtime, including planning,
+tool dispatch, streaming events, approvals, and response assembly.
 """
 
 from __future__ import annotations
@@ -55,7 +53,7 @@ from apps.conversations.models import (
     ConversationToolApprovalStatus,
 )
 from apps.llm.llm_provider import PromptGenerationError, _emit_stream_chunks
-from apps.rag.ai_orchestrator import (
+from apps.rag.contracts import (
     AiOrchestratorPlan,
     PlannedAction,
     ExtractionPlan,
@@ -233,11 +231,10 @@ class _PortalBlockStream:
 
 class McpOrchestratorService:
     """
-    Placeholder MCP orchestrator.
+    Primary portal orchestration service.
 
-    This class mirrors the public API of AiOrchestratorService so the chat
-    portal can swap between implementations via a feature flag. Real behavior
-    will be implemented in later phases of the migration plan.
+    The public API is intentionally small because portal turns construct this
+    service directly and consume its streaming turn result.
     """
 
     def __init__(self, *, agent: AgentProfile, provider: BaseMcpProvider | None) -> None:

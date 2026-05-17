@@ -8,7 +8,6 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
-from apps.api.chat_portal import _business_prefers_mcp
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
 from apps.conversations.models import Conversation, ConversationFile, ConversationFileChunk
 from apps.mcp.tools import execute_tool
@@ -85,13 +84,6 @@ class ChatPortalFileUploadTests(TestCase):
                 file_id = payload["file"]["id"]
                 download_url = payload["download_url"]
                 download_url_endpoint = reverse("api:chat-portal-files-download-url", args=[file_id])
-
-                self.conversation.refresh_from_db()
-                self.assertTrue(bool(self.conversation.metadata.get("mcp_required")))
-                # Conversation-level escalation should override any business setting.
-                self.business.metadata = {"mcp_orchestrator_enabled": False}
-                self.business.save(update_fields=["metadata", "updated_at"])
-                self.assertTrue(_business_prefers_mcp(self.business, conversation=self.conversation))
 
                 self.assertTrue(ConversationFile.objects.filter(id=file_id, conversation=self.conversation).exists())
                 self.assertGreater(

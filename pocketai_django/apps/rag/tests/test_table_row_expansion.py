@@ -14,7 +14,7 @@ from apps.knowledge.models import (
     KnowledgeUpload,
     KnowledgeUploadChunk,
 )
-from apps.rag.ai_orchestrator import KnowledgeSearchService
+from apps.rag.knowledge_search import KnowledgeSearchService
 from django.core.files.uploadedfile import SimpleUploadedFile
 
 
@@ -191,7 +191,7 @@ class TableRowExpansionOrderingTest(SimpleTestCase):
         3/4 tokens (75%) should be classified as relevant while a row
         matching only 1/4 (25%) should be supplemental.
         """
-        from apps.rag.ai_orchestrator import ChunkResult
+        from apps.rag.knowledge_search import ChunkResult
 
         # 3/4 tokens match: "credit", "card", "fees" → 75%
         cc_row = self._make_chunk(
@@ -239,7 +239,7 @@ class TableRowExpansionOrderingTest(SimpleTestCase):
 
     def test_fraction_based_ordering_sorts_relevant_rows_by_overlap(self):
         """Relevant rows should be sorted by overlap fraction (highest first)."""
-        from apps.rag.ai_orchestrator import ChunkResult
+        from apps.rag.knowledge_search import ChunkResult
 
         # 4/4 match
         full_match = self._make_chunk("Credit card issuance fees: EGP 500")
@@ -331,7 +331,7 @@ class TableRowExpansionOrderingTest(SimpleTestCase):
         should get a higher document_name_boost than chunks from
         'Cheques-EN' for query tokens ("credit", "card", "fees").
         """
-        from apps.rag.ai_orchestrator import KnowledgeSearchService
+        from apps.rag.knowledge_search import KnowledgeSearchService
 
         scorer = KnowledgeSearchService._lexical_score_text
         tokens = ("credit", "card", "issuance", "fees")

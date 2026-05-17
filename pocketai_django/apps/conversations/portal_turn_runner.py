@@ -31,32 +31,14 @@ from apps.conversations.models import (
     PortalTurnEvent,
     PortalTurnStatus,
 )
-from apps.llm.llm_provider import load_default_provider
 from apps.mcp.sanitizer import sanitize_with_diagnostics
 from apps.mcp.tool_artifacts import store_remote_tool_output_artifact
-from apps.rag.ai_orchestrator import AiOrchestratorService
 from apps.rag.rag_logging import structured_log
 from core.tenancy import tenant_context
 
 logger = logging.getLogger(__name__)
 
 TOOL_EVENT_PHASES = {"started", "finished", "approval_requested", "approval_resolved"}
-
-
-def _business_prefers_mcp(business: object | None, *, conversation: Conversation | None = None) -> bool:
-    global_default = getattr(settings, "RAG_USE_MCP_ORCHESTRATOR", False)
-    convo_meta = getattr(conversation, "metadata", None)
-    if isinstance(convo_meta, dict) and convo_meta.get("mcp_required"):
-        return True
-    if business is None:
-        return global_default
-    metadata = getattr(business, "metadata", None)
-    if not isinstance(metadata, dict):
-        return global_default
-    override = metadata.get("mcp_orchestrator_enabled")
-    if override is None:
-        return global_default
-    return bool(override)
 
 
 def _clip_debug_text(value: object, *, limit: int = 480) -> str:
@@ -822,16 +804,11 @@ class PortalTurnRunner:
         agent = self.conversation.agent_profile
         if not agent:
             raise ValueError("Agent profile is missing")
-        use_mcp = _business_prefers_mcp(self.conversation.business_profile, conversation=self.conversation)
-        if use_mcp:
-            from apps.llm.llm_provider import load_mcp_provider
-            from apps.mcp.orchestrator import McpOrchestratorService
+        from apps.llm.llm_provider import load_mcp_provider
+        from apps.mcp.orchestrator import McpOrchestratorService
 
-            provider = load_mcp_provider()
-            orchestrator = McpOrchestratorService(agent=agent, provider=provider)
-            return orchestrator
-        provider = load_default_provider()
-        return AiOrchestratorService(agent=agent, provider=provider)
+        provider = load_mcp_provider()
+        return McpOrchestratorService(agent=agent, provider=provider)
 
     def _has_turn_persisted_event(self) -> bool:
         # Phase 5: we may not persist PortalTurnEvent rows. Use a durable marker first.

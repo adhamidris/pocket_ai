@@ -69,12 +69,16 @@ from apps.conversations.models import (
     ConversationFile,
     ConversationFileChunk,
 )
-from apps.rag.ai_orchestrator import (
-    AiOrchestratorService,
-    KnowledgeSearchService,
+from apps.rag.contracts import (
     KnowledgeSnippet,
     KNOWLEDGE_READ_STATE_FULL,
     KNOWLEDGE_READ_STATE_PREVIEW,
+)
+from apps.rag.knowledge_search import KnowledgeSearchService
+from apps.rag.knowledge_payloads import (
+    diagnostic_warning_payload,
+    issue_warning_payloads,
+    serialize_knowledge_snippet,
 )
 from apps.knowledge.knowledge_access import apply_customer_visible_chunks, apply_customer_visible_uploads
 from apps.knowledge.privacy import sha256_hex
@@ -2628,15 +2632,12 @@ def _mark_rows_as_seen(rows: list[dict[str, object]], document_id: str, context:
 def _serialize_snippets(snippets: Sequence[object]) -> list[dict[str, object]]:
     """
     Convert KnowledgeSnippet instances into prompt/diagnostic-friendly dicts.
-
-    Reuses the legacy orchestrator's serializer so ingestion warnings and
-    downstream diagnostics behave consistently across MCP and non-MCP paths.
     """
 
     payloads: list[dict[str, object]] = []
     for snippet in snippets:
         try:
-            payloads.append(AiOrchestratorService._serialize_snippet(snippet))  # type: ignore[arg-type]
+            payloads.append(serialize_knowledge_snippet(snippet))
         except Exception:
             continue
     seen: set[tuple[str, str | None]] = set()
@@ -3181,7 +3182,7 @@ def _build_ingestion_warnings(
         upload_id = str(entry.get("upload_id") or entry_id)
         # Issue-derived warnings
         warnings.extend(
-            AiOrchestratorService._issue_warning_payloads(  # type: ignore[attr-defined]
+            issue_warning_payloads(
                 entry.get("issues"),
                 label=label,  # type: ignore[arg-type]
                 upload_id=upload_id,
@@ -3191,7 +3192,7 @@ def _build_ingestion_warnings(
         partial_index = bool(entry.get("partial_index"))
         truncation_note_val = entry.get("truncation_note")
         truncation_note = truncation_note_val if isinstance(truncation_note_val, str) else None
-        diag_warning = AiOrchestratorService._diagnostic_warning_payload(  # type: ignore[attr-defined]
+        diag_warning = diagnostic_warning_payload(
             label=label,  # type: ignore[arg-type]
             upload_id=upload_id,
             diagnostics=diagnostics,

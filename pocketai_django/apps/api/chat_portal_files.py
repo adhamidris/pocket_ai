@@ -127,14 +127,6 @@ def portal_file_upload(request: HttpRequest) -> JsonResponse:
         except PortalFileError as exc:
             return _json_error("upload_failed", str(exc), status=400)
 
-        # Mark the conversation as requiring MCP tooling so the portal can answer about uploads.
-        metadata = conversation.metadata if isinstance(conversation.metadata, dict) else {}
-        if not metadata.get("mcp_required"):
-            metadata = dict(metadata)
-            metadata["mcp_required"] = True
-            conversation.metadata = metadata
-            conversation.save(update_fields=["metadata", "last_activity_at"])
-
         try:
             message = service.append_message(
                 session_token=conversation.session_token,

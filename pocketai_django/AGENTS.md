@@ -5,6 +5,12 @@ This repo is a multi-tenant B2B SaaS. Your job is to ship production-ready chang
 ## Read first
 - `README.md`
 - `codebase_roadmap.md` — read this before touching any existing engine or path. It maps every runtime flow, background worker, core module, and external dependency in the system.
+- Active runtime search guidance:
+  - Treat `apps/api/`, `apps/conversations/`, `apps/mcp/`, `apps/rag/`, `apps/knowledge/`, `apps/accounts/`, `apps/agent_runs/`, `apps/automations/`, `apps/integrations/`, `apps/crm/`, `apps/voice/`, `frontend/`, `pocketai/`, and `core/` as the primary code surface.
+  - Ignore generated/runtime artifacts (`var/`, `.playwright-mcp/`, logs, profiler dumps, uploaded media) unless the task explicitly asks about local runtime output.
+  - Do not recreate removed archive folders or legacy snapshots as a shortcut. If historical context is needed, ask the owner or inspect git history deliberately.
+  - MCP is the active chat orchestration path. Do not reintroduce removed legacy orchestrator backups or deleted app snapshots as a shortcut.
+  - Import active RAG contracts from `apps/rag/contracts.py` and active knowledge search from `apps/rag/knowledge_search.py`; do not add new active imports from `apps/rag/ai_orchestrator.py`.
 - RAG runtime contract note (current portal behavior):
   - `KnowledgeSearchService.search` diagnostics may still include additive `auto_decision_contract` fields such as `scope_summary`, `categories`, `top_categories`, `conflict_detected`, and `no_result_reason` for compatibility/debugging.
   - Valid `no_result_reason` values are exactly: `not_found`, `not_applicable_to_segment`, `insufficient_evidence`.
@@ -137,7 +143,7 @@ Some wheels were reinvented before the owner knew alternatives existed. Do not r
 | Background job queue | `apps/knowledge/knowledge_ingestion.py`, `apps/conversations/agent_run_processing.py` | Custom, working | PostgreSQL-backed polling queue. Reliable at current scale. Do not replace unless scale demands it. |
 | Cron / schedule parser | `apps/conversations/automation_scheduling.py` | Custom, **limited** | Only supports minute/hour fields. Cannot schedule "every Monday" or "first of month". Known gap — use Celery Beat for any new scheduling work. |
 | Agent tool-calling loop | `apps/mcp/orchestrator.py` | Custom, working | 10,000+ line file. Uses httpx directly against OpenAI-compatible API. Has no LLM-level retry logic — this is a known risk. |
-| RAG / knowledge search | `apps/rag/ai_orchestrator.py` | Custom, intentional | 12,000+ line file. The table-aware retrieval, intent routing, and hybrid fusion are product differentiators. Do not replace with LangChain or LlamaIndex. |
+| RAG / knowledge search | `apps/rag/knowledge_search.py`, `apps/rag/contracts.py`, implementation currently in `apps/rag/ai_orchestrator.py` | Custom, intentional | The table-aware retrieval, intent routing, and hybrid fusion are product differentiators. Do not replace with LangChain or LlamaIndex. New active imports should use the split public modules, not the legacy implementation container. |
 | Document ingestion pipeline | `apps/knowledge/knowledge_ingestion.py` | Custom, intentional | Handles table scoping, bloom filter indexes, per-business concurrency control. LlamaIndex would be a downgrade here. |
 | LLM provider HTTP client | `apps/llm/llm_provider.py` | Custom, working | Calls OpenAI-compatible endpoint. No Anthropic SDK in use. No retry at the provider level — add retry before touching anything else in this file. |
 

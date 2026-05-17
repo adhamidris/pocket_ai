@@ -5,7 +5,7 @@ from unittest import mock
 from django.core.cache import cache
 from django.test import SimpleTestCase
 
-from apps.rag.ai_orchestrator import KnowledgeSearchService
+from apps.rag.knowledge_search import KnowledgeSearchService
 from apps.knowledge.knowledge_ingestion import KnowledgeIngestionService
 
 

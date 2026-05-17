@@ -34,7 +34,7 @@ Key Flows
 
 Configuration Touchpoints
 -------------------------
-- RAG_USE_MCP_ORCHESTRATOR (legacy path is deprecated; MCP is the active runtime)
+- RAG_WARM_EMBEDDINGS_ON_STARTUP
 - MCP_MAX_TOOL_ITERATIONS / MCP_*_CALLS_PER_MINUTE
 
 Quick Start (Dev)
@@ -84,7 +84,7 @@ Troubleshooting
 - 404 on portal:
   - Check business/agent slug and `resolve_portal_handle`.
 - Chat stalls:
-  - Verify MCP provider loads and `RAG_USE_MCP_ORCHESTRATOR` is set.
+  - Verify the MCP provider loads and turn events are being appended.
 - Knowledge list empty:
   - Ensure ingestion ran and uploads are ACTIVE.
 

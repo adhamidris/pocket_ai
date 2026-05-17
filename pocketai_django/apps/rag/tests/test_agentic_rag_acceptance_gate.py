@@ -31,7 +31,7 @@ from apps.knowledge.models import (
 )
 from apps.mcp import tools
 from apps.mcp.types import ToolExecutionContext
-from apps.rag.ai_orchestrator import KnowledgeSearchResult, KnowledgeSnippet
+from apps.rag.knowledge_search import KnowledgeSearchResult, KnowledgeSnippet
 from core.tenancy import tenant_context
 
 

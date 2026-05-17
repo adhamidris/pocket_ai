@@ -25,13 +25,13 @@ from typing import TYPE_CHECKING, Any, Mapping, MutableMapping, Optional, Sequen
 from apps.rag.query_classifier import QueryClassification, QueryIntent
 
 if TYPE_CHECKING:
-    from apps.rag.ai_orchestrator import (
+    from apps.rag.contracts import (
         AliasSearchResult,
         ChunkResult,
         KnowledgeSearchResult,
-        KnowledgeSearchService,
         QueryTraits,
     )
+    from apps.rag.knowledge_search import KnowledgeSearchService
 
 logger = logging.getLogger(__name__)
 

@@ -1111,30 +1111,6 @@ def _with_ui_language(request: HttpRequest, metadata: Mapping[str, object] | Non
     return payload
 
 
-def _business_prefers_mcp(business: BusinessProfile | None, *, conversation=None) -> bool:
-    """
-    Evaluate whether a business should use the MCP orchestrator.
-
-    Business metadata can override the global setting via the key
-    `mcp_orchestrator_enabled`. When unset, the global
-    RAG_USE_MCP_ORCHESTRATOR flag is used.
-    """
-
-    global_default = getattr(settings, "RAG_USE_MCP_ORCHESTRATOR", False)
-    # Allow per-conversation escalation to the MCP orchestrator when a portal
-    # feature requires tool calling (e.g., uploaded files).
-    convo_meta = getattr(conversation, "metadata", None)
-    if isinstance(convo_meta, dict) and convo_meta.get("mcp_required"):
-        return True
-    if business is None:
-        return global_default
-    metadata = business.metadata if isinstance(business.metadata, dict) else {}
-    override = metadata.get("mcp_orchestrator_enabled")
-    if override is None:
-        return global_default
-    return bool(override)
-
-
 def _business_to_dict(summary: PortalBusinessSummary) -> dict:
     return {"id": str(summary.id), "name": summary.name, "slug": summary.slug}
 

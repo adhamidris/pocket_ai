@@ -10,8 +10,9 @@ orchestrator path used by the chat portal.
   - No silent fallback prompt is used. Unsupported or missing model IDs should fail loudly.
 - **MCP wrapper prompts**: `apps/mcp/prompts.py`
   - System message assembly, planner prompt, and final answer prompt.
-- **Legacy prompt builder** (non‑portal): `apps/llm/ai_prompt_builder.py`
-  - Only relevant for legacy/non‑MCP flows (e.g., some voice/post‑call processing).
+- **PromptBundle builder**: `apps/llm/ai_prompt_builder.py`
+  - Shared support code for non-portal flows and postflight planning helpers.
+  - Do not treat this file as the active portal system prompt source of truth.
 
 ## Agentic v2 Read Contract (Enabled)
 
@@ -46,7 +47,7 @@ Workflow tools (agentic mode allowlist):
 `apps/mcp/prompts.py::build_system_message`:
 - If **rag_agentic_mode** feature flag is on **and** `MCP_AGENTIC_READ_V2_ENABLED=true`,
   MCP uses the **agentic v2 per‑model prompt**.
-- Otherwise it falls back to the non‑agentic MCP system prompt.
+- Otherwise it raises a runtime error. The non-agentic MCP prompt path has been removed.
 
 `build_model_specific_prompt` logs which template was selected (by model id).
 

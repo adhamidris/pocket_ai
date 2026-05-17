@@ -43,11 +43,11 @@ Out of scope:
   - `pocketai_django/apps/llm/llm_provider.py`
 
 - **RAG / Knowledge Layer**
-  - Search + read logic: `KnowledgeSearchService` in `pocketai_django/apps/rag/ai_orchestrator.py`
+  - Search public surface: `KnowledgeSearchService` in `pocketai_django/apps/rag/knowledge_search.py`
   - MCP tools wrapping that service: `pocketai_django/apps/mcp/tools.py`
 
-- **Planner & Actions**
-  - Planner JSON pass + ActionDispatcher in `apps/rag/ai_orchestrator.py`
+- **Planner & Tool Actions**
+  - MCP tool-calling loop, approvals, and response assembly in `apps/mcp/orchestrator.py`
 
 ---
 
@@ -118,9 +118,9 @@ In agentic mode, tables are read via `read_knowledge`:
 
 ---
 
-## Planner & Post‑actions
+## Tool Planning
 
-After streaming, `run_planner_only` produces a JSON payload:
+During a turn, `McpOrchestratorService` plans tool calls and streams events:
 
 ```json
 {
@@ -130,4 +130,4 @@ After streaming, `run_planner_only` produces a JSON payload:
 }
 ```
 
-Actions are executed asynchronously by `ActionDispatcher`.
+Tool calls are executed through `apps/mcp/tools.py` and remote MCP connectors.

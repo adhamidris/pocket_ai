@@ -19,7 +19,3 @@
 - `ops/datadog_mcp_grouped_retrieval_dashboard.json` — importable Datadog dashboard template
 - `voice/` — **dev-only** voice stack (single Phase 1+ runtime path)
 - `prompts/` — prompt catalog
-
-## Archived / Legacy
-- `archive/` — old prompts, architecture investigations, mobile docs, legacy product flows
-- Repo root `archive/notes/` — investigation notes and experiments

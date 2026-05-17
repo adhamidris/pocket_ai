@@ -19,7 +19,7 @@ class RagConfig(AppConfig):
         # Local/dev/prod warmup remains available via `warm_embeddings` and docker entrypoints.
         if "test" in sys.argv:
             return
-        if not getattr(settings, "RAG_USE_MCP_ORCHESTRATOR", False):
+        if not getattr(settings, "RAG_WARM_EMBEDDINGS_ON_STARTUP", True):
             return
         try:
             from .embeddings import warm_rag_embeddings

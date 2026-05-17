@@ -28,7 +28,7 @@ from apps.knowledge.models import (
     KnowledgeUpload,
     KnowledgeUploadFile,
 )
-from apps.rag.ai_orchestrator import KnowledgeSearchService, KnowledgeSnippet
+from apps.rag.knowledge_search import KnowledgeSearchService, KnowledgeSnippet
 from apps.rag.evaluation.datasets import GOLDEN_SETS, GoldenQuery, GoldenSet, GoldenFixture
 from apps.knowledge.knowledge_ingestion import KnowledgeIngestionService, queue_ingestion_job
 from apps.rag.quality_monitor import QualityMonitor
