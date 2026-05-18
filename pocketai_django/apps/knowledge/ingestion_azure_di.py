@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 import random
 import re
 import time
 from typing import Any, Iterable, Mapping, Sequence
+from urllib.parse import urlencode
 
 import requests
 
@@ -24,7 +26,28 @@ from apps.knowledge.ingestion_contracts import (
     TableRowPayload,
     _union_bbox,
 )
+from apps.knowledge.ingestion_signals import TABLE_SCOPE_CONTRACT_VERSION, _column_numeric_signal
 from apps.knowledge.ingestion_table_detection import TableDetector
+from apps.knowledge.table_scope_engine import (
+    SCOPE_ENGINE_VERSION,
+    build_scope_table_profile,
+    canonical_scope_reason,
+    infer_scope_for_row,
+    legacy_scope_reason,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class _ScopeMetadata(dict):
+    def __init__(self, *args, legacy_aliases: Mapping[str, Any] | None = None, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._legacy_aliases = dict(legacy_aliases or {})
+
+    def get(self, key: Any, default: Any = None) -> Any:
+        if key in self._legacy_aliases and key not in self:
+            return self._legacy_aliases[key]
+        return super().get(key, default)
 
 
 # Azure Document Intelligence table extraction (optional, REST-based)
@@ -599,6 +622,16 @@ class AzureDocumentIntelligenceExtractor:
             qualifier_columns = list(dict.fromkeys(qualifier_columns))
 
             row_meta = dict(row.metadata or {})
+            applicability_mode = legacy_scope_reason(scope_reason)
+            if applicability_mode == "explicit_span":
+                applicability_mode = "explicit_cells"
+            legacy_applies_to_labels = applies_to_labels
+            if scope_reason == "scope_explicit_span" and len(applies_to_labels) < len(scope_dimension_labels):
+                legacy_applies_to_labels = scope_dimension_labels
+            legacy_aliases = {
+                "applicability_mode": applicability_mode,
+                "applies_to_columns": legacy_applies_to_labels,
+            }
             row_meta.update(
                 {
                     "table_scope_contract_version": TABLE_SCOPE_CONTRACT_VERSION,
@@ -615,6 +648,7 @@ class AzureDocumentIntelligenceExtractor:
                     "scope_value": representative_value or "",
                 }
             )
+            row_meta = _ScopeMetadata(row_meta, legacy_aliases=legacy_aliases)
 
             updated_rows.append(
                 TableRowPayload(

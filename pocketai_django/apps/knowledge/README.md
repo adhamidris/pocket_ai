@@ -11,7 +11,9 @@ not own its lifecycle.
 Directory Map
 -------------
 - knowledge_ingestion.py
-  Main ingestion pipeline (files/urls/text), chunking, embeddings, dataset mode.
+  Compatibility facade for legacy imports; new code should import specific modules directly.
+- ingestion_service.py
+  KnowledgeIngestionService composition and service initialization/configuration.
 - ingestion_contracts.py
   Shared ingestion payload dataclasses and ingestion exceptions.
 - ingestion_ocr.py
@@ -28,6 +30,50 @@ Directory Map
   Geometry-based PDF table reconstruction from positioned spans.
 - ingestion_jobs.py
   Ingestion job queue creation, result payloads, and queue health snapshots.
+- ingestion_job_processing.py
+  Ingestion and embedding job execution mixin.
+- ingestion_extraction.py
+  Upload extraction orchestration for file, text, link, and persisted artifacts.
+- ingestion_docx_tables.py
+  DOCX table extraction and DOCX-specific table cleanup helpers.
+- ingestion_pdf_table_geometry.py
+  PDF table bbox geometry, table-region overlap annotation, and numeric signal helpers.
+- ingestion_pdf_table_routing.py
+  PDF table extractor routing and candidate fallback policy.
+- ingestion_pdf_table_reconstruction.py
+  Collapsed native-text PDF table reconstruction and structural acceptance.
+- ingestion_pdf_table_promotion.py
+  PDF table promotion gating, page chrome suppression, and consumed-block restoration.
+- ingestion_table_selection.py
+  Table candidate scoring, diagnostics, and extractor selection.
+- ingestion_table_vlm_repair.py
+  VLM table repair, rendering, and guardrail validation.
+- ingestion_link_extraction.py
+  Link scraping extraction and small HTML/encoding helpers.
+- ingestion_persistence.py
+  Ingestion persistence orchestration, quality reports, and post-commit indexing hooks.
+- ingestion_chunks.py
+  Chunk construction, quality filtering, canonical metadata, and residual reconciliation.
+- ingestion_entities.py
+  Evidence grouping, entity chunk payloads, and entity/alias persistence.
+- ingestion_embeddings.py
+  Embedding job scheduling, fallback embedding generation, and embedding metadata.
+- ingestion_table_quality.py
+  Table quality scoring and decorative/noisy table detection.
+- ingestion_table_postprocessing.py
+  Table row stitching, header propagation, duplicate suppression, and scope refresh.
+- ingestion_tabular_files.py
+  CSV/TSV/XLSX/XLS/JSONL extraction, dataset mode storage, and key indexes.
+- ingestion_json_files.py
+  JSON entity extraction and JSON-to-table/text payload conversion.
+- ingestion_table_limits.py
+  Table privacy rules, row/column limits, truncation metrics, and column normalization.
+- ingestion_table_semantics.py
+  Table column roles, OCR text normalization, scope contracts, and table chunk payloads.
+- ingestion_text_utils.py
+  Generic text file loading, text normalization, clamping, and summary helpers.
+- ingestion_file_formats.py
+  File format detection and PDF/DOCX fallback text extraction.
 - ingestion_signals.py
   Shared ingestion regexes, version constants, and numeric/table signal helpers.
 - ingestion_aliases.py
@@ -115,7 +161,7 @@ Upload
   ↓
 Preflight (knowledge_preflight)
   ↓
-Ingestion (knowledge_ingestion)
+Ingestion (ingestion_service via knowledge_ingestion compatibility facade)
   ↓
 Chunks + Embeddings + Dataset Metadata
 
@@ -152,20 +198,43 @@ Glossary (Quick)
 
 Where To Start (Reading Order)
 ------------------------------
-1) `apps/knowledge/knowledge_ingestion.py`
-2) `apps/knowledge/ingestion_contracts.py`
-3) `apps/knowledge/ingestion_ocr.py`
-4) `apps/knowledge/ingestion_page_renderer.py`
-5) `apps/knowledge/ingestion_table_detection.py`
-6) `apps/knowledge/ingestion_pdfplumber.py`
-7) `apps/knowledge/ingestion_azure_di.py`
-8) `apps/knowledge/ingestion_geometry_tables.py`
-9) `apps/knowledge/ingestion_jobs.py`
-10) `apps/knowledge/ingestion_signals.py`
-11) `apps/knowledge/ingestion_aliases.py`
-12) `apps/knowledge/knowledge_preflight.py`
-13) `apps/knowledge/dataset_cards.py`
-14) `apps/knowledge/privacy.py`
+1) `apps/knowledge/ingestion_service.py`
+2) `apps/knowledge/knowledge_ingestion.py`
+3) `apps/knowledge/ingestion_contracts.py`
+4) `apps/knowledge/ingestion_ocr.py`
+5) `apps/knowledge/ingestion_page_renderer.py`
+6) `apps/knowledge/ingestion_table_detection.py`
+7) `apps/knowledge/ingestion_pdfplumber.py`
+8) `apps/knowledge/ingestion_azure_di.py`
+9) `apps/knowledge/ingestion_geometry_tables.py`
+10) `apps/knowledge/ingestion_jobs.py`
+11) `apps/knowledge/ingestion_job_processing.py`
+12) `apps/knowledge/ingestion_extraction.py`
+13) `apps/knowledge/ingestion_docx_tables.py`
+14) `apps/knowledge/ingestion_pdf_table_geometry.py`
+15) `apps/knowledge/ingestion_pdf_table_routing.py`
+16) `apps/knowledge/ingestion_pdf_table_reconstruction.py`
+17) `apps/knowledge/ingestion_pdf_table_promotion.py`
+18) `apps/knowledge/ingestion_table_selection.py`
+19) `apps/knowledge/ingestion_table_vlm_repair.py`
+20) `apps/knowledge/ingestion_link_extraction.py`
+21) `apps/knowledge/ingestion_persistence.py`
+22) `apps/knowledge/ingestion_chunks.py`
+23) `apps/knowledge/ingestion_entities.py`
+24) `apps/knowledge/ingestion_embeddings.py`
+25) `apps/knowledge/ingestion_table_quality.py`
+26) `apps/knowledge/ingestion_table_postprocessing.py`
+27) `apps/knowledge/ingestion_tabular_files.py`
+28) `apps/knowledge/ingestion_json_files.py`
+29) `apps/knowledge/ingestion_table_limits.py`
+30) `apps/knowledge/ingestion_table_semantics.py`
+31) `apps/knowledge/ingestion_text_utils.py`
+32) `apps/knowledge/ingestion_file_formats.py`
+33) `apps/knowledge/ingestion_signals.py`
+34) `apps/knowledge/ingestion_aliases.py`
+35) `apps/knowledge/knowledge_preflight.py`
+36) `apps/knowledge/dataset_cards.py`
+37) `apps/knowledge/privacy.py`
 
 High-Level Architecture
 -----------------------
