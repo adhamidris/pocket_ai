@@ -16,8 +16,28 @@ Directory Map
   Main tool loop, streaming, budgets, memory summary, and prompt compaction.
 - prompts.py
   System prompt builder + transcript assembly rules for MCP.
+- tool_definitions.py
+  LLM-facing tool schemas and runtime schema limits.
 - tools.py
-  Tool schemas + handlers (knowledge search/read, email, gateway, PDFs).
+  Tool registry + handlers not yet split out.
+- gateway_tools.py
+  External MCP gateway search/call handlers.
+- file_tools.py
+  Conversation file search/read handlers and PDF utility handlers.
+- email_tools.py
+  Email account resolution and Gmail/Microsoft email handlers.
+- native_integration_tools.py
+  Calendar, Drive, OneDrive, Slack, and HubSpot native integration handlers.
+- integration_tool_catalog.py
+  Native/email integration catalog and enablement policy helpers.
+- agent_run_tools.py
+  Background AgentRun request/list/get/continue handlers.
+- task_tools.py
+  Persistent task automation list/draft/update/activate/pause handlers.
+- memory_tools.py
+  Memory search/save/forget handlers.
+- context_retrieval_tools.py
+  Long-chat compacted context retrieval handler.
 - types.py
   Shared types/exceptions + ToolExecutionContext.
 - sanitizer.py
@@ -59,7 +79,7 @@ Workflow tools:
 
 Tool Schema Reference
 ---------------------
-Schema lives in `apps/mcp/tools.py` as `TOOL_DEFINITIONS`.
+Schema lives in `apps/mcp/tool_definitions.py` as `TOOL_DEFINITIONS`.
 Use it as the canonical source of parameter names, enums, and limits.
 
 Examples
