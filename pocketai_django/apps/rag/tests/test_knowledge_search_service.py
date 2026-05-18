@@ -65,7 +65,7 @@ class KnowledgeSearchServiceAutoDecisionContractTests(SimpleTestCase):
 
 
 class KnowledgeSearchServiceRoutingTests(SimpleTestCase):
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_route_chunk_hits_keeps_text_and_table_candidates_for_table_intent(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         table_chunk = mock.Mock(metadata={"index_type": "table", "is_table_chunk": True})
@@ -192,7 +192,7 @@ class KnowledgeSearchServicePhaseSixSemanticsTests(SimpleTestCase):
             source_diagnostics={"table_title": service_name},
         )
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_apply_phase6_semantics_sets_conflict_clarification(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         traits = service.analyze_query("plus loan service fees")
@@ -218,7 +218,7 @@ class KnowledgeSearchServicePhaseSixSemanticsTests(SimpleTestCase):
         self.assertFalse(bool(contract.get("needs_clarification")))
         self.assertTrue(bool(contract.get("conflict_detected")))
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_apply_phase6_semantics_sets_no_result_reason_not_applicable(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         traits = service.analyze_query("plus premium segment fees")
@@ -238,7 +238,7 @@ class KnowledgeSearchServicePhaseSixSemanticsTests(SimpleTestCase):
         contract = diagnostics.get("auto_decision_contract") or {}
         self.assertEqual(contract.get("no_result_reason"), "not_applicable_to_segment")
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_apply_phase6_semantics_sets_no_result_reason_insufficient_evidence(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         traits = service.analyze_query("plus customer fees")
@@ -258,7 +258,7 @@ class KnowledgeSearchServicePhaseSixSemanticsTests(SimpleTestCase):
         contract = diagnostics.get("auto_decision_contract") or {}
         self.assertEqual(contract.get("no_result_reason"), "insufficient_evidence")
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_apply_phase6_semantics_sets_no_result_reason_not_found(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         traits = service.analyze_query("fees for unknown segment")
@@ -299,7 +299,7 @@ class KnowledgeSearchServiceAutoScoringTests(SimpleTestCase):
         chunk.content = content
         return chunk
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_dual_path_scoring_prefers_table_when_specific_signals_are_strong(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         table_hit = ChunkResult(
@@ -332,7 +332,7 @@ class KnowledgeSearchServiceAutoScoringTests(SimpleTestCase):
         self.assertGreaterEqual(scores["auto_table_signal_strong_hits"], 1)
         self.assertGreaterEqual(scores["auto_table_signal_specific_hits"], 1)
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_dual_path_scoring_prefers_text_when_semantic_signal_is_stronger(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         table_hit = ChunkResult(
@@ -363,7 +363,7 @@ class KnowledgeSearchServiceAutoScoringTests(SimpleTestCase):
 
 
 class KnowledgeSearchServiceRegressionContractTests(SimpleTestCase):
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_public_confidence_ignores_recency_only_inflation(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         upload = mock.Mock()
@@ -391,7 +391,7 @@ class KnowledgeSearchServiceRegressionContractTests(SimpleTestCase):
 
         self.assertEqual(snippet.confidence_score, 0.12)
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_chunk_hits_reuses_free_text_rerank_output(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         business = mock.Mock()
@@ -441,7 +441,7 @@ class KnowledgeSearchServiceRegressionContractTests(SimpleTestCase):
         self.assertEqual(diagnostics.get("rerank_duration_ms"), 321)
         self.assertTrue(diagnostics.get("chunk_hits_rerank_reused"))
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_chunk_hits_preserves_reranked_head_before_mmr(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         business = mock.Mock()
@@ -508,7 +508,7 @@ class KnowledgeSearchServiceRegressionContractTests(SimpleTestCase):
 
 
 class KnowledgeSearchServiceAutoArbitrationTests(SimpleTestCase):
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_arbitration_selects_table_when_margin_is_clear(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         arbitration = service._arbitrate_auto_mode(
@@ -524,7 +524,7 @@ class KnowledgeSearchServiceAutoArbitrationTests(SimpleTestCase):
         self.assertFalse(arbitration["auto_arbitration_needs_clarification"])
         self.assertTrue(arbitration["auto_arbitration_table_intent"])
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_arbitration_selects_text_when_margin_is_clear(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         arbitration = service._arbitrate_auto_mode(
@@ -540,7 +540,7 @@ class KnowledgeSearchServiceAutoArbitrationTests(SimpleTestCase):
         self.assertFalse(arbitration["auto_arbitration_needs_clarification"])
         self.assertFalse(arbitration["auto_arbitration_table_intent"])
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_arbitration_marks_ambiguous_scores_for_clarification(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         arbitration = service._arbitrate_auto_mode(
@@ -556,7 +556,7 @@ class KnowledgeSearchServiceAutoArbitrationTests(SimpleTestCase):
         self.assertFalse(arbitration["auto_arbitration_needs_clarification"])
         self.assertTrue(arbitration["auto_arbitration_table_intent"])
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_dynamic_ambiguity_question_uses_table_and_text_evidence_labels(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         table_chunk = mock.Mock()
@@ -617,7 +617,7 @@ class KnowledgeSearchServiceScopeSummaryTests(SimpleTestCase):
         chunk.upload_id = upload_id or uuid.uuid4()
         return chunk
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_scope_summary_detects_broad_fee_scope_before_clipping(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         doc_a = uuid.uuid4()
@@ -684,7 +684,7 @@ class KnowledgeSearchServiceScopeSummaryTests(SimpleTestCase):
         self.assertTrue(summary["is_broad_scope"])
         self.assertGreaterEqual(len(summary["category_counts"]), 3)
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_scope_summary_marks_narrow_scope(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         doc_a = uuid.uuid4()
@@ -732,7 +732,7 @@ class KnowledgeSearchServiceScopeSummaryTests(SimpleTestCase):
         )
         self.assertEqual(normalized_table_suffix, "cheques")
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_scope_categories_for_contract_returns_ranked_full_list(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         scope_summary = {
@@ -819,7 +819,7 @@ class KnowledgeSearchServiceAliasTests(TestCase):
             alias_search_vector="trip 101",
         )
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_alias_short_circuit_returns_neighbor_snippet(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         traits = service.analyze_query("TRIP-101")
@@ -845,7 +845,7 @@ class KnowledgeSearchServiceAliasTests(TestCase):
         self.assertEqual(result.diagnostics.get("token_count"), traits.token_count)
         self.assertTrue(result.diagnostics.get("identifier_like"))
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_alias_fuzzy_hits_flow_into_hybrid(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         KnowledgeAlias.objects.filter(business_profile=self.business).update(
@@ -869,7 +869,7 @@ class KnowledgeSearchServiceAliasTests(TestCase):
         self.assertEqual(result.status, "ok")
         self.assertTrue(result.snippets)
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_alias_search_handles_noisy_multiword_queries(self, _build_embeddings) -> None:
         chunk = KnowledgeUploadChunk.objects.create(
             upload=self.upload,
@@ -910,7 +910,7 @@ class KnowledgeSearchServiceAliasTests(TestCase):
         self.assertEqual(result.status, "ok")
         self.assertTrue(any(snippet.chunk_id == chunk.id for snippet in result.snippets))
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_not_found_status_when_no_chunks(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         empty_registration = RegistrationSession.objects.create(user=self.user)
@@ -991,7 +991,7 @@ class KnowledgeSearchServiceTableTests(TestCase):
                 },
             )
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_table_direct_path_returns_row_snippet(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         result = service.search(
@@ -1011,7 +1011,7 @@ class KnowledgeSearchServiceTableTests(TestCase):
         self.assertEqual(snippet.chunk_id, self.row_chunk.id)
         self.assertEqual(snippet.id, self.row_chunk.id)
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_table_specific_fallback_keeps_table_hits_when_no_text_hits(self, _build_embeddings) -> None:
         # Add table chunks (as produced by ingestion schema chunking) so hybrid retrieval has candidates.
         KnowledgeUploadChunk.objects.create(
@@ -1055,7 +1055,7 @@ class KnowledgeSearchServiceTableTests(TestCase):
             {"mixed_primary_table_biased", "mixed_primary_table_only"},
         )
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_parallel_rrf_does_not_force_context_hits(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         with tenant_context(self.business.id):
@@ -1140,7 +1140,7 @@ class KnowledgeSearchServiceTableTests(TestCase):
         self.assertTrue(captured.get("vector"))
         self.assertTrue(all(snippet.is_table_chunk for snippet in captured.get("vector", [])))
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_parallel_rrf_requires_table_intent(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         with tenant_context(self.business.id):
@@ -1235,7 +1235,7 @@ class KnowledgeSearchServiceRegressionTests(TestCase):
             metadata={"entity_name": entity_name, "entity_type": entity_type},
         )
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_chatty_company_query_hits_hybrid(self, _build_embeddings) -> None:
         chunk = self._chunk("Opportunities at Michael Page across finance teams.", "Michael Page", "company")
         result = self.service.search(
@@ -1246,12 +1246,12 @@ class KnowledgeSearchServiceRegressionTests(TestCase):
         self.assertTrue(any(snippet.chunk_id == chunk.id for snippet in result.snippets))
         self.assertEqual(result.diagnostics.get("path"), "hybrid")
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_table_row_cap_honors_requested_limit(self, _build_embeddings) -> None:
         cap = self.service._table_row_result_cap_for_business(self.business, requested=10)
         self.assertGreaterEqual(cap, 10)
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_table_row_cap_uses_business_override_as_floor(self, _build_embeddings) -> None:
         self.business.metadata = {
             "rag_overrides": {
@@ -1262,7 +1262,7 @@ class KnowledgeSearchServiceRegressionTests(TestCase):
         cap = self.service._table_row_result_cap_for_business(self.business, requested=10)
         self.assertEqual(cap, 25)
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_base_queryset_keeps_chunks_with_missing_search_tier(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         upload = KnowledgeUpload.objects.create(
@@ -1302,7 +1302,7 @@ class KnowledgeSearchServiceRegressionTests(TestCase):
         self.assertIn(primary_table_chunk.id, chunk_ids)
         self.assertNotIn(drill_down_chunk.id, chunk_ids)
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_table_intent_not_triggered_by_generic_fee_word_without_table_signals(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         traits = service.analyze_query("What is the fee for this?")
@@ -1310,7 +1310,7 @@ class KnowledgeSearchServiceRegressionTests(TestCase):
             table_context = service._table_query_context(self.business, traits)
         self.assertFalse(table_context.get("has_intent"))
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_chatty_plan_query_hits_hybrid(self, _build_embeddings) -> None:
         chunk = self._chunk("Gold Plan annual fee is $199 with bonus points.", "Gold Plan", "plan")
         result = self.service.search(
@@ -1320,7 +1320,7 @@ class KnowledgeSearchServiceRegressionTests(TestCase):
         self.assertEqual(result.status, "ok")
         self.assertTrue(any(snippet.chunk_id == chunk.id for snippet in result.snippets))
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_chatty_clinic_query_hits_hybrid(self, _build_embeddings) -> None:
         chunk = self._chunk("Helio Health Clinic offers primary care and pediatrics.", "Helio Health Clinic", "clinic")
         result = self.service.search(
@@ -1330,7 +1330,7 @@ class KnowledgeSearchServiceRegressionTests(TestCase):
         self.assertEqual(result.status, "ok")
         self.assertTrue(any(snippet.chunk_id == chunk.id for snippet in result.snippets))
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_chatty_product_query_hits_hybrid(self, _build_embeddings) -> None:
         chunk = self._chunk("Nebula Card Metal has 5x bonus and lounge access.", "Nebula Card Metal", "product")
         result = self.service.search(
@@ -1340,7 +1340,7 @@ class KnowledgeSearchServiceRegressionTests(TestCase):
         self.assertEqual(result.status, "ok")
         self.assertTrue(any(snippet.chunk_id == chunk.id for snippet in result.snippets))
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_table_fallback_runs_for_job_queries(self, _build_embeddings) -> None:
         job_registration = RegistrationSession.objects.create(user=self.user)
         job_business = BusinessProfile.objects.create(
@@ -1658,7 +1658,7 @@ class KnowledgeSearchServiceClarificationTests(TestCase):
             industry="operations",
         )
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_low_confidence_intent_does_not_block_with_needs_clarification(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         classification = QueryClassification(
@@ -1719,7 +1719,7 @@ class KnowledgeSearchServiceClarificationTests(TestCase):
         self.assertEqual(auto_contract.get("margin"), 0.0)
         chunk_hits.assert_called()
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_ambiguous_auto_scores_do_not_block_with_needs_clarification(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         classification = QueryClassification(
@@ -1814,7 +1814,7 @@ class KnowledgeSearchServicePhaseSixValidationTests(TestCase):
             industry="healthcare",
         )
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_table_context_uses_arabic_lexicon_for_aggregate_intent(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         traits = service.analyze_query("ما إجمالي المبيعات؟")
@@ -1853,7 +1853,7 @@ class KnowledgeSearchServicePhaseSixValidationTests(TestCase):
         self.assertEqual(table_context.get("tenant_lexicon_attribute_terms_count"), 1)
         self.assertFalse(table_context.get("requires_clarification"))
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_table_context_passes_tenant_id_to_classifier(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         traits = service.analyze_query("list all records")
@@ -1890,7 +1890,7 @@ class KnowledgeSearchServicePhaseSixValidationTests(TestCase):
 
         self.assertEqual(captured.get("tenant_id"), str(self.business.id))
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_same_query_does_not_cross_tenant_bleed_lexicon_entity_names(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         query = "list all service requests"
@@ -1932,7 +1932,7 @@ class KnowledgeSearchServicePhaseSixValidationTests(TestCase):
         self.assertIn("service request", [item.lower() for item in class_a.entity_names])
         self.assertNotIn("service request", [item.lower() for item in class_b.entity_names])
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_table_context_does_not_invoke_llm_intent_fallback(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
         traits = service.analyze_query("assessment fee personal loan")
@@ -2012,7 +2012,7 @@ class KnowledgeSearchServiceTableContextGuardrailTests(TestCase):
             display_name="Guardrail Fees",
         )
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_table_context_ignores_single_char_columns_and_generic_row_labels_for_specific_lookup(
         self,
         _build_embeddings,
@@ -2060,7 +2060,7 @@ class KnowledgeSearchServiceTableContextGuardrailTests(TestCase):
         self.assertEqual(table_context["matched_columns_query_raw"], {"m"})
         self.assertEqual(table_context["matched_row_labels_raw"], {"fee", "international"})
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_table_context_keeps_generic_column_signal_for_broad_enumeration_when_tables_dominate(
         self,
         _build_embeddings,
@@ -2105,7 +2105,7 @@ class KnowledgeSearchServiceTableContextGuardrailTests(TestCase):
         self.assertTrue(table_context["has_intent"])
         self.assertTrue(table_context["generic_column_signal"])
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_table_context_does_not_treat_single_exploratory_row_label_as_table_intent(
         self,
         _build_embeddings,
@@ -2155,7 +2155,7 @@ class KnowledgeSearchServiceTableContextGuardrailTests(TestCase):
         self.assertFalse(table_context["row_label_intent"])
         self.assertFalse(table_context["has_intent"])
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_table_residual_text_chunks_receive_stronger_penalty_under_table_intent(
         self,
         _build_embeddings,
@@ -2220,7 +2220,7 @@ class KnowledgeSearchServiceTableContextGuardrailTests(TestCase):
         self.assertGreater(table_penalty, neutral_penalty)
         self.assertLess(table_residual.rerank_score, neutral_residual.rerank_score)
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_table_residual_rescue_applies_when_canonical_specific_match_is_missing(
         self,
         _build_embeddings,
@@ -2276,7 +2276,7 @@ class KnowledgeSearchServiceTableContextGuardrailTests(TestCase):
         self.assertEqual(rerank_diag.get("table_residual_rescue_reason"), "promoted")
         self.assertGreater(float(residual_breakdown.get("table_residual_rescue_bonus") or 0.0), 0.0)
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_table_residual_rescue_skips_when_canonical_specific_match_exists(
         self,
         _build_embeddings,
@@ -2339,7 +2339,7 @@ class KnowledgeSearchServiceTableContextGuardrailTests(TestCase):
         )
         self.assertEqual(float(residual_breakdown.get("table_residual_rescue_bonus") or 0.0), 0.0)
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_table_residual_rescue_applies_for_broad_enumerate_queries(
         self,
         _build_embeddings,
@@ -2398,7 +2398,7 @@ class KnowledgeSearchServiceTableContextGuardrailTests(TestCase):
         self.assertEqual(rerank_diag.get("table_residual_rescue_reason"), "promoted")
         self.assertGreater(float(supporting_breakdown.get("table_residual_rescue_bonus") or 0.0), 0.0)
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_structural_table_rows_are_penalized_for_specific_value_queries(
         self,
         _build_embeddings,
@@ -2482,7 +2482,7 @@ class KnowledgeSearchServiceTableContextGuardrailTests(TestCase):
         self.assertGreater(float(structural_breakdown.get("table_structural_penalty") or 0.0), 0.0)
         self.assertEqual(float(structural_breakdown.get("table_header_bonus") or 0.0), 0.0)
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_structural_table_rows_are_detected_from_content_when_scope_metadata_is_missing(
         self,
         _build_embeddings,
@@ -2557,7 +2557,7 @@ class KnowledgeSearchServiceTableContextGuardrailTests(TestCase):
         self.assertGreater(int(structural_ranked.diagnostics.get("structural_pair_echo_count") or 0), 0)
         self.assertGreater(float(structural_breakdown.get("table_structural_penalty") or 0.0), 0.0)
 
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service", return_value=None)
     def test_section_aware_reranking_prefers_matching_section_headings(
         self,
         _build_embeddings,

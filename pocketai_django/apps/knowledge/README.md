@@ -12,6 +12,26 @@ Directory Map
 -------------
 - knowledge_ingestion.py
   Main ingestion pipeline (files/urls/text), chunking, embeddings, dataset mode.
+- ingestion_contracts.py
+  Shared ingestion payload dataclasses and ingestion exceptions.
+- ingestion_ocr.py
+  OCR callable setup and low-density PDF OCR reconciliation.
+- ingestion_page_renderer.py
+  Layout-aware PDF/DOCX/text page rendering.
+- ingestion_table_detection.py
+  Heuristic table block detection and table cell normalization.
+- ingestion_pdfplumber.py
+  Optional pdfplumber table extraction and default table settings.
+- ingestion_azure_di.py
+  Optional Azure Document Intelligence table extraction and retry handling.
+- ingestion_geometry_tables.py
+  Geometry-based PDF table reconstruction from positioned spans.
+- ingestion_jobs.py
+  Ingestion job queue creation, result payloads, and queue health snapshots.
+- ingestion_signals.py
+  Shared ingestion regexes, version constants, and numeric/table signal helpers.
+- ingestion_aliases.py
+  Alias and identifier extraction constants.
 - knowledge_preflight.py
   Fast preflight scan to classify uploads + surface limits.
 - documents.py
@@ -133,9 +153,19 @@ Glossary (Quick)
 Where To Start (Reading Order)
 ------------------------------
 1) `apps/knowledge/knowledge_ingestion.py`
-2) `apps/knowledge/knowledge_preflight.py`
-3) `apps/knowledge/dataset_cards.py`
-4) `apps/knowledge/privacy.py`
+2) `apps/knowledge/ingestion_contracts.py`
+3) `apps/knowledge/ingestion_ocr.py`
+4) `apps/knowledge/ingestion_page_renderer.py`
+5) `apps/knowledge/ingestion_table_detection.py`
+6) `apps/knowledge/ingestion_pdfplumber.py`
+7) `apps/knowledge/ingestion_azure_di.py`
+8) `apps/knowledge/ingestion_geometry_tables.py`
+9) `apps/knowledge/ingestion_jobs.py`
+10) `apps/knowledge/ingestion_signals.py`
+11) `apps/knowledge/ingestion_aliases.py`
+12) `apps/knowledge/knowledge_preflight.py`
+13) `apps/knowledge/dataset_cards.py`
+14) `apps/knowledge/privacy.py`
 
 High-Level Architecture
 -----------------------

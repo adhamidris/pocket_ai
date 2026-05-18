@@ -4865,7 +4865,7 @@ def _search_knowledge_handler(
     ) -> Mapping[str, object]:
         # Thin MCP wrapper: execute a single RAG search and translate the result
         # into MCP's stable tool contract. Retrieval planning, ranking, fusion,
-        # and fallback decisions must remain in apps.rag.ai_orchestrator.
+        # and fallback decisions must remain in apps.rag.knowledge_search.
         intent_info = intent_info_override or _query_intent(query_text)
         intent = intent_override or intent_info.get("intent")
         normalized_query = query_text.lower()

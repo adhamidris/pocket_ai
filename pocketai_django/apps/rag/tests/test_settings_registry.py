@@ -1,5 +1,5 @@
-"""Guardrail test: every ``getattr(settings, "RAG_*")`` key used in the
-orchestrator must have a corresponding attribute on
+"""Guardrail test: every ``getattr(settings, "RAG_*")`` key used in active RAG
+service modules must have a corresponding attribute on
 ``django.conf.settings``.
 
 This test prevents "dead knob" drift — where a developer adds a new
@@ -45,18 +45,24 @@ def _extract_rag_setting_keys(source_path: Path) -> set[str]:
 
 
 class TestRagSettingsRegistry(SimpleTestCase):
-    """Every ``RAG_*`` key referenced in ``ai_orchestrator.py`` must exist on
+    """Every ``RAG_*`` key referenced in active service modules must exist on
     ``django.conf.settings`` so that ``.env`` overrides actually take effect.
     """
 
     def test_all_orchestrator_rag_keys_exist_in_settings(self):
-        orchestrator_path = (
-            Path(__file__).resolve().parent.parent / "ai_orchestrator.py"
+        rag_dir = Path(__file__).resolve().parent.parent
+        source_paths = (
+            rag_dir / "knowledge_search_service.py",
+            rag_dir / "search_config.py",
+            rag_dir / "search_pipeline.py",
         )
-        self.assertTrue(orchestrator_path.exists(), f"Cannot find {orchestrator_path}")
+        for source_path in source_paths:
+            self.assertTrue(source_path.exists(), f"Cannot find {source_path}")
 
-        keys = _extract_rag_setting_keys(orchestrator_path)
-        self.assertTrue(keys, "Expected to find RAG_* getattr calls in orchestrator")
+        keys: set[str] = set()
+        for source_path in source_paths:
+            keys.update(_extract_rag_setting_keys(source_path))
+        self.assertTrue(keys, "Expected to find RAG_* getattr calls in active RAG service modules")
 
         missing: list[str] = sorted(
             key for key in keys if not hasattr(settings, key)
@@ -64,7 +70,7 @@ class TestRagSettingsRegistry(SimpleTestCase):
         if missing:
             bullet_list = "\n".join(f"  - {k}" for k in missing)
             self.fail(
-                f"{len(missing)} RAG_* key(s) used in ai_orchestrator.py have no "
+                f"{len(missing)} RAG_* key(s) used in active RAG service modules have no "
                 f"entry in settings.py:\n{bullet_list}\n\n"
                 "Add each key to pocketai/settings.py with a matching default "
                 "so that .env overrides take effect."

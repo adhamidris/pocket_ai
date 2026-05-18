@@ -19,7 +19,7 @@ class KnowledgeIngestionFormatTests(SimpleTestCase):
 
 
 class KnowledgeSearchCacheTests(SimpleTestCase):
-    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service")
+    @mock.patch("apps.rag.knowledge_search_service.build_embedding_service")
     def test_query_cache_invalidation_bumps_version(self, build_embedding_service: mock.MagicMock) -> None:
         fake_embed = mock.Mock()
         fake_embed.model = "test-model"
