@@ -107,6 +107,34 @@ class ContentSerializationMixin:
         if metrics.get("truncated_rows") or metrics.get("table_partial_tables"):
             metrics["partial_index"] = True
         return metrics
+    
+    def _structured_counts(self, upload: KnowledgeUpload) -> tuple[int, int]:
+        cache_key = (upload.business_profile_id, upload.id)
+        cached = self._structured_count_cache.get(cache_key)
+        if cached:
+            self._structured_count_cache.move_to_end(cache_key)
+            return cached
+        metadata = upload.ingestion_metadata if isinstance(upload.ingestion_metadata, dict) else {}
+        exports = metadata.get("structured_exports") if isinstance(metadata, dict) else None
+        tables = issues = 0
+        if isinstance(exports, dict):
+            tables = len(exports.get("tables") or [])
+            issues = len(exports.get("issues") or [])
+        else:
+            try:
+                tables = upload.tables.count()
+            except Exception:
+                tables = 0
+            try:
+                issues = upload.issues.count()
+            except Exception:
+                issues = 0
+        counts = (tables, issues)
+        self._structured_count_cache[cache_key] = counts
+        self._structured_count_cache.move_to_end(cache_key)
+        if len(self._structured_count_cache) > self.structured_count_cache_limit:
+            self._structured_count_cache.popitem(last=False)
+        return counts
 
     def _serialize_structured_tables_with_rows(
         self,
