@@ -5,7 +5,7 @@ from typing import Any, Mapping
 
 from apps.knowledge.ingestion.azure_di import AzureDocumentIntelligenceExtractor
 from apps.knowledge.ingestion.contracts import TablePayload, TableRowPayload
-from apps.knowledge.tables.column_roles import (
+from apps.knowledge.tables.semantic.column_roles import (
     COLUMN_ROLE_DESCRIPTOR,
     COLUMN_ROLE_QUALIFIER,
     COLUMN_ROLE_SCOPE_DIMENSION,

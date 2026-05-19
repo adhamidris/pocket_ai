@@ -12,7 +12,7 @@ from django.utils.text import slugify
 
 from core.tenancy import tenant_bypass
 
-from .models import (
+from apps.knowledge.models import (
     KnowledgeIngestionJob,
     KnowledgeUpload,
     KnowledgeUploadChunk,

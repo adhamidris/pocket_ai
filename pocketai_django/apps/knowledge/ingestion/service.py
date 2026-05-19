@@ -89,10 +89,10 @@ from apps.knowledge.ingestion.contracts import (
     TableRowPayload,
     _union_bbox,
 )
-from apps.knowledge.tables.docx import IngestionDocxTablesMixin
+from apps.knowledge.tables.docx_tables.extraction import IngestionDocxTablesMixin
 from apps.knowledge.ingestion.embeddings import IngestionEmbeddingsMixin
 from apps.knowledge.ingestion.entities import IngestionEntitiesMixin
-from apps.knowledge.tables.geometry import GeometryTableReconstructor
+from apps.knowledge.tables.geometry_tools.reconstructor import GeometryTableReconstructor
 from apps.knowledge.ingestion.extraction import IngestionExtractionMixin
 from apps.knowledge.ingestion.file_formats import IngestionFileFormatsMixin
 from apps.knowledge.ingestion.jobs import IngestionJobResult, get_ingestion_queue_health, queue_ingestion_job
@@ -102,10 +102,10 @@ from apps.knowledge.ingestion.link_extraction import IngestionLinkExtractionMixi
 from apps.knowledge.ingestion.ocr import OCRReconciler, create_ocr_reconciler, create_tesseract_ocr_callable
 from apps.knowledge.ingestion.page_renderer import PageRenderer
 from apps.knowledge.ingestion.persistence import IngestionPersistenceMixin
-from apps.knowledge.tables.pdf_geometry import IngestionPdfTableGeometryMixin
-from apps.knowledge.tables.pdf_promotion import IngestionPdfTablePromotionMixin
-from apps.knowledge.tables.pdf_reconstruction import IngestionPdfTableReconstructionMixin
-from apps.knowledge.tables.pdf_routing import IngestionPdfTableRoutingMixin
+from apps.knowledge.tables.pdf.geometry import IngestionPdfTableGeometryMixin
+from apps.knowledge.tables.pdf.promotion import IngestionPdfTablePromotionMixin
+from apps.knowledge.tables.pdf.reconstruction import IngestionPdfTableReconstructionMixin
+from apps.knowledge.tables.pdf.routing import IngestionPdfTableRoutingMixin
 from apps.knowledge.ingestion.pdfplumber import PdfPlumberTableExtractor
 from apps.knowledge.ingestion.signals import (
     COLUMN_ROLE_INFERENCE_VERSION,
@@ -134,12 +134,12 @@ from apps.knowledge.ingestion.signals import (
 )
 from apps.knowledge.tables.selection import IngestionTableSelectionMixin
 from apps.knowledge.tables.detection import TableDetector
-from apps.knowledge.tables.postprocessing import IngestionTablePostprocessingMixin
+from apps.knowledge.tables.postprocess.aggregator import IngestionTablePostprocessingMixin
 from apps.knowledge.tables.quality import IngestionTableQualityMixin
 from apps.knowledge.tables.limits import IngestionTableLimitsMixin
-from apps.knowledge.tables.semantics import IngestionTableSemanticsMixin
-from apps.knowledge.tables.vlm_repair import IngestionTableVlmRepairMixin
-from apps.knowledge.tables.tabular_files import IngestionTabularFilesMixin
+from apps.knowledge.tables.semantic.aggregator import IngestionTableSemanticsMixin
+from apps.knowledge.tables.vlm.repair import IngestionTableVlmRepairMixin
+from apps.knowledge.tables.tabular.aggregator import IngestionTabularFilesMixin
 from apps.knowledge.ingestion.text_utils import IngestionTextUtilsMixin
 from apps.rag.embeddings import LocalEmbeddingService, build_embedding_service, EmbeddingProviderError
 from apps.accounts.feature_flags import FeatureFlagService
@@ -157,7 +157,7 @@ from apps.knowledge.tables.normalization import (
     sheet_is_allowed,
     summarize_normalization,
 )
-from apps.knowledge.tables.column_roles import (
+from apps.knowledge.tables.semantic.column_roles import (
     COLUMN_ROLE_DESCRIPTOR,
     COLUMN_ROLE_NOTE,
     COLUMN_ROLE_QUALIFIER,
@@ -167,7 +167,7 @@ from apps.knowledge.tables.column_roles import (
     infer_column_roles,
     role_lookup_by_index,
 )
-from apps.knowledge.tables.scope_engine import (
+from apps.knowledge.tables.semantic.scope_engine import (
     SCOPE_ENGINE_VERSION,
     SCOPE_REASON_ABSTAIN,
     build_scope_table_profile,

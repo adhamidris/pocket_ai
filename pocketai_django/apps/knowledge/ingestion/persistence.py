@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import re
-import time
 import uuid
 from typing import Any, Mapping, Sequence
 
@@ -19,13 +18,14 @@ from apps.knowledge.ingestion.contracts import (
     PageBlockPayload,
     PageLayout,
 )
+from apps.knowledge.ingestion.lexicon_auto_learning import IngestionLexiconAutoLearningMixin
+from apps.knowledge.ingestion.quality_report import IngestionQualityReportMixin
+from apps.knowledge.ingestion.search_indexing import IngestionSearchIndexingMixin
 from apps.knowledge.ingestion.text_utils import IngestionTextUtilsMixin
-from apps.knowledge.lexicon.learning import TenantLexiconAutoLearningService
 from apps.knowledge.models import (
     KnowledgeEntity,
     KnowledgeTableColumn,
     KnowledgeUpload,
-    KnowledgeUploadChunk,
     KnowledgeUploadIssue,
     KnowledgeUploadPage,
     KnowledgeUploadPageBlock,
@@ -36,13 +36,16 @@ from apps.knowledge.models import (
 )
 from apps.rag.table_semantics import normalize_column_name
 from apps.rag.quality_monitor import QualityMonitor
-from core.tenancy import tenant_context
 
 
 logger = logging.getLogger(__name__)
 
 
-class IngestionPersistenceMixin:
+class IngestionPersistenceMixin(
+    IngestionLexiconAutoLearningMixin,
+    IngestionSearchIndexingMixin,
+    IngestionQualityReportMixin,
+):
 
 
     @staticmethod
@@ -658,328 +661,3 @@ class IngestionPersistenceMixin:
                 )
             except Exception as exc:  # pragma: no cover - monitoring failures must not block ingestion
                 logger.warning("quality.ingestion.monitor_failed business=%s error=%s", upload.business_profile_id, exc)
-
-    def _auto_learn_tenant_lexicon(
-        self,
-        *,
-        upload: KnowledgeUpload,
-        extraction: ExtractionResult,
-        structured_summary: Mapping[str, Any] | None,
-        ingestion_metadata: Mapping[str, Any] | None,
-        entity_payloads: Sequence[Mapping[str, Any]] | None = None,
-    ) -> dict[str, Any]:
-        if not self.tenant_lexicon_auto_learning_enabled:
-            return {"enabled": False, "term_count": 0, "synonym_count": 0, "language_code": "und"}
-        if self._tenant_lexicon_auto_learning_service is None:
-            self._tenant_lexicon_auto_learning_service = TenantLexiconAutoLearningService()
-        try:
-            stats = self._tenant_lexicon_auto_learning_service.learn_from_ingestion(
-                upload=upload,
-                extraction=extraction,
-                structured_summary=structured_summary,
-                ingestion_metadata=ingestion_metadata,
-                entity_payloads=entity_payloads,
-            )
-            logger.info(
-                "lexicon.autolearn.summary upload=%s business=%s terms=%s synonyms=%s enabled=%s",
-                upload.id,
-                upload.business_profile_id,
-                stats.get("term_count", 0),
-                stats.get("synonym_count", 0),
-                stats.get("enabled", True),
-            )
-            return stats
-        except Exception as exc:  # pragma: no cover - ingestion must stay resilient
-            logger.warning(
-                "lexicon.autolearn.failed upload=%s business=%s error=%s",
-                upload.id,
-                upload.business_profile_id,
-                exc,
-            )
-            return {
-                "enabled": True,
-                "term_count": 0,
-                "synonym_count": 0,
-                "error": str(exc)[:240],
-            }
-
-    def _schedule_azure_search_index_update(
-        self,
-        *,
-        upload: KnowledgeUpload,
-        format_hint: str | None,
-        now: timezone.datetime,
-        previous_chunk_count: int,
-        chunk_objects: Sequence[KnowledgeUploadChunk],
-    ) -> None:
-        """
-        Index freshly ingested chunks into Azure AI Search (P2) after DB commit.
-
-        This is best-effort: ingestion should succeed even if the external index
-        is temporarily unavailable. When Azure search is the active retrieval
-        backend, failures are recorded in upload.ingestion_metadata for visibility.
-        """
-
-        def _on_commit() -> None:
-            try:
-                from apps.rag.azure_ai_search import (
-                    AzureAISearchConfig,
-                    delete_upload,
-                    upsert_upload_chunks,
-                )
-            except Exception:
-                return
-
-            config = AzureAISearchConfig.from_settings()
-            if not config:
-                return
-
-            business_id = getattr(upload, "business_profile_id", None)
-            if not business_id:
-                return
-
-            started = time.perf_counter()
-            status = "ok"
-            error = ""
-            try:
-                with tenant_context(business_id):
-                    title = (upload.display_name or upload.source_name or upload.external_reference or str(upload.id)).strip()
-                    chunk_payloads = [
-                        {
-                            "chunk_id": chunk.id,
-                            "chunk_index": chunk.chunk_index,
-                            "content": chunk.content,
-                            "embedding": chunk.embedding,
-                            "metadata": chunk.metadata,
-                        }
-                        for chunk in chunk_objects
-                    ]
-                if previous_chunk_count:
-                    delete_upload(config=config, upload_id=upload.id, chunk_count=previous_chunk_count)
-                upsert_upload_chunks(
-                    config=config,
-                    business_id=uuid.UUID(str(business_id)),
-                    upload_id=upload.id,
-                    title=title,
-                    format_hint=format_hint,
-                    updated_at=now,
-                    chunks=chunk_payloads,
-                )
-            except Exception as exc:  # pragma: no cover - external dependency
-                status = "failed"
-                error = str(exc)[:300]
-                logger.warning(
-                    "azure_search.index_failed business=%s upload=%s error=%s",
-                    business_id,
-                    upload.id,
-                    error,
-                )
-            finally:
-                duration_ms = int((time.perf_counter() - started) * 1000.0)
-                try:
-                    from apps.rag.knowledge_search import KnowledgeSearchService
-
-                    KnowledgeSearchService.invalidate_result_cache(uuid.UUID(str(business_id)))
-                except Exception:
-                    pass
-                try:
-                    with tenant_context(business_id):
-                        refreshed = KnowledgeUpload.objects.filter(id=upload.id).values("ingestion_metadata").first()
-                        meta = dict((refreshed or {}).get("ingestion_metadata") or {})
-                        meta["azure_search"] = {
-                            "status": status,
-                            "index_name": config.index_name,
-                            "chunk_count": int(getattr(upload, "chunk_count", 0) or 0),
-                            "duration_ms": duration_ms,
-                            "indexed_at": now.isoformat(),
-                            "previous_chunk_count": int(previous_chunk_count),
-                            "error": error,
-                        }
-                        KnowledgeUpload.objects.filter(id=upload.id).update(ingestion_metadata=meta)
-                except Exception:
-                    pass
-
-        try:
-            transaction.on_commit(_on_commit)
-        except Exception:  # pragma: no cover - defensive
-            return
-
-    def _try_update_azure_search_embeddings(
-        self,
-        *,
-        upload: KnowledgeUpload,
-        chunks: Sequence[KnowledgeUploadChunk],
-    ) -> None:
-        """
-        Best-effort: when embeddings are generated asynchronously, update the Azure
-        index vectors so hybrid search quality remains stable.
-        """
-
-        try:
-            from apps.rag.azure_ai_search import AzureAISearchConfig, update_chunk_embeddings
-        except Exception:
-            return
-
-        config = AzureAISearchConfig.from_settings()
-        if not config:
-            return
-
-        business_id = getattr(upload, "business_profile_id", None)
-        if not business_id:
-            return
-
-        payloads = [
-            {
-                "chunk_id": chunk.id,
-                "chunk_index": chunk.chunk_index,
-                "embedding": chunk.embedding,
-            }
-            for chunk in chunks
-            if chunk.embedding is not None
-        ]
-        if not payloads:
-            return
-        try:
-            update_chunk_embeddings(config=config, upload_id=upload.id, chunks=payloads)
-        except Exception as exc:  # pragma: no cover - external dependency
-            logger.warning(
-                "azure_search.embedding_update_failed business=%s upload=%s error=%s",
-                business_id,
-                upload.id,
-                str(exc)[:250],
-            )
-
-    def _build_quality_report(
-        self,
-        *,
-        upload: KnowledgeUpload,
-        extraction: ExtractionResult,
-        chunk_count: int,
-        chunk_objects: Sequence[KnowledgeUploadChunk],
-        structured_summary: Mapping[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        report: dict[str, Any] = {}
-
-        def _pct(part: int, whole: int) -> float:
-            if whole <= 0:
-                return 0.0
-            return round((float(part) / float(whole)) * 100.0, 2)
-
-        report["generated_at"] = timezone.now().isoformat()
-        report["chunk_count"] = int(chunk_count)
-
-        table_chunk_count = 0
-        entity_chunk_count = 0
-        for chunk in chunk_objects:
-            meta = chunk.metadata if isinstance(chunk.metadata, Mapping) else {}
-            if meta.get("is_table_chunk"):
-                table_chunk_count += 1
-            if meta.get("index_type") == "entity":
-                entity_chunk_count += 1
-        text_chunk_count = max(0, chunk_count - table_chunk_count - entity_chunk_count)
-        report["chunk_breakdown"] = {
-            "text": text_chunk_count,
-            "table": table_chunk_count,
-            "entity": entity_chunk_count,
-        }
-
-        short_chunk_count = 0
-        heading_only_count = 0
-        low_quality_count = 0
-        duplicate_count = 0
-        seen_fingerprints: set[str] = set()
-        for chunk in chunk_objects:
-            meta = chunk.metadata if isinstance(chunk.metadata, Mapping) else {}
-            if not self._segment_is_text(meta):
-                continue
-            try:
-                token_count = int(meta.get("chunk_quality_tokens") or chunk.token_count or 0)
-            except (TypeError, ValueError):
-                token_count = int(chunk.token_count or 0)
-            if token_count < self.chunk_quality_min_tokens:
-                short_chunk_count += 1
-            if meta.get("chunk_heading_only"):
-                heading_only_count += 1
-            try:
-                score = float(meta.get("chunk_quality_score") or 0.0)
-            except (TypeError, ValueError):
-                score = 0.0
-            if score < self.chunk_quality_low_score:
-                low_quality_count += 1
-            fingerprint = self._chunk_fingerprint(chunk.content or "")
-            if fingerprint:
-                if fingerprint in seen_fingerprints:
-                    duplicate_count += 1
-                else:
-                    seen_fingerprints.add(fingerprint)
-
-        report["chunk_quality"] = {
-            "short_chunk_count": short_chunk_count,
-            "short_chunk_pct": _pct(short_chunk_count, text_chunk_count),
-            "heading_only_count": heading_only_count,
-            "heading_only_pct": _pct(heading_only_count, text_chunk_count),
-            "low_quality_count": low_quality_count,
-            "low_quality_pct": _pct(low_quality_count, text_chunk_count),
-            "duplicate_count": duplicate_count,
-            "duplicate_pct": _pct(duplicate_count, text_chunk_count),
-            "min_tokens": self.chunk_quality_min_tokens,
-            "min_unique_ratio": self.chunk_quality_min_unique_ratio,
-            "low_score_threshold": self.chunk_quality_low_score,
-        }
-
-        pages = extraction.pages or []
-        report["page_count"] = len(pages)
-        total_blocks = 0
-        decorative_blocks = 0
-        decorative_fragments_filtered = 0
-        for page in pages:
-            blocks = page.blocks or []
-            total_blocks += len(blocks)
-            page_meta = page.metadata if isinstance(page.metadata, Mapping) else {}
-            decorative_fragments_filtered += int(page_meta.get("decorative_fragments_filtered") or 0)
-            for block in blocks:
-                block_meta = block.metadata if isinstance(block.metadata, Mapping) else {}
-                if block_meta.get("is_decorative") or block_meta.get("region_role") == "decorative":
-                    decorative_blocks += 1
-        report["block_count"] = total_blocks
-        report["decorative_block_count"] = decorative_blocks
-        report["decorative_block_pct"] = _pct(decorative_blocks, total_blocks)
-        if decorative_fragments_filtered:
-            report["decorative_fragments_filtered"] = decorative_fragments_filtered
-
-        table_summary = None
-        if structured_summary and isinstance(structured_summary, Mapping):
-            table_summary = structured_summary.get("tables")
-        if isinstance(table_summary, list):
-            table_count = len(table_summary)
-            decorative_table_count = sum(1 for entry in table_summary if entry.get("is_decorative"))
-        else:
-            table_count = len(extraction.tables or [])
-            decorative_table_count = 0
-        report["table_count"] = table_count
-        report["decorative_table_count"] = decorative_table_count
-        report["decorative_table_pct"] = _pct(decorative_table_count, table_count)
-
-        issues = extraction.issues or []
-        report["issue_count"] = len(issues)
-        severity_counts = {
-            KnowledgeIssueSeverity.ERROR.value: 0,
-            KnowledgeIssueSeverity.WARNING.value: 0,
-            KnowledgeIssueSeverity.INFO.value: 0,
-        }
-        error_codes: set[str] = set()
-        for issue in issues:
-            severity = str(issue.severity or "")
-            if severity in severity_counts:
-                severity_counts[severity] += 1
-            else:
-                severity_counts[KnowledgeIssueSeverity.INFO.value] += 1
-            if severity == KnowledgeIssueSeverity.ERROR.value and issue.code:
-                error_codes.add(str(issue.code))
-        report["issue_severity"] = severity_counts
-        if error_codes:
-            report["extraction_error_codes"] = sorted(error_codes)[:12]
-
-        report["upload_id"] = str(upload.id)
-        report["business_profile_id"] = str(upload.business_profile_id)
-        return report

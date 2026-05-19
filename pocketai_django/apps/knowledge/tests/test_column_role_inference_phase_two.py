@@ -4,7 +4,7 @@ from unittest import mock
 
 from django.test import SimpleTestCase
 
-from apps.knowledge.tables.column_roles import (
+from apps.knowledge.tables.semantic.column_roles import (
     COLUMN_ROLE_DESCRIPTOR,
     COLUMN_ROLE_NOTE,
     COLUMN_ROLE_QUALIFIER,

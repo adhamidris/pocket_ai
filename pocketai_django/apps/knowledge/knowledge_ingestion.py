@@ -15,7 +15,7 @@ from apps.knowledge.ingestion.contracts import (
     TablePayload,
     TableRowPayload,
 )
-from apps.knowledge.tables.geometry import GeometryTableReconstructor
+from apps.knowledge.tables.geometry_tools.reconstructor import GeometryTableReconstructor
 from apps.knowledge.ingestion.jobs import IngestionJobResult, get_ingestion_queue_health, queue_ingestion_job
 from apps.knowledge.ingestion.service import DocxDocument, KnowledgeIngestionService as _KnowledgeIngestionService
 from apps.knowledge.ingestion.signals import COLUMN_ROLE_INFERENCE_VERSION

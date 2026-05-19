@@ -9,9 +9,9 @@ from django.utils import timezone
 from apps.accounts.models import KnowledgeIssueSeverity
 from apps.knowledge.ingestion.contracts import IssuePayload, TablePayload
 from apps.knowledge.models import KnowledgeUploadTable
-from apps.knowledge.tables.postprocess_rows import IngestionTablePostprocessRowsMixin
-from apps.knowledge.tables.postprocess_signals import IngestionTablePostprocessSignalsMixin
-from apps.knowledge.tables.postprocess_stitching import IngestionTablePostprocessStitchingMixin
+from apps.knowledge.tables.postprocess.rows import IngestionTablePostprocessRowsMixin
+from apps.knowledge.tables.postprocess.signals import IngestionTablePostprocessSignalsMixin
+from apps.knowledge.tables.postprocess.stitching import IngestionTablePostprocessStitchingMixin
 
 
 class IngestionTablePostprocessingMixin(

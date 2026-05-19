@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from apps.knowledge.ingestion.contracts import TableCellPayload, TablePayload, TableRowPayload
-from apps.knowledge.tables.column_roles import (
+from apps.knowledge.tables.semantic.column_roles import (
     COLUMN_ROLE_DESCRIPTOR,
     COLUMN_ROLE_QUALIFIER,
     role_lookup_by_index,

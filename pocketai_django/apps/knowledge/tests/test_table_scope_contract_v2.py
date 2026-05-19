@@ -8,7 +8,7 @@ from apps.knowledge.knowledge_ingestion import (
     TableCellPayload,
     TableRowPayload,
 )
-from apps.knowledge.tables.scope_engine import SCOPE_REASON_EXPLICIT_SPAN
+from apps.knowledge.tables.semantic.scope_engine import SCOPE_REASON_EXPLICIT_SPAN
 
 
 class TableScopeContractV2Tests(SimpleTestCase):

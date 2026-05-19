@@ -3,7 +3,7 @@ from __future__ import annotations
 from django.test import SimpleTestCase
 
 from apps.accounts.models import KnowledgeBlockType
-from apps.knowledge.tables.canonical_reconstruction import CanonicalTableReconstructor
+from apps.knowledge.tables.canonical.reconstruction import CanonicalTableReconstructor
 from apps.knowledge.knowledge_ingestion import (
     PageBlockPayload,
     PageLayout,

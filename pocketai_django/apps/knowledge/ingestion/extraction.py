@@ -23,7 +23,7 @@ from apps.knowledge.ingestion.contracts import (
     TableRowPayload,
     UnsupportedFormatError,
 )
-from apps.knowledge.tables.geometry import GeometryTableReconstructor
+from apps.knowledge.tables.geometry_tools.reconstructor import GeometryTableReconstructor
 from apps.knowledge.ingestion.pdfplumber import PdfPlumberTableExtractor
 from apps.knowledge.models import (
     KnowledgeUpload,
@@ -565,7 +565,7 @@ class IngestionExtractionMixin:
         canonical_reconstruction_meta: dict[str, Any] = {}
         if format_hint == "pdf" and chunking_pages:
             try:
-                from apps.knowledge.tables.canonical_reconstruction import CanonicalTableReconstructor
+                from apps.knowledge.tables.canonical.reconstruction import CanonicalTableReconstructor
 
                 reconstructor = CanonicalTableReconstructor(
                     PageLayout=PageLayout,
