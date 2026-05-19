@@ -22,7 +22,7 @@ from django.db.models.functions import Length
 
 from apps.accounts.models import KnowledgeStatus, KnowledgeVisibility
 from apps.conversations.models import Conversation, ConversationFile, ConversationFileChunk
-from apps.knowledge.knowledge_access import apply_customer_visible_chunks, apply_customer_visible_uploads
+from apps.knowledge.access.visibility import apply_customer_visible_chunks, apply_customer_visible_uploads
 from apps.knowledge.models import (
     KnowledgeUpload,
     KnowledgeUploadChunk,

@@ -10,7 +10,7 @@ from typing import Iterable
 
 from apps.accounts.models import AgentProfile, KnowledgeStatus
 from apps.conversations.models import Conversation
-from apps.knowledge.knowledge_access import apply_customer_visible_uploads
+from apps.knowledge.access.visibility import apply_customer_visible_uploads
 
 from ..types import ToolExecutionContext
 

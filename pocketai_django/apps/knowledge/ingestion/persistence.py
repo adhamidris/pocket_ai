@@ -20,7 +20,7 @@ from apps.knowledge.ingestion.contracts import (
     PageLayout,
 )
 from apps.knowledge.ingestion.text_utils import IngestionTextUtilsMixin
-from apps.knowledge.lexicon_learning import TenantLexiconAutoLearningService
+from apps.knowledge.lexicon.learning import TenantLexiconAutoLearningService
 from apps.knowledge.models import (
     KnowledgeEntity,
     KnowledgeTableColumn,

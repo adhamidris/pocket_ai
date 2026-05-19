@@ -14,7 +14,7 @@ from django.conf import settings
 from apps.accounts.models import KnowledgeAuditAction
 from apps.conversations.models import Conversation
 from apps.knowledge.models import KnowledgeAuditEvent, KnowledgeUpload
-from apps.knowledge.privacy import sha256_hex
+from apps.knowledge.privacy_tools.hashing import sha256_hex
 
 from ..types import ToolExecutionContext
 

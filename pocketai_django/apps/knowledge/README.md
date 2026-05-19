@@ -52,18 +52,58 @@ Directory Map
   Link scraping extraction and small HTML/encoding helpers.
 - ingestion_persistence.py
   Ingestion persistence orchestration, quality reports, and post-commit indexing hooks.
-- ingestion_chunks.py
-  Chunk construction, quality filtering, canonical metadata, and residual reconciliation.
-- ingestion_entities.py
-  Evidence grouping, entity chunk payloads, and entity/alias persistence.
+- ingestion/chunks.py
+  Chunk construction orchestration.
+- ingestion/chunk_text_segments.py
+  Text segment construction, flat-text fallback selection, and page-block fragmentation scoring.
+- ingestion/chunk_quality.py
+  Chunk quality metrics, dedupe fingerprints, and table payload classifiers.
+- ingestion/chunk_canonical.py
+  Canonical chunk metadata helpers.
+- ingestion/chunk_residuals.py
+  Table residual annotations, canonical payload projection, and residual reconciliation.
+- ingestion/entities.py
+  Table row entity extraction and spreadsheet entity gating.
+- ingestion/entity_aliases.py
+  Identifier alias extraction, normalization, and alias metadata helpers.
+- ingestion/entity_evidence.py
+  Evidence key/group metadata assignment.
+- ingestion/entity_payloads.py
+  Entity chunk payload rendering.
+- ingestion/entity_persistence.py
+  Knowledge entity and alias persistence.
 - ingestion_embeddings.py
   Embedding job scheduling, fallback embedding generation, and embedding metadata.
 - ingestion_table_quality.py
   Table quality scoring and decorative/noisy table detection.
 - ingestion_table_postprocessing.py
   Table row stitching, header propagation, duplicate suppression, and scope refresh.
-- ingestion_tabular_files.py
-  CSV/TSV/XLSX/XLS/JSONL extraction, dataset mode storage, and key indexes.
+- tables/postprocess_signals.py
+  Table row value/signal scoring and fragment compatibility gates.
+- tables/postprocess_rows.py
+  Table row cell rewrite, contextual column, and parent-label carry-down helpers.
+- tables/postprocess_stitching.py
+  Row continuation stitching, scope value stitching, and scope refresh helpers.
+- tables/tabular_files.py
+  Compatibility-style aggregator for tabular file ingestion mixins.
+- tables/delimited_files.py
+  CSV/TSV extraction for normal indexed-table ingestion.
+- tables/dataset_delimited.py
+  Large CSV/TSV dataset-mode storage and key indexes.
+- tables/spreadsheet_xls.py
+  XLS extraction for normal indexed-table ingestion.
+- tables/spreadsheet_common.py
+  XLSX extraction, normalized-sheet table building, sheet role classification, and spreadsheet row heuristics.
+- tables/dataset_common.py
+  Dataset-mode storage directories, preview table payloads, and key-column selection.
+- tables/dataset_xlsx.py
+  XLSX dataset-mode storage, preview table construction, and key indexes.
+- tables/dataset_xls.py
+  XLS dataset-mode storage and preview table construction.
+- tables/dataset_jsonl.py
+  JSONL dataset-mode storage and preview table construction.
+- tables/entity_rows.py
+  Table title derivation, embedded header promotion, and row attribute/model helpers.
 - ingestion_json_files.py
   JSON entity extraction and JSON-to-table/text payload conversion.
 - ingestion_table_limits.py
@@ -219,22 +259,42 @@ Where To Start (Reading Order)
 19) `apps/knowledge/ingestion_table_vlm_repair.py`
 20) `apps/knowledge/ingestion_link_extraction.py`
 21) `apps/knowledge/ingestion_persistence.py`
-22) `apps/knowledge/ingestion_chunks.py`
-23) `apps/knowledge/ingestion_entities.py`
-24) `apps/knowledge/ingestion_embeddings.py`
-25) `apps/knowledge/ingestion_table_quality.py`
-26) `apps/knowledge/ingestion_table_postprocessing.py`
-27) `apps/knowledge/ingestion_tabular_files.py`
-28) `apps/knowledge/ingestion_json_files.py`
-29) `apps/knowledge/ingestion_table_limits.py`
-30) `apps/knowledge/ingestion_table_semantics.py`
-31) `apps/knowledge/ingestion_text_utils.py`
-32) `apps/knowledge/ingestion_file_formats.py`
-33) `apps/knowledge/ingestion_signals.py`
-34) `apps/knowledge/ingestion_aliases.py`
-35) `apps/knowledge/knowledge_preflight.py`
-36) `apps/knowledge/dataset_cards.py`
-37) `apps/knowledge/privacy.py`
+22) `apps/knowledge/ingestion/chunks.py`
+23) `apps/knowledge/ingestion/chunk_text_segments.py`
+24) `apps/knowledge/ingestion/chunk_quality.py`
+25) `apps/knowledge/ingestion/chunk_canonical.py`
+26) `apps/knowledge/ingestion/chunk_residuals.py`
+27) `apps/knowledge/ingestion/entities.py`
+28) `apps/knowledge/ingestion/entity_aliases.py`
+29) `apps/knowledge/ingestion/entity_evidence.py`
+30) `apps/knowledge/ingestion/entity_payloads.py`
+31) `apps/knowledge/ingestion/entity_persistence.py`
+32) `apps/knowledge/ingestion/embeddings.py`
+33) `apps/knowledge/tables/quality.py`
+34) `apps/knowledge/tables/postprocessing.py`
+35) `apps/knowledge/tables/postprocess_signals.py`
+36) `apps/knowledge/tables/postprocess_rows.py`
+37) `apps/knowledge/tables/postprocess_stitching.py`
+38) `apps/knowledge/tables/tabular_files.py`
+39) `apps/knowledge/tables/delimited_files.py`
+40) `apps/knowledge/tables/dataset_delimited.py`
+41) `apps/knowledge/tables/spreadsheet_xls.py`
+42) `apps/knowledge/tables/dataset_common.py`
+43) `apps/knowledge/tables/spreadsheet_common.py`
+44) `apps/knowledge/tables/dataset_xlsx.py`
+45) `apps/knowledge/tables/dataset_xls.py`
+46) `apps/knowledge/tables/dataset_jsonl.py`
+47) `apps/knowledge/tables/entity_rows.py`
+48) `apps/knowledge/ingestion/json_files.py`
+49) `apps/knowledge/tables/limits.py`
+50) `apps/knowledge/tables/semantics.py`
+51) `apps/knowledge/ingestion/text_utils.py`
+52) `apps/knowledge/ingestion/file_formats.py`
+53) `apps/knowledge/ingestion/signals.py`
+54) `apps/knowledge/ingestion/aliases.py`
+55) `apps/knowledge/preflight/service.py`
+48) `apps/knowledge/datasets/cards.py`
+49) `apps/knowledge/privacy_tools/hashing.py`
 
 High-Level Architecture
 -----------------------

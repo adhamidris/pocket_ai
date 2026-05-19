@@ -8,7 +8,7 @@ from typing import Mapping, Sequence
 from django.db.models import Prefetch
 
 from apps.accounts.models import KnowledgeStatus
-from apps.knowledge.knowledge_access import (
+from apps.knowledge.access.visibility import (
     apply_customer_visible_chunks,
     apply_customer_visible_uploads,
 )

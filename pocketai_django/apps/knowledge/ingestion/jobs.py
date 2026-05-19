@@ -48,7 +48,7 @@ def queue_ingestion_job(upload: KnowledgeUpload, *, trigger: str = "upload", for
         return None
 
     try:
-        from apps.knowledge.knowledge_preflight import ensure_upload_preflight
+        from apps.knowledge.preflight.service import ensure_upload_preflight
 
         ensure_upload_preflight(upload, trigger=trigger)
     except Exception:  # pragma: no cover - preflight must never block ingestion

@@ -57,10 +57,10 @@ from apps.knowledge.models import (
     KnowledgeEntity,
     KnowledgeAlias,
 )
-from apps.knowledge.lexicon_learning import TenantLexiconAutoLearningService
+from apps.knowledge.lexicon.learning import TenantLexiconAutoLearningService
 from apps.knowledge.documents import DocumentScrapeError, scrape_document_source
-from apps.knowledge.dataset_cards import build_dataset_card_segment_payload
-from apps.knowledge.dataset_key_index import (
+from apps.knowledge.datasets.cards import build_dataset_card_segment_payload
+from apps.knowledge.datasets.key_index import (
     BloomFilter,
     bloom_spec_for_items,
     normalize_identifier_value,

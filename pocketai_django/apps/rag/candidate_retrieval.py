@@ -16,7 +16,7 @@ from pgvector.django import CosineDistance
 
 from apps.accounts.feature_flags import FeatureFlagService, FeatureState
 from apps.accounts.models import KnowledgeStatus
-from apps.knowledge.knowledge_access import apply_customer_visible_chunks
+from apps.knowledge.access.visibility import apply_customer_visible_chunks
 from apps.knowledge.models import KnowledgeUpload, KnowledgeUploadChunk
 from apps.rag.contracts import AliasSearchResult, ChunkResult, HybridSearchResult, QueryTraits
 from apps.rag.embeddings import EmbeddingProviderError

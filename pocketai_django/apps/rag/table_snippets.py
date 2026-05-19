@@ -9,7 +9,7 @@ from django.contrib.postgres.search import TrigramSimilarity
 from django.db.models import Q
 
 from apps.accounts.models import KnowledgeStatus, KnowledgeVisibility
-from apps.knowledge.knowledge_access import apply_customer_visible_uploads
+from apps.knowledge.access.visibility import apply_customer_visible_uploads
 from apps.knowledge.models import (
     KnowledgeUpload,
     KnowledgeUploadChunk,

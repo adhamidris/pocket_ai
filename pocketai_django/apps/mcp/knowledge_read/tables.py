@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Mapping
 
 from apps.accounts.models import KnowledgeStatus
-from apps.knowledge.knowledge_access import apply_customer_visible_chunks
+from apps.knowledge.access.visibility import apply_customer_visible_chunks
 from apps.knowledge.models import KnowledgeUploadChunk, KnowledgeUploadTable
 from apps.rag.contracts import (
     KNOWLEDGE_READ_STATE_FULL,

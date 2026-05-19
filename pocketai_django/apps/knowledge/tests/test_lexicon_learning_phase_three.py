@@ -15,7 +15,7 @@ from apps.accounts.models import (
     User,
 )
 from apps.knowledge.knowledge_ingestion import ExtractionResult, KnowledgeIngestionService, TablePayload
-from apps.knowledge.lexicon_learning import TenantLexiconAutoLearningService
+from apps.knowledge.lexicon.learning import TenantLexiconAutoLearningService
 from apps.knowledge.models import KnowledgeLexiconTerm, KnowledgeUpload
 
 

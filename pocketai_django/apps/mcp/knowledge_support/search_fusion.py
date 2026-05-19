@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 from typing import Mapping, Sequence
 
-from apps.knowledge.privacy import sha256_hex
+from apps.knowledge.privacy_tools.hashing import sha256_hex
 
 
 def _fuse_batched_search_runs(

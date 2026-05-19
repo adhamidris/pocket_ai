@@ -388,7 +388,7 @@ class IngestionJobProcessingMixin:
                             logger_obj=logger,
                         )
                         try:
-                            from apps.knowledge.knowledge_preflight import ensure_upload_preflight
+                            from apps.knowledge.preflight.service import ensure_upload_preflight
 
                             preflight = ensure_upload_preflight(upload, trigger="ingest_job_start")
                             if isinstance(preflight, dict):

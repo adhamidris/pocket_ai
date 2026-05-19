@@ -9,7 +9,7 @@ from django.conf import settings
 from django.core.cache import cache
 
 from apps.accounts.feature_flags import FeatureState
-from apps.knowledge.knowledge_access import CUSTOMER_VISIBILITY_POLICY_KEY
+from apps.knowledge.access.visibility import CUSTOMER_VISIBILITY_POLICY_KEY
 from apps.rag.contracts import (
     AliasSearchResult,
     KnowledgeSearchResult,
