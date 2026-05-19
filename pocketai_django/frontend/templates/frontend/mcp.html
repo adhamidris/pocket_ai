@@ -187,9 +187,98 @@
     white-space: nowrap;
   }
   .connectors-list {
-    display: grid;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+  }
+  .connectors-list__row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.85rem 0.5rem;
+    transition: background-color var(--transition-fast);
+    border-radius: 8px;
+  }
+  .connectors-list__row + .connectors-list__row {
+    border-top: 1px solid hsl(var(--border) / 0.5);
+  }
+  .connectors-list__left {
+    display: flex;
+    align-items: center;
     gap: 0.75rem;
-    max-width: 640px;
+    min-width: 0;
+    flex: 1 1 0;
+  }
+  .connectors-list__identity {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+  .connectors-list__name {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: hsl(var(--foreground));
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 200px;
+  }
+  .connectors-list__sep {
+    color: hsl(var(--muted-foreground) / 0.4);
+    font-size: 0.7rem;
+    user-select: none;
+  }
+  .connectors-list__identifier {
+    font-size: 0.76rem;
+    color: hsl(var(--muted-foreground));
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 240px;
+  }
+  .connectors-list__badges {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+  }
+  .connectors-list__meta {
+    font-size: 0.72rem;
+    color: hsl(var(--muted-foreground));
+    white-space: nowrap;
+  }
+  .connectors-list__actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+  }
+  @media (max-width: 768px) {
+    .connectors-list__row {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0.75rem;
+      padding: 1rem 0.5rem;
+    }
+    .connectors-list__left {
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    .connectors-list__identity {
+      flex-basis: 100%;
+    }
+    .connectors-list__badges {
+      flex-basis: 100%;
+    }
+    .connectors-list__actions {
+      justify-content: flex-end;
+      width: 100%;
+      border-top: 1px dashed hsl(var(--border) / 0.4);
+      padding-top: 0.5rem;
+    }
   }
   .connectors-empty {
     border: 1px dashed hsl(var(--border) / 0.75);
@@ -947,7 +1036,7 @@
 	      document.querySelectorAll("[data-mcp-connection-card]").forEach(function (card) {
 	        var id = String(card.getAttribute("data-mcp-connection-card") || "");
 	        var isActive = hasActiveTest && activeId && id === activeId;
-	        card.classList.toggle("border-primary/50", isActive);
+	        card.classList.toggle("bg-primary/5", isActive);
 	      });
 
 	      if (modalTest) {
@@ -1501,6 +1590,10 @@
         var name = isEmail
           ? (account.name || "Email account")
           : (key ? key.replace(/_/g, " ").replace(/\b\w/g, function (char) { return char.toUpperCase(); }) : "Native integration");
+        var displayName = name;
+        if (isEmail && displayName.indexOf("(") !== -1) {
+          displayName = displayName.split("(")[0].trim();
+        }
         var identifier = isEmail ? (account.emailAddress || "") : (account.account_identifier || "");
         var statusBadge = account.status === "connected"
           ? '<span class="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-400">Connected</span>'
@@ -1514,36 +1607,35 @@
             ? '<span class="inline-flex items-center rounded-full border border-teal-500/30 bg-teal-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-teal-400" title="Emails require approval before sending">Draft + Approval</span>'
             : "";
 
-        var errorMeta = account.lastError ? ('<div class="text-[11px] text-rose-400 truncate" title="' + escapeHtml(account.lastError) + '">' + escapeHtml(account.lastError) + "</div>") : "";
+        var errorMeta = account.lastError ? ('<div class="text-[11px] text-rose-400 truncate max-w-md" title="' + escapeHtml(account.lastError) + '">' + escapeHtml(account.lastError) + "</div>") : "";
         var el = document.createElement("div");
         el.setAttribute("data-native-account-card", account.id || "");
-        el.className = "rounded-xl border border-border/70 bg-background/60 p-4 shadow-sm";
+        el.className = "connectors-list__row";
         el.innerHTML =
-          '<div class="flex items-start justify-between gap-4">' +
-            '<div class="flex min-w-0 gap-3">' +
-              '<div class="shrink-0">' + getConnectorLogoHtml(key, name) + '</div>' +
-              '<div class="min-w-0 space-y-1">' +
-              '<div class="flex flex-wrap items-center gap-2">' +
-                '<div class="text-sm font-semibold text-foreground truncate">' + escapeHtml(name) + "</div>" +
-                statusBadge +
-                sendModeBadge +
-                renderSourceBadge("native") +
-              "</div>" +
-              '<div class="text-xs text-muted-foreground truncate">' + escapeHtml(identifier || account.provider || "") + "</div>" +
-              '<div class="text-[11px] text-muted-foreground">' +
-                escapeHtml(String(account.enabledToolCount || 0)) + "/" + escapeHtml(String(account.totalToolCount || 0)) + " tools enabled" +
-                (account.lastHealthCheckedAt ? " · Last checked " + new Date(account.lastHealthCheckedAt).toLocaleDateString() : "") +
-              "</div>" +
+          '<div class="connectors-list__left">' +
+            '<div class="shrink-0">' + getConnectorLogoHtml(key, displayName) + '</div>' +
+            '<div class="flex flex-col min-w-0 gap-0.5">' +
+              '<div class="connectors-list__identity">' +
+                '<span class="connectors-list__name" title="' + escapeHtml(displayName) + '">' + escapeHtml(displayName) + '</span>' +
+                (identifier ? '<span class="connectors-list__sep">·</span><span class="connectors-list__identifier" title="' + escapeHtml(identifier) + '">' + escapeHtml(identifier) + '</span>' : '') +
+              '</div>' +
               errorMeta +
-              "</div>" +
-            "</div>" +
-            '<div class="flex flex-col items-end gap-2 shrink-0">' +
-              '<button type="button" class="inline-flex items-center gap-2 rounded-md border border-rose-500/50 bg-rose-500/10 text-rose-400 px-3 py-2 text-xs font-medium hover:bg-rose-500/20 hover:border-rose-500" data-native-disconnect="' + escapeHtml(account.id) + '" data-native-disconnect-kind="' + (isEmail ? "email" : "integration") + '" data-native-disconnect-key="' + escapeHtml(key) + '" title="Disconnect native connector">' +
-                '<svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>' +
-                'Disconnect' +
-              '</button>' +
-            "</div>" +
-          "</div>";
+            '</div>' +
+            '<div class="connectors-list__badges">' +
+              statusBadge +
+              sendModeBadge +
+              renderSourceBadge("native") +
+            '</div>' +
+            '<span class="connectors-list__meta">' +
+              escapeHtml(String(account.enabledToolCount || 0)) + "/" + escapeHtml(String(account.totalToolCount || 0)) + " tools" +
+            '</span>' +
+          '</div>' +
+          '<div class="connectors-list__actions">' +
+            '<button type="button" class="inline-flex items-center gap-2 rounded-md border border-rose-500/50 bg-rose-500/10 text-rose-400 px-3 py-1.5 text-xs font-medium hover:bg-rose-500/20 hover:border-rose-500" data-native-disconnect="' + escapeHtml(account.id) + '" data-native-disconnect-kind="' + (isEmail ? "email" : "integration") + '" data-native-disconnect-key="' + escapeHtml(key) + '" title="Disconnect native connector">' +
+              '<svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>' +
+              'Disconnect' +
+            '</button>' +
+          '</div>';
 
         el.__nativeAccount = account;
         listEl.appendChild(el);
@@ -1580,46 +1672,48 @@
 
 	        var el = document.createElement("div");
 	        el.setAttribute("data-mcp-connection-card", conn.id || "");
-	        el.className = "rounded-xl border border-border/70 bg-background/60 p-4 shadow-sm";
+	        el.className = "connectors-list__row";
+	        
+	        var displayName = conn.name || "MCP Connection";
+	        var identifier = conn.serverUrl || "";
+	        var agentsInfo = "Access " + escapeHtml(String((conn.agents && conn.agents.assigned) || 0)) + "/" + escapeHtml(String((conn.agents && conn.agents.total) || 0));
+	        var metaText = escapeHtml(toolMeta) + (conn.lastTestedAt ? " · Tested" : "") + " · " + agentsInfo;
+
 	        el.innerHTML =
-	          '<div class="flex items-start justify-between gap-4">' +
-	            '<div class="flex min-w-0 gap-3">' +
-                '<div class="shrink-0">' + getConnectorLogoHtml(conn.marketplaceKey || conn.name, conn.name || "MCP Connection") + '</div>' +
-	              '<div class="min-w-0 space-y-1">' +
-	              '<div class="flex flex-wrap items-center gap-2">' +
-	                '<div class="text-sm font-semibold text-foreground truncate">' + escapeHtml(conn.name || "MCP Connection") + "</div>" +
-	                statusBadge +
-                  renderSourceBadge("mcp") +
-	                approvalBadge +
-	                (conn.sourceType === "marketplace" ? '<span class="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-400">Marketplace</span>' : "") +
-	                testingBadge +
-	                cacheWarning +
-	              "</div>" +
-	              '<div class="text-xs text-muted-foreground truncate" title="' + escapeHtml(conn.serverUrl || "") + '">' + escapeHtml(conn.serverUrl || "") + "</div>" +
-	              '<div class="text-[11px] text-muted-foreground" data-mcp-conn-meta="' + escapeHtml(conn.id) + '">' +
-	                escapeHtml(toolMeta) +
-	                (conn.lastTestedAt ? " · Tested" : "") +
-	              "</div>" +
+	          '<div class="connectors-list__left">' +
+	            '<div class="shrink-0">' + getConnectorLogoHtml(conn.marketplaceKey || conn.name, displayName) + '</div>' +
+	            '<div class="flex flex-col min-w-0 gap-0.5">' +
+	              '<div class="connectors-list__identity">' +
+	                '<span class="connectors-list__name" title="' + escapeHtml(displayName) + '">' + escapeHtml(displayName) + '</span>' +
+	                (identifier ? '<span class="connectors-list__sep">·</span><span class="connectors-list__identifier" title="' + escapeHtml(identifier) + '">' + escapeHtml(identifier) + '</span>' : '') +
+	              '</div>' +
 	              errorMeta +
-                "</div>" +
-	            "</div>" +
-	            '<div class="flex flex-col items-end gap-2 shrink-0">' +
-	              '<label class="inline-flex items-center gap-2 text-xs text-muted-foreground">' +
-	                '<input type="checkbox" class="h-4 w-4 rounded border-border/60" data-mcp-toggle="' + escapeHtml(conn.id) + '"' + (conn.status === "enabled" ? " checked" : "") + " />" +
-	                "<span>Enabled</span>" +
-	              "</label>" +
-	              '<div class="flex items-center gap-2">' +
-	                '<button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none" data-mcp-test="' + escapeHtml(conn.id) + '">Test</button>' +
-	                '<button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-tools="' + escapeHtml(conn.id) + '">Tools</button>' +
-	                '<button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-agents="' + escapeHtml(conn.id) + '">Access</button>' +
-	                '<button type="button" class="inline-flex items-center gap-2 rounded-md bg-primary/10 text-primary px-3 py-2 text-xs font-semibold hover:bg-primary/15" data-mcp-edit="' + escapeHtml(conn.id) + '">Edit</button>' +
-	                '<button type="button" class="inline-flex items-center gap-2 rounded-md border border-rose-500/50 bg-rose-500/10 text-rose-400 px-3 py-2 text-xs font-medium hover:bg-rose-500/20 hover:border-rose-500" data-mcp-delete="' + escapeHtml(conn.id) + '" title="Delete connection">' +
-	                  '<svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>' +
-	                '</button>' +
-	              "</div>" +
-	              '<div class="text-[11px] text-muted-foreground">Assistant access ' + escapeHtml(String((conn.agents && conn.agents.assigned) || 0)) + "/" + escapeHtml(String((conn.agents && conn.agents.total) || 0)) + "</div>" +
-	            "</div>" +
-	          "</div>";
+	            '</div>' +
+	            '<div class="connectors-list__badges">' +
+	              statusBadge +
+	              renderSourceBadge("mcp") +
+	              approvalBadge +
+	              (conn.sourceType === "marketplace" ? '<span class="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-400">Marketplace</span>' : "") +
+	              testingBadge +
+	              cacheWarning +
+	            '</div>' +
+	            '<span class="connectors-list__meta" data-mcp-conn-meta="' + escapeHtml(conn.id) + '">' +
+	              metaText +
+	            '</span>' +
+	          '</div>' +
+	          '<div class="connectors-list__actions">' +
+	            '<label class="inline-flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none mr-2">' +
+	              '<input type="checkbox" class="h-3.5 w-3.5 rounded border-border/60" data-mcp-toggle="' + escapeHtml(conn.id) + '"' + (conn.status === "enabled" ? " checked" : "") + " />" +
+	              "<span>Enabled</span>" +
+	            '</label>' +
+	            '<button type="button" class="inline-flex items-center gap-1 rounded-md border border-input bg-background px-2.5 py-1.5 text-xs font-medium hover:bg-accent hover:text-accent-foreground disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none" data-mcp-test="' + escapeHtml(conn.id) + '">Test</button>' +
+	            '<button type="button" class="inline-flex items-center gap-1 rounded-md border border-input bg-background px-2.5 py-1.5 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-tools="' + escapeHtml(conn.id) + '">Tools</button>' +
+	            '<button type="button" class="inline-flex items-center gap-1 rounded-md border border-input bg-background px-2.5 py-1.5 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-agents="' + escapeHtml(conn.id) + '">Access</button>' +
+	            '<button type="button" class="inline-flex items-center gap-1 rounded-md bg-primary/10 text-primary px-2.5 py-1.5 text-xs font-semibold hover:bg-primary/15" data-mcp-edit="' + escapeHtml(conn.id) + '">Edit</button>' +
+	            '<button type="button" class="inline-flex items-center gap-1 rounded-md border border-rose-500/50 bg-rose-500/10 text-rose-400 px-2 py-1.5 text-xs font-medium hover:bg-rose-500/20 hover:border-rose-500" data-mcp-delete="' + escapeHtml(conn.id) + '" title="Delete connection">' +
+	              '<svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>' +
+	            '</button>' +
+	          '</div>';
 
 	        el.__conn = conn;
 	        var meta = el.querySelector("[data-mcp-conn-meta]");
