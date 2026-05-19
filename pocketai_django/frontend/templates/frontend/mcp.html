@@ -72,13 +72,6 @@
         </div>
 
         <div class="space-y-4" data-tab-panel="native">
-          <div class="connectors-panel">
-            <div>
-              <div class="text-sm font-semibold text-foreground">{% trans "Available native integrations" %}</div>
-              <div class="text-xs text-muted-foreground">{% trans "First-party OAuth connections hosted directly by Pocket AI." %}</div>
-            </div>
-            <div class="text-xs text-muted-foreground" data-native-marketplace-count>—</div>
-          </div>
           <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" data-native-marketplace-grid></div>
         </div>
 
@@ -137,12 +130,8 @@
   .connectors-page * {
     box-sizing: border-box;
   }
-  .connectors-section,
-  .connectors-panel {
-    border: 1px solid hsl(var(--border) / 0.72);
-    border-radius: 14px;
-    background: hsl(var(--card) / 0.96);
-    box-shadow: 0 10px 28px hsl(215 25% 8% / 0.06);
+  .connectors-section {
+    background: transparent;
   }
   .connectors-section {
     padding: 1rem;
@@ -190,18 +179,23 @@
     display: flex;
     flex-direction: column;
     width: 100%;
+    gap: 0.5rem;
   }
   .connectors-list__row {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    padding: 0.85rem 0.5rem;
-    transition: background-color var(--transition-fast);
-    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    border-radius: 12px;
+    border: 1px solid hsl(var(--border) / 0.4);
+    background: hsl(var(--card));
+    transition: all 0.2s cubic-bezier(0.25, 1, 0.5, 1);
   }
-  .connectors-list__row + .connectors-list__row {
-    border-top: 1px solid hsl(var(--border) / 0.5);
+  .connectors-list__row:hover {
+    transform: translateY(-2px);
+    border-color: hsl(var(--border));
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
   }
   .connectors-list__left {
     display: flex;
@@ -317,7 +311,7 @@
   }
   .connector-segmented {
     display: flex;
-    width: 100%;
+    width: max-content;
     gap: 0.25rem;
     border: 1px solid hsl(var(--border) / 0.78);
     border-radius: 12px;
@@ -325,7 +319,8 @@
     padding: 0.25rem;
   }
   .connector-segmented__button {
-    flex: 1 1 0;
+    flex: 0 0 auto;
+    padding: 0 1.5rem;
     min-height: 2.3rem;
     border: 0;
     border-radius: 9px;
