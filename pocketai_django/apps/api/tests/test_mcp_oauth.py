@@ -43,13 +43,13 @@ class McpMarketplaceOAuthTests(TestCase):
             token_url="https://oauth2.googleapis.com/token",
             client_id="client-id",
             scopes=["scope-a", "scope-b"],
-            marketplace_keys=["gmail"],
+            marketplace_keys=["google_analytics"],
         )
         self.provider.set_client_secret("client-secret")
         self.provider.save()
 
     def test_oauth_start_redirects_to_provider(self) -> None:
-        url = reverse("api:oauth_start", kwargs={"provider_key": "google", "marketplace_key": "gmail"})
+        url = reverse("api:oauth_start", kwargs={"provider_key": "google", "marketplace_key": "google_analytics"})
         resp = self.client.get(
             url,
             data={"business_id": str(self.business.id), "redirect": "https://evil.example.com/"},
@@ -65,7 +65,7 @@ class McpMarketplaceOAuthTests(TestCase):
         self.assertEqual(query.get("scope"), ["scope-a scope-b"])
         self.assertIn("state", query)
 
-        state_row = OAuthState.objects.filter(provider=self.provider, marketplace_key="gmail").first()
+        state_row = OAuthState.objects.filter(provider=self.provider, marketplace_key="google_analytics").first()
         self.assertIsNotNone(state_row)
         assert state_row is not None
         self.assertTrue(state_row.state_token)
@@ -87,7 +87,7 @@ class McpMarketplaceOAuthTests(TestCase):
         }
         mock_post.return_value = mock_response
 
-        start_url = reverse("api:oauth_start", kwargs={"provider_key": "google", "marketplace_key": "gmail"})
+        start_url = reverse("api:oauth_start", kwargs={"provider_key": "google", "marketplace_key": "google_analytics"})
         self.client.get(start_url, data={"business_id": str(self.business.id)})
         state_row = OAuthState.objects.order_by("-created_at").first()
         self.assertIsNotNone(state_row)
@@ -101,7 +101,7 @@ class McpMarketplaceOAuthTests(TestCase):
         state_row.refresh_from_db()
         self.assertTrue(state_row.is_used)
 
-        connection = McpConnection.objects.filter(business_profile=self.business, marketplace_key="gmail").first()
+        connection = McpConnection.objects.filter(business_profile=self.business, marketplace_key="google_analytics").first()
         self.assertIsNotNone(connection)
         assert connection is not None
         creds = connection.credentials
@@ -154,4 +154,3 @@ class McpMarketplaceOAuthTests(TestCase):
         self.assertEqual(creds.get("token"), "new-access-token")
         self.assertEqual(creds.get("refresh_token"), "new-refresh-token")
         self.assertTrue(creds.get("expires_at"))
-

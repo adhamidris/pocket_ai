@@ -61,7 +61,7 @@ class GoogleIntegrationViewTests(TestCase):
         self.assertEqual(integration.status, KnowledgeIntegrationStatus.SYNCING)
         self.assertIn("oauth_state", integration.metadata)
 
-    @mock.patch("apps.api.views.discover_google_sheet_resources")
+    @mock.patch("apps.api.integrations.endpoints.discover_google_sheet_resources")
     def test_google_drive_resources_lists_available_tabs(self, mock_discover):
         mock_discover.return_value = [
             {
@@ -167,7 +167,7 @@ class GoogleIntegrationViewTests(TestCase):
         created = create_response.json()["integration"]
         self.assertEqual(created["name"], "Custom")
 
-    @mock.patch("apps.api.views.discover_google_sheet_resources")
+    @mock.patch("apps.api.integrations.endpoints.discover_google_sheet_resources")
     def test_integration_sheets_collection_proxies_google_resources(self, mock_discover):
         integration = self._create_integration()
         mock_discover.return_value = [
@@ -244,7 +244,7 @@ class GoogleIntegrationViewTests(TestCase):
         }
         response = self.client.post(url, data=json.dumps(body), content_type="application/json")
         self.assertEqual(response.status_code, 400)
-        self.assertIn("missing masking", response.json()["message"])
+        self.assertIn("internalOnlyColumns or excludedColumns", response.json()["message"])
 
         body["resources"][0]["columnPrivacy"]["internalOnlyColumns"] = ["SSN"]
         response = self.client.post(url, data=json.dumps(body), content_type="application/json")

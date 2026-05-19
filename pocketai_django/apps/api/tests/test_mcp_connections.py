@@ -500,7 +500,7 @@ class McpConnectionsApiTests(TestCase):
         self.assertNotIn("portal_emit_blocks", tool_names)
         self.assertNotIn("request_user_input", tool_names)
 
-    @mock.patch("apps.api.mcp_connections.test_mcp_server")
+    @mock.patch("apps.api.mcp.endpoints.test_mcp_server")
     def test_test_endpoint_caches_tools(self, mock_test_server) -> None:
         connection = McpConnection.objects.create(
             business_profile=self.business,
@@ -533,7 +533,7 @@ class McpConnectionsApiTests(TestCase):
         self.assertEqual(cache.get("tool_count"), 1)
         self.assertTrue(cache.get("tested_at"))
 
-    @mock.patch("apps.api.mcp_connections.test_mcp_server")
+    @mock.patch("apps.api.mcp.endpoints.test_mcp_server")
     def test_test_endpoint_returns_429_on_upstream_rate_limit(self, mock_test_server) -> None:
         connection = McpConnection.objects.create(
             business_profile=self.business,
@@ -631,7 +631,7 @@ class McpConnectionsApiTests(TestCase):
         payload = response.json()
         self.assertIn("private", payload.get("message", "").lower())
 
-    @mock.patch("apps.api.mcp_connections.test_mcp_server")
+    @mock.patch("apps.api.mcp.endpoints.test_mcp_server")
     def test_test_endpoint_sets_cache_expiration(self, mock_test_server) -> None:
         """Test endpoint should set expires_at on the tool cache."""
         connection = McpConnection.objects.create(

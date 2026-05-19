@@ -28,6 +28,7 @@ Directory Map
   - activity_actions.py: portal agent-run, automation, checkpoint, approval, and request action endpoints.
   - tool_history.py: portal tool approval and tool event history endpoint.
   - email_endpoints.py: portal email draft send/discard endpoints.
+  - files.py: portal upload, signed download, and fresh download URL endpoints.
   - session_stream.py: legacy session-level portal SSE stream endpoint.
   - conversation_endpoints.py: portal conversation collection, message list, turn creation, and deprecated session endpoints.
   - turn_stream.py: event-sourced portal turn SSE stream and cancel endpoints.
@@ -37,12 +38,28 @@ Directory Map
 - agents/
   Agent dashboard endpoints used by the legacy views.py entrypoint.
   - endpoints.py: agent list/detail, capability graph, directory, and knowledge access endpoints.
+  - run_shared.py: shared serializers, request helpers, and run/automation helper operations.
+  - runs.py: agent run list/detail/events/actions and checkpoint resolution endpoints.
+  - automations.py: automation CRUD, manual run, and webhook trigger endpoints.
+  - custom_assistants.py: custom assistant CRUD and session endpoints.
+  - memory.py: curated memory review/list/detail endpoints.
 - knowledge_documents/
   Knowledge document endpoints used by the legacy views.py entrypoint.
   - endpoints.py: document list/status/detail/download/scrape/CSV-preview endpoints and serializers.
 - integrations/
   Integration endpoints used by the legacy views.py entrypoint.
   - endpoints.py: Google Drive OAuth, resource selection, sync, and integration collection endpoints.
+  - oauth_shared.py: native integration OAuth config, provider bootstrap, profile fetchers, and shared serializers.
+  - oauth.py: native integration OAuth start/callback/disconnect/tool endpoints.
+- email/
+  First-party email OAuth endpoints used by the legacy email_oauth.py entrypoint.
+  - oauth_shared.py: email OAuth config, provider bootstrap, profile fetchers, and shared serializers.
+  - oauth.py: email OAuth start/callback/disconnect/tool endpoints.
+- voice/
+  Voice API endpoints used by the legacy voice_providers.py entrypoint.
+  - provider_shared.py: voice provider request, credential, serialization, and test helpers.
+  - providers.py: voice provider list/detail/test endpoints.
+  - calls.py: voice call list/detail/event stream/hangup endpoints.
 - mcp/
   MCP connection API helpers used by the legacy mcp_connections.py entrypoint.
   - shared.py: request parsing, business resolution, and MCP server URL validation.
@@ -50,6 +67,8 @@ Directory Map
   - serializers.py: MCP connection, tool setting, auth header, and active test-job serializers.
   - audit.py: MCP audit event writer.
   - controls.py: MCP tool-control and approval-mode helpers.
+  - oauth_shared.py: MCP marketplace OAuth provider bootstrap, popup, business, and marketplace helpers.
+  - oauth.py: MCP marketplace OAuth start/callback/refresh endpoints.
 - views.py
   REST-style endpoints for agents, registrations, documents, integrations,
   and CRM resources.

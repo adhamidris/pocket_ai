@@ -13,9 +13,13 @@ with the read v2 contract enabled via `MCP_AGENTIC_READ_V2_ENABLED=true`.
 Directory Map
 -------------
 - orchestrator.py
-  Main tool loop, streaming, budgets, memory summary, and prompt compaction.
+  Primary MCP orchestrator service shell and streaming public API.
+- orchestrator_turn_execution.py
+  Main MCP turn execution loop, tool dispatch, approval handling, and final answer pass.
 - prompts.py
   System prompt builder + transcript assembly rules for MCP.
+- prompt_context_notes.py
+  Conversation memory, compacted history, recent refs, files, and automation context notes for MCP prompts.
 - tool_definitions.py
   LLM-facing tool schemas and runtime schema limits.
 - tools.py
@@ -59,19 +63,33 @@ Directory Map
 - knowledge_search_fusion.py
   Search result fusion helpers for MCP knowledge search.
 - knowledge_search_tool.py
-  search_knowledge MCP tool handler.
+  Compatibility bridge for the public search_knowledge handler.
+- knowledge_search/
+  search_knowledge handler, service cache, pagination, and search result shaping.
 - knowledge_read_tool.py
-  read_knowledge MCP tool handler and agentic read engine.
+  Compatibility bridge for the public read_knowledge handler.
+- knowledge_read/
+  Agentic read_knowledge engine, wrapper validation, and table snippet helpers.
 - portal_block_stream.py
   Streaming helper for portal response block tool calls.
 - orchestrator_prompt_governor.py
   Prompt budgeting, compaction, and provider chat wrapper for the MCP orchestrator.
+- orchestrator_prompt_tool_compaction.py
+  Large tool-result prompt compaction helpers used by the prompt governor.
 - orchestrator_planning.py
   Final response planning, verification parsing, citations, and plan assembly.
 - orchestrator_knowledge_context.py
   MCP knowledge result tracking, read-reference repair, and cross-turn seen-item persistence.
 - orchestrator_approval_policy.py
-  Native integration policy, email/phone approval previews, and email send audit helpers.
+  Native integration policy, email approval previews, and email send audit helpers.
+- orchestrator_native_approval.py
+  Native integration availability, approval-mode overrides, and native policy decisions.
+- orchestrator_email_drafts.py
+  Email draft pending-state helpers and email argument sanitization.
+- orchestrator_tool_trace_summary.py
+  Privacy-safe tool input/output trace summaries for portal/debug events.
+- orchestrator_phone_approval.py
+  Phone-call approval payload, preview, reuse, and wait handling.
 - orchestrator_tool_schema.py
   Tool schema lookup, setup defaults, and argument validation helpers.
 - orchestrator_response_helpers.py
