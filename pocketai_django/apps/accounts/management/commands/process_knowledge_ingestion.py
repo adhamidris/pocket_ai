@@ -13,8 +13,8 @@ from apps.accounts.models import (
     KnowledgeStatus,
 )
 from apps.knowledge.models import KnowledgeUpload
-from apps.knowledge.ingestion_jobs import get_ingestion_queue_health, queue_ingestion_job
-from apps.knowledge.ingestion_service import KnowledgeIngestionService
+from apps.knowledge.ingestion.jobs import get_ingestion_queue_health, queue_ingestion_job
+from apps.knowledge.ingestion.service import KnowledgeIngestionService
 from apps.rag.rag_logging import structured_log
 
 

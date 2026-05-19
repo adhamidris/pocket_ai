@@ -253,7 +253,7 @@ def mcp_connections_collection(request: HttpRequest) -> JsonResponse:
             metadata={"source_type": source_type, "marketplace_key": marketplace_key or None},
         )
         try:
-            from apps.mcp.connection_test_jobs import enqueue_mcp_connection_test_job
+            from apps.mcp.runtime.connection_test_jobs import enqueue_mcp_connection_test_job
 
             enqueue_mcp_connection_test_job(connection=connection, trigger="create")
         except Exception:  # pragma: no cover - background enqueue must not break API
@@ -429,7 +429,7 @@ def mcp_connection_detail(request: HttpRequest, connection_id: uuid.UUID) -> Jso
             )
 
         try:
-            from apps.mcp.connection_test_jobs import enqueue_mcp_connection_test_job
+            from apps.mcp.runtime.connection_test_jobs import enqueue_mcp_connection_test_job
 
             trigger = None
             if "server_url" in updates:

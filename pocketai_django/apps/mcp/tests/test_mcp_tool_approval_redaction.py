@@ -13,7 +13,7 @@ from apps.accounts.models import (
 from apps.mcp.models import McpConnection
 from apps.conversations.models import Conversation, ConversationToolApproval, ConversationToolApprovalStatus
 from apps.mcp.orchestrator import McpOrchestratorService
-from apps.mcp.redaction import REDACTED_VALUE
+from apps.mcp.text.redaction import REDACTED_VALUE
 from core.tenancy import tenant_context
 
 

@@ -14,7 +14,7 @@ from apps.knowledge.models import (
     KnowledgeIngestionJob,
     KnowledgeUpload,
 )
-from apps.knowledge.ingestion_jobs import queue_ingestion_job
+from apps.knowledge.ingestion.jobs import queue_ingestion_job
 
 
 class Command(BaseCommand):

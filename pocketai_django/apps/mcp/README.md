@@ -17,51 +17,23 @@ Directory Map
 - orchestrator_turn_execution.py
   Main MCP turn execution loop, tool dispatch, approval handling, and final answer pass.
 - prompts.py
-  System prompt builder + transcript assembly rules for MCP.
-- prompt_context_notes.py
-  Conversation memory, compacted history, recent refs, files, and automation context notes for MCP prompts.
+  Compatibility bridge for MCP prompt builders and transcript assembly.
+- prompting/
+  MCP prompt builders, context notes, model-specific agentic templates, and transcript assembly rules.
 - tool_definitions.py
-  LLM-facing tool schemas and runtime schema limits.
+  Public tool schema aggregator and runtime schema description patching.
+- tool_schemas/
+  Domain-grouped LLM-facing tool schemas and shared schema limits/helpers.
 - tools.py
-  Tool registry + handlers not yet split out.
-- gateway_tools.py
-  External MCP gateway search/call handlers.
-- file_tools.py
-  Conversation file search/read handlers and PDF utility handlers.
-- email_tools.py
-  Email account resolution and Gmail/Microsoft email handlers.
-- native_integration_tools.py
-  Calendar, Drive, OneDrive, Slack, and HubSpot native integration handlers.
-- integration_tool_catalog.py
-  Native/email integration catalog and enablement policy helpers.
-- agent_run_tools.py
-  Background AgentRun request/list/get/continue handlers.
-- task_tools.py
-  Persistent task automation list/draft/update/activate/pause handlers.
-- memory_tools.py
-  Memory search/save/forget handlers.
-- context_retrieval_tools.py
-  Long-chat compacted context retrieval handler.
-- search_cursor.py
-  Search pagination cursor signing/cache helpers.
-- tool_runtime_helpers.py
-  Runtime logging, audit, and small cache helpers for MCP tools.
-- knowledge_scope.py
-  Agent knowledge-scope helpers for MCP knowledge tools.
-- knowledge_query_helpers.py
-  Query intent and read-sufficiency helpers for MCP knowledge tools.
-- knowledge_result_helpers.py
-  Knowledge result shaping helpers for MCP search/read tools.
-- knowledge_identifier_helpers.py
-  Identifier and table-column helpers for MCP knowledge tools.
-- knowledge_observability.py
-  Observability helpers for MCP knowledge tool payloads.
-- knowledge_read_guards.py
-  Read throttling and diagnostic warning helpers for MCP knowledge tools.
-- knowledge_agentic_response.py
-  Agentic search response conversion for MCP knowledge tools.
-- knowledge_search_fusion.py
-  Search result fusion helpers for MCP knowledge search.
+  Public tool registry and dispatcher.
+- tool_handlers/
+  Domain-grouped MCP tool handlers for gateway, files, email, native integrations, AgentRuns, tasks, memory, and context retrieval.
+- runtime/
+  Runtime helpers for tool logging/audits, artifacts, cursors, budgets, observability, portal block streaming, and connection test jobs.
+- text/
+  Sanitization, redaction, and identifier detection helpers.
+- knowledge_support/
+  Shared knowledge helper modules for scope, query intent, result shaping, identifiers, observability, read guards, agentic responses, and search fusion.
 - knowledge_search_tool.py
   Compatibility bridge for the public search_knowledge handler.
 - knowledge_search/
@@ -70,42 +42,20 @@ Directory Map
   Compatibility bridge for the public read_knowledge handler.
 - knowledge_read/
   Agentic read_knowledge engine, wrapper validation, and table snippet helpers.
-- portal_block_stream.py
-  Streaming helper for portal response block tool calls.
-- orchestrator_prompt_governor.py
-  Prompt budgeting, compaction, and provider chat wrapper for the MCP orchestrator.
-- orchestrator_prompt_tool_compaction.py
-  Large tool-result prompt compaction helpers used by the prompt governor.
-- orchestrator_planning.py
-  Final response planning, verification parsing, citations, and plan assembly.
-- orchestrator_knowledge_context.py
-  MCP knowledge result tracking, read-reference repair, and cross-turn seen-item persistence.
-- orchestrator_approval_policy.py
-  Native integration policy, email approval previews, and email send audit helpers.
-- orchestrator_native_approval.py
-  Native integration availability, approval-mode overrides, and native policy decisions.
-- orchestrator_email_drafts.py
-  Email draft pending-state helpers and email argument sanitization.
-- orchestrator_tool_trace_summary.py
-  Privacy-safe tool input/output trace summaries for portal/debug events.
-- orchestrator_phone_approval.py
-  Phone-call approval payload, preview, reuse, and wait handling.
-- orchestrator_tool_schema.py
-  Tool schema lookup, setup defaults, and argument validation helpers.
-- orchestrator_response_helpers.py
-  Response block parsing, assistant message coercion, and prompt/tool-note logging helpers.
-- orchestrator_runtime_controls.py
-  Runtime feature flags, character budgets, constraint payloads, and generic approval waiting.
-- orchestrator_remote_tools.py
-  Remote MCP call execution, retry/idempotency helpers, and tool-call parsing.
-- agentic_read_cursor.py
-  Signed cursor helpers for agentic read_knowledge pagination.
+- orchestration/
+  MCP orchestrator mixins for turn execution, prompt governance, planning, approvals, remote tools, response helpers, and runtime controls.
+- remote_client.py
+  Public remote MCP client compatibility surface for server tests and tool calls.
+- remote/
+  Remote MCP constants, errors, SSRF checks, protocol parsing, transports, tool calls, and dataclasses.
+- connectors.py
+  Compatibility bridge for MCP connection/tool-definition helpers.
+- connections/
+  MCP connection discovery, remote tool schema shaping, auth headers, and approval requirement helpers.
 - types.py
-  Shared types/exceptions + ToolExecutionContext.
-- sanitizer.py
-  Filters internal filler text from streaming responses.
-- identifier_detection.py
-  Light identifier parsing helpers (email/phone/order ids).
+  Compatibility bridge for shared MCP contracts.
+- contracts/
+  Shared MCP types/exceptions, ToolExecutionContext, and knowledge tool result contracts.
 - tests/
   Tool loop and observability tests.
 
@@ -175,7 +125,7 @@ Streaming Behavior
 - The first response may include a short placeholder.
 - After that, tool calls must emit empty content until final answer.
 - Portal turns stream **server-built blocks**; model-driven `portal_emit_blocks` is disabled to avoid mixed-mode streaming.
-- sanitizer.py removes investigative filler for professional/formal agents.
+- text/sanitizer.py removes investigative filler for professional/formal agents.
 
 ASCII Flow
 ----------
@@ -203,7 +153,7 @@ Prompt + Tone Controls
 ----------------------
 - MCP system prompt: `apps/mcp/prompts.py`
 - Tone labels: `apps/accounts/agents.py`
-- Placeholder filtering: `apps/mcp/sanitizer.py`
+- Placeholder filtering: `apps/mcp/text/sanitizer.py`
 
 Troubleshooting
 ---------------

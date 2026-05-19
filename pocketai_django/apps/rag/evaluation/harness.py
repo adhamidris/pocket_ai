@@ -30,8 +30,8 @@ from apps.knowledge.models import (
 )
 from apps.rag.knowledge_search import KnowledgeSearchService, KnowledgeSnippet
 from apps.rag.evaluation.datasets import GOLDEN_SETS, GoldenQuery, GoldenSet, GoldenFixture
-from apps.knowledge.ingestion_jobs import queue_ingestion_job
-from apps.knowledge.ingestion_service import KnowledgeIngestionService
+from apps.knowledge.ingestion.jobs import queue_ingestion_job
+from apps.knowledge.ingestion.service import KnowledgeIngestionService
 from apps.rag.quality_monitor import QualityMonitor
 from apps.rag.rag_logging import rag_log
 

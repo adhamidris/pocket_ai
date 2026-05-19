@@ -7,7 +7,7 @@ from apps.knowledge.models import (
     KnowledgeUploadTable,
     KnowledgeUploadTableRow,
 )
-from apps.knowledge.ingestion_service import KnowledgeIngestionService
+from apps.knowledge.ingestion.service import KnowledgeIngestionService
 from core.tenancy import tenant_bypass
 
 

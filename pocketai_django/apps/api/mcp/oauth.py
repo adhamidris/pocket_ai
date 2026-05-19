@@ -214,7 +214,7 @@ def oauth_callback(request: HttpRequest, provider_key: str) -> HttpResponse:
             metadata={"marketplace_key": oauth_state.marketplace_key, "provider": provider.key},
         )
         try:
-            from apps.mcp.connection_test_jobs import enqueue_mcp_connection_test_job
+            from apps.mcp.runtime.connection_test_jobs import enqueue_mcp_connection_test_job
 
             enqueue_mcp_connection_test_job(connection=connection, trigger=f"oauth_{provider.key}")
         except Exception:  # pragma: no cover - background enqueue must not break OAuth callback

@@ -31,8 +31,8 @@ from apps.conversations.models import (
     PortalTurnEvent,
     PortalTurnStatus,
 )
-from apps.mcp.sanitizer import sanitize_with_diagnostics
-from apps.mcp.tool_artifacts import store_remote_tool_output_artifact
+from apps.mcp.text.sanitizer import sanitize_with_diagnostics
+from apps.mcp.runtime.tool_artifacts import store_remote_tool_output_artifact
 from apps.rag.rag_logging import structured_log
 from core.tenancy import tenant_context
 

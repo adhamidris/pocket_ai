@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from django.test import SimpleTestCase
 
-from apps.knowledge.ingestion_benchmark import (
+from apps.knowledge.ingestion.benchmark import (
     compare_snapshots,
     evaluate_pdf_portfolio_snapshot,
     evaluate_quality_gate,

@@ -30,8 +30,8 @@ from .types import (
 from .tool_definitions import (
     get_tool_definitions,
 )
-from .gateway_tools import _mcp_call_tool_handler, _mcp_search_tools_handler
-from .file_tools import (
+from .tool_handlers.gateway import _mcp_call_tool_handler, _mcp_search_tools_handler
+from .tool_handlers.files import (
     _pdf_extract_pages_handler,
     _pdf_extract_text_handler,
     _pdf_generate_handler,
@@ -39,14 +39,14 @@ from .file_tools import (
     _read_conversation_file_handler,
     _search_conversation_files_handler,
 )
-from .email_tools import (
+from .tool_handlers.email import (
     _email_create_draft_handler,
     _email_get_message_handler,
     _email_get_thread_handler,
     _email_search_handler,
     _email_send_draft_handler,
 )
-from .native_integration_tools import (
+from .tool_handlers.native_integration import (
     _calendar_create_event_handler,
     _calendar_get_event_handler,
     _calendar_list_events_handler,
@@ -66,7 +66,7 @@ from .native_integration_tools import (
     _slack_search_messages_handler,
     _slack_send_message_handler,
 )
-from .integration_tool_catalog import (
+from .tool_handlers.integration_catalog import (
     get_email_integration_type_for_provider,
     get_email_integration_tool_names,
     get_email_integration_tools_for_provider,
@@ -84,29 +84,29 @@ from .integration_tool_catalog import (
     list_enabled_native_integration_tool_names,
     resolve_native_integration_account_for_tool,
 )
-from .agent_run_tools import (
+from .tool_handlers.agent_run import (
     _continue_agent_run_handler,
     _get_agent_run_handler,
     _list_agent_runs_handler,
     _request_user_input_handler,
     _start_agent_run_handler,
 )
-from .task_tools import (
+from .tool_handlers.tasks import (
     _draft_task_handler,
     _list_tasks_handler,
     _pause_task_handler,
     _request_task_activation_handler,
     _update_task_handler,
 )
-from .memory_tools import (
+from .tool_handlers.memory import (
     _forget_memory_handler,
     _save_memory_handler,
     _search_memory_handler,
 )
-from .context_retrieval_tools import _retrieve_earlier_context_handler
+from .tool_handlers.context_retrieval import _retrieve_earlier_context_handler
 from .knowledge_search_tool import _knowledge_service, _search_knowledge_handler
 from .knowledge_read_tool import _read_knowledge_handler
-from .budget_guidance import build_repeat_search_guidance, search_budget_exceeded_payload
+from .runtime.budget_guidance import build_repeat_search_guidance, search_budget_exceeded_payload
 
 
 logger = logging.getLogger(__name__)

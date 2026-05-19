@@ -11,7 +11,7 @@ from django.utils import timezone
 
 from apps.accounts.feature_flags import FeatureFlagService
 from apps.accounts.models import BusinessProfile
-from apps.knowledge.ingestion_benchmark import (
+from apps.knowledge.ingestion.benchmark import (
     capture_upload_snapshot,
     compare_snapshots,
     load_snapshot_from_json,

@@ -42,7 +42,7 @@ from apps.conversations.models import (
     MemoryScope,
     MemoryStatus,
 )
-from apps.mcp.sanitizer import has_dsml_markup, strip_dsml_markup
+from apps.mcp.text.sanitizer import has_dsml_markup, strip_dsml_markup
 from apps.rag.rag_logging import structured_log
 
 

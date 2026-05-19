@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from django.test import SimpleTestCase
 
-from apps.mcp.redaction import REDACTED_VALUE, redact_tool_input_payload
+from apps.mcp.text.redaction import REDACTED_VALUE, redact_tool_input_payload
 
 
 class McpToolInputRedactionTests(SimpleTestCase):

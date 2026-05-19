@@ -4,7 +4,7 @@ from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
 
-from apps.knowledge.ingestion_benchmark import (
+from apps.knowledge.ingestion.benchmark import (
     build_comparison_stem,
     build_snapshot_stem,
     capture_upload_snapshot,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from django.core.management.base import BaseCommand, CommandError
 
-from apps.knowledge.ingestion_benchmark import (
+from apps.knowledge.ingestion.benchmark import (
     build_snapshot_stem,
     capture_upload_snapshot,
     parse_terms,

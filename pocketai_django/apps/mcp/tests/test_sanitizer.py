@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from django.test import SimpleTestCase
 
-from apps.mcp.sanitizer import extract_sentences
+from apps.mcp.text.sanitizer import extract_sentences
 
 
 class SanitizerSentenceSplitTests(SimpleTestCase):

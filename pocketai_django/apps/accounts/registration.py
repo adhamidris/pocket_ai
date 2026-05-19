@@ -514,7 +514,7 @@ def finalize_knowledge_uploads(
     uploads.sort(key=lambda item: (item.category or "", item.created_at))
     if uploads_for_ingestion:
         try:
-            from apps.knowledge.ingestion_jobs import queue_ingestion_job
+            from apps.knowledge.ingestion.jobs import queue_ingestion_job
 
             for upload in uploads_for_ingestion:
                 queue_ingestion_job(upload, trigger="registration_link_upload")

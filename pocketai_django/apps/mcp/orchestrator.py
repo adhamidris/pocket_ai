@@ -25,15 +25,15 @@ from apps.rag.contracts import StreamingTurnContext
 from apps.rag.rag_logging import structured_log
 
 from . import tools as mcp_tools
-from .orchestrator_approval_policy import McpApprovalPolicyMixin
-from .orchestrator_knowledge_context import McpKnowledgeContextMixin
-from .orchestrator_planning import McpPlanningMixin
-from .orchestrator_prompt_governor import McpPromptGovernorMixin
-from .orchestrator_response_helpers import McpResponseHelpersMixin
-from .orchestrator_remote_tools import McpRemoteToolsMixin
-from .orchestrator_runtime_controls import McpRuntimeControlsMixin
-from .orchestrator_tool_schema import McpToolSchemaMixin
-from .orchestrator_turn_execution import McpTurnExecutionMixin
+from .orchestration.approval_policy import McpApprovalPolicyMixin
+from .orchestration.knowledge_context import McpKnowledgeContextMixin
+from .orchestration.planning import McpPlanningMixin
+from .orchestration.prompt_governor import McpPromptGovernorMixin
+from .orchestration.remote_tools import McpRemoteToolsMixin
+from .orchestration.response_helpers import McpResponseHelpersMixin
+from .orchestration.runtime_controls import McpRuntimeControlsMixin
+from .orchestration.tool_schema import McpToolSchemaMixin
+from .orchestration.turn_execution import McpTurnExecutionMixin
 
 from .types import (
     BaseMcpProvider,

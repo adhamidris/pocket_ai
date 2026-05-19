@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from django.core.management.base import BaseCommand, CommandError
 
-from apps.knowledge.ingestion_benchmark import (
+from apps.knowledge.ingestion.benchmark import (
     build_pdf_portfolio_stem,
     capture_pdf_portfolio_snapshot,
     load_pdf_portfolio_expectations_from_json,

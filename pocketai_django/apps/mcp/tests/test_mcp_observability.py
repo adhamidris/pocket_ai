@@ -170,7 +170,7 @@ class McpObservabilityTests(TestCase):
         orchestrator = McpOrchestratorService(agent=self.agent, provider=provider)
         streamed: list[str] = []
 
-        with self.assertLogs("apps.mcp.sanitizer", level="INFO") as logs:
+        with self.assertLogs("apps.mcp.text.sanitizer", level="INFO") as logs:
             context = orchestrator.stream_turn(
                 conversation=self.conversation,
                 user_message="What's the annual fee?",

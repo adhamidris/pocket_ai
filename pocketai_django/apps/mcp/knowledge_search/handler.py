@@ -19,21 +19,21 @@ from apps.rag.knowledge_search import KnowledgeSearchService
 from apps.rag.rag_logging import structured_log
 from apps.rag.tabular_limits import ToolRateLimit, enforce_tool_rate_limit
 
-from ..budget_guidance import build_repeat_search_guidance, search_budget_exceeded_payload
-from ..knowledge_agentic_response import _convert_to_agentic_search_response
-from ..knowledge_identifier_helpers import _extract_identifier_candidate
-from ..knowledge_observability import _log_snippet_payloads, _log_tool_metrics
-from ..knowledge_query_helpers import _compute_read_required, _query_intent
-from ..knowledge_result_helpers import (
+from ..runtime.budget_guidance import build_repeat_search_guidance, search_budget_exceeded_payload
+from ..knowledge_support.agentic_response import _convert_to_agentic_search_response
+from ..knowledge_support.identifier_helpers import _extract_identifier_candidate
+from ..knowledge_support.observability import _log_snippet_payloads, _log_tool_metrics
+from ..knowledge_support.query_helpers import _compute_read_required, _query_intent
+from ..knowledge_support.result_helpers import (
     _apply_seen_item_filter,
     _mark_snippets_as_seen,
     _sanitize_snippet_payloads_for_prompt,
     _serialize_snippets,
 )
-from ..knowledge_scope import _agent_knowledge_scope, _scope_upload_ids_to_uuids
-from ..knowledge_search_fusion import _fuse_batched_search_runs
-from ..rag_observability import build_query_scope_observability, build_retrieval_observability
-from ..search_cursor import (
+from ..knowledge_support.scope import _agent_knowledge_scope, _scope_upload_ids_to_uuids
+from ..knowledge_support.search_fusion import _fuse_batched_search_runs
+from ..runtime.rag_observability import build_query_scope_observability, build_retrieval_observability
+from ..runtime.search_cursor import (
     _decode_search_cursor,
     _encode_search_cursor,
     _resolve_search_cursor_from_handle,
@@ -48,7 +48,7 @@ from ..tool_definitions import (
     SEARCH_KNOWLEDGE_LIMIT_SCHEMA_DEFAULT,
     SEARCH_PREFETCH_ABSOLUTE_CAP,
 )
-from ..tool_runtime_helpers import _bounded_cache_store, _search_cache_key
+from ..runtime.tool_runtime_helpers import _bounded_cache_store, _search_cache_key
 from ..types import SearchBudgetExceeded, ToolExecutionContext, ToolRateLimitExceeded
 
 

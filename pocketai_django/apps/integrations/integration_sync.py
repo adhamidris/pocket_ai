@@ -32,7 +32,7 @@ from apps.knowledge.models import (
 )
 from apps.integrations.models import KnowledgeIntegration
 from apps.integrations.google_drive import GoogleOAuthError, maybe_refresh_google_credentials
-from apps.knowledge.ingestion_jobs import queue_ingestion_job
+from apps.knowledge.ingestion.jobs import queue_ingestion_job
 
 logger = logging.getLogger(__name__)
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}

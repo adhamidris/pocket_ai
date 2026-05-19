@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 from django.test import SimpleTestCase, override_settings
 
-from apps.knowledge.table_normalization import (
+from apps.knowledge.tables.normalization import (
     NormalizedSheet,
     SheetNormalizationDiagnostics,
     SpreadsheetRowInput,

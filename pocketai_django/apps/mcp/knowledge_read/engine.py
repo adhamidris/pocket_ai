@@ -34,28 +34,28 @@ from apps.rag.contracts import KNOWLEDGE_READ_STATE_FULL, KnowledgeSnippet
 from apps.rag.knowledge_search import KnowledgeSearchService
 from apps.rag.rag_logging import structured_log
 
-from ..agentic_read_cursor import (
+from ..runtime.agentic_read_cursor import (
     _AGENTIC_READ_CURSOR_V2_TTL_SECONDS,
     _sign_agentic_read_cursor_v2,
     _verify_agentic_read_cursor_v2,
 )
-from ..knowledge_identifier_helpers import _normalize_column_name
-from ..knowledge_read_guards import _build_ingestion_warnings
-from ..knowledge_result_helpers import (
+from ..knowledge_support.identifier_helpers import _normalize_column_name
+from ..knowledge_support.read_guards import _build_ingestion_warnings
+from ..knowledge_support.result_helpers import (
     _apply_seen_row_filter,
     _budget_allows_full_page,
     _detect_full_page_intent,
     _mark_rows_as_seen,
     _mark_snippets_as_seen,
 )
-from ..knowledge_scope import _agent_knowledge_scope, _agent_scope_allows_upload
+from ..knowledge_support.scope import _agent_knowledge_scope, _agent_scope_allows_upload
 from ..models import McpToolOutputArtifact
-from ..tool_artifacts import store_local_tool_output_artifact
+from ..runtime.tool_artifacts import store_local_tool_output_artifact
 from ..tool_definitions import (
     READ_KNOWLEDGE_MAX_CHARS_SCHEMA_DEFAULT,
     READ_KNOWLEDGE_MAX_CHARS_SCHEMA_MAX,
 )
-from ..tool_runtime_helpers import _read_cache_key, _record_knowledge_audit_event_once
+from ..runtime.tool_runtime_helpers import _read_cache_key, _record_knowledge_audit_event_once
 from ..types import CharacterBudgetExceeded, ToolExecutionContext
 
 

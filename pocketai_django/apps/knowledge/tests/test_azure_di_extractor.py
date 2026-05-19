@@ -42,9 +42,9 @@ class AzureDocumentIntelligenceExtractorTests(SimpleTestCase):
         self.addCleanup(lambda: os.path.exists(handle.name) and os.unlink(handle.name))
         self.path = Path(handle.name)
 
-    @mock.patch("apps.knowledge.ingestion_azure_di.time.sleep")
-    @mock.patch("apps.knowledge.ingestion_azure_di.requests.get")
-    @mock.patch("apps.knowledge.ingestion_azure_di.requests.post")
+    @mock.patch("apps.knowledge.ingestion.azure_di.time.sleep")
+    @mock.patch("apps.knowledge.ingestion.azure_di.requests.get")
+    @mock.patch("apps.knowledge.ingestion.azure_di.requests.post")
     def test_submit_retries_on_throttle_with_retry_after(
         self,
         mock_post,
@@ -95,9 +95,9 @@ class AzureDocumentIntelligenceExtractorTests(SimpleTestCase):
         self.assertGreaterEqual(float(first_retry.get("delay_s") or 0.0), 2.0)
         self.assertTrue(mock_sleep.called)
 
-    @mock.patch("apps.knowledge.ingestion_azure_di.time.sleep")
-    @mock.patch("apps.knowledge.ingestion_azure_di.requests.get")
-    @mock.patch("apps.knowledge.ingestion_azure_di.requests.post")
+    @mock.patch("apps.knowledge.ingestion.azure_di.time.sleep")
+    @mock.patch("apps.knowledge.ingestion.azure_di.requests.get")
+    @mock.patch("apps.knowledge.ingestion.azure_di.requests.post")
     def test_poll_timeout_is_classified(self, mock_post, mock_get, _mock_sleep) -> None:
         mock_post.return_value = _mock_response(
             status_code=202,
@@ -129,8 +129,8 @@ class AzureDocumentIntelligenceExtractorTests(SimpleTestCase):
         self.assertEqual(meta.get("failure_stage"), "poll")
         self.assertEqual(meta.get("failure_reason"), "poll_exception")
 
-    @mock.patch("apps.knowledge.ingestion_azure_di.time.sleep")
-    @mock.patch("apps.knowledge.ingestion_azure_di.requests.post")
+    @mock.patch("apps.knowledge.ingestion.azure_di.time.sleep")
+    @mock.patch("apps.knowledge.ingestion.azure_di.requests.post")
     def test_submit_hard_failure_is_classified(self, mock_post, mock_sleep) -> None:
         mock_post.return_value = _mock_response(
             status_code=400,

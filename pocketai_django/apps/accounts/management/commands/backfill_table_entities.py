@@ -6,8 +6,8 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 
 from apps.knowledge.models import KnowledgeUpload
-from apps.knowledge.ingestion_contracts import TableCellPayload, TablePayload, TableRowPayload
-from apps.knowledge.ingestion_service import KnowledgeIngestionService
+from apps.knowledge.ingestion.contracts import TableCellPayload, TablePayload, TableRowPayload
+from apps.knowledge.ingestion.service import KnowledgeIngestionService
 from core.tenancy import tenant_bypass, tenant_context
 
 

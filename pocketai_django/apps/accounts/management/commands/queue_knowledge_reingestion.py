@@ -4,7 +4,7 @@ from django.core.management.base import BaseCommand, CommandError
 
 from apps.accounts.models import KnowledgeStatus
 from apps.knowledge.models import KnowledgeUpload
-from apps.knowledge.ingestion_jobs import queue_ingestion_job
+from apps.knowledge.ingestion.jobs import queue_ingestion_job
 from apps.knowledge.knowledge_preflight import ensure_upload_preflight
 
 

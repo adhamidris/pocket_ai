@@ -10,7 +10,7 @@ from apps.accounts.models import (
     RegistrationSession,
 )
 from apps.mcp.models import McpConnection
-from apps.mcp.connection_test_jobs import McpConnectionTestJobRunner, enqueue_mcp_connection_test_job
+from apps.mcp.runtime.connection_test_jobs import McpConnectionTestJobRunner, enqueue_mcp_connection_test_job
 from apps.mcp.models import McpConnectionTestJobStatus
 from apps.mcp.remote_client import McpRemoteHttpStatusError, McpRemoteSession, McpRemoteTool
 
@@ -55,7 +55,7 @@ class McpConnectionTestJobRunnerTests(TestCase):
         )
         tools = [McpRemoteTool(name="query", title="Query", description="Run query", input_schema={"type": "object"})]
 
-        with mock.patch("apps.mcp.connection_test_jobs.test_mcp_server", return_value=(session, tools)):
+        with mock.patch("apps.mcp.runtime.connection_test_jobs.test_mcp_server", return_value=(session, tools)):
             runner = McpConnectionTestJobRunner(lease_seconds=30, idle_sleep_s=0.1)
             processed = runner.run_once(limit=5)
             self.assertEqual(processed, 1)
@@ -86,7 +86,7 @@ class McpConnectionTestJobRunnerTests(TestCase):
         assert job is not None
 
         with mock.patch(
-            "apps.mcp.connection_test_jobs.test_mcp_server",
+            "apps.mcp.runtime.connection_test_jobs.test_mcp_server",
             side_effect=McpRemoteHttpStatusError("rate limited", status_code=429, retry_after="3"),
         ):
             runner = McpConnectionTestJobRunner(lease_seconds=30, idle_sleep_s=0.1)

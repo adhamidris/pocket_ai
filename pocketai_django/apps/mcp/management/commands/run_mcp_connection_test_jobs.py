@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from django.core.management.base import BaseCommand
 
-from apps.mcp.connection_test_jobs import McpConnectionTestJobRunner
+from apps.mcp.runtime.connection_test_jobs import McpConnectionTestJobRunner
 
 
 class Command(BaseCommand):

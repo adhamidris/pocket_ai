@@ -8,7 +8,7 @@ from apps.knowledge.knowledge_ingestion import (
     TableCellPayload,
     TableRowPayload,
 )
-from apps.knowledge.table_scope_engine import (
+from apps.knowledge.tables.scope_engine import (
     SCOPE_REASON_ABSTAIN,
     SCOPE_REASON_EDGE_COMPLETION,
     SCOPE_REASON_EXPLICIT_SPAN,
