@@ -48,6 +48,7 @@
   .pa-empty { margin: 0; padding: 16px 18px 24px; text-align: left; border-radius: 16px; background: transparent; }
   .pa-empty-title { margin: 0; font-size: 18px; font-weight: 600; color: hsl(var(--foreground)); }
   .pa-empty-text { margin: 8px 0 24px; color: var(--pa-muted); line-height: 1.65; font-size: 14px; }
+  .pa-empty-text:last-child { margin-bottom: 0; }
   .pa-template-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
   .pa-template { min-height: 92px; text-align: left; border: 1px solid hsl(var(--border) / .75); border-radius: 10px; padding: 14px 16px; background: var(--pa-bg); cursor: pointer; }
   .pa-template:hover { border-color: hsl(var(--primary) / .45); background: hsl(var(--primary) / .05); }
@@ -60,10 +61,10 @@
   .pa-run-time { margin-top: 5px; font-size: 12px; color: var(--pa-muted); }
   .pa-error-box { margin-top: 10px; white-space: pre-wrap; border: 1px solid hsl(var(--destructive) / .35); border-radius: 8px; padding: 10px; color: hsl(var(--destructive)); background: hsl(var(--destructive) / .08); font-size: 12px; }
   .pa-side { padding: 18px; }
-  .pa-side-title { margin: 0; font-size: 14px; font-weight: 600; color: hsl(var(--foreground)); }
+  .pa-side-title { margin: 0; color: hsl(var(--muted-foreground)); font-size: 0.68rem; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; }
   .pa-side-text { margin: 8px 0 18px; color: var(--pa-muted); font-size: 13px; line-height: 1.6; }
   .pa-mini-list { display: grid; gap: 10px; }
-  .pa-mini-item { border: 1px solid hsl(var(--border) / .62); border-radius: 10px; padding: 12px; background: hsl(var(--background) / .72); }
+  .pa-mini-item { border: 1px solid hsl(var(--border) / .62); border-radius: 10px; padding: 14px 16px; background: hsl(var(--background) / .72); }
   .pa-mini-item strong { display: block; font-size: 13px; color: hsl(var(--foreground)); }
   .pa-mini-item span { display: block; margin-top: 4px; color: var(--pa-muted); font-size: 12px; line-height: 1.5; }
   .pa-drawer { position: fixed; inset: 0; z-index: 60; display: none; }
