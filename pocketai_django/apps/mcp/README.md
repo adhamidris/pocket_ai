@@ -38,6 +38,50 @@ Directory Map
   Memory search/save/forget handlers.
 - context_retrieval_tools.py
   Long-chat compacted context retrieval handler.
+- search_cursor.py
+  Search pagination cursor signing/cache helpers.
+- tool_runtime_helpers.py
+  Runtime logging, audit, and small cache helpers for MCP tools.
+- knowledge_scope.py
+  Agent knowledge-scope helpers for MCP knowledge tools.
+- knowledge_query_helpers.py
+  Query intent and read-sufficiency helpers for MCP knowledge tools.
+- knowledge_result_helpers.py
+  Knowledge result shaping helpers for MCP search/read tools.
+- knowledge_identifier_helpers.py
+  Identifier and table-column helpers for MCP knowledge tools.
+- knowledge_observability.py
+  Observability helpers for MCP knowledge tool payloads.
+- knowledge_read_guards.py
+  Read throttling and diagnostic warning helpers for MCP knowledge tools.
+- knowledge_agentic_response.py
+  Agentic search response conversion for MCP knowledge tools.
+- knowledge_search_fusion.py
+  Search result fusion helpers for MCP knowledge search.
+- knowledge_search_tool.py
+  search_knowledge MCP tool handler.
+- knowledge_read_tool.py
+  read_knowledge MCP tool handler and agentic read engine.
+- portal_block_stream.py
+  Streaming helper for portal response block tool calls.
+- orchestrator_prompt_governor.py
+  Prompt budgeting, compaction, and provider chat wrapper for the MCP orchestrator.
+- orchestrator_planning.py
+  Final response planning, verification parsing, citations, and plan assembly.
+- orchestrator_knowledge_context.py
+  MCP knowledge result tracking, read-reference repair, and cross-turn seen-item persistence.
+- orchestrator_approval_policy.py
+  Native integration policy, email/phone approval previews, and email send audit helpers.
+- orchestrator_tool_schema.py
+  Tool schema lookup, setup defaults, and argument validation helpers.
+- orchestrator_response_helpers.py
+  Response block parsing, assistant message coercion, and prompt/tool-note logging helpers.
+- orchestrator_runtime_controls.py
+  Runtime feature flags, character budgets, constraint payloads, and generic approval waiting.
+- orchestrator_remote_tools.py
+  Remote MCP call execution, retry/idempotency helpers, and tool-call parsing.
+- agentic_read_cursor.py
+  Signed cursor helpers for agentic read_knowledge pagination.
 - types.py
   Shared types/exceptions + ToolExecutionContext.
 - sanitizer.py
@@ -121,7 +165,7 @@ User msg
    ↓
 MCP planner + tool loop (apps/mcp/orchestrator.py)
    ↓
-search_knowledge → read_knowledge (apps/mcp/tools.py)
+search_knowledge → read_knowledge (apps/mcp/knowledge_search_tool.py, apps/mcp/knowledge_read_tool.py)
    ↓
 RAG retrieval (apps/rag) + knowledge access (apps/knowledge)
    ↓

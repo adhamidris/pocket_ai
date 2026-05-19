@@ -12,6 +12,44 @@ Directory Map
   Public API routes.
 - chat_portal.py
   Streaming chat endpoints + orchestration dispatch.
+- portal_chat/
+  Extracted portal chat helpers used by the legacy chat_portal.py entrypoint.
+  - debug_tools.py: portal tool/debug payload serialization.
+  - planning.py: low-intent and planner-decision helpers.
+  - activity_snapshots.py: agent run, automation, and agent request portal snapshots.
+  - serializers.py: portal session, message, turn, approval, and block serializers.
+  - tracing.py: portal structured trace logger.
+  - request_context.py: portal request parsing, auth resolution, JSON errors, and UI language metadata.
+  - email_drafts.py: pending email draft metadata helpers.
+  - streaming.py: SSE cursor parsing and Postgres LISTEN connection helpers.
+  - status_events.py: portal status event queue helpers.
+  - session_endpoints.py: portal handle, session bootstrap, messages, CSAT, and feedback endpoints.
+  - tool_approvals.py: portal MCP tool approval endpoint.
+  - activity_actions.py: portal agent-run, automation, checkpoint, approval, and request action endpoints.
+  - tool_history.py: portal tool approval and tool event history endpoint.
+  - email_endpoints.py: portal email draft send/discard endpoints.
+  - session_stream.py: legacy session-level portal SSE stream endpoint.
+  - conversation_endpoints.py: portal conversation collection, message list, turn creation, and deprecated session endpoints.
+  - turn_stream.py: event-sourced portal turn SSE stream and cancel endpoints.
+- registration/
+  Registration wizard endpoints used by the legacy views.py entrypoint.
+  - endpoints.py: registration session start, business profile update, and default agent configuration.
+- agents/
+  Agent dashboard endpoints used by the legacy views.py entrypoint.
+  - endpoints.py: agent list/detail, capability graph, directory, and knowledge access endpoints.
+- knowledge_documents/
+  Knowledge document endpoints used by the legacy views.py entrypoint.
+  - endpoints.py: document list/status/detail/download/scrape/CSV-preview endpoints and serializers.
+- integrations/
+  Integration endpoints used by the legacy views.py entrypoint.
+  - endpoints.py: Google Drive OAuth, resource selection, sync, and integration collection endpoints.
+- mcp/
+  MCP connection API helpers used by the legacy mcp_connections.py entrypoint.
+  - shared.py: request parsing, business resolution, and MCP server URL validation.
+  - marketplace.py: curated MCP marketplace catalog, setup-field validation, and native account payloads.
+  - serializers.py: MCP connection, tool setting, auth header, and active test-job serializers.
+  - audit.py: MCP audit event writer.
+  - controls.py: MCP tool-control and approval-mode helpers.
 - views.py
   REST-style endpoints for agents, registrations, documents, integrations,
   and CRM resources.
