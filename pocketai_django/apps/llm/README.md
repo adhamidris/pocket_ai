@@ -11,7 +11,21 @@ This app owns LLM provider integrations and prompt construction. It defines:
 Directory Map
 -------------
 - llm_provider.py
-  Provider clients + MCP tool-calling providers + selection helpers.
+  Compatibility entry point for legacy imports.
+- provider_factory.py
+  Provider selection helpers for legacy chat and MCP tool-calling providers.
+- chat_providers.py
+  Legacy prompt-bundle chat providers for OpenAI and DeepSeek.
+- tool_providers.py
+  MCP tool-calling providers for OpenAI and DeepSeek.
+- interfaces.py
+  Shared LLM/MCP provider protocols and the stub provider.
+- retry.py
+  Shared retry policy, retryable error wrappers, and backoff helpers.
+- streaming.py
+  SSE stream parsing, stream chunk emission, and streamed tool-call assembly.
+- usage.py
+  Token estimates, usage payload normalization, and span debug helpers.
 - ai_prompt_builder.py
   PromptBundle + PromptBuilder (legacy orchestrator prompt composition).
 - apps.py

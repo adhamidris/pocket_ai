@@ -17,7 +17,7 @@ from core.tenancy import tenant_context
 
 from apps.conversations.models import Conversation
 from apps.conversations.models import ConversationMessage, ConversationSender
-from apps.conversations.models import (
+from apps.agent_runs.models import (
     AgentRun,
     AgentRunEventStream,
     AgentRunEventType,
