@@ -16,18 +16,13 @@ from typing import Mapping, Sequence
 
 from django.conf import settings
 from django.core.cache import cache
-from django.db import models
-from django.db.models import Prefetch
 from django.db.models.functions import Length
 
-from apps.accounts.models import KnowledgeStatus, KnowledgeVisibility
 from apps.conversations.models import Conversation, ConversationFile, ConversationFileChunk
-from apps.knowledge.access.visibility import apply_customer_visible_chunks, apply_customer_visible_uploads
 from apps.knowledge.models import (
     KnowledgeUpload,
     KnowledgeUploadChunk,
     KnowledgeUploadTable,
-    KnowledgeUploadTableCell,
     KnowledgeUploadTableRow,
 )
 from apps.rag.contracts import KNOWLEDGE_READ_STATE_FULL, KnowledgeSnippet
@@ -39,24 +34,52 @@ from ..runtime.agentic_read_cursor import (
     _sign_agentic_read_cursor_v2,
     _verify_agentic_read_cursor_v2,
 )
-from ..knowledge_support.identifier_helpers import _normalize_column_name
 from ..knowledge_support.read_guards import _build_ingestion_warnings
 from ..knowledge_support.result_helpers import (
     _apply_seen_row_filter,
     _budget_allows_full_page,
     _detect_full_page_intent,
-    _mark_rows_as_seen,
     _mark_snippets_as_seen,
 )
-from ..knowledge_support.scope import _agent_knowledge_scope, _agent_scope_allows_upload
-from ..models import McpToolOutputArtifact
-from ..runtime.tool_artifacts import store_local_tool_output_artifact
 from ..tool_definitions import (
     READ_KNOWLEDGE_MAX_CHARS_SCHEMA_DEFAULT,
     READ_KNOWLEDGE_MAX_CHARS_SCHEMA_MAX,
 )
 from ..runtime.tool_runtime_helpers import _read_cache_key, _record_knowledge_audit_event_once
 from ..types import CharacterBudgetExceeded, ToolExecutionContext
+from .anchor_manifest import _load_table_anchor_manifest as _load_table_anchor_manifest_for_context
+from .artifact_output import _attach_artifact_for_item as _attach_artifact_for_item_impl
+from .artifact_segments import _read_artifact_segment as _read_artifact_segment_impl
+from .chunk_windows import _read_chunk_window_segment as _read_chunk_window_segment_impl
+from .cursors import (
+    _cursor_payload_base as _cursor_payload_base_for_conversation,
+    _decode_cursor as _decode_cursor_for_conversation,
+    _resolve_cursor_from_handle as _resolve_cursor_from_context,
+    _store_cursor_handle as _store_cursor_handle_for_context,
+)
+from .section_blocks import (
+    _load_ordered_page_blocks as _load_ordered_page_blocks_with_cache,
+    _resolve_text_section_span as _resolve_text_section_span_with_cache,
+    _upload_title,
+)
+from .response_building import (
+    _build_response as _build_response_impl,
+    _payload_len_with_budget,
+)
+from .table_anchors import (
+    _read_exact_table_row,
+    _read_tabular_rows_with_anchor as _read_tabular_rows_with_anchor_impl,
+)
+from .target_resolution import (
+    _enforce_access as _enforce_access_impl,
+    _is_dataset_upload,
+    _resolve_target as _resolve_target_impl,
+)
+from .text_segments import (
+    _read_page_blocks_segment as _read_page_blocks_segment_impl,
+    _read_section_span_segment as _read_section_span_segment_impl,
+)
+from .table_rows import _read_tabular_rows_segment_facts
 
 
 logger = logging.getLogger(__name__)
@@ -264,165 +287,9 @@ def _agentic_read_v2_handler(
         business_uuid = None
     business = getattr(conversation, "business_profile", None)
     upload_block_cache: dict[str, list[dict[str, object]]] = {}
-    _heading_month_tokens = {
-        "jan",
-        "january",
-        "feb",
-        "february",
-        "mar",
-        "march",
-        "apr",
-        "april",
-        "may",
-        "jun",
-        "june",
-        "jul",
-        "july",
-        "aug",
-        "august",
-        "sep",
-        "sept",
-        "september",
-        "oct",
-        "october",
-        "nov",
-        "november",
-        "dec",
-        "december",
-        "ongoing",
-        "present",
-    }
-
-    def _upload_title(upload: KnowledgeUpload | None) -> str:
-        if not upload:
-            return "Untitled"
-        title = (
-            getattr(upload, "display_name", None)
-            or getattr(upload, "filename", None)
-            or getattr(upload, "source_name", None)
-            or getattr(upload, "external_reference", None)
-            or getattr(upload, "slug", None)
-            or str(getattr(upload, "id", "") or "")
-        )
-        title_text = str(title or "").strip() or "Untitled"
-        return title_text
-
-    def _collapse_ws(value: object) -> str:
-        return re.sub(r"\s+", " ", str(value or "")).strip()
-
-    def _parse_block_anchor(value: object) -> tuple[int, int] | None:
-        raw = str(value or "").strip()
-        if not raw:
-            return None
-        match = re.search(r"p(?P<page>\d+)-b(?P<block>\d+)", raw)
-        if not match:
-            return None
-        try:
-            return int(match.group("page")), int(match.group("block"))
-        except (TypeError, ValueError):
-            return None
 
     def _load_ordered_page_blocks(upload_id: str) -> list[dict[str, object]]:
-        cached = upload_block_cache.get(upload_id)
-        if cached is not None:
-            return cached
-        try:
-            from apps.knowledge.models import KnowledgeUploadPageBlock
-
-            rows = list(
-                KnowledgeUploadPageBlock.objects.filter(upload_id=upload_id)
-                .exclude(text="")
-                .order_by("page__page_number", "order_index")
-                .values(
-                    "page__page_number",
-                    "order_index",
-                    "text",
-                    "section_heading",
-                    "heading_path",
-                )
-            )
-        except Exception:
-            rows = []
-        normalized: list[dict[str, object]] = []
-        for row in rows:
-            try:
-                page_number = int(row.get("page__page_number") or 0)
-                order_index = int(row.get("order_index") or 0)
-            except (TypeError, ValueError):
-                continue
-            normalized.append(
-                {
-                    "page_number": page_number,
-                    "order_index": order_index,
-                    "text": str(row.get("text") or ""),
-                    "section_heading": str(row.get("section_heading") or ""),
-                    "heading_path": list(row.get("heading_path") or []),
-                }
-            )
-        upload_block_cache[upload_id] = normalized
-        return normalized
-
-    def _classify_heading_block(block: Mapping[str, object]) -> dict[str, object] | None:
-        raw_text = str(block.get("text") or "")
-        text = _collapse_ws(raw_text)
-        if not text:
-            return None
-
-        normalized_path = [_collapse_ws(item) for item in (block.get("heading_path") or []) if _collapse_ws(item)]
-        explicit_heading = _collapse_ws(block.get("section_heading") or "")
-        if normalized_path or explicit_heading:
-            label = normalized_path[-1] if normalized_path else explicit_heading
-            return {
-                "page_number": int(block.get("page_number") or 0),
-                "order_index": int(block.get("order_index") or 0),
-                "label": label,
-                "level": max(1, len(normalized_path) or 1),
-                "signature": "|".join(item.lower() for item in (normalized_path or [label]) if item),
-                "heuristic": False,
-            }
-
-        if len(text) > 180:
-            return None
-        stripped = text.lstrip()
-        if not stripped:
-            return None
-        if stripped.startswith(("●", "•", "-", "–", "—", "➔", "*")):
-            return None
-        if stripped[0].islower():
-            return None
-        if text[-1:] in {".", ";", "?", "!"}:
-            return None
-
-        tokens = re.findall(r"[A-Za-z0-9&/+'().-]+", text)
-        if not tokens or len(tokens) > 22:
-            return None
-
-        lower_tokens = [token.lower() for token in tokens]
-        has_digits = any(ch.isdigit() for ch in text)
-        has_month = any(token in _heading_month_tokens for token in lower_tokens)
-        pipe_count = text.count("|")
-        comma_count = text.count(",")
-        colon_count = text.count(":")
-
-        level = 0
-        if len(tokens) <= 6 and not has_digits and not has_month and pipe_count == 0 and comma_count <= 1 and colon_count == 0:
-            level = 1
-        elif len(tokens) <= 12 and not has_digits and not has_month and comma_count <= 1 and colon_count == 0:
-            level = 1
-        elif len(tokens) <= 20 and (has_digits or has_month or pipe_count > 0 or comma_count > 0) and colon_count <= 1:
-            level = 2
-
-        if level <= 0:
-            return None
-
-        return {
-            "page_number": int(block.get("page_number") or 0),
-            "order_index": int(block.get("order_index") or 0),
-            "label": text,
-            "level": level,
-            "signature": text.lower(),
-            "heuristic": True,
-        }
+        return _load_ordered_page_blocks_with_cache(upload_id, upload_block_cache=upload_block_cache)
 
     def _resolve_text_section_span(
         *,
@@ -431,385 +298,28 @@ def _agentic_read_v2_handler(
         chunk_meta: Mapping[str, object],
         fallback_page_number: int,
     ) -> dict[str, int] | None:
-        blocks = _load_ordered_page_blocks(upload_id)
-        if not blocks:
-            return None
-
-        block_index_by_key = {
-            (int(block["page_number"]), int(block["order_index"])): idx
-            for idx, block in enumerate(blocks)
-        }
-
-        raw_block_anchors = chunk_meta.get("block_anchors")
-        parsed_anchors: list[tuple[int, int]] = []
-        if isinstance(raw_block_anchors, list):
-            for entry in raw_block_anchors:
-                parsed = _parse_block_anchor(entry)
-                if parsed is not None:
-                    parsed_anchors.append(parsed)
-        parsed_anchors = [anchor for anchor in parsed_anchors if anchor in block_index_by_key]
-        parsed_anchors.sort()
-
-        if parsed_anchors:
-            anchor_start_key = parsed_anchors[0]
-            anchor_end_key = parsed_anchors[-1]
-        else:
-            canonical_anchor = _parse_block_anchor(chunk_meta.get("canonical_anchor_id"))
-            if canonical_anchor and canonical_anchor in block_index_by_key:
-                anchor_start_key = canonical_anchor
-                anchor_end_key = canonical_anchor
-            else:
-                anchor_start_key = (int(fallback_page_number), 0)
-                anchor_end_key = (int(fallback_page_number), 0)
-                if anchor_start_key not in block_index_by_key:
-                    return None
-
-        anchor_start_idx = block_index_by_key.get(anchor_start_key)
-        anchor_end_idx = block_index_by_key.get(anchor_end_key)
-        if anchor_start_idx is None or anchor_end_idx is None:
-            return None
-        if anchor_end_idx < anchor_start_idx:
-            anchor_start_idx, anchor_end_idx = anchor_end_idx, anchor_start_idx
-
-        headings: list[dict[str, object]] = []
-        heading_index_by_pos: dict[tuple[int, int], int] = {}
-        for idx, block in enumerate(blocks):
-            candidate = _classify_heading_block(block)
-            if candidate is None:
-                continue
-            candidate["idx"] = idx
-            headings.append(candidate)
-            heading_index_by_pos[(int(candidate["page_number"]), int(candidate["order_index"]))] = idx
-
-        if not headings:
-            return None
-
-        anchor_major: list[dict[str, object]] = [
-            heading
-            for heading in headings
-            if anchor_start_idx <= int(heading["idx"]) <= anchor_end_idx and int(heading["level"]) == 1
-        ]
-        if anchor_major:
-            start_heading = anchor_major[-1]
-        else:
-            prior_major = [
-                heading
-                for heading in headings
-                if int(heading["idx"]) <= anchor_start_idx and int(heading["level"]) == 1
-            ]
-            if prior_major:
-                start_heading = prior_major[-1]
-            else:
-                anchor_any = [
-                    heading
-                    for heading in headings
-                    if anchor_start_idx <= int(heading["idx"]) <= anchor_end_idx
-                ]
-                if anchor_any:
-                    start_heading = anchor_any[-1]
-                else:
-                    prior_any = [heading for heading in headings if int(heading["idx"]) <= anchor_start_idx]
-                    if not prior_any:
-                        return None
-                    start_heading = prior_any[-1]
-
-        start_idx = int(start_heading["idx"])
-        start_level = int(start_heading["level"])
-        end_idx = len(blocks) - 1
-        start_signature = str(start_heading.get("signature") or "")
-        for heading in headings:
-            idx = int(heading["idx"])
-            if idx <= start_idx:
-                continue
-            level = int(heading["level"])
-            signature = str(heading.get("signature") or "")
-            if level <= start_level and signature != start_signature:
-                end_idx = idx - 1
-                break
-
-        if end_idx < start_idx:
-            return None
-
-        start_block = blocks[start_idx]
-        end_block = blocks[end_idx]
-        return {
-            "start_page_number": int(start_block["page_number"]),
-            "start_block_order": int(start_block["order_index"]),
-            "end_page_number": int(end_block["page_number"]),
-            "end_block_order": int(end_block["order_index"]),
-        }
+        return _resolve_text_section_span_with_cache(
+            upload_id=upload_id,
+            upload_block_cache=upload_block_cache,
+            chunk_record=chunk_record,
+            chunk_meta=chunk_meta,
+            fallback_page_number=fallback_page_number,
+        )
 
     def _cursor_payload_base(*, item_id: str, kind: str) -> dict[str, object]:
-        exp = int(time.time()) + _AGENTIC_READ_CURSOR_V2_TTL_SECONDS
-        return {
-            "v": 2,
-            "exp": exp,
-            "conversation_id": str(conversation.id),
-            "business_id": str(conversation.business_profile_id),
-            "item_id": item_id,
-            "kind": kind,
-        }
+        return _cursor_payload_base_for_conversation(conversation=conversation, item_id=item_id, kind=kind)
 
     def _decode_cursor(item_id: str, cursor: str) -> tuple[dict[str, object] | None, dict[str, object] | None]:
-        try:
-            payload = _verify_agentic_read_cursor_v2(cursor)
-        except ValueError as exc:
-            return None, {"id": item_id, "error_code": "invalid_cursor", "hint": str(exc) or "Invalid cursor."}
-        if str(payload.get("conversation_id") or "") != str(conversation.id):
-            return None, {"id": item_id, "error_code": "invalid_cursor", "hint": "Cursor is for a different conversation."}
-        if str(payload.get("business_id") or "") != str(conversation.business_profile_id):
-            return None, {"id": item_id, "error_code": "invalid_cursor", "hint": "Cursor is for a different business."}
-        if str(payload.get("item_id") or "") != item_id:
-            return None, {"id": item_id, "error_code": "invalid_cursor", "hint": "Cursor does not match the requested id."}
-        if int(payload.get("v") or 0) != 2:
-            return None, {"id": item_id, "error_code": "invalid_cursor", "hint": "Unsupported cursor version."}
-        return payload, None
+        return _decode_cursor_for_conversation(conversation, item_id, cursor)
 
     def _resolve_cursor_from_handle(cursor_token: str | None) -> str | None:
-        token = str(cursor_token or "").strip()
-        if not token:
-            return None
-        cache_value = getattr(context, "read_cursor_handles", None)
-        if isinstance(cache_value, dict):
-            mapped = cache_value.get(token)
-            if isinstance(mapped, str) and mapped.strip():
-                return mapped.strip()
-        return token
+        return _resolve_cursor_from_context(context, cursor_token)
 
     def _store_cursor_handle(cursor_signed: str | None) -> str | None:
-        token = str(cursor_signed or "").strip()
-        if not token:
-            return None
-        cache_value = getattr(context, "read_cursor_handles", None)
-        reverse_cache_value = getattr(context, "read_cursor_reverse_handles", None)
-        if not isinstance(cache_value, dict) or not isinstance(reverse_cache_value, dict):
-            return token
-
-        existing_handle = reverse_cache_value.get(token)
-        if isinstance(existing_handle, str) and existing_handle.strip():
-            cached_token = cache_value.get(existing_handle.strip())
-            if isinstance(cached_token, str) and cached_token == token:
-                return existing_handle.strip()
-
-        handle = f"c_{uuid.uuid4().hex[:20]}"
-        cache_value[handle] = token
-        reverse_cache_value[token] = handle
-
-        while len(cache_value) > 500:
-            oldest_handle = next(iter(cache_value))
-            oldest_cursor = cache_value.pop(oldest_handle, None)
-            if isinstance(oldest_cursor, str):
-                reverse_cache_value.pop(oldest_cursor, None)
-        while len(reverse_cache_value) > 500:
-            oldest_cursor_key = next(iter(reverse_cache_value))
-            oldest_handle_value = reverse_cache_value.pop(oldest_cursor_key, None)
-            if isinstance(oldest_handle_value, str):
-                cache_value.pop(oldest_handle_value, None)
-
-        return handle
+        return _store_cursor_handle_for_context(context, cursor_signed)
 
     def _load_table_anchor_manifest(*, ref_id: str, table_id: str | None = None) -> dict[str, object] | None:
-        cache_value = getattr(context, "table_row_anchor_manifests", None)
-        if not isinstance(cache_value, dict):
-            return None
-        candidate_keys: list[str] = []
-        ref_key = str(ref_id or "").strip()
-        table_key = str(table_id or "").strip()
-        if ref_key:
-            candidate_keys.append(ref_key)
-        if table_key and table_key not in candidate_keys:
-            candidate_keys.append(table_key)
-        for key in candidate_keys:
-            raw_manifest = cache_value.get(key)
-            if not isinstance(raw_manifest, Mapping):
-                continue
-            anchors: list[int] = []
-            raw_anchors = raw_manifest.get("anchors")
-            if isinstance(raw_anchors, list):
-                for entry in raw_anchors:
-                    if isinstance(entry, Mapping):
-                        parsed = _coerce_int(entry.get("row_index"))
-                    else:
-                        parsed = _coerce_int(entry)
-                    if parsed is None or parsed < 0:
-                        continue
-                    anchors.append(int(parsed))
-            # Deduplicate anchors while preserving order.
-            if anchors:
-                seen_rows: set[int] = set()
-                anchors = [row for row in anchors if (row not in seen_rows and not seen_rows.add(row))]
-
-            matched_row_index = _coerce_int(raw_manifest.get("matched_row_index"))
-            if matched_row_index is None:
-                matched_row_index = -1
-            if matched_row_index < 0:
-                if anchors:
-                    matched_row_index = int(anchors[0])
-                else:
-                    continue
-
-            # Ensure anchors includes matched_row_index, and keep it first.
-            if matched_row_index in anchors:
-                anchors = [matched_row_index] + [row for row in anchors if row != matched_row_index]
-            else:
-                anchors = [matched_row_index] + anchors
-            anchors = anchors[:5]
-
-            out: dict[str, object] = {
-                "ref_id": key,
-                "table_id": table_key or str(raw_manifest.get("table_id") or "").strip(),
-                "matched_row_index": int(matched_row_index),
-            }
-            if anchors:
-                out["anchors"] = list(anchors)
-
-            try:
-                estimated_rows = int(raw_manifest.get("estimated_rows") or 0)
-            except (TypeError, ValueError):
-                estimated_rows = 0
-            if estimated_rows > 0:
-                out["estimated_rows"] = int(estimated_rows)
-
-            try:
-                estimated_columns = int(raw_manifest.get("estimated_columns") or 0)
-            except (TypeError, ValueError):
-                estimated_columns = 0
-            if estimated_columns > 0:
-                out["estimated_columns"] = int(estimated_columns)
-
-            return out
-        return None
-
-    def _resolve_target(item_id: str) -> tuple[
-        KnowledgeUploadChunk | None,
-        KnowledgeUpload | None,
-        KnowledgeUploadTable | None,
-        KnowledgeUploadTableRow | None,
-        dict[str, object] | None,
-    ]:
-        if business_uuid is None:
-            return (
-                None,
-                None,
-                None,
-                None,
-                {
-                    "id": item_id,
-                    "error_code": "invalid_business_profile",
-                    "hint": "conversation.business_profile_id must be a UUID.",
-                },
-            )
-        try:
-            identifier = uuid.UUID(item_id)
-        except (TypeError, ValueError):
-            return None, None, None, None, {"id": item_id, "error_code": "invalid_id", "hint": "id must be a valid UUID from search_knowledge results."}
-
-        chunk_record = (
-            apply_customer_visible_chunks(
-                KnowledgeUploadChunk.objects.filter(
-                    id=identifier,
-                    business_profile_id=business_uuid,
-                    upload__status=KnowledgeStatus.ACTIVE,
-                )
-            )
-            .select_related("upload")
-            .first()
-        )
-        if chunk_record:
-            upload = getattr(chunk_record, "upload", None)
-            return chunk_record, upload, None, None, None
-
-        upload_record = apply_customer_visible_uploads(
-            KnowledgeUpload.objects.filter(
-                id=identifier,
-                business_profile_id=business_uuid,
-                status=KnowledgeStatus.ACTIVE,
-            )
-        ).first()
-        if upload_record:
-            return None, upload_record, None, None, None
-
-        table_record = (
-            KnowledgeUploadTable.objects.filter(
-                id=identifier,
-                upload__business_profile_id=business_uuid,
-                upload__status=KnowledgeStatus.ACTIVE,
-            )
-            .exclude(upload__visibility=KnowledgeVisibility.INTERNAL)
-            .select_related("upload")
-            .only(
-                "id",
-                "upload_id",
-                "title",
-                "section_heading",
-                "order_index",
-                "upload__id",
-                "upload__display_name",
-                "upload__source_name",
-                "upload__external_reference",
-                "upload__slug",
-            )
-            .first()
-        )
-        if table_record:
-            return None, None, table_record, None, None
-
-        row_record = (
-            KnowledgeUploadTableRow.objects.filter(
-                id=identifier,
-                table__upload__business_profile_id=business_uuid,
-                table__upload__status=KnowledgeStatus.ACTIVE,
-            )
-            .exclude(table__upload__visibility=KnowledgeVisibility.INTERNAL)
-            .select_related("table", "table__upload")
-            .only(
-                "id",
-                "row_index",
-                "table__id",
-                "table__title",
-                "table__section_heading",
-                "table__order_index",
-                "table__upload_id",
-                "table__upload__id",
-                "table__upload__display_name",
-                "table__upload__source_name",
-                "table__upload__external_reference",
-                "table__upload__slug",
-            )
-            .first()
-        )
-        if row_record:
-            return None, None, None, row_record, None
-
-        return None, None, None, None, {"id": item_id, "error_code": "not_found", "hint": "Document not found for this business."}
-
-    agent_scope = _agent_knowledge_scope(conversation, context)
-
-    def _enforce_access(upload_id: str, *, item_id: str) -> dict[str, object] | None:
-        if upload_id and not _agent_scope_allows_upload(scope=agent_scope, conversation=conversation, upload_id=upload_id):
-            return {"id": item_id, "error_code": "forbidden_document", "hint": "This agent is not permitted to access that document."}
-        return None
-
-    def _is_dataset_upload(upload: KnowledgeUpload | None) -> bool:
-        if not upload:
-            return False
-        try:
-            ingestion_meta = upload.ingestion_metadata if isinstance(getattr(upload, "ingestion_metadata", None), Mapping) else {}
-        except Exception:
-            ingestion_meta = {}
-        dataset_meta = ingestion_meta.get("dataset") if isinstance(ingestion_meta, Mapping) else None
-        dataset_enabled = bool(isinstance(dataset_meta, Mapping) and dataset_meta.get("enabled"))
-        format_hint = str(ingestion_meta.get("format") or "").strip().lower()
-        native_tabular = format_hint in {"csv", "tsv", "xls", "xlsx", "jsonl"}
-        if dataset_enabled or native_tabular:
-            return True
-        # Legacy heuristic: uploads that have tables but no pages are usually spreadsheets/datasets.
-        try:
-            if upload.tables.exists() and not upload.pages.exists():
-                return True
-        except Exception:
-            pass
-        return False
+        return _load_table_anchor_manifest_for_context(context, ref_id=ref_id, table_id=table_id)
 
     def _read_page_blocks_segment(
         *,
@@ -822,96 +332,16 @@ def _agentic_read_v2_handler(
         budget_chars: int,
         prepend_sep: bool = False,
     ) -> tuple[str, dict[str, object] | None, bool]:
-        try:
-            from apps.knowledge.models import (
-                KnowledgeUploadPage,
-                KnowledgeUploadPageBlock,
-            )
-        except Exception:
-            return "", None, True
-
-        page_obj = (
-            KnowledgeUploadPage.objects.filter(upload_id=upload_id, page_number=page_number)
-            .only("id")
-            .first()
+        return _read_page_blocks_segment_impl(
+            item_id=item_id,
+            cursor_payload_base=_cursor_payload_base,
+            upload_id=upload_id,
+            page_number=page_number,
+            start_order=start_order,
+            start_offset=start_offset,
+            budget_chars=budget_chars,
+            prepend_sep=prepend_sep,
         )
-        if not page_obj:
-            return "", None, True
-
-        blocks_qs = (
-            KnowledgeUploadPageBlock.objects.filter(page_id=page_obj.id)
-            .exclude(text="")
-            .order_by("order_index")
-            .values_list("order_index", "text")
-        )
-
-        remaining = max(0, int(budget_chars))
-        out_parts: list[str] = []
-        cursor_next: dict[str, object] | None = None
-        complete = True
-        # Only prepend a separator when resuming at an element boundary.
-        prepend_sep = bool(prepend_sep) and int(start_offset or 0) <= 0
-
-        started = False
-        for order_index, text in blocks_qs.iterator():  # type: ignore[attr-defined]
-            try:
-                order_int = int(order_index)
-            except (TypeError, ValueError):
-                continue
-            if order_int < int(start_order):
-                continue
-            raw_text = str(text or "")
-            if not raw_text:
-                continue
-
-            chunk_text = raw_text
-            offset = 0
-            if not started:
-                started = True
-                offset = max(0, int(start_offset))
-                if offset:
-                    chunk_text = chunk_text[offset:]
-            separator = "\n\n" if (out_parts or prepend_sep) else ""
-            # If we can't fit the separator + at least one character, stop and continue on next call.
-            needed_min = len(separator) + 1
-            if remaining < needed_min:
-                next_prepend_sep = True if out_parts else bool(prepend_sep)
-                cursor_next = {
-                    **_cursor_payload_base(item_id=item_id, kind="page_blocks"),
-                    "upload_id": upload_id,
-                    "page_number": int(page_number),
-                    "block_order": int(order_int),
-                    "char_offset": int(offset),
-                }
-                if next_prepend_sep:
-                    cursor_next["prepend_sep"] = True
-                complete = False
-                break
-            if separator:
-                out_parts.append(separator)
-                remaining -= len(separator)
-
-            if len(chunk_text) <= remaining:
-                out_parts.append(chunk_text)
-                remaining -= len(chunk_text)
-                # Continue to next block
-                continue
-
-            # Partial block
-            out_parts.append(chunk_text[:remaining])
-            cursor_next = {
-                **_cursor_payload_base(item_id=item_id, kind="page_blocks"),
-                "upload_id": upload_id,
-                "page_number": int(page_number),
-                "block_order": int(order_int),
-                "char_offset": int(offset + remaining),
-            }
-            complete = False
-            break
-
-        content_out = "".join(out_parts)
-        cursor_str = _sign_agentic_read_cursor_v2(cursor_next) if cursor_next else None
-        return content_out, ({"cursor": cursor_str} if cursor_str else None), complete
 
     def _read_section_span_segment(
         *,
@@ -927,635 +357,21 @@ def _agentic_read_v2_handler(
         budget_chars: int,
         prepend_sep: bool = False,
     ) -> tuple[str, dict[str, object] | None, bool]:
-        blocks = _load_ordered_page_blocks(upload_id)
-        if not blocks:
-            return "", None, True
-
-        remaining = max(0, int(budget_chars))
-        out_parts: list[str] = []
-        cursor_next: dict[str, object] | None = None
-        complete = True
-        prepend_sep = bool(prepend_sep) and int(start_offset or 0) <= 0
-
-        started = False
-        current_page = int(current_page_number)
-        current_order = int(current_block_order)
-        for block in blocks:
-            try:
-                page_int = int(block.get("page_number") or 0)
-                order_int = int(block.get("order_index") or 0)
-            except (TypeError, ValueError):
-                continue
-            if (page_int, order_int) < (int(start_page_number), int(start_block_order)):
-                continue
-            if (page_int, order_int) > (int(end_page_number), int(end_block_order)):
-                continue
-            if (page_int, order_int) < (current_page, current_order):
-                continue
-            raw_text = str(block.get("text") or "")
-            if not raw_text:
-                continue
-
-            chunk_text = raw_text
-            offset = 0
-            if not started:
-                started = True
-                offset = max(0, int(start_offset))
-                if offset:
-                    chunk_text = chunk_text[offset:]
-
-            separator = "\n\n" if (out_parts or prepend_sep) else ""
-            needed_min = len(separator) + 1
-            if remaining < needed_min:
-                next_prepend_sep = True if out_parts else bool(prepend_sep)
-                cursor_next = {
-                    **_cursor_payload_base(item_id=item_id, kind="section_span"),
-                    "upload_id": upload_id,
-                    "start_page_number": int(start_page_number),
-                    "start_block_order": int(start_block_order),
-                    "end_page_number": int(end_page_number),
-                    "end_block_order": int(end_block_order),
-                    "current_page_number": int(page_int),
-                    "current_block_order": int(order_int),
-                    "char_offset": int(offset),
-                }
-                if next_prepend_sep:
-                    cursor_next["prepend_sep"] = True
-                complete = False
-                break
-            if separator:
-                out_parts.append(separator)
-                remaining -= len(separator)
-
-            if len(chunk_text) <= remaining:
-                out_parts.append(chunk_text)
-                remaining -= len(chunk_text)
-                continue
-
-            out_parts.append(chunk_text[:remaining])
-            cursor_next = {
-                **_cursor_payload_base(item_id=item_id, kind="section_span"),
-                "upload_id": upload_id,
-                "start_page_number": int(start_page_number),
-                "start_block_order": int(start_block_order),
-                "end_page_number": int(end_page_number),
-                "end_block_order": int(end_block_order),
-                "current_page_number": int(page_int),
-                "current_block_order": int(order_int),
-                "char_offset": int(offset + remaining),
-            }
-            complete = False
-            break
-
-        content_out = "".join(out_parts)
-        cursor_str = _sign_agentic_read_cursor_v2(cursor_next) if cursor_next else None
-        return content_out, ({"cursor": cursor_str} if cursor_str else None), complete
-
-
-    def _read_tabular_rows_segment_facts(
-        *,
-        item_id: str,
-        upload_id: str,
-        table_id: str,
-        start_row_index: int = 0,
-        budget_chars: int,
-        max_rows: int | None = None,
-        business_profile,
-        selection_mode: str | None = None,
-    ) -> tuple[dict[str, object], dict[str, object] | None, bool]:
-        """
-        Facts-first table read for the LLM.
-
-        Contract:
-        - `start_row_index` is a 0-based row offset within the visible table body
-          (header/separator rows excluded by ingestion metadata).
-        - Returns only the table facts + paging signals needed to continue via
-          `row_start` + `row_limit` (no table cursors).
-        """
-
-        budget_limit = max(0, int(budget_chars))
-        complete = True
-
-        payload: dict[str, object] = {
-            "type": "table",
-            "table_id": str(table_id),
-            "columns": [],
-            "rows": [],
-            "row_offset": 0,
-            "rows_shown": 0,
-            "total_rows": 0,
-        }
-        if isinstance(selection_mode, str) and selection_mode.strip():
-            payload["selection_mode"] = selection_mode.strip()
-
-        try:
-            table_uuid = uuid.UUID(str(table_id))
-        except (TypeError, ValueError):
-            return payload, None, True
-
-        table = (
-            KnowledgeUploadTable.objects.filter(
-                id=table_uuid,
-                upload_id=upload_id,
-                upload__business_profile=business_profile,
-                upload__status=KnowledgeStatus.ACTIVE,
-            )
-            .only("id", "order_index", "title", "section_heading", "column_schema")
-            .first()
-        )
-        if not table:
-            return payload, None, True
-
-        def _dedupe_column_labels(raw_columns: Sequence[str]) -> list[str]:
-            deduped: list[str] = []
-            seen: dict[str, int] = {}
-            for index, raw_column in enumerate(raw_columns):
-                label = str(raw_column or "").strip() or f"column_{index + 1}"
-                key = label.lower()
-                count = seen.get(key, 0) + 1
-                seen[key] = count
-                deduped.append(label if count == 1 else f"{label}_{count}")
-            return deduped
-
-        # Column labels: prefer column_schema if it looks like a list of strings.
-        raw_schema = table.column_schema if isinstance(getattr(table, "column_schema", None), list) else []
-        columns: list[str] = []
-        for entry in raw_schema:
-            if isinstance(entry, str) and entry.strip():
-                columns.append(entry.strip())
-            elif isinstance(entry, Mapping):
-                for key in ("column", "name", "label", "key", "column_key"):
-                    value = entry.get(key)
-                    if isinstance(value, str) and value.strip():
-                        columns.append(value.strip())
-                        break
-        columns = columns[:200]
-
-        # Visible rows are non-header rows only (in ingestion metadata).
-        non_header_q = models.Q(metadata__row_type__isnull=True) | ~models.Q(
-            metadata__row_type__in=["header", "section_header"]
-        )
-
-        # If schema is missing/empty, infer columns from the first visible row's cells.
-        if not columns:
-            row_obj = (
-                table.rows.filter(non_header_q)
-                .order_by("row_index")
-                .only("id", "row_index")
-                .first()
-            )
-            if row_obj:
-                cell_qs = (
-                    KnowledgeUploadTableCell.objects.filter(row_id=row_obj.id)
-                    .order_by("column_index")
-                    .values_list("column_index", "column_key")
-                )
-                inferred: list[tuple[int, str]] = []
-                for col_idx, col_key in cell_qs:
-                    try:
-                        idx = int(col_idx)
-                    except (TypeError, ValueError):
-                        continue
-                    label = str(col_key or "").strip() or f"column_{idx + 1}"
-                    inferred.append((idx, label))
-                inferred.sort(key=lambda item: item[0])
-                columns = [label for _idx, label in inferred][:200]
-
-        columns = _dedupe_column_labels(columns[:200])
-        payload["columns"] = columns
-
-        try:
-            start_row = max(0, int(start_row_index))
-        except (TypeError, ValueError):
-            start_row = 0
-        payload["row_offset"] = start_row
-
-        try:
-            total_rows = int(table.rows.filter(non_header_q).count())
-        except Exception:
-            total_rows = 0
-        payload["total_rows"] = total_rows
-
-        # Bound reads: even for "list everything", never scan unbounded rows in one call.
-        try:
-            scan_cap = int(max(50, min(500, int(budget_chars) // 30 or 50)))
-        except Exception:
-            scan_cap = 200
-        limit_rows = scan_cap
-        if isinstance(max_rows, int) and max_rows > 0:
-            limit_rows = min(limit_rows, int(max_rows))
-        limit_rows = max(1, int(limit_rows))
-
-        row_qs = (
-            table.rows.filter(non_header_q)
-            .order_by("row_index")
-            .only("id", "row_index", "metadata")
-        )
-        row_qs = row_qs[start_row : start_row + limit_rows]
-        row_qs = row_qs.prefetch_related(
-            Prefetch(
-                "cells",
-                queryset=KnowledgeUploadTableCell.objects.order_by("column_index").only(
-                    "row_id",
-                    "column_index",
-                    "column_key",
-                    "raw_text",
-                ),
-            )
-        )
-
-        def _normalize_cell_text(value: str) -> str:
-            normalized = str(value or "").strip().lower()
-            normalized = re.sub(r"\\s+", " ", normalized)
-            return normalized
-
-        def _is_uniform_section_separator(values: Sequence[str]) -> tuple[bool, str]:
-            non_empty = [str(cell or "").strip() for cell in values if str(cell or "").strip()]
-            if len(non_empty) < 4:
-                return False, ""
-            normalized = [_normalize_cell_text(cell) for cell in non_empty]
-            first = normalized[0] if normalized else ""
-            if not first:
-                return False, ""
-            if any(cell != first for cell in normalized[1:]):
-                return False, ""
-            return True, non_empty[0]
-
-        scope_overlay_reasons = {
-            "scope_explicit_span",
-            "scope_repeated_value_span",
-            "scope_sparse_expansion",
-            "scope_edge_completion",
-        }
-        column_index_lookup: dict[str, int] = {}
-        for idx, label in enumerate(columns):
-            normalized = _normalize_column_name(label)
-            if normalized and normalized not in column_index_lookup:
-                column_index_lookup[normalized] = idx
-            lowered = str(label or "").strip().lower()
-            if lowered and lowered not in column_index_lookup:
-                column_index_lookup[lowered] = idx
-
-        index_offset: int | None = None
-        rows_out: list[list[str]] = []
-
-        def _payload_size(candidate_rows: Sequence[Sequence[str]]) -> int:
-            candidate: dict[str, object] = {
-                "type": "table",
-                "table_id": str(table_id),
-                "columns": list(columns),
-                "rows": [list(row) for row in candidate_rows],
-                "row_offset": int(start_row),
-                "rows_shown": int(len(candidate_rows)),
-                "total_rows": int(total_rows),
-            }
-            if isinstance(selection_mode, str) and selection_mode.strip():
-                candidate["selection_mode"] = selection_mode.strip()
-            try:
-                return len(json.dumps(candidate, ensure_ascii=False, default=str))
-            except Exception:
-                return 0
-
-        for row in row_qs:
-            cell_lookup: dict[int, str] = {}
-            for cell in row.cells.all():  # type: ignore[attr-defined]
-                try:
-                    idx = int(getattr(cell, "column_index", None) or 0)
-                except (TypeError, ValueError):
-                    continue
-                text = str(getattr(cell, "raw_text", "") or "")
-                cell_lookup[idx] = text
-
-            if index_offset is None:
-                keys = list(cell_lookup.keys())
-                if 0 in cell_lookup:
-                    index_offset = 0
-                elif 1 in cell_lookup:
-                    index_offset = 1
-                elif keys:
-                    index_offset = min(keys)
-                else:
-                    index_offset = 0
-
-            values: list[str] = []
-            for col_idx in range(len(columns)):
-                values.append(str(cell_lookup.get(int(col_idx) + int(index_offset or 0), "")))
-
-            # Collapse broad-span note rows (same text duplicated across many columns) to:
-            #   [note_text, "", "", ...]
-            is_uniform, uniform_label = _is_uniform_section_separator(values)
-            if is_uniform and uniform_label:
-                values = [uniform_label] + [""] * max(0, len(columns) - 1)
-
-            row_meta = row.metadata if isinstance(getattr(row, "metadata", None), Mapping) else {}
-            inferred_scope_columns: list[str] = []
-            raw_applies_to = row_meta.get("inferred_scope_columns")
-            if isinstance(raw_applies_to, (list, tuple)):
-                for scope_entry in raw_applies_to:
-                    label = str(scope_entry or "").strip()
-                    if label:
-                        inferred_scope_columns.append(label)
-            scope_reason = str(row_meta.get("scope_reason") or "").strip()
-            scope_reason_key = scope_reason.lower()
-            fee_value = str(row_meta.get("scope_value") or "").strip()
-
-            effective_values = list(values)
-            if (
-                fee_value
-                and inferred_scope_columns
-                and (
-                    scope_reason_key.startswith("inferred_")
-                    or scope_reason_key in scope_overlay_reasons
-                )
-            ):
-                for scope_label in inferred_scope_columns:
-                    normalized_scope = _normalize_column_name(scope_label)
-                    if not normalized_scope:
-                        continue
-                    col_pos = column_index_lookup.get(normalized_scope)
-                    if col_pos is None:
-                        col_pos = column_index_lookup.get(str(scope_label).strip().lower())
-                    if col_pos is None or col_pos < 0 or col_pos >= len(effective_values):
-                        continue
-                    if str(effective_values[col_pos] or "").strip():
-                        continue
-                    effective_values[col_pos] = fee_value
-
-            candidate_rows = [*rows_out, effective_values]
-            if _payload_size(candidate_rows) > budget_limit:
-                complete = False
-                break
-            rows_out = candidate_rows
-
-        payload["rows"] = rows_out
-        payload["rows_shown"] = len(rows_out)
-        if (start_row + len(rows_out)) < int(total_rows or 0):
-            payload["next_row_start"] = int(start_row + len(rows_out))
-
-        return payload, None, complete
-
-    def _table_payload_is_informative(table_payload: Mapping[str, object]) -> bool:
-        rows_value = table_payload.get("rows")
-        if not isinstance(rows_value, list) or not rows_value:
-            return False
-        for row in rows_value:
-            if isinstance(row, (list, tuple)):
-                if any(str(cell or "").strip() for cell in row):
-                    return True
-            elif str(row or "").strip():
-                return True
-        return False
-
-    def _table_payload_size(table_payload: Mapping[str, object]) -> int:
-        try:
-            return len(json.dumps(dict(table_payload), ensure_ascii=False, default=str))
-        except Exception:
-            return 0
-
-    def _merge_table_anchor_payloads(
-        *,
-        base_payload: Mapping[str, object],
-        incoming_payload: Mapping[str, object],
-        budget_chars: int,
-        selection_mode: str,
-    ) -> tuple[dict[str, object], int, bool]:
-        merged_columns = list(base_payload.get("columns") or incoming_payload.get("columns") or [])
-        if not merged_columns:
-            merged_columns = list(incoming_payload.get("columns") or [])
-
-        base_rows_raw = base_payload.get("rows")
-        incoming_rows_raw = incoming_payload.get("rows")
-        base_rows = [list(row) for row in base_rows_raw] if isinstance(base_rows_raw, list) else []
-        incoming_rows = [list(row) for row in incoming_rows_raw] if isinstance(incoming_rows_raw, list) else []
-
-        merged: dict[str, object] = {
-            "type": "table",
-            "table_id": str(base_payload.get("table_id") or incoming_payload.get("table_id") or ""),
-            "columns": merged_columns,
-            "rows": [],
-            "row_offset": min(
-                max(0, _coerce_int(base_payload.get("row_offset")) or 0),
-                max(0, _coerce_int(incoming_payload.get("row_offset")) or 0),
-            ),
-            "rows_shown": 0,
-            "total_rows": max(
-                max(0, _coerce_int(base_payload.get("total_rows")) or 0),
-                max(0, _coerce_int(incoming_payload.get("total_rows")) or 0),
-            ),
-            "selection_mode": selection_mode,
-        }
-
-        merged_rows: list[list[str]] = []
-        seen_rows: set[tuple[str, ...]] = set()
-        for row in [*base_rows, *incoming_rows]:
-            normalized_row = tuple(str(cell or "") for cell in row)
-            if normalized_row in seen_rows:
-                continue
-            candidate_rows = [*merged_rows, list(row)]
-            candidate_payload = dict(merged)
-            candidate_payload["rows"] = candidate_rows
-            candidate_payload["rows_shown"] = len(candidate_rows)
-            if _table_payload_size(candidate_payload) > max(0, int(budget_chars)):
-                merged["rows"] = merged_rows
-                merged["rows_shown"] = len(merged_rows)
-                if (
-                    int(merged["row_offset"]) + len(merged_rows)
-                ) < int(merged.get("total_rows") or 0):
-                    merged["next_row_start"] = int(merged["row_offset"]) + len(merged_rows)
-                return merged, max(0, len(merged_rows) - len(base_rows)), True
-            merged_rows = candidate_rows
-            seen_rows.add(normalized_row)
-
-        merged["rows"] = merged_rows
-        merged["rows_shown"] = len(merged_rows)
-        if (
-            int(merged["row_offset"]) + len(merged_rows)
-        ) < int(merged.get("total_rows") or 0):
-            merged["next_row_start"] = int(merged["row_offset"]) + len(merged_rows)
-        return merged, max(0, len(merged_rows) - len(base_rows)), False
-
-    def _table_db_row_index_to_visible_row_start(
-        *,
-        table_id: str,
-        upload_id: str,
-        business_profile,
-        db_row_index: int,
-    ) -> int:
-        """
-        Convert a stored table row index into a visible `row_start` offset.
-
-        The visible table body excludes header / section-header rows, so row refs
-        and anchor reads must normalize DB row indexes before paging facts.
-        """
-        try:
-            raw_idx = int(db_row_index)
-        except (TypeError, ValueError):
-            return 0
-        if raw_idx < 0:
-            return 0
-        try:
-            table_uuid = uuid.UUID(str(table_id))
-        except (TypeError, ValueError):
-            return max(0, raw_idx)
-
-        non_header_q = models.Q(metadata__row_type__isnull=True) | ~models.Q(
-            metadata__row_type__in=["header", "section_header"]
-        )
-
-        base_qs = KnowledgeUploadTableRow.objects.filter(
-            table_id=table_uuid,
-            table__upload_id=upload_id,
-            table__upload__business_profile=business_profile,
-            table__upload__status=KnowledgeStatus.ACTIVE,
-        )
-
-        target = (
-            base_qs.filter(non_header_q, row_index__gte=raw_idx)
-            .order_by("row_index")
-            .only("row_index")
-            .first()
-        )
-        if target is None:
-            target = (
-                base_qs.filter(non_header_q, row_index__lte=raw_idx)
-                .order_by("-row_index")
-                .only("row_index")
-                .first()
-            )
-        if target is None:
-            return 0
-
-        try:
-            target_db_idx = int(getattr(target, "row_index", 0) or 0)
-        except (TypeError, ValueError):
-            target_db_idx = raw_idx
-
-        try:
-            visible_before = int(
-                base_qs.filter(non_header_q, row_index__lt=int(target_db_idx)).count()
-            )
-        except Exception:
-            visible_before = max(0, raw_idx)
-        return max(0, int(visible_before))
-
-    def _read_exact_table_row(
-        *,
-        item_id: str,
-        upload_id: str,
-        table_id: str,
-        db_row_index: int,
-        budget_chars: int,
-        business_profile,
-    ) -> tuple[dict[str, object], bool]:
-        visible_row_start = _table_db_row_index_to_visible_row_start(
-            table_id=table_id,
-            upload_id=upload_id,
-            business_profile=business_profile,
-            db_row_index=db_row_index,
-        )
-        table_payload, _cursor_out, complete = _read_tabular_rows_segment_facts(
+        return _read_section_span_segment_impl(
+            load_ordered_page_blocks=_load_ordered_page_blocks,
+            cursor_payload_base=_cursor_payload_base,
             item_id=item_id,
             upload_id=upload_id,
-            table_id=table_id,
-            start_row_index=visible_row_start,
+            start_page_number=start_page_number,
+            start_block_order=start_block_order,
+            end_page_number=end_page_number,
+            end_block_order=end_block_order,
+            current_page_number=current_page_number,
+            current_block_order=current_block_order,
+            start_offset=start_offset,
             budget_chars=budget_chars,
-            max_rows=1,
-            business_profile=business_profile,
-            selection_mode="row_ref",
+            prepend_sep=prepend_sep,
         )
-        return table_payload, complete
-
-    def _read_tabular_rows_with_anchor(
-        *,
-        item_id: str,
-        upload_id: str,
-        table_id: str,
-        start_row_index: int,
-        budget_chars: int,
-        max_rows: int | None,
-        business_profile,
-        use_anchor: bool,
-    ) -> tuple[dict[str, object], dict[str, object] | None, bool, bool, bool]:
-        anchor_used = False
-        fallback_used = False
-        anchor_start_row = int(start_row_index)
-
-        if use_anchor and anchor_start_row <= 0:
-            manifest = _load_table_anchor_manifest(ref_id=item_id, table_id=table_id)
-            if isinstance(manifest, Mapping):
-                anchor_rows: list[int] = []
-                primary_anchor = _coerce_int(manifest.get("matched_row_index"))
-                if primary_anchor is not None and primary_anchor >= 0:
-                    anchor_rows.append(int(primary_anchor))
-                raw_anchors = manifest.get("anchors")
-                if isinstance(raw_anchors, list):
-                    for entry in raw_anchors:
-                        parsed = _coerce_int(entry)
-                        if parsed is None or parsed < 0:
-                            continue
-                        anchor_rows.append(int(parsed))
-                if anchor_rows:
-                    # Deduplicate while preserving order, and cap attempts.
-                    seen_rows: set[int] = set()
-                    anchor_rows = [row for row in anchor_rows if (row not in seen_rows and not seen_rows.add(row))]
-                    anchor_used = True
-                    merged_payload: dict[str, object] | None = None
-                    merged_complete = True
-                    merged_anchor_hits = 0
-                    for row_idx in anchor_rows[:2]:
-                        visible_row_start = _table_db_row_index_to_visible_row_start(
-                            table_id=table_id,
-                            upload_id=upload_id,
-                            business_profile=business_profile,
-                            db_row_index=int(row_idx),
-                        )
-                        anchor_start_row = max(0, int(visible_row_start) - 1)
-                        table_payload, cursor_out, complete = _read_tabular_rows_segment_facts(
-                            item_id=item_id,
-                            upload_id=upload_id,
-                            table_id=table_id,
-                            start_row_index=anchor_start_row,
-                            budget_chars=budget_chars,
-                            max_rows=max_rows,
-                            business_profile=business_profile,
-                            selection_mode="anchor_match",
-                        )
-                        if not _table_payload_is_informative(table_payload):
-                            merged_complete = False
-                            continue
-                        if merged_payload is None:
-                            merged_payload = dict(table_payload)
-                            merged_complete = bool(complete)
-                            merged_anchor_hits = 1
-                            continue
-                        merged_payload, added_rows, merge_budget_exhausted = _merge_table_anchor_payloads(
-                            base_payload=merged_payload,
-                            incoming_payload=table_payload,
-                            budget_chars=budget_chars,
-                            selection_mode="anchor_merge",
-                        )
-                        if added_rows > 0:
-                            merged_anchor_hits += 1
-                        merged_complete = bool(merged_complete and complete and not merge_budget_exhausted)
-                    if merged_payload is not None and _table_payload_is_informative(merged_payload):
-                        if merged_anchor_hits <= 1:
-                            merged_payload["selection_mode"] = "anchor_match"
-                        return merged_payload, None, merged_complete, anchor_used, fallback_used
-                    # Anchors were tried but didn't yield useful rows; fall back.
-                    fallback_used = True
-
-        table_payload, cursor_out, complete = _read_tabular_rows_segment_facts(
-            item_id=item_id,
-            upload_id=upload_id,
-            table_id=table_id,
-            start_row_index=max(0, int(start_row_index)),
-            budget_chars=budget_chars,
-            max_rows=max_rows,
-            business_profile=business_profile,
-            selection_mode="row_range",
-        )
-
-        return table_payload, cursor_out, complete, anchor_used, fallback_used
 
     def _read_chunk_window_segment(
         *,
@@ -1569,89 +385,18 @@ def _agentic_read_v2_handler(
         prepend_sep: bool = False,
         business_profile,
     ) -> tuple[str, dict[str, object] | None, bool]:
-        remaining = max(0, int(budget_chars))
-        out_parts: list[str] = []
-        cursor_next: dict[str, object] | None = None
-        complete = True
-        # Only prepend a separator when resuming at an element boundary.
-        prepend_sep = bool(prepend_sep) and int(start_offset or 0) <= 0
-
-        window_qs = (
-            apply_customer_visible_chunks(
-                KnowledgeUploadChunk.objects.filter(
-                    upload_id=upload_id,
-                    business_profile=business_profile,
-                    upload__status=KnowledgeStatus.ACTIVE,
-                    chunk_index__gte=int(start_index),
-                    chunk_index__lte=int(end_index),
-                )
-            )
-            .exclude(content="")
-            .order_by("chunk_index")
-            .values_list("chunk_index", "content")
+        return _read_chunk_window_segment_impl(
+            cursor_payload_base=_cursor_payload_base,
+            item_id=item_id,
+            upload_id=upload_id,
+            start_index=start_index,
+            end_index=end_index,
+            current_index=current_index,
+            start_offset=start_offset,
+            budget_chars=budget_chars,
+            prepend_sep=prepend_sep,
+            business_profile=business_profile,
         )
-
-        cur_idx = int(current_index)
-        offset = max(0, int(start_offset))
-        started = False
-        for chunk_index, content in window_qs.iterator():  # type: ignore[attr-defined]
-            try:
-                ci = int(chunk_index)
-            except (TypeError, ValueError):
-                continue
-            if ci < cur_idx:
-                continue
-            raw = str(content or "")
-            if not raw:
-                continue
-            text = raw
-            local_offset = 0
-            if not started:
-                started = True
-                local_offset = offset
-                if local_offset:
-                    text = text[local_offset:]
-
-            separator = "\n\n" if (out_parts or prepend_sep) else ""
-            needed_min = len(separator) + 1
-            if remaining < needed_min:
-                next_prepend_sep = True if out_parts else bool(prepend_sep)
-                cursor_next = {
-                    **_cursor_payload_base(item_id=item_id, kind="chunk_window"),
-                    "upload_id": upload_id,
-                    "chunk_start": int(start_index),
-                    "chunk_end": int(end_index),
-                    "chunk_index": int(ci),
-                    "char_offset": int(local_offset),
-                }
-                if next_prepend_sep:
-                    cursor_next["prepend_sep"] = True
-                complete = False
-                break
-            if separator:
-                out_parts.append(separator)
-                remaining -= len(separator)
-
-            if len(text) <= remaining:
-                out_parts.append(text)
-                remaining -= len(text)
-                continue
-
-            out_parts.append(text[:remaining])
-            cursor_next = {
-                **_cursor_payload_base(item_id=item_id, kind="chunk_window"),
-                "upload_id": upload_id,
-                "chunk_start": int(start_index),
-                "chunk_end": int(end_index),
-                "chunk_index": int(ci),
-                "char_offset": int(local_offset + remaining),
-            }
-            complete = False
-            break
-
-        content_out = "".join(out_parts)
-        cursor_str = _sign_agentic_read_cursor_v2(cursor_next) if cursor_next else None
-        return content_out, ({"cursor": cursor_str} if cursor_str else None), complete
 
     def _read_artifact_segment(
         *,
@@ -1660,60 +405,54 @@ def _agentic_read_v2_handler(
         start_offset: int,
         budget_chars: int,
     ) -> tuple[str, dict[str, object] | None, bool, dict[str, object] | None]:
-        """
-        Read from a stored tool-output artifact (Phase 4 fallback).
-
-        Artifact payload shape (response JSON):
-          { "text": "...", "title": "...", "type": "text|table", "cursor_after": "opaque_or_null" }
-        """
-
-        try:
-            artifact_uuid = uuid.UUID(str(artifact_id))
-        except (TypeError, ValueError):
-            return "", None, True, {"id": item_id, "error_code": "invalid_cursor", "hint": "Invalid artifact id."}
-
-        artifact = (
-            McpToolOutputArtifact.objects.filter(
-                id=artifact_uuid,
-                conversation=conversation,
-                invoked_tool="read_knowledge",
-            )
-            .only("id", "response")
-            .first()
+        return _read_artifact_segment_impl(
+            conversation=conversation,
+            cursor_payload_base=_cursor_payload_base,
+            item_id=item_id,
+            artifact_id=artifact_id,
+            start_offset=start_offset,
+            budget_chars=budget_chars,
         )
-        if not artifact:
-            return "", None, True, {"id": item_id, "error_code": "artifact_not_found", "hint": "Artifact not found for this conversation."}
 
-        payload = artifact.response if isinstance(getattr(artifact, "response", None), Mapping) else {}
-        full_text = payload.get("text")
-        if not isinstance(full_text, str):
-            full_text = str(full_text or "")
-        if not full_text:
-            return "", None, True, {"id": item_id, "error_code": "artifact_empty", "hint": "Artifact has no readable text."}
+    def _read_tabular_rows_with_anchor(
+        *,
+        item_id: str,
+        upload_id: str,
+        table_id: str,
+        start_row_index: int,
+        budget_chars: int,
+        max_rows: int | None,
+        business_profile,
+        use_anchor: bool,
+    ) -> tuple[dict[str, object], dict[str, object] | None, bool, bool, bool]:
+        return _read_tabular_rows_with_anchor_impl(
+            load_table_anchor_manifest=_load_table_anchor_manifest,
+            item_id=item_id,
+            upload_id=upload_id,
+            table_id=table_id,
+            start_row_index=start_row_index,
+            budget_chars=budget_chars,
+            max_rows=max_rows,
+            business_profile=business_profile,
+            use_anchor=use_anchor,
+        )
 
-        title_override = payload.get("title")
-        type_override = payload.get("type")
+    def _resolve_target(item_id: str) -> tuple[
+        KnowledgeUploadChunk | None,
+        KnowledgeUpload | None,
+        KnowledgeUploadTable | None,
+        KnowledgeUploadTableRow | None,
+        dict[str, object] | None,
+    ]:
+        return _resolve_target_impl(item_id, conversation=conversation)
 
-        start = max(0, int(start_offset or 0))
-        remaining = max(0, int(budget_chars))
-        out = full_text[start : start + remaining]
-        end = start + len(out)
-
-        cursor_after = payload.get("cursor_after")
-        if end < len(full_text):
-            cursor_next = {
-                **_cursor_payload_base(item_id=item_id, kind="artifact"),
-                "artifact_id": str(artifact.id),
-                "char_offset": int(end),
-            }
-            cursor_str = _sign_agentic_read_cursor_v2(cursor_next)
-            return out, {"cursor": cursor_str}, False, {"title": title_override, "type": type_override}
-
-        if isinstance(cursor_after, str) and cursor_after.strip():
-            # Once the artifact stream is consumed, resume the original knowledge cursor (if any).
-            return out, {"cursor": cursor_after.strip()}, False, {"title": title_override, "type": type_override}
-
-        return out, None, True, {"title": title_override, "type": type_override}
+    def _enforce_access(upload_id: str, *, item_id: str) -> dict[str, object] | None:
+        return _enforce_access_impl(
+            upload_id,
+            item_id=item_id,
+            conversation=conversation,
+            context=context,
+        )
 
     contents: list[dict[str, object]] = []
     read: list[dict[str, object]] = []
@@ -2383,171 +1122,32 @@ def _agentic_read_v2_handler(
         # Reserve room for JSON framing + cursors + budget metadata when the prompt cap is small.
         PROMPT_VIEW_INLINE_MAX_CHARS = min(PROMPT_VIEW_INLINE_MAX_CHARS, max(PROMPT_VIEW_INLINE_MIN_CHARS, output_limit // 2))
 
-    def _response_status() -> str:
-        if errors or deferred or any(str(entry.get("status") or "") in {"truncated", "partial", "artifact"} for entry in read):
-            return "truncated" if contents else "error"
-        return "ok"
-
-    def _compact_read_summaries_for_prompt(entries: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
-        """
-        Keep read summaries lean for prompt injection.
-
-        We preserve control-flow entries (truncated/error/deferred/covered/artifact/etc.)
-        and only keep "full" entries when they carry actionable metadata (hint/cursor/artifact).
-        """
-
-        compact_entries: list[dict[str, object]] = []
-        for entry in entries:
-            status_raw = str(entry.get("status") or "").strip()
-            status_key = status_raw.lower()
-            has_hint = isinstance(entry.get("hint"), str) and bool(str(entry.get("hint") or "").strip())
-            has_cursor = isinstance(entry.get("next_cursor"), str) and bool(str(entry.get("next_cursor") or "").strip())
-            has_artifact = isinstance(entry.get("artifact_id"), str) and bool(str(entry.get("artifact_id") or "").strip())
-            keep_entry = status_key != "full" or has_hint or has_cursor or has_artifact
-            if not keep_entry:
-                continue
-
-            out: dict[str, object] = {}
-            item_id = entry.get("id")
-            if isinstance(item_id, str) and item_id.strip():
-                out["id"] = item_id.strip()
-            elif item_id is not None:
-                out["id"] = item_id
-
-            if status_raw:
-                out["status"] = status_raw
-
-            chars_value = entry.get("chars")
-            if isinstance(chars_value, bool):
-                chars_value = None
-            if isinstance(chars_value, (int, float)):
-                out["chars"] = int(chars_value)
-            elif isinstance(chars_value, str) and chars_value.strip():
-                try:
-                    out["chars"] = int(chars_value.strip())
-                except (TypeError, ValueError):
-                    pass
-
-            error_code = entry.get("error_code")
-            if isinstance(error_code, str) and error_code.strip():
-                out["error_code"] = error_code.strip()
-
-            if has_artifact:
-                out["artifact_id"] = str(entry.get("artifact_id")).strip()
-            if has_cursor:
-                out["next_cursor"] = str(entry.get("next_cursor")).strip()
-            if has_hint:
-                out["hint"] = str(entry.get("hint")).strip()
-
-            if out:
-                compact_entries.append(out)
-
-        return compact_entries
-
     def _build_response(*, total_chars_value: int, hint: str | None = None) -> dict[str, object]:
-        read_out = _compact_read_summaries_for_prompt(read)
-        payload: dict[str, object] = {
-            "tool": "read_knowledge",
-            "status": _response_status(),
-            "evidence": contents,
-            "deferred": deferred,
-            "max_chars": int(max_chars),
-            "max_chars_allowed": int(max_chars_allowed),
-            "total_chars": int(total_chars_value),
-            "budget": context.budget_snapshot(),
-        }
-        if read_out:
-            payload["read"] = read_out
-        if errors:
-            payload["errors"] = errors
-        if hint:
-            payload["hint"] = hint
-        elif not contents and (deferred or errors):
-            payload["hint"] = (
-                "No content could be read. Ensure ids/cursors come from tool results, "
-                "increase max_chars (up to max_chars_allowed), or retry with fewer items."
-            )
-        return payload
-
-    def _payload_len_with_budget(payload: Mapping[str, object]) -> int:
-        try:
-            return len(json.dumps(dict(payload), ensure_ascii=False, default=str))
-        except Exception:
-            return 0
+        return _build_response_impl(
+            contents=contents,
+            read=read,
+            deferred=deferred,
+            errors=errors,
+            max_chars=max_chars,
+            max_chars_allowed=max_chars_allowed,
+            context=context,
+            total_chars_value=total_chars_value,
+            hint=hint,
+        )
 
     def _attach_artifact_for_item(item: dict[str, object], trace: dict[str, object]) -> bool:
-        item_id = str(item.get("id") or "").strip()
-        payload_obj = item.get("payload") if isinstance(item.get("payload"), Mapping) else {}
-        if str(payload_obj.get("type") or "") != "text":
-            return False
-        full_text = payload_obj.get("text")
-        if not item_id or not isinstance(full_text, str) or not full_text:
-            return False
-        if isinstance(item.get("artifact_id"), str) and str(item.get("artifact_id") or "").strip():
-            return False
-
-        preview_len = min(len(full_text), PROMPT_VIEW_INLINE_MAX_CHARS)
-        if len(full_text) >= PROMPT_VIEW_INLINE_MIN_CHARS:
-            preview_len = max(PROMPT_VIEW_INLINE_MIN_CHARS, preview_len)
-        preview_text = full_text[:preview_len]
-        cursor_after_raw = item.get("next_cursor")
-        cursor_after = _resolve_cursor_from_handle(cursor_after_raw if isinstance(cursor_after_raw, str) else None)
-        cursor_used_local = item.get("cursor_used")
-        if isinstance(cursor_used_local, str) and cursor_used_local.strip():
-            # Avoid nested artifacts: if this segment was already read from an artifact cursor,
-            # we can always clip + continue with that cursor instead of creating a new artifact.
-            try:
-                used_payload = _verify_agentic_read_cursor_v2(cursor_used_local.strip())
-            except ValueError:
-                used_payload = None
-            if isinstance(used_payload, dict) and str(used_payload.get("kind") or "") == "artifact":
-                return False
-
-        artifact_payload: dict[str, object] = {
-            "kind": "agentic_read_v2",
-            "item_id": item_id,
-            "title": item.get("title"),
-            "type": item.get("type"),
-            "text": full_text,
-        }
-        if isinstance(cursor_after, str) and cursor_after.strip():
-            artifact_payload["cursor_after"] = cursor_after.strip()
-        if isinstance(cursor_used_local, str) and cursor_used_local.strip():
-            artifact_payload["cursor_used"] = cursor_used_local.strip()
-
-        artifact_id = store_local_tool_output_artifact(
+        return _attach_artifact_for_item_impl(
+            item,
+            trace,
             conversation=conversation,
-            invoked_tool="read_knowledge",
-            request={"refs": [{"id": item_id, **({"cursor": cursor_used_local} if cursor_used_local else {})}]},
-            response=artifact_payload,
-            status="ok",
-            is_error=False,
-            retention_days=artifact_retention_days,
-            max_per_conversation=artifact_max_per_conversation,
+            cursor_payload_base=_cursor_payload_base,
+            resolve_cursor_from_handle=_resolve_cursor_from_handle,
+            store_cursor_handle=_store_cursor_handle,
+            prompt_view_inline_min_chars=PROMPT_VIEW_INLINE_MIN_CHARS,
+            prompt_view_inline_max_chars=PROMPT_VIEW_INLINE_MAX_CHARS,
+            artifact_retention_days=artifact_retention_days,
+            artifact_max_per_conversation=artifact_max_per_conversation,
         )
-        if not artifact_id:
-            return False
-
-        cursor_next = {
-            **_cursor_payload_base(item_id=item_id, kind="artifact"),
-            "artifact_id": artifact_id,
-            "char_offset": int(preview_len),
-        }
-        cursor_str = _sign_agentic_read_cursor_v2(cursor_next)
-
-        item["artifact_id"] = artifact_id
-        payload_obj = dict(payload_obj)
-        payload_obj["text"] = preview_text
-        item["payload"] = payload_obj
-        item["chars"] = len(preview_text)
-        item["next_cursor"] = _store_cursor_handle(cursor_str) or cursor_str
-        item["complete"] = False
-        item["truncated"] = True
-
-        trace["status"] = "artifact"
-        trace["chars"] = len(full_text)
-        trace["artifact_id"] = artifact_id
-        return True
 
     # Start with the raw v2 output; if it exceeds the prompt cap once budgets are added,
     # convert the largest content entries to artifacts until it fits.

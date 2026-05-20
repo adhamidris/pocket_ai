@@ -144,7 +144,7 @@ class AgentRunProcessingTests(TestCase):
         run = AgentRun.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
-            workflow=workflow,
+            automation=workflow,
             conversation=anchor,
             created_by=self.user,
             title="Subscription checker",
@@ -221,7 +221,7 @@ class AgentRunProcessingTests(TestCase):
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
-            workflow=workflow,
+            automation=workflow,
             title="Sales monitor",
             source=AgentRunSource.AUTOMATION,
             status=AgentRunStatus.WAITING_APPROVAL,
@@ -351,7 +351,7 @@ class AgentRunProcessingTests(TestCase):
         run = AgentRun.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
-            workflow=workflow,
+            automation=workflow,
             created_by=self.user,
             title="Sales monitor",
             source=AgentRunSource.SCHEDULE,
@@ -404,7 +404,7 @@ class AgentRunProcessingTests(TestCase):
         run = AgentRun.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
-            workflow=workflow,
+            automation=workflow,
             created_by=self.user,
             title="Sales monitor",
             source=AgentRunSource.SCHEDULE,
@@ -463,7 +463,7 @@ class AgentRunProcessingTests(TestCase):
         run = AgentRun.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
-            workflow=workflow,
+            automation=workflow,
             created_by=self.user,
             title="Sales monitor",
             source=AgentRunSource.SCHEDULE,
@@ -509,7 +509,7 @@ class AgentRunProcessingTests(TestCase):
         run = AgentRun.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
-            workflow=workflow,
+            automation=workflow,
             created_by=self.user,
             title="Sales monitor",
             source=AgentRunSource.SCHEDULE,

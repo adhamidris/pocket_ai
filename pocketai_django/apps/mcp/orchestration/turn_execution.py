@@ -2,27 +2,22 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import os
 import re
-import threading
 import time
 import uuid
-from datetime import timedelta
 from typing import Callable, Mapping, Sequence
 
 from django.conf import settings
-from django.core.cache import cache
 from django.utils import timezone
 
 from apps.accounts.feature_flags import FeatureFlagService
 from apps.accounts.models import McpConnectionApprovalMode, McpToolOperationType
 from apps.conversations.models import Conversation, ConversationMessage
-from apps.knowledge.models import KnowledgeUpload
-from apps.llm.llm_provider import _emit_stream_chunks
 from apps.rag.rag_logging import structured_log
 
 from core.otel import otel_trace
-from core.tenancy import tenant_context
 
 from .. import prompts, tools as mcp_tools
 from ..runtime.budget_guidance import search_budget_exceeded_payload
@@ -36,26 +31,30 @@ from ..runtime.rag_observability import compact_retrieval_observability
 from ..text.redaction import redact_tool_input_payload
 from ..remote_client import McpRemoteError
 from ..runtime.tool_artifacts import build_prompt_view_for_remote_tool_result, store_remote_tool_output_artifact
-from ..text.sanitizer import extract_sentences, sanitize_text, sanitize_with_diagnostics
+from ..text.sanitizer import sanitize_text, sanitize_with_diagnostics
 from ..types import ToolConstraintError, ToolExecutionContext
 from .response_helpers import INLINE_RESPONSE_BLOCK_PATTERN
+from .turn_answer_emit import _emit_final_answer as _emit_final_answer_impl
+from .turn_callbacks import (
+    _emit_tokens as _emit_tokens_impl,
+)
+from .turn_tool_ui import (
+    _split_portal_tool_calls as _split_portal_tool_calls_impl,
+    _tool_spinner_text as _tool_spinner_text_impl,
+)
+from .turn_stream_filters import _filter_dsml_stream as _filter_dsml_stream_impl
+from .turn_stream_logging import _log_stream_mismatch as _log_stream_mismatch_impl
+from .turn_stream_buffer import _flush_stream_buffer as _flush_stream_buffer_impl
+from .turn_portal_stream import _on_stream_tool_call_delta as _on_stream_tool_call_delta_impl
+from .turn_stream_handlers import (
+    _answer_stream_chunk as _answer_stream_chunk_impl,
+    _first_stream_chunk as _first_stream_chunk_impl,
+)
+from .turn_status import _status_event as _status_event_impl
 
 
 TRACER = otel_trace.get_tracer(__name__)
-
-TABLE_CACHE_KEY_FIELDS = (
-    "document_id",
-    "match_column",
-    "match_values",
-    "columns",
-    "query",
-    "sheet_name",
-    "table_order_index",
-    "max_rows",
-    "mode",
-    "value_column",
-)
-
+logger = logging.getLogger(__name__)
 
 class McpTurnExecutionMixin:
 
@@ -299,8 +298,6 @@ class McpTurnExecutionMixin:
         first_pass_streamed_chunks: list[str] = []
         answer_streamed_chunks: list[str] = []
         streaming_mode = "initial"
-        final_separator_pending = False
-        last_stream_char = ""
         single_pass_candidate: str | None = None
         first_stream_tool_calls: list[Mapping[str, object]] = []
         first_stream_message: dict[str, object] | None = None
@@ -359,128 +356,12 @@ class McpTurnExecutionMixin:
 
 
         def _status_event(code: str, label: str | None = None, meta: Mapping[str, object] | None = None) -> None:
-            if not on_status_change:
-                return
-            code_value = (code or "").strip()
-            if not code_value:
-                return
-            payload: dict[str, object] = {"code": code_value}
-            label_value = label.strip() if isinstance(label, str) else ""
-            if label_value:
-                payload["label"] = label_value
-            if meta:
-                try:
-                    payload["meta"] = dict(meta)
-                except Exception:
-                    pass
-            on_status_change(payload)
-
-        def _snippet_count(payload: Mapping[str, object] | None) -> int:
-            if not isinstance(payload, Mapping):
-                return 0
-            snippets = payload.get("snippets")
-            if isinstance(snippets, Sequence) and not isinstance(snippets, (str, bytes, bytearray)):
-                return len(snippets)
-            refs = payload.get("refs")
-            if isinstance(refs, Sequence) and not isinstance(refs, (str, bytes, bytearray)):
-                return len(refs)
-            results = payload.get("results")
-            if isinstance(results, Sequence) and not isinstance(results, (str, bytes, bytearray)):
-                return len(results)
-            contents = payload.get("contents")
-            if isinstance(contents, Sequence) and not isinstance(contents, (str, bytes, bytearray)):
-                return len(contents)
-            evidence = payload.get("evidence")
-            if isinstance(evidence, Sequence) and not isinstance(evidence, (str, bytes, bytearray, Mapping)):
-                return len(evidence)
-            if isinstance(evidence, Mapping):
-                snippets = evidence.get("snippets")
-                if isinstance(snippets, Sequence) and not isinstance(snippets, (str, bytes, bytearray)):
-                    return len(snippets)
-            return 0
-
-        def _resolve_read_label(arguments: Mapping[str, object], *, action_verb: str) -> str:
-            """
-            Best-effort label for read operations that prefers a human document name
-            over opaque UUIDs (especially when read operations are called with ids/refs).
-            """
-            try:
-                business_id = getattr(conversation, "business_profile_id", None)
-            except Exception:
-                business_id = None
-
-            resolved_title = ""
-            ids = arguments.get("ids")
-            if business_id and isinstance(ids, Sequence) and not isinstance(ids, (str, bytes, bytearray)) and ids:
-                try:
-                    from apps.knowledge.models import KnowledgeUploadChunk
-                except Exception:
-                    KnowledgeUploadChunk = None  # type: ignore[assignment]
-                if KnowledgeUploadChunk is not None:
-                    first_id = str(ids[0]).strip()
-                    if first_id:
-                        try:
-                            with tenant_context(business_id):
-                                resolved_title = (
-                                    KnowledgeUploadChunk.objects.filter(
-                                        id=first_id,
-                                        business_profile_id=business_id,
-                                    )
-                                    .values_list("upload__display_name", flat=True)
-                                    .first()
-                                    or ""
-                                )
-                        except Exception:
-                            resolved_title = ""
-
-            raw_doc_id = arguments.get("document_id")
-            doc_id = str(raw_doc_id).strip() if raw_doc_id is not None else ""
-            if business_id and doc_id and not resolved_title:
-                try:
-                    with tenant_context(business_id):
-                        resolved_title = (
-                            KnowledgeUpload.objects.filter(id=doc_id, business_profile_id=business_id)
-                            .values_list("display_name", flat=True)
-                            .first()
-                            or ""
-                        )
-                except Exception:
-                    resolved_title = ""
-            if business_id and doc_id and not resolved_title:
-                # Some call paths pass a chunk id as document_id; resolve back to the upload name.
-                try:
-                    from apps.knowledge.models import KnowledgeUploadChunk
-                except Exception:
-                    KnowledgeUploadChunk = None  # type: ignore[assignment]
-                if KnowledgeUploadChunk is not None:
-                    try:
-                        with tenant_context(business_id):
-                            resolved_title = (
-                                KnowledgeUploadChunk.objects.filter(
-                                    id=doc_id,
-                                    business_profile_id=business_id,
-                                )
-                                .values_list("upload__display_name", flat=True)
-                                .first()
-                                or ""
-                            )
-                    except Exception:
-                        resolved_title = ""
-
-            resolved_title = str(resolved_title or "").strip()
-            if resolved_title:
-                return f"{action_verb} {resolved_title[:80]}"
-            return ""
-
-        def _knowledge_phase_payload(tool_name: str, arguments: Mapping[str, object]) -> dict[str, object] | None:
-            return None
-
-        def _emit_phase_start(phase: Mapping[str, object] | None) -> dict[str, object] | None:
-            return None
-
-        def _emit_phase_complete(phase: Mapping[str, object] | None, *, snippet_total: int | None = None) -> None:
-            del phase, snippet_total
-            return None
+            _status_event_impl(
+                code,
+                on_status_change=on_status_change,
+                label=label,
+                meta=meta,
+            )
 
         def _mark_answer_started(label: str | None = "Responding…") -> None:
             nonlocal final_answer_started
@@ -496,135 +377,35 @@ class McpTurnExecutionMixin:
         def _split_portal_tool_calls(
             tool_calls: Sequence[Mapping[str, object]],
         ) -> tuple[list[Mapping[str, object]], list[Mapping[str, object]]]:
-            normal_calls: list[Mapping[str, object]] = []
-            portal_calls: list[Mapping[str, object]] = []
-            for tool_call in tool_calls:
-                if not isinstance(tool_call, Mapping):
-                    continue
-                try:
-                    tool_name = self._tool_name(tool_call)
-                except Exception:
-                    continue
-                if tool_name == PORTAL_BLOCK_TOOL_NAME:
-                    portal_calls.append(tool_call)
-                else:
-                    normal_calls.append(tool_call)
-            return normal_calls, portal_calls
+            return _split_portal_tool_calls_impl(tool_calls, tool_name_for_call=self._tool_name)
 
         def _tool_spinner_text(arguments: Mapping[str, object] | None) -> str:
-            if not isinstance(arguments, Mapping):
-                return ""
-            text = ""
-            raw_ui = arguments.get("__ui")
-            if isinstance(raw_ui, Mapping):
-                raw_text = raw_ui.get("spinner_text")
-                text = str(raw_text or "").strip() if raw_text is not None else ""
-            if not text:
-                raw_text = arguments.get("spinner_text")
-                text = str(raw_text or "").strip() if raw_text is not None else ""
-            if not text:
-                return ""
-            text = " ".join(text.split())
-            return self._clip_text(text, 160)
+            return _tool_spinner_text_impl(arguments, clip_text=self._clip_text)
 
         def _on_stream_tool_call_delta(tool_call: Mapping[str, object] | None) -> None:
-            if not tool_call:
-                return
-            portal_block_stream.ingest_stream_state(tool_call)
+            _on_stream_tool_call_delta_impl(tool_call, portal_block_stream=portal_block_stream)
 
         _status_event("thinking", "Thinking…")
 
-        def _append_chunk(chunk: str, target: list[str]) -> None:
-            if not chunk:
-                return
-            nonlocal last_stream_char
-            target.append(chunk)
-            last_stream_char = chunk[-1]
-            if on_response_text_delta:
-                try:
-                    on_response_text_delta(chunk)
-                except Exception:  # pragma: no cover - defensive
-                    logger.exception("on_response_text_delta callback failed")
-
         def _emit_tokens(text: str) -> None:
-            if not text:
-                return
-            target = first_pass_streamed_chunks if streaming_mode == "initial" else answer_streamed_chunks
-            _append_chunk(text, target)
-
-        def _emit_sentence(text: str) -> None:
-            if not text:
-                return
-            _emit_tokens(text)
-
-        DSML_MARKERS = ("<｜DSML｜", "</｜DSML｜", "<｜｜DSML｜｜", "</｜｜DSML｜｜", "<|DSML|", "</|DSML|")
-
-        def _filter_dsml_stream(chunk: str) -> str:
-            """
-            Some models (notably DeepSeek) can emit DSML tool-call markup in the visible
-            content stream. This is never visitor-facing; strip it line-by-line in a
-            stream-safe way so partial tags never leak.
-            """
-
-            nonlocal dsml_skip_line
-            if not chunk:
-                return ""
-
-            remaining = chunk
-            out_parts: list[str] = []
-
-            while remaining:
-                if dsml_skip_line:
-                    newline_idx = remaining.find("\n")
-                    if newline_idx == -1:
-                        # Still inside a DSML line; drop until we see the terminating newline.
-                        return "".join(out_parts)
-                    # Drop DSML line content; preserve a single newline to keep spacing stable.
-                    out_parts.append("\n")
-                    remaining = remaining[newline_idx + 1 :]
-                    dsml_skip_line = False
-                    continue
-
-                next_idx = -1
-                for marker in DSML_MARKERS:
-                    idx = remaining.find(marker)
-                    if idx != -1 and (next_idx == -1 or idx < next_idx):
-                        next_idx = idx
-                if next_idx == -1:
-                    out_parts.append(remaining)
-                    break
-
-                out_parts.append(remaining[:next_idx])
-                remaining = remaining[next_idx:]
-                dsml_skip_line = True
-
-            return "".join(out_parts)
+            _emit_tokens_impl(
+                text,
+                streaming_mode=streaming_mode,
+                first_pass_streamed_chunks=first_pass_streamed_chunks,
+                answer_streamed_chunks=answer_streamed_chunks,
+                on_response_text_delta=on_response_text_delta,
+                logger_obj=logger,
+            )
 
         def _emit_final_answer(text: str) -> None:
-            if not text:
-                return
-            nonlocal streaming_mode, final_separator_pending
-            _mark_answer_started()
-            streaming_mode = "final"
-            final_separator_pending = False
-            _emit_stream_chunks(lambda chunk: _append_chunk(chunk, answer_streamed_chunks), text)
-
-        def _sanitize_stream_segment(text: str, *, stage: str, filter_override: str | None = None) -> str:
-            nonlocal stream_dropped
-            if not text:
-                return ""
-            effective_filter = filter_override or filter_level
-            cleaned, dropped = sanitize_with_diagnostics(
+            nonlocal streaming_mode
+            streaming_mode = _emit_final_answer_impl(
                 text,
-                conversation=conversation,
-                stage=stage,
-                filter_level=effective_filter,
+                mark_answer_started=_mark_answer_started,
+                answer_streamed_chunks=answer_streamed_chunks,
+                on_response_text_delta=on_response_text_delta,
+                logger_obj=logger,
             )
-            if dropped:
-                stream_dropped.extend(dropped)
-                if cleaned.strip() == text.strip():
-                    return ""
-            return cleaned
 
         def _flush_stream_buffer(
             stage: str,
@@ -633,90 +414,51 @@ class McpTurnExecutionMixin:
             flush_remainder: bool = False,
         ) -> None:
             nonlocal stream_buffer
-            pending = stream_buffer
-            if not pending:
-                return
-            sentences, remainder = extract_sentences(pending)
-            stream_buffer = remainder
-            for sentence, sep in sentences:
-                clean_segment = _sanitize_stream_segment(
-                    f"{sentence}{sep}",
-                    stage=stage,
-                    filter_override=filter_override,
-                )
-                if clean_segment:
-                    _emit_tokens(clean_segment)
-            if flush_remainder and stream_buffer:
-                trailing_clean = _sanitize_stream_segment(
-                    stream_buffer,
-                    stage=stage,
-                    filter_override=filter_override,
-                )
-                stream_buffer = ""
-                if trailing_clean:
-                    _emit_tokens(trailing_clean)
+            stream_buffer = _flush_stream_buffer_impl(
+                stream_buffer,
+                conversation=conversation,
+                default_filter_level=filter_level,
+                stage=stage,
+                stream_dropped=stream_dropped,
+                emit_tokens=_emit_tokens,
+                filter_override=filter_override,
+                flush_remainder=flush_remainder,
+            )
 
         def _log_stream_mismatch(target: list[str], final_text: str, *, stage: str) -> None:
-            normalized_final = str(final_text or "")
-            current_text = "".join(target)
-            if current_text == normalized_final:
-                return
-            structured_log(
-                "mcp",
-                "stream.final_text_mismatch",
-                {
-                    "stage": stage,
-                    "streamed_chars": len(current_text),
-                    "final_chars": len(normalized_final),
-                    "streamed_is_prefix": bool(current_text and normalized_final.startswith(current_text)),
-                    "streamed_empty": not bool(current_text),
-                },
-                context={
-                    "conversation": conversation.id,
-                    "business": conversation.business_profile_id,
-                },
+            _log_stream_mismatch_impl(
+                target,
+                final_text,
+                stage=stage,
+                conversation=conversation,
                 logger_obj=logger,
             )
 
-        # Phase 1: streaming tool-enabled call. If tool_calls appear, we will
-        # fall back to the full tool loop + final-answer path. If no tool_calls
-        # and we have content, we can keep this streamed text and skip the
-        # second content call.
         def _first_stream_chunk(chunk: str) -> None:
-            nonlocal stream_buffer, initial_stream_started, inline_response_blocks_detected
-            if not chunk:
-                return
-            chunk = _filter_dsml_stream(chunk)
-            if not chunk:
-                return
-            if inline_response_blocks_detected:
-                return
-            if not initial_stream_started:
-                initial_stream_started = True
-                _status_event("responding", "Responding…")
-            _emit_tokens(chunk)
+            nonlocal dsml_skip_line, inline_response_blocks_detected, initial_stream_started
+            dsml_skip_line, inline_response_blocks_detected, initial_stream_started = _first_stream_chunk_impl(
+                chunk,
+                dsml_skip_line=dsml_skip_line,
+                inline_response_blocks_detected=inline_response_blocks_detected,
+                initial_stream_started=initial_stream_started,
+                filter_dsml_stream=lambda value, skip_line: _filter_dsml_stream_impl(value, skip_line=skip_line),
+                status_event=_status_event,
+                emit_tokens=_emit_tokens,
+            )
 
         def _answer_stream_chunk(chunk: str) -> None:
-            nonlocal stream_buffer, inline_response_blocks_detected
-            if not chunk:
-                return
-            chunk = _filter_dsml_stream(chunk)
-            if not chunk:
-                return
-            if inline_response_blocks_detected:
-                return
-            if not final_answer_started:
-                _mark_answer_started()
-            stream_buffer = f"{stream_buffer}{chunk}"
-            block_match = INLINE_RESPONSE_BLOCK_PATTERN.search(stream_buffer)
-            emit_text = stream_buffer
-            if block_match:
-                emit_text = stream_buffer[: block_match.start()]
-                inline_response_blocks_detected = True
-            stream_buffer = ""
-            if not emit_text:
-                return
-            _emit_tokens(emit_text)
+            nonlocal stream_buffer, dsml_skip_line, inline_response_blocks_detected
+            stream_buffer, dsml_skip_line, inline_response_blocks_detected = _answer_stream_chunk_impl(
+                chunk,
+                stream_buffer=stream_buffer,
+                dsml_skip_line=dsml_skip_line,
+                inline_response_blocks_detected=inline_response_blocks_detected,
+                final_answer_started=final_answer_started,
+                filter_dsml_stream=lambda value, skip_line: _filter_dsml_stream_impl(value, skip_line=skip_line),
+                mark_answer_started=_mark_answer_started,
+                emit_tokens=_emit_tokens,
+                response_block_pattern=INLINE_RESPONSE_BLOCK_PATTERN,
+            )
 
         first_stream_message: dict[str, object]
         first_stream_tool_calls: list[Mapping[str, object]]
@@ -2001,9 +1743,6 @@ class McpTurnExecutionMixin:
                 first_stream_tool_calls = next_tool_calls
             else:
                 raise RuntimeError("MCP tool loop exceeded iteration limit.")
-            # Preserve streamed answer buffers from tool-loop turns. Clearing here
-            # causes full-answer replay during tail reconciliation.
-            final_separator_pending = bool(first_pass_streamed_chunks)
         # No tool calls from the first streaming pass: take single-pass fast path.
         else:
             tool_phase_assistant_message = first_stream_message
@@ -2095,7 +1834,6 @@ class McpTurnExecutionMixin:
                 answer_streamed_chunks.clear()
                 _emit_final_answer(clean_single)
             _status_event("stream_complete", "")
-            final_separator_pending = False
             response_blocks = self._extract_response_blocks(normalized_assistant)
             clean_single = str(normalized_assistant.get("content") or clean_single)
             return {

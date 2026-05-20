@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from apps.conversations.portal_turn_events import get_portal_redis_client
+
 from apps.api.portal_chat.activity_snapshots import (
     _append_agent_run_event,
     _build_portal_agent_requests_snapshot,
@@ -106,9 +108,9 @@ from apps.api.portal_chat.status_events import (
 )
 from apps.api.portal_chat.tool_approvals import portal_tool_approval
 from apps.api.portal_chat.tool_history import portal_tool_history
+from apps.api.portal_chat import turn_stream as _turn_stream
 from apps.api.portal_chat.turn_stream import (
     portal_turn_cancel,
-    portal_turn_events,
 )
 from apps.api.portal_chat.tracing import PortalTraceLogger
 
@@ -116,3 +118,9 @@ from apps.api.portal_chat.tracing import PortalTraceLogger
 
 
 # NOTE: Portal verification (OTP / verified lookup) was removed; this deployment runs as knowledge-RAG only.
+
+
+def portal_turn_events(request, turn_id):
+    _turn_stream._open_portal_turn_listen_connection = _open_portal_turn_listen_connection
+    _turn_stream.get_portal_redis_client = get_portal_redis_client
+    return _turn_stream.portal_turn_events(request, turn_id)

@@ -103,9 +103,9 @@ def _resolve_request_conversation(
     payload: Mapping[str, object] | None = None,
     include_messages: bool = False,
 ) -> tuple[Conversation, PortalSessionState]:
-    user = _require_authenticated_user(request)
     conversation_id = _extract_conversation_id(payload, request)
     if conversation_id:
+        user = _require_authenticated_user(request)
         conversation = get_authorized_conversation(
             service=service,
             user=user,
@@ -124,7 +124,8 @@ def _resolve_request_conversation(
         raise PortalValidationError("conversation_id or session_token is required.")
 
     conversation = service.get_conversation(session_token=session_token, include_messages=include_messages)
-    if not can_access_conversation(user, conversation):
+    user = getattr(request, "user", None)
+    if getattr(user, "is_authenticated", False) and not can_access_conversation(user, conversation):
         raise PortalAuthorizationError("You do not have access to this conversation.")
     session = service.get_session_state(session_token=session_token, conversation=conversation)
     return conversation, session

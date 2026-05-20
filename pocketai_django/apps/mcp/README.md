@@ -41,7 +41,7 @@ Directory Map
 - knowledge_read_tool.py
   Compatibility bridge for the public read_knowledge handler.
 - knowledge_read/
-  Agentic read_knowledge engine, wrapper validation, and table snippet helpers.
+  Agentic read_knowledge engine, wrapper validation, cursor/page/section/table read segments, and table snippet helpers.
 - orchestration/
   MCP orchestrator mixins for turn execution, prompt governance, planning, approvals, remote tools, response helpers, and runtime controls.
 - remote_client.py

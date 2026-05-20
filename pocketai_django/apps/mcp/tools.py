@@ -16,6 +16,7 @@ from typing import Callable, Mapping
 
 from django.conf import settings
 
+from apps.accounts.feature_flags import FeatureFlagService
 from apps.conversations.models import Conversation
 from core.tenancy import tenant_context
 from .types import (
@@ -67,6 +68,7 @@ from .tool_handlers.native_integration import (
     _slack_send_message_handler,
 )
 from .tool_handlers.integration_catalog import (
+    EMAIL_INTEGRATION_TOOL_REGISTRY,
     get_email_integration_type_for_provider,
     get_email_integration_tool_names,
     get_email_integration_tools_for_provider,
@@ -104,9 +106,14 @@ from .tool_handlers.memory import (
     _search_memory_handler,
 )
 from .tool_handlers.context_retrieval import _retrieve_earlier_context_handler
-from .knowledge_search_tool import _knowledge_service, _search_knowledge_handler
+from .knowledge_search_tool import _knowledge_service, _portal_file_embedding_service, _search_knowledge_handler
 from .knowledge_read_tool import _read_knowledge_handler
+from .knowledge_read.engine import _agentic_read_v2_handler
+from .knowledge_support.agentic_response import _convert_to_agentic_search_response
+from .knowledge_support.search_fusion import _fuse_batched_search_runs
+from .runtime.agentic_read_cursor import _verify_agentic_read_cursor_v2
 from .runtime.budget_guidance import build_repeat_search_guidance, search_budget_exceeded_payload
+from .runtime.search_cursor import _encode_search_cursor, _search_cursor_handle_cache_key
 
 
 logger = logging.getLogger(__name__)

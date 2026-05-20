@@ -35,7 +35,7 @@ class MemoryExtractionServiceTests(TestCase):
         self.run = AgentRun.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
-            workflow=self.workflow,
+            automation=self.workflow,
             created_by=self.user,
             title="Email Checker",
             run_snapshot={"name": self.workflow.name},
