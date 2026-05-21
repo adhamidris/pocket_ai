@@ -5,10 +5,10 @@ import os
 import time
 from threading import Lock
 
-from apps.llm.chat_providers import DeepSeekChatProvider, OpenAIChatProvider
+from apps.llm.providers.chat import DeepSeekChatProvider, OpenAIChatProvider
 from apps.llm.interfaces import BaseLLMProvider, BaseMcpProvider, StubLLMProvider
-from apps.llm.provider_factory import load_default_provider, load_mcp_provider
-from apps.llm.retry import (
+from apps.llm.providers.factory import load_default_provider, load_mcp_provider
+from apps.llm.runtime.retry import (
     DEFAULT_RETRYABLE_STATUS_CODES,
     LLM_RETRY_BASE_DELAY_SECONDS,
     LLM_RETRY_JITTER_SECONDS,
@@ -29,14 +29,14 @@ from apps.llm.retry import (
     _retry_delay_seconds,
     _status_is_retryable,
 )
-from apps.llm.streaming import (
+from apps.llm.runtime.streaming import (
     _consume_chat_completion_stream,
     _ResponseTextExtractor,
     _emit_stream_chunks,
     _iter_sse_events,
 )
-from apps.llm.tool_providers import DeepSeekToolsProvider, OpenAIToolsProvider
-from apps.llm.usage import (
+from apps.llm.providers.tools import DeepSeekToolsProvider, OpenAIToolsProvider
+from apps.llm.telemetry.usage import (
     _coerce_usage_mapping,
     _estimate_text_tokens,
     _format_span_id,

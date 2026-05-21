@@ -167,6 +167,7 @@ urlpatterns = [
     path("integrations/google/resources/", views.google_drive_resources, name="integrations-google-resources"),
     path("integrations/google/resources/save/", views.google_drive_save_resources, name="integrations-google-resources-save"),
     path("integrations/google/sync/", views.google_drive_sync_now, name="integrations-google-sync"),
+    path("cases/", crm_api_views.crm_legacy_cases_retired, name="crm-legacy-cases-retired"),
     path("crm/contacts/", crm_api_views.crm_contacts_collection, name="crm-contacts"),
     path("crm/contacts/<uuid:contact_id>/", crm_api_views.crm_contact_detail, name="crm-contact-detail"),
     path("crm/contacts/<uuid:contact_id>/merge/", crm_api_views.crm_contact_merge, name="crm-contact-merge"),

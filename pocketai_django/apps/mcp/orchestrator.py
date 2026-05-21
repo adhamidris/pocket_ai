@@ -28,7 +28,7 @@ from . import tools as mcp_tools
 from .orchestration.approval_policy import McpApprovalPolicyMixin
 from .orchestration.knowledge_context import McpKnowledgeContextMixin
 from .orchestration.planning import McpPlanningMixin
-from .orchestration.prompt_governor import McpPromptGovernorMixin
+from .orchestration.prompt_chat import McpPromptChatMixin
 from .orchestration.remote_tools import McpRemoteToolsMixin
 from .orchestration.response_helpers import McpResponseHelpersMixin
 from .orchestration.runtime_controls import McpRuntimeControlsMixin
@@ -47,7 +47,7 @@ class McpOrchestratorService(
     McpApprovalPolicyMixin,
     McpKnowledgeContextMixin,
     McpPlanningMixin,
-    McpPromptGovernorMixin,
+    McpPromptChatMixin,
     McpResponseHelpersMixin,
     McpRemoteToolsMixin,
     McpRuntimeControlsMixin,

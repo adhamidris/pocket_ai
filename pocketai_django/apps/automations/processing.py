@@ -14,9 +14,9 @@ from apps.agent_runs.models import AgentRun, AgentRunEvent, AgentRunEventStream,
 from apps.automations.models import Automation, AutomationDedupeKey, AutomationStatus, AutomationTriggerType
 from apps.automations.scheduling import CronScheduleError, compute_next_automation_schedule_at
 from apps.conversations.instruction_contracts import normalize_workflow_instructions
-from apps.integrations.email_accounts import ensure_fresh_email_credentials
-from apps.integrations.gmail import GmailApiError, gmail_search_messages
-from apps.integrations.microsoft_graph import GraphApiError, graph_list_messages
+from apps.integrations.accounts.email import ensure_fresh_email_credentials
+from apps.integrations.providers.gmail import GmailApiError, gmail_search_messages
+from apps.integrations.providers.microsoft_graph import GraphApiError, graph_list_messages
 
 logger = logging.getLogger(__name__)
 

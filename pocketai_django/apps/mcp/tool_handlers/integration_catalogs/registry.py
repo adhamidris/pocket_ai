@@ -1,0 +1,297 @@
+from __future__ import annotations
+
+from typing import Mapping
+
+from apps.accounts.models import (
+    EmailAccountProvider,
+    IntegrationType,
+    McpToolOperationType,
+)
+
+
+# Native integration tool policy metadata consumed by the orchestrator.
+NATIVE_INTEGRATION_TOOL_REGISTRY: dict[str, dict[str, object]] = {
+    # Google Calendar
+    "calendar_list_events": {
+        "integration_type": IntegrationType.GOOGLE_CALENDAR,
+        "operation_type": McpToolOperationType.READ,
+        "requires_connected_account": True,
+        "requires_actor_user_binding": True,
+    },
+    "calendar_get_event": {
+        "integration_type": IntegrationType.GOOGLE_CALENDAR,
+        "operation_type": McpToolOperationType.READ,
+        "requires_connected_account": True,
+        "requires_actor_user_binding": True,
+    },
+    "calendar_create_event": {
+        "integration_type": IntegrationType.GOOGLE_CALENDAR,
+        "operation_type": McpToolOperationType.WRITE,
+        "requires_connected_account": True,
+        "requires_actor_user_binding": True,
+    },
+    "calendar_update_event": {
+        "integration_type": IntegrationType.GOOGLE_CALENDAR,
+        "operation_type": McpToolOperationType.WRITE,
+        "requires_connected_account": True,
+        "requires_actor_user_binding": True,
+    },
+    # Google Drive
+    "drive_search_files": {
+        "integration_type": IntegrationType.GOOGLE_DRIVE,
+        "operation_type": McpToolOperationType.READ,
+        "requires_connected_account": True,
+        "requires_actor_user_binding": True,
+    },
+    "drive_get_file": {
+        "integration_type": IntegrationType.GOOGLE_DRIVE,
+        "operation_type": McpToolOperationType.READ,
+        "requires_connected_account": True,
+        "requires_actor_user_binding": True,
+    },
+    "drive_list_files": {
+        "integration_type": IntegrationType.GOOGLE_DRIVE,
+        "operation_type": McpToolOperationType.READ,
+        "requires_connected_account": True,
+        "requires_actor_user_binding": True,
+    },
+    # OneDrive
+    "onedrive_search_files": {
+        "integration_type": IntegrationType.ONEDRIVE,
+        "operation_type": McpToolOperationType.READ,
+        "requires_connected_account": True,
+        "requires_actor_user_binding": True,
+    },
+    "onedrive_get_file": {
+        "integration_type": IntegrationType.ONEDRIVE,
+        "operation_type": McpToolOperationType.READ,
+        "requires_connected_account": True,
+        "requires_actor_user_binding": True,
+    },
+    "onedrive_list_files": {
+        "integration_type": IntegrationType.ONEDRIVE,
+        "operation_type": McpToolOperationType.READ,
+        "requires_connected_account": True,
+        "requires_actor_user_binding": True,
+    },
+    # Slack
+    "slack_list_channels": {
+        "integration_type": IntegrationType.SLACK,
+        "operation_type": McpToolOperationType.READ,
+        "requires_connected_account": True,
+        "requires_actor_user_binding": True,
+    },
+    "slack_read_channel": {
+        "integration_type": IntegrationType.SLACK,
+        "operation_type": McpToolOperationType.READ,
+        "requires_connected_account": True,
+        "requires_actor_user_binding": True,
+    },
+    "slack_send_message": {
+        "integration_type": IntegrationType.SLACK,
+        "operation_type": McpToolOperationType.WRITE,
+        "requires_connected_account": True,
+        "requires_actor_user_binding": True,
+    },
+    "slack_search_messages": {
+        "integration_type": IntegrationType.SLACK,
+        "operation_type": McpToolOperationType.READ,
+        "requires_connected_account": True,
+        "requires_actor_user_binding": True,
+    },
+    # HubSpot
+    "hubspot_search_contacts": {
+        "integration_type": IntegrationType.HUBSPOT,
+        "operation_type": McpToolOperationType.READ,
+        "requires_connected_account": True,
+        "requires_actor_user_binding": True,
+    },
+    "hubspot_get_contact": {
+        "integration_type": IntegrationType.HUBSPOT,
+        "operation_type": McpToolOperationType.READ,
+        "requires_connected_account": True,
+        "requires_actor_user_binding": True,
+    },
+    "hubspot_create_contact": {
+        "integration_type": IntegrationType.HUBSPOT,
+        "operation_type": McpToolOperationType.WRITE,
+        "requires_connected_account": True,
+        "requires_actor_user_binding": True,
+    },
+    "hubspot_search_deals": {
+        "integration_type": IntegrationType.HUBSPOT,
+        "operation_type": McpToolOperationType.READ,
+        "requires_connected_account": True,
+        "requires_actor_user_binding": True,
+    },
+}
+
+EMAIL_PROVIDER_INTEGRATION_TYPES: dict[str, str] = {
+    EmailAccountProvider.GOOGLE: "google_email",
+    EmailAccountProvider.MICROSOFT: "microsoft_email",
+}
+
+EMAIL_INTEGRATION_TOOL_REGISTRY: dict[str, dict[str, object]] = {
+    "email_search": {
+        "providers": [EmailAccountProvider.GOOGLE, EmailAccountProvider.MICROSOFT],
+        "operation_type": McpToolOperationType.READ,
+        "requires_connected_account": True,
+        "requires_actor_user_binding": True,
+    },
+    "email_get_message": {
+        "providers": [EmailAccountProvider.GOOGLE, EmailAccountProvider.MICROSOFT],
+        "operation_type": McpToolOperationType.READ,
+        "requires_connected_account": True,
+        "requires_actor_user_binding": True,
+    },
+    "email_get_thread": {
+        "providers": [EmailAccountProvider.GOOGLE, EmailAccountProvider.MICROSOFT],
+        "operation_type": McpToolOperationType.READ,
+        "requires_connected_account": True,
+        "requires_actor_user_binding": True,
+    },
+    "email_create_draft": {
+        "providers": [EmailAccountProvider.GOOGLE, EmailAccountProvider.MICROSOFT],
+        "operation_type": McpToolOperationType.WRITE,
+        "requires_connected_account": True,
+        "requires_actor_user_binding": True,
+    },
+    "email_send_draft": {
+        "providers": [EmailAccountProvider.GOOGLE, EmailAccountProvider.MICROSOFT],
+        "operation_type": McpToolOperationType.WRITE,
+        "requires_connected_account": True,
+        "requires_actor_user_binding": True,
+    },
+}
+
+_NATIVE_TOOL_PRESENTATION: dict[str, tuple[str, str]] = {
+    "calendar_list_events": ("List calendar events", "Read upcoming events from the connected calendar."),
+    "calendar_get_event": ("Get event details", "Read details for a specific calendar event."),
+    "calendar_create_event": ("Create calendar event", "Create a new event in the connected calendar."),
+    "calendar_update_event": ("Update calendar event", "Modify an existing calendar event."),
+    "drive_search_files": ("Search Drive files", "Search files in the connected Google Drive account."),
+    "drive_get_file": ("Get Drive file", "Read content/metadata for a specific Google Drive file."),
+    "drive_list_files": ("List Drive files", "List files from the connected Google Drive account."),
+    "onedrive_search_files": ("Search OneDrive files", "Search files in the connected OneDrive account."),
+    "onedrive_get_file": ("Get OneDrive file", "Read content/metadata for a specific OneDrive file."),
+    "onedrive_list_files": ("List OneDrive files", "List files from the connected OneDrive account."),
+    "slack_list_channels": ("List Slack channels", "Read available channels in the connected Slack workspace."),
+    "slack_read_channel": ("Read Slack channel", "Read messages from a selected Slack channel."),
+    "slack_send_message": ("Send Slack message", "Send a message to a Slack channel."),
+    "slack_search_messages": ("Search Slack messages", "Search workspace messages in Slack."),
+    "hubspot_search_contacts": ("Search HubSpot contacts", "Search contacts in the connected HubSpot workspace."),
+    "hubspot_get_contact": ("Get HubSpot contact", "Read a specific HubSpot contact."),
+    "hubspot_create_contact": ("Create HubSpot contact", "Create a new contact in HubSpot."),
+    "hubspot_search_deals": ("Search HubSpot deals", "Search deals in HubSpot."),
+    "email_search": ("Search email", "Search messages in the connected mailbox."),
+    "email_get_message": ("Get email message", "Read a specific email message."),
+    "email_get_thread": ("Get email thread", "Read a full conversation thread."),
+    "email_create_draft": ("Create email draft", "Create a draft email in the connected mailbox."),
+    "email_send_draft": ("Send email draft", "Send an existing draft email from the connected mailbox."),
+}
+
+
+def _native_tool_label(tool_name: str) -> str:
+    value = str(tool_name or "").strip()
+    if not value:
+        return "Tool"
+    preset = _NATIVE_TOOL_PRESENTATION.get(value)
+    if preset:
+        return preset[0]
+    return value.replace("_", " ").strip().title()
+
+
+def _native_tool_description(tool_name: str, *, operation_type: str) -> str:
+    value = str(tool_name or "").strip()
+    preset = _NATIVE_TOOL_PRESENTATION.get(value)
+    if preset:
+        return preset[1]
+    op = str(operation_type or "").strip().lower()
+    if op == McpToolOperationType.WRITE:
+        return "Write operation for this connected integration."
+    if op == McpToolOperationType.READ:
+        return "Read operation for this connected integration."
+    return "Native integration operation."
+
+
+
+def get_native_integration_tools_for_type(integration_type: str) -> list[dict[str, object]]:
+    normalized_type = str(integration_type or "").strip()
+    tools: list[dict[str, object]] = []
+    for tool_name, meta in NATIVE_INTEGRATION_TOOL_REGISTRY.items():
+        if not isinstance(meta, Mapping):
+            continue
+        if str(meta.get("integration_type") or "").strip() != normalized_type:
+            continue
+        operation_type = str(meta.get("operation_type") or McpToolOperationType.UNKNOWN).strip() or McpToolOperationType.UNKNOWN
+        tools.append(
+            {
+                "toolName": str(tool_name),
+                "label": _native_tool_label(str(tool_name)),
+                "description": _native_tool_description(str(tool_name), operation_type=operation_type),
+                "integrationType": normalized_type,
+                "operationType": operation_type,
+                "requiresConnectedAccount": bool(meta.get("requires_connected_account", True)),
+                "requiresActorUserBinding": bool(meta.get("requires_actor_user_binding", True)),
+            }
+        )
+    tools.sort(key=lambda item: str(item.get("label") or item.get("toolName") or ""))
+    return tools
+
+
+def get_native_integration_tool_metadata(tool_name: str) -> dict[str, object] | None:
+    meta = NATIVE_INTEGRATION_TOOL_REGISTRY.get(str(tool_name or "").strip())
+    if not isinstance(meta, Mapping):
+        return None
+    return dict(meta)
+
+
+def get_native_integration_tool_registry() -> dict[str, dict[str, object]]:
+    return {name: dict(meta) for name, meta in NATIVE_INTEGRATION_TOOL_REGISTRY.items()}
+
+
+def get_native_integration_tool_names() -> set[str]:
+    return set(NATIVE_INTEGRATION_TOOL_REGISTRY.keys())
+
+
+def get_email_integration_tool_names() -> set[str]:
+    return set(EMAIL_INTEGRATION_TOOL_REGISTRY.keys())
+
+
+def get_email_integration_type_for_provider(provider: str) -> str:
+    normalized_provider = str(provider or "").strip().lower()
+    return EMAIL_PROVIDER_INTEGRATION_TYPES.get(normalized_provider, "")
+
+
+def get_email_integration_tools_for_provider(provider: str) -> list[dict[str, object]]:
+    normalized_provider = str(provider or "").strip().lower()
+    integration_type = get_email_integration_type_for_provider(normalized_provider)
+    if not integration_type:
+        return []
+    tools: list[dict[str, object]] = []
+    for tool_name, meta in EMAIL_INTEGRATION_TOOL_REGISTRY.items():
+        if not isinstance(meta, Mapping):
+            continue
+        providers_raw = meta.get("providers")
+        providers = {
+            str(value or "").strip().lower()
+            for value in (providers_raw if isinstance(providers_raw, (list, tuple, set)) else [])
+            if str(value or "").strip()
+        }
+        if providers and normalized_provider not in providers:
+            continue
+        operation_type = str(meta.get("operation_type") or McpToolOperationType.UNKNOWN).strip() or McpToolOperationType.UNKNOWN
+        tools.append(
+            {
+                "toolName": str(tool_name),
+                "label": _native_tool_label(str(tool_name)),
+                "description": _native_tool_description(str(tool_name), operation_type=operation_type),
+                "integrationType": integration_type,
+                "provider": normalized_provider,
+                "operationType": operation_type,
+                "requiresConnectedAccount": bool(meta.get("requires_connected_account", True)),
+                "requiresActorUserBinding": bool(meta.get("requires_actor_user_binding", True)),
+            }
+        )
+    tools.sort(key=lambda item: str(item.get("label") or item.get("toolName") or ""))
+    return tools

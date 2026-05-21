@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from apps.accounts.feature_flags import FeatureFlagService
 from apps.mcp.prompting import messages as _messages
+from apps.mcp.prompting import system_message as _system_message
 from apps.mcp.prompting.context_notes import (
     _automation_resource_refs_note,
     _build_run_memory_context,
@@ -33,12 +34,12 @@ from apps.mcp.prompting.messages import (
 
 
 def _with_bridge_feature_flags(func, *args, **kwargs):
-    original = _messages.FeatureFlagService
-    _messages.FeatureFlagService = FeatureFlagService
+    original = _system_message.FeatureFlagService
+    _system_message.FeatureFlagService = FeatureFlagService
     try:
         return func(*args, **kwargs)
     finally:
-        _messages.FeatureFlagService = original
+        _system_message.FeatureFlagService = original
 
 
 def build_system_message(*args, **kwargs):

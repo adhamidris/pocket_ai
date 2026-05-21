@@ -31,7 +31,7 @@ from apps.knowledge.models import (
     KnowledgeUploadFile,
 )
 from apps.integrations.models import KnowledgeIntegration
-from apps.integrations.google_drive import GoogleOAuthError, maybe_refresh_google_credentials
+from apps.integrations.knowledge_sources.google_drive import GoogleOAuthError, maybe_refresh_google_credentials
 from apps.knowledge.ingestion.jobs import queue_ingestion_job
 
 logger = logging.getLogger(__name__)
@@ -419,7 +419,7 @@ class IntegrationSyncService:
         exported: ExportedSheet,
         *,
         synced_at: datetime,
-    ) -> tuple[KnowledgeUpload, int, str | None, bool]:
+    ) -> tuple[KnowledgeUpload, int, str | None, bool, int]:
         owner = integration.created_by or integration.business_profile.user
         sheet_name_raw = (resource.get("sheet_name") or "").strip()
         drive_name_raw = (resource.get("drive_file_name") or "").strip()

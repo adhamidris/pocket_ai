@@ -20,10 +20,10 @@ from apps.conversations.models import (
     ConversationToolApproval,
     ConversationToolApprovalStatus,
 )
-from apps.integrations.email_accounts import ensure_fresh_email_credentials
-from apps.integrations.email_policy import evaluate_email_send_policy
-from apps.integrations.gmail import GmailApiError, gmail_get_draft_headers
-from apps.integrations.microsoft_graph import GraphApiError, graph_get_draft_headers
+from apps.integrations.accounts.email import ensure_fresh_email_credentials
+from apps.integrations.email.policy import evaluate_email_send_policy
+from apps.integrations.providers.gmail import GmailApiError, gmail_get_draft_headers
+from apps.integrations.providers.microsoft_graph import GraphApiError, graph_get_draft_headers
 from apps.integrations.models import (
     AgentEmailAccountPolicyOverride,
     EmailAccount,

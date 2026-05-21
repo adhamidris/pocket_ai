@@ -19,7 +19,7 @@ from apps.integrations.models import (
     EmailAccountAuditEvent,
     EmailAccountHealthJob,
 )
-from apps.integrations.email_health_jobs import (
+from apps.integrations.email.health_jobs import (
     EmailAccountHealthJobRunner,
     enqueue_email_account_health_job,
     _log_email_audit,
@@ -176,8 +176,8 @@ class TestEmailAccountHealthJobRunner(EmailHealthJobTestMixin, TestCase):
         self.assertIsNotNone(job.finished_at)
         self.assertEqual(job.payload, {"test": "data"})
 
-    @patch("apps.integrations.email_health_jobs.ensure_fresh_email_credentials")
-    @patch("apps.integrations.email_health_jobs._test_google_connection")
+    @patch("apps.integrations.email.health_jobs.ensure_fresh_email_credentials")
+    @patch("apps.integrations.email.health_jobs._test_google_connection")
     def test_run_job_success_google(self, mock_test_google, mock_ensure_fresh):
         # Setup mocks
         mock_ensure_fresh.return_value = self.email_account
@@ -203,8 +203,8 @@ class TestEmailAccountHealthJobRunner(EmailHealthJobTestMixin, TestCase):
         self.assertEqual(self.email_account.status, EmailAccountStatus.CONNECTED)
         self.assertEqual(self.email_account.last_error, "")
 
-    @patch("apps.integrations.email_health_jobs.ensure_fresh_email_credentials")
-    @patch("apps.integrations.email_health_jobs._test_google_connection")
+    @patch("apps.integrations.email.health_jobs.ensure_fresh_email_credentials")
+    @patch("apps.integrations.email.health_jobs._test_google_connection")
     def test_run_job_failure_requeues(self, mock_test_google, mock_ensure_fresh):
         # Setup mocks
         mock_ensure_fresh.return_value = self.email_account
@@ -276,8 +276,8 @@ class TestLogEmailAudit(EmailHealthJobTestMixin, TestCase):
 
 
 class TestRunOnce(EmailHealthJobTestMixin, TestCase):
-    @patch("apps.integrations.email_health_jobs.ensure_fresh_email_credentials")
-    @patch("apps.integrations.email_health_jobs._test_google_connection")
+    @patch("apps.integrations.email.health_jobs.ensure_fresh_email_credentials")
+    @patch("apps.integrations.email.health_jobs._test_google_connection")
     def test_processes_multiple_jobs(self, mock_test_google, mock_ensure_fresh):
         mock_ensure_fresh.side_effect = lambda a: a
         mock_test_google.return_value = (True, "")

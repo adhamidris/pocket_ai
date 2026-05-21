@@ -530,7 +530,7 @@ class CrmV1RuntimeTests(TestCase):
             max_attempts=1,
         )
 
-        with patch("apps.crm.imports._load_rows", side_effect=RuntimeError("boom")):
+        with patch("apps.crm.import_pipeline.jobs._load_rows", side_effect=RuntimeError("boom")):
             process_next_job()
 
         job.refresh_from_db()

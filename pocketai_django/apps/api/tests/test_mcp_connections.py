@@ -793,8 +793,8 @@ class CacheTTLTests(TestCase):
 class RemoteClientPaginationTests(TestCase):
     """Tests for remote_client pagination and loop termination."""
 
-    @mock.patch("apps.mcp.remote_client._post_jsonrpc_with_retry_after")
-    @mock.patch("apps.mcp.remote_client._read_json_or_sse_response")
+    @mock.patch("apps.mcp.remote.streamable._post_jsonrpc_with_retry_after")
+    @mock.patch("apps.mcp.remote.streamable._read_json_or_sse_response")
     def test_pagination_terminates_without_next_cursor(self, mock_read, mock_post) -> None:
         """Tool listing should terminate cleanly when no nextCursor is returned."""
         mock_response = mock.MagicMock()
@@ -832,8 +832,8 @@ class RemoteClientPaginationTests(TestCase):
         # Should only call once since there's no nextCursor
         self.assertEqual(mock_post.call_count, 1)
 
-    @mock.patch("apps.mcp.remote_client._post_jsonrpc_with_retry_after")
-    @mock.patch("apps.mcp.remote_client._read_json_or_sse_response")
+    @mock.patch("apps.mcp.remote.streamable._post_jsonrpc_with_retry_after")
+    @mock.patch("apps.mcp.remote.streamable._read_json_or_sse_response")
     def test_pagination_follows_next_cursor(self, mock_read, mock_post) -> None:
         """Tool listing should follow nextCursor for paginated results."""
         mock_response = mock.MagicMock()
@@ -878,8 +878,8 @@ class RemoteClientPaginationTests(TestCase):
         # Should call twice (two pages)
         self.assertEqual(mock_post.call_count, 2)
 
-    @mock.patch("apps.mcp.remote_client._post_jsonrpc_with_retry_after")
-    @mock.patch("apps.mcp.remote_client._read_json_or_sse_response")
+    @mock.patch("apps.mcp.remote.streamable._post_jsonrpc_with_retry_after")
+    @mock.patch("apps.mcp.remote.streamable._read_json_or_sse_response")
     def test_pagination_respects_max_pages_limit(self, mock_read, mock_post) -> None:
         """Tool listing should stop at max_pages to prevent infinite loops."""
         mock_response = mock.MagicMock()

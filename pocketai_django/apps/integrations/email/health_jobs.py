@@ -25,9 +25,9 @@ from apps.integrations.models import (
     EmailAccountAuditEvent,
     EmailAccountHealthJob,
 )
-from apps.integrations.email_accounts import ensure_fresh_email_credentials
-from apps.integrations.gmail import GmailApiError, gmail_get_message
-from apps.integrations.microsoft_graph import GraphApiError, graph_get_profile
+from apps.integrations.accounts.email import ensure_fresh_email_credentials
+from apps.integrations.providers.gmail import GmailApiError, gmail_get_message
+from apps.integrations.providers.microsoft_graph import GraphApiError, graph_get_profile
 
 
 logger = logging.getLogger(__name__)
@@ -113,7 +113,7 @@ def _test_google_connection(account: EmailAccount, access_token: str) -> tuple[b
     """
     try:
         # Try to list messages with limit 1 to verify access
-        from apps.integrations.gmail import gmail_search_messages
+        from apps.integrations.providers.gmail import gmail_search_messages
         gmail_search_messages(access_token=access_token, query="", limit=1, include_snippets_limit=0)
         return True, ""
     except GmailApiError as exc:

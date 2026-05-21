@@ -11,6 +11,7 @@ urlpatterns = [
     path("register/", views.register, name="register"),
     path("dashboard/", views.dashboard, name="dashboard"),
     path("dashboard/chat/", views.dashboard_chat, name="dashboard-chat"),
+    path("dashboard/cases/", crm_frontend_views.dashboard_legacy_cases_retired, name="dashboard-legacy-cases-retired"),
     path("dashboard/crm/", crm_frontend_views.dashboard_crm_overview, name="dashboard-crm-overview"),
     path("dashboard/crm/contacts/", crm_frontend_views.dashboard_crm_contacts, name="dashboard-crm-contacts"),
     path("dashboard/crm/contacts/<uuid:contact_id>/", crm_frontend_views.dashboard_crm_contact_detail, name="dashboard-crm-contact-detail"),

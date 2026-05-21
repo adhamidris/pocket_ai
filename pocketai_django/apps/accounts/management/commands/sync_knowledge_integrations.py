@@ -7,7 +7,7 @@ from django.core.management.base import BaseCommand, CommandError
 
 from apps.accounts.models import KnowledgeIntegrationStatus
 from apps.integrations.models import KnowledgeIntegration
-from apps.integrations.integration_sync import IntegrationSyncService, IntegrationSyncError
+from apps.integrations.sync.service import IntegrationSyncService, IntegrationSyncError
 
 
 class Command(BaseCommand):

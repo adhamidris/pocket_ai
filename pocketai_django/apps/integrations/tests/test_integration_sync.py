@@ -20,7 +20,7 @@ from apps.accounts.models import (
     RegistrationSession,
 )
 from apps.integrations.models import KnowledgeIntegration
-from apps.integrations.integration_sync import ExportedSheet, IntegrationSyncError, IntegrationSyncService
+from apps.integrations.sync.service import ExportedSheet, IntegrationSyncError, IntegrationSyncService
 
 
 User = get_user_model()
@@ -84,8 +84,8 @@ class IntegrationSyncServiceTests(TestCase):
         )
         service = self._service()
 
-        with mock.patch("apps.integrations.integration_sync.queue_ingestion_job") as mock_queue:
-            upload, bytes_written, job_id, changed = service._save_and_queue(
+        with mock.patch("apps.integrations.sync.service.queue_ingestion_job") as mock_queue:
+            upload, bytes_written, job_id, changed, _ = service._save_and_queue(
                 self.integration,
                 resource,
                 exported,
@@ -97,8 +97,8 @@ class IntegrationSyncServiceTests(TestCase):
         self.assertIsNotNone(job_id)
         self.assertEqual(mock_queue.call_count, 1)
 
-        with mock.patch("apps.integrations.integration_sync.queue_ingestion_job") as mock_queue:
-            _, bytes_written_second, job_id_second, changed_second = service._save_and_queue(
+        with mock.patch("apps.integrations.sync.service.queue_ingestion_job") as mock_queue:
+            _, bytes_written_second, job_id_second, changed_second, _ = service._save_and_queue(
                 self.integration,
                 resource,
                 exported,
@@ -252,7 +252,7 @@ class IntegrationSyncServiceTests(TestCase):
         )
         service = self._service()
 
-        upload, bytes_written, _, changed = service._save_and_queue(
+        upload, bytes_written, _, changed, row_count = service._save_and_queue(
             self.integration,
             resource,
             exported,
@@ -261,6 +261,7 @@ class IntegrationSyncServiceTests(TestCase):
 
         self.assertTrue(changed)
         self.assertEqual(bytes_written, len(exported.content))
+        self.assertGreater(row_count, 0)
         upload.refresh_from_db()
         expected_label = "Playbook – Main"
         self.assertEqual(upload.display_name, expected_label)

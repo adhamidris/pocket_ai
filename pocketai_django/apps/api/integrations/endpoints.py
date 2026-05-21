@@ -25,7 +25,7 @@ from apps.accounts.models import (
     KnowledgeVisibility,
 )
 from apps.api.shared import _iso, _resolve_business_profile
-from apps.integrations.google_drive import (
+from apps.integrations.knowledge_sources.google_drive import (
     GoogleOAuthError,
     GoogleSheetsDiscoveryError,
     build_google_authorization_url,
@@ -33,7 +33,7 @@ from apps.integrations.google_drive import (
     exchange_google_authorization_code,
     fetch_google_account_profile,
 )
-from apps.integrations.integration_sync import IntegrationSyncError, IntegrationSyncService
+from apps.integrations.sync.service import IntegrationSyncError, IntegrationSyncService
 from apps.integrations.models import KnowledgeIntegration
 
 logger = logging.getLogger(__name__)

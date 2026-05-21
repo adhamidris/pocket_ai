@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping, Protocol
 
-from apps.llm.ai_prompt_builder import PromptBundle
-from apps.llm.retry import PromptGenerationError
+from apps.llm.prompts.builder import PromptBundle
+from apps.llm.runtime.retry import PromptGenerationError
 
 
 class BaseLLMProvider(Protocol):
