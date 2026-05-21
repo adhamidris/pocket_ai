@@ -24,7 +24,7 @@ from apps.automations.models import Automation, AutomationStatus
 from apps.conversations.models import (
     Conversation,
 )
-from apps.conversations.portal_session_serializers import serialize_agent_run_for_portal
+from apps.conversations.portal_session.serializers import serialize_agent_run_for_portal
 
 
 User = get_user_model()

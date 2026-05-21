@@ -12,7 +12,7 @@ from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSess
 from apps.api import chat_portal
 from apps.conversations.content_blocks import extract_text_from_content_blocks
 from apps.conversations.models import Conversation, ConversationMessage, PortalTurn, PortalTurnStatus
-from apps.conversations.portal_turn_events import append_turn_event
+from apps.conversations.portal_turn.events import append_turn_event
 from core.tenancy import tenant_context
 
 

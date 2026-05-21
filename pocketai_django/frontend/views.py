@@ -60,7 +60,7 @@ from apps.knowledge.knowledge_ingestion import queue_ingestion_job
 from apps.api.chat_portal import bootstrap_session as bootstrap_session_view
 from apps.api.views import start_google_drive_oauth as start_google_drive_oauth_view
 from apps.conversations.portal import ChatPortalService
-from apps.conversations.portal_auth import PortalAuthorizationError, get_authorized_conversation
+from apps.conversations.portal_service.auth import PortalAuthorizationError, get_authorized_conversation
 
 
 PORTAL_BOOTSTRAP_SCRIPT_ID = "portal-bootstrap-data"

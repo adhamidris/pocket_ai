@@ -20,7 +20,7 @@ from apps.conversations.models import (
     PortalTurnStatus,
 )
 from apps.conversations.content_blocks import extract_text_from_content_blocks
-from apps.conversations.portal_turn_runner import PortalTurnRunner
+from apps.conversations.portal_turn.runner import PortalTurnRunner
 
 
 User = get_user_model()
@@ -262,7 +262,7 @@ class PortalTurnSingleModeTests(TransactionTestCase):
 
         with (
             mock.patch.object(PortalTurnRunner, "_select_orchestrator", return_value=orchestrator),
-            mock.patch("apps.conversations.portal_turn_runner.append_turn_event", side_effect=_append_event),
+            mock.patch("apps.conversations.portal_turn.runner.append_turn_event", side_effect=_append_event),
         ):
             runner.run()
 
@@ -293,7 +293,7 @@ class PortalTurnSingleModeTests(TransactionTestCase):
 
         with (
             mock.patch.object(PortalTurnRunner, "_select_orchestrator", return_value=orchestrator),
-            mock.patch("apps.conversations.portal_turn_runner.append_turn_event", side_effect=_append_event),
+            mock.patch("apps.conversations.portal_turn.runner.append_turn_event", side_effect=_append_event),
         ):
             runner.run()
 
@@ -422,7 +422,7 @@ class PortalTurnSingleModeTests(TransactionTestCase):
 
         with (
             mock.patch.object(PortalTurnRunner, "_select_orchestrator", return_value=orchestrator),
-            mock.patch("apps.conversations.portal_turn_runner.append_turn_event", side_effect=_append_event),
+            mock.patch("apps.conversations.portal_turn.runner.append_turn_event", side_effect=_append_event),
         ):
             runner.run()
 
@@ -516,7 +516,7 @@ class PortalTurnSingleModeTests(TransactionTestCase):
         with (
             mock.patch.object(PortalTurnRunner, "_select_orchestrator", return_value=orchestrator),
             mock.patch("apps.api.chat_portal._serialize_debug_tools_payload", return_value=debug_payload),
-            mock.patch("apps.conversations.portal_turn_runner.append_turn_event", side_effect=_append_event),
+            mock.patch("apps.conversations.portal_turn.runner.append_turn_event", side_effect=_append_event),
         ):
             runner.run()
 

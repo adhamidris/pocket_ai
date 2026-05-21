@@ -9,7 +9,7 @@ from django.utils import timezone
 from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
 from apps.conversations.models import Conversation, PortalTurn, PortalTurnStatus
-from apps.conversations.portal_turn_processing import PortalTurnProcessingService
+from apps.conversations.portal_turn.processing import PortalTurnProcessingService
 
 
 User = get_user_model()

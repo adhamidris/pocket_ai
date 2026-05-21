@@ -8,7 +8,7 @@ from django.test import TestCase
 from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
 from apps.voice.models import CallType, VoiceCallAuditAction, VoiceCallAuditEvent, VoiceConfiguration, VoiceCountryPolicy
-from apps.voice.policy_engine import audit_policy_decision, evaluate_voice_compliance_policy
+from apps.voice.calls.policy import audit_policy_decision, evaluate_voice_compliance_policy
 from core.tenancy import tenant_context
 
 

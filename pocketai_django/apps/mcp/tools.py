@@ -247,7 +247,7 @@ def _enforce_single_chunk_read(context: ToolExecutionContext) -> None:
 
 # Voice tools live in the voice app to keep this registry focused.
 try:  # pragma: no cover - optional feature gate
-    from apps.voice.mcp_tools import initiate_phone_call_tool as _initiate_phone_call_handler
+    from apps.voice.tools.mcp import initiate_phone_call_tool as _initiate_phone_call_handler
 except Exception:  # pragma: no cover - voice feature may be disabled in some deployments
     _initiate_phone_call_handler = None  # type: ignore[assignment]
 

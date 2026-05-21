@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from django.http import HttpRequest
 
-from apps.conversations.portal_turn_events import PORTAL_TURN_EVENTS_NOTIFY_CHANNEL
+from apps.conversations.portal_turn.events import PORTAL_TURN_EVENTS_NOTIFY_CHANNEL
 
 
 def _parse_turn_since_seq(request: HttpRequest) -> int:

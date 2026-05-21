@@ -32,12 +32,12 @@ from apps.conversations.portal import (
     PortalNotFoundError,
     PortalValidationError,
 )
-from apps.conversations.portal_session_event_bus import (
+from apps.conversations.portal_session.event_bus import (
     portal_session_agent_requests_stream_key,
     portal_session_agent_automation_runs_stream_key,
     portal_session_conversation_stream_key,
 )
-from apps.conversations.portal_turn_events import get_portal_redis_client
+from apps.conversations.portal_turn.events import get_portal_redis_client
 from apps.rag.rag_logging import structured_log
 from core.tenancy import tenant_context
 

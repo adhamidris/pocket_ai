@@ -8,8 +8,8 @@ from django.test import RequestFactory, TestCase
 from apps.accounts.models import BusinessProfile, RegistrationSession
 from apps.voice.models import CallSession, CallStatus, VoiceProviderConnection
 from apps.voice.runtime import _detect_text_language, _stt_language_tags_for_session
-from apps.voice.twilio import build_twilio_signature
-from apps.voice.views_twilio import twilio_consent, twilio_twiml
+from apps.voice.providers.twilio import build_twilio_signature
+from apps.voice.webhooks.twilio import twilio_consent, twilio_twiml
 from core.tenancy import tenant_context
 
 

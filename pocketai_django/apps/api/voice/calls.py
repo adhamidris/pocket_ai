@@ -15,7 +15,7 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 from core.tenancy import tenant_bypass, tenant_context
 
 from apps.voice.models import CallEvent, CallSession, CallStatus
-from apps.voice.provider_credentials import (
+from apps.voice.providers.credentials import (
     VOICE_PROVIDER_TELNYX,
     VOICE_PROVIDER_TWILIO,
     resolve_telnyx_config,

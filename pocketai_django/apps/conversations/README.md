@@ -3,16 +3,35 @@ Conversations App (apps/conversations)
 
 Purpose
 -------
-This app owns the authenticated chat workspace lifecycle: conversations, messages,
-extractions, response blocks, and the chat-facing session API helpers.
+This app owns conversation persistence, chat portal session orchestration,
+streamed portal turns, file artifacts, and frontend response block shaping.
 
 Directory Map
 -------------
 - models.py
   Conversation, ConversationMessage, ConversationExtraction, feedback, and
-  identifier event models.
+  portal turn/file models.
 - portal.py
-  ChatPortalService: session bootstrap, message storage, identifier capture.
+  Compatibility/service surface for ChatPortalService.
+- portal_*.py
+  Portal service mixins and support modules. These are transitional root modules
+  and should be grouped under a portal package in the next cleanup pass.
+- portal_files.py
+  Compatibility bridge for portal file helpers.
+- portal_files_pkg/
+  Portal file blocks, creation, storage, ingestion, signed-token helpers, and
+  shared file errors.
+- portal_turn_runner.py
+  Portal turn execution worker and event builder.
+- portal_turn_events.py
+  Portal turn event persistence/Redis publishing.
+- portal_turn_processing.py
+  Queue-style processing service for pending portal turns.
+- portal_turn/
+  Internal portal turn builder mixins: blocks, text streaming, reasoning, tools,
+  debug helpers, and event folding.
+- rich_blocks/
+  Incremental rich content block parsing/building.
 - content_blocks.py
   Canonical ordered `content_blocks[]` schema (Phase 0: text blocks only).
 - response_blocks.py
@@ -28,7 +47,7 @@ Key Flows
 
 2) Message append
    ChatPortalService.append_message() -> writes ConversationMessage and updates
-   conversation metadata (identifiers, timestamps).
+   conversation metadata.
 
 3) Response blocks
    normalize_response_blocks() -> safe, bounded blocks for the frontend.
@@ -87,7 +106,9 @@ ChatPortalService (portal.py)
    ↓
 Conversation + Message models
    ↓
-MCP/LLM response -> response_blocks -> frontend
+PortalTurnRunner + MCP/LLM response
+   ↓
+rich_blocks / response_blocks -> frontend
 
 Troubleshooting
 ---------------

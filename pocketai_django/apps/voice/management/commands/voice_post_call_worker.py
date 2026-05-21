@@ -12,8 +12,8 @@ from django.utils import timezone
 from core.tenancy import tenant_bypass, tenant_context
 
 from apps.voice.models import CallSession, CallStatus
-from apps.voice.post_call_processing import process_post_call
-from apps.voice.r2_storage import load_r2_config
+from apps.voice.calls.post_processing import process_post_call
+from apps.voice.providers.r2_storage import load_r2_config
 
 
 logger = logging.getLogger(__name__)

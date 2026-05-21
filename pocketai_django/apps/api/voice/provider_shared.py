@@ -15,10 +15,10 @@ from django.views.decorators.http import require_http_methods
 from core.tenancy import tenant_context
 
 from apps.accounts.models import BusinessProfile
-from apps.voice.deepgram_stt import DeepgramConfig
-from apps.voice.elevenlabs_tts import ElevenLabsConfig
+from apps.voice.providers.deepgram_stt import DeepgramConfig
+from apps.voice.providers.elevenlabs_tts import ElevenLabsConfig
 from apps.voice.models import VoiceProviderConnection
-from apps.voice.provider_credentials import (
+from apps.voice.providers.credentials import (
     VOICE_PROVIDER_DEEPGRAM,
     VOICE_PROVIDER_ELEVENLABS,
     VOICE_PROVIDER_ORDER,

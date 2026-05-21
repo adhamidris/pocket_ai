@@ -37,8 +37,8 @@ from apps.conversations.portal import (
     PortalNotFoundError,
     PortalValidationError,
 )
-from apps.conversations.portal_stream_trace import PortalStreamTrace
-from apps.conversations.portal_turn_events import (
+from apps.conversations.portal_session.stream_trace import PortalStreamTrace
+from apps.conversations.portal_turn.events import (
     append_turn_event,
     get_portal_redis_client,
     list_turn_events,

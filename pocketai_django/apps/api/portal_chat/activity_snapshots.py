@@ -20,7 +20,7 @@ from apps.agent_runs.models import (
 )
 from apps.automations.models import Automation, AutomationTriggerType
 from apps.conversations.models import AgentRequest, Conversation
-from apps.conversations.portal_session_serializers import (
+from apps.conversations.portal_session.serializers import (
     serialize_agent_run_checkpoint_for_portal,
     serialize_agent_run_event_for_portal,
     serialize_agent_run_for_portal,

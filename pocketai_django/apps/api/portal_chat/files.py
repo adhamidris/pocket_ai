@@ -12,7 +12,7 @@ from apps.conversations.portal import (
     PortalNotFoundError,
     PortalValidationError,
 )
-from apps.conversations.portal_auth import can_access_conversation, get_authorized_conversation
+from apps.conversations.portal_service.auth import can_access_conversation, get_authorized_conversation
 from apps.conversations.portal_files import (
     PortalFileError,
     PortalFileTokenError,

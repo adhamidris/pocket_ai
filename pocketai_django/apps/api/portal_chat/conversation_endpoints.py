@@ -35,11 +35,11 @@ from apps.conversations.portal import (
     PortalNotFoundError,
     PortalValidationError,
 )
-from apps.conversations.portal_auth import (
+from apps.conversations.portal_service.auth import (
     get_authorized_conversation,
     resolve_scope_for_user,
 )
-from apps.conversations.portal_turn_runner import run_turn_background
+from apps.conversations.portal_turn.runner import run_turn_background
 from core.tenancy import tenant_context
 
 # ------------------------------------------------------------------

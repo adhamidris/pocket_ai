@@ -10,9 +10,9 @@ from django.utils import timezone
 from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
 from apps.conversations.models import ConversationMessage
-from apps.voice.call_insights import generate_call_insights
+from apps.voice.calls.insights import generate_call_insights
 from apps.voice.models import CallSession, CallStatus
-from apps.voice.post_call_processing import process_post_call
+from apps.voice.calls.post_processing import process_post_call
 
 
 User = get_user_model()

@@ -8,7 +8,7 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 
 from apps.conversations.models import PortalTurn, PortalTurnStatus
-from apps.conversations.portal_turn_processing import PortalTurnProcessingService
+from apps.conversations.portal_turn.processing import PortalTurnProcessingService
 from core.tenancy import tenant_bypass
 
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from apps.conversations.portal_turn_events import get_portal_redis_client
+from apps.conversations.portal_turn.events import get_portal_redis_client
 
 from apps.api.portal_chat.activity_snapshots import (
     _append_agent_run_event,

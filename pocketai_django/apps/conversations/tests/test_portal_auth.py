@@ -14,7 +14,7 @@ from apps.conversations.portal import (
     ChatPortalService,
     PortalAuthorizationError,
 )
-from apps.conversations.portal_auth import (
+from apps.conversations.portal_service.auth import (
     can_access_conversation,
     get_authorized_conversation,
     resolve_scope_for_user,

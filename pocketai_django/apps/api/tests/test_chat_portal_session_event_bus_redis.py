@@ -9,7 +9,7 @@ from django.test import RequestFactory, TestCase, override_settings
 from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
 from apps.api import chat_portal
-from apps.conversations.portal_session_event_bus import portal_session_conversation_stream_key
+from apps.conversations.portal_session.event_bus import portal_session_conversation_stream_key
 from apps.conversations.models import Conversation
 
 

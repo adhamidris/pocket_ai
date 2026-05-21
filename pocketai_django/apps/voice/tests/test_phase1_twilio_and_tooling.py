@@ -9,10 +9,10 @@ from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
 from apps.agent_runs.models import AgentRun, AgentRunEvent, AgentRunStatus
 from apps.conversations.models import Conversation, ConversationChannel
-from apps.voice.mcp_tools import initiate_phone_call_tool
+from apps.voice.tools.mcp import initiate_phone_call_tool
 from apps.voice.models import CallSession, CallStatus, VoiceProviderConnection
-from apps.voice.twilio import build_twilio_signature
-from apps.voice.views_twilio import twilio_consent, twilio_twiml
+from apps.voice.providers.twilio import build_twilio_signature
+from apps.voice.webhooks.twilio import twilio_consent, twilio_twiml
 from core.tenancy import tenant_context
 from apps.mcp.types import ToolExecutionContext
 

@@ -11,7 +11,7 @@ from django.utils import timezone
 from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
 from apps.conversations.models import Conversation, PortalTurn, PortalTurnEvent, PortalTurnStatus
-from apps.conversations.portal_turn_events import (
+from apps.conversations.portal_turn.events import (
     append_turn_event,
     portal_turn_redis_seq_key,
     portal_turn_redis_stream_key,
@@ -67,7 +67,7 @@ class PortalTurnRedisEventBusTests(TestCase):
         conn.pipeline.return_value = pipe
         pipe.execute.return_value = [None, True]
 
-        with mock.patch("apps.conversations.portal_turn_events.get_portal_redis_client", return_value=conn):
+        with mock.patch("apps.conversations.portal_turn.events.get_portal_redis_client", return_value=conn):
             with self.captureOnCommitCallbacks(execute=True):
                 with tenant_context(self.business.id):
                     append_turn_event(turn_id=turn.id, event_type="status", payload={"state": "responding"})
@@ -112,7 +112,7 @@ class PortalTurnRedisEventBusTests(TestCase):
         pipe.execute.return_value = [None, True, True]
 
         with mock.patch.dict(os.environ, {"REDIS_URL": "redis://redis:6379/0"}):
-            with mock.patch("apps.conversations.portal_turn_events.get_portal_redis_client", return_value=conn):
+            with mock.patch("apps.conversations.portal_turn.events.get_portal_redis_client", return_value=conn):
                 with tenant_context(self.business.id):
                     append_turn_event(turn_id=turn.id, event_type="status", payload={"state": "responding"})
 

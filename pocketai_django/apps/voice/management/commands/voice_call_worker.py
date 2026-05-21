@@ -8,7 +8,7 @@ from django.utils import timezone
 
 from core.tenancy import tenant_bypass
 
-from apps.voice.call_processing import VoiceCallWorkerService
+from apps.voice.calls.processing import VoiceCallWorkerService
 from apps.voice.models import CallSession, CallStatus
 
 

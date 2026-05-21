@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from django.urls import path
 
-from apps.voice import views_telnyx, views_twilio
+from apps.voice.webhooks import telnyx as views_telnyx
+from apps.voice.webhooks import twilio as views_twilio
 
 app_name = "voice"
 
