@@ -8,7 +8,7 @@ from apps.llm.providers.chat import DeepSeekChatProvider, OpenAIChatProvider
 from apps.llm.interfaces import BaseLLMProvider, BaseMcpProvider
 from apps.llm.runtime.retry import PromptGenerationError
 from apps.llm.providers.tools import DeepSeekToolsProvider, OpenAIToolsProvider
-from apps.rag.rag_logging import structured_log
+from apps.rag.observability.logging import structured_log
 
 
 _MCP_PROVIDER_SINGLETON: BaseMcpProvider | None = None

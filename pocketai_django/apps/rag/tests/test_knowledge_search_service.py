@@ -30,7 +30,7 @@ from apps.rag.knowledge_search import (
     KnowledgeSnippet,
     QueryNormalizer,
 )
-from apps.rag.query_classifier import QueryClassification, QueryIntent
+from apps.rag.query.classifier import QueryClassification, QueryIntent
 from core.tenancy import tenant_context
 
 
@@ -1884,7 +1884,7 @@ class KnowledgeSearchServicePhaseSixValidationTests(TestCase):
                 },
             ),
             mock.patch.object(service, "_table_row_label_tokens_for_business", return_value=set()),
-            mock.patch("apps.rag.table_context.QueryClassifier.classify", new=_fake_classify),
+            mock.patch("apps.rag.tables.context.QueryClassifier.classify", new=_fake_classify),
         ):
             service._table_query_context(self.business, traits)
 
@@ -1955,7 +1955,7 @@ class KnowledgeSearchServicePhaseSixValidationTests(TestCase):
             ),
             mock.patch.object(service, "_table_row_label_tokens_for_business", return_value={"assessment fees"}),
             mock.patch(
-                "apps.rag.table_context.QueryClassifier.classify",
+                "apps.rag.tables.context.QueryClassifier.classify",
                 return_value=QueryClassification(
                     intent=QueryIntent.EXPLORATORY,
                     confidence=0.2,
@@ -2044,7 +2044,7 @@ class KnowledgeSearchServiceTableContextGuardrailTests(TestCase):
             ),
             mock.patch.object(service, "_table_row_label_tokens_for_business", return_value={"fee", "international"}),
             mock.patch(
-                "apps.rag.table_context.QueryClassifier.classify",
+                "apps.rag.tables.context.QueryClassifier.classify",
                 return_value=QueryClassification(
                     intent=QueryIntent.EXPLORATORY,
                     confidence=0.92,
@@ -2092,7 +2092,7 @@ class KnowledgeSearchServiceTableContextGuardrailTests(TestCase):
             ),
             mock.patch.object(service, "_table_row_label_tokens_for_business", return_value=set()),
             mock.patch(
-                "apps.rag.table_context.QueryClassifier.classify",
+                "apps.rag.tables.context.QueryClassifier.classify",
                 return_value=QueryClassification(
                     intent=QueryIntent.ENUMERATE,
                     confidence=0.88,
@@ -2141,7 +2141,7 @@ class KnowledgeSearchServiceTableContextGuardrailTests(TestCase):
             ),
             mock.patch.object(service, "_table_row_label_tokens_for_business", return_value={"fee", "international"}),
             mock.patch(
-                "apps.rag.table_context.QueryClassifier.classify",
+                "apps.rag.tables.context.QueryClassifier.classify",
                 return_value=QueryClassification(
                     intent=QueryIntent.EXPLORATORY,
                     confidence=0.5,

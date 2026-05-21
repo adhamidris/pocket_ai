@@ -27,7 +27,7 @@ from apps.knowledge.models import (
 )
 from apps.rag.contracts import KNOWLEDGE_READ_STATE_FULL, KnowledgeSnippet
 from apps.rag.knowledge_search import KnowledgeSearchService
-from apps.rag.rag_logging import structured_log
+from apps.rag.observability.logging import structured_log
 
 from ..runtime.agentic_read_cursor import (
     _AGENTIC_READ_CURSOR_V2_TTL_SECONDS,

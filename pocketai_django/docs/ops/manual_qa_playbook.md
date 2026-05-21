@@ -12,7 +12,7 @@
 - **Alias Missing:** Use the admin to inspect `KnowledgeFeedbackCase` and replay the failing query. If alias extraction missed the value, re-ingest with the fixture and verify alias metadata contains the normalized version.
 - **Truncation Warnings:** Check `KnowledgeUpload.ingestion_metadata['truncated_entities']` and the `KnowledgeDriftSample` “ingestion” rows. Increase `INGEST_MAX_JSON_ENTITIES` for the business or split the upload.
 - **Fallback Misfires:** Review the chat transcript and the `KnowledgeDriftSample` retrieval metrics. If alias hits are low, verify pgvector indexes/embeddings exist and re-run `run_rag_eval` to reproduce.
-- **Slow Responses:** Inspect the JSON export (`var/logs/rag_eval_latest.json`) for latency percentiles and compare against `RAG_EVAL_THRESHOLDS`. Enable DEBUG logging on `apps.rag.ai_orchestrator` to view stage timings.
+- **Slow Responses:** Inspect the JSON export (`var/logs/rag_eval_latest.json`) for latency percentiles and compare against `RAG_EVAL_THRESHOLDS`. Enable DEBUG logging on `apps.rag.search.pipeline` to view stage timings.
 - **Portal Tool Trace:** Tool calls + top search results render under each assistant message (collapsed by default). Disable via `PORTAL_DEBUG_TOOL_TRACE=0` if needed.
 
 ## Portal Feedback Loop

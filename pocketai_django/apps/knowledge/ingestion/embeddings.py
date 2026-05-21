@@ -72,7 +72,7 @@ class IngestionEmbeddingsMixin:
         
         # P0 #3: Invalidate table profile cache on new uploads
         try:
-            from apps.rag.table_profile_cache import invalidate_table_profile_cache
+            from apps.rag.tables.profile_cache import invalidate_table_profile_cache
             invalidate_table_profile_cache(business_id)
         except Exception as exc:
             logger.warning(

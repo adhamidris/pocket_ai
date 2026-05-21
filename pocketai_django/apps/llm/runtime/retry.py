@@ -10,7 +10,7 @@ from email.utils import parsedate_to_datetime
 from typing import Any, Callable
 from urllib import error as urllib_error
 
-from apps.rag.rag_logging import structured_log
+from apps.rag.observability.logging import structured_log
 
 logger = logging.getLogger(__name__)
 

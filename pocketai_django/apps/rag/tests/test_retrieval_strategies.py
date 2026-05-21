@@ -9,8 +9,8 @@ from unittest.mock import MagicMock, patch
 
 from django.test import TestCase
 
-from apps.rag.query_classifier import QueryClassification, QueryIntent
-from apps.rag.retrieval_strategies import (
+from apps.rag.query.classifier import QueryClassification, QueryIntent
+from apps.rag.retrieval.strategies import (
     AggregateStrategy,
     ComparisonStrategy,
     EnumerationStrategy,
@@ -420,7 +420,7 @@ class TestStrategyIntegration(TestCase):
     
     def test_list_all_query_uses_enumeration(self):
         """Test 'list all' query routes to enumeration strategy."""
-        from apps.rag.query_classifier import classify_query
+        from apps.rag.query.classifier import classify_query
         
         classification = classify_query("list all credit cards")
         strategy = self.router.route(classification)
@@ -431,7 +431,7 @@ class TestStrategyIntegration(TestCase):
     
     def test_specific_query_uses_specific_lookup(self):
         """Test specific entity query routes to specific lookup strategy."""
-        from apps.rag.query_classifier import classify_query
+        from apps.rag.query.classifier import classify_query
         
         classification = classify_query("Gold card annual fee")
         strategy = self.router.route(classification)
@@ -442,7 +442,7 @@ class TestStrategyIntegration(TestCase):
     
     def test_compare_query_uses_comparison(self):
         """Test comparison query routes to comparison strategy."""
-        from apps.rag.query_classifier import classify_query
+        from apps.rag.query.classifier import classify_query
         
         classification = classify_query("compare Gold vs Platinum")
         strategy = self.router.route(classification)
@@ -451,7 +451,7 @@ class TestStrategyIntegration(TestCase):
     
     def test_aggregate_query_uses_aggregate(self):
         """Test aggregate query routes to aggregate strategy."""
-        from apps.rag.query_classifier import classify_query
+        from apps.rag.query.classifier import classify_query
         
         classification = classify_query("how many credit cards do you have")
         strategy = self.router.route(classification)
@@ -460,7 +460,7 @@ class TestStrategyIntegration(TestCase):
     
     def test_end_to_end_enumeration_hints(self):
         """Test end-to-end: query → classification → strategy → hints."""
-        from apps.rag.query_classifier import classify_query
+        from apps.rag.query.classifier import classify_query
         
         # Classify the query
         classification = classify_query("show me every product")

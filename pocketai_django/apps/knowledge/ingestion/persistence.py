@@ -34,8 +34,8 @@ from apps.knowledge.models import (
     KnowledgeUploadTableRow,
     KnowledgeUploadText,
 )
-from apps.rag.table_semantics import normalize_column_name
-from apps.rag.quality_monitor import QualityMonitor
+from apps.rag.tables.semantics import normalize_column_name
+from apps.rag.observability.quality_monitor import QualityMonitor
 
 
 logger = logging.getLogger(__name__)

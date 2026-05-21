@@ -8,7 +8,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
 from apps.knowledge.models import KnowledgeDriftSample
-from apps.rag.query_analytics import build_query_analytics_report, format_query_analytics_report
+from apps.rag.query.analytics import build_query_analytics_report, format_query_analytics_report
 
 
 class Command(BaseCommand):

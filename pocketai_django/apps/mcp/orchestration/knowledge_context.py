@@ -8,7 +8,7 @@ from typing import Mapping, MutableMapping, Sequence
 from django.utils import timezone
 
 from apps.conversations.models import Conversation
-from apps.rag.rag_logging import structured_log
+from apps.rag.observability.logging import structured_log
 
 from ..types import ToolExecutionContext
 

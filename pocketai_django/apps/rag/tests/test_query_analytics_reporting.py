@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from django.test import SimpleTestCase
 
-from apps.rag.query_analytics import build_query_analytics_report
+from apps.rag.query.analytics import build_query_analytics_report
 
 
 class QueryAnalyticsReportingTests(SimpleTestCase):

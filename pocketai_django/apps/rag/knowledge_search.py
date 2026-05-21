@@ -9,7 +9,7 @@ from apps.rag.contracts import (
     QueryTraits,
 )
 from apps.rag.knowledge_search_service import KnowledgeSearchService
-from apps.rag.query_normalizer import QueryNormalizer
+from apps.rag.query.normalizer import QueryNormalizer
 
 __all__ = [
     "AliasSearchResult",

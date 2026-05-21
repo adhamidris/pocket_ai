@@ -5,7 +5,7 @@ from django.test import TestCase
 
 from apps.accounts.models import BusinessProfile, RegistrationSession, User
 from apps.knowledge.models import KnowledgeLexiconSynonym, KnowledgeLexiconTerm
-from apps.rag.tenant_lexicon import TenantLexiconService, normalize_lexicon_text, tokenize_lexicon_text
+from apps.rag.lexicon.tenant import TenantLexiconService, normalize_lexicon_text, tokenize_lexicon_text
 
 
 class TenantLexiconServiceTests(TestCase):

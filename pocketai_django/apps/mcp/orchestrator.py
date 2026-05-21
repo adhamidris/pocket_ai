@@ -22,7 +22,7 @@ from apps.conversations.models import (
 )
 from apps.llm.llm_provider import _emit_stream_chunks
 from apps.rag.contracts import StreamingTurnContext
-from apps.rag.rag_logging import structured_log
+from apps.rag.observability.logging import structured_log
 
 from . import tools as mcp_tools
 from .orchestration.approval_policy import McpApprovalPolicyMixin

@@ -6,7 +6,7 @@ from typing import Callable, Iterable, Mapping, Sequence
 from django.conf import settings
 
 from apps.conversations.models import Conversation
-from apps.rag.rag_logging import structured_log
+from apps.rag.observability.logging import structured_log
 
 from .. import prompts
 from .prompt_payload_compaction import McpPromptPayloadCompactionMixin

@@ -44,7 +44,7 @@ from apps.conversations.portal_turn.events import (
     list_turn_events,
     portal_turn_redis_stream_key,
 )
-from apps.rag.rag_logging import structured_log
+from apps.rag.observability.logging import structured_log
 from core.tenancy import tenant_context
 
 

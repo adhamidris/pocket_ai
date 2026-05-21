@@ -15,7 +15,7 @@ from __future__ import annotations
 from django.test import SimpleTestCase
 
 from apps.rag import query_classifier as query_classifier_module
-from apps.rag.query_classifier import (
+from apps.rag.query.classifier import (
     QueryClassifier,
     QueryClassification,
     QueryIntent,

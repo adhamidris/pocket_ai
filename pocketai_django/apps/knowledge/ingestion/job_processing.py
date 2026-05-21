@@ -11,7 +11,7 @@ from apps.knowledge.ingestion.contracts import KnowledgeIngestionError
 from apps.knowledge.ingestion.job_lifecycle import IngestionJobLifecycleMixin
 from apps.knowledge.ingestion.jobs import IngestionJobResult
 from apps.knowledge.models import KnowledgeIngestionJob
-from apps.rag.rag_logging import structured_log
+from apps.rag.observability.logging import structured_log
 from core.otel import otel_trace
 from core.tenancy import tenant_context
 

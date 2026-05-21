@@ -8,7 +8,7 @@ from typing import Any, Mapping, Sequence
 from django.conf import settings
 
 from apps.knowledge.models import KnowledgeLexiconTerm, KnowledgeUpload
-from apps.rag.tenant_lexicon import (
+from apps.rag.lexicon.tenant import (
     TenantLexiconService,
     normalize_language_code,
     normalize_lexicon_text,

@@ -17,7 +17,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options) -> None:
         try:
-            from apps.rag.azure_ai_search import AzureAISearchConfig, ensure_index
+            from apps.rag.integrations.azure_ai_search import AzureAISearchConfig, ensure_index
         except Exception as exc:
             raise CommandError(f"Azure AI Search dependency missing: {exc}") from exc
 

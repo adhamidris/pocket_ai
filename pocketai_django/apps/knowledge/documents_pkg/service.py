@@ -440,12 +440,12 @@ def delete_document(*, business_profile: BusinessProfile, document_id: uuid.UUID
         KnowledgeSearchService.invalidate_result_cache(business_profile.id)
         
         # P0 #3: Invalidate table profile cache on deletions
-        from apps.rag.table_profile_cache import invalidate_table_profile_cache
+        from apps.rag.tables.profile_cache import invalidate_table_profile_cache
         invalidate_table_profile_cache(business_profile.id)
     except Exception:
         pass
     try:
-        from apps.rag.azure_ai_search import AzureAISearchConfig, delete_upload
+        from apps.rag.integrations.azure_ai_search import AzureAISearchConfig, delete_upload
 
         config = AzureAISearchConfig.from_settings()
         if config and chunk_count:

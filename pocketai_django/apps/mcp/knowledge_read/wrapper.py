@@ -6,7 +6,7 @@ import uuid
 from typing import Mapping
 
 from apps.conversations.models import Conversation
-from apps.rag.rag_logging import structured_log
+from apps.rag.observability.logging import structured_log
 
 from ..knowledge_support.read_guards import _is_uuid_ref_id, _scope_invalid_read_retry_limit
 from ..types import ToolExecutionContext

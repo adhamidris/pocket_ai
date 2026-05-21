@@ -9,7 +9,7 @@ from typing import Mapping, Sequence
 
 from django.conf import settings
 
-from apps.rag.knowledge_payloads import diagnostic_warning_payload, issue_warning_payloads
+from apps.rag.snippets.payloads import diagnostic_warning_payload, issue_warning_payloads
 from apps.rag.knowledge_search import KnowledgeSearchService
 
 from ..types import ToolExecutionContext

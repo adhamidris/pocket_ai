@@ -5,7 +5,7 @@ from unittest import mock
 
 from django.test import SimpleTestCase
 
-from apps.rag.quality_monitor import QualityMonitor
+from apps.rag.observability.quality_monitor import QualityMonitor
 
 
 class QualityMonitorQueryAnalyticsTests(SimpleTestCase):
@@ -22,7 +22,7 @@ class QualityMonitorQueryAnalyticsTests(SimpleTestCase):
         }
 
         with (
-            mock.patch("apps.rag.quality_monitor.KnowledgeDriftSample.objects.create") as create_mock,
+            mock.patch("apps.rag.observability.quality_monitor.KnowledgeDriftSample.objects.create") as create_mock,
             mock.patch.object(QualityMonitor, "_check_alias_hit_rate"),
             mock.patch.object(QualityMonitor, "_check_not_found_spike"),
         ):

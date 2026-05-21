@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from django.test import SimpleTestCase
 
-from apps.rag.intent_fallback import IntentFallbackService
-from apps.rag.query_classifier import QueryClassification, QueryIntent
+from apps.rag.decision.intent_fallback import IntentFallbackService
+from apps.rag.query.classifier import QueryClassification, QueryIntent
 
 
 class _StubProvider:

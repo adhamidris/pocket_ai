@@ -145,9 +145,9 @@ from apps.knowledge.tables.tabular.aggregator import IngestionTabularFilesMixin
 from apps.knowledge.ingestion.text_utils import IngestionTextUtilsMixin
 from apps.rag.embeddings import LocalEmbeddingService, build_embedding_service, EmbeddingProviderError
 from apps.accounts.feature_flags import FeatureFlagService
-from apps.rag.quality_monitor import QualityMonitor
-from apps.rag.rag_logging import structured_log
-from apps.rag.table_semantics import normalize_column_name
+from apps.rag.observability.quality_monitor import QualityMonitor
+from apps.rag.observability.logging import structured_log
+from apps.rag.tables.semantics import normalize_column_name
 from core.tenancy import tenant_context
 from apps.core.logging_utils import log_start, log_success, log_progress, log_warning, log_error, LogEmoji
 from apps.knowledge.tables.normalization import (

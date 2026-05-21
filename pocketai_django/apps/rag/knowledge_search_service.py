@@ -11,38 +11,38 @@ from typing import Mapping
 from apps.knowledge.models import (
     KnowledgeUploadChunk,
 )
-from apps.rag.auto_decision import (
+from apps.rag.decision.auto_decision import (
     SCOPE_CATEGORY_MAX_DEFAULT,
     SCOPE_TOP_CATEGORY_MAX_DEFAULT,
     SearchAutoDecisionMixin,
 )
-from apps.rag.alias_retrieval import AliasRetrievalMixin
+from apps.rag.decision.auto_scoring import SearchAutoScoringMixin
+from apps.rag.decision.auto_scope import SearchAutoScopeMixin
+from apps.rag.decision.intent_fallback import IntentFallbackService
+from apps.rag.retrieval.alias import AliasRetrievalMixin
 from apps.rag.embeddings import build_embedding_service
-from apps.rag.auto_scoring import SearchAutoScoringMixin
-from apps.rag.auto_scope import SearchAutoScopeMixin
-from apps.rag.candidate_retrieval import CandidateRetrievalMixin
-from apps.rag.content_reading import ContentReadingMixin
-from apps.rag.content_serialization import ContentSerializationMixin
-from apps.rag.evidence_grouping import EvidenceGroupingMixin
-from apps.rag.metadata_helpers import KnowledgeMetadataMixin
-from apps.rag.ranking_features import RankingFeatureMixin
-from apps.rag.reranking import RerankingMixin
-from apps.rag.snippet_builder import SnippetBuilderMixin
-from apps.rag.snippet_selection import SnippetSelectionMixin
-from apps.rag.table_expansion import TableExpansionMixin
-from apps.rag.table_snippets import TableSnippetMixin
-from apps.rag.search_observability import SearchObservabilityMixin
-from apps.rag.query_signals import QuerySignalMixin
+from apps.rag.retrieval.candidates import CandidateRetrievalMixin
+from apps.rag.content.reading import ContentReadingMixin
+from apps.rag.content.serialization import ContentSerializationMixin
+from apps.rag.snippets.evidence_grouping import EvidenceGroupingMixin
+from apps.rag.snippets.metadata import KnowledgeMetadataMixin
+from apps.rag.retrieval.ranking_features import RankingFeatureMixin
+from apps.rag.retrieval.reranking import RerankingMixin
+from apps.rag.snippets.builder import SnippetBuilderMixin
+from apps.rag.snippets.selection import SnippetSelectionMixin
+from apps.rag.tables.expansion import TableExpansionMixin
+from apps.rag.tables.snippets import TableSnippetMixin
+from apps.rag.search.observability import SearchObservabilityMixin
+from apps.rag.query.signals import QuerySignalMixin
 from apps.rag.contracts import (
     MAX_INLINE_KNOWLEDGE_CHARS,
 )
-from apps.rag.intent_fallback import IntentFallbackService
-from apps.rag.tenant_lexicon import TenantLexiconService
-from apps.rag.retrieval_strategies import StrategyRouter
-from apps.rag.search_cache import KnowledgeSearchCacheMixin
-from apps.rag.search_config import SearchConfigMixin
-from apps.rag.search_pipeline import SearchPipelineMixin
-from apps.rag.table_context import TableContextMixin
+from apps.rag.lexicon.tenant import TenantLexiconService
+from apps.rag.retrieval.strategies import StrategyRouter
+from apps.rag.search.cache import KnowledgeSearchCacheMixin
+from apps.rag.search.config import SearchConfigMixin
+from apps.rag.search.pipeline import SearchPipelineMixin
+from apps.rag.tables.context import TableContextMixin
 
 
 logger = logging.getLogger(__name__)

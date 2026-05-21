@@ -47,7 +47,7 @@ from apps.llm.telemetry.usage import (
     _normalize_usage_payload,
     _select_encoder,
 )
-from apps.rag.rag_logging import structured_log
+from apps.rag.observability.logging import structured_log
 
 # Optional flag to enable token estimation logs (guarded by DEBUG level as well).
 LOG_TOKEN_ESTIMATE = os.getenv("LLM_LOG_TOKEN_ESTIMATE", "").strip().lower() in {"1", "true", "yes"}

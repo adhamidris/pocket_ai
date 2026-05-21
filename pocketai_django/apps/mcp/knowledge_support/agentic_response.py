@@ -15,7 +15,7 @@ from django.conf import settings
 
 from apps.conversations.models import Conversation
 from apps.knowledge.privacy_tools.hashing import sha256_hex
-from apps.rag.rag_logging import structured_log
+from apps.rag.observability.logging import structured_log
 
 from ..runtime.search_cursor import _store_search_cursor_handle
 from ..tool_definitions import (

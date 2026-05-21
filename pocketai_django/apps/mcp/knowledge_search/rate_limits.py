@@ -5,7 +5,7 @@ from typing import Mapping
 from django.conf import settings
 
 from apps.conversations.models import Conversation
-from apps.rag.tabular_limits import ToolRateLimit, enforce_tool_rate_limit
+from apps.rag.tables.limits import ToolRateLimit, enforce_tool_rate_limit
 
 from ..types import ToolRateLimitExceeded
 

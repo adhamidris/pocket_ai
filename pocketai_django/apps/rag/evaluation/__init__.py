@@ -1,5 +1,6 @@
 from .datasets import GOLDEN_SETS, GoldenFixture, GoldenQuery, GoldenSet
-from .harness import EvaluationReport, EvaluationThresholdError, QueryObservation, RAGEvaluationHarness
+from .harness import RAGEvaluationHarness
+from .types import EvaluationReport, EvaluationThresholdError, QueryObservation
 
 __all__ = [
     "GOLDEN_SETS",

@@ -15,7 +15,7 @@ from typing import Mapping
 from django.conf import settings
 
 from apps.conversations.models import Conversation
-from apps.rag.rag_logging import structured_log
+from apps.rag.observability.logging import structured_log
 
 from ..types import ToolExecutionContext
 

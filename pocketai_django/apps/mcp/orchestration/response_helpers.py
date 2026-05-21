@@ -7,7 +7,7 @@ from typing import Mapping, MutableMapping, Sequence
 
 from apps.conversations.models import Conversation, ConversationSender
 from apps.conversations.response_blocks import normalize_response_blocks
-from apps.rag.rag_logging import structured_log
+from apps.rag.observability.logging import structured_log
 
 from ..types import ToolExecutionContext
 

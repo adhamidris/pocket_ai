@@ -387,7 +387,7 @@ def structured_log(
     Legacy structured logging function - maintained for backward compatibility.
     Now uses the enhanced console_logger formatting.
     """
-    from apps.rag.rag_logging import structured_log as enhanced_structured_log
+    from apps.rag.observability.logging import structured_log as enhanced_structured_log
     enhanced_structured_log(namespace, stage, detail, indent=indent, context=context, level=level, logger_obj=logger_obj)
 
 

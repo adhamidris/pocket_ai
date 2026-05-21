@@ -9,7 +9,7 @@ from typing import Mapping, Sequence
 
 from apps.conversations.models import Conversation
 from apps.knowledge.models import KnowledgeUpload
-from apps.rag.knowledge_payloads import serialize_knowledge_snippet
+from apps.rag.snippets.payloads import serialize_knowledge_snippet
 from apps.rag.knowledge_search import KnowledgeSearchService
 
 from ..types import ToolExecutionContext

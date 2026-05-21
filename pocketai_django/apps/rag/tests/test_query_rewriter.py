@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from django.test import SimpleTestCase
 
-from apps.rag.query_rewriter import ContextAwareQueryRewriter, RewriteContext, get_query_rewriter
+from apps.rag.query.rewriter import ContextAwareQueryRewriter, RewriteContext, get_query_rewriter
 
 
 class QueryRewriterTests(SimpleTestCase):

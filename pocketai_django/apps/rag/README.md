@@ -12,93 +12,47 @@ snapshots/classes should not be treated as runtime code.
 
 Directory Map
 -------------
-- ai_orchestrator.py
-  Temporary compatibility bridge for older imports. Do not add new retrieval
-  logic here.
 - knowledge_search.py
   Active public import surface for knowledge search (`KnowledgeSearchService`,
   `QueryNormalizer`, and search result types).
 - knowledge_search_service.py
   `KnowledgeSearchService` class composition and initialization.
-- query_normalizer.py
-  Query normalization, alias candidate generation, and identifier-like query
-  detection used by active retrieval.
-- query_signals.py
-  Query-token signal helpers used by alias retrieval and table/entity routing.
-- search_cache.py
-  Alias, query-vector, result, and per-session cache helpers mixed into
-  `KnowledgeSearchService`.
-- search_config.py
-  Business override, tenant-lexicon readiness, retrieval limit/threshold, and
-  filler-token helpers mixed into `KnowledgeSearchService`.
-- search_pipeline.py
-  Public search entrypoint, DB timeout wrapper, retrieval pipeline, cache
-  arbitration, table/vector routing, and final result assembly.
-- table_context.py
-  Table-query context construction, table metadata discovery, table intent
-  signals, and table-profile cache integration.
-- table_snippets.py
-  Direct table-row search snippets and fallback snippet construction.
-- table_expansion.py
-  Table/text hit routing, table match diagnostics, structural row checks, table
-  parent lookup, and row expansion/merge helpers.
-- ranking_features.py
-  Text quality penalties, lexical/entity/alias scoring features, phrase and
-  proximity boosts, and text evidence span selection.
-- reranking.py
-  Candidate reranking and residual table rescue arbitration.
-- auto_scoring.py
-  Auto-mode table/text scoring, weak-hit detection, chunk route helpers, and
-  small numeric scoring utilities.
-- auto_scope.py
-  Auto-mode scope/category summaries, category normalization, and scoped ref
-  hints for broad table/document result sets.
-- auto_decision.py
-  Auto-mode evidence labels, table/text arbitration, decision contracts,
-  final semantic contract application, conflict detection, and no-result reason
-  derivation.
-- alias_retrieval.py
-  Alias exact/fuzzy lookup, alias cache hydration, and alias-path diagnostics.
-- candidate_retrieval.py
-  Free-text chunk retrieval orchestration, chunk queryset scoping,
-  vector/lexical candidate generation, query-vector caching, candidate merging,
-  vector thresholds, and MMR selection.
-- evidence_grouping.py
-  Evidence-group collapse and conflict detection for retrieved snippets.
-- content_serialization.py
-  Structured export serialization, table row samples, public labels, summaries,
-  and content trimming used by search/read snippets.
-- snippet_builder.py
-  Chunk-to-`KnowledgeSnippet` shaping for retrieved chunks.
-- snippet_selection.py
-  Snippet selection, result diversification, chunk-hit conversion, public
-  confidence scoring, and vector/table RRF fusion.
-- search_observability.py
-  Retrieval quality sampling, search summary logging, snippet previews, shadow
-  vector snapshots, and small timing helpers.
-- content_reading.py
-  Document, page-window, chunk read/load, read-state, and neighbor/entity
-  expansion helpers used by MCP read tools.
-- metadata_helpers.py
-  Knowledge metadata flags, topic normalization, and pinned/read hints used by
-  snippet construction.
+- query/
+  Query classification, normalization, rewriting, signals, and analytics.
+- search/
+  Search entrypoint/pipeline, DB timeout wrapper, retrieval cache, tenant
+  search configuration, and retrieval observability helpers.
+- tables/
+  Table-query context, profile discovery, query-token helpers, support
+  utilities, snippets, expansion, lookup, profile cache, semantics, and tool
+  limits.
+- retrieval/
+  Candidate retrieval, retrieval strategies, critiques, alias retrieval,
+  ranking features, and reranking.
+- decision/
+  Auto-mode scoring, scope/category summaries, table/text arbitration, final
+  semantic contracts, conflict detection, and intent fallback.
+- content/
+  Document reading and content serialization helpers used by search/read
+  snippets.
+- snippets/
+  Chunk-to-`KnowledgeSnippet` shaping, snippet selection, evidence-group
+  collapse, metadata helpers, and MCP/read payload serialization.
 - contracts.py
   Shared RAG/MCP dataclasses and constants such as `KnowledgeSnippet`,
   `StreamingTurnContext`, and knowledge read-state values.
 - embeddings.py
   Embedding provider selection (local FastEmbed or OpenAI) + warmup helper.
-- rag_logging.py
-  Structured RAG/MCP/LLM trace logging helpers.
-- quality_monitor.py
-  Drift and retrieval quality sampling + evaluation run persistence.
+- lexicon/
+  Tenant lexicon service, lexicon tokenization, and plural/singular text
+  utilities.
+- observability/
+  Structured RAG/MCP/LLM trace logging helpers plus drift/retrieval quality
+  sampling and evaluation run persistence.
+- integrations/
+  External retrieval integrations such as Azure AI Search.
 - evaluation/
   Harness and fixtures for regression evaluation (golden sets).
-- tabular_limits.py
-  Shared tool rate limiting helper.
-- table_semantics.py
-  Column-name normalization + heuristics for total columns.
-- table_lookup.py
-  Placeholder interface for future row-on-demand retrieval.
 - management/commands/warm_embeddings.py
   Warms embedding backend and FastEmbed cache.
 - tests/
@@ -168,33 +122,32 @@ Glossary (Quick)
 Where To Start (Reading Order)
 ------------------------------
 1) `apps/rag/knowledge_search.py` — public active search import surface.
-2) `apps/rag/query_normalizer.py` — query normalization and alias candidate generation.
-3) `apps/rag/query_signals.py` — query-token signal helpers.
-4) `apps/rag/search_cache.py` — search cache keys, serialization, and invalidation.
-5) `apps/rag/search_config.py` — business overrides, thresholds, and tenant readiness helpers.
-6) `apps/rag/search_pipeline.py` — search entrypoint and retrieval result assembly.
+2) `apps/rag/query/normalizer.py` — query normalization and alias candidate generation.
+3) `apps/rag/query/signals.py` — query-token signal helpers.
+4) `apps/rag/search/cache.py` — search cache keys, serialization, and invalidation.
+5) `apps/rag/search/config.py` — business overrides, thresholds, and tenant readiness helpers.
+6) `apps/rag/search/pipeline.py` — search entrypoint and retrieval result assembly.
 7) `apps/rag/knowledge_search_service.py` — service composition and initialization.
-8) `apps/rag/table_context.py` — table query context and table intent signals.
-9) `apps/rag/table_snippets.py` — direct table-row and fallback snippet construction.
-10) `apps/rag/table_expansion.py` — table hit routing, diagnostics, and row expansion/merge helpers.
-11) `apps/rag/ranking_features.py` — scoring feature helpers used by reranking.
-12) `apps/rag/reranking.py` — candidate reranking and residual table rescue.
-13) `apps/rag/auto_scoring.py` — auto-mode table/text scoring and route helpers.
-14) `apps/rag/auto_scope.py` — scope/category summaries for broad auto-mode results.
-15) `apps/rag/auto_decision.py` — auto-mode decisions, final semantics, conflicts, and no-result reasons.
-16) `apps/rag/alias_retrieval.py` — exact/fuzzy alias lookup and alias diagnostics.
-17) `apps/rag/candidate_retrieval.py` — free-text/chunk retrieval, vector/lexical candidates, and MMR helpers.
-18) `apps/rag/evidence_grouping.py` — snippet evidence grouping and conflict detection.
-19) `apps/rag/content_serialization.py` — structured snippet payloads and content trimming.
-20) `apps/rag/snippet_builder.py` — chunk-to-snippet shaping.
-21) `apps/rag/snippet_selection.py` — snippet selection, diversification, and fusion.
-22) `apps/rag/search_observability.py` — retrieval logging, quality samples, and timing.
-23) `apps/rag/content_reading.py` — document/page/chunk read expansion.
-24) `apps/rag/metadata_helpers.py` — knowledge metadata flags and topic hints.
-25) `apps/rag/ai_orchestrator.py` — temporary compatibility bridge.
-26) `apps/rag/embeddings.py` — embedding providers + warmup.
-27) `apps/mcp/tools.py` — how RAG is invoked in the tool loop.
-28) `apps/rag/evaluation/harness.py` — regression tests + metrics.
+8) `apps/rag/tables/context.py` — table query context and table intent signals.
+9) `apps/rag/tables/snippets.py` — direct table-row and fallback snippet construction.
+10) `apps/rag/tables/expansion.py` — table hit routing, diagnostics, and row expansion/merge helpers.
+11) `apps/rag/retrieval/ranking_features.py` — scoring feature helpers used by reranking.
+12) `apps/rag/retrieval/reranking.py` — candidate reranking and residual table rescue.
+13) `apps/rag/decision/auto_scoring.py` — auto-mode table/text scoring and route helpers.
+14) `apps/rag/decision/auto_scope.py` — scope/category summaries for broad auto-mode results.
+15) `apps/rag/decision/auto_decision.py` — auto-mode decisions, final semantics, conflicts, and no-result reasons.
+16) `apps/rag/retrieval/alias.py` — exact/fuzzy alias lookup and alias diagnostics.
+17) `apps/rag/retrieval/candidates.py` — free-text/chunk retrieval orchestration.
+18) `apps/rag/snippets/evidence_grouping.py` — snippet evidence grouping and conflict detection.
+19) `apps/rag/content/serialization.py` — structured snippet payloads and content trimming.
+20) `apps/rag/snippets/builder.py` — chunk-to-snippet shaping.
+21) `apps/rag/snippets/selection.py` — snippet selection, diversification, and fusion.
+22) `apps/rag/search/observability.py` — retrieval logging, quality samples, and timing.
+23) `apps/rag/content/reading.py` — document/page/chunk read expansion.
+24) `apps/rag/snippets/metadata.py` — knowledge metadata flags and topic hints.
+25) `apps/rag/embeddings.py` — embedding providers + warmup.
+26) `apps/mcp/knowledge_search/handler.py` — how RAG is invoked in the tool loop.
+27) `apps/rag/evaluation/harness.py` — regression tests + metrics.
 
 High-Level Architecture
 -----------------------

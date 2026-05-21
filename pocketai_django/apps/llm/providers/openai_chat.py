@@ -18,7 +18,7 @@ from apps.llm.runtime.retry import (
 )
 from apps.llm.runtime.streaming import _ResponseTextExtractor, _consume_chat_completion_stream
 from apps.llm.telemetry.usage import _estimate_text_tokens, _log_usage, _message_char_stats, _normalize_usage_payload
-from apps.rag.rag_logging import structured_log
+from apps.rag.observability.logging import structured_log
 from core.otel import Status, StatusCode, otel_trace
 
 LOG_TOKEN_ESTIMATE = os.getenv("LLM_LOG_TOKEN_ESTIMATE", "").strip().lower() in {"1", "true", "yes"}

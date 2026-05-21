@@ -13,7 +13,7 @@ from django.conf import settings
 from apps.accounts.feature_flags import FeatureFlagService
 from apps.conversations.models import Conversation
 from apps.rag.knowledge_search import KnowledgeSearchService
-from apps.rag.rag_logging import structured_log
+from apps.rag.observability.logging import structured_log
 
 from ..runtime.budget_guidance import search_budget_exceeded_payload
 from ..knowledge_support.identifier_helpers import _extract_identifier_candidate

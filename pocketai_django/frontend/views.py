@@ -51,7 +51,7 @@ from apps.knowledge.models import (
     KnowledgeUploadUrl,
 )
 from apps.integrations.models import KnowledgeIntegration
-from apps.rag.query_analytics import build_query_analytics_report
+from apps.rag.query.analytics import build_query_analytics_report
 from apps.accounts.agents import initials_from_name
 from apps.accounts.constants import DEFAULT_ASSISTANT_ROLE
 from apps.accounts.registration import KnowledgeUploadError

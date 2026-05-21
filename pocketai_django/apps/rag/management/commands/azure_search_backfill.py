@@ -52,7 +52,7 @@ class Command(BaseCommand):
                 raise CommandError("--upload-id must be a valid UUID") from exc
 
         try:
-            from apps.rag.azure_ai_search import (
+            from apps.rag.integrations.azure_ai_search import (
                 AzureAISearchConfig,
                 delete_upload,
                 ensure_index,

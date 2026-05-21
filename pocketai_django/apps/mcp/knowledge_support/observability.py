@@ -10,7 +10,7 @@ from typing import Mapping, Sequence
 
 from apps.conversations.models import Conversation
 from apps.knowledge.privacy_tools.hashing import sha256_hex
-from apps.rag.rag_logging import structured_log
+from apps.rag.observability.logging import structured_log
 from core.metrics import latency_monitor
 
 from .result_helpers import _estimate_tokens

@@ -20,7 +20,7 @@ from apps.conversations.models import (
     ConversationMaintenanceJobKind,
     ConversationMaintenanceJobStatus,
 )
-from apps.rag.rag_logging import structured_log
+from apps.rag.observability.logging import structured_log
 from core.tenancy import tenant_bypass, tenant_context
 
 

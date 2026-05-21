@@ -13,7 +13,7 @@ from typing import Iterable, Tuple
 
 from core.otel import otel_trace
 
-from apps.rag.rag_logging import structured_log
+from apps.rag.observability.logging import structured_log
 
 logger = logging.getLogger(__name__)
 TRACER = otel_trace.get_tracer(__name__)

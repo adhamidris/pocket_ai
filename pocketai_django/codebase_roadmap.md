@@ -42,7 +42,7 @@ HTTP POST /api/...
       ├─ apps/llm/llm_provider.py        # LLM HTTP client (OpenAI-compatible, httpx)
       ├─ apps/llm/ai_prompt_builder.py   # System prompt construction
       ├─ apps/mcp/tools.py               # Tool implementations dispatched per tool call
-      │    ├─ search_knowledge           →  apps/rag/ai_orchestrator.py (KnowledgeSearchService)
+      │    ├─ search_knowledge           →  apps/rag/knowledge_search.py (KnowledgeSearchService)
       │    ├─ read_knowledge             →  apps/mcp/tools.py (agentic read v2)
       │    ├─ send_email / read_email    →  apps/integrations/gmail.py or microsoft_graph.py
       │    ├─ calendar tools             →  apps/integrations/google_calendar_api.py
@@ -154,33 +154,33 @@ HTTP /api/oauth/...
 
 ## RAG engine internals
 
-Entry point: `apps/rag/ai_orchestrator.py` → `KnowledgeSearchService`
+Entry point: `apps/rag/knowledge_search.py` → `KnowledgeSearchService`
 
 ```
 KnowledgeSearchService.search(query, business, agent)
-  → apps/rag/query_classifier.py          # QueryClassifier — intent classification
+  → apps/rag/query/classifier.py          # QueryClassifier — intent classification
   │    Intents: ENUMERATE / SPECIFIC_LOOKUP / COMPARE / AGGREGATE / EXPLORATORY
-  → apps/rag/tenant_lexicon.py            # TenantLexiconService — tenant vocabulary/synonym snapshots
-  → apps/rag/intent_fallback.py           # LLM fallback classifier for low-confidence table intent + clarification routing
-  → apps/rag/retrieval_strategies.py      # StrategyRouter — retrieval hints per intent
-  → apps/rag/query_rewriter.py            # Optional query rewriting for better vectors
+  → apps/rag/lexicon/tenant.py            # TenantLexiconService — tenant vocabulary/synonym snapshots
+  → apps/rag/decision/intent_fallback.py  # LLM fallback classifier for low-confidence table intent + clarification routing
+  → apps/rag/retrieval/strategies.py      # StrategyRouter — retrieval hints per intent
+  → apps/rag/query/rewriter.py            # Optional query rewriting for better vectors
   → Alias lookup (PostgreSQL trigram similarity)
   → apps/rag/embeddings.py                # Vector generation
   → Vector search:
   │    Primary:  pgvector (PostgreSQL HNSW index)
-  │    Optional: apps/rag/azure_ai_search.py (flag: AZURE_SEARCH_ENABLED)
+  │    Optional: apps/rag/integrations/azure_ai_search.py (flag: AZURE_SEARCH_ENABLED)
   → Lexical FTS (PostgreSQL full-text search)
   → Hybrid fusion + multi-signal reranking
-  → apps/rag/table_lookup.py              # Table-specific retrieval path
-  → apps/rag/table_profile_cache.py       # Table metadata (columns, row labels, ratios)
+  → apps/rag/tables/lookup.py             # Table-specific retrieval path
+  → apps/rag/tables/profile_cache.py      # Table metadata (columns, row labels, ratios)
   → apps/rag/dataset_router.py            # Bloom filter — identifier → dataset mapping
-  → apps/rag/table_semantics.py           # Table chunk scoring and expansion
-  → apps/rag/tabular_limits.py            # Table result budgets
+  → apps/rag/tables/semantics.py          # Table chunk scoring and expansion
+  → apps/rag/tables/limits.py             # Table result budgets
   → Cross-encoder reranking (optional, flag-controlled)
   → MMR deduplication
-  → apps/rag/retrieval_critique.py        # Result quality assessment
-  → apps/rag/rag_logging.py              # Structured retrieval logging
-  → apps/rag/quality_monitor.py           # Quality signal tracking
+  → apps/rag/retrieval/critique.py        # Result quality assessment
+  → apps/rag/observability/logging.py     # Structured retrieval logging
+  → apps/rag/observability/quality_monitor.py  # Quality signal tracking
 ```
 
 Runtime contract notes (verified from code):

@@ -8,7 +8,7 @@ from typing import Mapping
 from django.core.cache import cache
 
 from apps.conversations.models import Conversation
-from apps.rag.rag_logging import structured_log
+from apps.rag.observability.logging import structured_log
 
 from ..knowledge_support.observability import _log_tool_metrics
 from ..knowledge_support.read_guards import _extract_no_result_reason

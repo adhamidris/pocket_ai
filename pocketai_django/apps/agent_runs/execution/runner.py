@@ -38,7 +38,7 @@ from apps.agent_runs.models import (
 from apps.automations.models import AutomationDedupeKey
 from apps.conversations.models import ConversationToolApproval, ConversationToolApprovalStatus
 from apps.mcp.text.sanitizer import has_dsml_markup, strip_dsml_markup
-from apps.rag.rag_logging import structured_log
+from apps.rag.observability.logging import structured_log
 
 
 logger = logging.getLogger(__name__)

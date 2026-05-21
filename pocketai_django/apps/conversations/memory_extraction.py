@@ -19,7 +19,7 @@ from typing import Any, Mapping
 from django.conf import settings
 from django.utils import timezone
 
-from apps.rag.rag_logging import structured_log
+from apps.rag.observability.logging import structured_log
 
 logger = logging.getLogger(__name__)
 

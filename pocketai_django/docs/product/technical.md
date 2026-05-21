@@ -250,7 +250,7 @@ Suggested SLOs (product-level):
 ## Where to look in the repo
 - Orchestration + tool loop: `apps/mcp/`
 - Tool handlers and logging: `apps/mcp/tools.py`
-- Knowledge search service: `apps/rag/ai_orchestrator.py`
+- Knowledge search service: `apps/rag/knowledge_search.py`
 - Knowledge ingestion: `apps/knowledge/knowledge_ingestion.py`
 - Knowledge models (uploads/tables/collections): `apps/accounts/models.py`
 - Conversations + message persistence: `apps/conversations/`

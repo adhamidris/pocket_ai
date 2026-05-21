@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Iterable, Mapping
 
-from apps.rag.rag_logging import structured_log
+from apps.rag.observability.logging import structured_log
 from core.otel import Span
 
 try:  # optional dependency for accurate token estimates

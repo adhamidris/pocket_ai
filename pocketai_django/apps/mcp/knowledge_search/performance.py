@@ -6,7 +6,7 @@ from typing import Mapping, Sequence
 from django.conf import settings
 
 from apps.conversations.models import Conversation
-from apps.rag.rag_logging import structured_log
+from apps.rag.observability.logging import structured_log
 
 
 def _effective_limit(base_limit: int | None, *, max_snippets_cap: int) -> int | None:

@@ -38,7 +38,7 @@ from apps.conversations.portal_session.event_bus import (
     portal_session_conversation_stream_key,
 )
 from apps.conversations.portal_turn.events import get_portal_redis_client
-from apps.rag.rag_logging import structured_log
+from apps.rag.observability.logging import structured_log
 from core.tenancy import tenant_context
 
 

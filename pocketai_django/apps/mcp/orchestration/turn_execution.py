@@ -15,7 +15,7 @@ from django.utils import timezone
 from apps.accounts.feature_flags import FeatureFlagService
 from apps.accounts.models import McpConnectionApprovalMode, McpToolOperationType
 from apps.conversations.models import Conversation, ConversationMessage
-from apps.rag.rag_logging import structured_log
+from apps.rag.observability.logging import structured_log
 
 from core.otel import otel_trace
 

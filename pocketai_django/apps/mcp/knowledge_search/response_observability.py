@@ -4,7 +4,7 @@ import logging
 from typing import Mapping
 
 from apps.conversations.models import Conversation
-from apps.rag.rag_logging import structured_log
+from apps.rag.observability.logging import structured_log
 
 from ..runtime.rag_observability import build_retrieval_observability
 

@@ -8,7 +8,7 @@ from typing import Mapping, Sequence
 from django.core.cache import cache
 
 from apps.conversations.models import Conversation
-from apps.rag.rag_logging import structured_log
+from apps.rag.observability.logging import structured_log
 
 from ..knowledge_support.agentic_response import _convert_to_agentic_search_response
 from ..runtime.search_cursor import (

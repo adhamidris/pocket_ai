@@ -36,7 +36,7 @@ class IngestionSearchIndexingMixin:
 
         def _on_commit() -> None:
             try:
-                from apps.rag.azure_ai_search import (
+                from apps.rag.integrations.azure_ai_search import (
                     AzureAISearchConfig,
                     delete_upload,
                     upsert_upload_chunks,
@@ -130,7 +130,7 @@ class IngestionSearchIndexingMixin:
         """
 
         try:
-            from apps.rag.azure_ai_search import AzureAISearchConfig, update_chunk_embeddings
+            from apps.rag.integrations.azure_ai_search import AzureAISearchConfig, update_chunk_embeddings
         except Exception:
             return
 

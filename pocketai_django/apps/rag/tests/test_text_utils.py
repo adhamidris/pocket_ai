@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from django.test import SimpleTestCase
 
-from apps.rag.text_utils import PLURAL_BLACKLIST, is_plural_candidate, singularize
+from apps.rag.lexicon.text_utils import PLURAL_BLACKLIST, is_plural_candidate, singularize
 
 
 class TestSingularize(SimpleTestCase):

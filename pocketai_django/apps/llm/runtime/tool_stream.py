@@ -6,7 +6,7 @@ import time
 from typing import Callable, Mapping
 
 from apps.llm.runtime.sse import _iter_sse_events
-from apps.rag.rag_logging import structured_log
+from apps.rag.observability.logging import structured_log
 
 logger = logging.getLogger(__name__)
 

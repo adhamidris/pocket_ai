@@ -7,8 +7,8 @@ from django.test import SimpleTestCase
 
 from apps.rag.knowledge_search import ChunkResult, KnowledgeSearchService, KnowledgeSnippet
 from apps.rag.evaluation.datasets import GOLDEN_SETS
-from apps.rag.query_classifier import QueryClassifier, QueryIntent
-from apps.rag.query_rewriter import ContextAwareQueryRewriter, RewriteContext
+from apps.rag.query.classifier import QueryClassifier, QueryIntent
+from apps.rag.query.rewriter import ContextAwareQueryRewriter, RewriteContext
 
 
 class AgenticRagRegressionEvals(SimpleTestCase):
