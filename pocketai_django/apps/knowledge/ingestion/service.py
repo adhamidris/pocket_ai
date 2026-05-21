@@ -77,6 +77,7 @@ from apps.knowledge.ingestion.aliases import (
     ID_LINE_PATTERN,
 )
 from apps.knowledge.ingestion.azure_di import AzureDocumentIntelligenceExtractor
+from apps.knowledge.ingestion.artifact_rebuild import IngestionArtifactRebuildMixin
 from apps.knowledge.ingestion.chunks import IngestionChunksMixin
 from apps.knowledge.ingestion.contracts import (
     EnhancedContextDocument,
@@ -91,6 +92,7 @@ from apps.knowledge.ingestion.contracts import (
 )
 from apps.knowledge.tables.docx_tables.extraction import IngestionDocxTablesMixin
 from apps.knowledge.ingestion.embeddings import IngestionEmbeddingsMixin
+from apps.knowledge.ingestion.embedding_job_processing import IngestionEmbeddingJobProcessingMixin
 from apps.knowledge.ingestion.entities import IngestionEntitiesMixin
 from apps.knowledge.tables.geometry_tools.reconstructor import GeometryTableReconstructor
 from apps.knowledge.ingestion.extraction import IngestionExtractionMixin
@@ -208,7 +210,9 @@ except ImportError:  # pragma: no cover - fallback handled via runtime check
 
 class KnowledgeIngestionService(
     IngestionJobProcessingMixin,
+    IngestionEmbeddingJobProcessingMixin,
     IngestionExtractionMixin,
+    IngestionArtifactRebuildMixin,
     IngestionDocxTablesMixin,
     IngestionPdfTableGeometryMixin,
     IngestionPdfTableRoutingMixin,

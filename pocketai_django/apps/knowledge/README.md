@@ -36,10 +36,16 @@ Directory Map
   Logical row-fragment merge helpers for geometry table reconstruction.
 - ingestion_jobs.py
   Ingestion job queue creation, result payloads, and queue health snapshots.
-- ingestion_job_processing.py
-  Ingestion and embedding job execution mixin.
-- ingestion_extraction.py
-  Upload extraction orchestration for file, text, link, and persisted artifacts.
+- ingestion/job_processing.py
+  Main ingestion job execution flow and ingest-job observability.
+- ingestion/job_lifecycle.py
+  Job claiming, retry, lease, completion, failure, and stale-job recovery.
+- ingestion/embedding_job_processing.py
+  Embedding job execution and embedding metadata updates.
+- ingestion/extraction.py
+  Upload extraction orchestration for file, text, and link sources.
+- ingestion/artifact_rebuild.py
+  Rebuild extraction payloads from persisted page/table/issue artifacts.
 - tables/docx_tables/extraction.py
   DOCX table extraction and DOCX-specific table cleanup helpers.
 - tables/docx_tables/schema.py
@@ -72,8 +78,10 @@ Directory Map
   PDF table candidate classification and promotion gate policy.
 - tables/pdf/promotion_restore.py
   Restoration of page blocks consumed by suppressed table candidates.
-- ingestion_table_selection.py
-  Table candidate scoring, diagnostics, and extractor selection.
+- tables/selection.py
+  Table extractor candidate selection orchestration.
+- tables/selection_scoring.py
+  Table candidate scoring, diagnostics, readability, and runtime flags.
 - tables/vlm/repair.py
   VLM table repair orchestration and repair candidate selection.
 - tables/vlm/guardrails.py
@@ -99,7 +107,9 @@ Directory Map
 - ingestion/chunk_canonical.py
   Canonical chunk metadata helpers.
 - ingestion/chunk_residuals.py
-  Table residual annotations, canonical payload projection, and residual reconciliation.
+  Table residual annotation projection and canonical payload orchestration.
+- ingestion/chunk_residual_reconciliation.py
+  Table residual semantic equivalence, compaction, and reconciliation policy.
 - ingestion/entities.py
   Table row entity extraction and spreadsheet entity gating.
 - ingestion/entity_aliases.py
@@ -114,6 +124,14 @@ Directory Map
   Embedding job scheduling, fallback embedding generation, and embedding metadata.
 - ingestion_table_quality.py
   Table quality scoring and decorative/noisy table detection.
+- benchmarking/quality_gate.py
+  Ingestion benchmark quality-gate metrics and pass/fail thresholds.
+- benchmarking/rendering.py
+  Benchmark markdown/JSON rendering and output-file helpers.
+- benchmarking/table_snapshots.py
+  Upload table snapshot capture and snapshot comparison.
+- benchmarking/pdf_portfolio.py
+  PDF portfolio benchmark expectations, capture, evaluation, and reporting.
 - tables/postprocess/aggregator.py
   Table row stitching, header propagation, duplicate suppression, and scope refresh.
 - tables/postprocess/signals.py
@@ -160,16 +178,28 @@ Directory Map
   Shared ingestion regexes, version constants, and numeric/table signal helpers.
 - ingestion_aliases.py
   Alias and identifier extraction constants.
-- knowledge_preflight.py
-  Fast preflight scan to classify uploads + surface limits.
+- preflight/service.py
+  Upload preflight orchestration and source-type routing.
+- preflight/file_inspection.py
+  File format detection, PDF page counting, CSV/Excel/JSON inspection.
+- preflight/table_limits.py
+  Table row-cap, dataset-mode, and warning/recommendation helpers.
 - documents.py
-  Document listing/detail/preview helpers for UI + APIs.
+  Compatibility facade for document UI/API helpers.
+- documents_pkg/contracts.py
+  Document service dataclasses and document-specific exceptions.
+- documents_pkg/service.py
+  Document listing, detail loading, and deletion orchestration.
+- documents_pkg/source_tools.py
+  Remote source scraping and CSV preview helpers.
 - dataset_cards.py
   Build + refresh dataset card chunks (RAG discovery snippets).
 - dataset_key_index.py
   Bloom filters for dataset identifier routing (generated on ingest).
-- table_normalization.py
-  Sheet normalization policy (drop empty columns, null tokens, etc).
+- tables/normalization.py
+  Sheet normalization policy, sheet routing, and normalization summaries.
+- tables/normalization_rows.py
+  Spreadsheet row cleanup, row classification, scaffold detection, and cell normalization.
 - knowledge_access.py
   Visibility rules for customer-facing retrieval.
 - privacy.py
@@ -208,7 +238,7 @@ Examples
 --------
 Preflight (manual trigger):
 ```python
-from apps.knowledge.knowledge_preflight import ensure_upload_preflight
+from apps.knowledge.preflight.service import ensure_upload_preflight
 ensure_upload_preflight(upload, trigger="manual")
 ```
 
@@ -241,7 +271,7 @@ ASCII Flow
 ----------
 Upload
   ↓
-Preflight (knowledge_preflight)
+Preflight (preflight.service)
   ↓
 Ingestion (ingestion_service via knowledge_ingestion compatibility facade)
   ↓
