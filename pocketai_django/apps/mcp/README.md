@@ -13,9 +13,9 @@ with the read v2 contract enabled via `MCP_AGENTIC_READ_V2_ENABLED=true`.
 Directory Map
 -------------
 - orchestrator.py
+  Compatibility bridge for the public MCP orchestrator service import.
+- orchestration/service.py
   Primary MCP orchestrator service shell and streaming public API.
-- orchestrator_turn_execution.py
-  Main MCP turn execution loop, tool dispatch, approval handling, and final answer pass.
 - prompts.py
   Compatibility bridge for MCP prompt builders and transcript assembly.
 - prompting/
@@ -41,9 +41,29 @@ Directory Map
 - knowledge_read_tool.py
   Compatibility bridge for the public read_knowledge handler.
 - knowledge_read/
-  Agentic read_knowledge engine, wrapper validation, cursor/page/section/table read segments, and table snippet helpers.
+  Agentic read_knowledge engine, request preflight, cursor/table/document read strategies, evidence assembly, wrapper validation, runtime context adapters, cursor/page/section/table read segments, artifact output/fitting, and table snippet helpers.
 - orchestration/
   MCP orchestrator mixins for turn execution, prompt governance, planning, approvals, remote tools, response helpers, and runtime controls.
+- orchestration/approvals/
+  Approval policy, native integration policy gates, phone-call approval handling, and email draft state.
+- orchestration/context/
+  Knowledge result context tracking and persistence for the MCP tool loop.
+- orchestration/plans/
+  Public turn planning/finalization helpers that adapt MCP streaming turns to RAG plan contracts.
+- orchestration/prompt_runtime/
+  Prompt chat/governor path, proactive context compaction, sizing estimates, and prompt payload compaction.
+- orchestration/prompt_runtime/compaction/
+  Tool-result prompt compaction dispatcher plus remote MCP, file/PDF, and email branch handlers.
+- orchestration/responses/
+  Response block extraction, inline block cleanup, action/extraction normalization, and user-facing tool labels.
+- orchestration/tooling/
+  Remote MCP execution, runtime controls/budgets, tool schema filtering, and tool trace summaries.
+- orchestration/turns/
+  Turn-local execution loop, setup, initial-pass, verification, and finalization helpers.
+- orchestration/turns/streaming/
+  Turn-local stream state, portal streaming callbacks, status events, stream filtering, buffering, and response emission.
+- orchestration/turns/tools/
+  Turn-local internal/native/remote tool execution branches, tool preparation, tool result finalization, and trace/prompt-message handling.
 - remote_client.py
   Public remote MCP client compatibility surface for server tests and tool calls.
 - remote/
@@ -55,9 +75,22 @@ Directory Map
 - types.py
   Compatibility bridge for shared MCP contracts.
 - contracts/
-  Shared MCP types/exceptions, ToolExecutionContext, and knowledge tool result contracts.
+  Shared MCP compatibility exports, focused exception contracts, ToolExecutionContext, context state mixins, and knowledge tool result contracts.
+- schemas/
+  Compatibility bridge package for old prompt schema imports; new prompt implementation lives under prompting/.
 - tests/
   Tool loop and observability tests.
+
+Root File Rule
+--------------
+Root-level files in this app should be one of:
+- Django app files (`apps.py`, `admin.py`, `models.py`)
+- public runtime entrypoints (`tools.py`, `tool_definitions.py`)
+- compatibility bridges for legacy imports (`orchestrator.py`, `prompts.py`, `connectors.py`, `types.py`, `knowledge_*_tool.py`, `remote_client.py`)
+
+Implementation-heavy code should live in domain packages such as
+`orchestration/`, `knowledge_read/`, `knowledge_search/`, `tool_handlers/`,
+`tool_schemas/`, `runtime/`, `remote/`, `prompting/`, or `connections/`.
 
 Key Flows
 ---------

@@ -22,9 +22,8 @@ from apps.mcp.models import (
     McpConnection,
 )
 from apps.accounts.models import AgentProfile
+from apps.agent_runs.models import AgentRun, AgentRunStatus
 from apps.conversations.models import (
-    AgentRun,
-    AgentRunStatus,
     Conversation,
     ConversationMessage,
     ConversationSender,

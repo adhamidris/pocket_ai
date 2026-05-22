@@ -7,8 +7,8 @@ from django.test import TestCase
 from django.utils import timezone
 
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession, TenantMemoryConfiguration
+from apps.agent_runs.models import AgentRun
 from apps.conversations.models import (
-    AgentRun,
     CompactedHistorySegment,
     Conversation,
     ConversationMessage,

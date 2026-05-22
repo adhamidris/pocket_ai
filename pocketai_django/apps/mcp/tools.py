@@ -12,6 +12,7 @@ touching unrelated parts of the codebase.
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Callable, Mapping
 
 from django.conf import settings
@@ -118,6 +119,8 @@ from .runtime.search_cursor import _encode_search_cursor, _search_cursor_handle_
 
 logger = logging.getLogger(__name__)
 
+
+TOOL_DEFINITIONS = get_tool_definitions()
 
 
 

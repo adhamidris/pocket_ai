@@ -277,7 +277,10 @@ def _retrieve_earlier_context_handler(
     match_method = "lexical"
     vector_distance = None
 
-    embedder = _portal_file_embedding_service()
+    from apps.mcp import tools as tools_bridge
+
+    embedding_service_factory = getattr(tools_bridge, "_portal_file_embedding_service", _portal_file_embedding_service)
+    embedder = embedding_service_factory()
     query_vector: list[float] | None = None
     if embedder:
         try:

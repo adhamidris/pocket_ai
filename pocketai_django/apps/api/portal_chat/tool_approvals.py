@@ -108,6 +108,11 @@ def portal_tool_approval(request: HttpRequest) -> JsonResponse:
     except PortalValidationError as exc:
         return _json_error("validation_error", str(exc))
 
+    if remember and not getattr(settings, "PORTAL_ALLOW_MCP_TOOL_PREFERENCES", False):
+        user = getattr(request, "user", None)
+        if not user or not getattr(user, "is_authenticated", False):
+            return _json_error("auth_required", "Authentication is required.", status=401)
+
     approval: ConversationToolApproval | None = None
     now = timezone.now()
     business_id = getattr(conversation, "business_profile_id", None)

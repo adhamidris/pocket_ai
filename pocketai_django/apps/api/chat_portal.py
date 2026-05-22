@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from apps.conversations.portal_turn.runner import run_turn_background
 from apps.conversations.portal_turn.events import get_portal_redis_client
 
+from apps.api.portal_chat import conversation_endpoints as _conversation_endpoints
 from apps.api.portal_chat.activity_snapshots import (
     _append_agent_run_event,
     _build_portal_agent_requests_snapshot,
@@ -118,6 +120,11 @@ from apps.api.portal_chat.tracing import PortalTraceLogger
 
 
 # NOTE: Portal verification (OTP / verified lookup) was removed; this deployment runs as knowledge-RAG only.
+
+
+def portal_turn_create(request):
+    _conversation_endpoints.run_turn_background = run_turn_background
+    return _conversation_endpoints.portal_turn_create(request)
 
 
 def portal_turn_events(request, turn_id):

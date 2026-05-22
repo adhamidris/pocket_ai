@@ -25,6 +25,7 @@ from apps.mcp.orchestrator import McpOrchestratorService
 
 class _ToolRecordingProvider:
     def __init__(self) -> None:
+        self.model = "deepseek-chat"
         self.tool_name_sets: list[set[str]] = []
 
     def chat(

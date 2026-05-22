@@ -16,12 +16,13 @@ Directory Map
   Active public import surface for knowledge search (`KnowledgeSearchService`,
   `QueryNormalizer`, and search result types).
 - knowledge_search_service.py
-  `KnowledgeSearchService` class composition and initialization.
+  Compatibility bridge for the `KnowledgeSearchService` implementation.
 - query/
   Query classification, normalization, rewriting, signals, and analytics.
 - search/
-  Search entrypoint/pipeline, DB timeout wrapper, retrieval cache, tenant
-  search configuration, and retrieval observability helpers.
+  Search service composition, entrypoint/pipeline, DB timeout wrapper,
+  pipeline cache/alias/candidate/table phases, retrieval cache, tenant search
+  configuration, and retrieval observability helpers.
 - tables/
   Table-query context, profile discovery, query-token helpers, support
   utilities, snippets, expansion, lookup, profile cache, semantics, and tool
@@ -126,8 +127,8 @@ Where To Start (Reading Order)
 3) `apps/rag/query/signals.py` — query-token signal helpers.
 4) `apps/rag/search/cache.py` — search cache keys, serialization, and invalidation.
 5) `apps/rag/search/config.py` — business overrides, thresholds, and tenant readiness helpers.
-6) `apps/rag/search/pipeline.py` — search entrypoint and retrieval result assembly.
-7) `apps/rag/knowledge_search_service.py` — service composition and initialization.
+6) `apps/rag/search/service.py` — service composition and initialization.
+7) `apps/rag/search/pipeline.py` — search entrypoint and retrieval result assembly.
 8) `apps/rag/tables/context.py` — table query context and table intent signals.
 9) `apps/rag/tables/snippets.py` — direct table-row and fallback snippet construction.
 10) `apps/rag/tables/expansion.py` — table hit routing, diagnostics, and row expansion/merge helpers.

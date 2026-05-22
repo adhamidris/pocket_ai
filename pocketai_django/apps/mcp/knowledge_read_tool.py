@@ -8,7 +8,7 @@ from typing import Mapping
 
 from apps.conversations.models import Conversation
 
-from .knowledge_read.tables import _agentic_table_chunk_snippets
+from .knowledge_read.table_reading.shared import _agentic_table_chunk_snippets
 from .knowledge_read.wrapper import _read_knowledge_agentic_wrapper
 from .types import ToolExecutionContext
 

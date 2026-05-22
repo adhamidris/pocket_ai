@@ -14,6 +14,7 @@ from apps.mcp.orchestrator import McpOrchestratorService
 
 class _DuplicatePhoneProvider:
     def __init__(self) -> None:
+        self.model = "deepseek-chat"
         self.calls = 0
 
     def chat(
