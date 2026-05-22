@@ -38,8 +38,6 @@ class Command(BaseCommand):
                 processed += 1
                 if result.run_id:
                     self.stdout.write(self.style.SUCCESS(f"Triggered automation {result.automation_id} (run {result.run_id})."))
-                elif result.triggered_run_ids:
-                    self.stdout.write(self.style.SUCCESS(f"Polled automation {result.automation_id}; runs={len(result.triggered_run_ids)}."))
                 elif result.error:
                     self.stdout.write(self.style.WARNING(f"Automation {result.automation_id}: {result.action} ({result.error})."))
                 else:

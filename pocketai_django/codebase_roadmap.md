@@ -12,7 +12,7 @@ This document maps every active runtime engine, request path, background worker,
 | `apps/api` | HTTP API layer — chat portal, voice calls, agent runs, OAuth, MCP connections |
 | `apps/conversations` | Conversation models, turn processing, portal session, memory, compaction |
 | `apps/assistants` | Custom Assistant definitions for chat-first assistant sessions |
-| `apps/automations` | Runnable Automation definitions, scheduling, email/webhook trigger processing |
+| `apps/automations` | Runnable Automation definitions and schedule trigger processing |
 | `apps/agent_runs` | AgentRun execution primitives, events, checkpoints, notifications, worker processing |
 | `apps/knowledge` | Knowledge uploads, ingestion pipeline, chunking, document parsing, dataset cards, privacy |
 | `apps/rag` | RAG search engine — retrieval strategies, embeddings, query classification, Azure search, table retrieval |

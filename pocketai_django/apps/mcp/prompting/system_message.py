@@ -62,13 +62,13 @@ AGENT_WORKFORCE_BACKGROUND_RUN_INSTRUCTIONS = textwrap.dedent(
     **When to use each tool:**
     - `start_agent_run` → Brand new multi-step task with no prior context needed
     - `continue_agent_run` → Follow-up work on an existing task
-    - `draft_task` → Persistent manual/scheduled/webhook/email-inbox task that should be saved for future runs
+    - `draft_task` → Persistent scheduled task that should be saved for future runs
     - `request_task_activation` → Activate a drafted task only after the visitor explicitly approves it
     - `list_tasks` / `update_task` / `pause_task` → Manage saved tasks owned by agents
     - Direct tools (email_create_draft, etc.) → Simple one-shot actions you can do yourself
 
     **Saved automations:**
-    - If the visitor asks to create a recurring, scheduled, webhook, or email-monitoring task, create a draft first.
+    - If the visitor asks to create a recurring or scheduled task, create a draft first.
     - Do not save a vague one-line task. A saved automation must contain a reusable `wake_up_prompt` that can run well in isolation later.
     - Build the draft from the current conversation context. If the visitor says "turn what we just did into an automation", extract the steps followed, tools used, decisions made, quality criteria, reporting style, stop/pause conditions, and what the automation must remember.
     - Infer safe/basic defaults when they are obvious. For monitors, default toward new/unread items, avoiding already-inspected items, using metadata/snippets before full reads, and notifying only on relevant findings.

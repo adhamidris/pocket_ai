@@ -16,8 +16,6 @@ class AgentRunSource(models.TextChoices):
     CHAT = "chat", "Chat"
     AUTOMATION = "automation", "Automation"
     SCHEDULE = "schedule", "Schedule"
-    WEBHOOK = "webhook", "Webhook"
-    EMAIL_INBOX = "email_inbox", "Email inbox"
     DELEGATION = "delegation", "Delegation"
     API = "api", "API"
 

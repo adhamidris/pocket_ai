@@ -420,7 +420,7 @@ class AgentRunExecutorMixin(AgentRunConversationTranscriptMixin, AgentRunOutcome
             raw_response_text_value = str(getattr(turn, "response_text", "") or "").strip()
             response_text_value = raw_response_text_value
             malformed_final_reason = ""
-            if run.source in {AgentRunSource.AUTOMATION, AgentRunSource.SCHEDULE, AgentRunSource.WEBHOOK, AgentRunSource.EMAIL_INBOX}:
+            if run.source in {AgentRunSource.AUTOMATION, AgentRunSource.SCHEDULE}:
                 if has_dsml_markup(raw_response_text_value):
                     stripped = strip_dsml_markup(raw_response_text_value).strip()
                     response_text_value = stripped
@@ -724,7 +724,7 @@ class AgentRunExecutorMixin(AgentRunConversationTranscriptMixin, AgentRunOutcome
                     pass
 
             report_state: dict[str, object] = {}
-            if run.source in {AgentRunSource.AUTOMATION, AgentRunSource.SCHEDULE, AgentRunSource.WEBHOOK, AgentRunSource.EMAIL_INBOX}:
+            if run.source in {AgentRunSource.AUTOMATION, AgentRunSource.SCHEDULE}:
                 report_state = self._persist_run_report(
                     run=run,
                     report=run_report,

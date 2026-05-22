@@ -16,20 +16,11 @@ from ..types import ToolExecutionContext
 def _automation_payload(automation) -> dict[str, object]:
     instructions = automation.instructions if isinstance(automation.instructions, dict) else {}
     trigger_config = automation.trigger_config if isinstance(automation.trigger_config, dict) else {}
-    source_config = automation.source_config if isinstance(automation.source_config, dict) else {}
     compact_trigger: dict[str, object] = {}
     for key in ("type", "cron", "timezone"):
         value = trigger_config.get(key)
         if isinstance(value, str) and value.strip():
             compact_trigger[key] = value.strip()[:160]
-    compact_source: dict[str, object] = {}
-    query = source_config.get("query")
-    if isinstance(query, str) and query.strip():
-        compact_source["query"] = query.strip()[:240]
-    if "unreadOnly" in source_config:
-        compact_source["unreadOnly"] = bool(source_config.get("unreadOnly"))
-    if "unread_only" in source_config:
-        compact_source["unread_only"] = bool(source_config.get("unread_only"))
 
     payload = {
         "id": str(automation.id),
@@ -40,7 +31,6 @@ def _automation_payload(automation) -> dict[str, object]:
         "trigger_type": automation.trigger_type,
         "goal": str(instructions.get("goal") or ""),
         "trigger_config": compact_trigger,
-        "source_config": compact_source,
         "next_trigger_at": automation.next_trigger_at.isoformat() if automation.next_trigger_at else None,
         "last_triggered_at": automation.last_triggered_at.isoformat() if automation.last_triggered_at else None,
         "last_error": automation.last_error or "",
@@ -60,25 +50,7 @@ def _task_trigger_config_from_args(arguments: Mapping[str, object], trigger_type
         if timezone_value:
             out["timezone"] = timezone_value[:120]
         return out
-    if trigger_type == "webhook":
-        return {"type": "webhook"}
-    if trigger_type == "email_inbox":
-        return {"type": "email_inbox"}
     return {}
-
-
-def _task_source_config_from_args(arguments: Mapping[str, object], *, current: Mapping[str, object] | None = None) -> dict[str, object]:
-    raw = arguments.get("source_config") if "source_config" in arguments else arguments.get("sourceConfig")
-    source = raw if isinstance(raw, Mapping) else current if isinstance(current, Mapping) else {}
-    out: dict[str, object] = {}
-    query = source.get("query")
-    if isinstance(query, str) and query.strip():
-        out["query"] = query.strip()[:240]
-    if "unreadOnly" in source:
-        out["unreadOnly"] = bool(source.get("unreadOnly"))
-    if "unread_only" in source:
-        out["unread_only"] = bool(source.get("unread_only"))
-    return out
 
 
 def _first_present(arguments: Mapping[str, object], *keys: str) -> tuple[bool, object]:
@@ -105,7 +77,6 @@ def _task_instruction_spec_from_args(
         inferred_type, inferred_shape = infer_workflow_type_and_memory_shape(
             goal=spec.get("goal") or arguments.get("goal"),
             trigger_type=arguments.get("trigger_type") or arguments.get("triggerType"),
-            source_config=arguments.get("source_config") or arguments.get("sourceConfig"),
         )
         spec.setdefault("workflow_type", inferred_type)
         spec.setdefault("memory_shape", inferred_shape)
@@ -240,7 +211,6 @@ def _draft_task_handler(
         visibility=visibility,
         trigger_type=trigger_type,
         trigger_config=_task_trigger_config_from_args(arguments, trigger_type),
-        source_config=_task_source_config_from_args(arguments),
         instructions=instructions,
         metadata={
             "source": "chat_task_draft",
@@ -308,9 +278,6 @@ def _update_task_handler(
     if "trigger_config" in arguments or "triggerConfig" in arguments or "trigger_type" in arguments or "triggerType" in arguments:
         automation.trigger_config = _task_trigger_config_from_args(arguments, automation.trigger_type, current=automation.trigger_config)
         updates.append("trigger_config")
-    if "source_config" in arguments or "sourceConfig" in arguments:
-        automation.source_config = _task_source_config_from_args(arguments, current=automation.source_config)
-        updates.append("source_config")
     if "visibility" in arguments:
         visibility = str(arguments.get("visibility") or "").strip().lower()
         if visibility not in {choice for choice, _ in AgentRunVisibility.choices}:

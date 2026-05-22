@@ -20,16 +20,15 @@ TASK_TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
     _function_schema(
         name="draft_task",
         description=(
-            "Create an inactive automation draft. Use for persistent scheduled, webhook, or email inbox tasks. "
+            "Create an inactive automation draft. Use for persistent scheduled tasks. "
             "Drafts must be approved by the user before activation. Only store fields visible in the task UI."
         ),
         properties={
             "agent_id": {"type": "string", "description": "Optional owning agent UUID. Defaults to the current agent."},
             "name": {"type": "string", "description": "Short task name."},
             "goal": {"type": "string", "description": "What the task should accomplish."},
-            "trigger_type": {"type": "string", "enum": ["schedule", "webhook", "email_inbox"]},
+            "trigger_type": {"type": "string", "enum": ["schedule"]},
             "trigger_config": {"type": "object", "additionalProperties": True},
-            "source_config": {"type": "object", "additionalProperties": True},
             "visibility": {"type": "string", "enum": ["initiator", "managers", "workspace"]},
         },
         required=("name", "goal"),
@@ -41,9 +40,8 @@ TASK_TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
             "task_id": {"type": "string", "description": "Automation/task UUID."},
             "name": {"type": "string"},
             "goal": {"type": "string"},
-            "trigger_type": {"type": "string", "enum": ["schedule", "webhook", "email_inbox"]},
+            "trigger_type": {"type": "string", "enum": ["schedule"]},
             "trigger_config": {"type": "object", "additionalProperties": True},
-            "source_config": {"type": "object", "additionalProperties": True},
             "visibility": {"type": "string", "enum": ["initiator", "managers", "workspace"]},
         },
         required=("task_id",),

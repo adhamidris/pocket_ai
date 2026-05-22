@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import secrets
 import uuid
 from datetime import datetime, timedelta, timezone as dt_timezone
 from http import HTTPStatus
@@ -12,12 +11,12 @@ from django.db import transaction
 from django.db.models import Count, Max, Q
 from django.http import HttpRequest, JsonResponse
 from django.utils import timezone
-from django.views.decorators.csrf import csrf_exempt, csrf_protect
-from django.views.decorators.http import require_http_methods, require_POST
+from django.views.decorators.csrf import csrf_protect
+from django.views.decorators.http import require_http_methods
 
-from core.tenancy import tenant_bypass, tenant_context
+from core.tenancy import tenant_context
 
-from apps.accounts.models import AgentProfile, EmailAccountStatus
+from apps.accounts.models import AgentProfile
 from apps.agent_runs.models import (
     AgentRun,
     AgentRunCheckpoint,
@@ -54,7 +53,6 @@ from apps.conversations.models import (
     MemoryVisibility,
 )
 from apps.conversations.run_display import build_agent_run_display
-from apps.integrations.models import EmailAccount
 
 
 def _parse_json_body(request: HttpRequest) -> tuple[dict[str, Any] | None, JsonResponse | None]:
@@ -222,7 +220,6 @@ def _serialize_automation(automation: Automation, latest_run: AgentRun | None = 
         "agentName": getattr(getattr(automation, "agent_profile", None), "name", "") or "",
         "businessId": str(automation.business_profile_id),
         "conversationId": str(automation.conversation_id) if automation.conversation_id else None,
-        "emailAccountId": str(automation.email_account_id) if automation.email_account_id else None,
         "name": automation.name,
         "description": automation.description or "",
         "status": automation.status,
@@ -236,10 +233,7 @@ def _serialize_automation(automation: Automation, latest_run: AgentRun | None = 
         "autonomyMode": automation.autonomy_mode,
         "instructions": automation.instructions if isinstance(automation.instructions, dict) else {},
         "state": automation.state if isinstance(automation.state, dict) else {},
-        "pollIntervalSeconds": int(automation.poll_interval_seconds or 0),
-        "maxEventsPerPoll": int(automation.max_events_per_poll or 0),
         "lastTriggeredAt": automation.last_triggered_at.isoformat() if automation.last_triggered_at else None,
-        "lastPolledAt": automation.last_polled_at.isoformat() if automation.last_polled_at else None,
         "nextTriggerAt": automation.next_trigger_at.isoformat() if automation.next_trigger_at else None,
         "leaseExpiresAt": automation.lease_expires_at.isoformat() if automation.lease_expires_at else None,
         "errorCount": int(automation.error_count or 0),
@@ -576,9 +570,7 @@ def _normalize_trigger_type(value: object) -> str:
     return raw
 
 
-def _compute_next_trigger(trigger_type: str, trigger_config: dict[str, Any], *, after=None):
-    if trigger_type != AutomationTriggerType.SCHEDULE:
-        return None
+def _compute_next_trigger(trigger_config: dict[str, Any], *, after=None):
     cron_config = dict(trigger_config)
     cron_config.setdefault("type", "cron")
     return compute_next_automation_schedule_at("cron", cron_config, after=after or timezone.now())

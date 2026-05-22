@@ -377,9 +377,6 @@ def agent_operations_status(request: HttpRequest, agent_id: uuid.UUID) -> JsonRe
     with tenant_context(agent.business_profile_id):
         runs = AgentRun.objects.filter(agent_profile=agent)
         automations = Automation.objects.filter(agent_profile=agent)
-        email_accounts = EmailAccount.objects.filter(business_profile=agent.business_profile)
-        if not request.user.is_staff:
-            email_accounts = email_accounts.filter(user=request.user)
         payload = {
             "operations": {
                 "taskProcessingActive": bool(_heartbeat_payload(automation_heartbeat)["active"] and _heartbeat_payload(run_heartbeat)["active"]),
@@ -387,22 +384,12 @@ def agent_operations_status(request: HttpRequest, agent_id: uuid.UUID) -> JsonRe
                 "runProcessor": _heartbeat_payload(run_heartbeat),
                 "dueAutomations": automations.filter(
                     status=AutomationStatus.ACTIVE,
-                    trigger_type__in=[AutomationTriggerType.SCHEDULE, AutomationTriggerType.EMAIL_INBOX],
+                    trigger_type=AutomationTriggerType.SCHEDULE,
                     next_trigger_at__lte=now,
                 ).count(),
                 "queuedRuns": runs.filter(status=AgentRunStatus.QUEUED).count(),
                 "runningRuns": runs.filter(status=AgentRunStatus.RUNNING).count(),
                 "failedRuns": runs.filter(status=AgentRunStatus.FAILED).count(),
             },
-            "emailAccounts": [
-                {
-                    "id": str(account.id),
-                    "provider": account.provider,
-                    "email": account.email_address,
-                    "displayName": account.email_address or account.get_provider_display(),
-                    "status": account.status,
-                }
-                for account in email_accounts.order_by("provider", "email_address")[:100]
-            ],
         }
     return JsonResponse(payload, status=HTTPStatus.OK)

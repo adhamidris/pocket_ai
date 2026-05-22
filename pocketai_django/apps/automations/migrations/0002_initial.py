@@ -13,7 +13,6 @@ class Migration(migrations.Migration):
         ('accounts', '0001_initial'),
         ('automations', '0001_initial'),
         ('conversations', '0001_initial'),
-        ('integrations', '0001_initial'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
@@ -27,11 +26,6 @@ class Migration(migrations.Migration):
             model_name='automation',
             name='created_by',
             field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='created_automations', to=settings.AUTH_USER_MODEL),
-        ),
-        migrations.AddField(
-            model_name='automation',
-            name='email_account',
-            field=models.ForeignKey(blank=True, help_text='Email account used by email-inbox automations.', null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='automations', to='integrations.emailaccount'),
         ),
         migrations.AddField(
             model_name='automationdedupekey',

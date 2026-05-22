@@ -7462,8 +7462,6 @@ class ChatPortalClient {
     const norm = (triggerType || "").toString().trim().toLowerCase();
     if (norm === "schedule") return this.t("Scheduled");
     if (norm === "manual") return this.t("Manual");
-    if (norm === "webhook") return this.t("Webhook");
-    if (norm === "email_inbox") return this.t("Email inbox");
     return norm ? this.formatStatus(norm) : this.t("Automation");
   }
 

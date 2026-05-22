@@ -3,38 +3,6 @@ from __future__ import annotations
 from .run_shared import *  # noqa: F403
 
 
-@csrf_exempt
-@require_POST
-def automation_webhook_trigger(request: HttpRequest, automation_id: uuid.UUID, token: str) -> JsonResponse:
-    token_value = str(token or "").strip()
-    if not token_value:
-        return JsonResponse({"error": "NOT_FOUND", "message": "Automation not found."}, status=HTTPStatus.NOT_FOUND)
-    with tenant_bypass():
-        automation = (
-            Automation.objects.select_related("agent_profile", "business_profile", "conversation")
-            .filter(id=automation_id, trigger_type=AutomationTriggerType.WEBHOOK, status=AutomationStatus.ACTIVE)
-            .first()
-        )
-        if automation is None:
-            return JsonResponse({"error": "NOT_FOUND", "message": "Automation not found."}, status=HTTPStatus.NOT_FOUND)
-        secret_value = str((automation.trigger_config or {}).get("secret") or "").strip()
-        if not secret_value or not secrets.compare_digest(secret_value, token_value):
-            return JsonResponse({"error": "NOT_FOUND", "message": "Automation not found."}, status=HTTPStatus.NOT_FOUND)
-        run = _create_run(
-            agent=automation.agent_profile,
-            created_by=None,
-            automation=automation,
-            conversation=automation.conversation,
-            title=automation.name,
-            source=AgentRunSource.WEBHOOK,
-            visibility=automation.visibility,
-            snapshot=_run_snapshot(automation),
-            metadata={"automation_id": str(automation.id), "trigger": "webhook"},
-        )
-        Automation.objects.filter(id=automation.id).update(last_triggered_at=timezone.now(), updated_at=timezone.now())
-        return JsonResponse({"runId": str(run.id)}, status=HTTPStatus.CREATED)
-
-
 @csrf_protect
 @require_http_methods(["POST"])
 def automation_run(request: HttpRequest, agent_id: uuid.UUID, automation_id: uuid.UUID) -> JsonResponse:
@@ -143,36 +111,17 @@ def automations_collection(request: HttpRequest, agent_id: uuid.UUID) -> JsonRes
         if trigger_type not in {choice for choice, _ in AutomationTriggerType.choices}:
             return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid triggerType."}, status=HTTPStatus.BAD_REQUEST)
         trigger_config = dict((payload or {}).get("triggerConfig") or (payload or {}).get("trigger_config") or {})
-        if trigger_type == AutomationTriggerType.WEBHOOK and not str(trigger_config.get("secret") or "").strip():
-            trigger_config["secret"] = secrets.token_urlsafe(24)
         next_trigger_at = None
         if status == AutomationStatus.ACTIVE:
             try:
-                next_trigger_at = _compute_next_trigger(trigger_type, trigger_config, after=timezone.now())
+                next_trigger_at = _compute_next_trigger(trigger_config, after=timezone.now())
             except CronScheduleError as exc:
                 return JsonResponse({"error": "VALIDATION_ERROR", "message": str(exc)}, status=HTTPStatus.BAD_REQUEST)
-
-        email_account = None
-        email_account_id, err = _parse_uuid((payload or {}).get("emailAccountId") or (payload or {}).get("email_account_id"), field="emailAccountId")
-        if err:
-            return err
-        if trigger_type == AutomationTriggerType.EMAIL_INBOX:
-            if not email_account_id:
-                return JsonResponse({"error": "VALIDATION_ERROR", "message": "emailAccountId is required for email inbox automations."}, status=HTTPStatus.BAD_REQUEST)
-            account_qs = EmailAccount.objects.filter(id=email_account_id, business_profile=agent.business_profile)
-            if not request.user.is_staff:
-                account_qs = account_qs.filter(user=request.user)
-            email_account = account_qs.first()
-            if email_account is None:
-                return JsonResponse({"error": "EMAIL_ACCOUNT_NOT_FOUND", "message": "Email account not found."}, status=HTTPStatus.NOT_FOUND)
-            if email_account.status != EmailAccountStatus.CONNECTED:
-                return JsonResponse({"error": "VALIDATION_ERROR", "message": "Email account must be connected before enabling an email inbox automation."}, status=HTTPStatus.BAD_REQUEST)
 
         automation = Automation.objects.create(
             business_profile=agent.business_profile,
             agent_profile=agent,
             created_by=request.user,
-            email_account=email_account,
             name=name[:160],
             description=str((payload or {}).get("description") or "")[:4000],
             status=status,
@@ -186,8 +135,6 @@ def automations_collection(request: HttpRequest, agent_id: uuid.UUID) -> JsonRes
             autonomy_mode=autonomy_mode,
             instructions=normalize_workflow_instructions((payload or {}).get("instructions") or {}),
             state=dict((payload or {}).get("state") or {}),
-            poll_interval_seconds=max(60, min(int((payload or {}).get("pollIntervalSeconds") or (payload or {}).get("poll_interval_seconds") or 300), 86400)),
-            max_events_per_poll=max(1, min(int((payload or {}).get("maxEventsPerPoll") or (payload or {}).get("max_events_per_poll") or 5), 25)),
             next_trigger_at=next_trigger_at,
             metadata=dict((payload or {}).get("metadata") or {}),
         )
@@ -266,35 +213,9 @@ def automation_detail(request: HttpRequest, agent_id: uuid.UUID, automation_id: 
                 value = payload.get(public) if public in payload else payload.get(field)
                 setattr(automation, field, normalize_workflow_instructions(value) if field == "instructions" else dict(value or {}))
                 updates.append(field)
-        if "pollIntervalSeconds" in payload or "poll_interval_seconds" in payload:
-            automation.poll_interval_seconds = max(60, min(int(payload.get("pollIntervalSeconds") or payload.get("poll_interval_seconds") or 300), 86400))
-            updates.append("poll_interval_seconds")
-        if "maxEventsPerPoll" in payload or "max_events_per_poll" in payload:
-            automation.max_events_per_poll = max(1, min(int(payload.get("maxEventsPerPoll") or payload.get("max_events_per_poll") or 5), 25))
-            updates.append("max_events_per_poll")
-        if "emailAccountId" in payload or "email_account_id" in payload:
-            email_account_id, err = _parse_uuid(payload.get("emailAccountId") or payload.get("email_account_id"), field="emailAccountId")
-            if err:
-                return err
-            email_account = None
-            if email_account_id:
-                account_qs = EmailAccount.objects.filter(id=email_account_id, business_profile=agent.business_profile)
-                if not request.user.is_staff:
-                    account_qs = account_qs.filter(user=request.user)
-                email_account = account_qs.first()
-                if email_account is None:
-                    return JsonResponse({"error": "EMAIL_ACCOUNT_NOT_FOUND", "message": "Email account not found."}, status=HTTPStatus.NOT_FOUND)
-            automation.email_account = email_account
-            updates.append("email_account")
-        if automation.trigger_type == AutomationTriggerType.WEBHOOK:
-            cfg = dict(automation.trigger_config or {})
-            if not str(cfg.get("secret") or "").strip():
-                cfg["secret"] = secrets.token_urlsafe(24)
-                automation.trigger_config = cfg
-                updates.append("trigger_config")
         if {"status", "trigger_type", "trigger_config"} & set(updates):
             try:
-                automation.next_trigger_at = _compute_next_trigger(automation.trigger_type, automation.trigger_config, after=timezone.now()) if automation.status == AutomationStatus.ACTIVE else None
+                automation.next_trigger_at = _compute_next_trigger(automation.trigger_config, after=timezone.now()) if automation.status == AutomationStatus.ACTIVE else None
             except CronScheduleError as exc:
                 return JsonResponse({"error": "VALIDATION_ERROR", "message": str(exc)}, status=HTTPStatus.BAD_REQUEST)
             updates.append("next_trigger_at")

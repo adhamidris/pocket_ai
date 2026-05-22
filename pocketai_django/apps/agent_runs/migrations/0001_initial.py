@@ -93,7 +93,7 @@ class Migration(migrations.Migration):
                 ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
                 ('run_snapshot', models.JSONField(blank=True, default=dict, help_text='Immutable execution contract snapshot used for this run.')),
                 ('title', models.CharField(blank=True, default='', max_length=200)),
-                ('source', models.CharField(choices=[('chat', 'Chat'), ('automation', 'Automation'), ('schedule', 'Schedule'), ('webhook', 'Webhook'), ('email_inbox', 'Email inbox'), ('delegation', 'Delegation'), ('api', 'API')], default='chat', max_length=24)),
+                ('source', models.CharField(choices=[('chat', 'Chat'), ('automation', 'Automation'), ('schedule', 'Schedule'), ('delegation', 'Delegation'), ('api', 'API')], default='chat', max_length=24)),
                 ('status', models.CharField(choices=[('queued', 'Queued'), ('running', 'Running'), ('waiting_user', 'Waiting for user'), ('waiting_approval', 'Waiting for approval'), ('waiting_child', 'Waiting for child run'), ('waiting_external', 'Waiting for external'), ('paused', 'Paused'), ('completed', 'Completed'), ('failed', 'Failed'), ('cancelled', 'Cancelled')], db_index=True, default='queued', max_length=24)),
                 ('visibility', models.CharField(choices=[('initiator', 'Initiator'), ('managers', 'Managers'), ('workspace', 'Workspace')], default='initiator', max_length=24)),
                 ('plan', models.JSONField(blank=True, default=dict)),

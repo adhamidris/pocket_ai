@@ -16,8 +16,6 @@ class AutomationStatus(models.TextChoices):
 
 class AutomationTriggerType(models.TextChoices):
     SCHEDULE = "schedule", "Schedule"
-    WEBHOOK = "webhook", "Webhook"
-    EMAIL_INBOX = "email_inbox", "Email inbox"
 
 
 class AutomationReviewMode(models.TextChoices):
@@ -62,14 +60,6 @@ class Automation(models.Model):
         blank=True,
         help_text="Optional destination conversation for automation run results.",
     )
-    email_account = models.ForeignKey(
-        "integrations.EmailAccount",
-        related_name="automations",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        help_text="Email account used by email-inbox automations.",
-    )
     name = models.CharField(max_length=160)
     description = models.TextField(blank=True, default="")
     status = models.CharField(max_length=24, choices=AutomationStatus.choices, default=AutomationStatus.DRAFT, db_index=True)
@@ -88,10 +78,7 @@ class Automation(models.Model):
     )
     instructions = models.JSONField(default=dict, blank=True)
     state = models.JSONField(default=dict, blank=True)
-    poll_interval_seconds = models.PositiveIntegerField(default=300)
-    max_events_per_poll = models.PositiveSmallIntegerField(default=5)
     last_triggered_at = models.DateTimeField(null=True, blank=True)
-    last_polled_at = models.DateTimeField(null=True, blank=True)
     next_trigger_at = models.DateTimeField(null=True, blank=True, db_index=True)
     lease_expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
     error_count = models.PositiveSmallIntegerField(default=0)
@@ -119,8 +106,6 @@ class Automation(models.Model):
             self.business_profile = self.agent_profile.business_profile
         if self.conversation_id and not self.business_profile_id and getattr(self, "conversation", None):
             self.business_profile = self.conversation.business_profile
-        if self.email_account_id and not self.business_profile_id and getattr(self, "email_account", None):
-            self.business_profile = self.email_account.business_profile
         super().save(*args, **kwargs)
 
     def __str__(self) -> str:  # pragma: no cover

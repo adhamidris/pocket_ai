@@ -3,7 +3,6 @@ from __future__ import annotations
 from apps.api.agents.automations import (
     automation_detail,
     automation_run,
-    automation_webhook_trigger,
     automations_collection,
 )
 from apps.api.agents.custom_assistants import (
